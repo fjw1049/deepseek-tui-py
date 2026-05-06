@@ -1,34 +1,41 @@
 """真实 API 端到端测试（需要真实 API key）。
 
-运行此测试需要设置环境变量：
-export DEEPSEEK_API_KEY=sk-your-key-here
+Key 解析顺序：
 
-或者在 ~/.deepseek/config.toml 中配置 API key。
+1. ``DEEPSEEK_API_KEY`` 环境变量
+2. 项目根目录 ``config.toml`` 的 ``[providers.deepseek] api_key``
+3. 都没有则跳过
+
+实现细节见 :mod:`tests._real_api`。
 """
 
 import asyncio
-import os
 
 import pytest
 
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.requests import MessageRequest
+from tests._real_api import (
+    get_deepseek_api_key,
+    get_deepseek_base_url,
+    has_deepseek_api_key,
+)
 
 
 @pytest.mark.skipif(
-    not os.getenv("DEEPSEEK_API_KEY"),
-    reason="需要 DEEPSEEK_API_KEY 环境变量",
+    not has_deepseek_api_key(),
+    reason="需要 DEEPSEEK_API_KEY 环境变量或项目 config.toml 里的 api_key",
 )
 @pytest.mark.asyncio
 async def test_real_api_call_flash() -> None:
     """测试真实的 DeepSeek API 调用（flash 模型）。"""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    api_key = get_deepseek_api_key()
     assert api_key is not None
 
     client = DeepSeekClient(
         api_key=api_key,
-        base_url="https://api.deepseek.com",
+        base_url=get_deepseek_base_url(),
     )
 
     request = MessageRequest(
@@ -56,18 +63,18 @@ async def test_real_api_call_flash() -> None:
 
 
 @pytest.mark.skipif(
-    not os.getenv("DEEPSEEK_API_KEY"),
-    reason="需要 DEEPSEEK_API_KEY 环境变量",
+    not has_deepseek_api_key(),
+    reason="需要 DEEPSEEK_API_KEY 环境变量或项目 config.toml 里的 api_key",
 )
 @pytest.mark.asyncio
 async def test_real_api_call_pro() -> None:
     """测试真实的 DeepSeek API 调用（pro 模型）。"""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    api_key = get_deepseek_api_key()
     assert api_key is not None
 
     client = DeepSeekClient(
         api_key=api_key,
-        base_url="https://api.deepseek.com",
+        base_url=get_deepseek_base_url(),
     )
 
     request = MessageRequest(
@@ -91,10 +98,10 @@ async def test_real_api_call_pro() -> None:
 
 if __name__ == "__main__":
     # 直接运行测试
-    if os.getenv("DEEPSEEK_API_KEY"):
+    if has_deepseek_api_key():
         print("运行真实 API 测试...")
         asyncio.run(test_real_api_call_flash())
-        print("\n" + "="*50 + "\n")
+        print("\n" + "=" * 50 + "\n")
         asyncio.run(test_real_api_call_pro())
     else:
-        print("跳过：需要设置 DEEPSEEK_API_KEY 环境变量")
+        print("跳过：未找到 DEEPSEEK_API_KEY 或项目 config.toml")

@@ -277,10 +277,17 @@ class ToolRegistry:
 
     @staticmethod
     def _serialise_tool(tool: ToolSpec) -> dict[str, Any]:
+        # Encode the tool name to the provider-safe wire form. Rust
+        # `to_api_tool_name` (client.rs:25-39) is reversible, so the
+        # Python in-memory name (which may contain `.` / `:` / non-ASCII)
+        # round-trips correctly via `from_api_tool_name` when the model
+        # echoes it back. See client.streaming for the decode side.
+        from deepseek_tui.tools.encoding import to_api_tool_name
+
         return {
             "type": "function",
             "function": {
-                "name": tool.name(),
+                "name": to_api_tool_name(tool.name()),
                 "description": tool.description(),
                 "parameters": tool.input_schema(),
                 "allowed_callers": ["direct"],

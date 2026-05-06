@@ -96,7 +96,18 @@ class OpenAIStreamParser:
                     if isinstance(function_data, dict):
                         name = function_data.get("name")
                         if isinstance(name, str) and name:
-                            builder.name = name
+                            # The wire form is the encoded name produced
+                            # by ToolRegistry._serialise_tool. Decode here
+                            # so the rest of the engine sees the original
+                            # in-memory tool name (possibly with `.`, `:`,
+                            # CJK, emoji, etc.). Bare hex fallback in
+                            # from_api_tool_name also handles models that
+                            # mangle the `-x...-` delimiters.
+                            from deepseek_tui.tools.encoding import (
+                                from_api_tool_name,
+                            )
+
+                            builder.name = from_api_tool_name(name)
                         arguments_fragment = function_data.get("arguments")
                         if isinstance(arguments_fragment, str):
                             builder.append(arguments_fragment)
