@@ -6,16 +6,6 @@ from pathlib import Path
 import httpx
 import pytest
 
-from deepseek_tui.tools.automation_tools import (
-    AutomationCreateTool,
-    AutomationDeleteTool,
-    AutomationListTool,
-    AutomationPauseTool,
-    AutomationReadTool,
-    AutomationResumeTool,
-    AutomationRunTool,
-    AutomationUpdateTool,
-)
 from deepseek_tui.tools.base import ToolError
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.file_tools import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
@@ -39,27 +29,6 @@ from deepseek_tui.tools.shell_tools import (
     ExecShellInteractTool,
     ExecShellTool,
     ExecShellWaitTool,
-)
-from deepseek_tui.tools.subagent_tools import (
-    AgentAssignTool,
-    AgentCancelTool,
-    AgentListTool,
-    AgentResultTool,
-    AgentSpawnTool,
-    AgentWaitTool,
-)
-from deepseek_tui.tools.task_tools import (
-    PrAttemptCancelTool,
-    PrAttemptCompleteTool,
-    PrAttemptCreateTool,
-    PrAttemptListTool,
-    PrAttemptReadTool,
-    PrAttemptUpdateTool,
-    TaskCancelTool,
-    TaskCreateTool,
-    TaskGateRunTool,
-    TaskListTool,
-    TaskReadTool,
 )
 from deepseek_tui.tools.todo_tools import (
     TodoAddTool,
@@ -610,92 +579,6 @@ async def test_shell_tools_run_wait_interact_and_cancel(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_tools_create_list_read_cancel(tmp_path: Path) -> None:
-    context = ToolContext(working_directory=tmp_path)
-    create_tool = TaskCreateTool()
-    list_tool = TaskListTool()
-    read_tool = TaskReadTool()
-    cancel_tool = TaskCancelTool()
-
-    r1 = await create_tool.execute(
-        {"title": "First task", "description": "Do something"},
-        context,
-    )
-    r2 = await create_tool.execute({"title": "Second task"}, context)
-
-    assert r1.success is True
-    assert r1.content == "1"
-    assert r1.metadata["task"]["status"] == "open"
-    assert r2.content == "2"
-
-    list_result = await list_tool.execute({}, context)
-    assert list_result.success is True
-    assert list_result.metadata["count"] == 2
-    assert "First task" in list_result.content
-    assert "Second task" in list_result.content
-
-    read_result = await read_tool.execute({"task_id": "1"}, context)
-    assert read_result.success is True
-    assert "Do something" in read_result.content
-
-    cancel_result = await cancel_tool.execute({"task_id": "2"}, context)
-    assert cancel_result.success is True
-    assert cancel_result.metadata["task"]["status"] == "cancelled"
-
-    with pytest.raises(ToolError, match="Unknown task_id"):
-        await read_tool.execute({"task_id": "99"}, context)
-
-
-@pytest.mark.asyncio
-async def test_task_gate_run(tmp_path: Path) -> None:
-    context = ToolContext(working_directory=tmp_path)
-    await TaskCreateTool().execute({"title": "Gate test"}, context)
-
-    result = await TaskGateRunTool().execute(
-        {"task_id": "1", "gate": "lint"},
-        context,
-    )
-    assert result.success is True
-    assert "lint" in result.content
-    assert result.metadata["result"] == "passed"
-
-
-@pytest.mark.asyncio
-async def test_pr_attempt_lifecycle(tmp_path: Path) -> None:
-    context = ToolContext(working_directory=tmp_path)
-    await TaskCreateTool().execute({"title": "PR task"}, context)
-
-    create_result = await PrAttemptCreateTool().execute(
-        {"task_id": "1", "branch": "feat/x"},
-        context,
-    )
-    assert create_result.success is True
-    assert create_result.content == "1"
-    assert create_result.metadata["attempt"]["status"] == "open"
-
-    list_result = await PrAttemptListTool().execute({"task_id": "1"}, context)
-    assert list_result.metadata["count"] == 1
-    assert "feat/x" in list_result.content
-
-    read_result = await PrAttemptReadTool().execute({"attempt_id": "1"}, context)
-    assert "task: 1" in read_result.content
-
-    await PrAttemptUpdateTool().execute({"attempt_id": "1", "notes": "WIP"}, context)
-    read_after = await PrAttemptReadTool().execute({"attempt_id": "1"}, context)
-    assert "notes: WIP" in read_after.content
-
-    complete_result = await PrAttemptCompleteTool().execute({"attempt_id": "1"}, context)
-    assert complete_result.metadata["attempt"]["status"] == "completed"
-
-    await PrAttemptCreateTool().execute({"task_id": "1", "branch": "feat/y"}, context)
-    cancel_result = await PrAttemptCancelTool().execute({"attempt_id": "2"}, context)
-    assert cancel_result.metadata["attempt"]["status"] == "cancelled"
-
-    with pytest.raises(ToolError, match="Unknown attempt_id"):
-        await PrAttemptReadTool().execute({"attempt_id": "99"}, context)
-
-
-@pytest.mark.asyncio
 async def test_todo_tools_write_add_update_list(tmp_path: Path) -> None:
     context = ToolContext(working_directory=tmp_path)
 
@@ -724,90 +607,6 @@ async def test_todo_tools_write_add_update_list(tmp_path: Path) -> None:
     fresh_list = await TodoListTool().execute({}, context)
     assert fresh_list.metadata["count"] == 1
     assert "Fresh" in fresh_list.content
-
-
-@pytest.mark.asyncio
-async def test_subagent_tools_spawn_assign_result_cancel(
-    tmp_path: Path,
-) -> None:
-    context = ToolContext(working_directory=tmp_path)
-
-    spawn_result = await AgentSpawnTool().execute(
-        {"task": "Summarize file", "assignee": "worker-1"}, context
-    )
-    assert spawn_result.success is True
-    assert spawn_result.content == "1"
-    assert spawn_result.metadata["agent"]["status"] == "running"
-
-    await AgentSpawnTool().execute({"task": "Lint code"}, context)
-
-    list_result = await AgentListTool().execute({}, context)
-    assert list_result.metadata["count"] == 2
-    assert "Summarize file" in list_result.content
-
-    await AgentAssignTool().execute({"agent_id": "1", "assignee": "worker-2"}, context)
-    wait_result = await AgentWaitTool().execute({"agent_id": "1"}, context)
-    assert wait_result.content == "(no result yet)"
-    assert wait_result.metadata["agent"]["assignee"] == "worker-2"
-
-    await AgentResultTool().execute({"agent_id": "1", "result": "Done summarizing"}, context)
-    wait_after = await AgentWaitTool().execute({"agent_id": "1"}, context)
-    assert wait_after.content == "Done summarizing"
-    assert wait_after.metadata["agent"]["status"] == "completed"
-
-    cancel_result = await AgentCancelTool().execute({"agent_id": "2"}, context)
-    assert cancel_result.metadata["agent"]["status"] == "cancelled"
-
-    with pytest.raises(ToolError, match="Unknown agent_id"):
-        await AgentWaitTool().execute({"agent_id": "99"}, context)
-
-
-@pytest.mark.asyncio
-async def test_automation_tools_full_lifecycle(tmp_path: Path) -> None:
-    context = ToolContext(working_directory=tmp_path)
-
-    create_result = await AutomationCreateTool().execute(
-        {"name": "Auto lint", "trigger": "on_push", "action": "run lint"},
-        context,
-    )
-    assert create_result.success is True
-    assert create_result.content == "1"
-
-    await AutomationCreateTool().execute(
-        {"name": "Auto test", "trigger": "on_pr", "action": "run tests"},
-        context,
-    )
-
-    list_result = await AutomationListTool().execute({}, context)
-    assert list_result.metadata["count"] == 2
-
-    read_result = await AutomationReadTool().execute({"automation_id": "1"}, context)
-    assert "on_push" in read_result.content
-    assert "run lint" in read_result.content
-
-    await AutomationUpdateTool().execute(
-        {"automation_id": "1", "action": "run lint --fix"}, context
-    )
-    read_after = await AutomationReadTool().execute({"automation_id": "1"}, context)
-    assert "run lint --fix" in read_after.content
-
-    await AutomationPauseTool().execute({"automation_id": "1"}, context)
-    read_paused = await AutomationReadTool().execute({"automation_id": "1"}, context)
-    assert read_paused.metadata["automation"]["status"] == "paused"
-
-    await AutomationResumeTool().execute({"automation_id": "1"}, context)
-    read_resumed = await AutomationReadTool().execute({"automation_id": "1"}, context)
-    assert read_resumed.metadata["automation"]["status"] == "active"
-
-    run_result = await AutomationRunTool().execute({"automation_id": "1"}, context)
-    assert "run lint --fix" in run_result.content
-
-    await AutomationDeleteTool().execute({"automation_id": "2"}, context)
-    list_after = await AutomationListTool().execute({}, context)
-    assert list_after.metadata["count"] == 1
-
-    with pytest.raises(ToolError, match="Unknown automation_id"):
-        await AutomationReadTool().execute({"automation_id": "2"}, context)
 
 
 @pytest.mark.asyncio

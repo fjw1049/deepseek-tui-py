@@ -70,7 +70,9 @@ Stage 1.1–2.1 的代码**大部分是"孤岛"**：写进来、parity 测试过
 
 ```
 make check  # = ruff + mypy + pytest
-# 全绿：ruff / mypy 0 errors，pytest 385 passed, 0 skipped
+# 全绿：ruff / mypy 0 errors，pytest 351 passed, 0 skipped
+# 注：2026-05-06 清理删除了 34 个无意义测试（见步骤 4 的黑名单）
+# 当前测试数代表的是"真正有行为意义"的覆盖率
 ```
 
 ### 关键已修 bug
@@ -212,6 +214,31 @@ make check  # = ruff + mypy + pytest
 1. **直接移植 Rust `#[test]`**——每个 Rust 测试对应一个 Python 测试，测试名前加 `test_`，函数体翻译。测试 docstring 里写 "Mirror of Rust `<test_name>` (path:line)"。
 2. **Python 补充边界测试**——Rust 原本没覆盖但明显值得测的 edge case。
 
+#### 测试必须有实际意义（2026-05-06 用户原话："一些无意义的测试过滤掉"）
+
+**黑名单** —— 下列写法视同"无测试"，不得写也不得保留：
+
+- ❌ `assert obj is not None` / `assert len(x) > 0` —— 只证明对象能初始化
+- ❌ 只 `print("✓ 通过")` 没有断言
+- ❌ 测试 in-memory stub 实现（如当前 `task_tools` / `pr_attempt_tools` / `subagent_tools` / `automation_tools` 的 dict 操作），因为 Stage 3 真实化时会整体替换，现在测的是一次性 dict
+- ❌ 测试 stub 模块的 default 值（如 `NotImplementedError` 分支之前的 options 构造）
+- ❌ 一次性注册一个对象、再检查属性等于刚传入的值——这是测 Python dataclass，不是测行为
+
+**白名单** —— 下列才算"真测试"：
+
+- ✅ 真实读写文件系统（`tmp_path` + `read_file` / `write_file`）
+- ✅ 真实进程 / 真实 JSON-RPC 对话（`test_mcp.py` / `test_lsp.py` 用的 stdio mock server 模式）
+- ✅ 真实网络（`test_real_api.py` 打 DeepSeek，`test_tools.py::fetch_url_tool` 用 respx 模拟 HTTP）
+- ✅ 算法 round-trip（encode→decode 还原原值；parse→serialize 还原字节）
+- ✅ 状态机转移（approval gate 从 pending → approved → executed，每一步有事件断言）
+- ✅ 真实集成链路（`tests/integration/` 下的 wire-up 测试，验证调用链激活）
+
+**写测试前的自检 3 问**：
+
+1. 如果我把被测函数删了改成 `raise NotImplementedError`，这个测试能挂吗？（应答：能，否则无意义）
+2. 这个测试涉及的模块，将来 Stage N 重写时会不会整个作废？（应答：不会；如果会，说明测的是一次性 stub，不要写）
+3. 这个断言是否证明了至少一个行为？（应答：是；"类型正确"、"非 None"、"长度 > 0" 都不算行为）
+
 ### 步骤 5 — 验证 + 提交
 
 每个 stage 必做三项：
@@ -332,6 +359,7 @@ pytest: N passed (was M; +delta integration + X previously-skipped
 9. **不要写"孤岛代码"**——新模块写完后如果 `grep -rn '<new symbol>' src/` 在它自己的模块外**没有任何匹配**，就是债，必须按第四·步骤 7 在同一 Stage 内还清，或明确记入第九节的集成债务清单。2026-05-06 用户原话："光写代码进来有什么用，主要是为了用起来"。
 10. **不要用"全是 mock 的测试"冒充集成验证**——单元测试 + mock 测的是"对象能初始化"；集成测的是"运行时调用链激活"；真实 API 测的是"wire 行为与真实对端吻合"。三者必须共存，缺一不等于完成。
 11. **不要 skip 真实 API 测试"因为没 key"**——`tests/_real_api.py` 的 helper 会先看 `DEEPSEEK_API_KEY` env，再看 `config.toml` 的 `[providers.deepseek] api_key`。本地只要有 `config.toml` 就会自动跑起来；真的没 key 再 auto-skip。
+12. **不要写无意义测试**——参见第四·步骤 4 的黑名单。2026-05-06 清理移除了 34 个这类测试（5 个完整文件 + 5 个 stub 工具测试），包括 `test_e2e_scenarios.py` / `test_integration.py` / `test_app_server.py`。无意义测试会让 `make check` 通过但掩盖孤岛代码的真正状态。**新增测试前先过步骤 4 的"3 问自检"。**
 
 ---
 
