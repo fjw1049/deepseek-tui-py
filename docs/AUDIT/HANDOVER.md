@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Stage 1.5 完成（2026-05-06）。
+> 最后更新：Stage 2.1 完成 + Integration #1 完成（2026-05-06）。
 
 ---
 
@@ -42,7 +42,25 @@
 | 1.3 | `7a42e8e` | ToolRegistry 16 个方法补齐 + ApprovalRequirement + cache_control | +22 |
 | 1.4 | `a7d3b82` | protocol IPC：Envelope/EventFrame×21/ThreadRequest×10/AppRequest×7/ToolPayload/ReviewDecision 等，Rust JSON parity | +72 |
 | 1.5 | `8df5331` | provider_registry：ApiProvider×7 / ProviderKind×5 / ProviderCapability / context_window 含 NNNk hint | +77 |
-| **累计** | | | **322 passed, 2 skipped** |
+| 2.1 | `04eb1fa` + `df44565` + `0bd776d` | execpolicy 全量重写：Decision / Policy / PolicyParser (mini-Starlark) / matcher / amend / rules TOML；**没接入运行时** | +53 |
+| **Integration #1** | `469b650` | tool-name codec 接入 `ToolRegistry._serialise_tool` + `OpenAIStreamParser`；**真实 DeepSeek API 验证 round-trip** | +8 (+2 unskipped) |
+| **累计** | | | **385 passed, 0 skipped** |
+
+### ⚠️ 集成债（必读）
+
+Stage 1.1–2.1 的代码**大部分是"孤岛"**：写进来、parity 测试过，但运行时从来不调。2026-05-06 用户指出此问题后，引入了新的强制约束（见[四·步骤 7](#步骤-7--集成债务处理每个-stage-必做)）。
+
+**已还清**：
+- ✅ Integration #1（codec）—— commit `469b650`，真实 API 验证过
+
+**未还清（按顺序处理，每条一个独立 commit）**：
+- ⬜ Integration #2：`provider_capability` 接入 `client/deepseek.py._build_payload`
+- ⬜ Integration #3：`ApprovalRequirement` 接入 `engine/engine.py:_execute_tool_calls`
+- ⬜ Integration #4：`Secrets.auto_detect()` 接入应用启动入口
+- ⬜ Integration #5：execpolicy `Policy.check` 接入 `shell_tools.py`（需配合 Stage 3 shell 重写）
+- ⬜ Integration #6：`EventFrame` 接入 `app_server` SSE（需配合 Stage 4 App Server 重写）
+
+详见第九节"[集成债务清单](#九集成债务清单还清路线图)"。
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
@@ -52,7 +70,7 @@
 
 ```
 make check  # = ruff + mypy + pytest
-# 全绿：ruff / mypy 0 errors，pytest 322 passed, 2 skipped
+# 全绿：ruff / mypy 0 errors，pytest 385 passed, 0 skipped
 ```
 
 ### 关键已修 bug
@@ -238,6 +256,65 @@ Co-Authored-By: <your-coauthor-tag>
 
 每个 Stage 完成后，追加到本文档的"已完成"表；如果路线图有调整，更新第三节。
 
+### 步骤 7 — 集成债务处理（每个 Stage 必做）
+
+> **这是最容易被跳过、但也是最容易让"为了重构而重构"滋生的步骤。**
+
+在 2026-05-06 之前，Stage 1.1–2.1 的方法论漏了这一条——结果 **6 个 Stage、~3,700 行代码、240+ parity 测试**都是孤岛：写进来了，parity 测试过了，但运行时**没有任何调用链真的调它们**。用户指出问题后加入此步骤作为硬性约束。
+
+**验收门槛（3 条缺一不可）**：
+
+1. **运行时调用**：新实现至少被 `src/deepseek_tui/<其他模块>/*.py` 中的一处生产代码调用（不是只在 parity 测试里）。
+2. **旧实现退役**：相同语义的旧代码被替换 / 删除 / 加 `DeprecationWarning`。不能让新旧并存留下"反正都能用"的幻觉。
+3. **e2e 测试覆盖**：在 `tests/integration/test_<feature>_wire.py` 中至少加一组：
+   - 编码/解码/编排方向的**单元集成**（验证 wire 格式、调用链激活）
+   - **真实 API 验证**（用 `tests/_real_api.py` 的 helper 读 `config.toml` 的 DeepSeek key；`has_deepseek_api_key()` 为 False 时 auto-skip）
+   - mock 测试**保留**但**不是唯一**（"全是 mock 的测试无法证明真的跑起来了"——用户原话）
+
+**集成债样例（已实施，作参考）**：Integration #1 = commit `469b650`。查看那个 commit 了解标准动作：
+- 代码改动两处（`tools/registry.py` + `client/streaming.py`），每处都附注释指向 Rust 源行号
+- `tests/_real_api.py` 作为共享 helper 从 `config.toml` 读真实 key
+- `tests/integration/test_tool_name_wire.py` 8 个测试：4 wire-encode + 3 wire-decode + 1 live DeepSeek
+- Commit message 里写 **"Verification"** 段，记录真实 API 调用的实际输出（如 `decoded names: ['namespace.dot_tool']`）
+
+**Commit message 模板（集成债专用）**：
+
+```
+Integration #N: wire <feature> into runtime
+
+The Stage <X.Y> (commit <hash>) added <module> with N parity tests, but
+nothing called it — <explain the bug that integration fixes>.
+
+This commit closes the integration debt for Stage <X.Y>.
+
+## What changed
+
+src/deepseek_tui/<module>/<file>.py
+    <具体改动 + Rust 源行号注释>
+
+## Tests
+
+tests/integration/test_<feature>_wire.py (new, N tests)
+    - M unit integration tests for encode/decode path
+    - 1 live <provider> round-trip (auto-skip when no key)
+
+## Verification
+
+Live run confirmed: <引用真实 API 返回的关键断言>
+
+## make check
+
+ruff: All checks passed!
+mypy: Success: no issues found in N source files
+pytest: N passed (was M; +delta integration + X previously-skipped
+        real_api tests now run)
+```
+
+**什么时候加集成债，什么时候在 Stage 内部就集成**：
+
+- **每个新 Stage**：默认要求 Stage 内部就完成"运行时 + 退役 + e2e"三件事，不准产生新的债。
+- **遇到依赖缺失**：如果新模块接入点依赖一个还没做的模块（比如 Integration #5 execpolicy 需要 shell_tools 还没重写），记入"集成债"（见第九节），Stage 过线，**但必须在最终 release 前全部还清**，禁止带着集成债发布。
+
 ---
 
 ## 五、**绝对不要做的事**
@@ -252,6 +329,9 @@ Co-Authored-By: <your-coauthor-tag>
 6. **不要在测试用例里调真实的 keyring / 真实 API**——总用 `InMemoryKeyringStore` 或 mock。
 7. **不要改 `docs/DeepSeek-TUI-main/`**——这是只读的 parity 参考。
 8. **不要在工作区外找 Rust 源**——所有 Rust 源都在 `docs/DeepSeek-TUI-main/crates/`。
+9. **不要写"孤岛代码"**——新模块写完后如果 `grep -rn '<new symbol>' src/` 在它自己的模块外**没有任何匹配**，就是债，必须按第四·步骤 7 在同一 Stage 内还清，或明确记入第九节的集成债务清单。2026-05-06 用户原话："光写代码进来有什么用，主要是为了用起来"。
+10. **不要用"全是 mock 的测试"冒充集成验证**——单元测试 + mock 测的是"对象能初始化"；集成测的是"运行时调用链激活"；真实 API 测的是"wire 行为与真实对端吻合"。三者必须共存，缺一不等于完成。
+11. **不要 skip 真实 API 测试"因为没 key"**——`tests/_real_api.py` 的 helper 会先看 `DEEPSEEK_API_KEY` env，再看 `config.toml` 的 `[providers.deepseek] api_key`。本地只要有 `config.toml` 就会自动跑起来；真的没 key 再 auto-skip。
 
 ---
 
@@ -373,7 +453,129 @@ deepseek-tui-py/
 
 ---
 
-## 九、联系方式（用户侧）
+---
+
+## 九、集成债务清单（还清路线图）
+
+> 本节是**独立于 Stage 路线图**的并行工作清单。每条债务一个独立 commit，命名 `Integration #N: wire <feature> into runtime`。**剩余 5 条必须按顺序还清。**
+
+### 还清原则
+
+1. **按风险递增**：#1 最小 → #6 最大。每条打磨通了再下一条，不并行处理。
+2. **不扩展新功能**：集成债只做"接入 + 退役 + e2e"，遇到 Rust 新语义需要补实现的，拆到新 Stage 做。
+3. **每条一个 commit**：方便 GitHub 上逐条 review。
+4. **卡住就写**：如果某条债因为依赖缺失还不动（如 #5 依赖 shell_tools 重写），**在本节里更新"阻塞"字段**，不删除。最终 release 前必须全部还清。
+
+### ✅ Integration #1 — tool-name codec 接入运行时
+
+- **Commit**：`469b650`
+- **接入点**：`tools/registry.py:_serialise_tool` 编码 wire name；`client/streaming.py:OpenAIStreamParser` 解码回流 name
+- **退役**：无（之前这条路径根本不调 codec）
+- **e2e 测试**：`tests/integration/test_tool_name_wire.py` —— 7 个单元 + 1 个真实 DeepSeek round-trip
+- **真实验证输出**：`✓ live round-trip decoded names: ['namespace.dot_tool']`
+
+---
+
+### ⬜ Integration #2 — `provider_capability` 接入 `client._build_payload`
+
+- **Stage 依赖**：Stage 1.5（`8df5331`）
+- **接入点**：`src/deepseek_tui/client/deepseek.py`
+  - 在 `_build_payload()` 顶部调 `provider_capability(ApiProvider.parse(provider), model)`，拿到 `cap`
+  - 若 `request.max_tokens is None`，默认取 `cap.max_output`
+  - `stream_options.include_usage` 只在 `cap.cache_telemetry_supported` 为 True 时开启
+  - 若 `cap.deprecation is not None`，在构造请求前发一次 `warnings.warn(cap.deprecation.notice, DeprecationWarning)`
+- **退役**：
+  - `client/chat_messages.py` 里如果还有写死的 `max_tokens` 或 `include_usage`，统一走 capability
+  - 删除任何硬编码的 128_000 / 1_000_000 上下文窗口常量
+- **e2e 测试**：`tests/integration/test_provider_capability_wire.py`
+  - 单元：mock 一个 `DeepSeekClient._build_payload`，断言 `deepseek-v4-pro` 输出 `max_tokens=262_144`、`stream_options.include_usage=True`
+  - 单元：mock `deepseek-chat`（legacy），断言 `DeprecationWarning` 被触发
+  - 真实 API：用 `config.toml` 的 key 跑 `deepseek-v4-pro` 一次短对话，断言 usage 里包含 `cache_read_input_tokens` 字段（`cap.cache_telemetry_supported=True` 的证据）
+- **风险**：低
+- **阻塞**：无
+
+### ⬜ Integration #3 — `ApprovalRequirement` 接入 `engine._execute_tool_calls`
+
+- **Stage 依赖**：Stage 1.3（`7a42e8e`）
+- **接入点**：`src/deepseek_tui/engine/engine.py:_execute_tool_calls`
+  - 在工具执行前，先读 `tool.approval_requirement()`，根据返回的 `ApprovalRequirement.AUTO / SUGGEST / REQUIRED` 决定是否触发 `approval_handler.request_approval(...)`
+  - 替代当前的 `ExecPolicyEngine.evaluate(tool_name, capabilities)` 启发式（由 capability 推断 risk level）
+- **退役**：
+  - `execpolicy/engine.py:_assess_risk` / `_classify_category`（capability 启发式）改为**fallback**（当 tool 没覆盖 `approval_requirement()` 时才用）
+  - `execpolicy/models.py:RiskLevel / ToolCategory` 加 `DeprecationWarning`
+- **e2e 测试**：`tests/integration/test_approval_requirement_wire.py`
+  - 单元：注册一个 `approval_requirement() == REQUIRED` 的 tool；让 engine 走一轮对话让 LLM 调它；断言 `ApprovalRequiredEvent` 被发射
+  - 单元：注册一个 `AUTO` 的 tool；断言无 approval event
+  - 真实 API：用 DeepSeek 跑一次让它调用一个 SUGGEST 级别的 tool（比如模拟 `write_file`），断言 approval gate 触发一次
+- **风险**：中（改 engine 主路径）
+- **阻塞**：无
+
+### ⬜ Integration #4 — `Secrets.auto_detect()` 接入应用启动入口
+
+- **Stage 依赖**：Stage 1.2（`21d9ebd`）
+- **接入点**：
+  - `src/deepseek_tui/__main__.py` / `src/deepseek_tui/cli/`：启动时调 `Secrets.auto_detect()`，注入给 `SecretsManager(secrets=...)`
+  - 确保 `Engine` / `DeepSeekClient` 的初始化路径上 API key 真的走 `keyring → env → config.toml` 优先级
+- **退役**：
+  - 任何直接读 `os.environ["DEEPSEEK_API_KEY"]` 的代码（应 grep 一次全项目）
+  - 旧 `SecretsManager()` 无参默认构造已经用新 façade，但没人显式建 —— 加到启动入口
+- **e2e 测试**：`tests/integration/test_secrets_wire.py`
+  - 单元：mock keyring 存一个 key，断言启动时优先读它
+  - 单元：keyring 空、env 空、config.toml 有 key → 读 config.toml
+  - 真实 API：在 macOS Keychain 里存一个 test key（`security add-generic-password -s deepseek -a deepseek -w sk-test`），启动 DeepSeekClient，断言读到的是 keyring 值（之后清理）
+- **风险**：中（涉及 macOS keyring 操作）
+- **阻塞**：无
+
+### ⬜ Integration #5 — execpolicy `Policy.check` 接入 `shell_tools`
+
+- **Stage 依赖**：Stage 2.1（`04eb1fa` + `df44565` + `0bd776d`）
+- **接入点**：`src/deepseek_tui/tools/shell_tools.py:ExecShellTool`
+  - `execute()` 入口处：`tokens = shlex.split(command); evaluation = policy.check(tokens, heuristic_fallback)`
+  - `Decision.FORBIDDEN` → 返回 `ToolResult(success=False, content="blocked by execpolicy: ...")`
+  - `Decision.PROMPT` → 走 approval gate
+  - `Decision.ALLOW` → 直接跑
+  - `heuristic_fallback` 接 Stage 2.2（command_safety）的危险模式检测
+- **退役**：
+  - `execpolicy/sandbox.py`（当前 stub）—— Stage 2.5 Seatbelt 完成后统一替换
+- **e2e 测试**：`tests/integration/test_execpolicy_wire.py`
+  - 单元：注册 Policy 让 `git status` = ALLOW，`rm -rf /` = FORBIDDEN；分别调 shell tool 验证
+  - 真实 API：让 DeepSeek 调用 `exec_shell` 跑 `git --version`（应 ALLOW）和 `rm -rf /tmp/does-not-exist`（应 FORBIDDEN 或 PROMPT）
+- **风险**：高（改 shell 主路径 + 影响真实文件系统）
+- **阻塞**：**需要先完成 Stage 3 shell_tools 真实化重写**（当前是 in-memory stub，没真正跑命令，也没 tokens 可 check）
+
+### ⬜ Integration #6 — `EventFrame` 接入 `app_server` SSE
+
+- **Stage 依赖**：Stage 1.4（`a7d3b82`）
+- **接入点**：
+  - `src/deepseek_tui/app_server/server.py` + `sse.py`：用 `ResponseDeltaEvent / TurnCompleteEvent / ToolCallStartEvent / ...` 等具体变体替代当前 stub
+  - `src/deepseek_tui/hooks/events.py` 的 `GenericEventFrameEvent` 桥接到新 `EventFrame` 联合类型，不再定义独立事件类
+  - engine 发射事件时走统一的 `EventFrame` 序列化
+- **退役**：
+  - `hooks/events.py` 的 6 个内部事件类（除了保留 hook-payload 形式用的）
+  - `app_server/sse.py` 的 stub
+- **e2e 测试**：`tests/integration/test_event_frame_wire.py`
+  - 单元：启动一个 mock app server，发送一次 turn，断言 SSE stream 里出现 `event: turn_started` / `event: response_delta` / `event: turn_complete`
+  - 真实 API：启动 app server，用 `curl -N` 或 httpx async client 订阅 `/v1/threads/{id}/events`，跑一次真实 DeepSeek 对话，断言 SSE 里收到至少 3 个 EventFrame 变体
+- **风险**：高（涉及 SSE 流 + 多组件协调）
+- **阻塞**：**需要先完成 Stage 4 App Server FastAPI 重写**（当前 `app_server/server.py` 大部分是 `NotImplementedError`）
+
+---
+
+### 集成债版本化
+
+本清单**随项目演进会增加新条目**。约定：
+
+- 任何新 Stage 完成后，如果发现新模块没被调用链覆盖，**在本节追加 `⬜ Integration #N`**，不是隐藏
+- 完成一条就把 `⬜` 改 `✅`，写上 commit hash + 真实验证输出
+- `HANDOVER.md` 的"已完成"表在顶部、集成债清单在底部——顶部庆祝、底部催账，两个视角互相校验
+
+### 工作流断链
+
+如果接手 AI / 你发现某个"集成债"清单项描述与实际代码不符（比如接入点文件路径变了、Rust 源 reorganize 了），**以 git log + `docs/AUDIT/SUMMARY.md` 为准**。本文档是导航，不是唯一真相。
+
+---
+
+## 十、联系方式（用户侧）
 
 - 仓库：https://github.com/fjw1049/deepseek-tui-py
 - 用户 ID: fjw1049
