@@ -195,6 +195,9 @@ def test_deepseek_client_builds_openai_tool_schema() -> None:
                     "properties": {"path": {"type": "string"}},
                     "required": ["path"],
                 },
+                # Rust extension fields preserved by ToolRegistry.to_api_tools.
+                "allowed_callers": ["direct"],
+                "defer_loading": False,
             },
         }
     ]
