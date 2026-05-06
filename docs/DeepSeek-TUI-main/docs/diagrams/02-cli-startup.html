@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLI 启动流程 - DeepSeek-TUI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.2em;
+            color: #a0a0a0;
+            margin-top: 10px;
+        }
+
+        nav {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        nav a {
+            color: #e0e0e0;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+        }
+
+        nav a:hover, nav a.active {
+            background: rgba(100, 116, 139, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .diagram-container {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 40px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+
+        .flow-diagram {
+            margin: 40px 0;
+            padding: 30px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+
+        .flow-diagram h3 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #fff;
+            font-size: 1.5em;
+        }
+
+        svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .arrow {
+            stroke: #94a3b8;
+            stroke-width: 2;
+            fill: none;
+            marker-end: url(#arrowhead);
+        }
+
+        .arrow-label {
+            fill: #a0a0a0;
+            font-size: 12px;
+            font-family: 'Monaco', monospace;
+        }
+
+        .flow-box {
+            fill: rgba(100, 116, 139, 0.15);
+            stroke: #64748b;
+            stroke-width: 2;
+            rx: 8;
+        }
+
+        .flow-text {
+            fill: #e0e0e0;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .section-box {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 20px;
+            border: 2px solid #64748b;
+            margin-bottom: 20px;
+        }
+
+        .section-box h3 {
+            color: #94a3b8;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .section-box ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .section-box li {
+            padding: 6px 0;
+            padding-left: 20px;
+            position: relative;
+            font-size: 0.9em;
+            line-height: 1.6;
+            color: #c0c0c0;
+        }
+
+        .section-box li:before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: #64748b;
+        }
+
+        .code {
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #a0a0a0;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        th {
+            background: rgba(100, 116, 139, 0.2);
+            color: #94a3b8;
+            font-weight: 600;
+        }
+
+        td {
+            color: #c0c0c0;
+            font-size: 0.9em;
+        }
+
+        .code-inline {
+            font-family: 'Monaco', monospace;
+            background: rgba(100, 116, 139, 0.2);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
+            color: #94a3b8;
+        }
+
+        details {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            border: 1px solid rgba(100, 116, 139, 0.3);
+        }
+
+        summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #94a3b8;
+            padding: 5px;
+            user-select: none;
+        }
+
+        summary:hover {
+            color: #b4c3d8;
+        }
+
+        details[open] summary {
+            margin-bottom: 15px;
+            border-bottom: 1px solid rgba(100, 116, 139, 0.3);
+            padding-bottom: 10px;
+        }
+
+        @media (max-width: 768px) {
+            nav {
+                flex-direction: column;
+            }
+
+            table {
+                font-size: 0.85em;
+            }
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CLI 启动流程</h1>
+            <p class="subtitle">从 main() 到 TUI/Server 启动的完整初始化序列</p>
+            <p class="subtitle" style="font-size: 0.9em; margin-top: 5px;">版本 0.8.8</p>
+        </header>
+
+        <nav>
+            <a href="00-system-overview.html">00 系统总览</a>
+            <a href="01-config-system.html">01 配置系统</a>
+            <a href="02-cli-startup.html" class="active">02 CLI 启动</a>
+            <a href="03-tui-event-loop.html">03 TUI 事件循环</a>
+            <a href="04-engine-agent-loop.html">04 Engine 引擎</a>
+            <a href="05-llm-client-streaming.html">05 LLM 客户端</a>
+            <a href="06-tool-system.html">06 工具系统</a>
+            <a href="07-mcp-integration.html">07 MCP 集成</a>
+            <a href="08-approval-execpolicy.html">08 审批策略</a>
+            <a href="09-hooks-state.html">09 Hooks & State</a>
+            <a href="10-secrets-agent.html">10 Secrets & Agent</a>
+        </nav>
+
+        <div class="flow-diagram">
+            <h3>🚀 CLI 启动序列流程图</h3>
+            <svg viewBox="0 0 900 1400" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                        <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
+                    </marker>
+                </defs>
+
+                <!-- Step 1: main() -->
+                <rect class="flow-box" x="300" y="20" width="300" height="60" />
+                <text class="flow-text" x="450" y="55" text-anchor="middle">1. main() 入口点</text>
+
+                <!-- Step 2: Parse CLI Args -->
+                <rect class="flow-box" x="300" y="110" width="300" height="60" />
+                <text class="flow-text" x="450" y="145" text-anchor="middle">2. 解析 CLI 参数 (clap)</text>
+
+                <!-- Step 3: Init Logging -->
+                <rect class="flow-box" x="300" y="200" width="300" height="60" />
+                <text class="flow-text" x="450" y="235" text-anchor="middle">3. 初始化日志系统</text>
+
+                <!-- Step 4: Load Config -->
+                <rect class="flow-box" x="300" y="290" width="300" height="60" />
+                <text class="flow-text" x="450" y="325" text-anchor="middle">4. 加载配置 Config::load()</text>
+
+                <!-- Step 5: Load Secrets -->
+                <rect class="flow-box" x="300" y="380" width="300" height="60" />
+                <text class="flow-text" x="450" y="415" text-anchor="middle">5. 加载密钥 Secrets::load()</text>
+
+                <!-- Step 6: Open State -->
+                <rect class="flow-box" x="300" y="470" width="300" height="60" />
+                <text class="flow-text" x="450" y="505" text-anchor="middle">6. 打开状态 State::open()</text>
+
+                <!-- Step 7: Init Agent Registry -->
+                <rect class="flow-box" x="300" y="560" width="300" height="60" />
+                <text class="flow-text" x="450" y="595" text-anchor="middle">7. 初始化 AgentRegistry</text>
+
+                <!-- Step 8: Branch Decision -->
+                <rect class="flow-box" x="300" y="650" width="300" height="60" style="stroke: #f59e0b;" />
+                <text class="flow-text" x="450" y="685" text-anchor="middle">8. 分支: TUI 或 Server?</text>
+
+                <!-- TUI Branch -->
+                <rect class="flow-box" x="100" y="750" width="250" height="60" style="stroke: #3b82f6;" />
+                <text class="flow-text" x="225" y="785" text-anchor="middle">9a. run_tui()</text>
+
+                <rect class="flow-box" x="100" y="840" width="250" height="60" style="stroke: #3b82f6;" />
+                <text class="flow-text" x="225" y="875" text-anchor="middle">crossterm 初始化</text>
+
+                <rect class="flow-box" x="100" y="930" width="250" height="60" style="stroke: #3b82f6;" />
+                <text class="flow-text" x="225" y="965" text-anchor="middle">ratatui Terminal</text>
+
+                <rect class="flow-box" x="100" y="1020" width="250" height="60" style="stroke: #3b82f6;" />
+                <text class="flow-text" x="225" y="1055" text-anchor="middle">spawn_engine()</text>
+
+                <rect class="flow-box" x="100" y="1110" width="250" height="60" style="stroke: #3b82f6;" />
+                <text class="flow-text" x="225" y="1145" text-anchor="middle">run_event_loop()</text>
+
+                <!-- Server Branch -->
+                <rect class="flow-box" x="550" y="750" width="250" height="60" style="stroke: #10b981;" />
+                <text class="flow-text" x="675" y="785" text-anchor="middle">9b. run_server()</text>
+
+                <rect class="flow-box" x="550" y="840" width="250" height="60" style="stroke: #10b981;" />
+                <text class="flow-text" x="675" y="875" text-anchor="middle">axum HTTP 服务器</text>
+
+                <rect class="flow-box" x="550" y="930" width="250" height="60" style="stroke: #10b981;" />
+                <text class="flow-text" x="675" y="965" text-anchor="middle">注册路由</text>
+
+                <rect class="flow-box" x="550" y="1020" width="250" height="60" style="stroke: #10b981;" />
+                <text class="flow-text" x="675" y="1055" text-anchor="middle">监听 127.0.0.1:3000</text>
+
+                <rect class="flow-box" x="550" y="1110" width="250" height="60" style="stroke: #10b981;" />
+                <text class="flow-text" x="675" y="1145" text-anchor="middle">SSE 事件流</text>
+
+                <!-- Arrows -->
+                <path class="arrow" d="M 450 80 L 450 110" />
+                <path class="arrow" d="M 450 170 L 450 200" />
+                <path class="arrow" d="M 450 260 L 450 290" />
+                <path class="arrow" d="M 450 350 L 450 380" />
+                <path class="arrow" d="M 450 440 L 450 470" />
+                <path class="arrow" d="M 450 530 L 450 560" />
+                <path class="arrow" d="M 450 620 L 450 650" />
+
+                <!-- Branch arrows -->
+                <path class="arrow" d="M 350 710 L 225 750" />
+                <path class="arrow" d="M 550 710 L 675 750" />
+
+                <!-- TUI sequence -->
+                <path class="arrow" d="M 225 810 L 225 840" />
+                <path class="arrow" d="M 225 900 L 225 930" />
+                <path class="arrow" d="M 225 990 L 225 1020" />
+                <path class="arrow" d="M 225 1080 L 225 1110" />
+
+                <!-- Server sequence -->
+                <path class="arrow" d="M 675 810 L 675 840" />
+                <path class="arrow" d="M 675 900 L 675 930" />
+                <path class="arrow" d="M 675 990 L 675 1020" />
+                <path class="arrow" d="M 675 1080 L 675 1110" />
+
+                <!-- Labels -->
+                <text class="arrow-label" x="460" y="100">crates/cli/src/main.rs</text>
+                <text class="arrow-label" x="460" y="190">CliArgs::parse()</text>
+                <text class="arrow-label" x="460" y="280">env_logger::init()</text>
+                <text class="arrow-label" x="460" y="370">优先级链</text>
+                <text class="arrow-label" x="460" y="460">Keyring/Env</text>
+                <text class="arrow-label" x="460" y="550">SQLite DB</text>
+                <text class="arrow-label" x="460" y="640">模型映射</text>
+                <text class="arrow-label" x="280" y="730">TUI 模式</text>
+                <text class="arrow-label" x="580" y="730">Server 模式</text>
+            </svg>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">📋 CLI 参数解析</h2>
+
+            <div class="section-box">
+                <h3>子命令 (Subcommands)</h3>
+                <ul>
+                    <li><span class="code-inline">run</span> - 启动交互式 TUI 或 Agent 模式</li>
+                    <li><span class="code-inline">prompt</span> - 单次提示执行 (非交互)</li>
+                    <li><span class="code-inline">export</span> - 导出会话历史</li>
+                    <li><span class="code-inline">config</span> - 配置管理命令</li>
+                    <li><span class="code-inline">version</span> - 显示版本信息</li>
+                </ul>
+            </div>
+
+            <div class="section-box">
+                <h3>全局标志 (Global Flags)</h3>
+                <ul>
+                    <li><span class="code-inline">--model &lt;MODEL&gt;</span> - 指定 LLM 模型 (覆盖配置)</li>
+                    <li><span class="code-inline">--provider &lt;PROVIDER&gt;</span> - 指定 Provider (deepseek/openai/anthropic)</li>
+                    <li><span class="code-inline">--profile &lt;PROFILE&gt;</span> - 使用配置 Profile</li>
+                    <li><span class="code-inline">--config &lt;PATH&gt;</span> - 指定配置文件路径</li>
+                    <li><span class="code-inline">--verbose, -v</span> - 启用详细日志</li>
+                    <li><span class="code-inline">--no-color</span> - 禁用彩色输出</li>
+                </ul>
+            </div>
+
+            <div class="section-box">
+                <h3>run 子命令选项</h3>
+                <ul>
+                    <li><span class="code-inline">--mode &lt;MODE&gt;</span> - 运行模式: agent (默认) / yolo / plan</li>
+                    <li><span class="code-inline">--workspace &lt;PATH&gt;</span> - 工作目录路径</li>
+                    <li><span class="code-inline">--auto-approve</span> - 自动批准所有工具执行</li>
+                    <li><span class="code-inline">--server</span> - 启动 HTTP 服务器模式而非 TUI</li>
+                </ul>
+            </div>
+
+            <div class="section-box">
+                <h3>prompt 子命令选项</h3>
+                <ul>
+                    <li><span class="code-inline">--input &lt;TEXT&gt;</span> - 输入提示文本</li>
+                    <li><span class="code-inline">--output &lt;PATH&gt;</span> - 输出文件路径</li>
+                    <li><span class="code-inline">--format &lt;FORMAT&gt;</span> - 输出格式: json / plain</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">⚙️ 配置加载流程</h2>
+
+            <details open>
+                <summary>Config::load() 优先级链</summary>
+                <div style="margin-top: 15px;">
+                    <ol style="list-style: decimal; padding-left: 30px; color: #c0c0c0; line-height: 2;">
+                        <li><strong style="color: #94a3b8;">加载默认值</strong> - 内置的 Default::default()</li>
+                        <li><strong style="color: #94a3b8;">发现配置文件</strong> - 按顺序查找:
+                            <ul style="list-style: circle; padding-left: 30px; margin-top: 8px;">
+                                <li>--config 参数指定的路径</li>
+                                <li>当前目录 ./config.toml</li>
+                                <li>$HOME/.deepseek/config.toml</li>
+                                <li>XDG_CONFIG_HOME/deepseek/config.toml</li>
+                            </ul>
+                        </li>
+                        <li><strong style="color: #94a3b8;">解析 TOML</strong> - toml::from_str() 反序列化</li>
+                        <li><strong style="color: #94a3b8;">合并 Profile</strong> - 如果指定 --profile, 合并对应配置块</li>
+                        <li><strong style="color: #94a3b8;">应用环境变量</strong> - DEEPSEEK_* 前缀覆盖</li>
+                        <li><strong style="color: #94a3b8;">应用 CLI 覆盖</strong> - 命令行参数优先级最高</li>
+                        <li><strong style="color: #94a3b8;">验证配置</strong> - 检查必需字段和合法性</li>
+                    </ol>
+                </div>
+            </details>
+
+            <details>
+                <summary>配置文件结构示例</summary>
+                <div class="code" style="margin-top: 15px;">
+[default]
+model = "deepseek-chat"
+provider = "deepseek"
+temperature = 0.7
+max_tokens = 4096
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+timeout = 90
+
+[tools]
+enabled = ["bash", "read", "write", "edit"]
+timeout = 30
+
+[profiles.fast]
+model = "deepseek-chat"
+temperature = 0.3
+
+[profiles.creative]
+model = "deepseek-chat"
+temperature = 1.0
+                </div>
+            </details>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">🔐 Secrets 初始化</h2>
+
+            <div class="section-box">
+                <h3>Secrets::load() 优先级</h3>
+                <ol style="list-style: decimal; padding-left: 30px; color: #c0c0c0; line-height: 2;">
+                    <li><strong style="color: #94a3b8;">环境变量</strong> (最高优先级)
+                        <ul style="list-style: circle; padding-left: 30px; margin-top: 8px;">
+                            <li>DEEPSEEK_API_KEY</li>
+                            <li>OPENAI_API_KEY</li>
+                            <li>ANTHROPIC_API_KEY</li>
+                            <li>NVIDIA_NIM_API_KEY</li>
+                            <li>OPENROUTER_API_KEY</li>
+                        </ul>
+                    </li>
+                    <li><strong style="color: #94a3b8;">OS Keyring</strong> (推荐)
+                        <ul style="list-style: circle; padding-left: 30px; margin-top: 8px;">
+                            <li>macOS: Keychain Access</li>
+                            <li>Windows: Credential Manager</li>
+                            <li>Linux: Secret Service (libsecret)</li>
+                        </ul>
+                    </li>
+                    <li><strong style="color: #94a3b8;">config.toml</strong> (不安全的回退)
+                        <ul style="list-style: circle; padding-left: 30px; margin-top: 8px;">
+                            <li>[secrets] 配置块</li>
+                            <li>明文存储, 仅用于开发环境</li>
+                        </ul>
+                    </li>
+                </ol>
+            </div>
+
+            <details>
+                <summary>Keyring 存储示例 (macOS)</summary>
+                <div class="code" style="margin-top: 15px;">
+# 存储 API Key 到 Keychain
+security add-generic-password \
+  -a "$USER" \
+  -s "deepseek-tui-api-key" \
+  -w "sk-xxxxxxxxxxxxx"
+
+# 读取 API Key
+security find-generic-password \
+  -a "$USER" \
+  -s "deepseek-tui-api-key" \
+  -w
+                </div>
+            </details>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">💾 State 初始化</h2>
+
+            <div class="section-box">
+                <h3>State::open() 流程</h3>
+                <ul>
+                    <li>打开 SQLite 数据库: <span class="code-inline">~/.deepseek/state.db</span></li>
+                    <li>检查 schema 版本, 执行迁移 (如需要)</li>
+                    <li>创建表 (如不存在):
+                        <ul style="list-style: circle; padding-left: 30px; margin-top: 8px;">
+                            <li><strong>sessions</strong> - 会话元数据</li>
+                            <li><strong>messages</strong> - 消息历史</li>
+                            <li><strong>checkpoints</strong> - 状态快照</li>
+                            <li><strong>queued_requests</strong> - 离线队列</li>
+                        </ul>
+                    </li>
+                    <li>崩溃恢复: 检测未正常关闭的会话, 从 checkpoint 恢复</li>
+                </ul>
+            </div>
+
+            <details>
+                <summary>数据库 Schema</summary>
+                <div class="code" style="margin-top: 15px;">
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    metadata TEXT
+);
+
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+                </div>
+            </details>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">🤖 Agent Registry 初始化</h2>
+
+            <div class="section-box">
+                <h3>AgentRegistry::new() 流程</h3>
+                <ul>
+                    <li>从 Config 读取 Provider 配置</li>
+                    <li>注册所有可用模型到注册表</li>
+                    <li>建立模型名称到 Provider 的映射</li>
+                    <li>配置模型能力 (context_window, streaming, tools)</li>
+                    <li>设置默认参数 (temperature, top_p, max_tokens)</li>
+                </ul>
+            </div>
+
+            <details>
+                <summary>支持的 Provider 和模型</summary>
+                <div style="margin-top: 15px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Provider</th>
+                                <th>模型</th>
+                                <th>Context</th>
+                                <th>Streaming</th>
+                                <th>Tools</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>DeepSeek</td>
+                                <td>deepseek-chat</td>
+                                <td>64K</td>
+                                <td>✓</td>
+                                <td>✓</td>
+                            </tr>
+                            <tr>
+                                <td>OpenAI</td>
+                                <td>gpt-4, gpt-3.5-turbo</td>
+                                <td>128K / 16K</td>
+                                <td>✓</td>
+                                <td>✓</td>
+                            </tr>
+                            <tr>
+                                <td>Anthropic</td>
+                                <td>claude-3-opus, claude-3-sonnet</td>
+                                <td>200K</td>
+                                <td>✓</td>
+                                <td>✓</td>
+                            </tr>
+                            <tr>
+                                <td>NVIDIA NIM</td>
+                                <td>llama-3-70b, mixtral-8x7b</td>
+                                <td>8K / 32K</td>
+                                <td>✓</td>
+                                <td>✓</td>
+                            </tr>
+                            <tr>
+                                <td>OpenRouter</td>
+                                <td>多种模型</td>
+                                <td>变化</td>
+                                <td>✓</td>
+                                <td>✓</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">🖥️ TUI 启动流程</h2>
+
+            <div class="section-box">
+                <h3>run_tui() 详细步骤</h3>
+                <ol style="list-style: decimal; padding-left: 30px; color: #c0c0c0; line-height: 2;">
+                    <li><strong style="color: #94a3b8;">启用原始模式</strong>
+                        <div class="code" style="margin-top: 8px;">crossterm::terminal::enable_raw_mode()?</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">禁用行缓冲, 捕获每个按键</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">进入备用屏幕</strong>
+                        <div class="code" style="margin-top: 8px;">crossterm::execute!(stdout(), EnterAlternateScreen)?</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">保留原终端内容, 使用独立缓冲区</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">创建 Terminal</strong>
+                        <div class="code" style="margin-top: 8px;">ratatui::Terminal::new(CrosstermBackend::new(stdout()))?</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">初始化 ratatui 渲染管线</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">生成 Engine 后台任务</strong>
+                        <div class="code" style="margin-top: 8px;">tokio::spawn(spawn_engine(config, state))</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">异步运行 Engine, 处理 Op 调度</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">运行事件循环</strong>
+                        <div class="code" style="margin-top: 8px;">run_event_loop(terminal, app_state).await?</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">48ms 轮询键盘事件, 24ms 渲染更新</div>
+                    </li>
+                </ol>
+            </div>
+
+            <details>
+                <summary>TUI 清理流程 (退出时)</summary>
+                <div class="code" style="margin-top: 15px;">
+// 1. 退出事件循环
+event_loop.stop();
+
+// 2. 离开备用屏幕
+crossterm::execute!(stdout(), LeaveAlternateScreen)?;
+
+// 3. 禁用原始模式
+crossterm::terminal::disable_raw_mode()?;
+
+// 4. 保存会话状态
+state.save_checkpoint(session_id)?;
+
+// 5. 关闭数据库连接
+state.close()?;
+                </div>
+            </details>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">🌐 AppServer 启动流程</h2>
+
+            <div class="section-box">
+                <h3>run_server() 详细步骤</h3>
+                <ol style="list-style: decimal; padding-left: 30px; color: #c0c0c0; line-height: 2;">
+                    <li><strong style="color: #94a3b8;">创建 axum Router</strong>
+                        <div class="code" style="margin-top: 8px;">let app = Router::new()</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">初始化 HTTP 路由器</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">注册路由</strong>
+                        <ul style="list-style: circle; padding-left: 30px; margin-top: 8px;">
+                            <li><span class="code-inline">POST /v1/chat/completions</span> - OpenAI 兼容 API</li>
+                            <li><span class="code-inline">GET /v1/sse</span> - Server-Sent Events 流</li>
+                            <li><span class="code-inline">GET /health</span> - 健康检查</li>
+                            <li><span class="code-inline">GET /metrics</span> - Prometheus 指标</li>
+                        </ul>
+                    </li>
+                    <li><strong style="color: #94a3b8;">配置中间件</strong>
+                        <div class="code" style="margin-top: 8px;">.layer(CorsLayer::permissive())<br>.layer(TraceLayer::new_for_http())</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">CORS 和请求追踪</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">绑定地址</strong>
+                        <div class="code" style="margin-top: 8px;">let addr = SocketAddr::from(([127, 0, 0, 1], 3000))</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">默认监听 127.0.0.1:3000</div>
+                    </li>
+                    <li><strong style="color: #94a3b8;">启动服务器</strong>
+                        <div class="code" style="margin-top: 8px;">axum::Server::bind(&addr).serve(app.into_make_service()).await?</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">阻塞运行, 处理 HTTP 请求</div>
+                    </li>
+                </ol>
+            </div>
+
+            <details>
+                <summary>SSE 事件流格式</summary>
+                <div class="code" style="margin-top: 15px;">
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_123"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_stop
+data: {"type":"message_stop"}
+                </div>
+            </details>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">📊 详细步骤表</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>步骤</th>
+                        <th>操作</th>
+                        <th>结构体/函数</th>
+                        <th>文件位置</th>
+                        <th>输入/输出</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>解析参数</td>
+                        <td>clap::Parser::parse()</td>
+                        <td>crates/cli/src/main.rs:10</td>
+                        <td>CLI args → CliArgs</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>初始化日志</td>
+                        <td>env_logger::init()</td>
+                        <td>crates/cli/src/main.rs:25</td>
+                        <td>() → ()</td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>加载配置</td>
+                        <td>Config::load()</td>
+                        <td>crates/config/src/lib.rs:45</td>
+                        <td>Paths → Config</td>
+                    </tr>
+                    <tr>
+                        <td>4</td>
+                        <td>加载密钥</td>
+                        <td>Secrets::load()</td>
+                        <td>crates/secrets/src/lib.rs:30</td>
+                        <td>Config → Secrets</td>
+                    </tr>
+                    <tr>
+                        <td>5</td>
+                        <td>打开状态</td>
+                        <td>State::open()</td>
+                        <td>crates/state/src/lib.rs:60</td>
+                        <td>Path → State</td>
+                    </tr>
+                    <tr>
+                        <td>6</td>
+                        <td>初始化 Agent</td>
+                        <td>AgentRegistry::new()</td>
+                        <td>crates/agent/src/lib.rs:20</td>
+                        <td>Config → AgentRegistry</td>
+                    </tr>
+                    <tr>
+                        <td>7</td>
+                        <td>分支模式</td>
+                        <td>match subcommand</td>
+                        <td>crates/cli/src/main.rs:80</td>
+                        <td>CliArgs → ()</td>
+                    </tr>
+                    <tr>
+                        <td>8a</td>
+                        <td>启动 TUI</td>
+                        <td>run_tui()</td>
+                        <td>crates/tui/src/tui/ui.rs:100</td>
+                        <td>Config + State → ()</td>
+                    </tr>
+                    <tr>
+                        <td>8b</td>
+                        <td>启动服务器</td>
+                        <td>run_server()</td>
+                        <td>crates/app-server/src/main.rs:50</td>
+                        <td>Config + State → ()</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="diagram-container">
+            <h2 style="text-align: center; margin-bottom: 30px; color: #fff;">⚠️ 错误处理</h2>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px;">
+                <div class="section-box" style="border-color: #ef4444;">
+                    <h3 style="color: #f87171;">缺失 API Key</h3>
+                    <ul>
+                        <li>检测: Secrets::load() 返回 None</li>
+                        <li>行为: 提示用户设置环境变量或 Keyring</li>
+                        <li>退出码: 1</li>
+                        <li>示例消息:
+                            <div class="code" style="margin-top: 8px;">
+Error: Missing API key for provider 'deepseek'
+Please set DEEPSEEK_API_KEY environment variable
+or store it in OS Keyring
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="section-box" style="border-color: #f59e0b;">
+                    <h3 style="color: #fbbf24;">无效配置</h3>
+                    <ul>
+                        <li>检测: TOML 解析失败</li>
+                        <li>行为: 显示错误行号和列号</li>
+                        <li>退出码: 2</li>
+                        <li>示例消息:
+                            <div class="code" style="margin-top: 8px;">
+Error: Failed to parse config.toml
+  --> config.toml:15:10
+   |
+15 | timeout = "invalid"
+   |           ^^^^^^^^^ expected integer
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="section-box" style="border-color: #8b5cf6;">
+                    <h3 style="color: #a78bfa;">State DB 锁定</h3>
+                    <ul>
+                        <li>检测: SQLite BUSY 错误</li>
+                        <li>行为: 等待 5 秒或退出</li>
+                        <li>退出码: 3</li>
+                        <li>示例消息:
+                            <div class="code" style="margin-top: 8px;">
+Error: State database is locked
+Another instance may be running
+Waiting 5 seconds...
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="section-box" style="border-color: #3b82f6;">
+                    <h3 style="color: #60a5fa;">Terminal 初始化失败</h3>
+                    <ul>
+                        <li>检测: crossterm 返回错误</li>
+                        <li>行为: 回退到非交互模式</li>
+                        <li>退出码: 4</li>
+                        <li>示例消息:
+                            <div class="code" style="margin-top: 8px;">
+Error: Failed to initialize terminal
+Falling back to non-interactive mode
+Use --server flag for headless operation
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>DeepSeek-TUI v0.8.8 - CLI 启动流程文档</p>
+            <p style="margin-top: 10px; font-size: 0.9em;">生成时间: 2026-05-04</p>
+        </footer>
+    </div>
+</body>
+</html>

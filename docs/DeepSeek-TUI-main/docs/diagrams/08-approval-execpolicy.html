@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>审批 & 执行策略 (Approval & ExecPolicy) - DeepSeek-TUI 架构图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            border-radius: 12px;
+            border: 2px solid #f97316;
+            box-shadow: 0 4px 20px rgba(249, 115, 22, 0.3);
+        }
+
+        h1 {
+            color: #f97316;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(249, 115, 22, 0.5);
+        }
+
+        .subtitle {
+            color: #a0a0a0;
+            font-size: 1.1em;
+        }
+
+        nav {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            border: 1px solid #333;
+        }
+
+        nav a {
+            color: #f97316;
+            text-decoration: none;
+            margin: 0 15px;
+            transition: color 0.3s;
+        }
+
+        nav a:hover {
+            color: #fb923c;
+        }
+
+        .section {
+            background: #1a1a1a;
+            padding: 25px;
+            margin-bottom: 25px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+
+        h2 {
+            color: #f97316;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f97316;
+        }
+
+        h3 {
+            color: #fb923c;
+            font-size: 1.3em;
+            margin: 20px 0 15px 0;
+        }
+
+        .flowchart {
+            background: #0f0f0f;
+            padding: 30px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #f97316;
+            overflow-x: auto;
+        }
+
+        .flow-step {
+            background: linear-gradient(135deg, #2a1810 0%, #1a1a1a 100%);
+            border: 2px solid #f97316;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin: 15px auto;
+            max-width: 600px;
+            position: relative;
+            box-shadow: 0 2px 10px rgba(249, 115, 22, 0.2);
+        }
+
+        .flow-step-number {
+            background: #f97316;
+            color: #0a0a0a;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .arrow {
+            text-align: center;
+            color: #f97316;
+            font-size: 24px;
+            margin: 5px 0;
+        }
+
+        .code-block {
+            background: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+        }
+
+        .code-block code {
+            color: #fb923c;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #0f0f0f;
+        }
+
+        th {
+            background: #f97316;
+            color: #0a0a0a;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+        }
+
+        td {
+            padding: 12px;
+            border: 1px solid #333;
+        }
+
+        tr:nth-child(even) {
+            background: #1a1a1a;
+        }
+
+        tr:hover {
+            background: #2a2a2a;
+        }
+
+        .struct-box {
+            background: #0f0f0f;
+            border: 2px solid #f97316;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .struct-title {
+            color: #f97316;
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+        }
+
+        .struct-field {
+            color: #fb923c;
+            margin: 5px 0;
+            padding-left: 15px;
+        }
+
+        .enum-variant {
+            color: #fdba74;
+            margin: 5px 0;
+            padding-left: 15px;
+        }
+
+        details {
+            background: #0f0f0f;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        summary {
+            color: #f97316;
+            cursor: pointer;
+            font-weight: bold;
+            padding: 10px;
+            user-select: none;
+        }
+
+        summary:hover {
+            color: #fb923c;
+        }
+
+        .highlight {
+            background: #2a1810;
+            border-left: 4px solid #f97316;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #f97316;
+            color: #0a0a0a;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin: 0 5px;
+        }
+
+        .badge-benign {
+            background: #22c55e;
+        }
+
+        .badge-destructive {
+            background: #ef4444;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .card {
+            background: #0f0f0f;
+            border: 1px solid #f97316;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .card-title {
+            color: #f97316;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>审批 & 执行策略 (Approval & ExecPolicy)</h1>
+            <p class="subtitle">DeepSeek-TUI 架构图 - 子系统 08</p>
+        </header>
+
+        <nav>
+            <a href="01-overview.html">总览</a>
+            <a href="02-tui-layer.html">TUI层</a>
+            <a href="03-core-engine.html">核心引擎</a>
+            <a href="04-mcp-integration.html">MCP集成</a>
+            <a href="05-streaming.html">流式处理</a>
+            <a href="06-state-management.html">状态管理</a>
+            <a href="07-tool-execution.html">工具执行</a>
+            <a href="08-approval-execpolicy.html" style="color: #fb923c; font-weight: bold;">审批策略</a>
+        </nav>
+
+        <div class="section">
+            <h2>1. 审批流程 (Approval Flow)</h2>
+            <div class="flowchart">
+                <div class="flow-step">
+                    <span class="flow-step-number">1</span>
+                    <strong>工具调用待处理</strong><br>
+                    Engine 接收到 ToolCall，准备执行
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">2</span>
+                    <strong>策略检查</strong><br>
+                    ExecPolicyEngine.check() 评估命令
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">3</span>
+                    <strong>需要审批？</strong><br>
+                    如果需要审批：创建 ApprovalRequest
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">4</span>
+                    <strong>发送事件到 UI</strong><br>
+                    Event::ExecApprovalRequest → UI
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">5</span>
+                    <strong>渲染审批模态框</strong><br>
+                    ApprovalView 全屏接管显示
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">6</span>
+                    <strong>用户决策</strong><br>
+                    选择：批准一次 / 批准会话 / 拒绝 / 中止
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">7</span>
+                    <strong>发送决策回引擎</strong><br>
+                    ViewEvent::ApprovalDecision → Engine
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">8</span>
+                    <strong>引擎接收决策</strong><br>
+                    通过 rx_approval 通道接收
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">9</span>
+                    <strong>等待审批</strong><br>
+                    await_tool_approval() 阻塞在通道上
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">10</span>
+                    <strong>执行或拒绝</strong><br>
+                    根据决策执行工具或返回错误
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>2. ExecPolicy 评估逻辑</h2>
+            <div class="highlight">
+                <strong>ExecPolicyEngine.check() 执行流程：</strong>
+            </div>
+            <div class="flowchart">
+                <div class="flow-step">
+                    <span class="flow-step-number">1</span>
+                    <strong>规范化命令</strong><br>
+                    trim() + lowercase()
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">2</span>
+                    <strong>检查拒绝前缀</strong><br>
+                    denied_prefixes (不区分大小写)
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">3</span>
+                    <strong>如果拒绝</strong><br>
+                    返回 Forbidden
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">4</span>
+                    <strong>检查信任前缀</strong><br>
+                    trusted_prefixes
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">5</span>
+                    <strong>如果信任</strong><br>
+                    返回 Skip (自动允许)
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">6</span>
+                    <strong>检查会话缓存</strong><br>
+                    approved_for_session
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">7</span>
+                    <strong>如果已缓存</strong><br>
+                    返回 Skip
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">8</span>
+                    <strong>应用审批策略</strong><br>
+                    基于 ask_for_approval 模式
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <span class="flow-step-number">9</span>
+                    <strong>返回决策</strong><br>
+                    NeedsApproval 或 Skip
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>3. AskForApproval 模式</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">UnlessTrusted</div>
+                    <p>除非命令匹配信任前缀，否则询问</p>
+                    <div class="code-block"><code>默认模式，平衡安全与便利</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">OnFailure</div>
+                    <p>仅在命令失败时询问</p>
+                    <div class="code-block"><code>信任优先，失败后介入</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">OnRequest</div>
+                    <p>每次执行都询问</p>
+                    <div class="code-block"><code>最高安全级别</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Reject</div>
+                    <p>拒绝所有审批请求</p>
+                    <div class="code-block"><code>禁用所有工具执行</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Never</div>
+                    <p>从不询问</p>
+                    <div class="code-block"><code>完全自动化，无人工干预</code></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>4. 风险分类 (Risk Classification)</h2>
+            <div class="highlight">
+                <strong>classify_risk() 逻辑：</strong>
+            </div>
+            <div class="code-block">
+                <code>
+Safe/McpRead → Benign<br>
+Network: web_search/web_run → Benign; others → Destructive<br>
+Shell → always Destructive<br>
+FileWrite/McpAction/Unknown → Destructive
+                </code>
+            </div>
+
+            <h3>RiskLevel 枚举</h3>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">
+                        <span class="badge badge-benign">Benign</span>
+                    </div>
+                    <p><strong>良性操作</strong></p>
+                    <ul>
+                        <li>单次按键即可确认</li>
+                        <li>读取操作、安全查询</li>
+                        <li>无破坏性影响</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">
+                        <span class="badge badge-destructive">Destructive</span>
+                    </div>
+                    <p><strong>破坏性操作</strong></p>
+                    <ul>
+                        <li>需要明确的二次确认</li>
+                        <li>防止肌肉记忆误操作</li>
+                        <li>文件写入、Shell 执行、网络操作</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>5. 工具分类 (Tool Categories)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>分类</th>
+                        <th>描述</th>
+                        <th>示例工具</th>
+                        <th>风险级别</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="badge">Safe</span></td>
+                        <td>只读操作</td>
+                        <td>list_dir, read_file, todo_*</td>
+                        <td><span class="badge badge-benign">Benign</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge">FileWrite</span></td>
+                        <td>文件修改</td>
+                        <td>write_file, edit_file</td>
+                        <td><span class="badge badge-destructive">Destructive</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge">Shell</span></td>
+                        <td>Shell 执行</td>
+                        <td>exec_shell</td>
+                        <td><span class="badge badge-destructive">Destructive</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge">Network</span></td>
+                        <td>网络工具</td>
+                        <td>web_search, web_run, fetch_url</td>
+                        <td><span class="badge">Mixed</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge">McpRead</span></td>
+                        <td>MCP 发现/读取</td>
+                        <td>list_mcp_*, read_mcp_*, get_mcp_*</td>
+                        <td><span class="badge badge-benign">Benign</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge">McpAction</span></td>
+                        <td>MCP 状态变更</td>
+                        <td>mcp_*</td>
+                        <td><span class="badge badge-destructive">Destructive</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge">Unknown</span></td>
+                        <td>未分类</td>
+                        <td>其他工具</td>
+                        <td><span class="badge badge-destructive">Destructive</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>6. 关键结构体 (Key Structs)</h2>
+
+            <details>
+                <summary>ApprovalRequest</summary>
+                <div class="struct-box">
+                    <div class="struct-title">struct ApprovalRequest</div>
+                    <div class="struct-field">id: String</div>
+                    <div class="struct-field">tool_name: String</div>
+                    <div class="struct-field">description: String</div>
+                    <div class="struct-field">category: ToolCategory</div>
+                    <div class="struct-field">risk: RiskLevel</div>
+                    <div class="struct-field">impacts: Vec&lt;String&gt;</div>
+                    <div class="struct-field">params: serde_json::Value</div>
+                    <div class="struct-field">approval_key: String</div>
+                </div>
+            </details>
+
+            <details>
+                <summary>ApprovalDecision</summary>
+                <div class="struct-box">
+                    <div class="struct-title">enum ApprovalDecision</div>
+                    <div class="enum-variant">Approved</div>
+                    <div class="enum-variant">Denied</div>
+                    <div class="enum-variant">RetryWithPolicy</div>
+                </div>
+            </details>
+
+            <details>
+                <summary>ApprovalResult</summary>
+                <div class="struct-box">
+                    <div class="struct-title">enum ApprovalResult</div>
+                    <div class="enum-variant">Approved</div>
+                    <div class="enum-variant">Denied</div>
+                    <div class="enum-variant">RetryWithPolicy(SandboxPolicy)</div>
+                </div>
+            </details>
+
+            <details>
+                <summary>ExecPolicyEngine</summary>
+                <div class="struct-box">
+                    <div class="struct-title">struct ExecPolicyEngine</div>
+                    <div class="struct-field">trusted_prefixes: Vec&lt;String&gt;</div>
+                    <div class="struct-field">denied_prefixes: Vec&lt;String&gt;</div>
+                    <div class="struct-field">approved_for_session: HashSet&lt;String&gt;</div>
+                </div>
+            </details>
+
+            <details>
+                <summary>ExecPolicyContext</summary>
+                <div class="struct-box">
+                    <div class="struct-title">struct ExecPolicyContext</div>
+                    <div class="struct-field">command: String</div>
+                    <div class="struct-field">cwd: PathBuf</div>
+                    <div class="struct-field">ask_for_approval: AskForApproval</div>
+                    <div class="struct-field">sandbox_mode: bool</div>
+                </div>
+            </details>
+
+            <details>
+                <summary>ExecPolicyDecision</summary>
+                <div class="struct-box">
+                    <div class="struct-title">struct ExecPolicyDecision</div>
+                    <div class="struct-field">allow: bool</div>
+                    <div class="struct-field">requires_approval: bool</div>
+                    <div class="struct-field">requirement: ExecApprovalRequirement</div>
+                    <div class="struct-field">matched_rule: Option&lt;String&gt;</div>
+                </div>
+            </details>
+
+            <details>
+                <summary>ExecApprovalRequirement</summary>
+                <div class="struct-box">
+                    <div class="struct-title">enum ExecApprovalRequirement</div>
+                    <div class="enum-variant">Skip — 跳过审批</div>
+                    <div class="enum-variant">NeedsApproval — 需要审批</div>
+                    <div class="enum-variant">Forbidden — 禁止执行</div>
+                </div>
+            </details>
+        </div>
+
+        <div class="section">
+            <h2>7. 详细步骤表 (Detailed Steps Table)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>步骤</th>
+                        <th>操作</th>
+                        <th>结构体/函数</th>
+                        <th>文件:行号</th>
+                        <th>输入/输出</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>工具调用待处理</td>
+                        <td>ToolCall</td>
+                        <td>crates/tui/src/core/engine/turn_loop.rs</td>
+                        <td>ToolCall → ()</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>检查策略</td>
+                        <td>ExecPolicyEngine.check()</td>
+                        <td>crates/execpolicy/src/lib.rs</td>
+                        <td>Context → Decision</td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>分类风险</td>
+                        <td>classify_risk()</td>
+                        <td>crates/tui/src/tui/approval.rs</td>
+                        <td>ToolCategory → RiskLevel</td>
+                    </tr>
+                    <tr>
+                        <td>4</td>
+                        <td>创建请求</td>
+                        <td>ApprovalRequest::new()</td>
+                        <td>crates/tui/src/tui/approval.rs</td>
+                        <td>Tool → ApprovalRequest</td>
+                    </tr>
+                    <tr>
+                        <td>5</td>
+                        <td>发送到 UI</td>
+                        <td>tx_event.send(ExecApprovalRequest)</td>
+                        <td>crates/tui/src/core/engine/approval.rs</td>
+                        <td>Request → ()</td>
+                    </tr>
+                    <tr>
+                        <td>6</td>
+                        <td>渲染模态框</td>
+                        <td>ApprovalView.render()</td>
+                        <td>crates/tui/src/tui/approval.rs</td>
+                        <td>Request → Frame</td>
+                    </tr>
+                    <tr>
+                        <td>7</td>
+                        <td>用户决策</td>
+                        <td>handle_key_event()</td>
+                        <td>crates/tui/src/tui/approval.rs</td>
+                        <td>KeyEvent → Decision</td>
+                    </tr>
+                    <tr>
+                        <td>8</td>
+                        <td>发送决策</td>
+                        <td>tx_approval.send(ApprovalDecision)</td>
+                        <td>crates/tui/src/tui/app.rs</td>
+                        <td>Decision → ()</td>
+                    </tr>
+                    <tr>
+                        <td>9</td>
+                        <td>等待决策</td>
+                        <td>rx_approval.recv()</td>
+                        <td>crates/tui/src/core/engine/approval.rs</td>
+                        <td>() → Decision</td>
+                    </tr>
+                    <tr>
+                        <td>10</td>
+                        <td>执行或拒绝</td>
+                        <td>match decision</td>
+                        <td>crates/tui/src/core/engine/turn_loop.rs</td>
+                        <td>Decision → Result</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>8. 会话审批缓存 (Session Approval Cache)</h2>
+            <div class="highlight">
+                <strong>会话级别的审批记忆机制</strong>
+            </div>
+
+            <h3>核心机制</h3>
+            <div class="struct-box">
+                <div class="struct-title">approved_for_session: HashSet&lt;String&gt;</div>
+                <p>存储在 ExecPolicyEngine 中，记录已批准的命令指纹</p>
+            </div>
+
+            <h3>关键操作</h3>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">approval_key</div>
+                    <p>命令 + 参数的指纹</p>
+                    <div class="code-block"><code>hash(command + params)</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">remember_session_approval(key)</div>
+                    <p>添加到缓存</p>
+                    <div class="code-block"><code>approved_for_session.insert(key)</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">is_session_approved(key)</div>
+                    <p>检查缓存</p>
+                    <div class="code-block"><code>approved_for_session.contains(key)</code></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">清除缓存</div>
+                    <p>会话结束时清空</p>
+                    <div class="code-block"><code>approved_for_session.clear()</code></div>
+                </div>
+            </div>
+
+            <h3>工作流程</h3>
+            <div class="flowchart">
+                <div class="flow-step">
+                    <strong>用户选择 "Approve Session"</strong><br>
+                    批准当前命令并记住
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <strong>生成 approval_key</strong><br>
+                    基于命令和参数的哈希
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <strong>remember_session_approval(key)</strong><br>
+                    添加到 HashSet
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <strong>后续相同命令</strong><br>
+                    is_session_approved(key) 返回 true
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <strong>ExecPolicyEngine.check()</strong><br>
+                    返回 Skip，无需再次审批
+                </div>
+                <div class="arrow">↓</div>
+                <div class="flow-step">
+                    <strong>会话结束</strong><br>
+                    清空缓存，下次会话重新审批
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>9. 完整数据流图 (Complete Data Flow)</h2>
+            <svg width="100%" height="800" viewBox="0 0 1200 800" style="background: #0f0f0f; border-radius: 8px;">
+                <!-- Engine Layer -->
+                <rect x="50" y="50" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="150" y="105" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">Engine</text>
+                <text x="150" y="125" text-anchor="middle" fill="#e5e5e5" font-size="12">ToolCall Pending</text>
+
+                <!-- ExecPolicyEngine -->
+                <rect x="350" y="50" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="450" y="95" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">ExecPolicyEngine</text>
+                <text x="450" y="115" text-anchor="middle" fill="#e5e5e5" font-size="12">check()</text>
+                <text x="450" y="135" text-anchor="middle" fill="#e5e5e5" font-size="12">classify_risk()</text>
+
+                <!-- ApprovalRequest -->
+                <rect x="650" y="50" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="750" y="95" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">ApprovalRequest</text>
+                <text x="750" y="115" text-anchor="middle" fill="#e5e5e5" font-size="12">Create Request</text>
+                <text x="750" y="135" text-anchor="middle" fill="#e5e5e5" font-size="12">+ approval_key</text>
+
+                <!-- Event Channel -->
+                <rect x="950" y="50" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="1050" y="95" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">Event Channel</text>
+                <text x="1050" y="115" text-anchor="middle" fill="#e5e5e5" font-size="12">tx_event.send()</text>
+                <text x="1050" y="135" text-anchor="middle" fill="#e5e5e5" font-size="12">ExecApprovalRequest</text>
+
+                <!-- UI Layer -->
+                <rect x="950" y="250" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="1050" y="295" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">ApprovalView</text>
+                <text x="1050" y="315" text-anchor="middle" fill="#e5e5e5" font-size="12">Render Modal</text>
+                <text x="1050" y="335" text-anchor="middle" fill="#e5e5e5" font-size="12">User Input</text>
+
+                <!-- Decision -->
+                <rect x="650" y="250" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="750" y="295" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">ApprovalDecision</text>
+                <text x="750" y="315" text-anchor="middle" fill="#e5e5e5" font-size="12">Approved/Denied</text>
+                <text x="750" y="335" text-anchor="middle" fill="#e5e5e5" font-size="12">RetryWithPolicy</text>
+
+                <!-- Approval Channel -->
+                <rect x="350" y="250" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="450" y="295" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">Approval Channel</text>
+                <text x="450" y="315" text-anchor="middle" fill="#e5e5e5" font-size="12">rx_approval.recv()</text>
+                <text x="450" y="335" text-anchor="middle" fill="#e5e5e5" font-size="12">await_tool_approval()</text>
+
+                <!-- Execution -->
+                <rect x="50" y="250" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="150" y="295" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">Execution</text>
+                <text x="150" y="315" text-anchor="middle" fill="#e5e5e5" font-size="12">Execute Tool</text>
+                <text x="150" y="335" text-anchor="middle" fill="#e5e5e5" font-size="12">or Return Error</text>
+
+                <!-- Session Cache -->
+                <rect x="350" y="450" width="200" height="100" fill="#2a1810" stroke="#f97316" stroke-width="2" rx="8"/>
+                <text x="450" y="495" text-anchor="middle" fill="#f97316" font-size="16" font-weight="bold">Session Cache</text>
+                <text x="450" y="515" text-anchor="middle" fill="#e5e5e5" font-size="12">approved_for_session</text>
+                <text x="450" y="535" text-anchor="middle" fill="#e5e5e5" font-size="12">HashSet&lt;String&gt;</text>
+
+                <!-- Arrows -->
+                <!-- Engine to ExecPolicy -->
+                <line x1="250" y1="100" x2="350" y2="100" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="300" y="90" text-anchor="middle" fill="#fb923c" font-size="11">1. check</text>
+
+                <!-- ExecPolicy to ApprovalRequest -->
+                <line x1="550" y1="100" x2="650" y2="100" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="600" y="90" text-anchor="middle" fill="#fb923c" font-size="11">2. create</text>
+
+                <!-- ApprovalRequest to Event -->
+                <line x1="850" y1="100" x2="950" y2="100" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="900" y="90" text-anchor="middle" fill="#fb923c" font-size="11">3. send</text>
+
+                <!-- Event to UI -->
+                <line x1="1050" y1="150" x2="1050" y2="250" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="1070" y="200" text-anchor="start" fill="#fb923c" font-size="11">4. render</text>
+
+                <!-- UI to Decision -->
+                <line x1="950" y1="300" x2="850" y2="300" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="900" y="290" text-anchor="middle" fill="#fb923c" font-size="11">5. decide</text>
+
+                <!-- Decision to Channel -->
+                <line x1="650" y1="300" x2="550" y2="300" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="600" y="290" text-anchor="middle" fill="#fb923c" font-size="11">6. send</text>
+
+                <!-- Channel to Execution -->
+                <line x1="350" y1="300" x2="250" y2="300" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="300" y="290" text-anchor="middle" fill="#fb923c" font-size="11">7. recv</text>
+
+                <!-- ExecPolicy to Cache -->
+                <line x1="450" y1="150" x2="450" y2="450" stroke="#f97316" stroke-width="2" stroke-dasharray="5,5" marker-end="url(#arrowhead)"/>
+                <text x="470" y="300" text-anchor="start" fill="#fb923c" font-size="11">check cache</text>
+
+                <!-- Cache to ExecPolicy -->
+                <line x1="480" y1="450" x2="480" y2="150" stroke="#f97316" stroke-width="2" stroke-dasharray="5,5" marker-end="url(#arrowhead)"/>
+                <text x="500" y="300" text-anchor="start" fill="#fb923c" font-size="11">remember</text>
+
+                <!-- Arrow marker definition -->
+                <defs>
+                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                        <polygon points="0 0, 10 3, 0 6" fill="#f97316"/>
+                    </marker>
+                </defs>
+
+                <!-- Legend -->
+                <rect x="50" y="650" width="300" height="120" fill="#1a1a1a" stroke="#333" stroke-width="1" rx="8"/>
+                <text x="200" y="680" text-anchor="middle" fill="#f97316" font-size="14" font-weight="bold">图例</text>
+                <line x1="70" y1="700" x2="150" y2="700" stroke="#f97316" stroke-width="2" marker-end="url(#arrowhead)"/>
+                <text x="160" y="705" fill="#e5e5e5" font-size="12">同步流程</text>
+                <line x1="70" y1="730" x2="150" y2="730" stroke="#f97316" stroke-width="2" stroke-dasharray="5,5" marker-end="url(#arrowhead)"/>
+                <text x="160" y="735" fill="#e5e5e5" font-size="12">缓存查询/更新</text>
+            </svg>
+        </div>
+
+        <div class="section">
+            <h2>10. 关键文件位置</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>组件</th>
+                        <th>文件路径</th>
+                        <th>描述</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>ExecPolicyEngine</td>
+                        <td><code>crates/execpolicy/src/lib.rs</code></td>
+                        <td>策略引擎核心逻辑</td>
+                    </tr>
+                    <tr>
+                        <td>ApprovalView</td>
+                        <td><code>crates/tui/src/tui/approval.rs</code></td>
+                        <td>审批 UI 渲染和交互</td>
+                    </tr>
+                    <tr>
+                        <td>Approval Flow</td>
+                        <td><code>crates/tui/src/core/engine/approval.rs</code></td>
+                        <td>审批流程协调</td>
+                    </tr>
+                    <tr>
+                        <td>Turn Loop</td>
+                        <td><code>crates/tui/src/core/engine/turn_loop.rs</code></td>
+                        <td>工具执行主循环</td>
+                    </tr>
+                    <tr>
+                        <td>App Event Handler</td>
+                        <td><code>crates/tui/src/tui/app.rs</code></td>
+                        <td>UI 事件处理</td>
+                    </tr>
+                    <tr>
+                        <td>Tool Categories</td>
+                        <td><code>crates/tui/src/tui/approval.rs</code></td>
+                        <td>工具分类和风险评估</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>11. 安全特性总结</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">多层防护</div>
+                    <ul>
+                        <li>拒绝列表 (denied_prefixes)</li>
+                        <li>信任列表 (trusted_prefixes)</li>
+                        <li>会话缓存 (approved_for_session)</li>
+                        <li>风险分级 (Benign/Destructive)</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">用户控制</div>
+                    <ul>
+                        <li>批准一次 (Approve Once)</li>
+                        <li>批准会话 (Approve Session)</li>
+                        <li>拒绝 (Deny)</li>
+                        <li>中止 (Abort)</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">防误操作</div>
+                    <ul>
+                        <li>破坏性操作需二次确认</li>
+                        <li>防止肌肉记忆误触</li>
+                        <li>全屏模态框强制关注</li>
+                        <li>清晰的风险提示</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">灵活策略</div>
+                    <ul>
+                        <li>5 种审批模式</li>
+                        <li>可配置的信任/拒绝规则</li>
+                        <li>会话级别记忆</li>
+                        <li>沙箱模式支持</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <footer style="text-align: center; margin-top: 50px; padding: 30px; color: #666;">
+            <p>DeepSeek-TUI 架构图 - 审批 & 执行策略子系统</p>
+            <p style="margin-top: 10px;">
+                <a href="01-overview.html" style="color: #f97316; text-decoration: none;">返回总览</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>

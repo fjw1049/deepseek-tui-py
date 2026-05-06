@@ -1,0 +1,14 @@
+provider = "deepseek"
+model = "deepseek-v4-pro"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com"
+timeout = 120
+
+[ui]
+color_scheme = "default"
+show_thinking = true
+
+[state]
+database_path = "~/.deepseek_tui/state.db"
+autosave = true

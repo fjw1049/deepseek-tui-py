@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepseek-tui-py"
+version = "0.1.0"
+description = "Python rewrite of DeepSeek-TUI"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "fjw" }
+]
+dependencies = [
+  "textual>=0.50.0",
+  "httpx>=0.26.0",
+  "httpx-sse>=0.4.0",
+  "typer>=0.9.0",
+  "pydantic>=2.5.0",
+  "tomli>=2.0.1; python_version < '3.11'",
+  "aiosqlite>=0.19.0",
+  "keyring>=24.3.0",
+  "anyio>=4.2.0",
+  "rich>=13.7.0",
+  "jsonschema>=4.20.0",
+  "aiofiles>=23.2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.1.0",
+  "mypy>=1.8.0",
+  "ruff>=0.1.0",
+  "pre-commit>=3.6.0",
+]
+
+[project.scripts]
+deepseek-tui = "deepseek_tui.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepseek_tui"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: synchronous pathlib / fs ops in async fixtures are fine.
+"tests/**/*.py" = ["ASYNC240"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["deepseek_tui"]
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true

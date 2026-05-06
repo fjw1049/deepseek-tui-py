@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>配置系统 - DeepSeek-TUI 架构图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.2em;
+            color: #a0a0a0;
+            margin-top: 10px;
+        }
+
+        nav {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        nav a {
+            color: #e0e0e0;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+        }
+
+        nav a:hover {
+            background: rgba(245, 158, 11, 0.3);
+            transform: translateY(-2px);
+        }
+
+        nav a.active {
+            background: rgba(245, 158, 11, 0.5);
+        }
+
+        .diagram-section {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .section-title {
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            color: #f59e0b;
+        }
+
+        .flowchart {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .flow-step {
+            background: rgba(245, 158, 11, 0.1);
+            border: 2px solid #f59e0b;
+            border-radius: 8px;
+            padding: 20px;
+            position: relative;
+        }
+
+        .flow-step::after {
+            content: '↓';
+            position: absolute;
+            bottom: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            color: #f59e0b;
+        }
+
+        .flow-step:last-child::after {
+            content: '';
+        }
+
+        .step-number {
+            display: inline-block;
+            background: #f59e0b;
+            color: #1a1a2e;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .step-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+
+        .step-content {
+            color: #d0d0d0;
+            line-height: 1.6;
+        }
+
+        .code-block {
+            background: rgba(0, 0, 0, 0.3);
+            border-left: 3px solid #f59e0b;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin: 10px 0;
+            overflow-x: auto;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .data-table th {
+            background: rgba(245, 158, 11, 0.3);
+            color: #fff;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+        }
+
+        .data-table td {
+            padding: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: #d0d0d0;
+        }
+
+        .data-table tr:hover {
+            background: rgba(245, 158, 11, 0.1);
+        }
+
+        details {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        summary {
+            cursor: pointer;
+            font-weight: bold;
+            color: #f59e0b;
+            user-select: none;
+        }
+
+        summary:hover {
+            color: #fbbf24;
+        }
+
+        details[open] summary {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .priority-chain {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .priority-item {
+            flex: 1;
+            min-width: 200px;
+            background: rgba(245, 158, 11, 0.15);
+            border: 2px solid #f59e0b;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            position: relative;
+        }
+
+        .priority-item::after {
+            content: '→';
+            position: absolute;
+            right: -25px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 24px;
+            color: #f59e0b;
+        }
+
+        .priority-item:last-child::after {
+            content: '';
+        }
+
+        .priority-number {
+            display: inline-block;
+            background: #f59e0b;
+            color: #1a1a2e;
+            width: 25px;
+            height: 25px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 25px;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+
+        .priority-label {
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+
+        .priority-desc {
+            font-size: 0.85em;
+            color: #b0b0b0;
+        }
+
+        .struct-box {
+            background: rgba(0, 0, 0, 0.3);
+            border: 2px solid #f59e0b;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+
+        .struct-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #f59e0b;
+            margin-bottom: 15px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .struct-field {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .struct-field:last-child {
+            border-bottom: none;
+        }
+
+        .field-name {
+            color: #60a5fa;
+            font-weight: bold;
+        }
+
+        .field-type {
+            color: #34d399;
+        }
+
+        .field-comment {
+            color: #9ca3af;
+            font-style: italic;
+        }
+
+        .arrow-down {
+            text-align: center;
+            font-size: 32px;
+            color: #f59e0b;
+            margin: 10px 0;
+        }
+
+        @media (max-width: 768px) {
+            .priority-chain {
+                flex-direction: column;
+            }
+
+            .priority-item::after {
+                content: '↓';
+                right: auto;
+                top: auto;
+                bottom: -30px;
+                left: 50%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>配置系统 (Configuration System)</h1>
+            <p class="subtitle">DeepSeek-TUI 架构详解 - 子系统 01</p>
+        </header>
+
+        <nav>
+            <a href="00-system-overview.html">00-总览</a>
+            <a href="01-config-system.html" class="active">01-配置</a>
+            <a href="02-llm-client.html">02-LLM客户端</a>
+            <a href="03-agent-engine.html">03-Agent引擎</a>
+            <a href="04-mcp-system.html">04-MCP</a>
+            <a href="05-state-management.html">05-状态</a>
+            <a href="06-tool-system.html">06-工具</a>
+            <a href="07-tui-layer.html">07-TUI</a>
+            <a href="08-security.html">08-安全</a>
+            <a href="09-snapshot-system.html">09-快照</a>
+            <a href="10-lsp-integration.html">10-LSP</a>
+        </nav>
+
+        <!-- Section 1: Loading Precedence Chain -->
+        <div class="diagram-section">
+            <h2 class="section-title">1. 加载优先级链 (Loading Precedence Chain)</h2>
+            <p style="margin-bottom: 20px;">配置值按以下优先级从高到低合并，高优先级覆盖低优先级：</p>
+
+            <div class="priority-chain">
+                <div class="priority-item">
+                    <div class="priority-number">1</div>
+                    <div class="priority-label">CLI 参数</div>
+                    <div class="priority-desc">--model, --provider, --api-key, --base-url</div>
+                </div>
+                <div class="priority-item">
+                    <div class="priority-number">2</div>
+                    <div class="priority-label">环境变量</div>
+                    <div class="priority-desc">DEEPSEEK_*, NVIDIA_API_KEY, OPENAI_BASE_URL</div>
+                </div>
+                <div class="priority-item">
+                    <div class="priority-number">3</div>
+                    <div class="priority-label">config.toml</div>
+                    <div class="priority-desc">~/.deepseek/config.toml, ./config.toml</div>
+                </div>
+                <div class="priority-item">
+                    <div class="priority-number">4</div>
+                    <div class="priority-label">默认值</div>
+                    <div class="priority-desc">Config::default() 硬编码</div>
+                </div>
+            </div>
+
+            <details>
+                <summary>📋 优先级示例</summary>
+                <div class="code-block">
+# 场景：用户同时设置了多个配置源
+# CLI: --model deepseek-v4-flash
+# ENV: DEEPSEEK_MODEL=deepseek-v4-pro
+# TOML: model = "gpt-4.1"
+# 默认: deepseek-v4-pro
+
+# 最终生效：deepseek-v4-flash (CLI 优先级最高)
+                </div>
+            </details>
+        </div>
+
+        <!-- Section 2: Profile System -->
+        <div class="diagram-section">
+            <h2 class="section-title">2. Profile 系统 (Profile Merging)</h2>
+            <p style="margin-bottom: 20px;">Profile 允许为不同环境（dev/prod/work）维护独立配置集。</p>
+
+            <div class="flowchart">
+                <div class="flow-step">
+                    <div class="step-title">
+                        <span class="step-number">1</span>
+                        Profile 选择
+                    </div>
+                    <div class="step-content">
+                        <div class="code-block">
+# 通过 CLI 参数
+deepseek --profile work
+
+# 或环境变量
+export DEEPSEEK_PROFILE=dev
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flow-step">
+                    <div class="step-title">
+                        <span class="step-number">2</span>
+                        TOML Profile 定义
+                    </div>
+                    <div class="step-content">
+                        <div class="code-block">
+[profiles.dev]
+api_key = "DEV_KEY"
+provider = "deepseek"
+allow_shell = true
+
+[profiles.prod]
+api_key = "PROD_KEY"
+provider = "nvidia-nim"
+approval_policy = "on-request"
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flow-step">
+                    <div class="step-title">
+                        <span class="step-number">3</span>
+                        深度合并策略
+                    </div>
+                    <div class="step-content">
+                        <ul style="list-style-position: inside; color: #d0d0d0;">
+                            <li>标量字段：Profile 值覆盖基础配置</li>
+                            <li>数组字段：完全替换（不追加）</li>
+                            <li>Provider 映射：字段级合并（可只覆盖 model 而保留 api_key）</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <details>
+                <summary>🔍 合并逻辑详解</summary>
+                <div class="code-block">
+// crates/config/src/lib.rs:251-316
+pub fn merge_project_overrides(&mut self, project: ConfigToml) {
+    // 标量字段：有值则覆盖
+    if project.api_key.is_some() {
+        self.api_key = project.api_key;
+    }
+
+    // Provider 子表：字段级合并
+    merge_provider_config(&mut self.providers.deepseek,
+                          &project.providers.deepseek);
+}
+                </div>
+            </details>
+        </div>
+
+        <!-- Section 3: Provider Configuration -->
+        <div class="diagram-section">
+            <h2 class="section-title">3. Provider 配置 (Provider Configuration)</h2>
+            <p style="margin-bottom: 20px;">支持多 Provider 并存，通过 <code>provider</code> 字段切换。</p>
+
+            <div class="struct-box">
+                <div class="struct-title">ProvidersToml</div>
+                <div class="struct-field">
+                    <span class="field-name">deepseek</span>: <span class="field-type">ProviderConfigToml</span>
+                    <span class="field-comment">// DeepSeek Platform</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">nvidia_nim</span>: <span class="field-type">ProviderConfigToml</span>
+                    <span class="field-comment">// NVIDIA NIM</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">openai</span>: <span class="field-type">ProviderConfigToml</span>
+                    <span class="field-comment">// OpenAI</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">openrouter</span>: <span class="field-type">ProviderConfigToml</span>
+                    <span class="field-comment">// OpenRouter</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">novita</span>: <span class="field-type">ProviderConfigToml</span>
+                    <span class="field-comment">// Novita</span>
+                </div>
+            </div>
+
+            <div class="struct-box">
+                <div class="struct-title">ProviderConfigToml</div>
+                <div class="struct-field">
+                    <span class="field-name">api_key</span>: <span class="field-type">Option&lt;String&gt;</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">base_url</span>: <span class="field-type">Option&lt;String&gt;</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">model</span>: <span class="field-type">Option&lt;String&gt;</span>
+                </div>
+            </div>
+
+            <details>
+                <summary>📝 Provider 切换示例</summary>
+                <div class="code-block">
+# config.toml 中预存多个 Provider
+provider = "deepseek"
+
+[providers.deepseek]
+api_key = "sk-deepseek-xxx"
+model = "deepseek-v4-pro"
+
+[providers.nvidia_nim]
+api_key = "nvapi-xxx"
+base_url = "https://integrate.api.nvidia.com/v1"
+model = "deepseek-ai/deepseek-v4-pro"
+
+# 运行时切换（无需重新输入密钥）
+deepseek --provider nvidia-nim
+                </div>
+            </details>
+        </div>
+
+        <!-- Section 4: Environment Variable Mapping -->
+        <div class="diagram-section">
+            <h2 class="section-title">4. 环境变量映射 (Environment Variable Mapping)</h2>
+            <p style="margin-bottom: 20px;">环境变量通过特定前缀和分隔符映射到配置字段。</p>
+
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>环境变量</th>
+                        <th>映射字段</th>
+                        <th>类型</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>DEEPSEEK_PROVIDER</td>
+                        <td>Config.provider</td>
+                        <td>ProviderKind</td>
+                        <td>全局 Provider 选择</td>
+                    </tr>
+                    <tr>
+                        <td>DEEPSEEK_MODEL</td>
+                        <td>Config.model</td>
+                        <td>String</td>
+                        <td>默认模型名</td>
+                    </tr>
+                    <tr>
+                        <td>DEEPSEEK_API_KEY</td>
+                        <td>通过 Secrets 解析</td>
+                        <td>String</td>
+                        <td>API 密钥（优先级低于 keyring）</td>
+                    </tr>
+                    <tr>
+                        <td>DEEPSEEK_BASE_URL</td>
+                        <td>Config.base_url</td>
+                        <td>String</td>
+                        <td>DeepSeek API 端点</td>
+                    </tr>
+                    <tr>
+                        <td>NVIDIA_API_KEY</td>
+                        <td>通过 Secrets 解析</td>
+                        <td>String</td>
+                        <td>NVIDIA NIM 密钥</td>
+                    </tr>
+                    <tr>
+                        <td>NVIDIA_NIM_BASE_URL</td>
+                        <td>EnvRuntimeOverrides.nvidia_base_url</td>
+                        <td>String</td>
+                        <td>NIM 端点（别名：NIM_BASE_URL）</td>
+                    </tr>
+                    <tr>
+                        <td>OPENAI_BASE_URL</td>
+                        <td>EnvRuntimeOverrides.openai_base_url</td>
+                        <td>String</td>
+                        <td>OpenAI 兼容端点</td>
+                    </tr>
+                    <tr>
+                        <td>DEEPSEEK_TELEMETRY</td>
+                        <td>Config.telemetry</td>
+                        <td>bool</td>
+                        <td>遥测开关（1/true/yes → true）</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <details>
+                <summary>🔧 环境变量解析逻辑</summary>
+                <div class="code-block">
+// crates/config/src/lib.rs:902-948
+impl EnvRuntimeOverrides {
+    fn load() -> Self {
+        Self {
+            provider: std::env::var("DEEPSEEK_PROVIDER")
+                .ok()
+                .and_then(|v| ProviderKind::parse(&v)),
+            model: std::env::var("DEEPSEEK_MODEL").ok(),
+            telemetry: std::env::var("DEEPSEEK_TELEMETRY")
+                .ok()
+                .and_then(|v| parse_bool(&v).ok()),
+            // ...
+        }
+    }
+}
+                </div>
+            </details>
+        </div>
+
+        <!-- Section 5: Key Structs -->
+        <div class="diagram-section">
+            <h2 class="section-title">5. 核心数据结构 (Key Structs)</h2>
+
+            <div class="struct-box">
+                <div class="struct-title">ConfigToml</div>
+                <div class="struct-field">
+                    <span class="field-name">provider</span>: <span class="field-type">ProviderKind</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">providers</span>: <span class="field-type">ProvidersToml</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">network</span>: <span class="field-type">Option&lt;NetworkPolicyToml&gt;</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">lsp</span>: <span class="field-type">Option&lt;LspConfigToml&gt;</span>
+                </div>
+            </div>
+
+            <div class="struct-box">
+                <div class="struct-title">ResolvedRuntimeOptions</div>
+                <div class="struct-field">
+                    <span class="field-name">provider</span>: <span class="field-type">ProviderKind</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">model</span>: <span class="field-type">String</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">api_key</span>: <span class="field-type">Option&lt;String&gt;</span>
+                </div>
+                <div class="struct-field">
+                    <span class="field-name">base_url</span>: <span class="field-type">String</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

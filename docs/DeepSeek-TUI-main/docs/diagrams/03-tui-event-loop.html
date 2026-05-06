@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TUI 事件循环 - DeepSeek-TUI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.2em;
+            color: #a0a0a0;
+            margin-top: 10px;
+        }
+
+        nav {
+            background: rgba(59, 130, 246, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        nav a {
+            color: #3b82f6;
+            text-decoration: none;
+            margin: 0 15px;
+            transition: color 0.3s;
+        }
+
+        nav a:hover {
+            color: #60a5fa;
+        }
+
+        .section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        h2 {
+            color: #3b82f6;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+        }
+
+        h3 {
+            color: #60a5fa;
+            font-size: 1.4em;
+            margin: 25px 0 15px 0;
+        }
+
+        .flowchart {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .flow-box {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(37, 99, 235, 0.1) 100%);
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 20px 30px;
+            min-width: 300px;
+            text-align: center;
+            position: relative;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        }
+
+        .flow-box.start {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.2) 0%, rgba(22, 163, 74, 0.1) 100%);
+            border-color: #22c55e;
+        }
+
+        .flow-box.decision {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(245, 158, 11, 0.1) 100%);
+            border-color: #fbbf24;
+            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+            padding: 30px 40px;
+        }
+
+        .flow-box.process {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(37, 99, 235, 0.1) 100%);
+            border-color: #3b82f6;
+        }
+
+        .flow-arrow {
+            width: 0;
+            height: 0;
+            border-left: 15px solid transparent;
+            border-right: 15px solid transparent;
+            border-top: 20px solid #3b82f6;
+            margin: 5px 0;
+        }
+
+        .state-machine {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .state-box {
+            background: rgba(59, 130, 246, 0.15);
+            border: 2px solid #3b82f6;
+            border-radius: 50%;
+            padding: 30px;
+            text-align: center;
+            aspect-ratio: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.3s;
+        }
+
+        .state-box:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+        }
+
+        .state-box.default {
+            border-color: #22c55e;
+            background: rgba(34, 197, 94, 0.15);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        th {
+            background: rgba(59, 130, 246, 0.3);
+            color: #fff;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        code {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #60a5fa;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .metric-card {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 2em;
+            color: #3b82f6;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .metric-label {
+            color: #a0a0a0;
+            font-size: 0.9em;
+        }
+
+        details {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #3b82f6;
+            padding: 10px;
+            user-select: none;
+        }
+
+        summary:hover {
+            color: #60a5fa;
+        }
+
+        ul {
+            list-style: none;
+            padding-left: 20px;
+        }
+
+        li {
+            padding: 8px 0;
+            position: relative;
+        }
+
+        li:before {
+            content: "▸";
+            color: #3b82f6;
+            position: absolute;
+            left: -20px;
+        }
+
+        .pipeline {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+
+        .pipeline-step {
+            background: rgba(59, 130, 246, 0.15);
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 15px 20px;
+            min-width: 150px;
+            text-align: center;
+        }
+
+        .pipeline-arrow {
+            color: #3b82f6;
+            font-size: 2em;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>TUI 事件循环</h1>
+            <p class="subtitle">TUI Event Loop - DeepSeek-TUI 核心交互机制</p>
+        </header>
+
+        <nav>
+            <a href="00-system-overview.html">← 系统总览</a>
+            <a href="01-config-system.html">配置系统</a>
+            <a href="06-tool-system.html">工具系统</a>
+        </nav>
+
+        <!-- Section 1: Event Loop Flow -->
+        <div class="section">
+            <h2>1. 事件循环流程 (Event Loop Flow)</h2>
+            <p>主循环位于 <code>crates/tui/src/tui/ui.rs</code></p>
+
+            <div class="flowchart">
+                <div class="flow-box start">
+                    <strong>开始</strong><br>
+                    启动 TUI 事件循环
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box process">
+                    <strong>1. 轮询事件</strong><br>
+                    crossterm::event::poll()<br>
+                    <small>自适应超时: 48ms 空闲 / 24ms 活跃 / 80ms 动画</small>
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box decision">
+                    <strong>事件类型?</strong>
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box process">
+                    <strong>2. 事件分发</strong><br>
+                    Keyboard / Mouse / Paste<br>
+                    Resize / FocusGained / FocusLost
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box process">
+                    <strong>3. 路由到处理器</strong><br>
+                    基于当前活跃视图<br>
+                    handle_event()
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box process">
+                    <strong>4. 更新应用状态</strong><br>
+                    App state mutation<br>
+                    ComposerState / ViewportState
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box process">
+                    <strong>5. 渲染帧</strong><br>
+                    Terminal::draw() via ratatui<br>
+                    Frame-based rendering
+                </div>
+
+                <div class="flow-arrow"></div>
+
+                <div class="flow-box start">
+                    <strong>重复循环</strong><br>
+                    返回步骤 1
+                </div>
+            </div>
+
+            <details>
+                <summary>事件类型详细说明</summary>
+                <ul>
+                    <li><strong>Keyboard</strong>: 键盘输入事件，包括字符输入、快捷键、方向键等</li>
+                    <li><strong>Mouse</strong>: 鼠标事件，包括点击、滚动、拖拽等</li>
+                    <li><strong>Paste</strong>: 粘贴事件，支持 bracketed paste 模式</li>
+                    <li><strong>Resize</strong>: 终端窗口大小变化事件</li>
+                    <li><strong>FocusGained / FocusLost</strong>: 终端焦点获得/失去事件</li>
+                </ul>
+            </details>
+        </div>
+
+        <!-- Section 2: AppMode State Machine -->
+        <div class="section">
+            <h2>2. AppMode 状态机 (State Machine)</h2>
+            <p>应用模式在 <code>crates/tui/src/tui/app.rs</code> 中定义</p>
+
+            <div class="state-machine">
+                <div class="state-box default">
+                    <h3>Agent</h3>
+                    <p>默认模式</p>
+                    <small>需要批准工具调用</small>
+                </div>
+
+                <div class="state-box">
+                    <h3>Yolo</h3>
+                    <p>自动模式</p>
+                    <small>自动批准所有工具</small>
+                </div>
+
+                <div class="state-box">
+                    <h3>Plan</h3>
+                    <p>规划模式</p>
+                    <small>只读规划阶段</small>
+                </div>
+            </div>
+
+            <h3>状态转换触发器</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>触发器</th>
+                        <th>源状态</th>
+                        <th>目标状态</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/yolo</code> 命令</td>
+                        <td>Agent / Plan</td>
+                        <td>Yolo</td>
+                        <td>切换到自动批准模式</td>
+                    </tr>
+                    <tr>
+                        <td><code>/agent</code> 命令</td>
+                        <td>Yolo / Plan</td>
+                        <td>Agent</td>
+                        <td>切换到需要批准模式</td>
+                    </tr>
+                    <tr>
+                        <td>EnterPlanMode 工具</td>
+                        <td>Agent / Yolo</td>
+                        <td>Plan</td>
+                        <td>进入规划阶段</td>
+                    </tr>
+                    <tr>
+                        <td>ExitPlanMode 工具</td>
+                        <td>Plan</td>
+                        <td>Agent</td>
+                        <td>退出规划阶段</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section 3: User Input Handling -->
+        <div class="section">
+            <h2>3. 用户输入处理 (User Input Handling)</h2>
+
+            <h3>ComposerState 结构</h3>
+            <ul>
+                <li><strong>input</strong>: 当前输入文本内容</li>
+                <li><strong>cursor_position</strong>: 光标位置（字符索引）</li>
+                <li><strong>kill_buffer</strong>: Emacs 风格的剪切缓冲区（Ctrl+K / Ctrl+Y）</li>
+                <li><strong>paste_burst</strong>: 粘贴突发检测，防止逐字符粘贴</li>
+                <li><strong>input_history</strong>: 输入历史记录</li>
+                <li><strong>history_index</strong>: 当前历史索引</li>
+            </ul>
+
+            <h3>输入功能</h3>
+            <details>
+                <summary>历史导航</summary>
+                <ul>
+                    <li><strong>Up 箭头</strong>: 向上浏览历史记录</li>
+                    <li><strong>Down 箭头</strong>: 向下浏览历史记录</li>
+                    <li>自动保存当前草稿，切换历史时不丢失</li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>斜杠命令菜单</summary>
+                <ul>
+                    <li><strong>触发</strong>: 输入 <code>/</code> 字符</li>
+                    <li><strong>模糊匹配</strong>: 实时过滤命令列表</li>
+                    <li><strong>选择</strong>: Enter 键确认选择</li>
+                    <li>支持的命令: /yolo, /agent, /clear, /help 等</li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>提及菜单 (Mention Menu)</summary>
+                <ul>
+                    <li><strong>触发</strong>: 输入 <code>@</code> 字符</li>
+                    <li><strong>内容</strong>: MCP 资源和工具列表</li>
+                    <li><strong>导航</strong>: 上下箭头选择，Enter 确认</li>
+                    <li>自动补全文件路径和工具名称</li>
+                </ul>
+            </details>
+
+            <details>
+                <summary>多行输入</summary>
+                <ul>
+                    <li><strong>Shift+Enter</strong>: 插入换行符</li>
+                    <li><strong>Enter</strong>: 提交消息</li>
+                    <li><strong>最大长度</strong>: 16,000 字符</li>
+                    <li>超出限制时自动截断并显示警告</li>
+                </ul>
+            </details>
+        </div>
+
+        <!-- Section 4: Rendering Pipeline -->
+        <div class="section">
+            <h2>4. 渲染管道 (Rendering Pipeline)</h2>
+
+            <div class="pipeline">
+                <div class="pipeline-step">
+                    <strong>Frame</strong><br>
+                    ratatui Frame
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>Cache</strong><br>
+                    TranscriptViewCache
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>Render</strong><br>
+                    HistoryCell
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>Display</strong><br>
+                    Terminal
+                </div>
+            </div>
+
+            <h3>渲染组件</h3>
+            <ul>
+                <li><strong>TranscriptViewCache</strong>: 缓存已渲染的行，按单元格存储，修订号变化时失效</li>
+                <li><strong>StreamingState</strong>: 跟踪流式输出状态，每个块的收集器</li>
+                <li><strong>HistoryCell</strong>: 历史单元格类型（User / Assistant / System / Error / Thinking / Tool / SubAgent）</li>
+                <li><strong>ApprovalDialogs</strong>: 工具批准对话框和权限提升请求</li>
+                <li><strong>Overlays</strong>: 命令面板、上下文菜单、会话选择器等</li>
+            </ul>
+
+            <h3>鼠标/键盘事件处理</h3>
+            <ul>
+                <li><strong>鼠标滚动</strong>: 支持平滑滚动和动量滚动</li>
+                <li><strong>鼠标点击</strong>: 支持文本选择、链接点击、按钮交互</li>
+                <li><strong>文本选择</strong>: 支持鼠标拖拽选择和键盘选择</li>
+                <li><strong>复制粘贴</strong>: 支持系统剪贴板集成</li>
+            </ul>
+        </div>
+
+        <!-- Section 5: Streaming State Management -->
+        <div class="section">
+            <h2>5. 流式状态管理 (Streaming State Management)</h2>
+
+            <h3>StreamingState 结构</h3>
+            <p>位于 <code>crates/tui/src/tui/streaming/mod.rs</code></p>
+
+            <div class="pipeline">
+                <div class="pipeline-step">
+                    <strong>Raw Delta</strong><br>
+                    原始增量
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>LineBuffer</strong><br>
+                    换行门控
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>Collector</strong><br>
+                    收集器
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>Chunker</strong><br>
+                    分块器
+                </div>
+                <span class="pipeline-arrow">→</span>
+                <div class="pipeline-step">
+                    <strong>Commit</strong><br>
+                    提交显示
+                </div>
+            </div>
+
+            <h3>BlockState 与 LineBuffer</h3>
+            <ul>
+                <li><strong>文本块</strong>: 使用换行门控，只提交完整行</li>
+                <li><strong>思考块</strong>: 绕过换行门控，实时显示</li>
+                <li><strong>MarkdownStreamCollector</strong>: 缓冲并提交完整行</li>
+                <li><strong>take_committable</strong>: 提取可提交的完整内容</li>
+            </ul>
+
+            <details>
+                <summary>流式渲染策略</summary>
+                <ul>
+                    <li><strong>防止闪烁</strong>: 只显示完整行，避免部分单词闪烁</li>
+                    <li><strong>思考模式</strong>: 实时显示推理过程，无延迟</li>
+                    <li><strong>自适应分块</strong>: 根据内容类型调整提交频率</li>
+                    <li><strong>缓存优化</strong>: 已提交内容缓存，减少重复渲染</li>
+                </ul>
+            </details>
+        </div>
+
+        <!-- Section 6: Key Structs -->
+        <div class="section">
+            <h2>6. 关键结构体 (Key Structs)</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>结构体</th>
+                        <th>文件位置</th>
+                        <th>主要字段</th>
+                        <th>用途</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>App</code></td>
+                        <td>app.rs</td>
+                        <td>830+ 字段</td>
+                        <td>全局 TUI 状态容器</td>
+                    </tr>
+                    <tr>
+                        <td><code>AppMode</code></td>
+                        <td>app.rs:57</td>
+                        <td>Agent / Yolo / Plan</td>
+                        <td>应用模式枚举</td>
+                    </tr>
+                    <tr>
+                        <td><code>ComposerState</code></td>
+                        <td>app.rs:428</td>
+                        <td>input, cursor, history</td>
+                        <td>输入编辑器状态</td>
+                    </tr>
+                    <tr>
+                        <td><code>ViewportState</code></td>
+                        <td>app.rs:449</td>
+                        <td>scroll, cache, selection</td>
+                        <td>视口和滚动状态</td>
+                    </tr>
+                    <tr>
+                        <td><code>SessionState</code></td>
+                        <td>app.rs:489</td>
+                        <td>cost, tokens, telemetry</td>
+                        <td>会话成本和令牌统计</td>
+                    </tr>
+                    <tr>
+                        <td><code>StreamingState</code></td>
+                        <td>streaming/mod.rs</td>
+                        <td>collectors, buffers</td>
+                        <td>流式输出管理</td>
+                    </tr>
+                    <tr>
+                        <td><code>HistoryCell</code></td>
+                        <td>history.rs:78</td>
+                        <td>User / Assistant / Tool</td>
+                        <td>历史记录单元格类型</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section 7: Detailed Steps Table -->
+        <div class="section">
+            <h2>7. 详细步骤表 (Detailed Steps)</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>步骤</th>
+                        <th>操作</th>
+                        <th>结构体/函数</th>
+                        <th>文件:行号</th>
+                        <th>输入/输出</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>轮询事件</td>
+                        <td><code>crossterm::event::poll()</code></td>
+                        <td>ui.rs</td>
+                        <td>timeout → Option&lt;Event&gt;</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>读取事件</td>
+                        <td><code>crossterm::event::read()</code></td>
+                        <td>ui.rs</td>
+                        <td>() → Event</td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>事件分发</td>
+                        <td><code>handle_event()</code></td>
+                        <td>app.rs</td>
+                        <td>Event → ()</td>
+                    </tr>
+                    <tr>
+                        <td>4</td>
+                        <td>更新编辑器</td>
+                        <td><code>handle_key_event()</code></td>
+                        <td>composer.rs</td>
+                        <td>KeyEvent → ()</td>
+                    </tr>
+                    <tr>
+                        <td>5</td>
+                        <td>提交消息</td>
+                        <td><code>dispatch_user_message()</code></td>
+                        <td>app.rs</td>
+                        <td>() → Op::SendMessage</td>
+                    </tr>
+                    <tr>
+                        <td>6</td>
+                        <td>渲染帧</td>
+                        <td><code>Terminal::draw()</code></td>
+                        <td>ui.rs</td>
+                        <td>App → Frame</td>
+                    </tr>
+                    <tr>
+                        <td>7</td>
+                        <td>渲染对话</td>
+                        <td><code>render_transcript()</code></td>
+                        <td>transcript.rs</td>
+                        <td>Frame + History → ()</td>
+                    </tr>
+                    <tr>
+                        <td>8</td>
+                        <td>渲染编辑器</td>
+                        <td><code>render_composer()</code></td>
+                        <td>composer.rs</td>
+                        <td>Frame + ComposerState → ()</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section 8: Performance Metrics -->
+        <div class="section">
+            <h2>8. 性能指标 (Performance Metrics)</h2>
+
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <div class="metric-label">空闲轮询间隔</div>
+                    <div class="metric-value">48ms</div>
+                    <code>UI_IDLE_POLL_MS</code>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">活跃轮询间隔</div>
+                    <div class="metric-value">24ms</div>
+                    <code>UI_ACTIVE_POLL_MS</code>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">动画轮询间隔</div>
+                    <div class="metric-value">80ms</div>
+                    <code>UI_STATUS_ANIMATION_MS</code>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">最大输入字符数</div>
+                    <div class="metric-value">16,000</div>
+                    <code>MAX_SUBMITTED_INPUT_CHARS</code>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">工具状态符号周期</div>
+                    <div class="metric-value">720ms</div>
+                    <code>TOOL_STATUS_SYMBOL_MS</code>
+                </div>
+            </div>
+
+            <h3>性能优化策略</h3>
+            <ul>
+                <li><strong>自适应轮询</strong>: 根据活动状态动态调整轮询频率</li>
+                <li><strong>视图缓存</strong>: TranscriptViewCache 缓存已渲染内容</li>
+                <li><strong>增量渲染</strong>: 只重绘变化的区域</li>
+                <li><strong>流式优化</strong>: 换行门控减少闪烁和重绘</li>
+                <li><strong>低动作模式</strong>: 支持减少动画的无障碍模式</li>
+            </ul>
+
+            <details>
+                <summary>轮询间隔说明</summary>
+                <ul>
+                    <li><strong>空闲 (48ms)</strong>: 无活动时使用，约 20 FPS</li>
+                    <li><strong>活跃 (24ms)</strong>: 有流式输出或用户交互时，约 40 FPS</li>
+                    <li><strong>动画 (80ms)</strong>: 状态动画更新周期，约 12 FPS</li>
+                    <li><strong>低动作模式</strong>: 空闲时延长到 120ms，减少 CPU 使用</li>
+                </ul>
+            </details>
+        </div>
+
+        <footer style="text-align: center; margin-top: 50px; padding: 20px; color: #666;">
+            <p>DeepSeek-TUI 架构文档 | TUI 事件循环详细设计</p>
+            <p style="margin-top: 10px;">
+                <a href="00-system-overview.html" style="color: #3b82f6;">返回系统总览</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>

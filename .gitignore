@@ -1,0 +1,35 @@
+# Config with secrets
+config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# State / local data
+~/.deepseek_tui/
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code local settings (do not commit tool-permission files)
+.claude/settings.local.json
+
+# But keep the parity-reference Rust source tree clean of its stale IDE/session files
+docs/DeepSeek-TUI-main/.idea/
+docs/DeepSeek-TUI-main/.claude/
