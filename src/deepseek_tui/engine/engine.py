@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.approval import ApprovalHandler, AutoApprovalHandler
@@ -27,6 +28,9 @@ from deepseek_tui.tools.base import ToolError
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 
+if TYPE_CHECKING:
+    from deepseek_tui.tools.runtime import ToolRuntime
+
 
 class Engine:
     def __init__(
@@ -39,17 +43,72 @@ class Engine:
         exec_policy: ExecPolicyEngine | None = None,
         approval_handler: ApprovalHandler | None = None,
         max_tool_round_trips: int = 3,
+        tool_runtime: ToolRuntime | None = None,
     ) -> None:
         self.handle = handle
         self.client = client
         self.default_model = default_model
-        self.tool_registry = tool_registry or ToolRegistry()
-        self.tool_context = tool_context or ToolContext(working_directory=Path.cwd())
+        # When a full runtime is supplied, it wins — unpack registry + context
+        # from it so managers stay paired with the context they own.
+        if tool_runtime is not None:
+            self.tool_registry = tool_runtime.registry
+            self.tool_context = tool_runtime.context
+        else:
+            self.tool_registry = tool_registry or ToolRegistry()
+            self.tool_context = tool_context or ToolContext(working_directory=Path.cwd())
+        self.tool_runtime = tool_runtime
+        # Ensure the registry dispatcher can see the context (Stage 3
+        # managers are attached on the context, not the registry).
+        self.tool_registry.set_context(self.tool_context)
         self.exec_policy = exec_policy or ExecPolicyEngine()
         self.approval_handler = approval_handler or AutoApprovalHandler()
         self.max_tool_round_trips = max_tool_round_trips
         self.session_messages: list[Message] = []
         self.turn_loop = TurnLoop(client)
+
+    @classmethod
+    async def create(
+        cls,
+        handle: EngineHandle,
+        client: LLMClient,
+        *,
+        config: object | None = None,
+        working_directory: Path | None = None,
+        mode: str = "agent",
+        default_model: str = "deepseek-chat",
+        exec_policy: ExecPolicyEngine | None = None,
+        approval_handler: ApprovalHandler | None = None,
+        max_tool_round_trips: int = 3,
+    ) -> Engine:
+        """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
+
+        This is the integration-complete path: all managers (task/subagent),
+        the full registry, and the ToolContext are created together so that
+        tools can actually reach the managers at dispatch time.
+        """
+        from deepseek_tui.config.models import Config
+        from deepseek_tui.tools.runtime import create_tool_runtime
+
+        cfg = config if isinstance(config, Config) else Config()
+        runtime = await create_tool_runtime(
+            config=cfg,
+            working_directory=working_directory,
+            mode=mode,
+        )
+        return cls(
+            handle=handle,
+            client=client,
+            default_model=default_model,
+            exec_policy=exec_policy,
+            approval_handler=approval_handler,
+            max_tool_round_trips=max_tool_round_trips,
+            tool_runtime=runtime,
+        )
+
+    async def shutdown(self) -> None:
+        """Drain managers owned by the tool runtime if Engine built it."""
+        if self.tool_runtime is not None:
+            await self.tool_runtime.shutdown()
 
     async def run(self) -> None:
         while True:

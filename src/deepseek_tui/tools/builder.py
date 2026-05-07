@@ -29,6 +29,31 @@ from deepseek_tui.tools.shell_tools import (
     ExecShellTool,
     ExecShellWaitTool,
 )
+from deepseek_tui.tools.subagent_tools import (
+    AgentAssignTool,
+    AgentCancelTool,
+    AgentCloseTool,
+    AgentListTool,
+    AgentResultTool,
+    AgentResumeTool,
+    AgentSendInputTool,
+    AgentSpawnTool,
+    AgentWaitTool,
+    DelegateToAgentTool,
+)
+from deepseek_tui.tools.task_tools import (
+    PrAttemptListTool,
+    PrAttemptPreflightTool,
+    PrAttemptReadTool,
+    PrAttemptRecordTool,
+    TaskCancelTool,
+    TaskCreateTool,
+    TaskGateRunTool,
+    TaskListTool,
+    TaskReadTool,
+    TaskShellStartTool,
+    TaskShellWaitTool,
+)
 from deepseek_tui.tools.todo_tools import TodoAddTool, TodoListTool, TodoUpdateTool, TodoWriteTool
 from deepseek_tui.tools.utility_tools import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
 from deepseek_tui.tools.web_tools import FetchUrlTool, WebSearchTool
@@ -94,6 +119,37 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             ListMcpResourceTemplatesTool(),
             ReadMcpResourceTool(),
             McpGetPromptTool(),
+        ]:
+            registry.register(tool)
+
+    if cfg.features.tasks:
+        for tool in [
+            TaskCreateTool(),
+            TaskListTool(),
+            TaskReadTool(),
+            TaskCancelTool(),
+            TaskGateRunTool(),
+            TaskShellStartTool(),
+            TaskShellWaitTool(),
+            PrAttemptRecordTool(),
+            PrAttemptListTool(),
+            PrAttemptReadTool(),
+            PrAttemptPreflightTool(),
+        ]:
+            registry.register(tool)
+
+    if cfg.features.subagents:
+        for tool in [
+            AgentSpawnTool(),
+            AgentResultTool(),
+            AgentCancelTool(),
+            AgentCloseTool(),
+            AgentResumeTool(),
+            AgentListTool(),
+            AgentSendInputTool(),
+            AgentAssignTool(),
+            AgentWaitTool(),
+            DelegateToAgentTool(),
         ]:
             registry.register(tool)
 

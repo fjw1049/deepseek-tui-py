@@ -60,6 +60,7 @@ class RetryConfig(BaseModel):
 class FeatureConfig(BaseModel):
     shell_tool: bool = True
     subagents: bool = True
+    tasks: bool = True
     web_search: bool = True
     apply_patch: bool = True
     mcp: bool = True
