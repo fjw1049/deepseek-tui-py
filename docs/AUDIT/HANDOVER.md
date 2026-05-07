@@ -101,15 +101,20 @@ make check  # = ruff + mypy + pytest
 
 ### Stage 3（4–6 周）：74 工具补齐
 
-按 `docs/AUDIT/phase_C_tools.md` 的 inventory 表逐行推进。关键 P0：
+按 `docs/AUDIT/phase_C_tools.md` 的 inventory 表逐行推进。
+
+**Stage 3 本次窗口只做这 4 个核心 P0**（用户 2026-05-07 决定）：
 
 1. **durable Task 系统**（SQLite 表 `tasks` / `task_attempts` / `task_gates` + 7 个 task 工具）
 2. **Sub-agent runtime**（用 `multiprocessing` 子进程 + mailbox，不是 `asyncio.Task`）
 3. **apply_patch 模糊匹配**（Rust `MAX_FUZZ=50` + 合并冲突检测）
 4. **PTY shell**（用 `ptyprocess` 或 `pexpect`；不集成 Seatbelt，见第九节集成债）
-5. **approval cache 指纹**（280 行 Rust → Python，按 apply_patch 路径 / exec_shell 前 3 词 / fetch_url hostname 指纹）
-6. **web_run**（Playwright 集成，需要用户授权浏览器下载）
-7. **RLM / Remember / Plan / Skill / Validate_data / Test_runner / Truncate / Request_user_input** 等
+
+**以下工具延后到 Stage 3.next**（核心逻辑跑通后再做）：
+
+5. ~~approval cache 指纹~~（延后）
+6. ~~web_run / Playwright~~（延后）
+7. ~~RLM / Remember / Plan / Skill / Validate_data / Test_runner / Truncate / Request_user_input 等~~（延后）
 
 ### Stage 4（4–6 周）：MCP / LSP / Hooks / App Server
 
