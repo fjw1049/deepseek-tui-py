@@ -105,6 +105,20 @@ class SubagentConfig(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
 
 
+class HooksConfig(BaseModel):
+    """Hook dispatcher wiring — Stage 4.2.
+
+    - ``stdout``: print every event as JSON to stdout
+    - ``jsonl_path``: append events to this file (one JSON per line);
+      empty string / None disables
+    - ``webhook_urls``: POST every event to each URL with retry
+    """
+
+    stdout: bool = False
+    jsonl_path: Path | None = None
+    webhook_urls: list[str] = Field(default_factory=list)
+
+
 class ProfileConfig(BaseModel):
     provider: str | None = None
     model: str | None = None
@@ -153,6 +167,7 @@ class Config(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     capacity: CapacityConfig = Field(default_factory=CapacityConfig)
     subagents: SubagentConfig = Field(default_factory=SubagentConfig)
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()

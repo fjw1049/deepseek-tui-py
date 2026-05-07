@@ -1,7 +1,16 @@
-"""Hook sinks for event emission."""
+"""Hook sinks for event emission.
+
+Mirrors ``crates/hooks/src/lib.rs`` (170 lines). Three sinks:
+
+- :class:`StdoutHookSink`: prints JSON events line-by-line
+- :class:`JsonlHookSink`: appends timestamped events to a JSONL log file
+- :class:`WebhookHookSink`: POSTs events to a URL with backoff retry
+  (max 2 retries, 200ms × attempt backoff — Rust parity)
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -26,7 +35,6 @@ class StdoutHookSink(HookSink):
     """Emit hook events to stdout as JSON."""
 
     async def emit(self, event: HookEvent) -> None:
-        """Emit event to stdout."""
         payload = event_to_dict(event)
         print(json.dumps(payload), flush=True)
 
@@ -38,7 +46,6 @@ class JsonlHookSink(HookSink):
         self.path = path
 
     async def emit(self, event: HookEvent) -> None:
-        """Append event to JSONL file."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, Any] = {
             "at": datetime.now(timezone.utc).isoformat(),
@@ -50,7 +57,11 @@ class JsonlHookSink(HookSink):
 
 
 class WebhookHookSink(HookSink):
-    """POST hook events to a webhook URL."""
+    """POST hook events to a webhook URL.
+
+    Mirrors Rust ``WebhookHookSink`` (lib.rs:108-153): max 2 retries,
+    200ms × retries backoff. Status != 2xx triggers retry.
+    """
 
     def __init__(self, url: str, max_retries: int = 2) -> None:
         self.url = url
@@ -58,13 +69,11 @@ class WebhookHookSink(HookSink):
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Lazy-init HTTP client."""
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=10.0)
         return self._client
 
     async def emit(self, event: HookEvent) -> None:
-        """POST event to webhook with retries."""
         client = await self._get_client()
         payload: dict[str, Any] = {
             "at": datetime.now(timezone.utc).isoformat(),
@@ -84,13 +93,9 @@ class WebhookHookSink(HookSink):
                 if retries >= self.max_retries:
                     raise RuntimeError(f"webhook request failed: {e}") from e
             retries += 1
-            await httpx.AsyncClient().aclose()  # brief backoff
-            import asyncio
-
             await asyncio.sleep(0.2 * retries)
 
     async def close(self) -> None:
-        """Close HTTP client."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None

@@ -12,6 +12,10 @@ Scope for Stage 4.1:
 - Thin handlers for the 7 HTTP endpoints: healthz / thread / app /
   prompt / tool / jobs / mcp_startup
 - MCP startup is best-effort (Stage 4.3 wires real MCP)
+
+Stage 4.2 adds a :class:`HookDispatcher` that fans lifecycle events
+(Response*, ToolLifecycle, ApprovalLifecycle, JobLifecycle) to any
+sinks configured via ``config.hooks`` (stdout / JSONL file / webhooks).
 """
 
 from __future__ import annotations
@@ -24,10 +28,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.config.models import Config
-from deepseek_tui.protocol.events import (
+from deepseek_tui.hooks.dispatcher import HookDispatcher
+from deepseek_tui.hooks.events import (
+    JobLifecycleEvent,
     ResponseDeltaEvent,
     ResponseEndEvent,
     ResponseStartEvent,
+    ToolLifecycleEvent,
+)
+from deepseek_tui.hooks.sinks import JsonlHookSink, StdoutHookSink, WebhookHookSink
+from deepseek_tui.protocol.events import (
+    ResponseDeltaEvent as ResponseDeltaFrame,
+)
+from deepseek_tui.protocol.events import (
+    ResponseEndEvent as ResponseEndFrame,
+)
+from deepseek_tui.protocol.events import (
+    ResponseStartEvent as ResponseStartFrame,
 )
 from deepseek_tui.protocol.messages import Message
 
@@ -96,11 +113,13 @@ class AppRuntime:
         config: Config | None = None,
         tool_runtime: ToolRuntime | None = None,
         working_directory: Path | None = None,
+        hooks: HookDispatcher | None = None,
     ) -> None:
         self.config = config or Config()
         self.working_directory = (working_directory or Path.cwd()).resolve()
         self._tool_runtime: ToolRuntime | None = tool_runtime
         self.threads = ThreadStore()
+        self.hooks = hooks if hooks is not None else _build_hook_dispatcher(self.config)
 
     @classmethod
     async def create(
@@ -123,6 +142,14 @@ class AppRuntime:
     async def shutdown(self) -> None:
         if self._tool_runtime is not None:
             await self._tool_runtime.shutdown()
+        # Webhook sinks own httpx clients; close them if present.
+        for sink in self.hooks.sinks:
+            close = getattr(sink, "close", None)
+            if callable(close):
+                try:
+                    await close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     # --- handlers ----------------------------------------------------------
 
@@ -220,6 +247,7 @@ class AppRuntime:
 
         model = rec.model or self.config.default_text_model
         response_id = f"resp-{uuid.uuid4().hex[:12]}"
+        await self._emit_prompt_hooks(response_id)
         events = _build_prompt_event_frames(response_id)
         output_payload = {
             "provider": self.config.provider,
@@ -258,8 +286,21 @@ class AppRuntime:
         rec.messages.append(Message.user(text))
 
         response_id = f"resp-{uuid.uuid4().hex[:12]}"
+        await self._emit_prompt_hooks(response_id)
         for frame in _build_prompt_event_frames(response_id):
             yield frame
+
+    async def _emit_prompt_hooks(self, response_id: str) -> None:
+        """Fan-out the 3 response-lifecycle hook events (Rust parity).
+
+        Kept separate from event-frame construction so HTTP responses and
+        SSE streams share the same hook emission path.
+        """
+        await self.hooks.emit(ResponseStartEvent(response_id=response_id))
+        await self.hooks.emit(
+            ResponseDeltaEvent(response_id=response_id, delta="model-selected")
+        )
+        await self.hooks.emit(ResponseEndEvent(response_id=response_id))
 
     async def handle_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a single tool call through the registry.
@@ -280,14 +321,47 @@ class AppRuntime:
 
         if self._tool_runtime is None:
             return {"ok": False, "error": "tool runtime not initialized"}
+        response_id = f"tool-{uuid.uuid4().hex[:12]}"
+        await self.hooks.emit(
+            ToolLifecycleEvent(
+                response_id=response_id,
+                tool_name=tool_name,
+                phase="precheck",
+                payload={"arguments": arguments},
+            )
+        )
         try:
             tool = self._tool_runtime.registry.get(tool_name)
         except Exception as exc:  # noqa: BLE001 — registry raises ToolError
+            await self.hooks.emit(
+                ToolLifecycleEvent(
+                    response_id=response_id,
+                    tool_name=tool_name,
+                    phase="error",
+                    payload={"error": str(exc)},
+                )
+            )
             return {"ok": False, "error": str(exc)}
         try:
             result = await tool.execute(arguments, self._tool_runtime.context)
         except Exception as exc:  # noqa: BLE001 — surface to caller
+            await self.hooks.emit(
+                ToolLifecycleEvent(
+                    response_id=response_id,
+                    tool_name=tool_name,
+                    phase="error",
+                    payload={"error": f"{type(exc).__name__}: {exc}"},
+                )
+            )
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        await self.hooks.emit(
+            ToolLifecycleEvent(
+                response_id=response_id,
+                tool_name=tool_name,
+                phase="complete",
+                payload={"success": result.success},
+            )
+        )
         return {
             "ok": result.success,
             "content": result.content,
@@ -348,6 +422,13 @@ class AppRuntime:
                 task_count = counts.queued + counts.running
             if self._tool_runtime.subagent_manager is not None:
                 subagent_count = self._tool_runtime.subagent_manager.running_count()
+        await self.hooks.emit(
+            JobLifecycleEvent(
+                job_id="app-snapshot",
+                phase="snapshot",
+                detail=f"tasks={task_count} subagents={subagent_count}",
+            )
+        )
         return {
             "ok": True,
             "jobs": {
@@ -448,9 +529,27 @@ def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
     Mirrors Rust ``Runtime::handle_prompt`` (lib.rs:938-953).
     """
     return [
-        ResponseStartEvent(response_id=response_id).model_dump(),
-        ResponseDeltaEvent(
+        ResponseStartFrame(response_id=response_id).model_dump(),
+        ResponseDeltaFrame(
             response_id=response_id, delta="model-selected"
         ).model_dump(),
-        ResponseEndEvent(response_id=response_id).model_dump(),
+        ResponseEndFrame(response_id=response_id).model_dump(),
     ]
+
+
+def _build_hook_dispatcher(config: Config) -> HookDispatcher:
+    """Construct a HookDispatcher from ``config.hooks``.
+
+    Mirrors Rust ``build_state`` (app-server/src/lib.rs:264-287) — stdout
+    + jsonl by default, webhooks per URL. Stage 4.2 scope.
+    """
+    dispatcher = HookDispatcher()
+    hooks_cfg = config.hooks
+    if hooks_cfg.stdout:
+        dispatcher.add_sink(StdoutHookSink())
+    if hooks_cfg.jsonl_path is not None:
+        dispatcher.add_sink(JsonlHookSink(hooks_cfg.jsonl_path.expanduser()))
+    for url in hooks_cfg.webhook_urls:
+        if url.strip():
+            dispatcher.add_sink(WebhookHookSink(url))
+    return dispatcher
