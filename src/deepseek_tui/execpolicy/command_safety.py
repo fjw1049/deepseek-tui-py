@@ -376,25 +376,30 @@ def _all_segments_known_safe(command: str) -> bool:
 def classify_command(tokens: list[str]) -> str:
     """Classify a command from token list to canonical prefix.
 
-    The prefix is determined by COMMAND_ARITY: for each known prefix,
-    concatenate the first N tokens (skipping flags) to get the canonical form.
+    Mirrors Rust ``classify_command`` (command_safety.rs:268-300):
+
+    1. Drop flag tokens (starting with ``-``) entirely.
+    2. Lowercase positionals.
+    3. Try the COMMAND_ARITY dict from longest plausible prefix
+       (max depth 3) down to 1 positional word.
+    4. On hit, return ``positional[:min(arity, len(positional))]`` joined
+       by spaces.
+    5. On miss, return the bare base command (``positional[0]``).
     """
     if not tokens:
         return ""
 
-    # Build the command by joining non-flag tokens
-    cmd_parts = []
-    for token in tokens:
-        if token.startswith("-"):
-            continue
-        cmd_parts.append(token)
+    positional = [t.lower() for t in tokens if not t.startswith("-")]
+    if not positional:
+        return ""
 
-        # Check if current prefix is in COMMAND_ARITY
-        prefix = " ".join(cmd_parts).lower()
-        if prefix in COMMAND_ARITY:
-            arity = COMMAND_ARITY[prefix]
-            if len(cmd_parts) >= arity:
-                return prefix
+    max_depth = min(len(positional), 3)
+    for depth in range(max_depth, 0, -1):
+        candidate = " ".join(positional[:depth])
+        if candidate in COMMAND_ARITY:
+            arity = COMMAND_ARITY[candidate]
+            take = min(arity, len(positional))
+            return " ".join(positional[:take])
 
-    # Return joined tokens if no match
-    return " ".join(tokens).lower()
+    # No dictionary match → bare base command name.
+    return positional[0]

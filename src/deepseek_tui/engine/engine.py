@@ -19,6 +19,11 @@ from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.ops import CancelRequestOp, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
+from deepseek_tui.execpolicy.approval_cache import (
+    ApprovalCache,
+    ApprovalCacheStatus,
+    build_approval_key,
+)
 from deepseek_tui.execpolicy.engine import ExecPolicyEngine
 from deepseek_tui.execpolicy.models import ApprovalDecision
 from deepseek_tui.lsp import (
@@ -75,6 +80,9 @@ class Engine:
         # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
+        # Stage 3.next.1 approval cache — fingerprints repeat tool calls
+        # so an APPROVED_SESSION grant doesn't have to re-prompt.
+        self.approval_cache = ApprovalCache()
 
     @classmethod
     async def create(
@@ -209,36 +217,68 @@ class Engine:
                 tool = self.tool_registry.get(tool_call.name)
                 approval_request = self.exec_policy.evaluate(tool_call.name, tool.capabilities())
                 if approval_request is not None:
-                    await self.handle.emit(
-                        ApprovalRequiredEvent(
-                            tool_call_id=tool_call.id,
-                            request=approval_request,
-                        )
+                    # Stage 3.next.1: check fingerprint cache first.
+                    # APPROVED → skip handler entirely (silent reuse).
+                    # DENIED   → grant was one-shot and consumed; fall
+                    #            through to handler.
+                    # UNKNOWN  → no prior decision; fall through to handler.
+                    cache_key = build_approval_key(
+                        tool_call.name, tool_call.arguments
                     )
-                    decision = await self.approval_handler.request_approval(
-                        tool_call.id,
-                        approval_request,
-                    )
-                    await self.handle.emit(
-                        ApprovalResolvedEvent(
-                            tool_call_id=tool_call.id,
-                            approved=decision
-                            in {ApprovalDecision.APPROVED, ApprovalDecision.APPROVED_SESSION},
-                            reason=decision.value,
-                        )
-                    )
-                    if decision is ApprovalDecision.DENIED:
-                        reason = f"Tool {tool_call.name} denied by approval policy"
+                    cache_status = self.approval_cache.check(cache_key)
+                    if cache_status is ApprovalCacheStatus.APPROVED:
                         await self.handle.emit(
-                            SandboxDeniedEvent(
+                            ApprovalResolvedEvent(
                                 tool_call_id=tool_call.id,
-                                tool_name=tool_call.name,
-                                reason=reason,
+                                approved=True,
+                                reason="cached_session",
                             )
                         )
-                        results.append(Message.tool_result(tool_call.id, reason, is_error=True))
-                        continue
-                    self.exec_policy.record_decision(tool_call.name, decision)
+                    else:
+                        await self.handle.emit(
+                            ApprovalRequiredEvent(
+                                tool_call_id=tool_call.id,
+                                request=approval_request,
+                            )
+                        )
+                        decision = await self.approval_handler.request_approval(
+                            tool_call.id,
+                            approval_request,
+                        )
+                        await self.handle.emit(
+                            ApprovalResolvedEvent(
+                                tool_call_id=tool_call.id,
+                                approved=decision
+                                in {
+                                    ApprovalDecision.APPROVED,
+                                    ApprovalDecision.APPROVED_SESSION,
+                                },
+                                reason=decision.value,
+                            )
+                        )
+                        if decision is ApprovalDecision.DENIED:
+                            reason = f"Tool {tool_call.name} denied by approval policy"
+                            await self.handle.emit(
+                                SandboxDeniedEvent(
+                                    tool_call_id=tool_call.id,
+                                    tool_name=tool_call.name,
+                                    reason=reason,
+                                )
+                            )
+                            results.append(
+                                Message.tool_result(
+                                    tool_call.id, reason, is_error=True
+                                )
+                            )
+                            continue
+                        # Persist the grant so repeat calls match.
+                        self.approval_cache.insert(
+                            cache_key,
+                            approved_for_session=(
+                                decision is ApprovalDecision.APPROVED_SESSION
+                            ),
+                        )
+                        self.exec_policy.record_decision(tool_call.name, decision)
                 result = await self.tool_registry.execute(
                     tool_call.name,
                     tool_call.arguments,
