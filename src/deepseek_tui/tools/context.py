@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from deepseek_tui.execpolicy.policy import Policy
+    from deepseek_tui.tools.task_manager import TaskManager
 
 
 @dataclass(slots=True)
@@ -15,6 +16,7 @@ class ToolContext:
     trust_mode: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Policy | None = None
+    task_manager: TaskManager | None = None
 
     def resolve_path(self, path: str) -> Path:
         workspace = self.working_directory.expanduser().resolve()

@@ -48,7 +48,8 @@
 | 2.4 | `fd8ac3c` | engine/tool_parser 文本工具解析 + 流片段重组（~470 行）+ 5 种格式 + 智能 fallback | +25 |
 | 2.5 | `f5fa794` | execpolicy 集成：Policy 绑定 ToolContext + exec_shell Decision 检查（FORBIDDEN/PROMPT） | +0 |
 | 2.6 | `b3b0d83` | command_safety 分析：SafetyLevel×4 + COMMAND_ARITY 163 前缀 + 11 级检查管道 + 危险模式检测 | +24 |
-| **累计** | | | **453 passed, 2 skipped** |
+| 3.1 | _pending_ | durable Task 系统：TaskManager（~700 行）+ JSON 文件持久化 + 重启恢复（Running→Queued）+ 11 工具接通 | +33 |
+| **累计** | | | **486 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
@@ -421,6 +422,8 @@ deepseek-tui-py/
 | 条目 | Stage | 简化内容 | 原因 | 恢复完整行为需要做什么 |
 |---|---|---|---|---|
 | ⬜ 2.7.simplified: macOS Seatbelt sandbox | 2.7 | 跳过 `sandbox/seatbelt.py` 不实现；`exec_shell` 直接 `subprocess.create_subprocess_shell()` 无 OS 级隔离 | 用户 2026-05-07 决定：命令黑名单 + cwd 边界 + env 清洗足够本地开发用；Seatbelt 做完约 ~800 行工作量换来的是"OS 级兜底"，在本地开发场景收益不高 | 参考 `crates/tui/src/sandbox/{mod,policy,seatbelt}.rs`（~1,364 行），实现：1) `SandboxPolicy`（读/写/执行 allowlist） 2) `SeatbeltProfile` XML 生成 3) `exec_shell` 子进程用 `sandbox-exec -p <profile>` 包装 4) `CommandSpec` 编排器 |
+| ⬜ 3.1.simplified: TaskExecutor 占位版 | 3.1 | `task_manager.py::_stub_executor` 只 sleep 50ms 返回合成 summary，不真实调用 LLM / 不驱动 engine / 不真正产出 artifacts | 用户 2026-05-07 决定：让 TaskManager 的持久化/队列/状态机/重启恢复四层骨架今天落地；真 Executor 等 Stage 4 engine 链接通后替换 | 实现 `EngineTaskExecutor`：接 `engine/turn_loop` + `client/deepseek_client` + `ToolRegistry`，把 Rust `task_manager.rs::EngineTaskExecutor`（行 413-699）行为翻过来 —— 含 `TaskExecutionEvent` 流 + `apply_execution_event` + runtime_event_count 累加 + 产出 artifacts |
+| ⬜ 3.1.simplified: task_shell_start/wait 空壳 | 3.1 | `TaskShellStartTool` / `TaskShellWaitTool` 直接 `raise ToolError("not yet implemented")` | PTY shell 归在 Stage 3.4（本次窗口也做，但还没到） | 把 Stage 3.4 PTY 实现接进这两个工具；artifacts 写入 `~/.deepseek/artifacts/` 并追加到 `TaskRecord.artifacts` |
 
 > **约定**：✅ 已还清 / ⚠️ 部分还清 / ⬜ 未还清
 
