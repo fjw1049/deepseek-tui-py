@@ -27,6 +27,9 @@ from deepseek_tui.tools.task_manager import (
     TaskStatus,
     _utc_now_iso,
 )
+from deepseek_tui.tools.task_manager import (
+    TaskTimelineEntry as _TimelineEntryFactory,
+)
 
 _MAX_SUMMARY_CHARS = 900
 
@@ -251,8 +254,9 @@ class TaskShellStartTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "[stub] Start a background shell job attached to a task. "
-            "Full PTY implementation lands in Stage 3.4 (see integration debt)."
+            "Start a background shell job attached to a durable task. "
+            "Uses PTY by default so interactive commands (REPL, ssh) work. "
+            "Returns a process_id for task_shell_wait."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -261,6 +265,7 @@ class TaskShellStartTool(ToolSpec):
             "properties": {
                 "id": {"type": "string"},
                 "command": {"type": "string"},
+                "pty": {"type": "boolean"},
             },
             "required": ["id", "command"],
             "additionalProperties": False,
@@ -275,7 +280,50 @@ class TaskShellStartTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        raise ToolError("task_shell_start not yet implemented; see Stage 3.4")
+        from deepseek_tui.tools.shell_tools import ExecShellTool
+
+        manager = _require_manager(context)
+        task_id = _require_string(input_data, "id")
+        command = _require_string(input_data, "command")
+        use_pty = bool(input_data.get("pty", True))
+
+        # Ensure task exists (raises if not)
+        try:
+            task = await manager.get_task(task_id)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
+
+        # Launch background shell via ExecShellTool — reuse its pty logic
+        shell_result = await ExecShellTool().execute(
+            {"command": command, "background": True, "pty": use_pty},
+            context,
+        )
+        process_id = shell_result.content  # uuid string returned as content
+        now = _utc_now_iso()
+        task.timeline.append(
+            _TimelineEntryFactory(
+                timestamp=now,
+                kind="shell_started",
+                summary=f"bg shell: {command[:120]}",
+            )
+        )
+        # Track mapping task_id → process_id list via context metadata.
+        shell_map: dict[str, list[str]] = context.metadata.setdefault(
+            "task_shell_process_ids", {}
+        )
+        shell_map.setdefault(task_id, []).append(process_id)
+        async with manager._lock:  # noqa: SLF001
+            manager._persist_task_locked(task)  # noqa: SLF001
+        return ToolResult(
+            success=True,
+            content=process_id,
+            metadata={
+                "task_id": task_id,
+                "process_id": process_id,
+                "pty": use_pty,
+                "command": command,
+            },
+        )
 
 
 class TaskShellWaitTool(ToolSpec):
@@ -283,12 +331,18 @@ class TaskShellWaitTool(ToolSpec):
         return "task_shell_wait"
 
     def description(self) -> str:
-        return "[stub] Wait for a task-attached background shell job."
+        return (
+            "Wait for a task-attached background shell job to finish and "
+            "record its output as a task artifact."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"process_id": {"type": "string"}},
+            "properties": {
+                "process_id": {"type": "string"},
+                "task_id": {"type": "string"},
+            },
             "required": ["process_id"],
             "additionalProperties": False,
         }
@@ -299,7 +353,53 @@ class TaskShellWaitTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        raise ToolError("task_shell_wait not yet implemented; see Stage 3.4")
+        from deepseek_tui.tools.shell_tools import ExecShellWaitTool
+
+        process_id = _require_string(input_data, "process_id")
+        task_id_opt = _optional_string(input_data, "task_id")
+
+        # Delegate to ExecShellWaitTool — it handles pty and pipe cases.
+        wait_result = await ExecShellWaitTool().execute(
+            {"process_id": process_id}, context
+        )
+
+        # Record artifact on the task if we know which one.
+        if task_id_opt is not None:
+            manager = _require_manager(context)
+            try:
+                task = await manager.get_task(task_id_opt)
+            except KeyError as exc:
+                raise ToolError(str(exc)) from exc
+            now = _utc_now_iso()
+            from deepseek_tui.tools.task_manager import TaskArtifactRef
+
+            task.artifacts.append(
+                TaskArtifactRef(
+                    label=f"shell[{process_id[:8]}]",
+                    path=f"memory://shell/{process_id}",
+                    summary=(wait_result.content or "")[:400],
+                    created_at=now,
+                )
+            )
+            task.timeline.append(
+                _TimelineEntryFactory(
+                    timestamp=now,
+                    kind="shell_completed",
+                    summary=f"rc={wait_result.metadata.get('returncode')}",
+                )
+            )
+            async with manager._lock:  # noqa: SLF001
+                manager._persist_task_locked(task)  # noqa: SLF001
+
+        merged_meta = dict(wait_result.metadata)
+        merged_meta["process_id"] = process_id
+        if task_id_opt is not None:
+            merged_meta["task_id"] = task_id_opt
+        return ToolResult(
+            success=wait_result.success,
+            content=wait_result.content,
+            metadata=merged_meta,
+        )
 
 
 class PrAttemptRecordTool(ToolSpec):

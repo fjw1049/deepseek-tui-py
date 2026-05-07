@@ -147,14 +147,36 @@ class TestTaskGateRun:
         assert read.metadata["gates_len"] == 1
 
 
-class TestTaskShellStubs:
-    async def test_shell_start_is_stub(self, ctx: ToolContext) -> None:
-        with pytest.raises(ToolError, match="not yet implemented"):
-            await TaskShellStartTool().execute({"id": "x", "command": "ls"}, ctx)
+class TestTaskShellIntegration:
+    """Stage 3.4 wiring: task_shell_start/wait no longer stubs."""
 
-    async def test_shell_wait_is_stub(self, ctx: ToolContext) -> None:
-        with pytest.raises(ToolError, match="not yet implemented"):
-            await TaskShellWaitTool().execute({"process_id": "x"}, ctx)
+    async def test_shell_start_and_wait_end_to_end(self, ctx: ToolContext) -> None:
+        created = await TaskCreateTool().execute({"prompt": "shell"}, ctx)
+        task_id = created.metadata["task_id"]
+
+        # Non-pty so the test is simple and robust in CI.
+        start = await TaskShellStartTool().execute(
+            {"id": task_id, "command": "echo hi", "pty": False}, ctx
+        )
+        process_id = start.metadata["process_id"]
+        assert start.metadata["pty"] is False
+
+        wait = await TaskShellWaitTool().execute(
+            {"process_id": process_id, "task_id": task_id}, ctx
+        )
+        assert wait.success is True
+        assert "hi" in wait.content
+
+        read = await TaskReadTool().execute({"id": task_id}, ctx)
+        # One timeline entry for started + one for completed = 4 including
+        # "queued" + potential "running".
+        assert read.metadata["timeline_len"] >= 3
+
+    async def test_shell_start_rejects_unknown_task(self, ctx: ToolContext) -> None:
+        with pytest.raises(ToolError, match="Task not found"):
+            await TaskShellStartTool().execute(
+                {"id": "task_missing00", "command": "ls"}, ctx
+            )
 
 
 class TestPrAttempt:
