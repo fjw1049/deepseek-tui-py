@@ -30,7 +30,7 @@
 
 ---
 
-## 二、项目当前状态（2026-05-06）
+## 二、项目当前状态（2026-05-07）
 
 ### 已完成
 
@@ -47,7 +47,8 @@
 | 2.3 | `500c4b4` | engine/compaction 消息汇总（~450 行）+ working_set 去重 + 智能 pin + LLM 总结 | +23 |
 | 2.4 | `fd8ac3c` | engine/tool_parser 文本工具解析 + 流片段重组（~470 行）+ 5 种格式 + 智能 fallback | +25 |
 | 2.5 | `f5fa794` | execpolicy 集成：Policy 绑定 ToolContext + exec_shell Decision 检查（FORBIDDEN/PROMPT） | +0 |
-| **累计** | | | **429 passed, 2 skipped** |
+| 2.6 | `b3b0d83` | command_safety 分析：SafetyLevel×4 + COMMAND_ARITY 163 前缀 + 11 级检查管道 + 危险模式检测 | +24 |
+| **累计** | | | **453 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
