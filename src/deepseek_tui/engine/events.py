@@ -8,6 +8,11 @@ from deepseek_tui.protocol.responses import ToolCall, Usage
 
 
 @dataclass(frozen=True, slots=True)
+class StatusEvent:
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class TurnStartedEvent:
     user_text: str
 
@@ -73,7 +78,8 @@ class TurnCompleteEvent:
 
 
 EngineEvent = (
-    TurnStartedEvent
+    StatusEvent
+    | TurnStartedEvent
     | TextDeltaEvent
     | ThinkingDeltaEvent
     | ToolCallEvent

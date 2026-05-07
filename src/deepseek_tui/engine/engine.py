@@ -91,15 +91,18 @@ class Engine:
         system_prompt: str,
         max_tokens: int | None,
     ) -> TurnResult:
+        tools = self.tool_registry.to_api_tools()
         for _ in range(self.max_tool_round_trips + 1):
             request = MessageRequest(
                 model=model,
                 messages=messages,
                 system_prompt=system_prompt,
-                tools=self.tool_registry.to_api_tools(),
+                tools=tools,
                 max_tokens=max_tokens,
             )
-            result = await self.turn_loop.run(request, self.handle.emit, self.handle.cancel_event)
+            result = await self.turn_loop.run(
+                request, self.handle.emit, self.handle.cancel_event, tools=tools
+            )
             if result.cancelled:
                 return result
             if result.assistant_message is not None:
