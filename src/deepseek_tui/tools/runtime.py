@@ -23,6 +23,7 @@ from typing import Any
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.execpolicy.policy import Policy
+from deepseek_tui.lsp import LSP_MANAGER_KEY, LspConfig, LspManager
 from deepseek_tui.mcp.manager import McpManager
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
@@ -48,6 +49,7 @@ class ToolRuntime:
     subagent_manager: SubAgentManager | None
     mailbox: Mailbox | None
     mcp_manager: McpManager | None
+    lsp_manager: LspManager | None
 
     async def __aenter__(self) -> ToolRuntime:
         return self
@@ -64,6 +66,8 @@ class ToolRuntime:
             await self.task_manager.shutdown()
         if self.mcp_manager is not None:
             await self.mcp_manager.stop_all()
+        if self.lsp_manager is not None:
+            await self.lsp_manager.close_all()
 
 
 async def create_tool_runtime(
@@ -124,12 +128,26 @@ async def create_tool_runtime(
     if mcp is not None and start_mcp:
         await mcp.start_all()
 
+    lsp: LspManager | None = None
+    if cfg.lsp.enabled:
+        lsp = LspManager(
+            LspConfig(
+                enabled=True,
+                poll_after_edit_ms=cfg.lsp.poll_after_edit_ms,
+                max_diagnostics_per_file=cfg.lsp.max_diagnostics_per_file,
+                include_warnings=cfg.lsp.include_warnings,
+                servers=dict(cfg.lsp.servers),
+            )
+        )
+
     registry = build_default_registry(cfg, mode=mode)
     metadata: dict[str, Any] = {}
     if mcp is not None:
         from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
 
         metadata[MCP_MANAGER_KEY] = mcp
+    if lsp is not None:
+        metadata[LSP_MANAGER_KEY] = lsp
 
     context = ToolContext(
         working_directory=workspace,
@@ -147,6 +165,7 @@ async def create_tool_runtime(
         subagent_manager=subagent_manager,
         mailbox=mailbox,
         mcp_manager=mcp,
+        lsp_manager=lsp,
     )
 
 

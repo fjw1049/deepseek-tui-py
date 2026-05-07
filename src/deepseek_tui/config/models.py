@@ -119,6 +119,21 @@ class HooksConfig(BaseModel):
     webhook_urls: list[str] = Field(default_factory=list)
 
 
+class LspSettings(BaseModel):
+    """Post-edit LSP diagnostics settings — Stage 4.4.
+
+    Mirrors Rust ``LspConfig`` (crates/tui/src/lsp/mod.rs:55-103). The
+    engine collects diagnostics after every successful edit tool and
+    injects them as a synthetic user message before the next API call.
+    """
+
+    enabled: bool = False
+    poll_after_edit_ms: int = 5000
+    max_diagnostics_per_file: int = 20
+    include_warnings: bool = False
+    servers: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class ProfileConfig(BaseModel):
     provider: str | None = None
     model: str | None = None
@@ -168,6 +183,7 @@ class Config(BaseModel):
     capacity: CapacityConfig = Field(default_factory=CapacityConfig)
     subagents: SubagentConfig = Field(default_factory=SubagentConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
+    lsp: LspSettings = Field(default_factory=LspSettings)
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()
