@@ -33,3 +33,4 @@ dist/
 # But keep the parity-reference Rust source tree clean of its stale IDE/session files
 docs/DeepSeek-TUI-main/.idea/
 docs/DeepSeek-TUI-main/.claude/
+.claude/

@@ -439,10 +439,46 @@ class AppRuntime:
         }
 
     async def mcp_startup(self) -> dict[str, Any]:
-        """MCP startup summary. Stage 4.3 will plug in the real manager."""
+        """Start every enabled MCP server and summarize results.
+
+        Mirrors Rust ``Runtime::mcp_startup`` (core/src/lib.rs). Returns
+        per-server status so the client can render a dashboard.
+        """
+        if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
+            return {
+                "ok": True,
+                "summary": {"servers": [], "note": "mcp-disabled"},
+            }
+        manager = self._tool_runtime.mcp_manager
+        summaries: list[dict[str, Any]] = []
+        for name in manager.server_names:
+            cfg = manager._configs.get(name)  # noqa: SLF001
+            if cfg is None or not cfg.enabled:
+                summaries.append(
+                    {"name": name, "status": "disabled", "transport": _transport_label(cfg)}
+                )
+                continue
+            try:
+                await manager._ensure_client(name)  # noqa: SLF001
+                summaries.append(
+                    {
+                        "name": name,
+                        "status": "started",
+                        "transport": _transport_label(cfg),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                summaries.append(
+                    {
+                        "name": name,
+                        "status": "failed",
+                        "transport": _transport_label(cfg),
+                        "error": str(exc),
+                    }
+                )
         return {
-            "ok": True,
-            "summary": {"servers": [], "note": "stage-4.3-pending"},
+            "ok": all(s.get("status") != "failed" for s in summaries),
+            "summary": {"servers": summaries},
         }
 
 
@@ -454,6 +490,17 @@ def _pick_str(data: dict[str, Any], key: str) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _transport_label(cfg: Any) -> str:
+    """Describe an MCP server config's transport for the startup summary."""
+    if cfg is None:
+        return "unknown"
+    if getattr(cfg, "url", None):
+        return "sse"
+    if getattr(cfg, "command", None):
+        return "stdio"
+    return "unknown"
 
 
 def _require_str(data: dict[str, Any], key: str) -> str:
