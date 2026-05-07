@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from deepseek_tui.execpolicy.policy import Policy
+    from deepseek_tui.tools.subagent import SubAgentManager
     from deepseek_tui.tools.task_manager import TaskManager
 
 
@@ -17,6 +18,7 @@ class ToolContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Policy | None = None
     task_manager: TaskManager | None = None
+    subagent_manager: SubAgentManager | None = None
 
     def resolve_path(self, path: str) -> Path:
         workspace = self.working_directory.expanduser().resolve()

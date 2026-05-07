@@ -37,10 +37,14 @@ from .shell_tools import (
 from .subagent_tools import (
     AgentAssignTool,
     AgentCancelTool,
+    AgentCloseTool,
     AgentListTool,
     AgentResultTool,
+    AgentResumeTool,
+    AgentSendInputTool,
     AgentSpawnTool,
     AgentWaitTool,
+    DelegateToAgentTool,
 )
 from .task_tools import (
     PrAttemptListTool,
@@ -62,8 +66,11 @@ from .web_tools import FetchUrlTool, FinanceTool, WebRunTool, WebSearchTool
 __all__ = [
     "AgentAssignTool",
     "AgentCancelTool",
+    "AgentCloseTool",
     "AgentListTool",
     "AgentResultTool",
+    "AgentResumeTool",
+    "AgentSendInputTool",
     "AgentSpawnTool",
     "AgentWaitTool",
     "ApplyPatchTool",
@@ -75,6 +82,7 @@ __all__ = [
     "AutomationResumeTool",
     "AutomationRunTool",
     "AutomationUpdateTool",
+    "DelegateToAgentTool",
     "DiagnosticsTool",
     "EditFileTool",
     "ExecShellCancelTool",

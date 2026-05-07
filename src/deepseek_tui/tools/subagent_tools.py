@@ -1,22 +1,80 @@
+"""Sub-agent tools — thin wrappers over :class:`SubAgentManager`.
+
+Mirrors Rust ``crates/tui/src/tools/subagent/mod.rs`` (3,604 lines).
+All 10 tools delegate to ``context.subagent_manager``.
+"""
+
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from typing import Any
 
-from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
+from deepseek_tui.tools.base import (
+    ApprovalRequirement,
+    ToolCapability,
+    ToolError,
+    ToolResult,
+    ToolSpec,
+)
 from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.subagent import (
+    DEFAULT_RESULT_TIMEOUT_MS,
+    MAX_RESULT_TIMEOUT_MS,
+    MIN_WAIT_TIMEOUT_MS,
+    SpawnRequest,
+    SubAgentAssignment,
+    SubAgentManager,
+    SubAgentResult,
+    SubAgentType,
+)
 
-_AGENT_STORE_KEY = "agents"
+
+def _require_manager(context: ToolContext) -> SubAgentManager:
+    manager = context.subagent_manager
+    if manager is None:
+        raise ToolError("SubAgentManager is not attached to this context")
+    return manager
 
 
-@dataclass(slots=True)
-class SubAgent:
-    id: str
-    task: str
-    status: str
-    assignee: str = ""
-    result: str = ""
-    metadata: dict[str, object] = field(default_factory=dict)
+def _result_to_json(result: SubAgentResult) -> dict[str, Any]:
+    return {
+        "agent_id": result.agent_id,
+        "agent_type": result.agent_type.value,
+        "assignment": asdict(result.assignment),
+        "model": result.model,
+        "nickname": result.nickname,
+        "status": result.status.to_dict(),
+        "result": result.result,
+        "steps_taken": result.steps_taken,
+        "duration_ms": result.duration_ms,
+        "from_prior_session": result.from_prior_session,
+    }
+
+
+def _pick_str(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _pick_bool(data: dict[str, Any], *keys: str, default: bool = False) -> bool:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, bool):
+            return value
+    return default
+
+
+def _pick_int(data: dict[str, Any], *keys: str, default: int | None = None) -> int | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+    return default
 
 
 class AgentSpawnTool(ToolSpec):
@@ -24,37 +82,71 @@ class AgentSpawnTool(ToolSpec):
         return "agent_spawn"
 
     def description(self) -> str:
-        return "Spawn a sub-agent to work on a task."
+        return (
+            "Spawn a background sub-agent. Sub-agents run with a filtered "
+            "toolset and inherit the workspace configuration from the session."
+        )
 
-    def input_schema(self) -> dict[str, object]:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "task": {"type": "string"},
-                "assignee": {"type": "string"},
+                "prompt": {"type": "string"},
+                "message": {"type": "string"},
+                "objective": {"type": "string"},
+                "type": {"type": "string"},
+                "agent_type": {"type": "string"},
+                "agent_name": {"type": "string"},
+                "role": {"type": "string"},
+                "allowed_tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "model": {"type": "string"},
+                "nickname": {"type": "string"},
             },
-            "required": ["task"],
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE]
+        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
 
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        task = _require_string(input_data, "task")
-        assignee = _optional_string(input_data, "assignee") or ""
-        store = _agent_store(context)
-        agent = SubAgent(
-            id=str(store["next_id"]),
-            task=task,
-            status="running",
-            assignee=assignee,
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        prompt = _pick_str(input_data, "prompt", "message", "objective")
+        if prompt is None:
+            raise ToolError("prompt (or message/objective) is required")
+        raw_type = _pick_str(input_data, "type", "agent_type", "agent_name") or "general"
+        agent_type = SubAgentType.parse(raw_type)
+        if agent_type is None:
+            raise ToolError(f"Unknown sub-agent type: {raw_type}")
+        role = _pick_str(input_data, "role")
+        allowed_raw = input_data.get("allowed_tools")
+        allowed_tools: list[str] | None = None
+        if isinstance(allowed_raw, list):
+            allowed_tools = [s for s in allowed_raw if isinstance(s, str)]
+        if agent_type is SubAgentType.CUSTOM and not allowed_tools:
+            raise ToolError("Custom sub-agents require a non-empty allowed_tools list")
+        request = SpawnRequest(
+            prompt=prompt,
+            agent_type=agent_type,
+            assignment=SubAgentAssignment(objective=prompt, role=role),
+            allowed_tools=allowed_tools,
+            model=_pick_str(input_data, "model"),
+            nickname=_pick_str(input_data, "nickname"),
         )
-        store["next_id"] += 1
-        store["items"].append(agent)
+        try:
+            snapshot = await manager.spawn(request)
+        except RuntimeError as exc:
+            raise ToolError(str(exc)) from exc
         return ToolResult(
             success=True,
-            content=agent.id,
-            metadata={"agent": asdict(agent)},
+            content=f"spawned {snapshot.agent_id} [{snapshot.agent_type.value}]",
+            metadata=_result_to_json(snapshot),
         )
 
 
@@ -63,85 +155,46 @@ class AgentResultTool(ToolSpec):
         return "agent_result"
 
     def description(self) -> str:
-        return "Submit a result for a running sub-agent."
+        return "Fetch result of a sub-agent; optionally block until complete."
 
-    def input_schema(self) -> dict[str, object]:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
                 "agent_id": {"type": "string"},
-                "result": {"type": "string"},
+                "id": {"type": "string"},
+                "block": {"type": "boolean"},
+                "timeout_ms": {"type": "integer"},
             },
-            "required": ["agent_id", "result"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        agent = _require_agent(context, _require_string(input_data, "agent_id"))
-        agent.result = _require_string(input_data, "result")
-        agent.status = "completed"
-        return ToolResult(
-            success=True,
-            content="result submitted",
-            metadata={"agent": asdict(agent)},
-        )
-
-
-class AgentAssignTool(ToolSpec):
-    def name(self) -> str:
-        return "agent_assign"
-
-    def description(self) -> str:
-        return "Assign or reassign a sub-agent to a different worker."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "agent_id": {"type": "string"},
-                "assignee": {"type": "string"},
-            },
-            "required": ["agent_id", "assignee"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        agent = _require_agent(context, _require_string(input_data, "agent_id"))
-        agent.assignee = _require_string(input_data, "assignee")
-        return ToolResult(
-            success=True,
-            content="assigned",
-            metadata={"agent": asdict(agent)},
-        )
-
-
-class AgentWaitTool(ToolSpec):
-    def name(self) -> str:
-        return "agent_wait"
-
-    def description(self) -> str:
-        return "Wait for a sub-agent to complete and return its result."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"agent_id": {"type": "string"}},
-            "required": ["agent_id"],
         }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
 
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        agent = _require_agent(context, _require_string(input_data, "agent_id"))
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        agent_id = _pick_str(input_data, "agent_id", "id")
+        if agent_id is None:
+            raise ToolError("agent_id is required")
+        block = _pick_bool(input_data, "block")
+        timeout_ms = _pick_int(
+            input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS
+        ) or DEFAULT_RESULT_TIMEOUT_MS
+        timeout_ms = max(1000, min(MAX_RESULT_TIMEOUT_MS, int(timeout_ms)))
+        try:
+            if block:
+                snapshots = await manager.wait([agent_id], mode="any", timeout_ms=timeout_ms)
+                snapshot = snapshots[0]
+            else:
+                snapshot = await manager.get_result(agent_id)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
         return ToolResult(
             success=True,
-            content=agent.result or "(no result yet)",
-            metadata={"agent": asdict(agent)},
+            content=f"{snapshot.agent_id} [{snapshot.status.kind.value}]",
+            metadata=_result_to_json(snapshot),
         )
 
 
@@ -152,7 +205,7 @@ class AgentCancelTool(ToolSpec):
     def description(self) -> str:
         return "Cancel a running sub-agent."
 
-    def input_schema(self) -> dict[str, object]:
+    def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {"agent_id": {"type": "string"}},
@@ -160,15 +213,106 @@ class AgentCancelTool(ToolSpec):
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
+        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
 
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        agent = _require_agent(context, _require_string(input_data, "agent_id"))
-        agent.status = "cancelled"
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        agent_id = _pick_str(input_data, "agent_id", "id")
+        if agent_id is None:
+            raise ToolError("agent_id is required")
+        try:
+            snapshot = await manager.cancel(agent_id)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
         return ToolResult(
             success=True,
-            content="cancelled",
-            metadata={"agent": asdict(agent)},
+            content=f"cancelled {snapshot.agent_id}",
+            metadata=_result_to_json(snapshot),
+        )
+
+
+class AgentCloseTool(ToolSpec):
+    def name(self) -> str:
+        return "close_agent"
+
+    def description(self) -> str:
+        return "Close a sub-agent: cancel and remove it from the active map."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "agent_id": {"type": "string"},
+            },
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        agent_id = _pick_str(input_data, "id", "agent_id")
+        if agent_id is None:
+            raise ToolError("id is required")
+        try:
+            snapshot = await manager.close(agent_id)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            success=True,
+            content=f"closed {snapshot.agent_id}",
+            metadata=_result_to_json(snapshot),
+        )
+
+
+class AgentResumeTool(ToolSpec):
+    def name(self) -> str:
+        return "resume_agent"
+
+    def description(self) -> str:
+        return "Resume a terminated sub-agent."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "agent_id": {"type": "string"},
+            },
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        agent_id = _pick_str(input_data, "id", "agent_id")
+        if agent_id is None:
+            raise ToolError("id is required")
+        try:
+            snapshot = await manager.resume(agent_id)
+        except (KeyError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            success=True,
+            content=f"resumed {snapshot.agent_id}",
+            metadata=_result_to_json(snapshot),
         )
 
 
@@ -177,59 +321,220 @@ class AgentListTool(ToolSpec):
         return "agent_list"
 
     def description(self) -> str:
-        return "List all sub-agents."
+        return "List sub-agents; include_archived flips prior-session filter."
 
-    def input_schema(self) -> dict[str, object]:
-        return {"type": "object", "properties": {}}
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "include_archived": {"type": "boolean"},
+            },
+        }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
 
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        items = _agent_store(context)["items"]
-        lines = [f"{a.id} | {a.status} | {a.task}" for a in items]
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        include_archived = _pick_bool(input_data, "include_archived")
+        snapshots = manager.list_filtered(include_archived=include_archived)
         return ToolResult(
             success=True,
-            content="\n".join(lines),
-            metadata={
-                "agents": [asdict(a) for a in items],
-                "count": len(items),
-            },
+            content=f"{len(snapshots)} agent(s)",
+            metadata={"agents": [_result_to_json(s) for s in snapshots]},
         )
 
 
-def _agent_store(context: ToolContext) -> dict[str, Any]:
-    store = context.metadata.get(_AGENT_STORE_KEY)
-    if store is None:
-        store = {"next_id": 1, "items": []}
-        context.metadata[_AGENT_STORE_KEY] = store
-    if not isinstance(store, dict):
-        raise ToolError("agent store is invalid")
-    items = store.get("items")
-    next_id = store.get("next_id")
-    if not isinstance(items, list) or not isinstance(next_id, int):
-        raise ToolError("agent store is invalid")
-    return store
+class AgentSendInputTool(ToolSpec):
+    def name(self) -> str:
+        return "agent_send_input"
+
+    def description(self) -> str:
+        return "Send a text input to a running sub-agent."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string"},
+                "id": {"type": "string"},
+                "input": {"type": "string"},
+                "text": {"type": "string"},
+                "interrupt": {"type": "boolean"},
+            },
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.EXECUTES_CODE]
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        agent_id = _pick_str(input_data, "agent_id", "id")
+        text = _pick_str(input_data, "input", "text")
+        if agent_id is None or text is None:
+            raise ToolError("agent_id and input are required")
+        interrupt = _pick_bool(input_data, "interrupt")
+        try:
+            await manager.send_input(agent_id, text, interrupt=interrupt)
+        except (KeyError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            success=True,
+            content=f"sent input to {agent_id}",
+            metadata={"agent_id": agent_id, "interrupt": interrupt},
+        )
 
 
-def _require_agent(context: ToolContext, agent_id: str) -> SubAgent:
-    for agent in _agent_store(context)["items"]:
-        if isinstance(agent, SubAgent) and agent.id == agent_id:
-            return agent
-    raise ToolError(f"Unknown agent_id: {agent_id}")
+class AgentAssignTool(ToolSpec):
+    def name(self) -> str:
+        return "agent_assign"
+
+    def description(self) -> str:
+        return "Update a sub-agent's objective/role and optionally inject a message."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string"},
+                "id": {"type": "string"},
+                "objective": {"type": "string"},
+                "role": {"type": "string"},
+                "message": {"type": "string"},
+                "interrupt": {"type": "boolean"},
+            },
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.EXECUTES_CODE]
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        agent_id = _pick_str(input_data, "agent_id", "id")
+        if agent_id is None:
+            raise ToolError("agent_id is required")
+        try:
+            snapshot = await manager.assign(
+                agent_id,
+                objective=_pick_str(input_data, "objective"),
+                role=_pick_str(input_data, "role"),
+                message=_pick_str(input_data, "message"),
+                interrupt=_pick_bool(input_data, "interrupt"),
+            )
+        except (KeyError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            success=True,
+            content=f"reassigned {snapshot.agent_id}",
+            metadata=_result_to_json(snapshot),
+        )
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
+class AgentWaitTool(ToolSpec):
+    def name(self) -> str:
+        return "agent_wait"
+
+    def description(self) -> str:
+        return "Wait for one or more sub-agents to reach a terminal state."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "agent_ids": {"type": "array", "items": {"type": "string"}},
+                "agent_id": {"type": "string"},
+                "mode": {"type": "string", "enum": ["any", "all", "first"]},
+                "timeout_ms": {"type": "integer"},
+            },
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.READ_ONLY]
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        ids_raw = input_data.get("agent_ids")
+        agent_ids: list[str]
+        if isinstance(ids_raw, list) and ids_raw:
+            agent_ids = [s for s in ids_raw if isinstance(s, str)]
+        else:
+            single = _pick_str(input_data, "agent_id", "id")
+            if single is None:
+                raise ToolError("agent_ids or agent_id is required")
+            agent_ids = [single]
+        mode = _pick_str(input_data, "mode") or "any"
+        timeout_ms = _pick_int(input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS)
+        timeout_ms = max(
+            MIN_WAIT_TIMEOUT_MS,
+            min(MAX_RESULT_TIMEOUT_MS, int(timeout_ms or DEFAULT_RESULT_TIMEOUT_MS)),
+        )
+        try:
+            snapshots = await manager.wait(agent_ids, mode=mode, timeout_ms=timeout_ms)
+        except (KeyError, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            success=True,
+            content=f"waited on {len(snapshots)} agent(s) [mode={mode}]",
+            metadata={"agents": [_result_to_json(s) for s in snapshots]},
+        )
 
 
-def _optional_string(input_data: dict[str, object], key: str) -> str | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
+class DelegateToAgentTool(ToolSpec):
+    """``delegate_to_agent`` — convenience combo: spawn + block on result.
+
+    Mirrors Rust ``DelegateToAgentTool``; internally spawns a fresh agent
+    then waits up to ``timeout_ms`` for it to terminate.
+    """
+
+    def name(self) -> str:
+        return "delegate_to_agent"
+
+    def description(self) -> str:
+        return "Spawn a sub-agent and wait for its completion."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "message": {"type": "string"},
+                "objective": {"type": "string"},
+                "type": {"type": "string"},
+                "agent_type": {"type": "string"},
+                "role": {"type": "string"},
+                "model": {"type": "string"},
+                "allowed_tools": {"type": "array", "items": {"type": "string"}},
+                "timeout_ms": {"type": "integer"},
+            },
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        spawn_result = await AgentSpawnTool().execute(input_data, context)
+        agent_id = spawn_result.metadata["agent_id"]
+        timeout_ms = _pick_int(
+            input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS
+        ) or DEFAULT_RESULT_TIMEOUT_MS
+        wait_input = {"agent_id": agent_id, "mode": "any", "timeout_ms": timeout_ms}
+        wait_result = await AgentWaitTool().execute(wait_input, context)
+        final = wait_result.metadata["agents"][0]
+        return ToolResult(
+            success=True,
+            content=f"delegated to {agent_id} → {final['status']['kind']}",
+            metadata=final,
+        )

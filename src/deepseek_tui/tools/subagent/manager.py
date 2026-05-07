@@ -1,0 +1,630 @@
+"""Sub-agent runtime and manager.
+
+Mirrors `crates/tui/src/tools/subagent/mod.rs` (3,604 lines). Provides:
+
+- :class:`SubAgentType` / :class:`SubAgentStatus` / :class:`SubAgentResult`
+- :class:`SubAgentManager`: spawn/cancel/result/list/resume/assign/send_input
+- ``asyncio.Task``-backed execution (not multiprocessing — LLM calls are
+  IO-bound; see HANDOVER.md decision 2026-05-07)
+- Persistence under ``<workspace>/.deepseek/subagents.v1.json``
+
+The executor that drives the LLM loop is plugged in at manager
+construction; the default is a placeholder that sleeps briefly and
+returns a synthetic result (integration debt tracked for Stage 4).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import tempfile
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
+
+DEFAULT_MAX_STEPS = 100
+DEFAULT_MAX_AGENTS = 8
+DEFAULT_MAX_SPAWN_DEPTH = 3
+DEFAULT_RESULT_TIMEOUT_MS = 30_000
+MIN_WAIT_TIMEOUT_MS = 10_000
+MAX_RESULT_TIMEOUT_MS = 3_600_000
+SUBAGENT_STATE_SCHEMA_VERSION = 1
+SUBAGENT_STATE_FILE = "subagents.v1.json"
+SUBAGENT_RESTART_REASON = "Interrupted by process restart"
+
+
+class SubAgentType(str, Enum):
+    GENERAL = "general"
+    EXPLORE = "explore"
+    PLAN = "plan"
+    REVIEW = "review"
+    IMPLEMENTER = "implementer"
+    VERIFIER = "verifier"
+    CUSTOM = "custom"
+
+    @staticmethod
+    def parse(raw: str) -> SubAgentType | None:
+        """Accepts Rust-compatible aliases (general_purpose, worker, etc.)."""
+        key = raw.strip().lower().replace("-", "_")
+        aliases: dict[str, SubAgentType] = {
+            "general": SubAgentType.GENERAL,
+            "general_purpose": SubAgentType.GENERAL,
+            "worker": SubAgentType.GENERAL,
+            "default": SubAgentType.GENERAL,
+            "explore": SubAgentType.EXPLORE,
+            "exploration": SubAgentType.EXPLORE,
+            "explorer": SubAgentType.EXPLORE,
+            "plan": SubAgentType.PLAN,
+            "planning": SubAgentType.PLAN,
+            "awaiter": SubAgentType.PLAN,
+            "review": SubAgentType.REVIEW,
+            "code_review": SubAgentType.REVIEW,
+            "reviewer": SubAgentType.REVIEW,
+            "implementer": SubAgentType.IMPLEMENTER,
+            "implement": SubAgentType.IMPLEMENTER,
+            "implementation": SubAgentType.IMPLEMENTER,
+            "builder": SubAgentType.IMPLEMENTER,
+            "verifier": SubAgentType.VERIFIER,
+            "verify": SubAgentType.VERIFIER,
+            "verification": SubAgentType.VERIFIER,
+            "validator": SubAgentType.VERIFIER,
+            "tester": SubAgentType.VERIFIER,
+            "custom": SubAgentType.CUSTOM,
+        }
+        return aliases.get(key)
+
+
+class SubAgentStatusKind(str, Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass(slots=True, frozen=True)
+class SubAgentStatus:
+    kind: SubAgentStatusKind
+    message: str | None = None
+
+    @staticmethod
+    def running() -> SubAgentStatus:
+        return SubAgentStatus(SubAgentStatusKind.RUNNING)
+
+    @staticmethod
+    def completed() -> SubAgentStatus:
+        return SubAgentStatus(SubAgentStatusKind.COMPLETED)
+
+    @staticmethod
+    def interrupted(msg: str) -> SubAgentStatus:
+        return SubAgentStatus(SubAgentStatusKind.INTERRUPTED, msg)
+
+    @staticmethod
+    def failed(msg: str) -> SubAgentStatus:
+        return SubAgentStatus(SubAgentStatusKind.FAILED, msg)
+
+    @staticmethod
+    def cancelled() -> SubAgentStatus:
+        return SubAgentStatus(SubAgentStatusKind.CANCELLED)
+
+    def is_terminal(self) -> bool:
+        return self.kind is not SubAgentStatusKind.RUNNING
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"kind": self.kind.value}
+        if self.message is not None:
+            out["message"] = self.message
+        return out
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> SubAgentStatus:
+        return SubAgentStatus(
+            SubAgentStatusKind(data["kind"]), data.get("message")
+        )
+
+
+@dataclass(slots=True)
+class SubAgentAssignment:
+    objective: str
+    role: str | None = None
+
+
+@dataclass(slots=True)
+class SubAgentResult:
+    agent_id: str
+    agent_type: SubAgentType
+    assignment: SubAgentAssignment
+    model: str
+    nickname: str | None
+    status: SubAgentStatus
+    result: str | None
+    steps_taken: int
+    duration_ms: int
+    from_prior_session: bool = False
+
+
+@dataclass(slots=True)
+class SpawnRequest:
+    prompt: str
+    agent_type: SubAgentType
+    assignment: SubAgentAssignment
+    allowed_tools: list[str] | None = None
+    model: str | None = None
+    nickname: str | None = None
+
+
+# Executor signature — takes a SubAgent handle plus cancel token, returns
+# a free-form result string or raises.
+SubAgentExecutor = Callable[
+    ["SubAgent", asyncio.Event], Awaitable[str]
+]
+
+
+async def _stub_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
+    """Placeholder executor — sleeps briefly, returns synthetic summary.
+
+    Integration debt: Stage 3.2.simplified. Real implementation wires in
+    the LLM client + mini turn loop; parked until Stage 4.
+    """
+    try:
+        await asyncio.wait_for(cancel.wait(), timeout=0.05)
+    except asyncio.TimeoutError:
+        agent.steps_taken += 1
+        return f"[stub] agent {agent.id} completed prompt '{agent.prompt[:80]}'"
+    raise asyncio.CancelledError
+
+
+class SubAgent:
+    """Single sub-agent handle.
+
+    Mirrors Rust ``SubAgent`` (mod.rs:648-723).
+    """
+
+    def __init__(
+        self,
+        agent_type: SubAgentType,
+        prompt: str,
+        assignment: SubAgentAssignment,
+        model: str,
+        nickname: str | None,
+        allowed_tools: list[str] | None,
+        session_boot_id: str,
+    ) -> None:
+        self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
+        self.agent_type = agent_type
+        self.prompt = prompt
+        self.assignment = assignment
+        self.model = model
+        self.nickname = nickname
+        self.status: SubAgentStatus = SubAgentStatus.running()
+        self.result: str | None = None
+        self.steps_taken: int = 0
+        self.started_at_ms: int = _epoch_ms()
+        self.allowed_tools = allowed_tools
+        self.session_boot_id = session_boot_id
+        self.cancel_token: asyncio.Event = asyncio.Event()
+        self.task: asyncio.Task[None] | None = None
+        self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+
+    def snapshot(self) -> SubAgentResult:
+        duration_ms = max(0, _epoch_ms() - self.started_at_ms)
+        return SubAgentResult(
+            agent_id=self.id,
+            agent_type=self.agent_type,
+            assignment=self.assignment,
+            model=self.model,
+            nickname=self.nickname,
+            status=self.status,
+            result=self.result,
+            steps_taken=self.steps_taken,
+            duration_ms=duration_ms,
+            from_prior_session=False,
+        )
+
+
+class SubAgentManager:
+    """Manager for in-process sub-agents.
+
+    Mirrors Rust ``SubAgentManager`` (mod.rs:726-). Runs agents as
+    :class:`asyncio.Task` rather than multiprocessing subprocesses —
+    LLM calls are IO-bound and Rust itself uses tokio::spawn.
+    """
+
+    def __init__(
+        self,
+        workspace: Path,
+        max_agents: int = DEFAULT_MAX_AGENTS,
+        state_path: Path | None = None,
+        executor: SubAgentExecutor | None = None,
+        mailbox: Mailbox | None = None,
+        default_model: str = "deepseek-chat",
+    ) -> None:
+        self.workspace = workspace
+        self.max_agents = max_agents
+        self.max_steps = DEFAULT_MAX_STEPS
+        self.default_model = default_model
+        self._state_path = state_path
+        self._executor: SubAgentExecutor = executor or _stub_executor
+        self._mailbox = mailbox
+        self._agents: dict[str, SubAgent] = {}
+        self._lock = asyncio.Lock()
+        self._session_boot_id: str = f"boot_{uuid.uuid4().hex[:12]}"
+        if state_path is not None:
+            self._load_state()
+
+    @property
+    def session_boot_id(self) -> str:
+        return self._session_boot_id
+
+    @property
+    def mailbox(self) -> Mailbox | None:
+        return self._mailbox
+
+    def running_count(self) -> int:
+        return sum(
+            1
+            for a in self._agents.values()
+            if a.status.kind is SubAgentStatusKind.RUNNING
+        )
+
+    def list_filtered(self, include_archived: bool = False) -> list[SubAgentResult]:
+        out: list[SubAgentResult] = []
+        for agent in self._agents.values():
+            from_prior = self._is_from_prior_session(agent)
+            if from_prior and not include_archived:
+                continue
+            snap = agent.snapshot()
+            # Synthesize the from_prior_session flag manager-side.
+            snap = SubAgentResult(
+                agent_id=snap.agent_id,
+                agent_type=snap.agent_type,
+                assignment=snap.assignment,
+                model=snap.model,
+                nickname=snap.nickname,
+                status=snap.status,
+                result=snap.result,
+                steps_taken=snap.steps_taken,
+                duration_ms=snap.duration_ms,
+                from_prior_session=from_prior,
+            )
+            out.append(snap)
+        return out
+
+    def list_agents(self) -> list[SubAgentResult]:
+        return self.list_filtered(include_archived=False)
+
+    async def spawn(self, request: SpawnRequest) -> SubAgentResult:
+        async with self._lock:
+            if self.running_count() >= self.max_agents:
+                raise RuntimeError(
+                    f"Too many sub-agents running ({self.max_agents} cap)"
+                )
+            agent = SubAgent(
+                agent_type=request.agent_type,
+                prompt=request.prompt,
+                assignment=request.assignment,
+                model=request.model or self.default_model,
+                nickname=request.nickname,
+                allowed_tools=request.allowed_tools,
+                session_boot_id=self._session_boot_id,
+            )
+            self._agents[agent.id] = agent
+            snapshot = agent.snapshot()
+            self._persist_best_effort()
+
+        if self._mailbox is not None:
+            self._mailbox.send(
+                MailboxMessage.started(agent.id, request.agent_type.value)
+            )
+        agent.task = asyncio.create_task(self._drive_agent(agent))
+        return snapshot
+
+    async def get_result(self, agent_id: str) -> SubAgentResult:
+        async with self._lock:
+            agent = self._require_agent(agent_id)
+            return agent.snapshot()
+
+    async def cancel(self, agent_id: str) -> SubAgentResult:
+        async with self._lock:
+            agent = self._require_agent(agent_id)
+            agent.cancel_token.set()
+            if agent.status.kind is SubAgentStatusKind.RUNNING:
+                agent.status = SubAgentStatus.cancelled()
+            self._persist_best_effort()
+            snapshot = agent.snapshot()
+
+        if self._mailbox is not None:
+            self._mailbox.send(MailboxMessage.cancelled(agent_id))
+        return snapshot
+
+    async def send_input(
+        self, agent_id: str, text: str, interrupt: bool = False
+    ) -> None:
+        async with self._lock:
+            agent = self._require_agent(agent_id)
+            if agent.status.kind is not SubAgentStatusKind.RUNNING:
+                raise RuntimeError(
+                    f"Cannot send input to {agent_id}: {agent.status.kind.value}"
+                )
+        await agent.input_queue.put((text, interrupt))
+
+    async def assign(
+        self,
+        agent_id: str,
+        objective: str | None = None,
+        role: str | None = None,
+        message: str | None = None,
+        interrupt: bool = False,
+    ) -> SubAgentResult:
+        async with self._lock:
+            agent = self._require_agent(agent_id)
+            if objective is not None:
+                agent.assignment = SubAgentAssignment(
+                    objective=objective, role=role or agent.assignment.role
+                )
+            elif role is not None:
+                agent.assignment = SubAgentAssignment(
+                    objective=agent.assignment.objective, role=role
+                )
+            snapshot = agent.snapshot()
+        if message is not None:
+            await self.send_input(agent_id, message, interrupt=interrupt)
+        return snapshot
+
+    async def resume(self, agent_id: str) -> SubAgentResult:
+        """Re-open a terminated agent for a new prompt.
+
+        Mirrors Rust ``SubAgentManager::resume`` — resurrects the status
+        back to Running and re-spawns the driver task.
+        """
+        async with self._lock:
+            agent = self._require_agent(agent_id)
+            if agent.status.kind is SubAgentStatusKind.RUNNING:
+                raise RuntimeError(f"Agent {agent_id} is already running")
+            agent.status = SubAgentStatus.running()
+            agent.result = None
+            agent.cancel_token = asyncio.Event()
+            agent.started_at_ms = _epoch_ms()
+            self._persist_best_effort()
+            snapshot = agent.snapshot()
+
+        if self._mailbox is not None:
+            self._mailbox.send(
+                MailboxMessage.started(agent_id, agent.agent_type.value)
+            )
+        agent.task = asyncio.create_task(self._drive_agent(agent))
+        return snapshot
+
+    async def close(self, agent_id: str) -> SubAgentResult:
+        """Terminate and remove an agent from the active map."""
+        snapshot = await self.cancel(agent_id)
+        async with self._lock:
+            self._agents.pop(agent_id, None)
+            self._persist_best_effort()
+        return snapshot
+
+    async def wait(
+        self, agent_ids: list[str], mode: str, timeout_ms: int
+    ) -> list[SubAgentResult]:
+        """Wait until `mode` ("any" or "all") targets are terminal.
+
+        Returns the snapshots after the wait concludes (either mode
+        satisfied or timeout expired).
+        """
+        if mode not in ("any", "all", "first"):
+            raise ValueError(f"Unknown wait mode: {mode}")
+        deadline = time.monotonic() + timeout_ms / 1000
+        while True:
+            async with self._lock:
+                snapshots = [
+                    self._require_agent(aid).snapshot() for aid in agent_ids
+                ]
+            terminals = [s for s in snapshots if s.status.kind is not SubAgentStatusKind.RUNNING]
+            if mode in ("any", "first"):
+                if terminals:
+                    return snapshots
+            else:  # all
+                if len(terminals) == len(snapshots):
+                    return snapshots
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return snapshots
+            await asyncio.sleep(min(0.05, remaining))
+
+    async def shutdown(self) -> None:
+        """Cancel and join every running agent."""
+        async with self._lock:
+            agents = list(self._agents.values())
+        for agent in agents:
+            agent.cancel_token.set()
+        for agent in agents:
+            if agent.task is not None and not agent.task.done():
+                agent.task.cancel()
+                try:
+                    await agent.task
+                except (asyncio.CancelledError, BaseException):  # noqa: BLE001
+                    pass
+
+    # --- internal ------------------------------------------------------
+
+    def _require_agent(self, agent_id: str) -> SubAgent:
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            raise KeyError(f"Unknown agent: {agent_id}")
+        return agent
+
+    def _is_from_prior_session(self, agent: SubAgent) -> bool:
+        return (
+            not agent.session_boot_id
+            or agent.session_boot_id != self._session_boot_id
+        )
+
+    async def _drive_agent(self, agent: SubAgent) -> None:
+        try:
+            result = await self._executor(agent, agent.cancel_token)
+        except asyncio.CancelledError:
+            async with self._lock:
+                if agent.status.kind is SubAgentStatusKind.RUNNING:
+                    agent.status = SubAgentStatus.cancelled()
+                self._persist_best_effort()
+            if self._mailbox is not None:
+                self._mailbox.send(MailboxMessage.cancelled(agent.id))
+            return
+        except Exception as exc:  # noqa: BLE001 — translate to Failed status
+            async with self._lock:
+                agent.status = SubAgentStatus.failed(str(exc))
+                self._persist_best_effort()
+            if self._mailbox is not None:
+                self._mailbox.send(MailboxMessage.failed(agent.id, str(exc)))
+            return
+
+        async with self._lock:
+            if agent.cancel_token.is_set():
+                if agent.status.kind is SubAgentStatusKind.RUNNING:
+                    agent.status = SubAgentStatus.cancelled()
+            else:
+                agent.status = SubAgentStatus.completed()
+                agent.result = result
+            self._persist_best_effort()
+
+        if self._mailbox is not None:
+            if agent.status.kind is SubAgentStatusKind.CANCELLED:
+                self._mailbox.send(MailboxMessage.cancelled(agent.id))
+            else:
+                self._mailbox.send(MailboxMessage.completed(agent.id, result))
+
+    def _persist_best_effort(self) -> None:
+        if self._state_path is None:
+            return
+        try:
+            self._persist_state()
+        except Exception as exc:  # noqa: BLE001
+            # Match Rust's eprintln! best-effort behavior.
+            print(f"Failed to persist sub-agent state: {exc}")
+
+    def _persist_state(self) -> None:
+        if self._state_path is None:
+            return
+        now_ms = _epoch_ms()
+        agents_payload = []
+        for agent in sorted(self._agents.values(), key=lambda a: a.id):
+            agents_payload.append(
+                {
+                    "id": agent.id,
+                    "agent_type": agent.agent_type.value,
+                    "prompt": agent.prompt,
+                    "assignment": {
+                        "objective": agent.assignment.objective,
+                        "role": agent.assignment.role,
+                    },
+                    "model": agent.model,
+                    "nickname": agent.nickname,
+                    "status": agent.status.to_dict(),
+                    "result": agent.result,
+                    "steps_taken": agent.steps_taken,
+                    "duration_ms": max(0, now_ms - agent.started_at_ms),
+                    "allowed_tools": agent.allowed_tools or [],
+                    "updated_at_ms": now_ms,
+                    "session_boot_id": agent.session_boot_id,
+                }
+            )
+        payload = {
+            "schema_version": SUBAGENT_STATE_SCHEMA_VERSION,
+            "agents": agents_payload,
+        }
+        _write_json_atomic(self._state_path, payload)
+
+    def _load_state(self) -> None:
+        if self._state_path is None or not self._state_path.exists():
+            return
+        data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        if data.get("schema_version") != SUBAGENT_STATE_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Unsupported sub-agent state schema {data.get('schema_version')}"
+            )
+        self._agents.clear()
+        for raw in data.get("agents", []):
+            agent = SubAgent(
+                agent_type=SubAgentType(raw["agent_type"]),
+                prompt=raw["prompt"],
+                assignment=SubAgentAssignment(
+                    objective=raw["assignment"]["objective"],
+                    role=raw["assignment"].get("role"),
+                ),
+                model=raw.get("model", self.default_model),
+                nickname=raw.get("nickname"),
+                allowed_tools=raw.get("allowed_tools") or None,
+                session_boot_id=raw.get("session_boot_id", ""),
+            )
+            # Restore id from persisted record, overwriting the freshly
+            # generated one.
+            agent.id = raw["id"]
+            # Running on disk → Interrupted on load (Rust parity).
+            status = SubAgentStatus.from_dict(raw["status"])
+            if status.kind is SubAgentStatusKind.RUNNING:
+                status = SubAgentStatus.interrupted(SUBAGENT_RESTART_REASON)
+            agent.status = status
+            agent.result = raw.get("result")
+            agent.steps_taken = raw.get("steps_taken", 0)
+            duration_ms = raw.get("duration_ms", 0)
+            agent.started_at_ms = _epoch_ms() - max(0, int(duration_ms))
+            self._agents[agent.id] = agent
+
+
+@dataclass(slots=True)
+class SubAgentRuntime:
+    """Runtime context forwarded to children on spawn.
+
+    Rust analogue: ``SubAgentRuntime`` (mod.rs:507). Fields track parent
+    mailbox / cancel token / spawn depth so deeper children cooperate
+    on cancellation and respect :attr:`max_spawn_depth`.
+    """
+
+    manager: SubAgentManager
+    cancel_token: asyncio.Event = field(default_factory=asyncio.Event)
+    mailbox: Mailbox | None = None
+    spawn_depth: int = 0
+    max_spawn_depth: int = DEFAULT_MAX_SPAWN_DEPTH
+
+    def child(self) -> SubAgentRuntime:
+        return SubAgentRuntime(
+            manager=self.manager,
+            cancel_token=self.cancel_token,
+            mailbox=self.mailbox,
+            spawn_depth=self.spawn_depth + 1,
+            max_spawn_depth=self.max_spawn_depth,
+        )
+
+
+# --- helpers ----------------------------------------------------------------
+
+
+def _epoch_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _write_json_atomic(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(value, fh, indent=2, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
