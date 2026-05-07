@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from deepseek_tui.execpolicy.policy import Policy
 
 
 @dataclass(slots=True)
@@ -11,6 +14,7 @@ class ToolContext:
     timeout_ms: int | None = None
     trust_mode: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    policy: Policy | None = None
 
     def resolve_path(self, path: str) -> Path:
         workspace = self.working_directory.expanduser().resolve()

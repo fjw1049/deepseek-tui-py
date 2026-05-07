@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import uuid
 from asyncio.subprocess import Process
 from typing import Any
 
+from deepseek_tui.execpolicy.decision import Decision
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -34,6 +36,23 @@ class ExecShellTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         command = _require_string(input_data, "command")
         background = bool(input_data.get("background", False))
+
+        # Check command execution policy
+        if context.policy:
+            cmd_tokens = _parse_command_tokens(command)
+            evaluation = context.policy.check(
+                cmd_tokens,
+                lambda _: Decision.ALLOW  # Fallback to allow if no rule matches
+            )
+            if evaluation.decision == Decision.FORBIDDEN:
+                raise ToolError(
+                    f"Command execution forbidden by policy: {command}"
+                )
+            elif evaluation.decision == Decision.PROMPT:
+                raise ToolError(
+                    f"Command requires approval (not yet implemented): {command}"
+                )
+
         process = await asyncio.create_subprocess_shell(
             command,
             cwd=str(context.working_directory),
@@ -220,3 +239,12 @@ def _build_shell_result(
         content=_decode_output(stdout, stderr),
         metadata=metadata,
     )
+
+
+def _parse_command_tokens(command: str) -> list[str]:
+    """Parse shell command string into token list for policy matching."""
+    try:
+        return shlex.split(command)
+    except ValueError:
+        # If shlex fails (e.g., unclosed quote), return as single token
+        return [command]
