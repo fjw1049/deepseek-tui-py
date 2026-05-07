@@ -74,7 +74,7 @@ make check  # = ruff + mypy + pytest
 
 按 `docs/AUDIT/SUMMARY.md` 第七节，剩余 Stage 2–7，合计 29–42 周（一名全职）。
 
-### Stage 2（4–6 周）：engine 核心 + execpolicy + sandbox
+### Stage 2（4–6 周）：engine 核心 + execpolicy
 
 **P0 任务**（按顺序）：
 
@@ -95,9 +95,9 @@ make check  # = ruff + mypy + pytest
 6. `execpolicy/command_safety.py` 新建 ~1,000 行
    - **读** `crates/tui/src/command_safety.rs`（~1,200 行）
    - 163 命令 arity 字典 + 危险模式（`rm -rf`, `dd`, `format` 等）
-7. `execpolicy/sandbox/seatbelt.py` 新建
-   - **读** `crates/tui/src/sandbox/{mod,policy,seatbelt}.rs`（~1,364 行）
-   - macOS Seatbelt XML profile 生成
+7. ~~`execpolicy/sandbox/seatbelt.py`~~ — **已跳过**（2026-05-07 用户决定）
+   - 原因：macOS Seatbelt OS 级隔离不做；命令黑名单 + cwd 边界 + env 清洗已足够
+   - 详见集成债清单（第九节）
 
 ### Stage 3（4–6 周）：74 工具补齐
 
@@ -106,7 +106,7 @@ make check  # = ruff + mypy + pytest
 1. **durable Task 系统**（SQLite 表 `tasks` / `task_attempts` / `task_gates` + 7 个 task 工具）
 2. **Sub-agent runtime**（用 `multiprocessing` 子进程 + mailbox，不是 `asyncio.Task`）
 3. **apply_patch 模糊匹配**（Rust `MAX_FUZZ=50` + 合并冲突检测）
-4. **PTY shell**（用 `ptyprocess` 或 `pexpect`，集成 Seatbelt）
+4. **PTY shell**（用 `ptyprocess` 或 `pexpect`；不集成 Seatbelt，见第九节集成债）
 5. **approval cache 指纹**（280 行 Rust → Python，按 apply_patch 路径 / exec_shell 前 3 词 / fetch_url hostname 指纹）
 6. **web_run**（Playwright 集成，需要用户授权浏览器下载）
 7. **RLM / Remember / Plan / Skill / Validate_data / Test_runner / Truncate / Request_user_input** 等
@@ -367,7 +367,7 @@ deepseek-tui-py/
 │   ├── client/                           # Stage 2.? 要扩
 │   ├── config/                           # Stage 1 补过 provider_registry
 │   ├── engine/                           # Stage 2 要重写
-│   ├── execpolicy/                       # Stage 2 要重写（+ 新增 sandbox/）
+│   ├── execpolicy/                       # Stage 2.5/2.6 已集成 ✓（不含 sandbox 子目录，Seatbelt 跳过）
 │   ├── hooks/                            # Stage 4 要补
 │   ├── lsp/                              # Stage 4 微调
 │   ├── mcp/                              # Stage 4 补 HTTP + stdio server
@@ -409,7 +409,19 @@ deepseek-tui-py/
 
 ---
 
-## 九、联系方式（用户侧）
+## 九、集成债清单（Simplification Debt）
+
+按照第四节步骤 0 的要求，任何偏离"百分百 Rust 行为复刻"的简化都必须记在这里。每条写清楚：**简化了什么、为什么、恢复完整行为需要做什么**。
+
+| 条目 | Stage | 简化内容 | 原因 | 恢复完整行为需要做什么 |
+|---|---|---|---|---|
+| ⬜ 2.7.simplified: macOS Seatbelt sandbox | 2.7 | 跳过 `sandbox/seatbelt.py` 不实现；`exec_shell` 直接 `subprocess.create_subprocess_shell()` 无 OS 级隔离 | 用户 2026-05-07 决定：命令黑名单 + cwd 边界 + env 清洗足够本地开发用；Seatbelt 做完约 ~800 行工作量换来的是"OS 级兜底"，在本地开发场景收益不高 | 参考 `crates/tui/src/sandbox/{mod,policy,seatbelt}.rs`（~1,364 行），实现：1) `SandboxPolicy`（读/写/执行 allowlist） 2) `SeatbeltProfile` XML 生成 3) `exec_shell` 子进程用 `sandbox-exec -p <profile>` 包装 4) `CommandSpec` 编排器 |
+
+> **约定**：✅ 已还清 / ⚠️ 部分还清 / ⬜ 未还清
+
+---
+
+## 十、联系方式（用户侧）
 
 - 仓库：https://github.com/fjw1049/deepseek-tui-py
 - 用户 ID: fjw1049
