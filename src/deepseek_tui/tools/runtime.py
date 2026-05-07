@@ -86,7 +86,7 @@ async def create_tool_runtime(
     mailbox: Mailbox | None = None
 
     if cfg.features.tasks:
-        data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir().parent
+        data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
         task_cfg = TaskManagerConfig(
             data_dir=data_dir,
             default_workspace=workspace,

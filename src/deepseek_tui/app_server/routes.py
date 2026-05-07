@@ -1,55 +1,114 @@
-"""HTTP server routes for app server."""
+"""FastAPI router for the 7 app-server endpoints.
+
+Mirrors ``crates/app-server/src/lib.rs`` (783 lines). Each handler is a
+thin delegator to :class:`AppRuntime` so HTTP + stdio JSON-RPC share the
+same code path.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
+from fastapi import APIRouter, Request
 
-async def healthz() -> dict[str, Any]:
-    """Health check endpoint."""
-    return {
-        "status": "ok",
-        "protocol": "v2",
-        "service": "deepseek-app-server",
-    }
+from deepseek_tui.app_server.runtime import AppRuntime
 
 
-async def thread_handler(request: dict[str, Any]) -> dict[str, Any]:
-    """Handle thread requests."""
-    return {
-        "thread_id": "stub",
-        "status": "not_implemented",
-        "thread": None,
-        "threads": [],
-        "model": None,
-        "model_provider": None,
-        "cwd": None,
-        "approval_policy": None,
-        "sandbox": None,
-        "events": [],
-    }
+def build_router() -> APIRouter:
+    """Build the FastAPI router. Caller must set ``app.state.runtime``."""
+    router = APIRouter()
+
+    @router.get("/healthz")
+    async def healthz(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.healthz()
+
+    @router.post("/thread")
+    async def thread(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        payload = await _body(request)
+        return await runtime.handle_thread(payload)
+
+    @router.post("/app")
+    async def app(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        payload = await _body(request)
+        return await runtime.handle_app(payload)
+
+    @router.post("/prompt")
+    async def prompt(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        payload = await _body(request)
+        return await runtime.handle_prompt(payload)
+
+    @router.post("/tool")
+    async def tool(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        payload = await _body(request)
+        return await runtime.handle_tool(payload)
+
+    @router.get("/jobs")
+    async def jobs(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.jobs()
+
+    @router.post("/mcp/startup")
+    async def mcp_startup(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.mcp_startup()
+
+    return router
 
 
-async def app_handler(request: dict[str, Any]) -> dict[str, Any]:
-    """Handle app requests."""
-    return {"status": "not_implemented"}
+def _get_runtime(request: Request) -> AppRuntime:
+    runtime = getattr(request.app.state, "runtime", None)
+    if not isinstance(runtime, AppRuntime):
+        raise RuntimeError("AppRuntime not attached to app.state.runtime")
+    return runtime
 
 
-async def prompt_handler(request: dict[str, Any]) -> dict[str, Any]:
-    """Handle prompt requests."""
-    return {"status": "not_implemented"}
+async def _body(request: Request) -> dict[str, Any]:
+    if request.headers.get("content-length", "0") == "0":
+        return {}
+    try:
+        data = await request.json()
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-async def tool_handler(request: dict[str, Any]) -> dict[str, Any]:
-    """Handle tool execution requests."""
-    return {"status": "not_implemented"}
+# --- legacy stdio dispatchers (used by server.py::run_stdio) ---------------
+#
+# The in-proc stdio JSON-RPC path re-uses the same AppRuntime by calling
+# these shims directly. Each accepts (runtime, payload) so server.py can
+# pass the process-wide runtime through.
 
 
-async def jobs_handler() -> dict[str, Any]:
-    """Handle jobs list requests."""
-    return {"jobs": []}
+async def stdio_healthz(runtime: AppRuntime, _payload: dict[str, Any]) -> dict[str, Any]:
+    return await runtime.healthz()
 
 
-async def mcp_startup_handler(request: dict[str, Any]) -> dict[str, Any]:
-    """Handle MCP startup requests."""
-    return {"status": "not_implemented"}
+async def stdio_thread(runtime: AppRuntime, payload: dict[str, Any]) -> dict[str, Any]:
+    return await runtime.handle_thread(payload)
+
+
+async def stdio_app(runtime: AppRuntime, payload: dict[str, Any]) -> dict[str, Any]:
+    return await runtime.handle_app(payload)
+
+
+async def stdio_prompt(runtime: AppRuntime, payload: dict[str, Any]) -> dict[str, Any]:
+    return await runtime.handle_prompt(payload)
+
+
+async def stdio_tool(runtime: AppRuntime, payload: dict[str, Any]) -> dict[str, Any]:
+    return await runtime.handle_tool(payload)
+
+
+async def stdio_jobs(runtime: AppRuntime, _payload: dict[str, Any]) -> dict[str, Any]:
+    return await runtime.jobs()
+
+
+async def stdio_mcp_startup(
+    runtime: AppRuntime, _payload: dict[str, Any]
+) -> dict[str, Any]:
+    return await runtime.mcp_startup()

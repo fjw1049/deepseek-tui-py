@@ -52,7 +52,9 @@
 | 3.2 | `3cbf9a9` | Sub-agent runtime：SubAgentManager（~600 行）+ Mailbox（9 种消息 + 单调 seq）+ asyncio.Task 调度 + 重启恢复（Running→Interrupted）+ 10 工具接通 | +42 |
 | 3.3 | `7456887` | apply_patch 原生实现：patch_engine.py（~400 行）+ MAX_FUZZ=50 模糊匹配 + 累积偏移 + create/delete via /dev/null + 重写 ApplyPatchTool 不再外调 `patch` 命令 | +27 |
 | 3.4 | `7456887` | PTY shell：stdlib `pty.openpty()` + `os.fork()` 模式 + exec_shell `pty=true` 参数 + Wait/Interact/Cancel 兼容 PTY 句柄 + 解除 task_shell_start/wait 空壳（artifacts 记录到 TaskRecord） | +6 (PTY) +2 (task shell) |
-| **累计** | | | **561 passed, 2 skipped** |
+| 3-int | `dca3816` | **集成**：tasks feature flag + builder 注册 53 工具 + `create_tool_runtime`/`ToolRuntime` 一站式装配 + `Engine.create()` 工厂方法 | +7 |
+| 4.1 | _pending_ | **App Server**：FastAPI + uvicorn 7 路由（healthz/thread/app/prompt/tool/jobs/mcp/startup）+ AppRuntime 单例共享 + ThreadStore（内存）+ 更新后的 stdio JSON-RPC 走同一 AppRuntime + `deepseek-tui serve` CLI 子命令 | +19 |
+| **累计** | | | **587 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
