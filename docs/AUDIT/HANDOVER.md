@@ -57,7 +57,8 @@
 | 4.1.x | `23a5712` | **/prompt Rust parity**：handle_prompt emit ResponseStart/Delta/End 3-frame 序列 + /prompt/stream SSE 路由 + SseStream event: data: 双字段框 | +4 |
 | 4.2 | `1ccd563` | **Hooks 集成**：HooksConfig + _build_hook_dispatcher + AppRuntime 挂 dispatcher + handle_prompt/stream_prompt/handle_tool/jobs 各自 emit 对应 HookEvent + 修 WebhookHookSink dead code + retry 200ms×N 对齐 Rust | +14 |
 | 4.3 | `61a4901` | **MCP SSE/HTTP transport**：McpTransport 抽象（stdio + SSE）+ McpClient 重构走 transport + pending-id map 并发支持 + ToolRuntime 挂 McpManager + Config 自动加载 mcp.json + AppRuntime.mcp_startup 真实 per-server 状态 | +12 |
-| **累计** | | | **617 passed, 2 skipped** |
+| 4.4 | `22438d2` | **LSP post-edit hook 接通 engine**：edited_paths_for_tool / parse_patch_paths + Config.lsp + ToolRuntime 挂 LspManager + Engine.pending_lsp_blocks + _run_post_edit_lsp_hook + flush 注入 synthetic user message | +22 |
+| **累计** | | | **639 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
