@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Stage 1.5 完成（2026-05-06）。
+> 最后更新：Stage 2.1–2.6 审核完成（2026-05-07）。
 
 ---
 
@@ -60,7 +60,31 @@
 | 4.4 | `22438d2` | **LSP post-edit hook 接通 engine**：edited_paths_for_tool / parse_patch_paths + Config.lsp + ToolRuntime 挂 LspManager + Engine.pending_lsp_blocks + _run_post_edit_lsp_hook + flush 注入 synthetic user message | +22 |
 | 4.1.nn | `234dbe9` | **/prompt/stream 接真实 Engine**：engine_event_to_sse 桥接 12 种 EngineEvent + AppRuntime.stream_prompt 可注入 LLMClient → 驱动 Engine → 产生真实 SSE 事件流；含真实 DeepSeek API 集成测（config.toml api_key 自动 opt-in） | +9 |
 | 3.next.1 | `1d97997` | **approval cache 指纹**：ApprovalKey/Cache/Status + build_approval_key（patch: 路径 hash / shell: classify_command / net: host / tool:\*）+ Engine 集成（session grant 绕过 handler）+ classify_command 修正 Rust parity（剥 flags；未匹配返 positional[0]） | +17 |
-| **累计** | | | **665 passed, 2 skipped** |
+| 5.prompts | — | **17 个 prompt 模板**：从 Rust `crates/tui/src/prompts/` 复制 17 文件到 `src/deepseek_tui/prompts/` + `__init__.py` 加载器（compose_prompt 4 层组合）+ `engine/prompts.py` 接入真实模板（含 handoff / working_set / context management） | +32 |
+| **累计** | | | **693 passed, 4 skipped** |
+
+### Stage 2.1–2.6 审核结论（2026-05-07）
+
+> 审核视角：功能是否实现 × 是否接入系统 × 测试覆盖
+
+| Stage | 功能实现 | 系统接入 | 测试 | 判定 |
+|-------|---------|---------|------|------|
+| 2.1 turn_loop | ⚠️ 骨架级（256 行 vs Rust 1,597 行） | ✅ Engine 调用 | ⚠️ 无流式集成测 | 部分达标 |
+| 2.2 capacity | ✅ 核心决策逻辑（326 行） | ❌ 无运行时调用 | ✅ 14 tests | **孤岛** |
+| 2.3 compaction | ⚠️ ~21% Rust 规模（423+180 行） | ❌ 无运行时调用 | ⚠️ 无异步测试 | **孤岛** |
+| 2.4 tool_parser | ✅ ~96% Rust 规模（488 行） | ❌ 无运行时调用 | ✅ 25 tests | **孤岛** |
+| 2.5 execpolicy 集成 | ✅ Policy→ToolContext→ExecShell | ✅ shell 执行路径 | ✅ 40+ tests | **达标** |
+| 2.6 command_safety | ✅ 4 级 + 11 步管道（405 行） | ⚠️ 仅 classify_command 被用 | ✅ 22 tests | 部分达标 |
+
+**关键发现：**
+
+1. **3 个孤岛**（capacity / compaction / tool_parser）：代码存在但 Engine 从未调用，违反原则 B
+2. **tool_parser fallback 缺失**：DeepSeek 模型文本格式工具调用会丢失（功能性 bug）
+3. **context overflow recovery 空壳**：`turn_loop.py:167` 只 `continue` 不压缩
+4. **analyze_command() 是死代码**：11 步安全管道运行时不走这条路
+5. **COMMAND_ARITY 94 前缀**（非声称的 163）
+
+**修复计划**：见 Stage 2 路线图中的 "Integration commit" 章节 + 第九节集成债清单新增 7 条
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
@@ -110,6 +134,33 @@ make check  # = ruff + mypy + pytest
 7. ~~`execpolicy/sandbox/seatbelt.py`~~ — **已跳过**（2026-05-07 用户决定）
    - 原因：macOS Seatbelt OS 级隔离不做；命令黑名单 + cwd 边界 + env 清洗已足够
    - 详见集成债清单（第九节）
+
+**Stage 2 Integration commit（P0，2026-05-07 审核后追加）：**
+
+> 2026-05-07 审核发现 Stage 2.2/2.3/2.4 三个模块是孤岛（代码存在但系统从未调用），违反原则 B。
+> 需要一个 Integration commit 把它们接入 Engine/TurnLoop。
+
+接入顺序（按依赖关系）：
+
+1. **tool_parser → turn_loop**（~15 行，无外部依赖）
+   - 在 `turn_loop.py` 流结束后加 fallback：`has_tool_call_markers` → `parse_tool_calls`
+   - Rust 对应：`turn_loop.rs:726-758`
+   - 触发条件：API 未返回结构化 tool blocks 但文本中有 `[TOOL_CALL]` / `<invoke>` 标记
+
+2. **compaction → Engine + turn_loop**（~40 行接入）
+   - `Engine._run_conversation` 每轮前：`should_compact` → `compact_messages_safe` → 替换 messages + 合并 summary_prompt
+   - `turn_loop.py` context overflow：替换空 `continue` 为紧急 compaction 调用
+   - Rust 对应：`turn_loop.rs:85-168`（自动）+ `turn_loop.rs:177-208`（紧急）
+
+3. **capacity → Engine**（~200 行 capacity_flow + Engine 改动）
+   - `Engine.__init__` 实例化 `CapacityController`
+   - `Engine._run_conversation` 加 3 个 checkpoint：pre-request / post-tool / error-escalation
+   - 新建 `engine/capacity_flow.py` 实现 `apply_targeted_context_refresh`（调 compaction）/ `apply_verify_with_tool_replay`（重跑只读工具）/ `apply_verify_and_replan`（重建 canonical state）
+   - Rust 对应：`capacity_flow.rs:1-975`
+
+4. **command_safety → ExecShellTool heuristics**（~10 行）
+   - 把 `Policy.check()` 的 heuristics fallback 从 `lambda _: ALLOW` 改为 `analyze_command` 映射
+   - 补齐 COMMAND_ARITY 至 163 前缀
 
 ### Stage 3（4–6 周）：74 工具补齐
 
@@ -484,6 +535,13 @@ deepseek-tui-py/
 | ✅ 4.1.simplified: /prompt 不调 LLM | 4.1 → 4.1.next → 4.1.nn | 原为 3-frame placeholder；**已还清**（commit `234dbe9`）：AppRuntime.stream_prompt 注入 LLMClient 时走真实 Engine → turn_loop → DeepSeekClient → SSE，12 种 EngineEvent 全部桥接；无 client 时保持 3-frame placeholder（向后兼容）。含真实 DeepSeek API 集成测（/prompt/stream → flash 模型 → "pong" round-trip） | — | — |
 | ⬜ 3.2.simplified: SubAgent 占位 Executor | 3.2 | `subagent/manager.py::_stub_executor` sleep 50ms 返合成 result；没有真实 LLM 调用 / 没 turn loop / 没工具派发 / 不累加 token usage | 用户 2026-05-07 决定：让 Manager+Mailbox+持久化+重启恢复+10 工具接口今天落地，LLM 驱动等 Stage 4 接通 | 实现 `LlmSubAgentExecutor`：用 `DeepSeekClient` + mini turn loop + 为 sub-agent 构建过滤过的 `ToolRegistry`（按 `agent_type.allowed_tools()`）+ 发 `MailboxMessage.tool_call_started/completed` + 发 `MailboxMessage.token_usage`。参考 Rust `mod.rs:1077+`（run_loop / dispatch_tool / handle_api_response）约 ~800 行 |
 | ⬜ 3.2.simplified: 7 种 SubAgentType 的 system prompt 未拷 | 3.2 | 只实现了类型枚举 + `allowed_tools()` 推荐清单；各类型的 **system prompt** 没从 `crates/tui/src/prompts/` 拷进来 | prompt 文件和 executor 强耦合，等真 Executor 落地一起做 | 把 `GENERAL_AGENT_PROMPT / EXPLORE_AGENT_PROMPT / PLAN_AGENT_PROMPT / REVIEW_AGENT_PROMPT / IMPLEMENTER_AGENT_PROMPT / VERIFIER_AGENT_PROMPT / CUSTOM_AGENT_PROMPT` 7 份从 Rust 常量整理到 `src/deepseek_tui/prompts/subagent_*.md` 并在 `SubAgentType.system_prompt()` 加载 |
+| ⬜ 2.4.orphan: tool_parser 未接入 turn_loop | 2.4 | `engine/tool_parser.py`（488 行）实现完整但 turn_loop 流结束后没有 fallback 检查文本中的工具调用；DeepSeek 模型在某些场景会把工具调用写成文本而非结构化 blocks，此时 Python 版会**丢失工具调用** | 2026-05-07 审核发现：Rust `turn_loop.rs:726-758` 在流结束后检查 `has_tool_call_markers` → `parse_tool_calls` 作为 fallback，Python 缺此路径 | 在 `turn_loop.py` 的 `StreamDone` 处理后、`break` 前加入：`if not tool_calls and buffer.has_text(): has_tool_call_markers → parse_tool_calls → 追加到 tool_calls + 替换 buffer text`（~15 行） |
+| ⬜ 2.3.orphan: compaction 未接入 Engine/turn_loop | 2.3 | `engine/compaction.py`（423 行）+ `working_set.py`（180 行）实现了但 4 个触发路径全断：①自动 compaction ②手动 /compact ③紧急 context overflow ④capacity refresh | 2026-05-07 审核发现：Rust 在 turn_loop 每步开头调 `should_compact`，context overflow 时调紧急 compaction；Python 的 context overflow recovery 是注释占位（`turn_loop.py:167`） | 1) `Engine._run_conversation` 每轮前调 `should_compact` → `compact_messages_safe` 2) `turn_loop.py` context overflow 路径调紧急 compaction 替代空 `continue` 3) compaction 结果回写 messages + 合并 summary_prompt 到 system_prompt |
+| ⬜ 2.2.orphan: capacity 未接入 Engine（3 个 checkpoint 缺失） | 2.2 | `engine/capacity.py`（326 行）决策逻辑正确但 Engine/TurnLoop 从未实例化或调用 `CapacityController`；缺 `capacity_flow` 执行层（Rust 975 行） | 2026-05-07 审核发现：Rust 在 turn_loop 的 pre-request / post-tool / error-escalation 三处调 capacity checkpoint；Python 完全没有 | 1) `Engine.__init__` 实例化 `CapacityController` 2) 实现 `capacity_flow.py`（~200 行）含 `run_capacity_pre_request_checkpoint` / `run_capacity_post_tool_checkpoint` / `run_capacity_error_escalation_checkpoint` 3) pre-request 的 `TARGETED_CONTEXT_REFRESH` 触发 compaction 4) post-tool 的 `VERIFY_WITH_TOOL_REPLAY` 选只读工具重跑对比 5) error-escalation 的 `VERIFY_AND_REPLAN` 重建 canonical state |
+| ⬜ 2.6.dead_code: analyze_command 运行时未调用 | 2.6 | `command_safety.py::analyze_command()`（11 步安全管道）存在但 `ExecShellTool` 走的是 `Policy.check()`（前缀规则），不是 safety 分析管道 | 设计选择：Rust 中 `command_safety` 是 `Policy` 的**输入源**之一（为无规则匹配的命令提供 heuristic fallback），Python 的 `Policy.check()` 第二参数 `heuristics_fn` 硬编码为 `lambda _: Decision.ALLOW` | 把 `ExecShellTool` 的 heuristics fallback 从 `lambda _: ALLOW` 改为调用 `analyze_command` 并映射：`SAFE/WORKSPACE_SAFE → ALLOW`、`REQUIRES_APPROVAL → PROMPT`、`DANGEROUS → FORBIDDEN` |
+| ⬜ 2.6.data: COMMAND_ARITY 数量不足 | 2.6 | HANDOVER 声称 163 前缀，实际只有 94（git 37 + npm 26 + cargo 21 + python 2 + docker 6 + node 2） | 2026-05-07 审核发现 | 对照 Rust `command_safety.rs` 补齐缺失前缀（预计 +69 条），覆盖 brew/pip/yarn/pnpm/kubectl/systemctl/chmod/chown/mv/cp 等 |
+| ⬜ 2.1.stub: turn_loop context recovery 空壳 | 2.1 | `turn_loop.py:167` 注释 "would call recover_context_overflow()" 但实际只 `continue`（无限重试直到 MAX_CONTEXT_RECOVERY_ATTEMPTS） | 实现时 compaction 尚未就绪 | 接入 compaction 后替换为真实紧急 compaction 调用（见 2.3.orphan 修复方案第 2 点） |
+| ⬜ 2.1.dead_state: consecutive_tool_error_steps 未使用 | 2.1 | `_TurnState.consecutive_tool_error_steps` 声明但从未递增或判断 | Rust 在 post-tool 阶段递增此计数器并在 ≥3 时 hard stop；Python 的工具执行在 Engine 层而非 TurnLoop 层 | 在 `Engine._run_conversation` 的工具执行循环中追踪连续失败步数，≥3 时 break 并 emit ErrorEvent（或在 capacity error escalation 中处理） |
 
 > **约定**：✅ 已还清 / ⚠️ 部分还清 / ⬜ 未还清
 
