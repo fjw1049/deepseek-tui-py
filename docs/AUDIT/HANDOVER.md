@@ -43,7 +43,8 @@
 | 1.4 | `a7d3b82` | protocol IPC：Envelope/EventFrame×21/ThreadRequest×10/AppRequest×7/ToolPayload/ReviewDecision 等，Rust JSON parity | +72 |
 | 1.5 | `8df5331` | provider_registry：ApiProvider×7 / ProviderKind×5 / ProviderCapability / context_window 含 NNNk hint | +77 |
 | 2.1 | `dd78a8f` | engine/turn_loop 完整化（1,500 行）+ context checkpoint + tool_setup + capacity 状态机 | +13 |
-| **累计** | | | **364 passed, 2 skipped** |
+| 2.2 | `afa2da4` | engine/capacity 容量控制系统（~750 行）+ GuardrailAction + RiskBand + cooldown | +17 |
+| **累计** | | | **381 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
