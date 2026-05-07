@@ -59,7 +59,8 @@
 | 4.3 | `61a4901` | **MCP SSE/HTTP transport**：McpTransport 抽象（stdio + SSE）+ McpClient 重构走 transport + pending-id map 并发支持 + ToolRuntime 挂 McpManager + Config 自动加载 mcp.json + AppRuntime.mcp_startup 真实 per-server 状态 | +12 |
 | 4.4 | `22438d2` | **LSP post-edit hook 接通 engine**：edited_paths_for_tool / parse_patch_paths + Config.lsp + ToolRuntime 挂 LspManager + Engine.pending_lsp_blocks + _run_post_edit_lsp_hook + flush 注入 synthetic user message | +22 |
 | 4.1.nn | `234dbe9` | **/prompt/stream 接真实 Engine**：engine_event_to_sse 桥接 12 种 EngineEvent + AppRuntime.stream_prompt 可注入 LLMClient → 驱动 Engine → 产生真实 SSE 事件流；含真实 DeepSeek API 集成测（config.toml api_key 自动 opt-in） | +9 |
-| **累计** | | | **648 passed, 2 skipped** |
+| 3.next.1 | `1d97997` | **approval cache 指纹**：ApprovalKey/Cache/Status + build_approval_key（patch: 路径 hash / shell: classify_command / net: host / tool:\*）+ Engine 集成（session grant 绕过 handler）+ classify_command 修正 Rust parity（剥 flags；未匹配返 positional[0]） | +17 |
+| **累计** | | | **665 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
