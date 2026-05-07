@@ -56,7 +56,8 @@
 | 4.1 | `6f7c630` | **App Server**：FastAPI + uvicorn 7 路由（healthz/thread/app/prompt/tool/jobs/mcp/startup）+ AppRuntime 单例共享 + ThreadStore（内存）+ 更新后的 stdio JSON-RPC 走同一 AppRuntime + `deepseek-tui serve` CLI 子命令 | +19 |
 | 4.1.x | `23a5712` | **/prompt Rust parity**：handle_prompt emit ResponseStart/Delta/End 3-frame 序列 + /prompt/stream SSE 路由 + SseStream event: data: 双字段框 | +4 |
 | 4.2 | `1ccd563` | **Hooks 集成**：HooksConfig + _build_hook_dispatcher + AppRuntime 挂 dispatcher + handle_prompt/stream_prompt/handle_tool/jobs 各自 emit 对应 HookEvent + 修 WebhookHookSink dead code + retry 200ms×N 对齐 Rust | +14 |
-| **累计** | | | **605 passed, 2 skipped** |
+| 4.3 | `61a4901` | **MCP SSE/HTTP transport**：McpTransport 抽象（stdio + SSE）+ McpClient 重构走 transport + pending-id map 并发支持 + ToolRuntime 挂 McpManager + Config 自动加载 mcp.json + AppRuntime.mcp_startup 真实 per-server 状态 | +12 |
+| **累计** | | | **617 passed, 2 skipped** |
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
