@@ -49,6 +49,7 @@ from deepseek_tui.protocol.events import (
 from deepseek_tui.protocol.messages import Message
 
 if TYPE_CHECKING:
+    from deepseek_tui.client.base import LLMClient
     from deepseek_tui.tools.runtime import ToolRuntime
 
 
@@ -114,12 +115,14 @@ class AppRuntime:
         tool_runtime: ToolRuntime | None = None,
         working_directory: Path | None = None,
         hooks: HookDispatcher | None = None,
+        llm_client: LLMClient | None = None,
     ) -> None:
         self.config = config or Config()
         self.working_directory = (working_directory or Path.cwd()).resolve()
         self._tool_runtime: ToolRuntime | None = tool_runtime
         self.threads = ThreadStore()
         self.hooks = hooks if hooks is not None else _build_hook_dispatcher(self.config)
+        self._llm_client: LLMClient | None = llm_client
 
     @classmethod
     async def create(
@@ -128,6 +131,7 @@ class AppRuntime:
         config: Config | None = None,
         working_directory: Path | None = None,
         mode: str = "agent",
+        llm_client: LLMClient | None = None,
     ) -> AppRuntime:
         """Build an AppRuntime with a freshly-wired :class:`ToolRuntime`."""
         from deepseek_tui.tools.runtime import create_tool_runtime
@@ -137,7 +141,12 @@ class AppRuntime:
         tool_runtime = await create_tool_runtime(
             config=cfg, working_directory=wd, mode=mode
         )
-        return cls(config=cfg, tool_runtime=tool_runtime, working_directory=wd)
+        return cls(
+            config=cfg,
+            tool_runtime=tool_runtime,
+            working_directory=wd,
+            llm_client=llm_client,
+        )
 
     async def shutdown(self) -> None:
         if self._tool_runtime is not None:
@@ -267,9 +276,16 @@ class AppRuntime:
     ) -> AsyncIterator[dict[str, Any]]:
         """Async-iterator variant of handle_prompt — yields each EventFrame.
 
-        Consumed by the /prompt/stream SSE route. Yields typed event dicts
-        in the same order as ``handle_prompt`` would pack into the events
-        list, so clients can stream or batch identically.
+        Consumed by the /prompt/stream SSE route. Two modes:
+
+        - **With** an LLMClient injected: spin up an :class:`Engine`
+          over the current tool runtime, send the prompt, and stream
+          every engine event through :func:`engine_event_to_sse`.
+        - **Without** an LLMClient: yield the Rust-parity 3-frame
+          placeholder (ResponseStart/Delta("model-selected")/ResponseEnd).
+
+        The latter path preserves Stage 4.1.next behavior for tests and
+        offline callers that have no upstream LLM configured.
         """
         text = _pick_str(payload, "input") or _pick_str(payload, "prompt")
         if text is None:
@@ -287,8 +303,55 @@ class AppRuntime:
 
         response_id = f"resp-{uuid.uuid4().hex[:12]}"
         await self._emit_prompt_hooks(response_id)
+
+        if self._llm_client is not None:
+            async for frame in self._stream_engine_events(
+                text, rec.model or self.config.default_text_model
+            ):
+                yield frame
+            return
+
         for frame in _build_prompt_event_frames(response_id):
             yield frame
+
+    async def _stream_engine_events(
+        self, prompt_text: str, model: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Drive a one-shot Engine turn and yield SSE frames for each event."""
+        import asyncio
+
+        from deepseek_tui.app_server.engine_bridge import engine_event_to_sse
+        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.events import TurnCancelledEvent, TurnCompleteEvent
+        from deepseek_tui.engine.handle import EngineHandle
+
+        assert self._llm_client is not None  # checked by caller
+
+        handle = EngineHandle()
+        engine = Engine(
+            handle=handle,
+            client=self._llm_client,
+            default_model=model,
+            tool_runtime=self._tool_runtime,
+        )
+
+        # Run the engine loop in the background; it exits when the
+        # single turn terminates via TurnComplete/TurnCancelled.
+        engine_task = asyncio.create_task(engine.run())
+        try:
+            await handle.send_message(content=prompt_text, model=model)
+            events_iter = handle.events()
+            async for event in events_iter:
+                yield engine_event_to_sse(event)
+                if isinstance(event, (TurnCompleteEvent, TurnCancelledEvent)):
+                    break
+        finally:
+            await handle.cancel()
+            engine_task.cancel()
+            try:
+                await engine_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
 
     async def _emit_prompt_hooks(self, response_id: str) -> None:
         """Fan-out the 3 response-lifecycle hook events (Rust parity).
