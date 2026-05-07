@@ -166,6 +166,49 @@ make check  # = ruff + mypy + pytest
 
 这是我和用户对齐后的**协作模式**，严格执行可以避免 90% 的返工：
 
+### 🔴 两条核心原则（2026-05-07 用户追加，所有 stage 必须遵守）
+
+**原则 A：真实场景测试优先 —— 能用真实大模型 API 验证的，就必须用真实 API 测**
+
+> 用户原话："一定要判断是否能在真实大模型接口的逻辑下实现测试就真实场景测试。"
+
+自检清单（写完模块后，commit 前逐条过）：
+1. 本模块是否**可能**出现在真实 LLM 调用路径上？（client / engine / turn_loop / AppRuntime / tool execution / approval / engine event bridge / SSE streaming / hooks / LSP 都算）
+2. 如果**是**：必须新增至少一个真实 API 集成测。用 `tests/_real_api.py` 的 `has_deepseek_api_key()` 做 opt-in（没 key 自动 skip，有 key 自动跑）。**不许用"全是 mock 的测试"冒充真实场景**——mock 测对象能初始化，真实 API 测 wire 行为与真实对端吻合，两者必须共存。
+3. 如果**纯算法、纯数据结构、纯本地 IO**（apply_patch / command_safety / classify_command / approval_key fingerprint / SSE framing 等）：不需要真实 API 测，但必须有足够的单元测试覆盖 Rust parity 的每条 `#[test]`。
+4. 真实 API 测失败时 **不许偷偷 skip 掉**。必须调通或在集成债清单登记（带明确还清计划）。
+5. 真实 API 测里如果用到敏感参数（model 名 / base_url / 工具数量），要让**用户的 config.toml 生效**，不要硬编码偏离用户环境的值。
+
+典型例子（本项目已有）：
+- ✅ `tests/test_real_api.py` — DeepSeekClient 直接打 API
+- ✅ `tests/parity/phase_d/test_prompt_stream.py::TestStreamPromptRealApi` — AppRuntime→Engine→turn_loop→SSE 全链路走真实 flash 模型返回 "pong"
+
+**原则 B：写的每一行代码都必须能"接进系统里"，不许写孤岛**
+
+> 用户原话："写的功能一定是为了继承到系统里。"
+
+自检清单（写完模块后，commit 前逐条过）：
+1. `grep -rn '<ClassName|function_name>' src/ tests/` 在**本模块之外**有没有匹配？
+   - **没有** = 孤岛。不许 commit。
+2. 新模块的所有 public 入口，在**同一个 stage 内**必须被**下列之一**接通：
+   - `ToolRegistry` / `ToolContext`（工具类）
+   - `AppRuntime` / `Engine` / `ToolRuntime`（运行时类）
+   - `build_default_registry` / `create_tool_runtime` / `AppRuntime.create`（装配工厂）
+   - CLI 子命令 / HTTP 路由（入口类）
+   - 另一个已接通的模块（链式依赖）
+3. 集成点**在同一 commit 或紧邻 commit 内完成**。不许 "Stage X 只建模块，集成留给 Stage X.next"——除非用户明确批准延后并在集成债清单登记。
+4. 写**集成测试**验证"对象从顶层入口真的能到达这个模块"（不是单测 manager 自己能工作；要测 `registry.get("task_create").execute(...)` 真的调到了 TaskManager）。
+5. 如果一个 stage 里的集成链路长，用 **Integration #N** 命名的独立 commit 单独做集成（例子：`dca3816 Integration #2: wire Stage 3 managers into registry + Engine`）。
+
+典型例子（本项目已有）：
+- ✅ Stage 3.1/3.2 Manager 建好后，Integration #2 commit (`dca3816`) 把它们挂到 `ToolRuntime` + `Engine.create` + `ToolContext.metadata`
+- ✅ Stage 4.2 发现 `hooks/` 是孤岛（没人调用），本 stage 的核心工作就是**接线**而不是新建
+- ✅ Stage 4.4 LSP 栈已存在但孤岛，stage 的工作是 `Engine._run_post_edit_lsp_hook` 和 `flush` 接入 turn_loop
+
+**违反原则 A 或 B 的 commit 视为债务**，必须立即在集成债清单登记。
+
+---
+
 ### 步骤 0 — 心态：遇到问题不许随意简化（2026-05-06 用户要求）
 
 > 用户原话："简化流程一定是遇到问题一定要告知我为什么要简化，可以做哪些替代方案，而不是遇到问题一味的简化。"
@@ -423,6 +466,9 @@ deepseek-tui-py/
 1. **用户要的是百分百行为复刻**，不是最快完成；任何想偷工减料的地方先问用户。
 2. **Rust 才是规范**；Python 的旧实现很多地方是错的（从 Stage 0 审核可见）。每个 stage 前先读 Rust 源。
 3. **每完成一个 P0 就 commit + push**；不要累积改动超过一个逻辑单元。用户希望能在 GitHub 上审阅每一步。
+4. **两条核心原则（2026-05-07）** — 见第四节 🔴 章节：
+   - **A**：能用真实大模型 API 测的模块，就必须写真实 API 测（不是 mock）
+   - **B**：每一行新代码必须能"接进系统"，孤岛代码不许提交，一个 stage 内必须接通
 
 ---
 
