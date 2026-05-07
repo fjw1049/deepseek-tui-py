@@ -16,12 +16,19 @@ Scope for Stage 4.1:
 
 from __future__ import annotations
 
+import json
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.protocol.events import (
+    ResponseDeltaEvent,
+    ResponseEndEvent,
+    ResponseStartEvent,
+)
 from deepseek_tui.protocol.messages import Message
 
 if TYPE_CHECKING:
@@ -185,11 +192,11 @@ class AppRuntime:
         return _thread_error("", f"unknown op: {op}")
 
     async def handle_prompt(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Minimal prompt handler — records the prompt on a fresh thread.
+        """Prompt handler — records prompt, emits 3 event frames.
 
-        Stage 4.1 scope: does NOT yet call the LLM. The Engine path is
-        exercised when the client wires an LLM + approval handler — left
-        to a caller-side integration to keep 4.1 hermetic.
+        Mirrors Rust ``Runtime::handle_prompt`` (core/src/lib.rs:925-999):
+        ResponseStart → ResponseDelta("model-selected") → ResponseEnd.
+        Full LLM streaming lands via /prompt/stream.
         """
         text = _pick_str(payload, "input") or _pick_str(payload, "prompt")
         if text is None:
@@ -198,13 +205,61 @@ class AppRuntime:
                 "model": "unknown",
                 "events": [],
             }
-        rec = self.threads.create(model=_pick_str(payload, "model"))
+        thread_id = _pick_str(payload, "thread_id")
+        if thread_id is not None:
+            rec = self.threads.get(thread_id)
+            if rec is None:
+                return {
+                    "output": f"unknown thread: {thread_id}",
+                    "model": "unknown",
+                    "events": [],
+                }
+        else:
+            rec = self.threads.create(model=_pick_str(payload, "model"))
         rec.messages.append(Message.user(text))
-        return {
-            "output": f"accepted on {rec.thread_id}",
-            "model": rec.model or self.config.default_text_model,
-            "events": [],
+
+        model = rec.model or self.config.default_text_model
+        response_id = f"resp-{uuid.uuid4().hex[:12]}"
+        events = _build_prompt_event_frames(response_id)
+        output_payload = {
+            "provider": self.config.provider,
+            "model": model,
+            "prompt": text,
+            "response_id": response_id,
+            "thread_id": rec.thread_id,
         }
+        return {
+            "output": json.dumps(output_payload),
+            "model": model,
+            "events": events,
+        }
+
+    async def stream_prompt(
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Async-iterator variant of handle_prompt — yields each EventFrame.
+
+        Consumed by the /prompt/stream SSE route. Yields typed event dicts
+        in the same order as ``handle_prompt`` would pack into the events
+        list, so clients can stream or batch identically.
+        """
+        text = _pick_str(payload, "input") or _pick_str(payload, "prompt")
+        if text is None:
+            yield {"event": "error", "message": "missing 'input' or 'prompt'"}
+            return
+        thread_id = _pick_str(payload, "thread_id")
+        if thread_id is not None:
+            rec = self.threads.get(thread_id)
+            if rec is None:
+                yield {"event": "error", "message": f"unknown thread: {thread_id}"}
+                return
+        else:
+            rec = self.threads.create(model=_pick_str(payload, "model"))
+        rec.messages.append(Message.user(text))
+
+        response_id = f"resp-{uuid.uuid4().hex[:12]}"
+        for frame in _build_prompt_event_frames(response_id):
+            yield frame
 
     async def handle_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a single tool call through the registry.
@@ -385,3 +440,17 @@ def _dotted_get(data: Any, key: str) -> Any:
         else:
             return None
     return current
+
+
+def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
+    """Build the 3-frame response envelope Rust emits for every prompt.
+
+    Mirrors Rust ``Runtime::handle_prompt`` (lib.rs:938-953).
+    """
+    return [
+        ResponseStartEvent(response_id=response_id).model_dump(),
+        ResponseDeltaEvent(
+            response_id=response_id, delta="model-selected"
+        ).model_dump(),
+        ResponseEndEvent(response_id=response_id).model_dump(),
+    ]

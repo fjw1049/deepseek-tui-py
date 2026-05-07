@@ -124,15 +124,75 @@ class TestApp:
 
 
 class TestPrompt:
-    async def test_records_fresh_thread(self, client: httpx.AsyncClient) -> None:
+    async def test_emits_three_event_frames(self, client: httpx.AsyncClient) -> None:
+        """Rust parity: ResponseStart → ResponseDelta("model-selected") → ResponseEnd."""
         r = await client.post("/prompt", json={"input": "hello"})
         body = r.json()
-        assert body["output"].startswith("accepted on thread_")
+        assert r.status_code == 200
+        events = body["events"]
+        assert [e["event"] for e in events] == [
+            "response_start",
+            "response_delta",
+            "response_end",
+        ]
+        # All three share the same response_id
+        rids = {e["response_id"] for e in events}
+        assert len(rids) == 1
+        assert next(iter(rids)).startswith("resp-")
+        # Delta payload matches Rust
+        assert events[1]["delta"] == "model-selected"
+
+    async def test_output_is_json_payload(self, client: httpx.AsyncClient) -> None:
+        import json as json_
+
+        r = await client.post("/prompt", json={"input": "x"})
+        body = r.json()
+        parsed = json_.loads(body["output"])
+        assert parsed["provider"] == "deepseek"
+        assert parsed["prompt"] == "x"
+        assert parsed["response_id"].startswith("resp-")
+        assert parsed["thread_id"].startswith("thread_")
 
     async def test_rejects_missing_input(self, client: httpx.AsyncClient) -> None:
         r = await client.post("/prompt", json={})
         body = r.json()
         assert "missing" in body["output"]
+
+    async def test_unknown_thread_rejected(self, client: httpx.AsyncClient) -> None:
+        r = await client.post(
+            "/prompt", json={"input": "x", "thread_id": "thread_nope"}
+        )
+        body = r.json()
+        assert "unknown thread" in body["output"]
+
+
+class TestPromptStream:
+    async def test_streams_sse_frames(self, client: httpx.AsyncClient) -> None:
+        async with client.stream(
+            "POST", "/prompt/stream", json={"input": "hello"}
+        ) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            body = b""
+            async for chunk in response.aiter_bytes():
+                body += chunk
+        text = body.decode("utf-8")
+        # Three SSE envelopes — each has "event: <name>" + "data: {...}"
+        assert "event: response_start" in text
+        assert "event: response_delta" in text
+        assert "event: response_end" in text
+        # The delta payload is inlined
+        assert '"delta": "model-selected"' in text
+
+    async def test_streams_error_on_missing_input(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        async with client.stream("POST", "/prompt/stream", json={}) as response:
+            body = b""
+            async for chunk in response.aiter_bytes():
+                body += chunk
+        text = body.decode("utf-8")
+        assert "event: error" in text
 
 
 class TestTool:

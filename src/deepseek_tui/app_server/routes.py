@@ -10,8 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 
 from deepseek_tui.app_server.runtime import AppRuntime
+from deepseek_tui.app_server.sse import iter_sse
 
 
 def build_router() -> APIRouter:
@@ -40,6 +42,13 @@ def build_router() -> APIRouter:
         runtime = _get_runtime(request)
         payload = await _body(request)
         return await runtime.handle_prompt(payload)
+
+    @router.post("/prompt/stream")
+    async def prompt_stream(request: Request) -> StreamingResponse:
+        runtime = _get_runtime(request)
+        payload = await _body(request)
+        generator = iter_sse(runtime.stream_prompt(payload))
+        return StreamingResponse(generator, media_type="text/event-stream")
 
     @router.post("/tool")
     async def tool(request: Request) -> dict[str, Any]:
