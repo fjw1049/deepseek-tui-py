@@ -5,7 +5,7 @@ import json
 from deepseek_tui.state.checkpoints import CheckpointRecord, CheckpointsStore
 from deepseek_tui.state.database import Database
 from deepseek_tui.state.jobs import JobRecord, JobsStore
-from deepseek_tui.state.messages import MessageRecord, MessagesStore, encode_content
+from deepseek_tui.state.messages import MessagesStore, encode_content
 from deepseek_tui.state.offline_queue import OfflineQueueRecord, OfflineQueueStore
 from deepseek_tui.state.sessions import SessionRecord, SessionsStore
 from deepseek_tui.state.threads import ThreadRecord, ThreadsStore
@@ -18,6 +18,7 @@ async def test_sessions_and_checkpoints_roundtrip(tmp_path) -> None:
     sessions = SessionsStore(database)
     checkpoints = CheckpointsStore(database)
     offline_queue = OfflineQueueStore(database)
+    threads = ThreadsStore(database)
 
     session = SessionRecord(
         id="session-1",
@@ -32,24 +33,34 @@ async def test_sessions_and_checkpoints_roundtrip(tmp_path) -> None:
     assert loaded_session is not None
     assert loaded_session.transcript[0]["content"] == "hello"
 
-    checkpoint_id = await checkpoints.create(
-        CheckpointRecord(
-            id=None,
-            session_id="session-1",
-            created_at="2026-05-04T00:01:00Z",
-            summary="summary",
-            payload_json=json.dumps({"messages": 1}),
+    # Checkpoints now reference threads via FK, so create a thread first
+    await threads.upsert(
+        ThreadRecord(
+            id="thread-cp",
+            preview="cp-test",
+            model_provider="m",
+            cwd="/tmp",
+            status="idle",
+            created_at=1714780800,
+            updated_at=1714780800,
         )
     )
-    assert checkpoint_id > 0
 
-    latest_checkpoint = await checkpoints.get_latest_for_session("session-1")
+    await checkpoints.save(
+        CheckpointRecord(
+            thread_id="thread-cp",
+            checkpoint_id="cp-1",
+            state_json=json.dumps({"messages": 1}),
+            created_at=1714780860,
+        )
+    )
+
+    latest_checkpoint = await checkpoints.load("thread-cp")
     assert latest_checkpoint is not None
-    assert latest_checkpoint.summary == "summary"
+    assert latest_checkpoint.checkpoint_id == "cp-1"
 
-    loaded_checkpoints = await checkpoints.list_for_session("session-1")
+    loaded_checkpoints = await checkpoints.list_for_thread("thread-cp")
     assert len(loaded_checkpoints) == 1
-    assert loaded_checkpoints[0].summary == "summary"
 
     queue_id = await offline_queue.enqueue(
         OfflineQueueRecord(
@@ -68,7 +79,6 @@ async def test_sessions_and_checkpoints_roundtrip(tmp_path) -> None:
 
     await sessions.delete("session-1")
     assert await sessions.get("session-1") is None
-    assert await checkpoints.list_for_session("session-1") == []
 
     await database.close()
 
@@ -85,12 +95,11 @@ async def test_threads_messages_and_jobs_roundtrip(tmp_path) -> None:
         ThreadRecord(
             id="thread-1",
             preview="hello",
-            model="deepseek-v4-pro",
-            workspace=str(tmp_path),
-            mode="agent",
+            model_provider="deepseek-v4-pro",
+            cwd=str(tmp_path),
             status="idle",
-            created_at="2026-05-04T00:00:00Z",
-            updated_at="2026-05-04T00:00:00Z",
+            created_at=1714780800,
+            updated_at=1714780800,
         )
     )
     loaded_thread = await threads.get("thread-1")
@@ -98,17 +107,14 @@ async def test_threads_messages_and_jobs_roundtrip(tmp_path) -> None:
     assert loaded_thread.preview == "hello"
 
     message_id = await messages.append(
-        MessageRecord(
-            id=None,
-            thread_id="thread-1",
-            role="user",
-            content_json=encode_content({"text": "hello"}),
-            created_at="2026-05-04T00:01:00Z",
-        )
+        thread_id="thread-1",
+        role="user",
+        content=encode_content({"text": "hello"}),
+        created_at=1714780860,
     )
     assert message_id > 0
     loaded_messages = await messages.list_for_thread("thread-1")
-    assert loaded_messages[0].content == {"text": "hello"}
+    assert json.loads(loaded_messages[0].content) == {"text": "hello"}
 
     await jobs.upsert(
         JobRecord(

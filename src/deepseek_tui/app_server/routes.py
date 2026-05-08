@@ -1,8 +1,20 @@
-"""FastAPI router for the 7 app-server endpoints.
+"""FastAPI router for app-server endpoints.
 
 Mirrors ``crates/app-server/src/lib.rs`` (783 lines). Each handler is a
 thin delegator to :class:`AppRuntime` so HTTP + stdio JSON-RPC share the
 same code path.
+
+Extended with runtime-thread lifecycle routes (mirrors Rust runtime_api.rs):
+- POST /threads          — create thread
+- GET  /threads          — list threads
+- GET  /threads/{id}     — get thread detail
+- PATCH /threads/{id}    — update thread (archive/unarchive)
+- POST /threads/{id}/fork — fork thread
+- POST /threads/{id}/turns — start turn
+- POST /threads/{id}/turns/{turn_id}/interrupt — interrupt turn
+- POST /threads/{id}/turns/{turn_id}/steer — steer turn
+- POST /threads/{id}/compact — compact thread
+- GET  /threads/{id}/events — events since seq
 """
 
 from __future__ import annotations
@@ -66,6 +78,144 @@ def build_router() -> APIRouter:
         runtime = _get_runtime(request)
         return await runtime.mcp_startup()
 
+    # --- Runtime Thread lifecycle routes ------------------------------------
+
+    @router.post("/threads")
+    async def create_thread(request: Request) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        payload = await _body(request)
+        from deepseek_tui.app_server.runtime_threads import CreateThreadRequest
+
+        req = CreateThreadRequest.model_validate(payload)
+        thread = await manager.create_thread(req)
+        return {"ok": True, "thread": thread.model_dump(mode="json")}
+
+    @router.get("/threads")
+    async def list_threads(request: Request) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        include_archived = request.query_params.get("include_archived", "false") == "true"
+        limit_str = request.query_params.get("limit")
+        limit = int(limit_str) if limit_str else None
+        threads = await manager.list_threads(include_archived=include_archived, limit=limit)
+        return {
+            "ok": True,
+            "threads": [t.model_dump(mode="json") for t in threads],
+        }
+
+    @router.get("/threads/{thread_id}")
+    async def get_thread_detail(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        try:
+            detail = await manager.get_thread_detail(thread_id)
+        except FileNotFoundError:
+            return {"ok": False, "error": f"thread not found: {thread_id}"}
+        return {"ok": True, "detail": detail.model_dump(mode="json")}
+
+    @router.patch("/threads/{thread_id}")
+    async def update_thread(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        payload = await _body(request)
+        from deepseek_tui.app_server.runtime_threads import UpdateThreadRequest
+
+        req = UpdateThreadRequest.model_validate(payload)
+        try:
+            thread = await manager.update_thread(thread_id, req)
+        except (FileNotFoundError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "thread": thread.model_dump(mode="json")}
+
+    @router.post("/threads/{thread_id}/fork")
+    async def fork_thread(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        try:
+            forked = await manager.fork_thread(thread_id)
+        except FileNotFoundError:
+            return {"ok": False, "error": f"thread not found: {thread_id}"}
+        return {"ok": True, "thread": forked.model_dump(mode="json")}
+
+    @router.post("/threads/{thread_id}/turns")
+    async def start_turn(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        payload = await _body(request)
+        from deepseek_tui.app_server.runtime_threads import StartTurnRequest
+
+        req = StartTurnRequest.model_validate(payload)
+        try:
+            turn = await manager.start_turn(thread_id, req)
+        except (FileNotFoundError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "turn": turn.model_dump(mode="json")}
+
+    @router.post("/threads/{thread_id}/turns/{turn_id}/interrupt")
+    async def interrupt_turn(
+        request: Request, thread_id: str, turn_id: str
+    ) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        try:
+            turn = await manager.interrupt_turn(thread_id, turn_id)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "turn": turn.model_dump(mode="json")}
+
+    @router.post("/threads/{thread_id}/turns/{turn_id}/steer")
+    async def steer_turn(
+        request: Request, thread_id: str, turn_id: str
+    ) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        payload = await _body(request)
+        from deepseek_tui.app_server.runtime_threads import SteerTurnRequest
+
+        req = SteerTurnRequest.model_validate(payload)
+        try:
+            turn = await manager.steer_turn(thread_id, turn_id, req)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "turn": turn.model_dump(mode="json")}
+
+    @router.post("/threads/{thread_id}/compact")
+    async def compact_thread(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        payload = await _body(request)
+        from deepseek_tui.app_server.runtime_threads import CompactThreadRequest
+
+        req = CompactThreadRequest.model_validate(payload)
+        try:
+            turn = await manager.compact_thread(thread_id, req)
+        except (FileNotFoundError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "turn": turn.model_dump(mode="json")}
+
+    @router.get("/threads/{thread_id}/events")
+    async def get_events(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        since_str = request.query_params.get("since_seq")
+        since_seq = int(since_str) if since_str else None
+        events = manager.events_since(thread_id, since_seq)
+        return {
+            "ok": True,
+            "events": [e.model_dump(mode="json") for e in events],
+        }
+
     return router
 
 
@@ -74,6 +224,11 @@ def _get_runtime(request: Request) -> AppRuntime:
     if not isinstance(runtime, AppRuntime):
         raise RuntimeError("AppRuntime not attached to app.state.runtime")
     return runtime
+
+
+def _get_thread_manager(request: Request) -> Any:
+    """Get the RuntimeThreadManager from app state, or None."""
+    return getattr(request.app.state, "thread_manager", None)
 
 
 async def _body(request: Request) -> dict[str, Any]:

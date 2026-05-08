@@ -35,6 +35,8 @@ from deepseek_tui.tui.commands import dispatch
 from deepseek_tui.tui.widgets.command_palette import CommandPalette
 from deepseek_tui.tui.widgets.composer import Composer
 from deepseek_tui.tui.widgets.file_mention import FileMention
+from deepseek_tui.tui.widgets.help_panel import HelpPanel
+from deepseek_tui.tui.widgets.sidebar import Sidebar
 from deepseek_tui.tui.widgets.slash_menu import SlashMenu
 from deepseek_tui.tui.widgets.status_bar import StatusBar
 from deepseek_tui.tui.widgets.transcript import Transcript
@@ -64,6 +66,8 @@ class DeepSeekTUI(App[None]):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+n", "new_session", "New Session"),
         Binding("ctrl+k", "command_palette", "Command Palette"),
+        Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
+        Binding("question_mark", "show_help", "Help", show=False),
     ]
 
     def __init__(
@@ -79,6 +83,7 @@ class DeepSeekTUI(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Sidebar()
         yield Transcript()
         yield SlashMenu()
         yield FileMention()
@@ -284,3 +289,15 @@ class DeepSeekTUI(App[None]):
         if self._engine_task is not None:
             self._engine_task.cancel()
         self.exit()
+
+    def action_toggle_sidebar(self) -> None:
+        self.query_one(Sidebar).toggle()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpPanel())
+
+    def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
+        """Handle session selection from sidebar."""
+        transcript = self.query_one(Transcript)
+        transcript.add_system_message(f"Switching to session: {event.session_id[:8]}...")
+        self.query_one(Sidebar).hide_sidebar()

@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Stage 2-int 完成 — 3 孤岛 + 1 死代码已全部接入运行时（2026-05-08）。
+> 最后更新：Stage 4.9 P1 中间层管理器 — cycle_manager/seam_manager/working_set 三组件实现 + 55 parity tests（2026-05-09）。
 
 ---
 
@@ -68,7 +68,13 @@
 | 6.4 | — | **审批门禁 UI**：`TUIApprovalHandler` 桥接 `ApprovalDialog` modal → asyncio.Future → Engine | +6 |
 | 6.5 | — | **Slash 命令活化**：Composer 检测 `/` → SlashMenu，dispatch 应用结果到 transcript | +14 |
 | 6.6 | — | **命令面板 + @file + StatusBar**：Ctrl+K CommandPalette，@file FileMention，StatusBar model/mode/tokens | +16 |
-| **累计** | | | **830 passed, 4 skipped** |
+| 4.5 | — | **RuntimeThreadManager**：thread_manager.py（~830 行）+ runtime_threads.py（~460 行）+ broadcast.py（AsyncBroadcast）+ utils.py（write_json_atomic / summarize_text）+ routes.py 扩展 12 路由（threads CRUD/fork/turns/interrupt/steer/compact/events）+ 25 parity tests | +25 |
+| 4.6a | — | **SessionManager + State 时间戳修正**：session_manager.py（~330 行）+ schema.py v2（INTEGER 时间戳 + 19 字段 ThreadMetadata）+ threads.py/messages.py/checkpoints.py 全面重构 + SessionIndex JSONL + Session 内存模型 + 20 parity tests | +20 |
+| 4.6b | — | **SubAgent/Task 真实 Executor**：engine/executors.py（~190 行）替换 _stub_executor → 真实 Engine turn loop 驱动。task_manager.py 增加 get_real_task_executor()；subagent/manager.py 增加 get_real_subagent_executor() | +0 |
+| 4.7 | — | **P1 缺失工具补齐**：knowledge_tools.py（~480 行）实现 remember / note / review / rlm_query / plan_update / recall_archive / skill_load 七工具 + builder.py 注册 + 23 parity tests | +23 |
+| 4.8 | — | **P1 TUI Widget**：sidebar.py（~200 行）+ help_panel.py（~130 行）+ pickers.py（~190 行）+ markdown_render.py（~280 行）+ diff_viewer.py（~280 行）+ app.py 集成 Sidebar/Help + widgets/__init__.py 导出 + 34 parity tests | +34 |
+| 4.9 | — | **P1 中间层管理器**：cycle_manager.py（~290 行）+ seam_manager.py（~340 行）+ working_set.py 增强 summary() + 55 parity tests（CycleConfig/should_advance_cycle/extract_carry_forward/archive_cycle/build_seed_messages/SeamConfig/seam_level_for/verbatim_window/WorkingSet pin/summary） | +55 |
+| **累计** | | | **1042 passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
 
@@ -537,10 +543,11 @@ deepseek-tui-py/
 | 条目 | Stage | 简化内容 | 原因 | 恢复完整行为需要做什么 |
 |---|---|---|---|---|
 | ⬜ 2.7.simplified: macOS Seatbelt sandbox | 2.7 | 跳过 `sandbox/seatbelt.py` 不实现；`exec_shell` 直接 `subprocess.create_subprocess_shell()` 无 OS 级隔离 | 用户 2026-05-07 决定：命令黑名单 + cwd 边界 + env 清洗足够本地开发用；Seatbelt 做完约 ~800 行工作量换来的是"OS 级兜底"，在本地开发场景收益不高 | 参考 `crates/tui/src/sandbox/{mod,policy,seatbelt}.rs`（~1,364 行），实现：1) `SandboxPolicy`（读/写/执行 allowlist） 2) `SeatbeltProfile` XML 生成 3) `exec_shell` 子进程用 `sandbox-exec -p <profile>` 包装 4) `CommandSpec` 编排器 |
-| ⬜ 3.1.simplified: TaskExecutor 占位版 | 3.1 | `task_manager.py::_stub_executor` 只 sleep 50ms 返回合成 summary，不真实调用 LLM / 不驱动 engine / 不真正产出 artifacts | 用户 2026-05-07 决定：让 TaskManager 的持久化/队列/状态机/重启恢复四层骨架今天落地；真 Executor 等 Stage 4 engine 链接通后替换 | 实现 `EngineTaskExecutor`：接 `engine/turn_loop` + `client/deepseek_client` + `ToolRegistry`，把 Rust `task_manager.rs::EngineTaskExecutor`（行 413-699）行为翻过来 —— 含 `TaskExecutionEvent` 流 + `apply_execution_event` + runtime_event_count 累加 + 产出 artifacts |
+| ✅ 3.1.simplified: TaskExecutor 真实版 (2026-05-09) | 3.1 → 4.6b | `task_manager.py::_stub_executor` 已被 `engine/executors.py::real_task_executor` 替代，真实驱动 Engine turn loop | — | — |
 | ✅ 3.1.simplified: task_shell_start/wait 空壳 | 3.1 | `TaskShellStartTool` / `TaskShellWaitTool` 原为 `raise ToolError("not yet implemented")` | PTY shell 归在 Stage 3.4 | **Stage 3.4 已还清**（commit `7456887`）：两工具直接调 `ExecShellTool`（pty=True 默认），wait 时把 output 以 `TaskArtifactRef` 形式记到 `TaskRecord.artifacts` 并 append timeline 事件；`task_shell_wait` 额外接受 `task_id` 关联任务 |
 | ✅ 4.1.simplified: /prompt 不调 LLM | 4.1 → 4.1.next → 4.1.nn | 原为 3-frame placeholder；**已还清**（commit `234dbe9`）：AppRuntime.stream_prompt 注入 LLMClient 时走真实 Engine → turn_loop → DeepSeekClient → SSE，12 种 EngineEvent 全部桥接；无 client 时保持 3-frame placeholder（向后兼容）。含真实 DeepSeek API 集成测（/prompt/stream → flash 模型 → "pong" round-trip） | — | — |
-| ⬜ 3.2.simplified: SubAgent 占位 Executor | 3.2 | `subagent/manager.py::_stub_executor` sleep 50ms 返合成 result；没有真实 LLM 调用 / 没 turn loop / 没工具派发 / 不累加 token usage | 用户 2026-05-07 决定：让 Manager+Mailbox+持久化+重启恢复+10 工具接口今天落地，LLM 驱动等 Stage 4 接通 | 实现 `LlmSubAgentExecutor`：用 `DeepSeekClient` + mini turn loop + 为 sub-agent 构建过滤过的 `ToolRegistry`（按 `agent_type.allowed_tools()`）+ 发 `MailboxMessage.tool_call_started/completed` + 发 `MailboxMessage.token_usage`。参考 Rust `mod.rs:1077+`（run_loop / dispatch_tool / handle_api_response）约 ~800 行 |
+| ✅ 3.2.simplified: SubAgent 真实 Executor (2026-05-09) | 3.2 → 4.6b | `subagent/manager.py::_stub_executor` 已被 `engine/executors.py::real_subagent_executor` 替代，真实驱动 Engine turn loop + 支持 parent send_input/interrupt | — | — |
+| ⬜ 4.6b.simplified: SubAgent allowed_tools 过滤 | 4.6b | `real_subagent_executor` 创建 Engine 时未传递 `agent.allowed_tools` 过滤，子 Engine 可使用全部工具 | Rust 会按 `agent_type.allowed_tools()` 限制子 Agent 可用工具集 | 在 `_create_engine_for_execution` 中接受 `allowed_tools: list[str] | None` 参数，构建过滤后的 `ToolRegistry` 传入 Engine |
 | ⬜ 3.2.simplified: 7 种 SubAgentType 的 system prompt 未拷 | 3.2 | 只实现了类型枚举 + `allowed_tools()` 推荐清单；各类型的 **system prompt** 没从 `crates/tui/src/prompts/` 拷进来 | prompt 文件和 executor 强耦合，等真 Executor 落地一起做 | 把 `GENERAL_AGENT_PROMPT / EXPLORE_AGENT_PROMPT / PLAN_AGENT_PROMPT / REVIEW_AGENT_PROMPT / IMPLEMENTER_AGENT_PROMPT / VERIFIER_AGENT_PROMPT / CUSTOM_AGENT_PROMPT` 7 份从 Rust 常量整理到 `src/deepseek_tui/prompts/subagent_*.md` 并在 `SubAgentType.system_prompt()` 加载 |
 | ✅ 2.4.orphan: tool_parser 已接入 turn_loop (2026-05-08) | 2.4 | `engine/tool_parser.py`（488 行）实现完整但 turn_loop 流结束后没有 fallback 检查文本中的工具调用；DeepSeek 模型在某些场景会把工具调用写成文本而非结构化 blocks，此时 Python 版会**丢失工具调用** | 2026-05-07 审核发现：Rust `turn_loop.rs:726-758` 在流结束后检查 `has_tool_call_markers` → `parse_tool_calls` 作为 fallback，Python 缺此路径 | 在 `turn_loop.py` 的 `StreamDone` 处理后、`break` 前加入：`if not tool_calls and buffer.has_text(): has_tool_call_markers → parse_tool_calls → 追加到 tool_calls + 替换 buffer text`（~15 行） |
 | ✅ 2.3.orphan: compaction 已接入 Engine/turn_loop (2026-05-08) | 2.3 | `engine/compaction.py`（423 行）+ `working_set.py`（180 行）实现了但 4 个触发路径全断：①自动 compaction ②手动 /compact ③紧急 context overflow ④capacity refresh | 2026-05-07 审核发现：Rust 在 turn_loop 每步开头调 `should_compact`，context overflow 时调紧急 compaction；Python 的 context overflow recovery 是注释占位（`turn_loop.py:167`） | 1) `Engine._run_conversation` 每轮前调 `should_compact` → `compact_messages_safe` 2) `turn_loop.py` context overflow 路径调紧急 compaction 替代空 `continue` 3) compaction 结果回写 messages + 合并 summary_prompt 到 system_prompt |
@@ -561,13 +568,13 @@ deepseek-tui-py/
 | ⬜ 5.3: Skills ↔ Engine 集成 | 5.3 | `render_available_skills_context()` 未被 `engine/prompts.py` 调用；`load_skill` 工具未注册；`active_skill` 一次性注入未实现 | 需 Engine + ToolRegistry 集成 | 1) engine/prompts.py 调 render_available_skills_context() 2) 注册 load_skill 工具 3) Engine 消息队列支持 active_skill 注入 |
 | ⬜ 5.3: 远程 Registry 获取 | 5.3 | `fetch_registry()` 未实现 | 需 httpx GET | 实现 httpx GET + RegistryDocument.from_json()，`DEFAULT_REGISTRY_URL` 已准备 |
 | ⬜ 6: LineBuffer commit_tick 深度集成 | 6 | `LineBuffer` 存在但 Transcript 仍逐 delta 刷新 | Rust `commit_tick` 按固定间隔提交缓冲区减少重绘 | 在 `_listen_events` 中用 timer 限流 Transcript 刷新 |
-| ⬜ 6: Markdown 渲染升级 | 6 | Transcript 当前用 Rich markup，Rust 有自定义 markdown 渲染器（559 LOC） | Textual 内建 `Markdown` widget 可用 | 将 `_AssistantCell` 从 Static 改为 Markdown widget，支持代码块、表格等 |
-| ⬜ 6: Diff 渲染 | 6 | Rust `diff_render.rs`（449 LOC）未实现 | — | 在 Transcript 中支持 unified diff 格式渲染 |
+| ✅ 6: Sidebar (2026-05-09) | 6 → 4.8 | `sidebar.py`（~200 行）：SidebarEntry 模型 + 过滤 + 键盘导航 + SessionSelected/Deleted/Archived 消息 | — | — |
+| ✅ 6: Markdown 渲染升级 (2026-05-09) | 6 → 4.8 | `markdown_render.py`（~280 行）：MarkdownRenderer + AssistantMarkdownCell + 代码块/表格/链接提取 + Rich Markdown 流式渲染 | — | — |
+| ✅ 6: Diff 渲染 (2026-05-09) | 6 → 4.8 | `diff_viewer.py`（~280 行）：unified diff 解析 + BM25 行着色 + DiffViewer widget + DiffScreen 内联 | — | — |
+| ✅ 6: Help Screen (2026-05-09) | 6 → 4.8 | help_panel.py: HelpPanel ModalScreen + KEYBIND_SECTIONS + SlashCommandHelp | — | — |
 | ⬜ 6: ChatScreen/ConfigScreen 整合 | 6 | `screens/chat.py` 和 `screens/config_ui.py` 仍独立存在，未被 DeepSeekTUI 使用 | — | 统一架构或删除重复 |
-| ⬜ 6: Help Screen | 6 | Rust `views/help.rs`（672 LOC）未实现 | `/help` 仅输出文本 | 实现专用 Help Screen |
-| ⬜ 6: Sidebar | 6 | Rust `sidebar.rs`（770 LOC）会话/线程侧边栏未实现 | — | 实现 Textual 侧边栏 widget |
-| ⬜ 6: Model/Provider Picker | 6 | Rust 981 LOC combined 未实现 | `/model` 可接受参数但无 UI picker | 实现 ModalScreen picker |
-| ⬜ 6: Session Picker | 6 | Rust `session_picker.rs`（671 LOC）未实现 | — | — |
+| ✅ 6: Model/Provider Picker (2026-05-09) | 6 → 4.8 | pickers.py: ModelPicker + ModePicker + ProviderPicker + FilePicker + SessionPicker | — | — |
+| ✅ 6: Session Picker (2026-05-09) | 6 → 4.8 | pickers.py: SessionPicker 实现 | — | — |
 | ⬜ 6: Onboarding Screen | 6 | Rust `onboarding/mod.rs`（167 LOC）未实现 | 当前无 API key 时仅 StatusBar 提示 | 实现首次启动引导 screen |
 | ⬜ 6: Ctrl+Enter 换行 | 6 | Composer 当前 Enter 即发送，无多行输入 | Rust 支持 Ctrl+Enter 换行 | Composer 按键处理区分 Enter/Ctrl+Enter |
 | ⬜ 6: Paste burst detection | 6 | Rust `paste_burst.rs`（328 LOC）未实现 | — | — |

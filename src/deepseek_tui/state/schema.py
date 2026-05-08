@@ -17,16 +17,35 @@ SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
-        preview TEXT NOT NULL,
-        model TEXT NOT NULL,
-        workspace TEXT NOT NULL,
-        mode TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
+        rollout_path TEXT,
+        preview TEXT NOT NULL DEFAULT '',
+        ephemeral INTEGER NOT NULL DEFAULT 0,
+        model_provider TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'idle',
+        path TEXT,
+        cwd TEXT NOT NULL DEFAULT '.',
+        cli_version TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'unknown',
+        title TEXT,
+        sandbox_policy TEXT,
+        approval_mode TEXT,
         archived INTEGER NOT NULL DEFAULT 0,
-        system_prompt TEXT
+        archived_at INTEGER,
+        git_sha TEXT,
+        git_branch TEXT,
+        git_origin_url TEXT,
+        memory_mode TEXT
     )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_threads_updated_at
+    ON threads(updated_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_threads_archived_at
+    ON threads(archived_at DESC)
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_threads_archived_updated
@@ -37,8 +56,9 @@ SCHEMA_STATEMENTS = [
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         thread_id TEXT NOT NULL,
         role TEXT NOT NULL,
-        content_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        content TEXT NOT NULL,
+        item_json TEXT,
+        created_at INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE
     )
     """,
@@ -58,14 +78,28 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS checkpoints (
+        thread_id TEXT NOT NULL,
+        checkpoint_id TEXT NOT NULL,
+        state_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(thread_id, checkpoint_id),
+        FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_created_at
+    ON checkpoints(thread_id, created_at DESC)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         status TEXT NOT NULL,
         progress INTEGER,
         detail TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        created_at INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -73,25 +107,15 @@ SCHEMA_STATEMENTS = [
     ON jobs(updated_at DESC)
     """,
     """
-    CREATE TABLE IF NOT EXISTS checkpoints (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-    )
-    """,
-    """
     CREATE TABLE IF NOT EXISTS offline_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0,
         payload_json TEXT NOT NULL,
         status TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
-    INSERT OR IGNORE INTO schema_migrations(version) VALUES (1)
+    INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)
     """,
 ]
