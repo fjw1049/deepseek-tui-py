@@ -1,61 +1,55 @@
 # DeepSeek-TUI Python
 
-一个功能完整的 DeepSeek AI 助手终端界面（TUI），使用 Python 重写。
+基于 [DeepSeek-TUI](https://github.com/deepseek-ai/DeepSeek-TUI)（Rust）的 Python 行为复刻版——一个功能完整的终端 AI Agent。
 
 ## 特性
 
-- 🚀 **完整的 LLM 集成** - 支持 DeepSeek V4 Flash 和 Pro 模型
-- 🛠️ **丰富的工具系统** - 32+ 内置工具（文件操作、Shell、Git、Web、GitHub 等）
-- 🔐 **灵活的密钥管理** - 支持环境变量、配置文件、系统 keyring
-- 💾 **持久化存储** - SQLite 数据库存储会话历史
-- 🎨 **现代 TUI 界面** - 基于 Textual 的交互式终端界面
-- 🔌 **MCP 集成** - 支持 Model Context Protocol 外部工具
-- 🛡️ **审批策略** - 可配置的工具执行审批机制
-- 🔍 **LSP 集成** - 代码编辑后自动诊断
-- 📊 **Hooks 系统** - 事件分发和日志记录
+- **完整的 LLM 对话引擎** — 流式输出、工具调用、多轮推理、容量控制、自动压缩
+- **53+ 内置工具** — 文件操作、Shell、Git、Web、GitHub、任务管理、子代理等
+- **现代 TUI 界面** — 基于 Textual，包含 Sidebar、Markdown 渲染、Diff 查看、快捷键面板
+- **多会话持久化** — SQLite 存储，支持会话恢复、fork、检查点
+- **审批策略系统** — ExecPolicy + CommandSafety 4 级安全管道
+- **MCP/LSP 集成** — 外部工具扩展 + 代码编辑后自动诊断
+- **Hooks 事件系统** — 生命周期事件分发与日志
+- **Cycle/Seam 上下文管理** — 长会话自动归档 + Flash 摘要 + prefix cache 友好
+- **App Server** — FastAPI HTTP/SSE 接口，支持远程调用
 
 ## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- macOS / Linux
 
 ### 安装
 
 ```bash
-# 克隆仓库
-git clone https://github.com/yourusername/deepseek-tui-py.git
+git clone https://github.com/fjw1049/deepseek-tui-py.git
 cd deepseek-tui-py
 
-# 创建虚拟环境
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# 或 .venv\Scripts\activate  # Windows
+# 推荐使用 uv（快速）
+uv venv .venv --python 3.12
+uv pip install -e ".[dev]"
 
-# 安装依赖
-pip install -e .
+# 或使用 pip
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-### 配置
-
-1. 设置 API Key（三种方式任选其一）：
+### 配置 API Key
 
 ```bash
-# 方式 1：环境变量
+# 方式 1：环境变量（推荐）
 export DEEPSEEK_API_KEY=sk-your-key-here
 
 # 方式 2：配置文件
 mkdir -p ~/.deepseek
-cat > ~/.deepseek/config.toml << EOF
-provider = "deepseek"
-api_key = "sk-your-key-here"
-EOF
+cp config.example.toml ~/.deepseek/config.toml
+# 编辑 api_key 字段
 
 # 方式 3：系统 keyring
 python -c "import keyring; keyring.set_password('deepseek-tui', 'deepseek', 'sk-your-key-here')"
-```
-
-2. （可选）自定义配置：
-
-```bash
-cp config.example.toml ~/.deepseek/config.toml
-# 编辑 ~/.deepseek/config.toml
 ```
 
 ### 运行
@@ -64,143 +58,91 @@ cp config.example.toml ~/.deepseek/config.toml
 # 启动 TUI
 deepseek-tui
 
-# 或直接运行
-python -m deepseek_tui.cli
+# 启动 App Server
+deepseek-tui serve --port 8080
+
+# 单次对话
+deepseek-tui prompt "你好"
 ```
 
-## 架构
+## 项目结构
 
 ```
-deepseek-tui-py/
-├── src/deepseek_tui/
-│   ├── config/          # 配置系统
-│   ├── secrets/         # 密钥管理
-│   ├── state/           # SQLite 持久化
-│   ├── protocol/        # 消息协议
-│   ├── client/          # LLM 客户端
-│   ├── engine/          # 引擎核心
-│   ├── tools/           # 工具系统
-│   ├── mcp/             # MCP 集成
-│   ├── execpolicy/      # 审批策略
-│   ├── tui/             # TUI 界面
-│   ├── lsp/             # LSP 集成
-│   ├── hooks/           # Hooks 系统
-│   └── app_server/      # App Server
-└── tests/               # 测试套件
+src/deepseek_tui/
+├── config/          # 配置系统 + Provider 注册表
+├── secrets/         # 密钥管理（keyring / env / config 三级优先级）
+├── protocol/        # 消息协议（Message / Request / Response / Events）
+├── client/          # LLM 客户端（流式 SSE + 重试）
+├── engine/          # 核心引擎
+│   ├── engine.py        # Engine 主体 + turn loop
+│   ├── context.py       # 上下文预算 + token 估算
+│   ├── capacity.py      # 容量控制 + 风险等级
+│   ├── compaction.py    # 消息压缩 + LLM 摘要
+│   ├── dispatch.py      # 工具调度
+│   ├── tool_catalog.py  # 工具目录管理
+│   ├── cycle_manager.py # Cycle 归档 + briefing
+│   ├── seam_manager.py  # Seam 层级摘要（prefix cache 友好）
+│   └── working_set.py   # 活跃文件追踪
+├── tools/           # 53+ 工具实现
+├── execpolicy/      # 执行策略 + 命令安全分析
+├── state/           # SQLite 持久化 + SessionManager
+├── tui/             # Textual TUI 界面
+│   ├── app.py           # 主应用
+│   └── widgets/         # Sidebar / Help / Pickers / Markdown / Diff
+├── mcp/             # MCP 客户端（stdio + SSE transport）
+├── lsp/             # LSP 集成（post-edit 诊断）
+├── hooks/           # Hooks 事件系统
+├── app_server/      # FastAPI HTTP 服务
+├── cli/             # Typer CLI（22 子命令）
+└── prompts/         # 17 个 prompt 模板
 ```
 
 ## 工具系统
 
-内置 32+ 工具：
-
 ### 文件操作
-- `read_file` - 读取文件
-- `write_file` - 写入文件
-- `edit_file` - 编辑文件
-- `list_dir` - 列出目录
+`read_file` · `write_file` · `edit_file` · `list_dir` · `multi_edit`
 
 ### 搜索
-- `grep_files` - 搜索文件内容
-- `file_search` - 按名称搜索文件
+`grep_files` · `file_search` · `project_map`
 
 ### Shell
-- `exec_shell` - 执行 Shell 命令
-- `exec_shell_cancel` - 取消后台命令
-- `exec_shell_wait` - 等待命令完成
-- `exec_shell_interact` - 与命令交互
+`exec_shell` · `exec_shell_cancel` · `exec_shell_wait` · `exec_shell_interact`
 
 ### Git
-- `git_status` - Git 状态
-- `git_diff` - Git 差异
-- `git_log` - Git 日志
-- `git_show` - 显示提交
-- `git_blame` - Git blame
+`git_status` · `git_diff` · `git_log` · `git_show` · `git_blame`
 
-### Web
-- `web_search` - 网页搜索
-- `fetch_url` - 获取 URL
+### Web & GitHub
+`web_search` · `fetch_url` · `github_issue_context` · `github_pr_context` · `github_comment` · `github_close`
 
-### GitHub
-- `github_issue_context` - 获取 Issue 上下文
-- `github_pr_context` - 获取 PR 上下文
-- `github_comment` - 添加评论
-- `github_close` - 关闭 Issue/PR
+### 任务 & 子代理
+`task_create` · `task_list` · `task_read` · `task_cancel` · `agent_create` · `agent_send` · `agent_read`
 
-### 任务管理
-- `task_create` - 创建任务
-- `task_list` - 列出任务
-- `task_read` - 读取任务
-- `task_cancel` - 取消任务
+### 知识管理
+`remember` · `note` · `update_plan` · `recall_archive` · `skill_load` · `review` · `rlm_query`
 
 ### 其他
-- `apply_patch` - 应用补丁
-- `diagnostics` - 系统诊断
-- `project_map` - 项目结构
-- `todo_*` - Todo 管理
-- `automation_*` - 自动化任务
-- `agent_*` - 子代理管理
+`apply_patch` · `diagnostics` · `todo_read` · `todo_write` · `automation_run`
 
 ## 配置
 
-配置文件位置：`~/.deepseek/config.toml`
-
-### 基础配置
+配置文件：`~/.deepseek/config.toml`
 
 ```toml
 provider = "deepseek"
 model = "deepseek-v4-pro"
-api_key = "sk-your-key-here"
-base_url = "https://api.deepseek.com"
 
-# 审批策略
-approval_policy = "on-request"  # auto, on-request, never-ask
-sandbox_mode = "workspace-write"  # workspace-write, workspace-read, trust
-
-# 工具配置
-allow_shell = true
-max_subagents = 10
-```
-
-### Provider 配置
-
-```toml
 [providers.deepseek]
-api_key = "sk-your-key-here"
 base_url = "https://api.deepseek.com"
-model = "deepseek-v4-pro"
+api_key = "sk-your-key-here"
 timeout = 120
-max_tokens = 4096
-temperature = 0.7
-```
 
-### UI 配置
-
-```toml
 [ui]
 color_scheme = "default"
 show_thinking = true
-show_tool_details = true
-auto_compact = false
-max_history = 1000
-```
 
-### 状态配置
-
-```toml
 [state]
 database_path = "~/.deepseek/state.db"
 autosave = true
-```
-
-### 重试配置
-
-```toml
-[retry]
-enabled = true
-max_retries = 3
-initial_delay = 1.0
-max_delay = 60.0
-exponential_base = 2.0
 ```
 
 ## 开发
@@ -208,58 +150,49 @@ exponential_base = 2.0
 ### 运行测试
 
 ```bash
-# 运行所有测试
-make test
+# 全量测试
+pytest tests/ -v
 
-# 或
-pytest tests/
+# 仅 parity 测试
+pytest tests/parity/ -v
 
-# 运行特定测试
-pytest tests/test_integration.py -v
-
-# 运行真实 API 测试（需要 API key）
-export DEEPSEEK_API_KEY=sk-your-key-here
-pytest tests/test_real_api.py -v
+# 带覆盖率
+pytest tests/ --cov=deepseek_tui --cov-report=term-missing
 ```
 
-### 代码质量检查
+### 代码质量
 
 ```bash
-# 运行所有检查
-make check
-
-# 或分别运行
+# Lint
 ruff check src/ tests/
-mypy src/
-pytest tests/
-```
 
-### 格式化代码
-
-```bash
+# 格式化
 ruff format src/ tests/
+
+# 类型检查
+mypy src/
 ```
 
-## API 文档
+### 当前测试状态
 
-详细的 API 文档请参见 [API.md](docs/API.md)。
+- **1042 passed**（parity + unit + integration）
+- 覆盖：protocol / config / secrets / engine / tools / state / TUI / app_server / hooks / MCP / LSP
 
-## 配置文档
+## 技术栈
 
-详细的配置文档请参见 [CONFIG.md](docs/CONFIG.md)。
-
-## 架构文档
-
-详细的架构文档请参见 [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md)。
-
-## 贡献
-
-欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md)。
+| 组件 | 技术选型 |
+|------|---------|
+| TUI | Textual |
+| HTTP Client | httpx + httpx-sse |
+| CLI | Typer |
+| 数据模型 | Pydantic v2 |
+| 持久化 | aiosqlite |
+| App Server | FastAPI + Uvicorn |
+| 密钥 | keyring |
+| 异步 | asyncio + anyio |
+| Lint | ruff |
+| 类型检查 | mypy |
 
 ## 许可证
 
 MIT License
-
-## 致谢
-
-本项目是 [DeepSeek-TUI](https://github.com/deepseek-ai/DeepSeek-TUI) 的 Python 重写版本。
