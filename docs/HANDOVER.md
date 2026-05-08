@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Stage 2-int 完成 — 3 孤岛 + 1 死代码已全部接入运行时（2026-05-08）。
+> 最后更新：Engine Core Modules 完成 — context/dispatch/tool_execution/tool_catalog 四模块创建并集成入 engine.py（2026-05-08）。
 
 ---
 
@@ -68,7 +68,8 @@
 | 6.4 | — | **审批门禁 UI**：`TUIApprovalHandler` 桥接 `ApprovalDialog` modal → asyncio.Future → Engine | +6 |
 | 6.5 | — | **Slash 命令活化**：Composer 检测 `/` → SlashMenu，dispatch 应用结果到 transcript | +14 |
 | 6.6 | — | **命令面板 + @file + StatusBar**：Ctrl+K CommandPalette，@file FileMention，StatusBar model/mode/tokens | +16 |
-| **累计** | | | **830 passed, 4 skipped** |
+| 2-core | — | **Engine Core Modules**：`context.py`（tool result compaction + token estimation + working set）、`dispatch.py`（input parsing + parallel/plan policy + MCP policy）、`tool_execution.py`（audit logging + write lock）、`tool_catalog.py`（deferred loading + tool search + edit distance suggestions + code execution）+ engine.py 集成（special tool routing + compaction on results + audit emit） | +55 |
+| **累计** | | | **578+ passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
 

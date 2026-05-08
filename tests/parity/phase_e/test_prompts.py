@@ -9,7 +9,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from deepseek_tui.engine.prompts import build_system_prompt, _load_handoff_block
+from deepseek_tui.engine.prompts import _load_handoff_block, build_system_prompt
 from deepseek_tui.prompts import (
     AGENT_MODE,
     AGENT_PROMPT,

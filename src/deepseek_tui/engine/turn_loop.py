@@ -21,11 +21,12 @@ from deepseek_tui.engine.events import (
     ToolCallEvent,
 )
 from deepseek_tui.engine.streaming import AssistantResponseBuffer
-from deepseek_tui.engine.tool_setup import (
+from deepseek_tui.engine.tool_catalog import (
     active_tools_for_step,
     ensure_advanced_tooling,
     initial_active_tools,
 )
+from deepseek_tui.engine.tool_parser import has_tool_call_markers, parse_tool_calls
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import (
@@ -78,8 +79,13 @@ class TurnLoop:
 
     Mirrors `Engine::handle_deepseek_turn` from Rust.
     """
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(
+        self,
+        client: LLMClient,
+        compact_fn: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
+    ) -> None:
         self.client = client
+        self._compact_fn = compact_fn
 
     async def run(
         self,
@@ -164,8 +170,11 @@ class TurnLoop:
                                 error_message=msg,
                             )
                         state.context_recovery_attempts += 1
-                        # In full implementation, would call recover_context_overflow()
-                        # For now, continue to attempt
+                        # Emergency compaction — mirrors turn_loop.rs:177-208
+                        if self._compact_fn is not None:
+                            request.messages[:] = await self._compact_fn(
+                                request.messages
+                            )
                         continue
 
             # Build request with active tools
@@ -217,6 +226,23 @@ class TurnLoop:
                         )
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage
+
+                # Text-based tool call fallback (DeepSeek models may emit
+                # tool calls as text rather than structured blocks).
+                # Mirrors turn_loop.rs:726-758.
+                accumulated_text = "".join(buffer.text_parts)
+                if not tool_calls and accumulated_text:
+                    if has_tool_call_markers(accumulated_text):
+                        parsed = parse_tool_calls(accumulated_text)
+                        for tc in parsed.tool_calls:
+                            converted = ToolCall(
+                                id=tc.id,
+                                name=tc.name,
+                                arguments=dict(tc.args) if tc.args else {},
+                            )
+                            tool_calls.append(converted)
+                            await emit(ToolCallEvent(tool_call=converted))
+                        buffer.text_parts[:] = [parsed.clean_text]
 
                 # Stream completed successfully
                 state.context_recovery_attempts = 0

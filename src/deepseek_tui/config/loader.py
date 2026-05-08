@@ -18,7 +18,7 @@ from deepseek_tui.config.paths import (
 )
 
 try:
-    import tomllib as toml_impl  # type: ignore[import-not-found]
+    import tomllib as toml_impl  # type: ignore[import-untyped]
 except ModuleNotFoundError:
     import tomli as toml_impl  # type: ignore[import-not-found]
 
