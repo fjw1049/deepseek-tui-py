@@ -222,7 +222,7 @@ class TestStubCommands:
 
     def test_sessions_stub(self) -> None:
         result = runner.invoke(app, ["sessions"])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
 
     def test_mcp_stub(self) -> None:
         result = runner.invoke(app, ["mcp"])
@@ -234,7 +234,7 @@ class TestStubCommands:
 
     def test_metrics_stub(self) -> None:
         result = runner.invoke(app, ["metrics"])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
 
     def test_update_runs(self) -> None:
         result = runner.invoke(app, ["update"])

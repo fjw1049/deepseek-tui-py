@@ -206,7 +206,70 @@ def cmd_export(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/config")
 def cmd_config(args: str, app: DeepSeekTUI) -> CommandResult:
+    sub = args.strip().split(maxsplit=1)
+    action = sub[0] if sub else "show"
+
+    if action == "set":
+        if len(sub) < 2 or "=" not in sub[1]:
+            return CommandResult(error="Usage: /config set key=value")
+        key, _, value = sub[1].partition("=")
+        return _config_write(key.strip(), value.strip())
+
+    if action == "unset":
+        if len(sub) < 2:
+            return CommandResult(error="Usage: /config unset key")
+        return _config_write(sub[1].strip(), None)
+
     return CommandResult(output="Opening config editor...")
+
+
+def _config_write(key: str, value: str | None) -> CommandResult:
+    """Set or unset a key in ~/.deepseek/config.toml."""
+    from deepseek_tui.config.paths import default_config_path
+
+    config_path = default_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    if config_path.exists():
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+
+    found = False
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.split("#", 1)[0].strip()
+        if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+            found = True
+            if value is not None:
+                new_lines.append(f"{key} = {_toml_value(value)}")
+        else:
+            new_lines.append(line)
+
+    if not found and value is not None:
+        new_lines.append(f"{key} = {_toml_value(value)}")
+
+    config_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    if value is None:
+        return CommandResult(output=f"Unset {key}" if found else f"Key {key} not found")
+    return CommandResult(output=f"Set {key} = {_toml_value(value)}")
+
+
+def _toml_value(raw: str) -> str:
+    """Wrap as TOML string unless it looks like a bool/int/float."""
+    if raw.lower() in ("true", "false"):
+        return raw.lower()
+    try:
+        int(raw)
+        return raw
+    except ValueError:
+        pass
+    try:
+        float(raw)
+        return raw
+    except ValueError:
+        pass
+    return f'"{raw}"'
 
 
 # ── /agent ───────────────────────────────────────────────────────────────

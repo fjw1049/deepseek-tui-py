@@ -122,10 +122,10 @@ class TestDispatch:
         assert result.error
         assert "unknown" in result.error.lower()
 
-    def test_p1_command_returns_not_implemented(self) -> None:
+    def test_p1_command_returns_output(self) -> None:
         result = dispatch("/yolo", self._mock_app())
-        assert result.error
-        assert "P1" in result.error or "not yet" in result.error
+        assert result.output
+        assert not result.error
 
     def test_alias_dispatch(self) -> None:
         result = dispatch("/?", self._mock_app())

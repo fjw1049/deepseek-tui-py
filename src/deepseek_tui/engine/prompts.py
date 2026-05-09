@@ -25,6 +25,7 @@ def build_system_prompt(
     personality: Personality = Personality.CALM,
     workspace: Path | None = None,
     working_set_summary: str | None = None,
+    skills_context: str | None = None,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -34,9 +35,10 @@ def build_system_prompt(
     Otherwise, composes from layered templates following the Rust ordering:
       1. mode prompt (base + personality + mode + approval)
       2. context management guidance (Agent/Yolo only)
-      3. compaction handoff template
-      4. previous-session handoff (volatile)
-      5. working-set summary (volatile)
+      3. skills context (available skills list)
+      4. compaction handoff template
+      5. previous-session handoff (volatile)
+      6. working-set summary (volatile)
     """
     if override is not None and override.strip():
         return override
@@ -56,6 +58,10 @@ def build_system_prompt(
             "If you notice context is getting long (>80%), "
             "proactively suggest using `/compact` to the user."
         )
+
+    # Skills context (mirrors Rust skills injection into system prompt)
+    if skills_context and skills_context.strip():
+        full_prompt += "\n\n" + skills_context
 
     # Compaction handoff template
     full_prompt += "\n\n" + COMPACT_TEMPLATE()

@@ -94,6 +94,7 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
         workspace=Path("."),
         allow_shell=True,
         auto_approve=True,
+        allowed_tools=agent.allowed_tools,
     )
 
     try:
@@ -142,11 +143,16 @@ async def _create_engine_for_execution(
     workspace: Path,
     allow_shell: bool = True,
     auto_approve: bool = True,
+    allowed_tools: list[str] | None = None,
 ) -> tuple[object, EngineHandle, asyncio.Task[None]]:
     """Create a lightweight Engine + handle for executor use.
 
     Returns (engine, handle, background_task). Caller must cancel the task
     when done.
+
+    When *allowed_tools* is provided (SubAgent use-case), only tools whose
+    names appear in the list are kept in the registry — mirrors Rust
+    ``SubAgent::allowed_tools`` filtering (mod.rs:810-825).
     """
     from deepseek_tui.client.deepseek import DeepSeekClient
     from deepseek_tui.config.models import Config
@@ -165,6 +171,11 @@ async def _create_engine_for_execution(
         default_model=model,
         max_tool_round_trips=10,
     )
+
+    # Filter registry down to allowed_tools (Rust: SubAgent scope restriction)
+    if allowed_tools is not None:
+        allowed_set = set(allowed_tools)
+        engine.tool_registry.filter_by_names(allowed_set)
 
     async def _run_engine() -> None:
 

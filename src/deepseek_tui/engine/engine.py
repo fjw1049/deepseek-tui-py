@@ -82,6 +82,7 @@ class Engine:
         max_tool_round_trips: int = 3,
         tool_runtime: ToolRuntime | None = None,
         compaction_config: CompactionConfig | None = None,
+        skill_registry: object | None = None,
     ) -> None:
         self.handle = handle
         self.client = client
@@ -112,6 +113,8 @@ class Engine:
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
         self._tool_write_lock = asyncio.Lock()
+        # Skills integration — renders available skills into system prompt
+        self.skill_registry = skill_registry
 
     @classmethod
     async def create(
@@ -134,6 +137,7 @@ class Engine:
         tools can actually reach the managers at dispatch time.
         """
         from deepseek_tui.config.models import Config
+        from deepseek_tui.skills import discover_in_workspace
         from deepseek_tui.tools.runtime import create_tool_runtime
 
         cfg = config if isinstance(config, Config) else Config()
@@ -142,6 +146,8 @@ class Engine:
             working_directory=working_directory,
             mode=mode,
         )
+        # Discover skills for system prompt injection
+        skill_reg = discover_in_workspace(workspace=working_directory)
         return cls(
             handle=handle,
             client=client,
@@ -150,7 +156,16 @@ class Engine:
             approval_handler=approval_handler,
             max_tool_round_trips=max_tool_round_trips,
             tool_runtime=runtime,
+            skill_registry=skill_reg,
         )
+
+    def _render_skills_context(self) -> str | None:
+        """Render skills context for system prompt injection."""
+        if self.skill_registry is None:
+            return None
+        from deepseek_tui.skills import render_available_skills_context
+
+        return render_available_skills_context(self.skill_registry) or None
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""
@@ -174,7 +189,10 @@ class Engine:
         result = await self._run_conversation(
             messages=working_messages,
             model=op.model or self.default_model,
-            system_prompt=build_system_prompt(op.system_prompt),
+            system_prompt=build_system_prompt(
+                op.system_prompt,
+                skills_context=self._render_skills_context(),
+            ),
             max_tokens=op.max_tokens,
         )
 

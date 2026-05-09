@@ -47,7 +47,7 @@
 | 2.3 | `500c4b4` | engine/compaction 消息汇总（~450 行）+ working_set 去重 + 智能 pin + LLM 总结 | +23 |
 | 2.4 | `fd8ac3c` | engine/tool_parser 文本工具解析 + 流片段重组（~470 行）+ 5 种格式 + 智能 fallback | +25 |
 | 2.5 | `f5fa794` | execpolicy 集成：Policy 绑定 ToolContext + exec_shell Decision 检查（FORBIDDEN/PROMPT） | +0 |
-| 2.6 | `b3b0d83` | command_safety 分析：SafetyLevel×4 + COMMAND_ARITY 163 前缀 + 11 级检查管道 + 危险模式检测 | +24 |
+| 2.6 | `b3b0d83` | command_safety 分析：SafetyLevel×4 + COMMAND_ARITY 189 前缀 + 11 级检查管道 + 危险模式检测 | +24 |
 | 3.1 | `c8c72e1` | durable Task 系统：TaskManager（~700 行）+ JSON 文件持久化 + 重启恢复（Running→Queued）+ 11 工具接通 | +33 |
 | 3.2 | `3cbf9a9` | Sub-agent runtime：SubAgentManager（~600 行）+ Mailbox（9 种消息 + 单调 seq）+ asyncio.Task 调度 + 重启恢复（Running→Interrupted）+ 10 工具接通 | +42 |
 | 3.3 | `7456887` | apply_patch 原生实现：patch_engine.py（~400 行）+ MAX_FUZZ=50 模糊匹配 + 累积偏移 + create/delete via /dev/null + 重写 ApplyPatchTool 不再外调 `patch` 命令 | +27 |
@@ -96,9 +96,9 @@
 2. ~~**tool_parser fallback 缺失**~~ → ✅ turn_loop StreamDone 后 fallback 已实现
 3. ~~**context overflow recovery 空壳**~~ → ✅ 紧急 compaction 已接入
 4. ~~**analyze_command() 是死代码**~~ → ✅ 已接入 ExecShellTool heuristic fallback
-5. **COMMAND_ARITY 94 前缀**（非声称的 163）— 仍待补齐
+5. ~~**COMMAND_ARITY 94 前缀**~~ → ✅ 已补齐至 189 条（与 Rust 完全对齐）
 
-**修复计划**：Stage 2-int 已于 2026-05-08 执行完毕（见 docs/BUG.txt）。剩余 COMMAND_ARITY 补齐见集成债清单。
+**修复计划**：Stage 2-int 已于 2026-05-08 执行完毕（见 docs/BUG.txt）。COMMAND_ARITY 已补齐至 189。
 
 ### 五阶段缺口审核（`docs/AUDIT/`）
 
@@ -174,7 +174,7 @@ make check  # = ruff + mypy + pytest
 
 4. **command_safety → ExecShellTool heuristics**（~10 行）
    - 把 `Policy.check()` 的 heuristics fallback 从 `lambda _: ALLOW` 改为 `analyze_command` 映射
-   - 补齐 COMMAND_ARITY 至 163 前缀
+   - ~~补齐 COMMAND_ARITY 至 163 前缀~~ → ✅ 已补齐至 189
 
 ### Stage 3（4–6 周）：74 工具补齐
 
@@ -548,26 +548,26 @@ deepseek-tui-py/
 | ✅ 3.1.simplified: task_shell_start/wait 空壳 | 3.1 | `TaskShellStartTool` / `TaskShellWaitTool` 原为 `raise ToolError("not yet implemented")` | PTY shell 归在 Stage 3.4 | **Stage 3.4 已还清**（commit `7456887`）：两工具直接调 `ExecShellTool`（pty=True 默认），wait 时把 output 以 `TaskArtifactRef` 形式记到 `TaskRecord.artifacts` 并 append timeline 事件；`task_shell_wait` 额外接受 `task_id` 关联任务 |
 | ✅ 4.1.simplified: /prompt 不调 LLM | 4.1 → 4.1.next → 4.1.nn | 原为 3-frame placeholder；**已还清**（commit `234dbe9`）：AppRuntime.stream_prompt 注入 LLMClient 时走真实 Engine → turn_loop → DeepSeekClient → SSE，12 种 EngineEvent 全部桥接；无 client 时保持 3-frame placeholder（向后兼容）。含真实 DeepSeek API 集成测（/prompt/stream → flash 模型 → "pong" round-trip） | — | — |
 | ✅ 3.2.simplified: SubAgent 真实 Executor (2026-05-09) | 3.2 → 4.6b | `subagent/manager.py::_stub_executor` 已被 `engine/executors.py::real_subagent_executor` 替代，真实驱动 Engine turn loop + 支持 parent send_input/interrupt | — | — |
-| ⬜ 4.6b.simplified: SubAgent allowed_tools 过滤 | 4.6b | `real_subagent_executor` 创建 Engine 时未传递 `agent.allowed_tools` 过滤，子 Engine 可使用全部工具 | Rust 会按 `agent_type.allowed_tools()` 限制子 Agent 可用工具集 | 在 `_create_engine_for_execution` 中接受 `allowed_tools: list[str] | None` 参数，构建过滤后的 `ToolRegistry` 传入 Engine |
+| ✅ 4.6b.simplified: SubAgent allowed_tools 过滤 (2026-05-09) | 4.6b | `real_subagent_executor` 传递 `agent.allowed_tools` 过滤，子 Engine 只能使用许可工具 | ToolRegistry.filter_by_names() 实现 | `_create_engine_for_execution` 接受 `allowed_tools` 参数并调用 `engine.tool_registry.filter_by_names()` |
 | ⬜ 3.2.simplified: 7 种 SubAgentType 的 system prompt 未拷 | 3.2 | 只实现了类型枚举 + `allowed_tools()` 推荐清单；各类型的 **system prompt** 没从 `crates/tui/src/prompts/` 拷进来 | prompt 文件和 executor 强耦合，等真 Executor 落地一起做 | 把 `GENERAL_AGENT_PROMPT / EXPLORE_AGENT_PROMPT / PLAN_AGENT_PROMPT / REVIEW_AGENT_PROMPT / IMPLEMENTER_AGENT_PROMPT / VERIFIER_AGENT_PROMPT / CUSTOM_AGENT_PROMPT` 7 份从 Rust 常量整理到 `src/deepseek_tui/prompts/subagent_*.md` 并在 `SubAgentType.system_prompt()` 加载 |
 | ✅ 2.4.orphan: tool_parser 已接入 turn_loop (2026-05-08) | 2.4 | `engine/tool_parser.py`（488 行）实现完整但 turn_loop 流结束后没有 fallback 检查文本中的工具调用；DeepSeek 模型在某些场景会把工具调用写成文本而非结构化 blocks，此时 Python 版会**丢失工具调用** | 2026-05-07 审核发现：Rust `turn_loop.rs:726-758` 在流结束后检查 `has_tool_call_markers` → `parse_tool_calls` 作为 fallback，Python 缺此路径 | 在 `turn_loop.py` 的 `StreamDone` 处理后、`break` 前加入：`if not tool_calls and buffer.has_text(): has_tool_call_markers → parse_tool_calls → 追加到 tool_calls + 替换 buffer text`（~15 行） |
 | ✅ 2.3.orphan: compaction 已接入 Engine/turn_loop (2026-05-08) | 2.3 | `engine/compaction.py`（423 行）+ `working_set.py`（180 行）实现了但 4 个触发路径全断：①自动 compaction ②手动 /compact ③紧急 context overflow ④capacity refresh | 2026-05-07 审核发现：Rust 在 turn_loop 每步开头调 `should_compact`，context overflow 时调紧急 compaction；Python 的 context overflow recovery 是注释占位（`turn_loop.py:167`） | 1) `Engine._run_conversation` 每轮前调 `should_compact` → `compact_messages_safe` 2) `turn_loop.py` context overflow 路径调紧急 compaction 替代空 `continue` 3) compaction 结果回写 messages + 合并 summary_prompt 到 system_prompt |
 | ✅ 2.2.orphan: capacity 已接入 Engine（3 checkpoint 实现） (2026-05-08) | 2.2 | `engine/capacity.py`（326 行）决策逻辑正确但 Engine/TurnLoop 从未实例化或调用 `CapacityController`；缺 `capacity_flow` 执行层（Rust 975 行） | 2026-05-07 审核发现：Rust 在 turn_loop 的 pre-request / post-tool / error-escalation 三处调 capacity checkpoint；Python 完全没有 | 1) `Engine.__init__` 实例化 `CapacityController` 2) 实现 `capacity_flow.py`（~200 行）含 `run_capacity_pre_request_checkpoint` / `run_capacity_post_tool_checkpoint` / `run_capacity_error_escalation_checkpoint` 3) pre-request 的 `TARGETED_CONTEXT_REFRESH` 触发 compaction 4) post-tool 的 `VERIFY_WITH_TOOL_REPLAY` 选只读工具重跑对比 5) error-escalation 的 `VERIFY_AND_REPLAN` 重建 canonical state |
 | ✅ 2.6.dead_code: analyze_command 已接入 ExecShellTool heuristic (2026-05-08) | 2.6 | `command_safety.py::analyze_command()`（11 步安全管道）存在但 `ExecShellTool` 走的是 `Policy.check()`（前缀规则），不是 safety 分析管道 | 设计选择：Rust 中 `command_safety` 是 `Policy` 的**输入源**之一（为无规则匹配的命令提供 heuristic fallback），Python 的 `Policy.check()` 第二参数 `heuristics_fn` 硬编码为 `lambda _: Decision.ALLOW` | 把 `ExecShellTool` 的 heuristics fallback 从 `lambda _: ALLOW` 改为调用 `analyze_command` 并映射：`SAFE/WORKSPACE_SAFE → ALLOW`、`REQUIRES_APPROVAL → PROMPT`、`DANGEROUS → FORBIDDEN` |
-| ⬜ 2.6.data: COMMAND_ARITY 数量不足 | 2.6 | HANDOVER 声称 163 前缀，实际只有 94（git 37 + npm 26 + cargo 21 + python 2 + docker 6 + node 2） | 2026-05-07 审核发现 | 对照 Rust `command_safety.rs` 补齐缺失前缀（预计 +69 条），覆盖 brew/pip/yarn/pnpm/kubectl/systemctl/chmod/chown/mv/cp 等 |
+| ✅ 2.6.data: COMMAND_ARITY 已补齐 (2026-05-09) | 2.6 | COMMAND_ARITY 已补齐至 189 条，与 Rust `command_safety.rs` 完全对齐（含 yarn/pnpm/kubectl/go/pip/gh/rustup/deno/bun/npx） | — | — |
 | ✅ 2.1.stub: turn_loop context recovery 已接入紧急 compaction (2026-05-08) | 2.1 | `turn_loop.py:167` 注释 "would call recover_context_overflow()" 但实际只 `continue`（无限重试直到 MAX_CONTEXT_RECOVERY_ATTEMPTS） | 实现时 compaction 尚未就绪 | 接入 compaction 后替换为真实紧急 compaction 调用（见 2.3.orphan 修复方案第 2 点） |
-| ⬜ 2.1.dead_state: consecutive_tool_error_steps 未使用 | 2.1 | `_TurnState.consecutive_tool_error_steps` 声明但从未递增或判断 | Rust 在 post-tool 阶段递增此计数器并在 ≥3 时 hard stop；Python 的工具执行在 Engine 层而非 TurnLoop 层 | 在 `Engine._run_conversation` 的工具执行循环中追踪连续失败步数，≥3 时 break 并 emit ErrorEvent（或在 capacity error escalation 中处理） |
+| ✅ 2.1.dead_state: consecutive_tool_error_steps 已清理 (2026-05-09) | 2.1 | `_TurnState.consecutive_tool_error_steps` 已移除（死代码）；实际追踪在 `Engine._run_conversation` 中完成 | — | — |
 | ✅ 5.1: P1 CLI 子命令骨架（11 个） | 5.1 → 4.10 | exec/review/sessions/resume/fork/mcp/metrics/apply 已功能化（接入 Engine/SessionManager/git） | — | eval 子命令需 eval 框架（Stage 7），已留 stub |
-| ⬜ 5.1: config set/unset 不写文件 | 5.1 | `config set` / `config unset` 只打印信息，不写 config.toml | 缺 ConfigStore.save() | 实现 ConfigStore.save() 回写 config.toml |
+| ✅ 5.1: config set/unset 写文件 (2026-05-09) | 5.1 | `/config set key=value` 和 `/config unset key` 现已写入 `~/.deepseek/config.toml` | — | — |
 | ✅ 5.1: _launch_tui 未接 Engine | 5.1 → 6.1 | 原为空 EngineHandle 传入 DeepSeekTUI | — | **Stage 6.1 已还清**：`_launch_tui` 传 Config → `DeepSeekTUI` on_mount 构建真实 Client+Engine+Task |
 | ✅ 5.1: _run_one_shot 未实现 | 5.1 → 6.1 | 原只打印信息 | — | **Stage 6.1 已还清**：`_run_one_shot_async` 构建 Client+Engine 执行单次对话 |
 | ✅ 5.2: P1 slash 命令（30 个） | 5.2 → 4.10 | 全部 30 个 P1 命令已有 handler（handlers_p1.py），dispatch 返回有意义的结果 | — | — |
 | ⬜ 5.2: P0 handler 功能深度不足 | 5.2 | `/save` `/load` `/sessions` → "requires StateStore"；`/edit` `/undo` `/retry` → "requires Engine"；`/tokens` `/cost` `/context` → "requires Engine"；`/statusline` → "requires TUI widget integration" | 需 Engine/StateStore 集成 | 逐个接入：save/load→StateStore, edit/undo/retry→Engine 会话管理, tokens/cost→Engine usage 统计 |
 | ✅ 5.2: slash_menu 集成 | 5.2 → 6.5 | 原 SlashMenu 未被 Composer/App 使用 | — | **Stage 6.5 已还清**：Composer 检测 `/` → SlashMenu.show()，Selected → dispatch() |
-| ⬜ 5.3: GitHub skill install 未实现 | 5.3 | `install.py` 对 `kind="github"` 返回 FAILED + P1 提示 | 需 HTTP client (httpx) 下载 tarball + 验证 + 解压 | 实现 GitHub tarball 下载、checksum 验证、原子解压 |
+| ✅ 5.3: GitHub skill install 已实现 (2026-05-09) | 5.3 | `install.py` 对 `kind="github"` 现通过 urllib 下载 tarball + 解压 + 验证 SKILL.md | — | — |
 | ⬜ 5.3: skill update 未实现 | 5.3 | Rust 的 `update` / `update_with_registry` 未 port | 依赖 GitHub install | 读取 `.installed-from` 获取 source spec → 下载新版 → 比较 checksum → 原子替换 |
-| ⬜ 5.3: Skills ↔ Engine 集成 | 5.3 | `render_available_skills_context()` 未被 `engine/prompts.py` 调用；`load_skill` 工具未注册；`active_skill` 一次性注入未实现 | 需 Engine + ToolRegistry 集成 | 1) engine/prompts.py 调 render_available_skills_context() 2) 注册 load_skill 工具 3) Engine 消息队列支持 active_skill 注入 |
-| ⬜ 5.3: 远程 Registry 获取 | 5.3 | `fetch_registry()` 未实现 | 需 httpx GET | 实现 httpx GET + RegistryDocument.from_json()，`DEFAULT_REGISTRY_URL` 已准备 |
+| ✅ 5.3: Skills ↔ Engine 集成 (2026-05-09) | 5.3 | `render_available_skills_context()` 已被 `engine/prompts.py::build_system_prompt()` 调用；Engine.create 自动 discover_in_workspace | — | load_skill 工具注册 + active_skill 注入待后续 |
+| ✅ 5.3: 远程 Registry 获取 (2026-05-09) | 5.3 | `fetch_registry()` 已实现（urllib GET + RegistryDocument.from_json()） | — | — |
 | ⬜ 6: LineBuffer commit_tick 深度集成 | 6 | `LineBuffer` 存在但 Transcript 仍逐 delta 刷新 | Rust `commit_tick` 按固定间隔提交缓冲区减少重绘 | 在 `_listen_events` 中用 timer 限流 Transcript 刷新 |
 | ✅ 6: Sidebar (2026-05-09) | 6 → 4.8 | `sidebar.py`（~200 行）：SidebarEntry 模型 + 过滤 + 键盘导航 + SessionSelected/Deleted/Archived 消息 | — | — |
 | ✅ 6: Markdown 渲染升级 (2026-05-09) | 6 → 4.8 | `markdown_render.py`（~280 行）：MarkdownRenderer + AssistantMarkdownCell + 代码块/表格/链接提取 + Rich Markdown 流式渲染 | — | — |

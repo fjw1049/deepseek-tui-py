@@ -25,6 +25,7 @@ __all__ = [
     "InstallSource",
     "RegistryDocument",
     "RegistryEntry",
+    "fetch_registry",
     "install",
     "uninstall",
     "trust",
@@ -129,13 +130,68 @@ def install(
         return (InstallOutcome.INSTALLED, f"Installed {name} to {dest}")
 
     if source.kind == "github":
-        return (
-            InstallOutcome.FAILED,
-            f"GitHub install ({source.owner}/{source.repo}) "
-            "requires HTTP client — P1 integration debt",
-        )
+        return _install_from_github(source, target_dir, name_override)
 
     return (InstallOutcome.FAILED, f"Invalid source: {source.kind}")
+
+
+def _install_from_github(
+    source: InstallSource,
+    target_dir: Path,
+    name_override: str | None,
+) -> tuple[InstallOutcome, str]:
+    """Fetch a skill from GitHub (tarball download) and extract."""
+    import io
+    import tarfile
+    import urllib.request
+
+    name = name_override or source.repo
+    dest = target_dir / name
+    if dest.exists():
+        return (InstallOutcome.ALREADY_EXISTS, f"Skill {name} already exists at {dest}")
+
+    url = (
+        f"https://github.com/{source.owner}/{source.repo}"
+        f"/archive/refs/heads/main.tar.gz"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
+            data = resp.read()
+    except Exception as exc:
+        return (InstallOutcome.FAILED, f"Download failed: {exc}")
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            members = tf.getmembers()
+            if not members:
+                return (InstallOutcome.FAILED, "Empty archive")
+            prefix = members[0].name.split("/", 1)[0]
+            dest.mkdir(parents=True, exist_ok=True)
+            for member in members:
+                if member.name == prefix:
+                    continue
+                rel = member.name[len(prefix) + 1:]
+                if not rel:
+                    continue
+                target = dest / rel
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif member.isfile():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    extracted = tf.extractfile(member)
+                    if extracted:
+                        target.write_bytes(extracted.read())
+    except Exception as exc:
+        if dest.exists():
+            shutil.rmtree(dest)
+        return (InstallOutcome.FAILED, f"Extract failed: {exc}")
+
+    if not (dest / SKILL_FILENAME).is_file():
+        shutil.rmtree(dest)
+        return (InstallOutcome.FAILED, f"No {SKILL_FILENAME} in repo root")
+
+    _write_installed_from(dest, f"github:{source.owner}/{source.repo}")
+    return (InstallOutcome.INSTALLED, f"Installed {name} from GitHub")
 
 
 def uninstall(name: str, skills_dir: Path | None = None) -> str:
@@ -180,3 +236,21 @@ def _write_installed_from(dest: Path, source_spec: str) -> None:
         json.dumps({"spec": source_spec}, indent=2),
         encoding="utf-8",
     )
+
+
+def fetch_registry(url: str | None = None) -> RegistryDocument | None:
+    """Fetch the remote skill registry index.
+
+    Returns None on network/parse failure. Mirrors Rust
+    ``fetch_registry`` (install.rs:450-470).
+    """
+    import urllib.request
+
+    target = url or DEFAULT_REGISTRY_URL
+    try:
+        with urllib.request.urlopen(target, timeout=10) as resp:  # noqa: S310
+            data = resp.read().decode("utf-8")
+        return RegistryDocument.from_json(data)
+    except Exception:
+        _LOG.debug("Failed to fetch registry from %s", target)
+        return None

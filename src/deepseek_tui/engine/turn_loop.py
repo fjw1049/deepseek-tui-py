@@ -67,7 +67,6 @@ class TurnResult:
 @dataclass
 class _TurnState:
     """Internal turn state tracking (mirrors Rust state variables)."""
-    consecutive_tool_error_steps: int = 0
     context_recovery_attempts: int = 0
     stream_retry_attempts: int = 0
     active_tool_names: set[str] = field(default_factory=set)
