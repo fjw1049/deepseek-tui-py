@@ -28,6 +28,7 @@ __all__ = [
     "fetch_registry",
     "install",
     "uninstall",
+    "update",
     "trust",
 ]
 
@@ -211,6 +212,49 @@ def uninstall(name: str, skills_dir: Path | None = None) -> str:
         )
     shutil.rmtree(skill_path)
     return f"Uninstalled {name}"
+
+
+def update(
+    name: str, skills_dir: Path | None = None
+) -> tuple[InstallOutcome, str]:
+    """Re-install a community skill from its original source spec.
+
+    Reads ``.installed-from`` to recover the source, then deletes and
+    re-installs. Mirrors Rust ``update`` (install.rs:412-450).
+    """
+    target_dir = skills_dir or default_skills_dir()
+    skill_path = target_dir / name
+    if not skill_path.is_dir():
+        return (InstallOutcome.FAILED, f"Skill not found: {name}")
+    marker = skill_path / INSTALLED_FROM_MARKER
+    if not marker.is_file():
+        return (
+            InstallOutcome.FAILED,
+            f"Cannot update {name}: no {INSTALLED_FROM_MARKER} marker",
+        )
+    try:
+        spec_data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return (InstallOutcome.FAILED, f"Failed to read marker: {exc}")
+    spec = spec_data.get("spec", "")
+    if not spec:
+        return (InstallOutcome.FAILED, "Empty spec in installed-from marker")
+
+    # Preserve trust state across update
+    trust_marker = skill_path / TRUSTED_MARKER
+    was_trusted = trust_marker.is_file()
+
+    source = InstallSource.parse(spec)
+    if source.kind == "invalid":
+        return (InstallOutcome.FAILED, f"Cannot parse stored spec: {spec}")
+
+    shutil.rmtree(skill_path)
+    outcome, message = install(source, skills_dir=target_dir, name_override=name)
+    if outcome == InstallOutcome.INSTALLED:
+        if was_trusted:
+            (skill_path / TRUSTED_MARKER).touch()
+        return (InstallOutcome.UPDATED, f"Updated {name} from {spec}")
+    return (outcome, message)
 
 
 def trust(name: str, skills_dir: Path | None = None) -> str:

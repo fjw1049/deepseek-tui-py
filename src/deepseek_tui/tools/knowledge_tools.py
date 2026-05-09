@@ -267,23 +267,41 @@ class RlmQueryTool(ToolSpec):
             user_content = f"Context:\n{extra_context}\n\nQuestion:\n{query}"
 
         from deepseek_tui.client.deepseek import DeepSeekClient
-        from deepseek_tui.client.events import StreamTextDelta
-        from deepseek_tui.client.models import MessageRequest
         from deepseek_tui.config.models import Config
+        from deepseek_tui.protocol.messages import Message
+        from deepseek_tui.protocol.requests import MessageRequest
+        from deepseek_tui.protocol.responses import StreamTextDelta
 
         config = Config()
-        client = DeepSeekClient.from_config(config)
+        try:
+            client = DeepSeekClient.from_config(config)
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                success=False,
+                content=f"rlm_query: cannot build LLM client: {exc}",
+                metadata={"query": query},
+            )
 
         request = MessageRequest(
-            model="deepseek-chat",
-            messages=[{"role": "user", "content": user_content}],
+            model=getattr(config, "model", None) or "deepseek-chat",
+            messages=[Message.user(user_content)],
             max_tokens=max_tokens,
+            stream=True,
         )
 
         result_text: list[str] = []
-        async for event in client.stream_chat_completion(request):
-            if isinstance(event, StreamTextDelta):
-                result_text.append(event.text)
+        try:
+            async for event in client.stream_chat_completion(request):
+                if isinstance(event, StreamTextDelta):
+                    result_text.append(event.text)
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                success=False,
+                content=f"rlm_query failed: {exc}",
+                metadata={"query": query},
+            )
+        finally:
+            await client.close()
 
         output = "".join(result_text)
         return ToolResult(success=True, content=output, metadata={"query": query})

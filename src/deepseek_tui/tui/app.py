@@ -28,6 +28,7 @@ from deepseek_tui.engine.events import (
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
+    UserInputRequiredEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.ops import SendMessageOp
@@ -245,6 +246,9 @@ class DeepSeekTUI(App[None]):
                 transcript.add_system_message(
                     f"Sandbox denied {event.tool_name}: {event.reason}"
                 )
+            elif isinstance(event, UserInputRequiredEvent):
+                status.set_status("awaiting user input...")
+                self._handle_user_input_event(event, transcript)
             elif isinstance(event, ErrorEvent):
                 transcript.add_system_message(f"Error: {event.message}")
                 status.set_status("error")
@@ -262,6 +266,35 @@ class DeepSeekTUI(App[None]):
                 break
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
+
+    # ── user input handling ─────────────────────────────────────────
+
+    def _handle_user_input_event(
+        self, event: UserInputRequiredEvent, transcript: Transcript
+    ) -> None:
+        """Display questions and resolve with first option (auto-select).
+
+        A full interactive picker can be added later; for now this
+        unblocks the Engine so it never deadlocks.
+        """
+        response: dict[str, object] = {}
+        for q in event.questions:
+            qid = q.get("id", "")
+            question = q.get("question", "")
+            options = q.get("options", [])
+            option_labels = [
+                o.get("label", "?") if isinstance(o, dict) else str(o)
+                for o in (options if isinstance(options, list) else [])
+            ]
+            display = f"Question: {question}\nOptions: {', '.join(option_labels)}"
+            transcript.add_system_message(display)
+            if option_labels:
+                response[str(qid)] = option_labels[0]
+                transcript.add_system_message(
+                    f"Auto-selected: {option_labels[0]}"
+                )
+
+        self.handle.resolve_user_input(event.tool_call_id, response)
 
     # ── actions ───────────────────────────────────────────────────────
 

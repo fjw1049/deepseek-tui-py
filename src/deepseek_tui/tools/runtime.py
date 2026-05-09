@@ -108,16 +108,19 @@ async def create_tool_runtime(
             allow_shell=cfg.allow_shell,
             trust_mode=getattr(cfg, "trust_mode", False),
         )
-        task_manager = TaskManager(task_cfg)
+        task_exec = _safe_task_executor()
+        task_manager = TaskManager(task_cfg, executor=task_exec)
         await task_manager.start()
 
     if cfg.features.subagents:
         mailbox = Mailbox()
         state_path = subagent_state_path or (workspace / ".deepseek" / "subagents.v1.json")
+        subagent_exec = _safe_subagent_executor()
         subagent_manager = SubAgentManager(
             workspace=workspace,
             state_path=state_path,
             mailbox=mailbox,
+            executor=subagent_exec,
         )
 
     mcp: McpManager | None = None
@@ -167,6 +170,48 @@ async def create_tool_runtime(
         mcp_manager=mcp,
         lsp_manager=lsp,
     )
+
+
+def _has_api_key() -> bool:
+    """Check if a DeepSeek API key is available for real executors."""
+    import os
+
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return True
+    try:
+        from deepseek_tui.config.loader import ConfigLoader
+
+        cfg = ConfigLoader().load()
+        if cfg.api_key:
+            return True
+        pc = cfg.effective_provider_config()
+        if pc.api_key:
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _safe_task_executor() -> Any:
+    """Return real executor if API key available, else stub."""
+    if _has_api_key():
+        from deepseek_tui.tools.task_manager import get_real_task_executor
+
+        return get_real_task_executor()
+    from deepseek_tui.tools.task_manager import _stub_executor
+
+    return _stub_executor
+
+
+def _safe_subagent_executor() -> Any:
+    """Return real executor if API key available, else stub."""
+    if _has_api_key():
+        from deepseek_tui.tools.subagent.manager import get_real_subagent_executor
+
+        return get_real_subagent_executor()
+    from deepseek_tui.tools.subagent.manager import _stub_executor
+
+    return _stub_executor
 
 
 async def _build_mcp_manager(cfg: Config) -> McpManager:

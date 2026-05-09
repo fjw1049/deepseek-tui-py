@@ -655,41 +655,99 @@ thread_app = typer.Typer(help="Manage thread/session metadata.")
 app.add_typer(thread_app, name="thread")
 
 
+def _open_session_manager() -> tuple[Any, Any]:
+    """Open Database + SessionManager. Returns (db, manager) or (None, None)."""
+    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.state.database import Database
+    from deepseek_tui.state.session_manager import SessionManager
+
+    db_path = default_config_path().parent / "state.db"
+    if not db_path.exists():
+        return None, None
+    db = Database(db_path)
+    return db, SessionManager(db)
+
+
 @thread_app.command("list")
 def thread_list(
     all_threads: bool = typer.Option(False, "--all", help="Include archived threads."),
-    limit: int | None = typer.Option(None, "--limit", help="Max threads to show."),
+    limit: int | None = typer.Option(20, "--limit", help="Max threads to show."),
 ) -> None:
     """List saved threads."""
-    typer.echo("thread list — requires StateStore integration (Stage 6)")
-    raise typer.Exit(1)
+
+    async def _run() -> None:
+        db, mgr = _open_session_manager()
+        if mgr is None:
+            typer.echo("No saved threads (no state.db).")
+            return
+        await db.initialize()
+        sessions = await mgr.list_sessions(limit=limit, include_archived=all_threads)
+        if not sessions:
+            typer.echo("No saved threads.")
+            return
+        for s in sessions:
+            tag = " [archived]" if getattr(s, "archived", False) else ""
+            typer.echo(f"{s.id}  {getattr(s, 'preview', '(unnamed)')}{tag}")
+
+    asyncio.run(_run())
 
 
 @thread_app.command("read")
 def thread_read(
     thread_id: str = typer.Argument(..., help="Thread ID to read."),
 ) -> None:
-    """Read a thread's contents as JSON."""
-    typer.echo(f"thread read {thread_id} — requires StateStore integration (Stage 6)")
-    raise typer.Exit(1)
+    """Read a thread's metadata as JSON."""
+
+    async def _run() -> None:
+        db, mgr = _open_session_manager()
+        if mgr is None:
+            typer.echo("No saved threads (no state.db).", err=True)
+            raise typer.Exit(1)
+        await db.initialize()
+        meta = await mgr.get_session(thread_id)
+        if meta is None:
+            typer.echo(f"Thread not found: {thread_id}", err=True)
+            raise typer.Exit(1)
+        from dataclasses import asdict, is_dataclass
+
+        if is_dataclass(meta):
+            typer.echo(json.dumps(asdict(meta), indent=2, default=str))
+        else:
+            typer.echo(json.dumps(getattr(meta, "__dict__", {}), indent=2, default=str))
+
+    asyncio.run(_run())
 
 
 @thread_app.command("resume")
 def thread_resume(
     thread_id: str = typer.Argument(..., help="Thread ID to resume."),
+    config: Path | None = CONFIG_OPTION,
+    profile: str | None = PROFILE_OPTION,
 ) -> None:
-    """Resume a saved thread."""
-    typer.echo(f"thread resume {thread_id} — requires TUI integration (Stage 6)")
-    raise typer.Exit(1)
+    """Resume a saved thread (delegates to top-level `resume`)."""
+    loaded = _load_config(config, profile)
+    try:
+        from deepseek_tui.tui.app import DeepSeekTUI
+        DeepSeekTUI(config=loaded, resume_session_id=thread_id).run()
+    except ImportError as exc:
+        typer.echo(f"TUI not available: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 @thread_app.command("fork")
 def thread_fork(
     thread_id: str = typer.Argument(..., help="Thread ID to fork."),
+    config: Path | None = CONFIG_OPTION,
+    profile: str | None = PROFILE_OPTION,
 ) -> None:
-    """Fork a saved thread."""
-    typer.echo(f"thread fork {thread_id} — requires TUI integration (Stage 6)")
-    raise typer.Exit(1)
+    """Fork a saved thread (delegates to top-level `fork`)."""
+    loaded = _load_config(config, profile)
+    try:
+        from deepseek_tui.tui.app import DeepSeekTUI
+        DeepSeekTUI(config=loaded, fork_session_id=thread_id).run()
+    except ImportError as exc:
+        typer.echo(f"TUI not available: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 @thread_app.command("archive")
@@ -697,8 +755,17 @@ def thread_archive(
     thread_id: str = typer.Argument(..., help="Thread ID to archive."),
 ) -> None:
     """Archive a thread."""
-    typer.echo(f"thread archive {thread_id} — requires StateStore integration (Stage 6)")
-    raise typer.Exit(1)
+
+    async def _run() -> None:
+        db, mgr = _open_session_manager()
+        if mgr is None:
+            typer.echo("No state.db found.", err=True)
+            raise typer.Exit(1)
+        await db.initialize()
+        await mgr.archive(thread_id)
+        typer.echo(f"Archived {thread_id}")
+
+    asyncio.run(_run())
 
 
 @thread_app.command("unarchive")
@@ -706,8 +773,17 @@ def thread_unarchive(
     thread_id: str = typer.Argument(..., help="Thread ID to unarchive."),
 ) -> None:
     """Unarchive a thread."""
-    typer.echo(f"thread unarchive {thread_id} — requires StateStore integration (Stage 6)")
-    raise typer.Exit(1)
+
+    async def _run() -> None:
+        db, mgr = _open_session_manager()
+        if mgr is None:
+            typer.echo("No state.db found.", err=True)
+            raise typer.Exit(1)
+        await db.initialize()
+        await mgr.unarchive(thread_id)
+        typer.echo(f"Unarchived {thread_id}")
+
+    asyncio.run(_run())
 
 
 @thread_app.command("set-name")
@@ -716,8 +792,17 @@ def thread_set_name(
     name: str = typer.Argument(..., help="New thread name."),
 ) -> None:
     """Rename a thread."""
-    typer.echo(f"thread set-name {thread_id} {name} — requires StateStore integration (Stage 6)")
-    raise typer.Exit(1)
+
+    async def _run() -> None:
+        db, mgr = _open_session_manager()
+        if mgr is None:
+            typer.echo("No state.db found.", err=True)
+            raise typer.Exit(1)
+        await db.initialize()
+        await mgr.set_name(thread_id, name)
+        typer.echo(f"Renamed {thread_id} to {name!r}")
+
+    asyncio.run(_run())
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1027,11 +1112,19 @@ def completions(
         typer.echo(f"Unknown shell: {shell}", err=True)
 
 
+_MCP_WORKSPACE_OPTION = typer.Option(
+    None, "--workspace", help="Workspace root (defaults to cwd)."
+)
+
+
 @app.command(name="mcp-server")
-def mcp_server() -> None:
-    """Run as MCP server mode over stdio."""
-    typer.echo("mcp-server — requires MCP stdio server integration (Stage 6)")
-    raise typer.Exit(1)
+def mcp_server(workspace: Path | None = _MCP_WORKSPACE_OPTION) -> None:
+    """Run as MCP server mode over stdio JSON-RPC."""
+    from deepseek_tui.mcp.server import run_mcp_server
+
+    ws = (workspace or Path.cwd()).resolve()
+    typer.echo(f"mcp-server: starting on stdio (workspace={ws})", err=True)
+    asyncio.run(run_mcp_server(ws))
 
 
 @app.command(name="app-server")

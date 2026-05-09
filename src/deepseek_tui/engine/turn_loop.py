@@ -22,7 +22,12 @@ from deepseek_tui.engine.events import (
     ThinkingDeltaEvent,
     ToolCallEvent,
 )
-from deepseek_tui.engine.streaming import AssistantResponseBuffer
+from deepseek_tui.engine.streaming import (
+    FAKE_WRAPPER_NOTICE,
+    AssistantResponseBuffer,
+    FakeWrapperFilter,
+    contains_fake_tool_wrapper,
+)
 from deepseek_tui.engine.tool_catalog import (
     active_tools_for_step,
     ensure_advanced_tooling,
@@ -210,6 +215,8 @@ class TurnLoop:
                 transparent_retries = 0
                 stream_start = time.monotonic()
                 content_bytes = 0
+                fake_filter = FakeWrapperFilter()
+                fake_notice_sent = False
 
                 async for stream_event in self.client.stream_with_retry(stream_request):
                     if cancel_event.is_set():
@@ -238,9 +245,22 @@ class TurnLoop:
 
                     if isinstance(stream_event, StreamTextDelta):
                         any_content_received = True
-                        content_bytes += len(stream_event.text.encode())
-                        buffer.append_text(stream_event.text)
-                        await emit(TextDeltaEvent(text=stream_event.text))
+                        raw = stream_event.text
+                        # Buffer keeps RAW text so the post-stream tool_parser
+                        # fallback can still detect markers. Only the visible
+                        # delta is scrubbed of fake wrappers (mirrors Rust:
+                        # buffer holds canonical, emit shows cleaned UX).
+                        buffer.append_text(raw)
+                        if (
+                            not fake_notice_sent
+                            and (fake_filter.in_tool_call or contains_fake_tool_wrapper(raw))
+                        ):
+                            fake_notice_sent = True
+                            logger.info(FAKE_WRAPPER_NOTICE)
+                        cleaned = fake_filter.filter(raw)
+                        content_bytes += len(cleaned.encode())
+                        if cleaned:
+                            await emit(TextDeltaEvent(text=cleaned))
                     elif isinstance(stream_event, StreamThinkingDelta):
                         any_content_received = True
                         content_bytes += len(stream_event.thinking.encode())

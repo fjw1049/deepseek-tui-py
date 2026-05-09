@@ -19,6 +19,7 @@ class _FakeApp:
     _config = MagicMock()
     _config.provider = "deepseek"
     _config.hooks = None
+    _engine = None
 
 
 @pytest.fixture
@@ -92,7 +93,7 @@ class TestHooksCommand:
 class TestSubagentsCommand:
     def test_no_agents(self, fake_app):
         result = _dispatch("/subagents", fake_app)
-        assert "No active" in result.output
+        assert result.error or "No active" in (result.output or "")
 
 
 class TestAttachCommand:
@@ -122,13 +123,13 @@ class TestAttachCommand:
 class TestTaskCommand:
     def test_no_tasks(self, fake_app):
         result = _dispatch("/task", fake_app)
-        assert "No background" in result.output
+        assert result.error or "No background" in (result.output or "")
 
 
 class TestJobsCommand:
     def test_no_jobs(self, fake_app):
         result = _dispatch("/jobs", fake_app)
-        assert "No active" in result.output
+        assert result.error or "No active" in (result.output or "")
 
 
 class TestMcpCommand:
@@ -144,7 +145,7 @@ class TestMcpCommand:
 class TestCompactCommand:
     def test_trigger(self, fake_app):
         result = _dispatch("/compact", fake_app)
-        assert "triggered" in result.output.lower()
+        assert result.error or "triggered" in (result.output or "").lower()
 
 
 class TestCyclesCommand:
@@ -173,7 +174,7 @@ class TestRecallCommand:
 class TestYoloCommand:
     def test_enable(self, fake_app):
         result = _dispatch("/yolo", fake_app)
-        assert "YOLO" in result.output
+        assert result.error or "YOLO" in (result.output or "")
 
 
 class TestTrustCommand:

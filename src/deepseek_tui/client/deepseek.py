@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -90,6 +91,7 @@ class DeepSeekClient(LLMClient):
         }
         payload = self._build_payload(request)
         client = self._get_http_client()
+        chunk_timeout = self.timeout_seconds
         async with aconnect_sse(
             client,
             "POST",
@@ -97,7 +99,14 @@ class DeepSeekClient(LLMClient):
             headers=headers,
             json=payload,
         ) as event_source:
-            async for sse in event_source.aiter_sse():
+            sse_iter = event_source.aiter_sse().__aiter__()
+            while True:
+                try:
+                    sse = await asyncio.wait_for(
+                        sse_iter.__anext__(), timeout=chunk_timeout
+                    )
+                except StopAsyncIteration:
+                    break
                 if sse.data == "[DONE]":
                     break
                 chunk = json.loads(sse.data)

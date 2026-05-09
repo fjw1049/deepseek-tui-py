@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：P0 slash 命令功能深度修复（2026-05-09）。
+> 最后更新：P2 审核报告修复 — fake_wrapper + snapshot undo + skill update + MCP server + web_run + composer 增强（2026-05-10）。
 
 ---
 
@@ -72,6 +72,9 @@
 | bugfix-7 | — | **代码逻辑审核修复 7 项**：①executors.py 改用 Engine.run() 替代错误的 TurnLoop.run() 直调（P0 致命）②CLI resume/fork 传参修复（DeepSeekTUI 新增 resume_session_id/fork_session_id）③exec_shell PROMPT 决策改返回 ToolResult 而非 raise ToolError ④one-shot 模式显示工具调用进度（ToolCallEvent/ToolResultEvent）⑤CLI config set/unset 实现真实文件写入 ⑥httpx 连接池复用（持久 AsyncClient + Engine.shutdown 关闭）⑦TURN_MAX_OUTPUT_TOKENS 统一为 262,144（对齐 Rust context.rs:18） | +0 |
 | p0-stream | — | **P0 流式健壮性 + 特殊工具**：①turn_loop transparent stream retry（空流 ≤2 次自动重试）②per-chunk 90s timeout + wall-clock 1800s guard + 10MB content guard ③streaming.py reasoning_content fallback（兼容 NIM `delta.reasoning`）④`is_reasoning_model()` 模型检测 ⑤`MultiToolUseParallelTool`（并发展开只读子调用）⑥`RequestUserInputTool`（验证 + UserInputRequiredEvent + asyncio.Future 阻塞）⑦Engine special routing（parallel/user_input 拦截） | +0 |
 | p0-slash | — | **P0 slash 命令功能深度**：①`/save` 实现（session JSON 序列化 + metadata + 时间戳文件名）②`/load` 实现（JSON 反序列化 + Engine.session_messages 恢复 + Transcript 重建）③`/tokens` 实现（从 StatusBar 读取累积 token + 模型/消息数统计）④`/cost` 实现（基于 token 的成本估算 + DeepSeek 定价）— 对齐 Rust `commands/session.rs` + `commands/debug.rs` | +0 |
+| p0-audit | — | **P0 审核报告修复 5 项**：①runtime.py executor 安全降级（无 API key 时回退 stub，修复 test_runtime_integration 挂死）②TUI _listen_events 处理 UserInputRequiredEvent（auto-select + resolve_user_input 解除死锁）③deepseek.py per-chunk idle timeout（asyncio.wait_for 包装每个 SSE chunk 读取，对齐 Rust STREAM_CHUNK_TIMEOUT_SECS=90）④parallel tool read-only 检查（非 read-only 工具拒绝并行）⑤parallel tool 递归自调用阻止 | +0 |
+| p1-audit | — | **P1 审核报告修复 5 项**：①3 个缺失工具实现：ValidateDataTool（JSON/TOML 验证 + auto 检测）、RunTestsTool（pytest/cargo/npm 自动检测）、RevertTurnTool（git checkout 回滚）②Session 自动持久化（_auto_persist_session 写 current.json）③SubAgent 7 种 system prompt（SubAgentType.system_prompt() + _SUBAGENT_PROMPTS 字典）④Steer input 处理（EngineHandle._steer_queue + drain_steers + Engine 每轮循环开头注入 user message）⑤builder.py 注册 3 个新工具 | +0 |
+| p2-audit | — | **P2 审核报告修复 8 项**：①fake_tool_wrapper 过滤（streaming.py: TOOL_CALL_START/END_MARKERS + FakeWrapperFilter + contains_fake_tool_wrapper + turn_loop 集成；buffer 保留 raw 以兼容 tool_parser 回退，emit 仅出干净文本）②per-tool snapshot undo（Engine.tool_snapshots + _take_pre_tool_snapshot for write_file/edit_file/apply_patch + undo_last_tool + /undo slash 接通）③RLM rlm_query 修复（错误的 client.events/models 导入修正为 protocol.responses，加 close 善后）④CLI 7 个 thread 子命令接通 SessionManager（list/read/resume/fork/archive/unarchive/set-name）⑤skill update（读 .installed-from → 重装 → 保留 trust 标记）⑥MCP server stdio 模式（mcp/server.py: initialize/tools/list/tools/call/resources/list JSON-RPC + CLI mcp-server 接通）⑦web_run Playwright 集成（缺依赖时返回安装提示而非沉默 stub）⑧Composer Ctrl+Enter 换行 + Ctrl+E 调 $EDITOR | +0 |
 | **累计** | | | **1110 passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
@@ -545,7 +548,7 @@ deepseek-tui-py/
 | ✅ 3.1.simplified: task_shell_start/wait 空壳 | 3.1 | `TaskShellStartTool` / `TaskShellWaitTool` 原为 `raise ToolError("not yet implemented")` | PTY shell 归在 Stage 3.4 | **Stage 3.4 已还清**（commit `7456887`）：两工具直接调 `ExecShellTool`（pty=True 默认），wait 时把 output 以 `TaskArtifactRef` 形式记到 `TaskRecord.artifacts` 并 append timeline 事件；`task_shell_wait` 额外接受 `task_id` 关联任务 |
 | ✅ 4.1.simplified: /prompt 不调 LLM | 4.1 → 4.1.next → 4.1.nn | 原为 3-frame placeholder；**已还清**（commit `234dbe9`）：AppRuntime.stream_prompt 注入 LLMClient 时走真实 Engine → turn_loop → DeepSeekClient → SSE，12 种 EngineEvent 全部桥接；无 client 时保持 3-frame placeholder（向后兼容）。含真实 DeepSeek API 集成测（/prompt/stream → flash 模型 → "pong" round-trip） | — | — |
 | ⬜ 3.2.simplified: SubAgent 占位 Executor | 3.2 | `subagent/manager.py::_stub_executor` sleep 50ms 返合成 result；没有真实 LLM 调用 / 没 turn loop / 没工具派发 / 不累加 token usage | 用户 2026-05-07 决定：让 Manager+Mailbox+持久化+重启恢复+10 工具接口今天落地，LLM 驱动等 Stage 4 接通 | 实现 `LlmSubAgentExecutor`：用 `DeepSeekClient` + mini turn loop + 为 sub-agent 构建过滤过的 `ToolRegistry`（按 `agent_type.allowed_tools()`）+ 发 `MailboxMessage.tool_call_started/completed` + 发 `MailboxMessage.token_usage`。参考 Rust `mod.rs:1077+`（run_loop / dispatch_tool / handle_api_response）约 ~800 行 |
-| ⬜ 3.2.simplified: 7 种 SubAgentType 的 system prompt 未拷 | 3.2 | 只实现了类型枚举 + `allowed_tools()` 推荐清单；各类型的 **system prompt** 没从 `crates/tui/src/prompts/` 拷进来 | prompt 文件和 executor 强耦合，等真 Executor 落地一起做 | 把 `GENERAL_AGENT_PROMPT / EXPLORE_AGENT_PROMPT / PLAN_AGENT_PROMPT / REVIEW_AGENT_PROMPT / IMPLEMENTER_AGENT_PROMPT / VERIFIER_AGENT_PROMPT / CUSTOM_AGENT_PROMPT` 7 份从 Rust 常量整理到 `src/deepseek_tui/prompts/subagent_*.md` 并在 `SubAgentType.system_prompt()` 加载 |
+| ✅ 3.2.simplified: SubAgent system prompt (2026-05-10 p1-audit) | 3.2 | `SubAgentType.system_prompt()` 实现 + `_SUBAGENT_PROMPTS` 7 种类型的 prompt + 自动追加 `subagent_output_format.md` | — | — |
 | ✅ 2.4.orphan: tool_parser 已接入 turn_loop (2026-05-08) | 2.4 | `engine/tool_parser.py`（488 行）实现完整但 turn_loop 流结束后没有 fallback 检查文本中的工具调用；DeepSeek 模型在某些场景会把工具调用写成文本而非结构化 blocks，此时 Python 版会**丢失工具调用** | 2026-05-07 审核发现：Rust `turn_loop.rs:726-758` 在流结束后检查 `has_tool_call_markers` → `parse_tool_calls` 作为 fallback，Python 缺此路径 | 在 `turn_loop.py` 的 `StreamDone` 处理后、`break` 前加入：`if not tool_calls and buffer.has_text(): has_tool_call_markers → parse_tool_calls → 追加到 tool_calls + 替换 buffer text`（~15 行） |
 | ✅ 2.3.orphan: compaction 已接入 Engine/turn_loop (2026-05-08) | 2.3 | `engine/compaction.py`（423 行）+ `working_set.py`（180 行）实现了但 4 个触发路径全断：①自动 compaction ②手动 /compact ③紧急 context overflow ④capacity refresh | 2026-05-07 审核发现：Rust 在 turn_loop 每步开头调 `should_compact`，context overflow 时调紧急 compaction；Python 的 context overflow recovery 是注释占位（`turn_loop.py:167`） | 1) `Engine._run_conversation` 每轮前调 `should_compact` → `compact_messages_safe` 2) `turn_loop.py` context overflow 路径调紧急 compaction 替代空 `continue` 3) compaction 结果回写 messages + 合并 summary_prompt 到 system_prompt |
 | ✅ 2.2.orphan: capacity 已接入 Engine（3 checkpoint 实现） (2026-05-08) | 2.2 | `engine/capacity.py`（326 行）决策逻辑正确但 Engine/TurnLoop 从未实例化或调用 `CapacityController`；缺 `capacity_flow` 执行层（Rust 975 行） | 2026-05-07 审核发现：Rust 在 turn_loop 的 pre-request / post-tool / error-escalation 三处调 capacity checkpoint；Python 完全没有 | 1) `Engine.__init__` 实例化 `CapacityController` 2) 实现 `capacity_flow.py`（~200 行）含 `run_capacity_pre_request_checkpoint` / `run_capacity_post_tool_checkpoint` / `run_capacity_error_escalation_checkpoint` 3) pre-request 的 `TARGETED_CONTEXT_REFRESH` 触发 compaction 4) post-tool 的 `VERIFY_WITH_TOOL_REPLAY` 选只读工具重跑对比 5) error-escalation 的 `VERIFY_AND_REPLAN` 重建 canonical state |
@@ -561,7 +564,7 @@ deepseek-tui-py/
 | ⬜ 5.2: P0 handler 功能深度不足 | 5.2 | `/save` `/load` `/sessions` → "requires StateStore"；`/edit` `/undo` `/retry` → "requires Engine"；`/tokens` `/cost` `/context` → "requires Engine"；`/statusline` → "requires TUI widget integration" | 需 Engine/StateStore 集成 | 逐个接入：save/load→StateStore, edit/undo/retry→Engine 会话管理, tokens/cost→Engine usage 统计 |
 | ✅ 5.2: slash_menu 集成 | 5.2 → 6.5 | 原 SlashMenu 未被 Composer/App 使用 | — | **Stage 6.5 已还清**：Composer 检测 `/` → SlashMenu.show()，Selected → dispatch() |
 | ⬜ 5.3: GitHub skill install 未实现 | 5.3 | `install.py` 对 `kind="github"` 返回 FAILED + P1 提示 | 需 HTTP client (httpx) 下载 tarball + 验证 + 解压 | 实现 GitHub tarball 下载、checksum 验证、原子解压 |
-| ⬜ 5.3: skill update 未实现 | 5.3 | Rust 的 `update` / `update_with_registry` 未 port | 依赖 GitHub install | 读取 `.installed-from` 获取 source spec → 下载新版 → 比较 checksum → 原子替换 |
+| ✅ 5.3: skill update (2026-05-10 p2-audit) | 5.3 | `update()` 实现：读 `.installed-from` → 删除 → 重装 → 保留 trust 标记 | — | — |
 | ⬜ 5.3: Skills ↔ Engine 集成 | 5.3 | `render_available_skills_context()` 未被 `engine/prompts.py` 调用；`load_skill` 工具未注册；`active_skill` 一次性注入未实现 | 需 Engine + ToolRegistry 集成 | 1) engine/prompts.py 调 render_available_skills_context() 2) 注册 load_skill 工具 3) Engine 消息队列支持 active_skill 注入 |
 | ⬜ 5.3: 远程 Registry 获取 | 5.3 | `fetch_registry()` 未实现 | 需 httpx GET | 实现 httpx GET + RegistryDocument.from_json()，`DEFAULT_REGISTRY_URL` 已准备 |
 | ⬜ 6: LineBuffer commit_tick 深度集成 | 6 | `LineBuffer` 存在但 Transcript 仍逐 delta 刷新 | Rust `commit_tick` 按固定间隔提交缓冲区减少重绘 | 在 `_listen_events` 中用 timer 限流 Transcript 刷新 |
@@ -573,9 +576,9 @@ deepseek-tui-py/
 | ⬜ 6: Model/Provider Picker | 6 | Rust 981 LOC combined 未实现 | `/model` 可接受参数但无 UI picker | 实现 ModalScreen picker |
 | ⬜ 6: Session Picker | 6 | Rust `session_picker.rs`（671 LOC）未实现 | — | — |
 | ⬜ 6: Onboarding Screen | 6 | Rust `onboarding/mod.rs`（167 LOC）未实现 | 当前无 API key 时仅 StatusBar 提示 | 实现首次启动引导 screen |
-| ⬜ 6: Ctrl+Enter 换行 | 6 | Composer 当前 Enter 即发送，无多行输入 | Rust 支持 Ctrl+Enter 换行 | Composer 按键处理区分 Enter/Ctrl+Enter |
+| ✅ 6: Ctrl+Enter 换行 (2026-05-10 p2-audit) | 6 | Composer 现支持 Ctrl+Enter / Ctrl+J 插入换行 | — | — |
 | ⬜ 6: Paste burst detection | 6 | Rust `paste_burst.rs`（328 LOC）未实现 | — | — |
-| ⬜ 6: External editor ($EDITOR) | 6 | Rust `external_editor.rs`（321 LOC）未实现 | — | — |
+| ✅ 6: External editor ($EDITOR) (2026-05-10 p2-audit) | 6 | Composer Ctrl+E 调 `$VISUAL`/`$EDITOR` 编辑临时文件，保存后填回 | — | — |
 | ⬜ 6: Keybinding 自定义配置 | 6 | Textual 有 BINDINGS 但未暴露自定义配置 | Rust `keybindings.rs`（349 LOC） | — |
 | ⬜ 6: Subagent/Shell/MCP 输出路由 | 6 | Rust `subagent_routing.rs`（333）+ `shell_job_routing.rs`（182）+ `mcp_routing.rs`（161）未在 TUI 中显示 | — | 各 routing 模块接入 Transcript |
 | ⬜ 6: Agent card widget | 6 | Rust `agent_card.rs`（671 LOC）未实现 | — | — |

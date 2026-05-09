@@ -14,6 +14,7 @@ class EngineHandle:
         self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
         self.cancel_event = asyncio.Event()
         self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
 
     async def send_message(
         self,
@@ -50,6 +51,20 @@ class EngineHandle:
 
     def reset_cancel(self) -> None:
         self.cancel_event = asyncio.Event()
+
+    async def steer(self, text: str) -> None:
+        """Inject a user message mid-turn (mirrors Rust rx_steer)."""
+        await self._steer_queue.put(text)
+
+    def drain_steers(self) -> list[str]:
+        """Non-blocking drain of all queued steer messages."""
+        steers: list[str] = []
+        while True:
+            try:
+                steers.append(self._steer_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return steers
 
     def resolve_user_input(self, tool_call_id: str, response: dict[str, Any]) -> bool:
         """Resolve a pending user input request from the TUI.

@@ -113,11 +113,40 @@ class WebRunTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")
         script = _require_string(input_data, "script")
-        return ToolResult(
-            success=True,
-            content="(web_run not yet wired to a browser runtime)",
-            metadata={"url": url, "script": script, "stub": True},
-        )
+        try:
+            from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+        except ImportError:
+            return ToolResult(
+                success=False,
+                content=(
+                    "web_run requires Playwright. Install with:\n"
+                    "  pip install playwright && playwright install chromium\n"
+                    "Then retry the call."
+                ),
+                metadata={"url": url, "script": script, "missing_dependency": "playwright"},
+            )
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                try:
+                    page = await browser.new_page()
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                    result = await page.evaluate(script)
+                finally:
+                    await browser.close()
+            import json as _json
+
+            return ToolResult(
+                success=True,
+                content=_json.dumps(result, ensure_ascii=False, default=str),
+                metadata={"url": url},
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                success=False,
+                content=f"web_run failed: {exc}",
+                metadata={"url": url, "error": str(exc)},
+            )
 
 
 class FinanceTool(ToolSpec):

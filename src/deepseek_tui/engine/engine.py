@@ -118,6 +118,10 @@ class Engine:
         self._tool_write_lock = asyncio.Lock()
         # Skills integration — renders available skills into system prompt
         self.skill_registry = skill_registry
+        # Per-tool snapshots for /undo (mirrors Rust pre_tool_snapshot, #384).
+        # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
+        # None means file did not exist before the tool ran.
+        self.tool_snapshots: dict[str, list[tuple[Path, bytes | None]]] = {}
 
     @classmethod
     async def create(
@@ -212,6 +216,7 @@ class Engine:
                 usage=result.usage,
             )
         )
+        await self._auto_persist_session()
 
     async def _run_conversation(
         self,
@@ -225,6 +230,12 @@ class Engine:
         step_error_count = 0
         consecutive_tool_error_steps = 0
         for _ in range(self.max_tool_round_trips + 1):
+            # Drain steer messages — mid-turn user input (mirrors turn_loop.rs:49-57)
+            for steer_text in self.handle.drain_steers():
+                steer_text = steer_text.strip()
+                if steer_text:
+                    messages.append(Message.user(steer_text))
+
             # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
             await run_pre_request_checkpoint(
                 self.capacity_controller,
@@ -381,6 +392,63 @@ class Engine:
                 )
         return results
 
+    _SNAPSHOT_TOOLS: frozenset[str] = frozenset(
+        {"write_file", "edit_file", "apply_patch"}
+    )
+
+    def _take_pre_tool_snapshot(
+        self, tool_call_id: str, tool_name: str, args: dict[str, Any]
+    ) -> None:
+        """Capture file contents before a write tool runs (mirrors Rust #384).
+
+        Best-effort — failures here must never block tool execution.
+        """
+        if tool_name not in self._SNAPSHOT_TOOLS:
+            return
+        from deepseek_tui.lsp import edited_paths_for_tool
+
+        try:
+            paths = edited_paths_for_tool(tool_name, args)
+        except Exception:  # noqa: BLE001
+            return
+        workspace = self.tool_context.working_directory
+        snapshots: list[tuple[Path, bytes | None]] = []
+        for p in paths:
+            absolute = p if p.is_absolute() else workspace / p
+            try:
+                snapshots.append((absolute, absolute.read_bytes()))
+            except FileNotFoundError:
+                snapshots.append((absolute, None))
+            except OSError:
+                continue
+        if snapshots:
+            self.tool_snapshots[tool_call_id] = snapshots
+
+    def undo_last_tool(self) -> tuple[bool, str]:
+        """Restore the most recent tool snapshot (mirrors Rust /undo).
+
+        Returns (success, message).
+        """
+        if not self.tool_snapshots:
+            return False, "No tool snapshots available to undo."
+        last_id = next(reversed(self.tool_snapshots))
+        snapshots = self.tool_snapshots.pop(last_id)
+        restored = 0
+        errors: list[str] = []
+        for path, original in snapshots:
+            try:
+                if original is None:
+                    if path.exists():
+                        path.unlink()
+                else:
+                    path.write_bytes(original)
+                restored += 1
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+        if errors:
+            return False, f"Restored {restored}; errors: {'; '.join(errors)}"
+        return True, f"Reverted {restored} file(s) from tool {last_id[:8]}"
+
     async def _execute_single_tool(
         self,
         tool_call: ToolCall,
@@ -392,6 +460,8 @@ class Engine:
         Returns None if the tool was denied by approval.
         """
         tool_name = tool_call.name
+        # Snapshot before file-modifying tools
+        self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
         # --- Special built-in tools (not in ToolRegistry) ---
         if is_tool_search_tool(tool_name):
@@ -507,6 +577,31 @@ class Engine:
         self.exec_policy.record_decision(tool_call.name, decision)
         return False
 
+    async def _auto_persist_session(self) -> None:
+        """Best-effort session persistence after each turn.
+
+        Writes session_messages to a JSON file so sessions survive restarts.
+        Mirrors Rust ``Engine::auto_save_session`` behavior. Silent on failure.
+        """
+        try:
+            from deepseek_tui.config.paths import default_config_path
+
+            sessions_dir = default_config_path().parent / "sessions"
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+            session_file = sessions_dir / "current.json"
+            import json as _json
+
+            data = {
+                "model": self.default_model,
+                "turn_counter": self.turn_counter,
+                "messages": [m.model_dump() for m in self.session_messages],
+            }
+            tmp = session_file.with_suffix(".tmp")
+            tmp.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(session_file)
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
         """Emergency compaction callback for TurnLoop context overflow recovery."""
         result = await compact_messages_safe(
@@ -522,8 +617,9 @@ class Engine:
     async def _execute_parallel_tools(self, input_data: dict[str, Any]) -> ToolResult:
         """Fan out multi_tool_use.parallel sub-calls concurrently.
 
-        Mirrors Rust turn_loop.rs:1161-1189.
+        Mirrors Rust turn_loop.rs:1161-1189 + tool_execution.rs:58-67.
         Only read-only tools that don't require approval are eligible.
+        Recursive self-calls are rejected (tool_execution.rs:63).
         """
         tool_uses = input_data.get("tool_uses")
         if not isinstance(tool_uses, list) or not tool_uses:
@@ -534,9 +630,29 @@ class Engine:
             params = item.get("parameters", {})
             if not isinstance(params, dict):
                 params = {}
-            # Strip "functions." prefix that some models add
-            if name.startswith("functions."):
-                name = name[len("functions."):]
+            for prefix in ("functions.", "tools.", "tool."):
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                    break
+            if name == MULTI_TOOL_PARALLEL_NAME:
+                return {
+                    "tool": name,
+                    "error": "multi_tool_use.parallel cannot call itself",
+                    "success": "false",
+                }
+            if not self.tool_registry.contains(name):
+                return {
+                    "tool": name,
+                    "error": f"Tool '{name}' not found",
+                    "success": "false",
+                }
+            tool = self.tool_registry.get(name)
+            if not tool.is_read_only():
+                return {
+                    "tool": name,
+                    "error": f"Tool '{name}' is not read-only; denied",
+                    "success": "false",
+                }
             try:
                 result = await self.tool_registry.execute(
                     name, params, self.tool_context

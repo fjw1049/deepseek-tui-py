@@ -67,6 +67,7 @@ from deepseek_tui.tools.task_tools import (
 from deepseek_tui.tools.todo_tools import TodoAddTool, TodoListTool, TodoUpdateTool, TodoWriteTool
 from deepseek_tui.tools.user_input_tool import RequestUserInputTool
 from deepseek_tui.tools.utility_tools import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
+from deepseek_tui.tools.validation_tools import RevertTurnTool, RunTestsTool, ValidateDataTool
 from deepseek_tui.tools.web_tools import FetchUrlTool, WebSearchTool
 
 
@@ -180,5 +181,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     if getattr(cfg, "memory_enabled", True):
         registry.register(RememberTool())
         registry.register(RecallArchiveTool())
+
+    registry.register(ValidateDataTool())
+    registry.register(RunTestsTool())
+    if mode != "plan":
+        registry.register(RevertTurnTool())
 
     return registry

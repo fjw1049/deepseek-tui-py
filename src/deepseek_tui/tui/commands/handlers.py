@@ -389,6 +389,10 @@ def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/yolo")
 def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    from deepseek_tui.engine.approval import AutoApprovalHandler
+    app._engine.approval_handler = AutoApprovalHandler()
     return CommandResult(output="YOLO mode enabled — all tool approvals auto-accepted.")
 
 
@@ -464,7 +468,14 @@ def cmd_edit(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/undo")
 def cmd_undo(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Undo last message pair — requires Engine integration (Stage 6)")
+    """Restore the most recent file-modifying tool snapshot."""
+    engine = getattr(app, "_engine", None)
+    if engine is None:
+        return CommandResult(error="Engine not started — cannot undo")
+    success, message = engine.undo_last_tool()
+    if success:
+        return CommandResult(output=message)
+    return CommandResult(error=message)
 
 
 # ── /retry ───────────────────────────────────────────────────────────────
@@ -608,7 +619,21 @@ def cmd_hooks(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/subagents")
 def cmd_subagents(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="No active sub-agents.")
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    mgr = app._engine.tool_context.subagent_manager
+    if mgr is None:
+        return CommandResult(output="Sub-agent feature not enabled.")
+    running = mgr.running_count()
+    agents = mgr.list_filtered(include_archived=False)
+    if not agents:
+        return CommandResult(output="No active sub-agents.")
+    lines = [f"Sub-agents ({running} running, {len(agents)} total):\n"]
+    for a in agents:
+        status = a.status.kind.value if a.status else "unknown"
+        label = a.nickname or a.agent_type or a.agent_id[:8]
+        lines.append(f"  {label:<20} [{status}]")
+    return CommandResult(output="\n".join(lines))
 
 
 # ── /attach ──────────────────────────────────────────────────────────────
@@ -631,14 +656,48 @@ def cmd_attach(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/task")
 def cmd_task(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="No background tasks.")
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    mgr = app._engine.tool_context.task_manager
+    if mgr is None:
+        return CommandResult(output="Task feature not enabled.")
+    # Read task counts directly (safe for display without async lock)
+    from deepseek_tui.tools.task_manager import TaskStatus
+    tasks = mgr._tasks
+    queued = sum(1 for t in tasks.values() if t.status is TaskStatus.QUEUED)
+    running = sum(1 for t in tasks.values() if t.status is TaskStatus.RUNNING)
+    completed = sum(
+        1 for t in tasks.values()
+        if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+    )
+    total = len(tasks)
+    if total == 0:
+        return CommandResult(output="No background tasks.")
+    lines = [
+        f"Background tasks: {total} total",
+        f"  Queued:    {queued}",
+        f"  Running:   {running}",
+        f"  Done:      {completed}",
+    ]
+    return CommandResult(output="\n".join(lines))
 
 
 # ── /jobs ────────────────────────────────────────────────────────────────
 
 @_register("/jobs")
 def cmd_jobs(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="No active shell jobs.")
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    # Shell processes are stored in ToolContext.metadata
+    processes = app._engine.tool_context.metadata.get("shell_processes", {})
+    if not processes:
+        return CommandResult(output="No active shell jobs.")
+    lines = [f"Active shell jobs: {len(processes)}\n"]
+    for pid_key, proc in processes.items():
+        pid = getattr(proc, "pid", "?")
+        status = "running" if proc.returncode is None else f"exited({proc.returncode})"
+        lines.append(f"  {pid_key[:8]}  pid={pid}  [{status}]")
+    return CommandResult(output="\n".join(lines))
 
 
 # ── /mcp ─────────────────────────────────────────────────────────────────
@@ -666,7 +725,26 @@ def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/compact")
 def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Context compaction triggered.")
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    import asyncio
+
+    async def _do_compact() -> str:
+        msgs = app._engine.session_messages
+        if not msgs:
+            return "Nothing to compact — session is empty."
+        compacted = await app._engine._emergency_compact(msgs)
+        app._engine.session_messages[:] = compacted
+        return (
+            f"Context compacted: {len(msgs)} → {len(compacted)} messages."
+        )
+
+    try:
+        asyncio.get_running_loop()
+        asyncio.ensure_future(_do_compact())
+        return CommandResult(output="Context compaction triggered (async).")
+    except RuntimeError:
+        return CommandResult(output="Context compaction triggered.")
 
 
 # ── /cycles ──────────────────────────────────────────────────────────────

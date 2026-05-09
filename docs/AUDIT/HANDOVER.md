@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：P0 slash 命令功能深度修复（2026-05-09）。
+> 最后更新：P2 审核报告修复 — fake_wrapper + snapshot undo + skill update + MCP server + web_run + composer 增强（2026-05-10）。
 
 ---
 
@@ -78,6 +78,9 @@
 | bugfix-7 | — | **代码逻辑审核修复 7 项**：①executors.py 改用 Engine.run() 替代错误的 TurnLoop.run() 直调（P0 致命）②CLI resume/fork 传参修复（DeepSeekTUI 新增 resume_session_id/fork_session_id）③exec_shell PROMPT 决策改返回 ToolResult 而非 raise ToolError ④one-shot 模式显示工具调用进度（ToolCallEvent/ToolResultEvent）⑤CLI config set/unset 实现真实文件写入 ⑥httpx 连接池复用（持久 AsyncClient + Engine.shutdown 关闭）⑦TURN_MAX_OUTPUT_TOKENS 统一为 262,144（对齐 Rust context.rs:18） | +0 |
 | p0-stream | — | **P0 流式健壮性 + 特殊工具**：①turn_loop transparent stream retry（空流 ≤2 次自动重试）②per-chunk 90s timeout + wall-clock 1800s guard + 10MB content guard ③streaming.py reasoning_content fallback（兼容 NIM `delta.reasoning`）④`is_reasoning_model()` 模型检测 ⑤`MultiToolUseParallelTool`（并发展开只读子调用）⑥`RequestUserInputTool`（验证 + UserInputRequiredEvent + asyncio.Future 阻塞）⑦Engine special routing（parallel/user_input 拦截） | +0 |
 | p0-slash | — | **P0 slash 命令功能深度**：①`/save` 实现（session JSON 序列化 + metadata + 时间戳文件名）②`/load` 实现（JSON 反序列化 + Engine.session_messages 恢复 + Transcript 重建）③`/tokens` 实现（从 StatusBar 读取累积 token + 模型/消息数统计）④`/cost` 实现（基于 token 的成本估算 + DeepSeek 定价）— 对齐 Rust `commands/session.rs` + `commands/debug.rs` | +0 |
+| p0-audit | — | **P0 审核报告修复 5 项**：①runtime.py executor 安全降级（无 API key 时回退 stub，修复 test_runtime_integration 挂死）②TUI _listen_events 处理 UserInputRequiredEvent（auto-select + resolve_user_input 解除死锁）③deepseek.py per-chunk idle timeout（asyncio.wait_for 包装每个 SSE chunk 读取，对齐 Rust STREAM_CHUNK_TIMEOUT_SECS=90）④parallel tool read-only 检查（非 read-only 工具拒绝并行）⑤parallel tool 递归自调用阻止 | +0 |
+| p1-audit | — | **P1 审核报告修复 5 项**：①3 个缺失工具（ValidateData/RunTests/RevertTurn）②Session 自动持久化 ③SubAgent 7 种 system prompt ④Steer input 处理 ⑤builder.py 注册 | +0 |
+| p2-audit | — | **P2 审核报告修复 8 项**：①fake_tool_wrapper 过滤（buffer 留 raw、emit 过滤）②per-tool snapshot undo（write_file/edit_file/apply_patch + /undo 接通）③RLM rlm_query 修复（错误 import 改对）④CLI 7 个 thread 子命令接 SessionManager ⑤skill update（重装保留 trust）⑥MCP server stdio 模式 ⑦web_run Playwright 集成 ⑧Composer Ctrl+Enter 换行 + Ctrl+E 调 $EDITOR | +0 |
 | **累计** | | | **1110 passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
