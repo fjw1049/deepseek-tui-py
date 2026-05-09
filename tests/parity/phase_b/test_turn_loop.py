@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.engine.tool_setup import (
+from deepseek_tui.engine.tool_catalog import (
     active_tools_for_step,
     ensure_advanced_tooling,
     initial_active_tools,
@@ -27,30 +27,39 @@ class TestToolSetup:
     """Tests for tool setup and filtering logic."""
 
     def test_ensure_advanced_tooling_adds_missing_system_tools(self) -> None:
-        """Mirror of Rust test: verify system tools are injected into catalog."""
+        """Mirror of Rust test: verify built-in tools are injected into catalog."""
         tools: list[dict[str, Any]] = []
         ensure_advanced_tooling(tools)
 
-        tool_names = {t.get("name") for t in tools}
-        assert "update_plan" in tool_names
-        assert "note" in tool_names
+        tool_names = {
+            t.get("function", t).get("name")  # type: ignore[union-attr]
+            for t in tools
+        }
+        assert "code_execution" in tool_names
+        assert "tool_search_tool_regex" in tool_names
+        assert "tool_search_tool_bm25" in tool_names
 
     def test_ensure_advanced_tooling_preserves_existing_tools(self) -> None:
         """System tools shouldn't duplicate if already present."""
-        tools = [
+        tools: list[dict[str, Any]] = [
             {
                 "type": "function",
-                "name": "update_plan",
-                "description": "Update plan",
-                "parameters": {"type": "object"},
+                "function": {
+                    "name": "code_execution",
+                    "description": "Execute code",
+                    "parameters": {"type": "object"},
+                },
             }
         ]
         original_len = len(tools)
         ensure_advanced_tooling(tools)
 
         assert len(tools) >= original_len
-        tool_names = [t.get("name") for t in tools if t.get("name")]
-        assert tool_names.count("update_plan") == 1
+        names = [
+            t.get("function", t).get("name")  # type: ignore[union-attr]
+            for t in tools
+        ]
+        assert names.count("code_execution") == 1
 
     def test_initial_active_tools_returns_all_tool_names(self) -> None:
         """Initial active tools should include all tools in catalog."""

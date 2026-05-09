@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.approval import ApprovalHandler, AutoApprovalHandler
+from deepseek_tui.engine.capacity import CapacityController, CapacityControllerConfig
+from deepseek_tui.engine.capacity_flow import (
+    run_error_escalation_checkpoint,
+    run_post_tool_checkpoint,
+    run_pre_request_checkpoint,
+)
+from deepseek_tui.engine.compaction import (
+    CompactionConfig,
+    compact_messages_safe,
+    should_compact,
+)
+from deepseek_tui.engine.context import compact_tool_result_for_context
+from deepseek_tui.engine.dispatch import format_tool_error
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
@@ -18,6 +33,14 @@ from deepseek_tui.engine.events import (
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.ops import CancelRequestOp, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
+from deepseek_tui.engine.tool_catalog import (
+    CODE_EXECUTION_TOOL_NAME,
+    execute_code_execution_tool,
+    execute_tool_search,
+    is_tool_search_tool,
+    missing_tool_error_message,
+)
+from deepseek_tui.engine.tool_execution import emit_tool_audit
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
 from deepseek_tui.execpolicy.approval_cache import (
     ApprovalCache,
@@ -36,12 +59,14 @@ from deepseek_tui.lsp import (
 from deepseek_tui.protocol.messages import Message, ToolUseBlock
 from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.tools.base import ToolError
+from deepseek_tui.tools.base import ToolError, ToolResult
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.runtime import ToolRuntime
+
+logger = logging.getLogger(__name__)
 
 
 class Engine:
@@ -56,6 +81,8 @@ class Engine:
         approval_handler: ApprovalHandler | None = None,
         max_tool_round_trips: int = 3,
         tool_runtime: ToolRuntime | None = None,
+        compaction_config: CompactionConfig | None = None,
+        skill_registry: object | None = None,
     ) -> None:
         self.handle = handle
         self.client = client
@@ -75,14 +102,19 @@ class Engine:
         self.exec_policy = exec_policy or ExecPolicyEngine()
         self.approval_handler = approval_handler or AutoApprovalHandler()
         self.max_tool_round_trips = max_tool_round_trips
+        self.compaction_config = compaction_config or CompactionConfig()
+        self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
-        self.turn_loop = TurnLoop(client)
+        self.turn_loop = TurnLoop(client, compact_fn=self._emergency_compact)
         # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
         # Stage 3.next.1 approval cache — fingerprints repeat tool calls
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
+        self._tool_write_lock = asyncio.Lock()
+        # Skills integration — renders available skills into system prompt
+        self.skill_registry = skill_registry
 
     @classmethod
     async def create(
@@ -105,6 +137,7 @@ class Engine:
         tools can actually reach the managers at dispatch time.
         """
         from deepseek_tui.config.models import Config
+        from deepseek_tui.skills import discover_in_workspace
         from deepseek_tui.tools.runtime import create_tool_runtime
 
         cfg = config if isinstance(config, Config) else Config()
@@ -113,6 +146,8 @@ class Engine:
             working_directory=working_directory,
             mode=mode,
         )
+        # Discover skills for system prompt injection
+        skill_reg = discover_in_workspace(workspace=working_directory)
         return cls(
             handle=handle,
             client=client,
@@ -121,7 +156,16 @@ class Engine:
             approval_handler=approval_handler,
             max_tool_round_trips=max_tool_round_trips,
             tool_runtime=runtime,
+            skill_registry=skill_reg,
         )
+
+    def _render_skills_context(self) -> str | None:
+        """Render skills context for system prompt injection."""
+        if self.skill_registry is None:
+            return None
+        from deepseek_tui.skills import render_available_skills_context
+
+        return render_available_skills_context(self.skill_registry) or None
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""
@@ -145,7 +189,10 @@ class Engine:
         result = await self._run_conversation(
             messages=working_messages,
             model=op.model or self.default_model,
-            system_prompt=build_system_prompt(op.system_prompt),
+            system_prompt=build_system_prompt(
+                op.system_prompt,
+                skills_context=self._render_skills_context(),
+            ),
             max_tokens=op.max_tokens,
         )
 
@@ -170,7 +217,31 @@ class Engine:
     ) -> TurnResult:
         tools = self.tool_registry.to_api_tools()
         self.turn_counter += 1
+        step_error_count = 0
+        consecutive_tool_error_steps = 0
         for _ in range(self.max_tool_round_trips + 1):
+            # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
+            await run_pre_request_checkpoint(
+                self.capacity_controller,
+                self.turn_counter,
+                model,
+                messages,
+                compact_fn=self._emergency_compact,
+            )
+
+            # Auto-compact before each LLM call if thresholds exceeded.
+            # Mirrors Rust turn_loop.rs:85-168.
+            if should_compact(messages, self.compaction_config):
+                compact_result = await compact_messages_safe(
+                    self.client,
+                    messages,
+                    self.compaction_config,
+                    workspace=self.tool_context.working_directory,
+                )
+                messages[:] = compact_result.messages
+                if compact_result.summary_prompt:
+                    system_prompt = f"{system_prompt}\n\n{compact_result.summary_prompt}"
+
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
             self._flush_pending_lsp_diagnostics(messages)
@@ -192,7 +263,31 @@ class Engine:
                 return result
 
             messages.append(self._build_tool_use_message(result.tool_calls))
-            messages.extend(await self._execute_tool_calls(result.tool_calls))
+            tool_results = await self._execute_tool_calls(result.tool_calls, model)
+            tool_errors = sum(1 for m in tool_results if any(
+                getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error")
+            ))
+            messages.extend(tool_results)
+
+            # Capacity post-tool checkpoint (mirrors capacity_flow.rs:37-76)
+            await run_post_tool_checkpoint(
+                self.capacity_controller, self.turn_counter, model, messages,
+            )
+
+            # Capacity error escalation (mirrors capacity_flow.rs:78-151)
+            if tool_errors > 0:
+                step_error_count += tool_errors
+                consecutive_tool_error_steps += 1
+                await run_error_escalation_checkpoint(
+                    self.capacity_controller,
+                    self.turn_counter,
+                    model,
+                    messages,
+                    step_error_count=step_error_count,
+                    consecutive_tool_error_steps=consecutive_tool_error_steps,
+                )
+            else:
+                consecutive_tool_error_steps = 0
 
         await self.handle.emit(
             ErrorEvent(
@@ -210,79 +305,35 @@ class Engine:
             ]
         )
 
-    async def _execute_tool_calls(self, tool_calls: list[ToolCall]) -> list[Message]:
+    async def _execute_tool_calls(
+        self, tool_calls: list[ToolCall], model: str | None = None
+    ) -> list[Message]:
         results: list[Message] = []
+        effective_model = model or self.default_model
+        api_tools = self.tool_registry.to_api_tools()
+
         for tool_call in tool_calls:
             try:
-                tool = self.tool_registry.get(tool_call.name)
-                approval_request = self.exec_policy.evaluate(tool_call.name, tool.capabilities())
-                if approval_request is not None:
-                    # Stage 3.next.1: check fingerprint cache first.
-                    # APPROVED → skip handler entirely (silent reuse).
-                    # DENIED   → grant was one-shot and consumed; fall
-                    #            through to handler.
-                    # UNKNOWN  → no prior decision; fall through to handler.
-                    cache_key = build_approval_key(
-                        tool_call.name, tool_call.arguments
-                    )
-                    cache_status = self.approval_cache.check(cache_key)
-                    if cache_status is ApprovalCacheStatus.APPROVED:
-                        await self.handle.emit(
-                            ApprovalResolvedEvent(
-                                tool_call_id=tool_call.id,
-                                approved=True,
-                                reason="cached_session",
-                            )
-                        )
-                    else:
-                        await self.handle.emit(
-                            ApprovalRequiredEvent(
-                                tool_call_id=tool_call.id,
-                                request=approval_request,
-                            )
-                        )
-                        decision = await self.approval_handler.request_approval(
+                result = await self._execute_single_tool(
+                    tool_call, api_tools, effective_model
+                )
+                if result is None:
+                    results.append(
+                        Message.tool_result(
                             tool_call.id,
-                            approval_request,
+                            f"Tool {tool_call.name} denied by approval policy",
+                            is_error=True,
                         )
-                        await self.handle.emit(
-                            ApprovalResolvedEvent(
-                                tool_call_id=tool_call.id,
-                                approved=decision
-                                in {
-                                    ApprovalDecision.APPROVED,
-                                    ApprovalDecision.APPROVED_SESSION,
-                                },
-                                reason=decision.value,
-                            )
-                        )
-                        if decision is ApprovalDecision.DENIED:
-                            reason = f"Tool {tool_call.name} denied by approval policy"
-                            await self.handle.emit(
-                                SandboxDeniedEvent(
-                                    tool_call_id=tool_call.id,
-                                    tool_name=tool_call.name,
-                                    reason=reason,
-                                )
-                            )
-                            results.append(
-                                Message.tool_result(
-                                    tool_call.id, reason, is_error=True
-                                )
-                            )
-                            continue
-                        # Persist the grant so repeat calls match.
-                        self.approval_cache.insert(
-                            cache_key,
-                            approved_for_session=(
-                                decision is ApprovalDecision.APPROVED_SESSION
-                            ),
-                        )
-                        self.exec_policy.record_decision(tool_call.name, decision)
-                result = await self.tool_registry.execute(
-                    tool_call.name,
-                    tool_call.arguments,
-                    self.tool_context,
+                    )
+                    continue
+
+                emit_tool_audit(
+                    {
+                        "event": "tool.result",
+                        "tool_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                        "success": result.success,
+                    }
                 )
                 await self.handle.emit(
                     ToolResultEvent(
@@ -296,17 +347,164 @@ class Engine:
                     await self._run_post_edit_lsp_hook(
                         tool_call.name, tool_call.arguments
                     )
+                output_for_context = compact_tool_result_for_context(
+                    effective_model, tool_call.name, result
+                )
                 results.append(
                     Message.tool_result(
                         tool_call.id,
-                        result.content,
+                        output_for_context,
                         is_error=not result.success,
                     )
                 )
             except ToolError as exc:
-                await self.handle.emit(ErrorEvent(message=str(exc), retryable=False))
-                results.append(Message.tool_result(tool_call.id, str(exc), is_error=True))
+                error_msg = format_tool_error(exc, tool_call.name)
+                emit_tool_audit(
+                    {
+                        "event": "tool.result",
+                        "tool_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                        "success": False,
+                        "error": error_msg,
+                    }
+                )
+                await self.handle.emit(ErrorEvent(message=error_msg, retryable=False))
+                results.append(
+                    Message.tool_result(
+                        tool_call.id, f"Error: {error_msg}", is_error=True
+                    )
+                )
         return results
+
+    async def _execute_single_tool(
+        self,
+        tool_call: ToolCall,
+        api_tools: list[dict[str, Any]],
+        model: str,
+    ) -> ToolResult | None:
+        """Execute a single tool call, handling special tools and approval.
+
+        Returns None if the tool was denied by approval.
+        """
+        tool_name = tool_call.name
+
+        # --- Special built-in tools (not in ToolRegistry) ---
+        if is_tool_search_tool(tool_name):
+            active: set[str] = set()
+            for t in api_tools:
+                fn = t.get("function", t)
+                if isinstance(fn, dict):
+                    name = fn.get("name", "")
+                    if isinstance(name, str):
+                        active.add(name)
+            return execute_tool_search(
+                tool_name, tool_call.arguments, api_tools, active
+            )
+
+        if tool_name == CODE_EXECUTION_TOOL_NAME:
+            return await execute_code_execution_tool(
+                tool_call.arguments, self.tool_context.working_directory
+            )
+
+        # --- Normal registry tools ---
+        if not self.tool_registry.contains(tool_name):
+            raise ToolError(missing_tool_error_message(tool_name, api_tools))
+
+        tool = self.tool_registry.get(tool_name)
+
+        # Approval gate
+        approval_request = self.exec_policy.evaluate(
+            tool_name, tool.capabilities()
+        )
+        if approval_request is not None:
+            denied = await self._handle_approval_flow(tool_call, approval_request)
+            if denied:
+                return None
+
+        return await self.tool_registry.execute(
+            tool_name, tool_call.arguments, self.tool_context
+        )
+
+    async def _handle_approval_flow(
+        self,
+        tool_call: ToolCall,
+        approval_request: Any,
+    ) -> bool:
+        """Run the approval gate. Returns True if denied."""
+        cache_key = build_approval_key(tool_call.name, tool_call.arguments)
+        cache_status = self.approval_cache.check(cache_key)
+
+        if cache_status is ApprovalCacheStatus.APPROVED:
+            await self.handle.emit(
+                ApprovalResolvedEvent(
+                    tool_call_id=tool_call.id,
+                    approved=True,
+                    reason="cached_session",
+                )
+            )
+            return False
+
+        emit_tool_audit(
+            {
+                "event": "tool.approval_required",
+                "tool_id": tool_call.id,
+                "tool_name": tool_call.name,
+            }
+        )
+        await self.handle.emit(
+            ApprovalRequiredEvent(
+                tool_call_id=tool_call.id,
+                request=approval_request,
+            )
+        )
+        decision = await self.approval_handler.request_approval(
+            tool_call.id, approval_request
+        )
+        approved = decision in {
+            ApprovalDecision.APPROVED,
+            ApprovalDecision.APPROVED_SESSION,
+        }
+        emit_tool_audit(
+            {
+                "event": "tool.approval_decision",
+                "tool_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "decision": decision.value,
+            }
+        )
+        await self.handle.emit(
+            ApprovalResolvedEvent(
+                tool_call_id=tool_call.id,
+                approved=approved,
+                reason=decision.value,
+            )
+        )
+        if decision is ApprovalDecision.DENIED:
+            await self.handle.emit(
+                SandboxDeniedEvent(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    reason=f"Tool {tool_call.name} denied by approval policy",
+                )
+            )
+            return True
+
+        self.approval_cache.insert(
+            cache_key,
+            approved_for_session=(decision is ApprovalDecision.APPROVED_SESSION),
+        )
+        self.exec_policy.record_decision(tool_call.name, decision)
+        return False
+
+    async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
+        """Emergency compaction callback for TurnLoop context overflow recovery."""
+        result = await compact_messages_safe(
+            self.client,
+            messages,
+            self.compaction_config,
+            workspace=self.tool_context.working_directory,
+        )
+        return result.messages
 
     # --- Stage 4.4 post-edit LSP hooks --------------------------------
 

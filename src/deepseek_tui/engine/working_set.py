@@ -92,6 +92,16 @@ class WorkingSet:
         paths = list(self.recent_paths)
         return paths[-limit:]
 
+    def summary(self, limit: int = 24) -> str:
+        """Produce a human-readable summary block for cycle carry-forward."""
+        paths = self.top_paths(limit)
+        if not paths:
+            return ""
+        lines = ["### Working Set (recent files)"]
+        for p in paths:
+            lines.append(f"- `{p}`")
+        return "\n".join(lines)
+
     def _extract_paths_from_text(self, text: str, workspace: Path | None = None) -> None:
         """Extract file paths from text."""
         if not text:
@@ -159,21 +169,19 @@ class WorkingSet:
         self, msg: Message, workspace: Path | None = None
     ) -> bool:
         """Check if message references any working set paths."""
-        from deepseek_tui.protocol.messages import ContentBlock
+        if not self.recent_paths:
+            return False
 
         for block in msg.content:
-            if isinstance(block, ContentBlock):
-                if hasattr(block, "text"):
-                    text = getattr(block, "text", "")
-                    if isinstance(text, str) and any(
-                        path in text for path in self.recent_paths
-                    ):
-                        return True
-                if hasattr(block, "content"):
-                    content = getattr(block, "content", "")
-                    if isinstance(content, str) and any(
-                        path in content for path in self.recent_paths
-                    ):
-                        return True
+            text = getattr(block, "text", None)
+            if isinstance(text, str) and any(
+                path in text for path in self.recent_paths
+            ):
+                return True
+            content = getattr(block, "content", None)
+            if isinstance(content, str) and any(
+                path in content for path in self.recent_paths
+            ):
+                return True
 
         return False

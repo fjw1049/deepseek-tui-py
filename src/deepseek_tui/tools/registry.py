@@ -81,6 +81,17 @@ class ToolRegistry:
         self._tools.clear()
         self._invalidate_api_cache()
 
+    def filter_by_names(self, allowed: set[str]) -> None:
+        """Keep only tools whose names appear in *allowed*.
+
+        Mirrors Rust SubAgent scope restriction (mod.rs:810-825).
+        """
+        to_remove = [n for n in self._tools if n not in allowed]
+        if to_remove:
+            for n in to_remove:
+                del self._tools[n]
+            self._invalidate_api_cache()
+
     # ------------------------------------------------------------------
     # introspection
     # ------------------------------------------------------------------

@@ -269,7 +269,7 @@ async def _stub_executor(
     """Placeholder executor: sleeps briefly, returns synthetic result.
 
     Integration debt: Stage 3.1.simplified: real TaskExecutor not wired.
-    Replaced in a later stage when engine/turn_loop can drive task execution.
+    Use ``real_task_executor`` from ``engine.executors`` for production.
     """
     try:
         await asyncio.wait_for(cancel.wait(), timeout=0.05)
@@ -280,6 +280,13 @@ async def _stub_executor(
             error=None,
         )
     return TaskExecutionResult(summary="", error="canceled")
+
+
+def get_real_task_executor() -> ExecutorFunc:
+    """Return the real task executor that drives Engine turn loops."""
+    from deepseek_tui.engine.executors import real_task_executor
+
+    return real_task_executor
 
 
 class TaskManager:

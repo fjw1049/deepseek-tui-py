@@ -171,8 +171,8 @@ SubAgentExecutor = Callable[
 async def _stub_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
     """Placeholder executor — sleeps briefly, returns synthetic summary.
 
-    Integration debt: Stage 3.2.simplified. Real implementation wires in
-    the LLM client + mini turn loop; parked until Stage 4.
+    Integration debt: Stage 3.2.simplified. Use ``real_subagent_executor``
+    from ``engine.executors`` for production.
     """
     try:
         await asyncio.wait_for(cancel.wait(), timeout=0.05)
@@ -180,6 +180,13 @@ async def _stub_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
         agent.steps_taken += 1
         return f"[stub] agent {agent.id} completed prompt '{agent.prompt[:80]}'"
     raise asyncio.CancelledError
+
+
+def get_real_subagent_executor() -> SubAgentExecutor:
+    """Return the real sub-agent executor that drives Engine turn loops."""
+    from deepseek_tui.engine.executors import real_subagent_executor
+
+    return real_subagent_executor
 
 
 class SubAgent:

@@ -15,6 +15,15 @@ from deepseek_tui.tools.github_tools import (
     GitHubIssueContextTool,
     GitHubPrContextTool,
 )
+from deepseek_tui.tools.knowledge_tools import (
+    NoteTool,
+    PlanUpdateTool,
+    RecallArchiveTool,
+    RememberTool,
+    ReviewTool,
+    RlmQueryTool,
+    SkillLoadTool,
+)
 from deepseek_tui.tools.mcp_tools import (
     ListMcpResourcesTool,
     ListMcpResourceTemplatesTool,
@@ -152,5 +161,18 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             DelegateToAgentTool(),
         ]:
             registry.register(tool)
+
+    # Knowledge / memory / review tools
+    registry.register(NoteTool())
+    registry.register(PlanUpdateTool())
+    registry.register(RlmQueryTool())
+    registry.register(SkillLoadTool())
+
+    if cfg.features.web_search:
+        registry.register(ReviewTool())
+
+    if getattr(cfg, "memory_enabled", True):
+        registry.register(RememberTool())
+        registry.register(RecallArchiveTool())
 
     return registry

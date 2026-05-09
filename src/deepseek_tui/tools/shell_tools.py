@@ -8,6 +8,7 @@ import uuid
 from asyncio.subprocess import Process
 from typing import Any
 
+from deepseek_tui.execpolicy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.execpolicy.decision import Decision
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
@@ -50,7 +51,7 @@ class ExecShellTool(ToolSpec):
             cmd_tokens = _parse_command_tokens(command)
             evaluation = context.policy.check(
                 cmd_tokens,
-                lambda _: Decision.ALLOW  # Fallback to allow if no rule matches
+                _command_safety_heuristic,
             )
             if evaluation.decision == Decision.FORBIDDEN:
                 raise ToolError(
@@ -313,8 +314,22 @@ def _parse_command_tokens(command: str) -> list[str]:
     try:
         return shlex.split(command)
     except ValueError:
-        # If shlex fails (e.g., unclosed quote), return as single token
         return [command]
+
+
+def _command_safety_heuristic(tokens: list[str]) -> Decision:
+    """Map command_safety analysis to Policy Decision.
+
+    Used as the heuristics fallback when no prefix-rule matches.
+    Mirrors the Rust command_safety → Policy::check integration.
+    """
+    cmd_str = " ".join(tokens)
+    analysis = analyze_command(cmd_str)
+    if analysis.level in (SafetyLevel.SAFE, SafetyLevel.WORKSPACE_SAFE):
+        return Decision.ALLOW
+    if analysis.level == SafetyLevel.REQUIRES_APPROVAL:
+        return Decision.PROMPT
+    return Decision.FORBIDDEN
 
 
 # --- PTY support -----------------------------------------------------------

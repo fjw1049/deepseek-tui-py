@@ -28,6 +28,25 @@ class DeepSeekClient(LLMClient):
         self.timeout_seconds = timeout_seconds
         self.transport = transport
 
+    @classmethod
+    def from_config(cls, config: object) -> DeepSeekClient:
+        """Build a client from a Config instance (or use env fallback)."""
+        import os
+
+        from deepseek_tui.secrets.manager import SecretsManager
+
+        mgr = SecretsManager()
+        api_key = mgr.resolve_api_key(config)
+        if not api_key:
+            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        pc = config.effective_provider_config()  # type: ignore[union-attr]
+        base_url = pc.base_url or "https://api.deepseek.com"
+        return cls(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=float(pc.timeout),
+        )
+
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         parser = OpenAIStreamParser()
         headers = {

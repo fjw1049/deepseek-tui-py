@@ -1,3 +1,10 @@
+"""Input composer widget — mirrors Rust ``tui/user_input.rs``.
+
+Stage 6.5: Detects ``/`` prefix for slash commands, posts ``SlashInput``
+message when the input starts with ``/``, and ``Submitted`` for normal
+messages. Also fires ``TextChanged`` on every keystroke so the app can
+show/hide the SlashMenu.
+"""
 from __future__ import annotations
 
 from textual.events import Key
@@ -13,6 +20,20 @@ class Composer(TextArea):
             super().__init__()
             self.text = text
 
+    class SlashInput(Message):
+        """Posted when user submits a ``/command``."""
+
+        def __init__(self, raw_input: str) -> None:
+            super().__init__()
+            self.raw_input = raw_input
+
+    class TextChanged(Message):
+        """Posted on every keystroke so the app can update slash menu."""
+
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
     def __init__(self) -> None:
         super().__init__(language=None)
         self.show_line_numbers = False
@@ -22,7 +43,14 @@ class Composer(TextArea):
             event.prevent_default()
             text = self.text.strip()
             if text:
-                self.post_message(self.Submitted(text))
+                if text.startswith("/"):
+                    self.post_message(self.SlashInput(text))
+                else:
+                    self.post_message(self.Submitted(text))
                 self.clear()
+        elif event.key == "escape":
+            event.prevent_default()
+            self.post_message(self.TextChanged(""))
         else:
             await super()._on_key(event)
+            self.post_message(self.TextChanged(self.text))

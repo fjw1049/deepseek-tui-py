@@ -1,25 +1,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from deepseek_tui.state.database import Database
 
 
 @dataclass(slots=True)
 class ThreadRecord:
+    """Simplified thread record for the legacy ThreadsStore interface.
+
+    For full Rust-parity ThreadMetadata (19 fields), use
+    ``state.session_manager.ThreadMetadata`` and ``SessionManager``.
+    """
+
     id: str
     preview: str
-    model: str
-    workspace: str
-    mode: str
+    model_provider: str
+    cwd: str
     status: str
-    created_at: str
-    updated_at: str
+    created_at: int
+    updated_at: int
     archived: bool = False
-    system_prompt: str | None = None
+    cli_version: str = ""
+    source: str = "unknown"
 
 
 class ThreadsStore:
+    """Legacy thread store — thin wrapper for quick CRUD.
+
+    For production multi-session lifecycle, prefer ``SessionManager``.
+    """
+
     def __init__(self, database: Database):
         self.database = database
 
@@ -28,31 +40,31 @@ class ThreadsStore:
         await connection.execute(
             """
             INSERT INTO threads (
-                id, preview, model, workspace, mode, status, created_at, updated_at,
-                archived, system_prompt
+                id, preview, model_provider, cwd, status, created_at, updated_at,
+                archived, cli_version, source
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 preview = excluded.preview,
-                model = excluded.model,
-                workspace = excluded.workspace,
-                mode = excluded.mode,
+                model_provider = excluded.model_provider,
+                cwd = excluded.cwd,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
                 archived = excluded.archived,
-                system_prompt = excluded.system_prompt
+                cli_version = excluded.cli_version,
+                source = excluded.source
             """,
             (
                 record.id,
                 record.preview,
-                record.model,
-                record.workspace,
-                record.mode,
+                record.model_provider,
+                record.cwd,
                 record.status,
                 record.created_at,
                 record.updated_at,
                 int(record.archived),
-                record.system_prompt,
+                record.cli_version,
+                record.source,
             ),
         )
         await connection.commit()
@@ -61,8 +73,8 @@ class ThreadsStore:
         connection = await self.database.connect()
         cursor = await connection.execute(
             """
-            SELECT id, preview, model, workspace, mode, status, created_at, updated_at,
-                   archived, system_prompt
+            SELECT id, preview, model_provider, cwd, status, created_at, updated_at,
+                   archived, cli_version, source
             FROM threads
             WHERE id = ?
             """,
@@ -85,8 +97,8 @@ class ThreadsStore:
         if include_archived:
             cursor = await connection.execute(
                 """
-                SELECT id, preview, model, workspace, mode, status, created_at, updated_at,
-                       archived, system_prompt
+                SELECT id, preview, model_provider, cwd, status, created_at, updated_at,
+                       archived, cli_version, source
                 FROM threads
                 ORDER BY updated_at DESC
                 LIMIT ?
@@ -96,8 +108,8 @@ class ThreadsStore:
         else:
             cursor = await connection.execute(
                 """
-                SELECT id, preview, model, workspace, mode, status, created_at, updated_at,
-                       archived, system_prompt
+                SELECT id, preview, model_provider, cwd, status, created_at, updated_at,
+                       archived, cli_version, source
                 FROM threads
                 WHERE archived = 0
                 ORDER BY updated_at DESC
@@ -115,10 +127,17 @@ class ThreadsStore:
 
     async def archive(self, thread_id: str, archived: bool = True) -> None:
         connection = await self.database.connect()
-        await connection.execute(
-            "UPDATE threads SET archived = ? WHERE id = ?",
-            (int(archived), thread_id),
-        )
+        now = int(datetime.now(timezone.utc).timestamp())
+        if archived:
+            await connection.execute(
+                "UPDATE threads SET archived = 1, archived_at = ? WHERE id = ?",
+                (now, thread_id),
+            )
+        else:
+            await connection.execute(
+                "UPDATE threads SET archived = 0, archived_at = NULL WHERE id = ?",
+                (thread_id,),
+            )
         await connection.commit()
 
     async def delete(self, thread_id: str) -> None:
