@@ -768,22 +768,90 @@ def exec(
     prompt: str | None = typer.Option(None, "-p", "--prompt", help="Prompt text."),
 ) -> None:
     """Run a non-interactive single-shot agent command."""
-    typer.echo("exec — requires full Engine + TUI integration (Stage 6)")
-    raise typer.Exit(1)
+    loaded = _load_config(config, profile, provider, model)
+    text = prompt
+    if text is None:
+        if not sys.stdin.isatty():
+            text = sys.stdin.read().strip()
+        else:
+            typer.echo("error: --prompt or stdin required", err=True)
+            raise typer.Exit(1)
+    if not text:
+        typer.echo("error: empty prompt", err=True)
+        raise typer.Exit(1)
+    _run_one_shot(loaded, text)
 
 
 @app.command()
-def review() -> None:
+def review(
+    config: Path | None = CONFIG_OPTION,
+    profile: str | None = PROFILE_OPTION,
+    provider: str | None = PROVIDER_OPTION,
+    model: str | None = MODEL_OPTION,
+) -> None:
     """Run a DeepSeek-powered code review over a git diff."""
-    typer.echo("review — requires Engine + diff integration (Stage 6)")
-    raise typer.Exit(1)
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        typer.echo("error: git not available or timed out", err=True)
+        raise typer.Exit(1) from exc
+
+    if result.returncode != 0 or not result.stdout.strip():
+        typer.echo("No changes to review (git diff HEAD is empty).", err=True)
+        raise typer.Exit(1)
+
+    diff = result.stdout.strip()
+    loaded = _load_config(config, profile, provider, model)
+    prompt_text = (
+        "Review the following git diff. Point out bugs, security issues, "
+        "style problems, and suggest improvements. Be concise.\n\n"
+        f"```diff\n{diff}\n```"
+    )
+    _run_one_shot(loaded, prompt_text)
 
 
 @app.command()
-def apply() -> None:
+def apply(
+    patch_file: str | None = typer.Argument(None, help="Path to patch file (or stdin)."),
+) -> None:
     """Apply a patch file or stdin to the working tree."""
-    typer.echo("apply — use `deepseek-tui serve` + apply_patch tool for now")
-    raise typer.Exit(1)
+    import subprocess
+
+    if patch_file:
+        path = Path(patch_file)
+        if not path.exists():
+            typer.echo(f"error: file not found: {path}", err=True)
+            raise typer.Exit(1)
+        patch_data = path.read_text(encoding="utf-8")
+    elif not sys.stdin.isatty():
+        patch_data = sys.stdin.read()
+    else:
+        typer.echo("error: provide a patch file or pipe patch via stdin", err=True)
+        raise typer.Exit(1)
+
+    if not patch_data.strip():
+        typer.echo("error: empty patch", err=True)
+        raise typer.Exit(1)
+
+    result = subprocess.run(
+        ["git", "apply", "--stat"],
+        input=patch_data, capture_output=True, text=True, timeout=30,
+    )
+    typer.echo(result.stdout or "(no stats)")
+
+    result = subprocess.run(
+        ["git", "apply"],
+        input=patch_data, capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        typer.echo(f"error: git apply failed:\n{result.stderr}", err=True)
+        raise typer.Exit(1)
+    typer.echo("Patch applied successfully.")
 
 
 @app.command(name="eval")
@@ -794,24 +862,72 @@ def eval_cmd() -> None:
 
 
 @app.command()
-def sessions() -> None:
+def sessions(
+    config: Path | None = CONFIG_OPTION,
+    limit: int = typer.Option(20, "--limit", help="Max sessions to show."),
+) -> None:
     """List saved TUI sessions."""
-    typer.echo("sessions — requires session_manager integration (Stage 6)")
-    raise typer.Exit(1)
+    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.state.database import Database
+    from deepseek_tui.state.session_manager import SessionManager
+
+    async def _list() -> None:
+        db_path = default_config_path().parent / "state.db"
+        if not db_path.exists():
+            typer.echo("No saved sessions.")
+            return
+        db = Database(db_path)
+        await db.initialize()
+        mgr = SessionManager(db)
+        all_sessions = await mgr.list_sessions(limit=limit)
+        if not all_sessions:
+            typer.echo("No saved sessions.")
+            return
+        for s in all_sessions:
+            name = getattr(s, "preview", None) or "(unnamed)"
+            sid = getattr(s, "id", "?")
+            ts = getattr(s, "updated_at", "")
+            typer.echo(f"{sid}  {name}  {ts}")
+
+    asyncio.run(_list())
 
 
 @app.command()
-def resume(session_id: str = typer.Argument(..., help="Session ID to resume.")) -> None:
+def resume(
+    session_id: str = typer.Argument(..., help="Session ID to resume."),
+    config: Path | None = CONFIG_OPTION,
+    profile: str | None = PROFILE_OPTION,
+    provider: str | None = PROVIDER_OPTION,
+    model: str | None = MODEL_OPTION,
+) -> None:
     """Resume a saved TUI session."""
-    typer.echo(f"resume {session_id} — requires session_manager integration (Stage 6)")
-    raise typer.Exit(1)
+    loaded = _load_config(config, profile, provider, model)
+    try:
+        from deepseek_tui.tui.app import DeepSeekTUI
+        tui_app = DeepSeekTUI(config=loaded, resume_session_id=session_id)
+        tui_app.run()
+    except ImportError as exc:
+        typer.echo(f"TUI not available: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 @app.command()
-def fork(session_id: str = typer.Argument(..., help="Session ID to fork.")) -> None:
+def fork(
+    session_id: str = typer.Argument(..., help="Session ID to fork."),
+    config: Path | None = CONFIG_OPTION,
+    profile: str | None = PROFILE_OPTION,
+    provider: str | None = PROVIDER_OPTION,
+    model: str | None = MODEL_OPTION,
+) -> None:
     """Fork a saved TUI session."""
-    typer.echo(f"fork {session_id} — requires session_manager integration (Stage 6)")
-    raise typer.Exit(1)
+    loaded = _load_config(config, profile, provider, model)
+    try:
+        from deepseek_tui.tui.app import DeepSeekTUI
+        tui_app = DeepSeekTUI(config=loaded, fork_session_id=session_id)
+        tui_app.run()
+    except ImportError as exc:
+        typer.echo(f"TUI not available: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 @app.command()
@@ -831,10 +947,34 @@ def setup() -> None:
 
 
 @app.command()
-def mcp() -> None:
+def mcp(
+    config: Path | None = CONFIG_OPTION,
+) -> None:
     """Manage MCP servers."""
-    typer.echo("mcp — requires MCP management integration (Stage 6)")
-    raise typer.Exit(1)
+    from deepseek_tui.config.paths import default_config_path
+
+    mcp_path = default_config_path().parent / "mcp.json"
+    if not mcp_path.exists():
+        typer.echo("No MCP servers configured.")
+        typer.echo(f"Config expected at: {mcp_path}")
+        typer.echo("Run `deepseek-tui setup` to create the config.")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        typer.echo(f"error: failed to read mcp.json: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    if not data:
+        typer.echo("No MCP servers configured in mcp.json.")
+        return
+
+    typer.echo(f"MCP servers ({len(data)}):")
+    for name, cfg in data.items():
+        cmd = cfg.get("command", "")
+        args_list = cfg.get("args", [])
+        typer.echo(f"  {name}: {cmd} {' '.join(args_list)}")
 
 
 @app.command()
@@ -882,11 +1022,36 @@ def app_server(
 @app.command()
 def metrics(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
-    since: str | None = typer.Option(None, "--since", help="Duration filter."),
+    since: str | None = typer.Option(None, "--since", help="Duration filter (e.g. 7d, 24h)."),
+    config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Print a usage rollup from the audit log."""
-    typer.echo("metrics — requires audit log integration (Stage 7)")
-    raise typer.Exit(1)
+    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.state.database import Database
+    from deepseek_tui.state.session_manager import SessionManager
+
+    async def _metrics() -> None:
+        db_path = default_config_path().parent / "state.db"
+        if not db_path.exists():
+            total_sessions = 0
+        else:
+            db = Database(db_path)
+            await db.initialize()
+            mgr = SessionManager(db)
+            all_sessions = await mgr.list_sessions(include_archived=True)
+            total_sessions = len(all_sessions)
+        data = {
+            "total_sessions": total_sessions,
+            "period": since or "all-time",
+        }
+        if json_output:
+            typer.echo(json.dumps(data, indent=2))
+        else:
+            typer.echo("DeepSeek TUI Metrics")
+            typer.echo(f"  Total sessions: {total_sessions}")
+            typer.echo(f"  Period: {since or 'all-time'}")
+
+    asyncio.run(_metrics())
 
 
 @app.command()

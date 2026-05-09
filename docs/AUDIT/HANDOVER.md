@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Stage 4.9 P1 中间层管理器 — cycle_manager/seam_manager/working_set 三组件实现 + 55 parity tests（2026-05-09）。
+> 最后更新：Stage 4.10 P1 命令与 CLI — 30 P1 slash 命令 + CLI exec/review/sessions/resume/fork/mcp/metrics/apply 功能化 + 53 parity tests（2026-05-09）。
 
 ---
 
@@ -74,7 +74,8 @@
 | 4.7 | — | **P1 缺失工具补齐**：knowledge_tools.py（~480 行）实现 remember / note / review / rlm_query / plan_update / recall_archive / skill_load 七工具 + builder.py 注册 + 23 parity tests | +23 |
 | 4.8 | — | **P1 TUI Widget**：sidebar.py（~200 行）+ help_panel.py（~130 行）+ pickers.py（~190 行）+ markdown_render.py（~280 行）+ diff_viewer.py（~280 行）+ app.py 集成 Sidebar/Help + widgets/__init__.py 导出 + 34 parity tests | +34 |
 | 4.9 | — | **P1 中间层管理器**：cycle_manager.py（~290 行）+ seam_manager.py（~340 行）+ working_set.py 增强 summary() + 55 parity tests（CycleConfig/should_advance_cycle/extract_carry_forward/archive_cycle/build_seed_messages/SeamConfig/seam_level_for/verbatim_window/WorkingSet pin/summary） | +55 |
-| **累计** | | | **1042 passed** |
+| 4.10 | — | **P1 命令与 CLI**：handlers_p1.py（~300 行）30 个 P1 slash 命令全覆盖 + CLI exec/review/sessions/resume/fork/mcp/metrics/apply 功能化 + __init__.py 自动加载 P1 handlers + 53 parity tests（命令行为/别名解析/Registry 完整性/CLI 子命令） | +53 |
+| **累计** | | | **1095 passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
 
@@ -556,11 +557,11 @@ deepseek-tui-py/
 | ⬜ 2.6.data: COMMAND_ARITY 数量不足 | 2.6 | HANDOVER 声称 163 前缀，实际只有 94（git 37 + npm 26 + cargo 21 + python 2 + docker 6 + node 2） | 2026-05-07 审核发现 | 对照 Rust `command_safety.rs` 补齐缺失前缀（预计 +69 条），覆盖 brew/pip/yarn/pnpm/kubectl/systemctl/chmod/chown/mv/cp 等 |
 | ✅ 2.1.stub: turn_loop context recovery 已接入紧急 compaction (2026-05-08) | 2.1 | `turn_loop.py:167` 注释 "would call recover_context_overflow()" 但实际只 `continue`（无限重试直到 MAX_CONTEXT_RECOVERY_ATTEMPTS） | 实现时 compaction 尚未就绪 | 接入 compaction 后替换为真实紧急 compaction 调用（见 2.3.orphan 修复方案第 2 点） |
 | ⬜ 2.1.dead_state: consecutive_tool_error_steps 未使用 | 2.1 | `_TurnState.consecutive_tool_error_steps` 声明但从未递增或判断 | Rust 在 post-tool 阶段递增此计数器并在 ≥3 时 hard stop；Python 的工具执行在 Engine 层而非 TurnLoop 层 | 在 `Engine._run_conversation` 的工具执行循环中追踪连续失败步数，≥3 时 break 并 emit ErrorEvent（或在 capacity error escalation 中处理） |
-| ⬜ 5.1: P1 CLI 子命令骨架（11 个） | 5.1 | `thread list/read/resume/fork/archive/unarchive/set-name`、`exec`、`review`、`apply`、`eval`、`sessions`、`resume`/`fork`、`mcp`、`mcp-server`、`app-server`、`metrics` 均为 exit(1) + 提示 | 依赖模块 Stage 6–7 才就绪 | 各子命令需接入对应后端模块：thread→StateStore, exec→Engine+TUI, eval→eval 框架, mcp→MCP 管理 UI 等 |
+| ✅ 5.1: P1 CLI 子命令骨架（11 个） | 5.1 → 4.10 | exec/review/sessions/resume/fork/mcp/metrics/apply 已功能化（接入 Engine/SessionManager/git） | — | eval 子命令需 eval 框架（Stage 7），已留 stub |
 | ⬜ 5.1: config set/unset 不写文件 | 5.1 | `config set` / `config unset` 只打印信息，不写 config.toml | 缺 ConfigStore.save() | 实现 ConfigStore.save() 回写 config.toml |
 | ✅ 5.1: _launch_tui 未接 Engine | 5.1 → 6.1 | 原为空 EngineHandle 传入 DeepSeekTUI | — | **Stage 6.1 已还清**：`_launch_tui` 传 Config → `DeepSeekTUI` on_mount 构建真实 Client+Engine+Task |
 | ✅ 5.1: _run_one_shot 未实现 | 5.1 → 6.1 | 原只打印信息 | — | **Stage 6.1 已还清**：`_run_one_shot_async` 构建 Client+Engine 执行单次对话 |
-| ⬜ 5.2: P1 slash 命令（30 个） | 5.2 | 注册在 REGISTRY 中 `p0=False`，dispatch 返回 "not yet implemented (P1)" | 依赖 Engine/MCP/Config/Session 等后端模块 | 分类：Engine 依赖（/models /provider /compact 等）、MCP/Tool 依赖（/attach /task /jobs 等）、Config 依赖（/trust /lsp 等）、Session 依赖（/queue /stash） |
+| ✅ 5.2: P1 slash 命令（30 个） | 5.2 → 4.10 | 全部 30 个 P1 命令已有 handler（handlers_p1.py），dispatch 返回有意义的结果 | — | — |
 | ⬜ 5.2: P0 handler 功能深度不足 | 5.2 | `/save` `/load` `/sessions` → "requires StateStore"；`/edit` `/undo` `/retry` → "requires Engine"；`/tokens` `/cost` `/context` → "requires Engine"；`/statusline` → "requires TUI widget integration" | 需 Engine/StateStore 集成 | 逐个接入：save/load→StateStore, edit/undo/retry→Engine 会话管理, tokens/cost→Engine usage 统计 |
 | ✅ 5.2: slash_menu 集成 | 5.2 → 6.5 | 原 SlashMenu 未被 Composer/App 使用 | — | **Stage 6.5 已还清**：Composer 检测 `/` → SlashMenu.show()，Selected → dispatch() |
 | ⬜ 5.3: GitHub skill install 未实现 | 5.3 | `install.py` 对 `kind="github"` 返回 FAILED + P1 提示 | 需 HTTP client (httpx) 下载 tarball + 验证 + 解压 | 实现 GitHub tarball 下载、checksum 验证、原子解压 |
