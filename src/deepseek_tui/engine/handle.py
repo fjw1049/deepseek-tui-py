@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 from deepseek_tui.engine.events import EngineEvent
 from deepseek_tui.engine.ops import CancelRequestOp, EngineOp, SendMessageOp
@@ -12,6 +13,7 @@ class EngineHandle:
         self._op_queue: asyncio.Queue[EngineOp] = asyncio.Queue()
         self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
         self.cancel_event = asyncio.Event()
+        self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def send_message(
         self,
@@ -48,3 +50,14 @@ class EngineHandle:
 
     def reset_cancel(self) -> None:
         self.cancel_event = asyncio.Event()
+
+    def resolve_user_input(self, tool_call_id: str, response: dict[str, Any]) -> bool:
+        """Resolve a pending user input request from the TUI.
+
+        Returns True if the future was found and resolved.
+        """
+        future = self.pending_user_inputs.get(tool_call_id)
+        if future is not None and not future.done():
+            future.set_result(response)
+            return True
+        return False

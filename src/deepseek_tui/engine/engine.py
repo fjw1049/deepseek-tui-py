@@ -29,12 +29,15 @@ from deepseek_tui.engine.events import (
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
+    UserInputRequiredEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.ops import CancelRequestOp, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
 from deepseek_tui.engine.tool_catalog import (
     CODE_EXECUTION_TOOL_NAME,
+    MULTI_TOOL_PARALLEL_NAME,
+    REQUEST_USER_INPUT_NAME,
     execute_code_execution_tool,
     execute_tool_search,
     is_tool_search_tool,
@@ -171,6 +174,8 @@ class Engine:
         """Drain managers owned by the tool runtime if Engine built it."""
         if self.tool_runtime is not None:
             await self.tool_runtime.shutdown()
+        if hasattr(self.client, "close"):
+            await self.client.close()
 
     async def run(self) -> None:
         while True:
@@ -406,6 +411,12 @@ class Engine:
                 tool_call.arguments, self.tool_context.working_directory
             )
 
+        if tool_name == MULTI_TOOL_PARALLEL_NAME:
+            return await self._execute_parallel_tools(tool_call.arguments)
+
+        if tool_name == REQUEST_USER_INPUT_NAME:
+            return await self._await_user_input(tool_call.id, tool_call.arguments)
+
         # --- Normal registry tools ---
         if not self.tool_registry.contains(tool_name):
             raise ToolError(missing_tool_error_message(tool_name, api_tools))
@@ -505,6 +516,79 @@ class Engine:
             workspace=self.tool_context.working_directory,
         )
         return result.messages
+
+    # --- Engine-intercepted special tools --------------------------------
+
+    async def _execute_parallel_tools(self, input_data: dict[str, Any]) -> ToolResult:
+        """Fan out multi_tool_use.parallel sub-calls concurrently.
+
+        Mirrors Rust turn_loop.rs:1161-1189.
+        Only read-only tools that don't require approval are eligible.
+        """
+        tool_uses = input_data.get("tool_uses")
+        if not isinstance(tool_uses, list) or not tool_uses:
+            raise ToolError("tool_uses must be a non-empty array")
+
+        async def _run_one(item: dict[str, Any]) -> dict[str, str]:
+            name = item.get("recipient_name", "")
+            params = item.get("parameters", {})
+            if not isinstance(params, dict):
+                params = {}
+            # Strip "functions." prefix that some models add
+            if name.startswith("functions."):
+                name = name[len("functions."):]
+            try:
+                result = await self.tool_registry.execute(
+                    name, params, self.tool_context
+                )
+                return {"tool": name, "content": result.content, "success": "true"}
+            except (ToolError, Exception) as exc:
+                return {"tool": name, "error": str(exc), "success": "false"}
+
+        import json as _json
+
+        results = await asyncio.gather(*[_run_one(item) for item in tool_uses])
+        return ToolResult(content=_json.dumps(results, ensure_ascii=False), success=True)
+
+    async def _await_user_input(
+        self, tool_call_id: str, input_data: dict[str, Any]
+    ) -> ToolResult:
+        """Emit UserInputRequiredEvent and block until TUI resolves.
+
+        Mirrors Rust turn_loop.rs:1245-1275.
+        """
+        from deepseek_tui.tools.user_input_tool import validate_user_input_request
+
+        questions = validate_user_input_request(input_data)
+        questions_payload: list[dict[str, object]] = [
+            {
+                "header": q.header,
+                "id": q.id,
+                "question": q.question,
+                "options": q.options,
+            }
+            for q in questions
+        ]
+
+        # Create a future the TUI will resolve
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
+        self.handle.pending_user_inputs[tool_call_id] = future
+
+        await self.handle.emit(
+            UserInputRequiredEvent(
+                tool_call_id=tool_call_id,
+                questions=questions_payload,
+            )
+        )
+
+        try:
+            response = await future
+        finally:
+            self.handle.pending_user_inputs.pop(tool_call_id, None)
+
+        import json as _json
+
+        return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
 
     # --- Stage 4.4 post-edit LSP hooks --------------------------------
 

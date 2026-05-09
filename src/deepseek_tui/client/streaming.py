@@ -73,7 +73,7 @@ class OpenAIStreamParser:
             if isinstance(content, str) and content:
                 events.append(StreamTextDelta(text=content))
 
-            thinking = delta.get("reasoning_content")
+            thinking = delta.get("reasoning_content") or delta.get("reasoning")
             if isinstance(thinking, str) and thinking:
                 events.append(StreamThinkingDelta(thinking=thinking))
 

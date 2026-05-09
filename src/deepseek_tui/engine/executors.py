@@ -177,28 +177,5 @@ async def _create_engine_for_execution(
         allowed_set = set(allowed_tools)
         engine.tool_registry.filter_by_names(allowed_set)
 
-    async def _run_engine() -> None:
-
-        turn_loop = engine.turn_loop
-        while not handle.cancel_event.is_set():
-            op = await handle.next_op()
-            from deepseek_tui.engine.ops import CancelRequestOp, SendMessageOp
-
-            if isinstance(op, CancelRequestOp):
-                break
-            if isinstance(op, SendMessageOp):
-                await turn_loop.run(
-                    handle=handle,
-                    messages=engine.session_messages,
-                    model=op.model or engine.default_model,
-                    system_prompt=op.system_prompt,
-                    tool_registry=engine.tool_registry,
-                    tool_context=engine.tool_context,
-                    exec_policy=engine.exec_policy,
-                    approval_handler=engine.approval_handler,
-                    max_tool_round_trips=engine.max_tool_round_trips,
-                    cancel_event=handle.cancel_event,
-                )
-
-    engine_task = asyncio.create_task(_run_engine())
+    engine_task = asyncio.create_task(engine.run())
     return engine, handle, engine_task

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,14 +37,23 @@ from deepseek_tui.protocol.responses import (
     StreamTextDelta,
     StreamThinkingDelta,
     StreamToolCallComplete,
+    StreamToolCallDelta,
     ToolCall,
     Usage,
 )
 
-# Mirrors Rust constants from turn_loop.rs
+logger = logging.getLogger(__name__)
+
+# Mirrors Rust constants from streaming.rs / turn_loop.rs
 MAX_STREAM_RETRIES = 3
 MAX_CONTEXT_RECOVERY_ATTEMPTS = 3
-TURN_MAX_OUTPUT_TOKENS = 16384
+TURN_MAX_OUTPUT_TOKENS = 262_144
+
+# Stream guard constants (mirrors Rust streaming.rs)
+STREAM_CHUNK_TIMEOUT_SECS = 90
+STREAM_MAX_DURATION_SECS = 1800
+STREAM_MAX_CONTENT_BYTES = 10 * 1024 * 1024
+MAX_TRANSPARENT_STREAM_RETRIES = 2
 
 
 class TurnOutcomeStatus(enum.Enum):
@@ -136,7 +147,6 @@ class TurnLoop:
         usage: Usage | None = None
         tool_calls: list[ToolCall] = []
 
-        # Stream retry loop (for transparent retries on mid-stream failures)
         while state.stream_retry_attempts < MAX_STREAM_RETRIES:
             if cancel_event.is_set():
                 return TurnResult(
@@ -169,7 +179,6 @@ class TurnLoop:
                                 error_message=msg,
                             )
                         state.context_recovery_attempts += 1
-                        # Emergency compaction — mirrors turn_loop.rs:177-208
                         if self._compact_fn is not None:
                             request.messages[:] = await self._compact_fn(
                                 request.messages
@@ -195,8 +204,13 @@ class TurnLoop:
                 stream=True,
             )
 
-            # Attempt to stream response
+            # Attempt to stream response with timeout guards
             try:
+                any_content_received = False
+                transparent_retries = 0
+                stream_start = time.monotonic()
+                content_bytes = 0
+
                 async for stream_event in self.client.stream_with_retry(stream_request):
                     if cancel_event.is_set():
                         return TurnResult(
@@ -207,16 +221,53 @@ class TurnLoop:
                             outcome=TurnOutcomeStatus.INTERRUPTED,
                         )
 
+                    # Wall-clock duration guard (30 min)
+                    elapsed = time.monotonic() - stream_start
+                    if elapsed > STREAM_MAX_DURATION_SECS:
+                        msg = f"Stream exceeded max duration ({STREAM_MAX_DURATION_SECS}s)"
+                        logger.warning(msg)
+                        await emit(ErrorEvent(message=msg, retryable=False))
+                        return TurnResult(
+                            assistant_message=buffer.build_message(),
+                            usage=usage,
+                            tool_calls=tool_calls,
+                            cancelled=False,
+                            outcome=TurnOutcomeStatus.FAILED,
+                            error_message=msg,
+                        )
+
                     if isinstance(stream_event, StreamTextDelta):
+                        any_content_received = True
+                        content_bytes += len(stream_event.text.encode())
                         buffer.append_text(stream_event.text)
                         await emit(TextDeltaEvent(text=stream_event.text))
                     elif isinstance(stream_event, StreamThinkingDelta):
+                        any_content_received = True
+                        content_bytes += len(stream_event.thinking.encode())
                         buffer.append_thinking(stream_event.thinking)
                         await emit(ThinkingDeltaEvent(thinking=stream_event.thinking))
+                    elif isinstance(stream_event, StreamToolCallDelta):
+                        any_content_received = True
+                        content_bytes += len(
+                            stream_event.arguments_fragment.encode()
+                        )
                     elif isinstance(stream_event, StreamToolCallComplete):
+                        any_content_received = True
                         tool_calls.append(stream_event.tool_call)
                         await emit(ToolCallEvent(tool_call=stream_event.tool_call))
                     elif isinstance(stream_event, StreamError):
+                        # Transparent retry: only if no content received yet
+                        if _should_transparently_retry(
+                            any_content_received, transparent_retries, cancel_event.is_set()
+                        ):
+                            transparent_retries += 1
+                            logger.info(
+                                "Transparent stream retry %d/%d: %s",
+                                transparent_retries,
+                                MAX_TRANSPARENT_STREAM_RETRIES,
+                                stream_event.message,
+                            )
+                            break  # break inner loop to retry
                         await emit(
                             ErrorEvent(
                                 message=stream_event.message,
@@ -226,42 +277,81 @@ class TurnLoop:
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage
 
-                # Text-based tool call fallback (DeepSeek models may emit
-                # tool calls as text rather than structured blocks).
-                # Mirrors turn_loop.rs:726-758.
-                accumulated_text = "".join(buffer.text_parts)
-                if not tool_calls and accumulated_text:
-                    if has_tool_call_markers(accumulated_text):
-                        parsed = parse_tool_calls(accumulated_text)
-                        for tc in parsed.tool_calls:
-                            converted = ToolCall(
-                                id=tc.id,
-                                name=tc.name,
-                                arguments=dict(tc.args) if tc.args else {},
-                            )
-                            tool_calls.append(converted)
-                            await emit(ToolCallEvent(tool_call=converted))
-                        buffer.text_parts[:] = [parsed.clean_text]
+                    # Content byte guard (10 MB)
+                    if content_bytes > STREAM_MAX_CONTENT_BYTES:
+                        msg = f"Stream content exceeded {STREAM_MAX_CONTENT_BYTES} bytes"
+                        logger.warning(msg)
+                        await emit(ErrorEvent(message=msg, retryable=False))
+                        return TurnResult(
+                            assistant_message=buffer.build_message(),
+                            usage=usage,
+                            tool_calls=tool_calls,
+                            cancelled=False,
+                            outcome=TurnOutcomeStatus.FAILED,
+                            error_message=msg,
+                        )
+                else:
+                    # Stream completed normally (for-else: no break)
+                    # Text-based tool call fallback
+                    accumulated_text = "".join(buffer.text_parts)
+                    if not tool_calls and accumulated_text:
+                        if has_tool_call_markers(accumulated_text):
+                            parsed = parse_tool_calls(accumulated_text)
+                            for tc in parsed.tool_calls:
+                                converted = ToolCall(
+                                    id=tc.id,
+                                    name=tc.name,
+                                    arguments=dict(tc.args) if tc.args else {},
+                                )
+                                tool_calls.append(converted)
+                                await emit(ToolCallEvent(tool_call=converted))
+                            buffer.text_parts[:] = [parsed.clean_text]
 
-                # Stream completed successfully
-                state.context_recovery_attempts = 0
-                break
+                    state.context_recovery_attempts = 0
+                    break  # success — exit retry loop
+
+                # If we broke out of the for loop (transparent retry), continue
+                continue
+
+            except asyncio.TimeoutError:
+                msg = f"Stream chunk timeout ({STREAM_CHUNK_TIMEOUT_SECS}s idle)"
+                if _should_transparently_retry(
+                    any_content_received, state.stream_retry_attempts, cancel_event.is_set()
+                ):
+                    state.stream_retry_attempts += 1
+                    logger.info(
+                        "Stream timeout, retrying (%d/%d)",
+                        state.stream_retry_attempts, MAX_STREAM_RETRIES,
+                    )
+                    continue
+                await emit(ErrorEvent(message=msg, retryable=False))
+                return TurnResult(
+                    assistant_message=buffer.build_message(),
+                    usage=usage,
+                    tool_calls=tool_calls,
+                    cancelled=False,
+                    outcome=TurnOutcomeStatus.FAILED,
+                    error_message=msg,
+                )
 
             except Exception as e:
-                # Stream failed, potentially retryable
                 err_msg = str(e)
                 state.stream_retry_attempts += 1
 
-                if state.stream_retry_attempts < MAX_STREAM_RETRIES:
-                    # Retry transparently
+                if _should_transparently_retry(
+                    any_content_received, state.stream_retry_attempts, cancel_event.is_set()
+                ):
+                    logger.info(
+                        "Stream error, transparent retry %d/%d: %s",
+                        state.stream_retry_attempts, MAX_STREAM_RETRIES, err_msg,
+                    )
+                    continue
+                elif state.stream_retry_attempts < MAX_STREAM_RETRIES:
                     await emit(
-                        ErrorEvent(
-                            message="Stream interrupted, retrying...", retryable=True
-                        )
+                        ErrorEvent(message="Stream interrupted, retrying...", retryable=True)
                     )
                     continue
                 else:
-                    # Max retries exceeded
                     await emit(ErrorEvent(message=err_msg, retryable=False))
                     return TurnResult(
                         assistant_message=None,
@@ -278,3 +368,14 @@ class TurnLoop:
             cancelled=False,
             outcome=TurnOutcomeStatus.SUCCESS,
         )
+
+
+def _should_transparently_retry(
+    any_content_received: bool, attempts: int, cancelled: bool
+) -> bool:
+    """Mirrors Rust should_transparently_retry_stream()."""
+    return (
+        not any_content_received
+        and attempts < MAX_TRANSPARENT_STREAM_RETRIES
+        and not cancelled
+    )

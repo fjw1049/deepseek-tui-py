@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Stage 4.10 P1 命令与 CLI — 30 P1 slash 命令 + CLI exec/review/sessions/resume/fork/mcp/metrics/apply 功能化 + 53 parity tests（2026-05-09）。
+> 最后更新：P0 slash 命令功能深度修复（2026-05-09）。
 
 ---
 
@@ -75,7 +75,10 @@
 | 4.8 | — | **P1 TUI Widget**：sidebar.py（~200 行）+ help_panel.py（~130 行）+ pickers.py（~190 行）+ markdown_render.py（~280 行）+ diff_viewer.py（~280 行）+ app.py 集成 Sidebar/Help + widgets/__init__.py 导出 + 34 parity tests | +34 |
 | 4.9 | — | **P1 中间层管理器**：cycle_manager.py（~290 行）+ seam_manager.py（~340 行）+ working_set.py 增强 summary() + 55 parity tests（CycleConfig/should_advance_cycle/extract_carry_forward/archive_cycle/build_seed_messages/SeamConfig/seam_level_for/verbatim_window/WorkingSet pin/summary） | +55 |
 | 4.10 | — | **P1 命令与 CLI**：handlers_p1.py（~300 行）30 个 P1 slash 命令全覆盖 + CLI exec/review/sessions/resume/fork/mcp/metrics/apply 功能化 + __init__.py 自动加载 P1 handlers + 53 parity tests（命令行为/别名解析/Registry 完整性/CLI 子命令） | +53 |
-| **累计** | | | **1095 passed** |
+| bugfix-7 | — | **代码逻辑审核修复 7 项**：①executors.py 改用 Engine.run() 替代错误的 TurnLoop.run() 直调（P0 致命）②CLI resume/fork 传参修复（DeepSeekTUI 新增 resume_session_id/fork_session_id）③exec_shell PROMPT 决策改返回 ToolResult 而非 raise ToolError ④one-shot 模式显示工具调用进度（ToolCallEvent/ToolResultEvent）⑤CLI config set/unset 实现真实文件写入 ⑥httpx 连接池复用（持久 AsyncClient + Engine.shutdown 关闭）⑦TURN_MAX_OUTPUT_TOKENS 统一为 262,144（对齐 Rust context.rs:18） | +0 |
+| p0-stream | — | **P0 流式健壮性 + 特殊工具**：①turn_loop transparent stream retry（空流 ≤2 次自动重试）②per-chunk 90s timeout + wall-clock 1800s guard + 10MB content guard ③streaming.py reasoning_content fallback（兼容 NIM `delta.reasoning`）④`is_reasoning_model()` 模型检测 ⑤`MultiToolUseParallelTool`（并发展开只读子调用）⑥`RequestUserInputTool`（验证 + UserInputRequiredEvent + asyncio.Future 阻塞）⑦Engine special routing（parallel/user_input 拦截） | +0 |
+| p0-slash | — | **P0 slash 命令功能深度**：①`/save` 实现（session JSON 序列化 + metadata + 时间戳文件名）②`/load` 实现（JSON 反序列化 + Engine.session_messages 恢复 + Transcript 重建）③`/tokens` 实现（从 StatusBar 读取累积 token + 模型/消息数统计）④`/cost` 实现（基于 token 的成本估算 + DeepSeek 定价）— 对齐 Rust `commands/session.rs` + `commands/debug.rs` | +0 |
+| **累计** | | | **1110 passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
 

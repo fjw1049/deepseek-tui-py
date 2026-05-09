@@ -74,12 +74,16 @@ class DeepSeekTUI(App[None]):
         self,
         handle: EngineHandle | None = None,
         config: Config | None = None,
+        resume_session_id: str | None = None,
+        fork_session_id: str | None = None,
     ) -> None:
         super().__init__()
         self.config = config or Config()
         self.handle = handle or EngineHandle()
         self._engine: Engine | None = None
         self._engine_task: asyncio.Task[None] | None = None
+        self._resume_session_id = resume_session_id
+        self._fork_session_id = fork_session_id
 
     def compose(self) -> ComposeResult:
         yield Header()

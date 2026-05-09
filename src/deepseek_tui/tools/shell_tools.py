@@ -58,8 +58,13 @@ class ExecShellTool(ToolSpec):
                     f"Command execution forbidden by policy: {command}"
                 )
             elif evaluation.decision == Decision.PROMPT:
-                raise ToolError(
-                    f"Command requires approval (not yet implemented): {command}"
+                return ToolResult(
+                    success=False,
+                    content=(
+                        f"Command requires user approval before execution: {command}\n"
+                        "The command was flagged by the safety policy. "
+                        "Ask the user to approve or use a safer alternative."
+                    ),
                 )
 
         if use_pty:

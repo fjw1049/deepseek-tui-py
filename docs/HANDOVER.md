@@ -2,7 +2,7 @@
 
 > 本文档是为**跨平台、跨对话、跨 AI 工具**继续这个项目而写的。读完这一份你就能接手。
 >
-> 最后更新：Engine Core Modules 完成 — context/dispatch/tool_execution/tool_catalog 四模块创建并集成入 engine.py（2026-05-08）。
+> 最后更新：P0 slash 命令功能深度修复（2026-05-09）。
 
 ---
 
@@ -69,7 +69,10 @@
 | 6.5 | — | **Slash 命令活化**：Composer 检测 `/` → SlashMenu，dispatch 应用结果到 transcript | +14 |
 | 6.6 | — | **命令面板 + @file + StatusBar**：Ctrl+K CommandPalette，@file FileMention，StatusBar model/mode/tokens | +16 |
 | 2-core | — | **Engine Core Modules**：`context.py`（tool result compaction + token estimation + working set）、`dispatch.py`（input parsing + parallel/plan policy + MCP policy）、`tool_execution.py`（audit logging + write lock）、`tool_catalog.py`（deferred loading + tool search + edit distance suggestions + code execution）+ engine.py 集成（special tool routing + compaction on results + audit emit） | +55 |
-| **累计** | | | **578+ passed** |
+| bugfix-7 | — | **代码逻辑审核修复 7 项**：①executors.py 改用 Engine.run() 替代错误的 TurnLoop.run() 直调（P0 致命）②CLI resume/fork 传参修复（DeepSeekTUI 新增 resume_session_id/fork_session_id）③exec_shell PROMPT 决策改返回 ToolResult 而非 raise ToolError ④one-shot 模式显示工具调用进度（ToolCallEvent/ToolResultEvent）⑤CLI config set/unset 实现真实文件写入 ⑥httpx 连接池复用（持久 AsyncClient + Engine.shutdown 关闭）⑦TURN_MAX_OUTPUT_TOKENS 统一为 262,144（对齐 Rust context.rs:18） | +0 |
+| p0-stream | — | **P0 流式健壮性 + 特殊工具**：①turn_loop transparent stream retry（空流 ≤2 次自动重试）②per-chunk 90s timeout + wall-clock 1800s guard + 10MB content guard ③streaming.py reasoning_content fallback（兼容 NIM `delta.reasoning`）④`is_reasoning_model()` 模型检测 ⑤`MultiToolUseParallelTool`（并发展开只读子调用）⑥`RequestUserInputTool`（验证 + UserInputRequiredEvent + asyncio.Future 阻塞）⑦Engine special routing（parallel/user_input 拦截） | +0 |
+| p0-slash | — | **P0 slash 命令功能深度**：①`/save` 实现（session JSON 序列化 + metadata + 时间戳文件名）②`/load` 实现（JSON 反序列化 + Engine.session_messages 恢复 + Transcript 重建）③`/tokens` 实现（从 StatusBar 读取累积 token + 模型/消息数统计）④`/cost` 实现（基于 token 的成本估算 + DeepSeek 定价）— 对齐 Rust `commands/session.rs` + `commands/debug.rs` | +0 |
+| **累计** | | | **1110 passed** |
 
 ### Stage 2.1–2.6 审核结论（2026-05-07）
 
@@ -551,7 +554,7 @@ deepseek-tui-py/
 | ✅ 2.1.stub: turn_loop context recovery 已接入紧急 compaction (2026-05-08) | 2.1 | `turn_loop.py:167` 注释 "would call recover_context_overflow()" 但实际只 `continue`（无限重试直到 MAX_CONTEXT_RECOVERY_ATTEMPTS） | 实现时 compaction 尚未就绪 | 接入 compaction 后替换为真实紧急 compaction 调用（见 2.3.orphan 修复方案第 2 点） |
 | ⬜ 2.1.dead_state: consecutive_tool_error_steps 未使用 | 2.1 | `_TurnState.consecutive_tool_error_steps` 声明但从未递增或判断 | Rust 在 post-tool 阶段递增此计数器并在 ≥3 时 hard stop；Python 的工具执行在 Engine 层而非 TurnLoop 层 | 在 `Engine._run_conversation` 的工具执行循环中追踪连续失败步数，≥3 时 break 并 emit ErrorEvent（或在 capacity error escalation 中处理） |
 | ⬜ 5.1: P1 CLI 子命令骨架（11 个） | 5.1 | `thread list/read/resume/fork/archive/unarchive/set-name`、`exec`、`review`、`apply`、`eval`、`sessions`、`resume`/`fork`、`mcp`、`mcp-server`、`app-server`、`metrics` 均为 exit(1) + 提示 | 依赖模块 Stage 6–7 才就绪 | 各子命令需接入对应后端模块：thread→StateStore, exec→Engine+TUI, eval→eval 框架, mcp→MCP 管理 UI 等 |
-| ⬜ 5.1: config set/unset 不写文件 | 5.1 | `config set` / `config unset` 只打印信息，不写 config.toml | 缺 ConfigStore.save() | 实现 ConfigStore.save() 回写 config.toml |
+| ✅ 5.1: config set/unset 写文件 (2026-05-09 bugfix-7) | 5.1 | CLI `config set` / `config unset` 已实现真实文件写入（读取→修改→回写 config.toml） | — | — |
 | ✅ 5.1: _launch_tui 未接 Engine | 5.1 → 6.1 | 原为空 EngineHandle 传入 DeepSeekTUI | — | **Stage 6.1 已还清**：`_launch_tui` 传 Config → `DeepSeekTUI` on_mount 构建真实 Client+Engine+Task |
 | ✅ 5.1: _run_one_shot 未实现 | 5.1 → 6.1 | 原只打印信息 | — | **Stage 6.1 已还清**：`_run_one_shot_async` 构建 Client+Engine 执行单次对话 |
 | ⬜ 5.2: P1 slash 命令（30 个） | 5.2 | 注册在 REGISTRY 中 `p0=False`，dispatch 返回 "not yet implemented (P1)" | 依赖 Engine/MCP/Config/Session 等后端模块 | 分类：Engine 依赖（/models /provider /compact 等）、MCP/Tool 依赖（/attach /task /jobs 等）、Config 依赖（/trust /lsp 等）、Session 依赖（/queue /stash） |

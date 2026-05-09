@@ -30,6 +30,7 @@ from deepseek_tui.tools.mcp_tools import (
     McpGetPromptTool,
     ReadMcpResourceTool,
 )
+from deepseek_tui.tools.parallel_tool import MultiToolUseParallelTool
 from deepseek_tui.tools.registry import ToolRegistry
 from deepseek_tui.tools.search_tools import FileSearchTool, GrepFilesTool
 from deepseek_tui.tools.shell_tools import (
@@ -64,6 +65,7 @@ from deepseek_tui.tools.task_tools import (
     TaskShellWaitTool,
 )
 from deepseek_tui.tools.todo_tools import TodoAddTool, TodoListTool, TodoUpdateTool, TodoWriteTool
+from deepseek_tui.tools.user_input_tool import RequestUserInputTool
 from deepseek_tui.tools.utility_tools import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
 from deepseek_tui.tools.web_tools import FetchUrlTool, WebSearchTool
 
@@ -167,6 +169,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(PlanUpdateTool())
     registry.register(RlmQueryTool())
     registry.register(SkillLoadTool())
+
+    # Engine-intercepted special tools (always active)
+    registry.register(MultiToolUseParallelTool())
+    registry.register(RequestUserInputTool())
 
     if cfg.features.web_search:
         registry.register(ReviewTool())

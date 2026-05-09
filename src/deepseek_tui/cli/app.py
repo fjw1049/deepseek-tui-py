@@ -113,6 +113,8 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
     from deepseek_tui.engine.events import (
         ErrorEvent,
         TextDeltaEvent,
+        ToolCallEvent,
+        ToolResultEvent,
         TurnCompleteEvent,
     )
     from deepseek_tui.engine.handle import EngineHandle
@@ -140,6 +142,12 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
         async for event in handle.events():
             if isinstance(event, TextDeltaEvent):
                 print(event.text, end="", flush=True)
+            elif isinstance(event, ToolCallEvent):
+                tc = event.tool_call
+                typer.echo(f"\n[tool: {tc.name}]", err=True)
+            elif isinstance(event, ToolResultEvent):
+                status = "ok" if event.success else "error"
+                typer.echo(f"[tool result: {status}]", err=True)
             elif isinstance(event, ErrorEvent):
                 typer.echo(f"\nError: {event.message}", err=True)
                 break
@@ -474,12 +482,7 @@ def config_set(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Set a single config value (writes to config.toml)."""
-    typer.echo(f"set {key}")
-    typer.echo(
-        "Config persistence requires ConfigStore.save() — not yet wired. "
-        "Edit config.toml directly for now.",
-        err=True,
-    )
+    _cli_config_write(key, value)
 
 
 @config_app.command("unset")
@@ -489,12 +492,7 @@ def config_unset(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Remove a config key (writes to config.toml)."""
-    typer.echo(f"unset {key}")
-    typer.echo(
-        "Config persistence requires ConfigStore.save() — not yet wired. "
-        "Edit config.toml directly for now.",
-        err=True,
-    )
+    _cli_config_write(key, None)
 
 
 @config_app.command("list")
@@ -547,6 +545,41 @@ def _config_get_value(config: Config, key: str) -> str | None:
     if obj is None:
         return None
     return str(obj)
+
+
+def _cli_config_write(key: str, value: str | None) -> None:
+    """Set or unset a key in the config TOML file."""
+    from deepseek_tui.config.paths import default_config_path
+
+    config_path = default_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    if config_path.exists():
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+
+    found = False
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{key}") and "=" in stripped:
+            left = stripped.split("=", 1)[0].strip()
+            if left == key:
+                found = True
+                if value is not None:
+                    new_lines.append(f'{key} = "{value}"')
+                continue
+        new_lines.append(line)
+
+    if not found and value is not None:
+        new_lines.append(f'{key} = "{value}"')
+
+    config_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    if value is not None:
+        typer.echo(f"set {key} = {value} in {config_path}")
+    else:
+        typer.echo(f"unset {key} from {config_path}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

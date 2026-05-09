@@ -15,6 +15,8 @@ from deepseek_tui.tui.commands import (
     REGISTRY,
     CommandResult,
 )
+from deepseek_tui.tui.widgets.status_bar import StatusBar
+from deepseek_tui.tui.widgets.transcript import Transcript
 
 if TYPE_CHECKING:
     from deepseek_tui.tui.app import DeepSeekTUI
@@ -161,7 +163,46 @@ def cmd_note(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/save")
 def cmd_save(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Session save — requires StateStore integration (Stage 6)")
+    """Save current session to JSON file."""
+    if app._engine is None:
+        return CommandResult(error="Engine not started — cannot save session")
+
+    # Determine save path
+    if args.strip():
+        save_path = Path(args.strip()).expanduser()
+    else:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        save_path = Path.cwd() / f"session_{timestamp}.json"
+
+    # Build session snapshot
+    messages = [msg.model_dump() for msg in app._engine.session_messages]
+    model = app._engine.default_model
+    workspace = str(app._engine.tool_context.working_directory)
+
+    # Calculate total tokens from status bar (cumulative display)
+    status = app.query_one(StatusBar)
+    total_tokens = status._tokens
+
+    session_data = {
+        "metadata": {
+            "id": f"session-{int(time.time())}",
+            "model": model,
+            "workspace": workspace,
+            "total_tokens": total_tokens,
+            "message_count": len(messages),
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        "messages": messages,
+    }
+
+    try:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        json_content = json.dumps(session_data, indent=2, ensure_ascii=False)
+        save_path.write_text(json_content, encoding="utf-8")
+        session_id = session_data["metadata"]["id"][:8]
+        return CommandResult(output=f"Session saved to {save_path} (ID: {session_id})")
+    except OSError as exc:
+        return CommandResult(error=f"Failed to save session: {exc}")
 
 
 # ── /sessions ────────────────────────────────────────────────────────────
@@ -175,7 +216,65 @@ def cmd_sessions(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/load")
 def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Session load — requires StateStore integration (Stage 6)")
+    """Load session from JSON file."""
+    if app._engine is None:
+        return CommandResult(error="Engine not started — cannot load session")
+
+    if not args.strip():
+        return CommandResult(error="Usage: /load <path>")
+
+    load_path = Path(args.strip()).expanduser()
+    if not load_path.exists():
+        return CommandResult(error=f"File not found: {load_path}")
+
+    try:
+        content = load_path.read_text(encoding="utf-8")
+        session_data = json.loads(content)
+    except OSError as exc:
+        return CommandResult(error=f"Failed to read session file: {exc}")
+    except json.JSONDecodeError as exc:
+        return CommandResult(error=f"Failed to parse session file: {exc}")
+
+    # Validate structure
+    if "messages" not in session_data or "metadata" not in session_data:
+        return CommandResult(error="Invalid session file format")
+
+    # Restore messages to engine
+    from deepseek_tui.protocol.messages import Message
+    try:
+        restored_messages = [Message.model_validate(msg) for msg in session_data["messages"]]
+        app._engine.session_messages.clear()
+        app._engine.session_messages.extend(restored_messages)
+    except Exception as exc:
+        return CommandResult(error=f"Failed to restore messages: {exc}")
+
+    # Update UI
+    transcript = app.query_one(Transcript)
+    transcript.clear_messages()
+
+    # Rebuild transcript from messages
+    for msg in restored_messages:
+        if msg.role == "user":
+            # Extract text content
+            text_parts = [block.text for block in msg.content if hasattr(block, "text")]
+            if text_parts:
+                transcript.add_user_message(" ".join(text_parts))
+        elif msg.role == "assistant":
+            text_parts = [
+                block.text
+                for block in msg.content
+                if hasattr(block, "text") and block.type == "text"
+            ]
+            if text_parts:
+                transcript.add_assistant_message(" ".join(text_parts))
+
+    metadata = session_data["metadata"]
+    session_id = metadata.get("id", "unknown")[:8]
+    message_count = metadata.get("message_count", len(restored_messages))
+
+    return CommandResult(
+        output=f"Session loaded from {load_path} (ID: {session_id}, {message_count} messages)"
+    )
 
 
 # ── /context ─────────────────────────────────────────────────────────────
@@ -316,7 +415,31 @@ def cmd_logout(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/tokens")
 def cmd_tokens(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Token usage — requires Engine integration (Stage 6)")
+    """Show token usage statistics for the current session."""
+    if app._engine is None:
+        return CommandResult(error="Engine not started — no token data available")
+
+    # Get current session state
+    message_count = len(app._engine.session_messages)
+    model = app._engine.default_model
+
+    # Get cumulative tokens from status bar (tracks total across all turns)
+    status = app.query_one(StatusBar)
+    total_tokens = status._tokens
+
+    # Build report
+    lines = [
+        "Token Usage Report",
+        "=" * 50,
+        f"Model:              {model}",
+        f"API messages:       {message_count}",
+        f"Cumulative tokens:  {total_tokens:,}",
+        "",
+        "Note: Token counts are cumulative across all turns in this session.",
+        "Use /cost to see estimated cost breakdown.",
+    ]
+
+    return CommandResult(output="\n".join(lines))
 
 
 # ── /system ──────────────────────────────────────────────────────────────
@@ -392,7 +515,36 @@ def cmd_statusline(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/cost")
 def cmd_cost(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Cost breakdown — requires Engine integration (Stage 6)")
+    """Show estimated cost breakdown for the current session."""
+    if app._engine is None:
+        return CommandResult(error="Engine not started — no cost data available")
+
+    # Get cumulative tokens from status bar
+    status = app.query_one(StatusBar)
+    total_tokens = status._tokens
+    model = app._engine.default_model
+
+    # DeepSeek pricing (as of 2024):
+    # deepseek-chat: $0.14 per 1M input tokens, $0.28 per 1M output tokens
+    # For simplicity, use average rate of $0.21 per 1M tokens
+    # (This is a rough estimate; actual cost depends on input/output ratio)
+
+    cost_per_million = 0.21  # USD per 1M tokens (average)
+    estimated_cost = (total_tokens / 1_000_000) * cost_per_million
+
+    lines = [
+        "Session Cost Breakdown",
+        "=" * 50,
+        f"Model:              {model}",
+        f"Total tokens:       {total_tokens:,}",
+        f"Estimated cost:     ${estimated_cost:.4f} USD",
+        "",
+        "Note: This is an approximate estimate based on average pricing.",
+        "Actual costs may vary based on input/output token ratio and",
+        "cache hit rates. Check your DeepSeek dashboard for exact billing.",
+    ]
+
+    return CommandResult(output="\n".join(lines))
 
 
 # ── /queue ───────────────────────────────────────────────────────────────

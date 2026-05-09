@@ -14,6 +14,25 @@ from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import StreamEvent
 
 
+def is_reasoning_model(model: str) -> bool:
+    """Check if a model supports reasoning_content output.
+
+    Mirrors Rust client/chat.rs requires_reasoning_content().
+    """
+    lower = model.lower()
+    return any(
+        marker in lower
+        for marker in (
+            "deepseek-r",
+            "reasoner",
+            "-reasoning",
+            "-thinking",
+            "deepseek-v3.2",
+            "deepseek-v4",
+        )
+    )
+
+
 class DeepSeekClient(LLMClient):
     def __init__(
         self,
@@ -27,6 +46,7 @@ class DeepSeekClient(LLMClient):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.transport = transport
+        self._http_client: httpx.AsyncClient | None = None
 
     @classmethod
     def from_config(cls, config: object) -> DeepSeekClient:
@@ -47,6 +67,21 @@ class DeepSeekClient(LLMClient):
             timeout_seconds=float(pc.timeout),
         )
 
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Return a persistent httpx client for connection reuse."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout_seconds),
+                transport=self.transport,
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        """Close the persistent HTTP client."""
+        if self._http_client is not None and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
+
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         parser = OpenAIStreamParser()
         headers = {
@@ -54,23 +89,20 @@ class DeepSeekClient(LLMClient):
             "Content-Type": "application/json",
         }
         payload = self._build_payload(request)
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout_seconds),
-            transport=self.transport,
-        ) as client:
-            async with aconnect_sse(
-                client,
-                "POST",
-                f"{self.base_url}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-            ) as event_source:
-                async for sse in event_source.aiter_sse():
-                    if sse.data == "[DONE]":
-                        break
-                    chunk = json.loads(sse.data)
-                    for event in parser.parse_chunk(chunk):
-                        yield event
+        client = self._get_http_client()
+        async with aconnect_sse(
+            client,
+            "POST",
+            f"{self.base_url}/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        ) as event_source:
+            async for sse in event_source.aiter_sse():
+                if sse.data == "[DONE]":
+                    break
+                chunk = json.loads(sse.data)
+                for event in parser.parse_chunk(chunk):
+                    yield event
         for event in parser.finalize():
             yield event
 

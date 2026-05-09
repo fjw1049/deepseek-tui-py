@@ -77,6 +77,12 @@ class TurnCompleteEvent:
     usage: Usage | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class UserInputRequiredEvent:
+    tool_call_id: str
+    questions: list[dict[str, object]]
+
+
 EngineEvent = (
     StatusEvent
     | TurnStartedEvent
@@ -90,4 +96,5 @@ EngineEvent = (
     | ErrorEvent
     | TurnCancelledEvent
     | TurnCompleteEvent
+    | UserInputRequiredEvent
 )
