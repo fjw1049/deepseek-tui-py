@@ -231,8 +231,7 @@ def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
             error=f"unknown command: {cmd_name}. Type /help",
         )
 
-    from . import handlers  # noqa: I001
-    from . import handlers_p1  # noqa: F401 — side-effect import for registration
+    from . import handlers
     handler_fn = handlers.get_handler(entry.name)
     if handler_fn is None:
         return CommandResult(

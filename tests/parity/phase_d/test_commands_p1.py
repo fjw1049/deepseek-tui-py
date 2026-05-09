@@ -318,11 +318,7 @@ class TestAliasResolution:
 class TestRegistryCompleteness:
     def test_all_commands_have_handlers(self):
         """Every command in the registry should have a handler (P0 or P1)."""
-        # Force P1 handler registration
-        from deepseek_tui.tui.commands import (
-            REGISTRY,
-            handlers_p1,  # noqa: F401
-        )
+        from deepseek_tui.tui.commands import REGISTRY
         from deepseek_tui.tui.commands.handlers import get_handler
 
         missing = []
