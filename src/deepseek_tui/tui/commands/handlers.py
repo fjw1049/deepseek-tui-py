@@ -281,7 +281,33 @@ def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/context")
 def cmd_context(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Context inspector — requires Engine integration (Stage 6)")
+    """Render the session-context inspector.
+
+    Mirror Rust slash ``/context``. Builds an :class:`InspectorSnapshot`
+    from whatever live state the app exposes — for now that's just the
+    model + workspace path, since the API-message stream and reference
+    log live in the engine. As more state surfaces on ``DeepSeekTUI``
+    (api_messages, references, tool details), they get wired in here.
+    """
+    from pathlib import Path
+
+    from deepseek_tui.tui.widgets.context_inspector import (
+        InspectorSnapshot,
+        build_context_inspector_text,
+    )
+
+    config = getattr(app, "config", None)
+    model = getattr(config, "model", None) or "unknown"
+    workspace = Path(
+        getattr(config, "workspace", None) or "."
+    ).expanduser()
+
+    snapshot = InspectorSnapshot(
+        model=model,
+        workspace=workspace,
+        history_cells=0,
+    )
+    return CommandResult(output=build_context_inspector_text(snapshot))
 
 
 # ── /export ──────────────────────────────────────────────────────────────
@@ -382,6 +408,26 @@ def cmd_agent(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/plan")
 def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Switch to Plan mode and pop the plan-confirmation prompt.
+
+    Mirror Rust slash ``/plan`` + ``PlanPromptView``. The prompt opens
+    via :class:`PlanPromptScreen` (push_screen with a callback). Outside
+    of a running Textual app (e.g. unit tests), the call short-circuits
+    to a textual hint so the dispatch layer is still testable.
+    """
+    from deepseek_tui.tui.plan_prompt import PlanOutcome, PlanPromptScreen
+    from deepseek_tui.tui.widgets.status_bar import StatusBar
+
+    if not getattr(app, "is_running", False):
+        return CommandResult(output="Switched to Plan mode.")
+
+    def _on_plan_outcome(outcome: PlanOutcome | None) -> None:
+        if outcome is None or outcome == PlanOutcome.DISMISSED:
+            return
+        status = app.query_one(StatusBar)
+        status.set_mode(outcome.value)
+
+    app.push_screen(PlanPromptScreen(), _on_plan_outcome)
     return CommandResult(output="Switched to Plan mode.")
 
 

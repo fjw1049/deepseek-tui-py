@@ -8,17 +8,30 @@ show/hide the SlashMenu.
 P2 enhancements (2026-05-10):
 - Ctrl+Enter inserts a newline instead of submitting (multi-line input).
 - Ctrl+E opens $EDITOR for long-form editing (mirrors Rust external_editor.rs).
+
+Stage 6 paste-burst integration (2026-05-10): rather than port Rust's
+``paste_burst.rs`` char-timing fallback (necessary because crossterm in
+some terminals delivers paste as a stream of fast keystrokes), we lean
+on Textual's native bracketed-paste support — ``events.Paste`` fires
+once with the full payload. We additionally suppress the next ``Enter``
+submission for a short window after a multi-line paste, mirroring Rust
+``newline_should_insert_instead_of_submit``: if a paste contained
+newlines, the user almost certainly didn't intend the trailing Enter as
+a "submit now" signal.
 """
 from __future__ import annotations
 
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
-from textual.events import Key
+from textual import events
 from textual.message import Message
 from textual.widgets import TextArea
+
+PASTE_ENTER_SUPPRESS_WINDOW_SECS: float = 0.120
 
 
 class Composer(TextArea):
@@ -46,8 +59,31 @@ class Composer(TextArea):
     def __init__(self) -> None:
         super().__init__(language=None)
         self.show_line_numbers = False
+        self._paste_suppress_until: float = 0.0
 
-    async def _on_key(self, event: Key) -> None:
+    def _paste_window_active(self) -> bool:
+        return time.monotonic() < self._paste_suppress_until
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Insert pasted text at the cursor and suppress next Enter.
+
+        Mirror Rust ``PasteBurst::newline_should_insert_instead_of_submit``
+        (paste_burst.rs:157): when a paste contains a newline, the
+        following Enter should insert a newline rather than submit, so
+        the user can edit the pasted block before sending.
+        """
+        if not event.text:
+            return
+        event.prevent_default()
+        event.stop()
+        self.insert(event.text)
+        if "\n" in event.text or "\r" in event.text:
+            self._paste_suppress_until = (
+                time.monotonic() + PASTE_ENTER_SUPPRESS_WINDOW_SECS
+            )
+        self.post_message(self.TextChanged(self.text))
+
+    async def _on_key(self, event: events.Key) -> None:
         if event.key in ("ctrl+j", "ctrl+enter"):
             event.prevent_default()
             self.insert("\n")
@@ -63,6 +99,10 @@ class Composer(TextArea):
             return
         if event.key == "enter":
             event.prevent_default()
+            if self._paste_window_active():
+                self.insert("\n")
+                self.post_message(self.TextChanged(self.text))
+                return
             text = self.text.strip()
             if text:
                 if text.startswith("/"):

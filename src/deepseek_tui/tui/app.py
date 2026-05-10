@@ -7,6 +7,8 @@ Stage 6.5: Slash command activation — SlashMenu in compose tree,
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
@@ -32,6 +34,7 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.ops import SendMessageOp
+from deepseek_tui.tui.backtrack import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
 from deepseek_tui.tui.widgets.command_palette import CommandPalette
 from deepseek_tui.tui.widgets.composer import Composer
@@ -68,6 +71,7 @@ class DeepSeekTUI(App[None]):
         Binding("ctrl+n", "new_session", "New Session"),
         Binding("ctrl+k", "command_palette", "Command Palette"),
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
+        Binding("escape", "esc_press", "Backtrack", show=False),
         Binding("question_mark", "show_help", "Help", show=False),
     ]
 
@@ -85,6 +89,8 @@ class DeepSeekTUI(App[None]):
         self._engine_task: asyncio.Task[None] | None = None
         self._resume_session_id = resume_session_id
         self._fork_session_id = fork_session_id
+        self._turn_started_at: float | None = None
+        self._backtrack = BacktrackState()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -101,15 +107,35 @@ class DeepSeekTUI(App[None]):
         await self._start_engine()
 
     async def _start_engine(self) -> None:
-        """Build LLM client + Engine from config and start the engine loop."""
+        """Build LLM client + Engine from config and start the engine loop.
+
+        When no API key is configured, push the onboarding screen and
+        retry once the user supplies one.
+        """
         from deepseek_tui.engine.engine import Engine
         from deepseek_tui.tui.approval_handler import TUIApprovalHandler
+        from deepseek_tui.tui.screens.onboarding import (
+            OnboardingScreen,
+            is_onboarded,
+            mark_onboarded,
+        )
 
         client = self._build_client()
         if client is None:
             self.query_one(StatusBar).set_status(
                 "no API key — run `deepseek-tui setup` or `deepseek-tui login`"
             )
+            if not is_onboarded():
+                def _on_onboarding(api_key: str | None) -> None:
+                    if api_key:
+                        self.config.api_key = api_key
+                        try:
+                            mark_onboarded()
+                        except OSError:
+                            pass
+                        self.run_worker(self._start_engine(), exclusive=True)
+
+                self.push_screen(OnboardingScreen(), _on_onboarding)
             return
 
         model = self.config.model or self.config.default_text_model
@@ -217,6 +243,7 @@ class DeepSeekTUI(App[None]):
         status = self.query_one(StatusBar)
         async for event in self.handle.events():
             if isinstance(event, TurnStartedEvent):
+                self._turn_started_at = time.monotonic()
                 status.set_status("thinking...")
                 transcript.start_assistant_message()
             elif isinstance(event, TextDeltaEvent):
@@ -263,6 +290,7 @@ class DeepSeekTUI(App[None]):
                         event.usage.input_tokens + event.usage.output_tokens
                     )
                 transcript.finalize_message()
+                self._maybe_notify_turn_done()
                 break
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
@@ -333,8 +361,63 @@ class DeepSeekTUI(App[None]):
     def action_show_help(self) -> None:
         self.push_screen(HelpPanel())
 
+    def action_esc_press(self) -> None:
+        """Esc-Esc backtrack chord (mirrors Rust ``backtrack.rs``).
+
+        First Esc primes; second opens the picker. The picker shows up
+        as a system message rather than a full overlay (which is logged
+        as a known simplification in HANDOVER).
+        """
+        engine = self._engine
+        total = (
+            len([m for m in engine.session_messages if getattr(m, "role", None) == "user"])
+            if engine is not None
+            else 0
+        )
+        effect = self._backtrack.handle_esc(total)
+        transcript = self.query_one(Transcript)
+        if effect == EscEffect.PRIME:
+            transcript.add_system_message("Press Esc again to backtrack to a previous turn")
+        elif effect == EscEffect.CANCEL:
+            transcript.add_system_message("Backtrack cancelled")
+        elif effect == EscEffect.OPEN_OVERLAY:
+            transcript.add_system_message(
+                f"Backtrack: {total} user turn(s). "
+                f"Press Enter to commit (depth-from-tail = {self._backtrack.selected_idx})."
+            )
+
     def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
         """Handle session selection from sidebar."""
         transcript = self.query_one(Transcript)
         transcript.add_system_message(f"Switching to session: {event.session_id[:8]}...")
         self.query_one(Sidebar).hide_sidebar()
+
+    # ── notifications ─────────────────────────────────────────────────
+
+    def _maybe_notify_turn_done(self) -> None:
+        """Emit OSC 9 / BEL when a long turn finishes (mirrors Rust notifications.rs).
+
+        Threshold + method come from ``Config.ui.notify_*``. Silently no-ops
+        when stdout has no buffer or method is OFF.
+        """
+        import sys
+
+        from deepseek_tui.tui.notifications import Method, notify_done_to
+
+        started = self._turn_started_at
+        self._turn_started_at = None
+        if started is None:
+            return
+        elapsed = time.monotonic() - started
+
+        ui = self.config.ui
+        method = Method.from_str(ui.notify_method)
+        threshold_secs = float(ui.notify_threshold_secs)
+        in_tmux = bool(os.environ.get("TMUX"))
+        sink = getattr(sys.stdout, "buffer", None)
+        if sink is None:
+            return
+        try:
+            notify_done_to(method, in_tmux, "deepseek: done", threshold_secs, elapsed, sink)
+        except (OSError, ValueError):
+            return

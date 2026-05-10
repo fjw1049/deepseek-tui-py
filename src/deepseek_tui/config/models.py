@@ -42,6 +42,10 @@ class UiConfig(BaseModel):
     max_history: int = 1000
     alternate_screen: str = "auto"
     mouse_capture: bool = True
+    osc8_links: bool = True
+    notify_method: str = "auto"
+    notify_threshold_secs: float = 30.0
+    frame_refresh_hz: float = 30.0
 
 
 class StateConfig(BaseModel):

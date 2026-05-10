@@ -4,12 +4,21 @@ Stage 6.2: VerticalScroll container with individual message widgets.
 Each message is a distinct cell (user / assistant / system / tool) for
 proper scrolling and rendering. Markdown rendering uses Textual's
 built-in ``Markdown`` widget for assistant responses.
+
+Stage 6 (TUI-debt sweep, 2026-05-10): wired :class:`FrameRateLimiter`
+into ``append_delta`` so a stream of fast SSE chunks doesn't trigger a
+redraw per chunk. The limiter caps live updates to 120 FPS by buffering
+the assistant cell text and skipping ``Static.update`` until the next
+frame interval is reached. Final flush happens in ``finalize_message``.
 """
 from __future__ import annotations
+
+import time
 
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from deepseek_tui.tui.frame_rate_limiter import FrameRateLimiter
 from deepseek_tui.tui.widgets.tool_cell import ToolCell
 
 
@@ -35,7 +44,11 @@ class _ThinkingCell(Static):
 
 
 class _AssistantCell(Static):
-    """Displays assistant response with Rich markup (live-updating)."""
+    """Displays assistant response with Rich markup (live-updating).
+
+    The redraw rate is capped by a :class:`FrameRateLimiter` so a stream
+    of dozens of SSE chunks per second renders at most ``120 FPS``.
+    """
 
     DEFAULT_CSS = "_AssistantCell { margin: 0 0 1 0; }"
 
@@ -43,16 +56,23 @@ class _AssistantCell(Static):
         super().__init__("")
         self._buffer: str = ""
         self._finalized: bool = False
+        self._limiter = FrameRateLimiter()
 
     def append(self, text: str) -> None:
         self._buffer += text
-        self._refresh()
+        if self._finalized:
+            self._refresh(force=True)
+            return
+        now = time.monotonic()
+        if self._limiter.time_until_next_draw(now) is None:
+            self._limiter.mark_emitted(now)
+            self._refresh(force=False)
 
     def finalize(self) -> None:
         self._finalized = True
-        self._refresh()
+        self._refresh(force=True)
 
-    def _refresh(self) -> None:
+    def _refresh(self, force: bool) -> None:
         cursor = "" if self._finalized else "[blink]▌[/]"
         self.update(f"[bold green]Assistant:[/] {self._buffer}{cursor}")
 

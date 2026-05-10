@@ -216,6 +216,50 @@ def build_router() -> APIRouter:
             "events": [e.model_dump(mode="json") for e in events],
         }
 
+    # --- App-Server long-tail (skills / tasks / mcp / workspace) ---------
+    #
+    # Mirrors a subset of Rust ``runtime_api.rs`` routes that overlap with
+    # CLI thread/task/skill commands. Each handler is a thin delegator to
+    # :class:`AppRuntime` and returns ``{"ok": False, "error": ...}`` when
+    # the underlying manager isn't wired (no exceptions across HTTP).
+
+    @router.get("/skills")
+    async def list_skills(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.list_skills()
+
+    @router.get("/tasks")
+    async def list_tasks(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        limit_str = request.query_params.get("limit")
+        limit = int(limit_str) if limit_str else None
+        return await runtime.list_tasks(limit=limit)
+
+    @router.get("/tasks/{task_id}")
+    async def get_task(request: Request, task_id: str) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.get_task(task_id)
+
+    @router.post("/tasks/{task_id}/cancel")
+    async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.cancel_task(task_id)
+
+    @router.get("/apps/mcp/servers")
+    async def list_mcp_servers_route(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.list_mcp_servers()
+
+    @router.get("/apps/mcp/tools")
+    async def list_mcp_tools_route(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.list_mcp_tools()
+
+    @router.get("/workspace/status")
+    async def workspace_status_route(request: Request) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.workspace_status()
+
     return router
 
 

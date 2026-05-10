@@ -501,6 +501,132 @@ class AppRuntime:
             "data": {},
         }
 
+    # --- App Server long-tail handlers -----------------------------------
+    #
+    # Mirrors a subset of Rust ``runtime_api.rs`` (runtime_api.rs:297-341)
+    # that overlaps with existing CLI thread/task/skill commands. Each
+    # handler is a thin delegator to a manager that already exists in the
+    # Python tree (TaskManager / SkillRegistry / McpManager / SessionManager).
+    # Handlers return ``{"ok": False, "error": ...}`` when the underlying
+    # manager isn't wired so the routes never raise.
+
+    async def list_skills(self) -> dict[str, Any]:
+        """Mirror Rust ``list_skills`` (runtime_api.rs:657)."""
+        from deepseek_tui.skills import discover_in_workspace
+
+        skills_dir = Path(self.config.skills_dir).expanduser()  # noqa: ASYNC240 — pure path expansion, not I/O
+        try:
+            registry = discover_in_workspace(
+                skills_dir=skills_dir,
+                workspace=self.working_directory,
+            )
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": f"skill discovery failed: {exc}"}
+        return {
+            "ok": True,
+            "skills": [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "path": str(s.path),
+                }
+                for s in registry.skills
+            ],
+            "warnings": registry.warnings,
+        }
+
+    async def list_tasks(self, limit: int | None = None) -> dict[str, Any]:
+        """Mirror Rust ``list_tasks`` (runtime_api.rs:954)."""
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        manager = self._tool_runtime.task_manager
+        summaries = await manager.list_tasks(limit=limit)
+        return {
+            "ok": True,
+            "tasks": [_task_summary_to_dict(s) for s in summaries],
+        }
+
+    async def get_task(self, task_id: str) -> dict[str, Any]:
+        """Mirror Rust ``get_task`` (runtime_api.rs:963)."""
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        try:
+            record = await self._tool_runtime.task_manager.get_task(task_id)
+        except KeyError as exc:
+            return {"ok": False, "error": f"task not found: {exc}"}
+        return {"ok": True, "task": _task_record_to_dict(record)}
+
+    async def cancel_task(self, task_id: str) -> dict[str, Any]:
+        """Mirror Rust ``cancel_task`` (runtime_api.rs:?)."""
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        try:
+            record = await self._tool_runtime.task_manager.cancel_task(task_id)
+        except KeyError as exc:
+            return {"ok": False, "error": f"task not found: {exc}"}
+        return {"ok": True, "task": _task_record_to_dict(record)}
+
+    async def list_mcp_servers(self) -> dict[str, Any]:
+        """Mirror Rust ``list_mcp_servers`` (runtime_api.rs:678)."""
+        if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
+            return {"ok": False, "error": "mcp manager not configured"}
+        manager = self._tool_runtime.mcp_manager
+        out: list[dict[str, Any]] = []
+        for name in manager.server_names:
+            cfg = manager._configs.get(name)  # noqa: SLF001
+            out.append(
+                {
+                    "name": name,
+                    "enabled": bool(getattr(cfg, "enabled", False)),
+                    "transport": _transport_label(cfg),
+                }
+            )
+        return {"ok": True, "servers": out}
+
+    async def list_mcp_tools(self) -> dict[str, Any]:
+        """Mirror Rust ``list_mcp_tools`` (runtime_api.rs:708)."""
+        if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
+            return {"ok": False, "error": "mcp manager not configured"}
+        manager = self._tool_runtime.mcp_manager
+        tools: list[dict[str, Any]] = []
+        for name in manager.server_names:
+            try:
+                client = await manager._ensure_client(name)  # noqa: SLF001
+            except Exception:  # noqa: BLE001
+                continue
+            try:
+                listed = await client.list_tools()
+            except Exception:  # noqa: BLE001
+                continue
+            for tool in listed:
+                tools.append(
+                    {
+                        "server": name,
+                        "name": tool.name,
+                        "description": tool.description,
+                    }
+                )
+        return {"ok": True, "tools": tools}
+
+    async def workspace_status(self) -> dict[str, Any]:
+        """Mirror Rust ``workspace_status`` (runtime_api.rs:?).
+
+        Returns the current working directory, model, sandbox/approval
+        configuration, and minimal counts. Used by the TUI / dashboards
+        for a quick read-only header.
+        """
+        return {
+            "ok": True,
+            "workspace": {
+                "cwd": str(self.working_directory),
+                "model": self.config.model or self.config.default_text_model,
+                "provider": self.config.provider,
+                "approval_policy": self.config.approval_policy,
+                "sandbox_mode": self.config.sandbox_mode,
+                "thread_count": self.threads.count(),
+            },
+        }
+
     async def mcp_startup(self) -> dict[str, Any]:
         """Start every enabled MCP server and summarize results.
 
@@ -631,6 +757,36 @@ def _dotted_get(data: Any, key: str) -> Any:
         else:
             return None
     return current
+
+
+def _task_summary_to_dict(summary: Any) -> dict[str, Any]:
+    """Best-effort serialisation for TaskSummary."""
+    fields = (
+        "id",
+        "title",
+        "status",
+        "created_at",
+        "updated_at",
+        "agent_type",
+        "model",
+    )
+    return {f: getattr(summary, f, None) for f in fields}
+
+
+def _task_record_to_dict(record: Any) -> dict[str, Any]:
+    """Best-effort serialisation for TaskRecord."""
+    base = _task_summary_to_dict(record)
+    timeline: list[Any] = []
+    for ev in getattr(record, "timeline", []) or []:
+        dump = getattr(ev, "model_dump", None)
+        timeline.append(dump() if callable(dump) else ev)
+    base["timeline"] = timeline
+    artifacts: list[Any] = []
+    for art in getattr(record, "artifacts", []) or []:
+        dump = getattr(art, "model_dump", None)
+        artifacts.append(dump() if callable(dump) else art)
+    base["artifacts"] = artifacts
+    return base
 
 
 def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
