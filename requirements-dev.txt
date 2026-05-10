@@ -1,6 +1,18 @@
-# Development dependencies for deepseek-tui-py
-# Install: pip install -r requirements-dev.txt
+# Development dependencies for deepseek-tui-py.
+#
+# Includes the runtime stack plus pytest / mypy / ruff / pre-commit so a
+# fresh checkout can run `make check` end-to-end:
+#
+#   uv venv .venv --python 3.12
+#   uv pip install -r requirements-dev.txt
+#   uv pip install -e .
+#
+# The pyproject.toml `[project.optional-dependencies]` table already exposes
+# the same set as `pip install -e ".[dev]"`; this file is the equivalent
+# entry point for environments that prefer pinned requirements files.
+
 -r requirements.txt
+
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0

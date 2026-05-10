@@ -37,6 +37,35 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+#### 精确版本复现（CI / 协作）
+
+`requirements.lock` 是用本仓库当前 `.venv` `uv pip freeze` 出来的精确版本快照，
+跟 1323 个 parity 测试通过的环境一一对应。任何机器从空白 venv 还原同一环境：
+
+```bash
+# 推荐 uv（推送过 PyPI 镜像后秒级安装）
+uv venv .venv --python 3.12
+UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+  uv pip install -r requirements.lock
+uv pip install -e .
+
+# 或 pip
+python -m venv .venv
+source .venv/bin/activate
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.lock
+pip install -e .
+
+# 验证
+pytest tests -q   # 应该 1323 passed
+```
+
+依赖文件分工：
+- `requirements.txt` — 仅 runtime，floor 版本
+- `requirements-dev.txt` — runtime + dev（pytest/mypy/ruff）
+- `requirements.lock` — 全部依赖的精确版本（推荐 CI 使用）
+
+升级依赖后用 `uv pip freeze | grep -v '^-e' > requirements.lock` 重新生成 lock。
+
 ### 配置 API Key
 
 ```bash
@@ -175,8 +204,10 @@ mypy src/
 
 ### 当前测试状态
 
-- **1042 passed**（parity + unit + integration）
-- 覆盖：protocol / config / secrets / engine / tools / state / TUI / app_server / hooks / MCP / LSP
+- **1323 passed, 4 skipped**（parity + unit + integration，约 7 秒跑完）
+- ruff: All checks passed!
+- mypy: 39 errors（与基线一致，无新增；详见 HANDOVER 集成债清单）
+- 覆盖：protocol / config / secrets / engine / tools / state / TUI / app_server / hooks / MCP / LSP / logging
 
 ## 技术栈
 
