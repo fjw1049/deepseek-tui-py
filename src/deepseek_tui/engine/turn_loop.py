@@ -151,6 +151,15 @@ class TurnLoop:
         buffer = AssistantResponseBuffer()
         usage: Usage | None = None
         tool_calls: list[ToolCall] = []
+        logger.info(
+            "stream_start model=%s msg_count=%d tools_count=%d "
+            "max_tokens=%s reasoning_effort=%s",
+            request.model,
+            len(request.messages),
+            len(tool_catalog),
+            request.max_tokens,
+            request.reasoning_effort,
+        )
 
         while state.stream_retry_attempts < MAX_STREAM_RETRIES:
             if cancel_event.is_set():
@@ -168,6 +177,12 @@ class TurnLoop:
                 if input_budget is not None:
                     estimated_input = estimated_input_tokens(request.messages)
                     if estimated_input > input_budget:
+                        logger.warning(
+                            "context_overflow estimated=%d budget=%d attempts=%d",
+                            estimated_input,
+                            input_budget,
+                            state.context_recovery_attempts,
+                        )
                         if state.context_recovery_attempts >= MAX_CONTEXT_RECOVERY_ATTEMPTS:
                             msg = (
                                 f"Context remains above model limit after "
@@ -206,6 +221,16 @@ class TurnLoop:
                 tools=active_tools or [],
                 tool_choice={"type": "auto"} if active_tools else None,
                 max_tokens=TURN_MAX_OUTPUT_TOKENS,
+                # Forward reasoning / sampling controls from the upstream
+                # request so non-streaming Engine config (Config.reasoning_effort
+                # etc.) reaches the LLM client. Without this propagation the
+                # rebuilt request below would silently drop these fields and
+                # reasoning models (DeepSeek-R1 / V4) would never enable
+                # thinking. Mirrors Rust turn_loop.rs which preserves them.
+                temperature=request.temperature,
+                top_p=request.top_p,
+                reasoning_effort=request.reasoning_effort,
+                extra_body=dict(request.extra_body),
                 stream=True,
             )
 
@@ -232,7 +257,11 @@ class TurnLoop:
                     elapsed = time.monotonic() - stream_start
                     if elapsed > STREAM_MAX_DURATION_SECS:
                         msg = f"Stream exceeded max duration ({STREAM_MAX_DURATION_SECS}s)"
-                        logger.warning(msg)
+                        logger.warning(
+                            "stream_wall_clock_exceeded elapsed=%.1fs threshold=%ds",
+                            elapsed,
+                            STREAM_MAX_DURATION_SECS,
+                        )
                         await emit(ErrorEvent(message=msg, retryable=False))
                         return TurnResult(
                             assistant_message=buffer.build_message(),
@@ -256,14 +285,21 @@ class TurnLoop:
                             and (fake_filter.in_tool_call or contains_fake_tool_wrapper(raw))
                         ):
                             fake_notice_sent = True
-                            logger.info(FAKE_WRAPPER_NOTICE)
+                            logger.info("fake_wrapper_detected: %s", FAKE_WRAPPER_NOTICE)
                         cleaned = fake_filter.filter(raw)
                         content_bytes += len(cleaned.encode())
                         if cleaned:
+                            logger.debug(
+                                "sse_chunk type=text_delta bytes=%d", len(cleaned)
+                            )
                             await emit(TextDeltaEvent(text=cleaned))
                     elif isinstance(stream_event, StreamThinkingDelta):
                         any_content_received = True
                         content_bytes += len(stream_event.thinking.encode())
+                        logger.debug(
+                            "sse_chunk type=thinking_delta bytes=%d",
+                            len(stream_event.thinking),
+                        )
                         buffer.append_thinking(stream_event.thinking)
                         await emit(ThinkingDeltaEvent(thinking=stream_event.thinking))
                     elif isinstance(stream_event, StreamToolCallDelta):
@@ -271,9 +307,18 @@ class TurnLoop:
                         content_bytes += len(
                             stream_event.arguments_fragment.encode()
                         )
+                        logger.debug(
+                            "sse_chunk type=tool_call_delta bytes=%d",
+                            len(stream_event.arguments_fragment),
+                        )
                     elif isinstance(stream_event, StreamToolCallComplete):
                         any_content_received = True
                         tool_calls.append(stream_event.tool_call)
+                        logger.info(
+                            "tool_call_received name=%s id=%s",
+                            stream_event.tool_call.name,
+                            stream_event.tool_call.id[:8],
+                        )
                         await emit(ToolCallEvent(tool_call=stream_event.tool_call))
                     elif isinstance(stream_event, StreamError):
                         # Transparent retry: only if no content received yet
@@ -281,13 +326,18 @@ class TurnLoop:
                             any_content_received, transparent_retries, cancel_event.is_set()
                         ):
                             transparent_retries += 1
-                            logger.info(
-                                "Transparent stream retry %d/%d: %s",
+                            logger.warning(
+                                "stream_transparent_retry attempt=%d/%d reason=%s",
                                 transparent_retries,
                                 MAX_TRANSPARENT_STREAM_RETRIES,
                                 stream_event.message,
                             )
                             break  # break inner loop to retry
+                        logger.warning(
+                            "stream_error_emit message=%s retryable=%s",
+                            stream_event.message,
+                            stream_event.retryable,
+                        )
                         await emit(
                             ErrorEvent(
                                 message=stream_event.message,
@@ -296,11 +346,23 @@ class TurnLoop:
                         )
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage
+                        logger.info(
+                            "stream_done duration_ms=%d input_tokens=%s "
+                            "output_tokens=%s reasoning_tokens=%s",
+                            int((time.monotonic() - stream_start) * 1000),
+                            getattr(usage, "input_tokens", 0) if usage else 0,
+                            getattr(usage, "output_tokens", 0) if usage else 0,
+                            getattr(usage, "reasoning_tokens", 0) if usage else 0,
+                        )
 
                     # Content byte guard (10 MB)
                     if content_bytes > STREAM_MAX_CONTENT_BYTES:
                         msg = f"Stream content exceeded {STREAM_MAX_CONTENT_BYTES} bytes"
-                        logger.warning(msg)
+                        logger.warning(
+                            "stream_content_exceeded bytes=%d threshold=%d",
+                            content_bytes,
+                            STREAM_MAX_CONTENT_BYTES,
+                        )
                         await emit(ErrorEvent(message=msg, retryable=False))
                         return TurnResult(
                             assistant_message=buffer.build_message(),
@@ -317,6 +379,11 @@ class TurnLoop:
                     if not tool_calls and accumulated_text:
                         if has_tool_call_markers(accumulated_text):
                             parsed = parse_tool_calls(accumulated_text)
+                            logger.info(
+                                "tool_parser_fallback tool_calls=%d clean_chars=%d",
+                                len(parsed.tool_calls),
+                                len(parsed.clean_text),
+                            )
                             for tc in parsed.tool_calls:
                                 converted = ToolCall(
                                     id=tc.id,
@@ -335,12 +402,17 @@ class TurnLoop:
 
             except asyncio.TimeoutError:
                 msg = f"Stream chunk timeout ({STREAM_CHUNK_TIMEOUT_SECS}s idle)"
+                logger.warning(
+                    "stream_chunk_timeout idle_threshold=%ds attempts=%d",
+                    STREAM_CHUNK_TIMEOUT_SECS,
+                    state.stream_retry_attempts,
+                )
                 if _should_transparently_retry(
                     any_content_received, state.stream_retry_attempts, cancel_event.is_set()
                 ):
                     state.stream_retry_attempts += 1
                     logger.info(
-                        "Stream timeout, retrying (%d/%d)",
+                        "stream_timeout_retry attempt=%d/%d",
                         state.stream_retry_attempts, MAX_STREAM_RETRIES,
                     )
                     continue

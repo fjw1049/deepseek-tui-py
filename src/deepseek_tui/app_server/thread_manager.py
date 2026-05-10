@@ -216,6 +216,61 @@ class RuntimeThreadManager:
         latest_seq = await self.store.current_seq()
         return ThreadDetail(thread=thread, turns=turns, items=items, latest_seq=latest_seq)
 
+    async def resume_thread(self, thread_id: str) -> ThreadDetail:
+        """Touch a thread so its engine is loaded and return its detail.
+
+        Mirrors Rust ``RuntimeThreadManager::resume_thread`` (runtime_threads.rs:809-813).
+        The Rust version does ``ensure_engine_loaded`` to re-hydrate the
+        engine task; here we drive the same path through ``_ensure_engine_loaded``
+        so the LRU cache + engine task wake up before clients hit the next
+        ``/threads/{id}/turns`` request. Re-emits a ``thread.resumed``
+        event for parity with Rust's event timeline.
+        """
+        thread = self.store.load_thread(thread_id)
+        await self._ensure_engine_loaded(thread)
+        await self._emit_event(
+            thread.id,
+            None,
+            None,
+            "thread.resumed",
+            {"thread": thread.model_dump(mode="json")},
+        )
+        return await self.get_thread_detail(thread_id)
+
+    async def threads_summary(self) -> dict[str, Any]:
+        """Compact roll-up over all threads.
+
+        Mirrors Rust ``GET /v1/threads/summary`` (runtime_api.rs:568-648).
+        Returns aggregate counts + last-updated id so dashboards / TUI
+        sidebars can render a header without paginating the full list.
+        Python's ``ThreadRecord`` doesn't carry a status enum (Rust does),
+        so we expose ``active`` vs ``archived`` and a per-mode breakdown.
+        """
+        threads = self.store.list_threads()
+        active = 0
+        archived = 0
+        modes: dict[str, int] = {}
+        latest_id: str | None = None
+        latest_ts = None
+        for t in threads:
+            if t.archived:
+                archived += 1
+            else:
+                active += 1
+            modes[t.mode] = modes.get(t.mode, 0) + 1
+            ts = t.updated_at
+            if latest_ts is None or (ts is not None and ts > latest_ts):
+                latest_ts = ts
+                latest_id = t.id
+        return {
+            "total": len(threads),
+            "active": active,
+            "archived": archived,
+            "modes": modes,
+            "latest_thread_id": latest_id,
+            "latest_updated_at": latest_ts.isoformat() if latest_ts else None,
+        }
+
     async def fork_thread(self, thread_id: str) -> ThreadRecord:
         source = self.store.load_thread(thread_id)
         now = datetime.now(timezone.utc)

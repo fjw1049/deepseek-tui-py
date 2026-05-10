@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import pty
 import shlex
@@ -13,8 +14,15 @@ from deepseek_tui.execpolicy.decision import Decision
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
+logger = logging.getLogger(__name__)
+
 _PROCESS_STORE_KEY = "shell_processes"
 _PTY_STORE_KEY = "shell_pty_processes"
+
+
+# Default + max foreground timeouts mirror Rust shell.rs:1481-1482.
+EXEC_DEFAULT_TIMEOUT_MS = 120_000
+EXEC_MAX_TIMEOUT_MS = 600_000
 
 
 class ExecShellTool(ToolSpec):
@@ -23,8 +31,10 @@ class ExecShellTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Execute a shell command. Supports background jobs and an "
-            "optional pseudo-TTY (pty=true) for interactive programs."
+            "Execute a shell command. Supports background jobs (background=true) "
+            "and an optional pseudo-TTY (pty=true) for interactive programs. "
+            "Foreground commands are killed after timeout_ms milliseconds "
+            "(default 120000, max 600000)."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -34,6 +44,15 @@ class ExecShellTool(ToolSpec):
                 "command": {"type": "string"},
                 "background": {"type": "boolean"},
                 "pty": {"type": "boolean"},
+                "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": EXEC_MAX_TIMEOUT_MS,
+                    "description": (
+                        f"Foreground timeout in milliseconds. "
+                        f"Default {EXEC_DEFAULT_TIMEOUT_MS}, max {EXEC_MAX_TIMEOUT_MS}."
+                    ),
+                },
             },
             "required": ["command"],
         }
@@ -45,6 +64,15 @@ class ExecShellTool(ToolSpec):
         command = _require_string(input_data, "command")
         background = bool(input_data.get("background", False))
         use_pty = bool(input_data.get("pty", False))
+        timeout_ms = _resolve_timeout_ms(input_data.get("timeout_ms"))
+        logger.info(
+            "exec_shell_start command=%r background=%s pty=%s timeout_ms=%d cwd=%s",
+            command[:200],
+            background,
+            use_pty,
+            timeout_ms,
+            context.working_directory,
+        )
 
         # Check command execution policy
         if context.policy:
@@ -89,8 +117,61 @@ class ExecShellTool(ToolSpec):
                 metadata={"background": True, "pid": process.pid, "pty": False},
             )
 
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=timeout_ms / 1000.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "exec_shell_timeout command=%r timeout_ms=%d pid=%s",
+                command[:100],
+                timeout_ms,
+                process.pid,
+            )
+            # Kill so we don't leak a zombie when the model fires off a
+            # runaway command. Best-effort terminate first to give Python
+            # signal handlers a chance, then fall back to kill.
+            try:
+                process.terminate()
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            return ToolResult(
+                success=False,
+                content=(
+                    f"Command timed out after {timeout_ms} ms and was killed: "
+                    f"{command}"
+                ),
+                metadata={
+                    "timed_out": True,
+                    "timeout_ms": timeout_ms,
+                    "returncode": process.returncode,
+                },
+            )
+        logger.info(
+            "exec_shell_end command=%r returncode=%s stdout_bytes=%d stderr_bytes=%d",
+            command[:100],
+            process.returncode,
+            len(stdout) if stdout else 0,
+            len(stderr) if stderr else 0,
+        )
         return _build_shell_result(process, stdout, stderr)
+
+
+def _resolve_timeout_ms(raw: object) -> int:
+    """Validate timeout_ms argument; clamp to [1, EXEC_MAX_TIMEOUT_MS]."""
+    if raw is None:
+        return EXEC_DEFAULT_TIMEOUT_MS
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ToolError("timeout_ms must be an integer (milliseconds)")
+    if raw < 1:
+        raise ToolError("timeout_ms must be >= 1")
+    if raw > EXEC_MAX_TIMEOUT_MS:
+        raise ToolError(f"timeout_ms must be <= {EXEC_MAX_TIMEOUT_MS}")
+    return raw
 
 
 class ExecShellWaitTool(ToolSpec):

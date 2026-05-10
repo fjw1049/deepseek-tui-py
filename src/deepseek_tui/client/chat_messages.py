@@ -162,7 +162,27 @@ def _strip_orphaned_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _should_include_reasoning(model: str, reasoning_effort: str | None) -> bool:
-    if reasoning_effort == "off":
-        return False
+    """Mirror Rust ``requires_reasoning_content`` (client/chat.rs:826-834).
+
+    Rust treats the following effort values as "off" and skips reasoning
+    replay: ``off`` / ``disabled`` / ``none`` / ``false``. Otherwise, any
+    DeepSeek model whose name contains one of the reasoning markers gets
+    its reasoning blocks replayed back into the request, which avoids the
+    400 error DeepSeek returns when an assistant turn carries tool_calls
+    but no reasoning_content.
+    """
+    if reasoning_effort is not None:
+        if reasoning_effort.strip().lower() in {"off", "disabled", "none", "false"}:
+            return False
     normalized = normalize_model(model).lower()
-    return "deepseek" in normalized and ("v4" in normalized or normalized.endswith("reasoner"))
+    if "deepseek" not in normalized:
+        return False
+    markers = (
+        "deepseek-r",  # R1 / future R-series
+        "reasoner",
+        "-reasoning",
+        "-thinking",
+        "deepseek-v3.2",
+        "deepseek-v4",
+    )
+    return any(marker in normalized for marker in markers)

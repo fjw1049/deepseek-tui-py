@@ -216,6 +216,66 @@ def build_router() -> APIRouter:
             "events": [e.model_dump(mode="json") for e in events],
         }
 
+    @router.get("/threads/{thread_id}/events/stream")
+    async def stream_events(request: Request, thread_id: str) -> StreamingResponse:
+        """Long-poll friendly SSE wrapper over ``events_since``.
+
+        Rust ``GET /v1/threads/{id}/events`` returns SSE; the JSON variant
+        above is kept for clients that already integrated with the Python
+        snapshot semantics. New clients should target this stream endpoint.
+        """
+        manager = _get_thread_manager(request)
+        if manager is None:
+            async def _empty() -> Any:
+                yield (
+                    'event: error\ndata: '
+                    '{"error":"runtime thread manager not configured"}\n\n'
+                )
+            return StreamingResponse(_empty(), media_type="text/event-stream")
+
+        since_str = request.query_params.get("since_seq")
+        since_seq = int(since_str) if since_str else None
+
+        import asyncio as _asyncio
+        import json as _json
+
+        async def _generator() -> Any:
+            current = since_seq
+            # 30 ticks at 100ms = ~3s window per HTTP keepalive. Enough for
+            # most short turns; clients that want continuous streams should
+            # reconnect with the last seen seq.
+            for _ in range(30):
+                events = manager.events_since(thread_id, current)
+                for ev in events:
+                    payload = ev.model_dump(mode="json")
+                    current = payload.get("seq", current)
+                    yield (
+                        f"event: {payload.get('event', 'event')}\n"
+                        f"data: {_json.dumps(payload)}\n\n"
+                    )
+                await _asyncio.sleep(0.1)
+            yield "event: done\ndata: {}\n\n"
+
+        return StreamingResponse(_generator(), media_type="text/event-stream")
+
+    @router.post("/threads/{thread_id}/resume")
+    async def resume_thread(request: Request, thread_id: str) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        try:
+            detail = await manager.resume_thread(thread_id)
+        except FileNotFoundError:
+            return {"ok": False, "error": f"thread not found: {thread_id}"}
+        return {"ok": True, "detail": detail.model_dump(mode="json")}
+
+    @router.get("/threads/summary")
+    async def threads_summary(request: Request) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        return {"ok": True, **(await manager.threads_summary())}
+
     # --- App-Server long-tail (skills / tasks / mcp / workspace) ---------
     #
     # Mirrors a subset of Rust ``runtime_api.rs`` routes that overlap with

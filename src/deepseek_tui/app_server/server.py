@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,8 @@ from deepseek_tui.app_server.routes import (
 )
 from deepseek_tui.app_server.runtime import AppRuntime
 from deepseek_tui.config.models import Config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -46,7 +50,31 @@ def build_fastapi_app(runtime: AppRuntime) -> Any:
 
     app = FastAPI(title="deepseek-app-server", version="0.1.0")
     app.state.runtime = runtime
+
+    # Per-request access log: method/path/status/duration. ``uvicorn.access``
+    # is silenced in :mod:`logging_setup` so this is the single source of
+    # truth for HTTP traffic during real-API testing.
+    @app.middleware("http")
+    async def _access_log(request: Any, call_next: Any) -> Any:
+        started = time.monotonic()
+        response = await call_next(request)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "http_access method=%s path=%s status=%d duration_ms=%d",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+
+    # Mount the same router twice: at root for legacy callers and at ``/v1``
+    # for Rust-parity callers. Rust's ``runtime_api`` exposes everything
+    # under ``/v1/...`` (see runtime_api.rs:295-344). Keeping both prefixes
+    # working avoids breaking existing Python integration tests while
+    # giving cross-language clients the URL shape they expect.
     app.include_router(build_router())
+    app.include_router(build_router(), prefix="/v1")
     return app
 
 
@@ -56,6 +84,17 @@ async def run_http(
     """Serve the 7 endpoints over HTTP via uvicorn."""
     import uvicorn
 
+    # Wire rotating-file logging up before AppRuntime spins up so the
+    # very first router import lands in the file too. Safe to call even
+    # if the CLI already configured logging — duplicate handlers are
+    # cleaned out by :func:`setup_logging` itself.
+    from deepseek_tui.logging_setup import setup_logging
+
+    setup_logging(config)
+
+    logger.info(
+        "app_server_start host=%s port=%d", options.host, options.port
+    )
     runtime = await AppRuntime.create(
         config=config, working_directory=options.working_directory
     )
@@ -67,6 +106,7 @@ async def run_http(
     try:
         await server.serve()
     finally:
+        logger.info("app_server_stop")
         await runtime.shutdown()
 
 

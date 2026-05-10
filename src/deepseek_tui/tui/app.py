@@ -7,6 +7,7 @@ Stage 6.5: Slash command activation — SlashMenu in compose tree,
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from typing import TYPE_CHECKING
@@ -48,6 +49,15 @@ from deepseek_tui.tui.widgets.transcript import Transcript
 if TYPE_CHECKING:
     from deepseek_tui.engine.engine import Engine
 
+logger = logging.getLogger(__name__)
+
+
+def _json_decode_error() -> type[Exception]:
+    """Lazy import to keep top-level imports cheap."""
+    import json as _json
+
+    return _json.JSONDecodeError
+
 
 class DeepSeekTUI(App[None]):
     """Main TUI application."""
@@ -73,6 +83,18 @@ class DeepSeekTUI(App[None]):
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
         Binding("escape", "esc_press", "Backtrack", show=False),
         Binding("question_mark", "show_help", "Help", show=False),
+        # Rust-parity bindings (subset). Full Rust catalog has 40+ chords;
+        # this batch covers the highest-traffic ones — pickers, mode cycle,
+        # transcript scroll. Remaining Rust bindings are documented in the
+        #集成债 list as Stage 6 follow-up.
+        Binding("ctrl+r", "open_session_picker", "Sessions"),
+        Binding("ctrl+m", "open_model_picker", "Models"),
+        Binding("ctrl+p", "open_file_picker", "Files"),
+        Binding("tab", "cycle_mode", "Cycle Mode", show=False),
+        Binding("ctrl+l", "clear_transcript", "Clear", show=False),
+        Binding("pageup", "transcript_page_up", "PageUp", show=False),
+        Binding("pagedown", "transcript_page_down", "PageDown", show=False),
+        Binding("ctrl+t", "toggle_thinking", "Thinking", show=False),
     ]
 
     def __init__(
@@ -103,6 +125,11 @@ class DeepSeekTUI(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
+        logger.info(
+            "tui_on_mount resume=%s fork=%s",
+            self._resume_session_id,
+            self._fork_session_id,
+        )
         self.query_one(Composer).focus()
         await self._start_engine()
 
@@ -122,6 +149,7 @@ class DeepSeekTUI(App[None]):
 
         client = self._build_client()
         if client is None:
+            logger.warning("tui_no_api_key onboarding=%s", not is_onboarded())
             self.query_one(StatusBar).set_status(
                 "no API key — run `deepseek-tui setup` or `deepseek-tui login`"
             )
@@ -140,6 +168,7 @@ class DeepSeekTUI(App[None]):
 
         model = self.config.model or self.config.default_text_model
         approval_handler = TUIApprovalHandler(self)
+        logger.info("tui_engine_create model=%s", model)
         self._engine = await Engine.create(
             self.handle,
             client,
@@ -148,10 +177,92 @@ class DeepSeekTUI(App[None]):
             approval_handler=approval_handler,
         )
         self._engine_task = asyncio.create_task(self._engine.run())
+        logger.info("tui_engine_started")
         status = self.query_one(StatusBar)
         status.set_model(model)
         status.set_mode("agent")
-        status.set_status("ready")
+        # Apply --resume / --fork before announcing ready so the user sees
+        # the restored transcript rather than a blank screen. Errors here
+        # are non-fatal: status bar surfaces them and the user can keep
+        # going with an empty session.
+        applied = self._apply_resume_or_fork()
+        if applied is None:
+            status.set_status("ready")
+        else:
+            status.set_status(applied)
+
+    def _apply_resume_or_fork(self) -> str | None:
+        """Restore session messages from disk if a resume/fork id was given.
+
+        Returns a status-bar message (or ``None`` if nothing to do).
+        Sessions are read from ``~/.deepseek/sessions/<id>.json``; the
+        special id ``current``/``latest`` maps to the auto-persisted
+        ``current.json`` snapshot. Mirrors Rust ``run_interactive``'s
+        resume path which also feeds ``SessionManager::load_session``
+        output back into the engine before the first user input.
+        """
+        if self._engine is None:
+            return None
+        target_id = self._resume_session_id or self._fork_session_id
+        if not target_id:
+            return None
+        path = self._resolve_session_path(target_id)
+        if path is None or not path.exists():
+            return f"resume target not found: {target_id}"
+        try:
+            import json as _json
+
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, _json_decode_error()) as exc:
+            return f"failed to read session: {exc}"
+        messages_raw = data.get("messages", [])
+        if not isinstance(messages_raw, list):
+            return "session file has no messages"
+        from deepseek_tui.protocol.messages import Message
+
+        try:
+            restored = [Message.model_validate(m) for m in messages_raw]
+        except Exception as exc:  # noqa: BLE001 — pydantic validation errors
+            return f"session file invalid: {exc}"
+        self._engine.session_messages.clear()
+        self._engine.session_messages.extend(restored)
+        transcript = self.query_one(Transcript)
+        transcript.clear_messages()
+        for msg in restored:
+            text_parts = [
+                getattr(b, "text", "")
+                for b in msg.content
+                if getattr(b, "type", None) == "text"
+            ]
+            text = " ".join(p for p in text_parts if p)
+            if not text:
+                continue
+            if msg.role == "user":
+                transcript.add_user_message(text)
+            elif msg.role == "assistant":
+                # Transcript has no single "add assistant message" — synthesize
+                # from the streaming primitives so the cell looks identical to
+                # a freshly-streamed turn.
+                transcript.start_assistant_message()
+                transcript.append_delta(text)
+                transcript.finalize_message()
+        verb = "resumed" if self._resume_session_id else "forked from"
+        return f"{verb} {target_id[:8]} ({len(restored)} messages)"
+
+    @staticmethod
+    def _resolve_session_path(session_id: str):  # type: ignore[no-untyped-def]
+        """Map a session id to a JSON path under ``~/.deepseek/sessions``."""
+        from pathlib import Path
+
+        from deepseek_tui.config.paths import default_config_path
+
+        sessions_dir = default_config_path().parent / "sessions"
+        if session_id in {"current", "latest"}:
+            return sessions_dir / "current.json"
+        absolute = Path(session_id).expanduser()
+        if absolute.is_absolute() and absolute.exists():
+            return absolute
+        return sessions_dir / f"{session_id}.json"
 
     def _build_client(self) -> LLMClient | None:
         """Construct an LLM client from config + secrets."""
@@ -175,10 +286,17 @@ class DeepSeekTUI(App[None]):
 
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
         if self._engine is None:
+            logger.warning("composer_submit_no_engine")
             self.query_one(Transcript).add_system_message(
                 "Engine not started. Please configure an API key first."
             )
             return
+        preview = (event.text or "")[:200].replace("\n", " ")
+        logger.info(
+            "composer_submit text_len=%d preview=%r",
+            len(event.text or ""),
+            preview,
+        )
         transcript = self.query_one(Transcript)
         transcript.add_user_message(event.text)
         await self.handle.send_op(SendMessageOp(content=event.text))
@@ -349,6 +467,7 @@ class DeepSeekTUI(App[None]):
             self._engine.session_messages.clear()
 
     async def action_quit(self) -> None:
+        logger.info("tui_quit")
         if self._engine is not None:
             await self._engine.shutdown()
         if self._engine_task is not None:
@@ -360,6 +479,127 @@ class DeepSeekTUI(App[None]):
 
     def action_show_help(self) -> None:
         self.push_screen(HelpPanel())
+
+    # ── Rust-parity action stubs (subset) ────────────────────────────
+
+    def action_open_session_picker(self) -> None:
+        """Open the session picker (Ctrl+R, Rust ``Ctrl+R``).
+
+        Sessions are loaded from ``~/.deepseek/sessions/*.json``; selection
+        triggers the same restore path used by ``--resume``. Empty list
+        falls back to the auto-saved ``current.json`` when present.
+        """
+        from deepseek_tui.tui.widgets.pickers import SessionPicker
+
+        sessions = self._discover_session_picks()
+        if not sessions:
+            self.query_one(Transcript).add_system_message(
+                "No saved sessions found in ~/.deepseek/sessions/"
+            )
+            return
+
+        def _on_pick(picked: str | None) -> None:
+            if picked:
+                self._resume_session_id = picked
+                self._fork_session_id = None
+                applied = self._apply_resume_or_fork()
+                if applied:
+                    self.query_one(StatusBar).set_status(applied)
+
+        self.push_screen(SessionPicker(sessions=sessions), _on_pick)
+
+    def action_open_model_picker(self) -> None:
+        """Open the model picker (Ctrl+M, Rust ``Ctrl+M``)."""
+        from deepseek_tui.tui.widgets.pickers import ModelPicker
+
+        def _on_pick(picked: str | None) -> None:
+            if not picked or self._engine is None:
+                return
+            self._engine.default_model = picked
+            self.config.model = picked
+            self.query_one(StatusBar).set_model(picked)
+
+        self.push_screen(ModelPicker(), _on_pick)
+
+    def action_open_file_picker(self) -> None:
+        """Open the workspace file picker (Ctrl+P, Rust ``Ctrl+P``).
+
+        On selection, prepends the path to the composer as ``@path``.
+        """
+        from deepseek_tui.tui.widgets.pickers import FilePicker
+
+        def _on_pick(picked: str | None) -> None:
+            if not picked:
+                return
+            composer = self.query_one(Composer)
+            current = composer.text
+            composer.clear()
+            composer.insert(f"{current}@{picked} ".lstrip())
+            composer.focus()
+
+        self.push_screen(FilePicker(), _on_pick)
+
+    def action_cycle_mode(self) -> None:
+        """Cycle agent/plan/yolo/ask modes (Tab, Rust ``Tab``)."""
+        modes = ("agent", "plan", "yolo", "ask")
+        current = self.query_one(StatusBar)._mode or "agent"
+        try:
+            idx = modes.index(current)
+        except ValueError:
+            idx = 0
+        next_mode = modes[(idx + 1) % len(modes)]
+        self.query_one(StatusBar).set_mode(next_mode)
+        self.query_one(Transcript).add_system_message(f"Mode: {next_mode}")
+
+    def action_clear_transcript(self) -> None:
+        """Clear visible transcript without resetting engine session.
+
+        Rust ``Ctrl+L`` clears the screen; ``Ctrl+N`` is the full new-session
+        chord. Keeping these distinct mirrors that split.
+        """
+        self.query_one(Transcript).clear_messages()
+
+    def action_transcript_page_up(self) -> None:
+        try:
+            self.query_one(Transcript).scroll_page_up(animate=False)
+        except Exception:  # noqa: BLE001 — Textual scroll is best-effort
+            pass
+
+    def action_transcript_page_down(self) -> None:
+        try:
+            self.query_one(Transcript).scroll_page_down(animate=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def action_toggle_thinking(self) -> None:
+        """Toggle ``ui.show_thinking`` (Ctrl+T, Rust ``Ctrl+T``).
+
+        Currently advisory: the transcript always shows thinking deltas.
+        Wiring the toggle to actually hide them is documented as a Stage 6
+        follow-up since the cell already streams via ``_ThinkingCell``.
+        """
+        self.config.ui.show_thinking = not self.config.ui.show_thinking
+        state = "on" if self.config.ui.show_thinking else "off"
+        self.query_one(Transcript).add_system_message(f"show_thinking={state}")
+
+    @staticmethod
+    def _discover_session_picks() -> list[tuple[str, str]]:
+        """Read ``~/.deepseek/sessions/*.json`` into picker tuples."""
+        from deepseek_tui.config.paths import default_config_path
+
+        sessions_dir = default_config_path().parent / "sessions"
+        if not sessions_dir.exists():
+            return []
+        items: list[tuple[str, str]] = []
+        for path in sorted(sessions_dir.glob("*.json")):
+            stem = path.stem
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            label = f"{stem} ({size:,}B)"
+            items.append((stem, label))
+        return items
 
     def action_esc_press(self) -> None:
         """Esc-Esc backtrack chord (mirrors Rust ``backtrack.rs``).

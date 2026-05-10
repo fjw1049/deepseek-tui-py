@@ -3,14 +3,63 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class Usage(BaseModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_creation_input_tokens: int = 0
-    cache_read_input_tokens: int = 0
+    """Token-usage accounting for a single LLM response.
+
+    Mirrors Rust ``crates/tui/src/models.rs::Usage`` (185-202). DeepSeek
+    returns ``prompt_tokens`` / ``completion_tokens`` and provides
+    ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens`` and
+    ``completion_tokens_details.reasoning_tokens``. We accept those wire
+    names via Pydantic v2 ``AliasChoices`` so ``Usage.model_validate``
+    on a raw API payload no longer silently drops cache/reasoning counts.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    input_tokens: int = Field(
+        default=0,
+        validation_alias=AliasChoices("input_tokens", "prompt_tokens"),
+    )
+    output_tokens: int = Field(
+        default=0,
+        validation_alias=AliasChoices("output_tokens", "completion_tokens"),
+    )
+    cache_creation_input_tokens: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "cache_creation_input_tokens", "prompt_cache_miss_tokens"
+        ),
+    )
+    cache_read_input_tokens: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "cache_read_input_tokens", "prompt_cache_hit_tokens"
+        ),
+    )
+    reasoning_tokens: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _extract_nested_reasoning(cls, data: Any) -> Any:
+        """Pull reasoning_tokens out of completion_tokens_details if present.
+
+        DeepSeek puts it nested under ``completion_tokens_details``; Rust
+        ``parse_usage`` handles this same path. Avoid clobbering an explicit
+        top-level ``reasoning_tokens`` if the caller already set one.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "reasoning_tokens" in data and data["reasoning_tokens"]:
+            return data
+        details = data.get("completion_tokens_details")
+        if isinstance(details, dict):
+            nested = details.get("reasoning_tokens")
+            if isinstance(nested, int):
+                data = {**data, "reasoning_tokens": nested}
+        return data
 
 
 class ToolCall(BaseModel):

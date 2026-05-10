@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ from deepseek_tui.tools.patch_engine import (
     parse_unified_diff,
     parse_unified_diff_files,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ApplyPatchTool(ToolSpec):
@@ -81,11 +84,20 @@ class ApplyPatchTool(ToolSpec):
 
         # Full-file replacements path.
         if "changes" in input_data and input_data["changes"] is not None:
-            return _apply_changes(input_data["changes"], context)
+            changes = input_data["changes"]
+            change_count = len(changes) if isinstance(changes, list) else 0
+            logger.info("apply_patch_changes file_count=%d", change_count)
+            return _apply_changes(changes, context)
 
         patch_text = input_data.get("patch")
         if not isinstance(patch_text, str) or not patch_text.strip():
             raise ToolError("patch must be a non-empty string")
+        logger.info(
+            "apply_patch patch_bytes=%d fuzz=%d create_if_missing=%s",
+            len(patch_text),
+            fuzz,
+            create_if_missing,
+        )
 
         path_override = input_data.get("path")
         if path_override is not None and not isinstance(path_override, str):

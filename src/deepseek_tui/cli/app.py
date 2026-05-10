@@ -35,6 +35,12 @@ PROVIDER_OPTION = typer.Option(None, "--provider", help="Provider name override.
 MODEL_OPTION = typer.Option(None, "--model", help="Model name override.")
 OUTPUT_MODE_OPTION = typer.Option(None, "--output-mode", help="Output mode (text/json).")
 LOG_LEVEL_OPTION = typer.Option(None, "--log-level", help="Log level (debug/info/warn/error).")
+LOG_DIR_OPTION = typer.Option(
+    None, "--log-dir", help="Directory for per-hour rotating log files."
+)
+LOG_CONSOLE_OPTION = typer.Option(
+    False, "--log-console", help="Also write log records to stderr."
+)
 API_KEY_OPTION = typer.Option(None, "--api-key", help="API key override.")
 BASE_URL_OPTION = typer.Option(None, "--base-url", help="Base URL override.")
 APPROVAL_POLICY_OPTION = typer.Option(None, "--approval-policy", help="Approval policy.")
@@ -66,6 +72,8 @@ def main_callback(
     model: str | None = MODEL_OPTION,
     output_mode: str | None = OUTPUT_MODE_OPTION,
     log_level: str | None = LOG_LEVEL_OPTION,
+    log_dir: Path | None = LOG_DIR_OPTION,
+    log_console: bool = LOG_CONSOLE_OPTION,
     api_key: str | None = API_KEY_OPTION,
     base_url: str | None = BASE_URL_OPTION,
     approval_policy: str | None = APPROVAL_POLICY_OPTION,
@@ -82,6 +90,17 @@ def main_callback(
         return
 
     loaded = _load_config(config, profile, provider, model)
+
+    # Wire the rotating log handlers up before any subsystem runs so the
+    # very first INFO event ("engine starting") lands in the file.
+    from deepseek_tui.logging_setup import setup_logging
+
+    setup_logging(
+        loaded,
+        level_override=log_level,
+        dir_override=log_dir,
+        console_override=log_console if log_console else None,
+    )
 
     if prompt is not None:
         _run_one_shot(loaded, prompt)

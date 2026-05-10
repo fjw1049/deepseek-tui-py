@@ -183,6 +183,10 @@ REGISTRY: list[CommandEntry] = [
         "/cache", "Prefix-cache stats",
         _D, p0=False,
     ),
+    CommandEntry(
+        "/log", "Show log file path; '/log tail [N]' prints last N lines",
+        _D,
+    ),
 ]
 
 # Build lookup dicts for fast dispatch.

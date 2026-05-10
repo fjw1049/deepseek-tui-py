@@ -1,10 +1,10 @@
 """MCP server — expose DeepSeek tools to other agents over stdio JSON-RPC.
 
 Mirrors a trimmed-down version of ``crates/tui/src/mcp_server.rs``. Implements
-``initialize``, ``tools/list``, ``tools/call``, and ``resources/list``. The
-``deepseek`` / ``deepseek-reply`` meta-tools that wrap a full Engine turn are
-deferred (need full Engine integration); only direct registry tools are
-exposed for now.
+``initialize``, ``tools/list``, ``tools/call``, ``resources/list``, and
+``resources/read``. Adds the ``deepseek`` meta-tool which wraps a one-shot
+``Engine`` turn (the ``deepseek-reply`` continuation variant is still
+deferred — see HANDOVER pre-realapi-batch-2 for the gap).
 """
 from __future__ import annotations
 
@@ -96,15 +96,9 @@ class McpStdioServer:
             if method == "tools/call":
                 return _make_response(req_id, await self._tools_call(params))
             if method == "resources/list":
-                return _make_response(req_id, {
-                    "resources": [{
-                        "uri": f"file://{self.workspace}",
-                        "name": "workspace",
-                        "description": "Workspace root",
-                        "mimeType": "inode/directory",
-                    }],
-                    "nextCursor": None,
-                })
+                return _make_response(req_id, self._resources_list())
+            if method == "resources/read":
+                return _make_response(req_id, self._resources_read(params))
             if method == "ping":
                 return _make_response(req_id, {})
             if req_id is None:
@@ -127,13 +121,39 @@ class McpStdioServer:
                 "description": tool.description(),
                 "inputSchema": tool.input_schema(),
             })
+        # ``deepseek`` meta-tool: lets an outside MCP agent ask DeepSeek
+        # itself for an answer without going through the registry. Mirrors
+        # Rust ``mcp_server.rs:176-224`` ``deepseek`` schema.
+        tools.append({
+            "name": "deepseek",
+            "description": (
+                "Ask DeepSeek for a one-shot text answer. Returns the model's "
+                "completion as plain text. No tool calls, no streaming."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The user prompt to send to DeepSeek.",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Optional model override.",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        })
         return {"tools": tools, "nextCursor": None}
 
     async def _tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
         name = params.get("name", "")
+        arguments = params.get("arguments", {}) or {}
+        if name == "deepseek":
+            return await self._deepseek_meta_call(arguments)
         if name not in self.exposed_tools:
             raise ValueError(f"Tool not exposed: {name}")
-        arguments = params.get("arguments", {}) or {}
         registry = self._runtime.registry
         if not registry.contains(name):
             raise ValueError(f"Tool not registered: {name}")
@@ -142,6 +162,118 @@ class McpStdioServer:
             "content": [{"type": "text", "text": result.content}],
             "isError": not result.success,
         }
+
+    async def _deepseek_meta_call(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One-shot LLM round-trip behind the ``deepseek`` MCP meta-tool.
+
+        Builds a fresh ``DeepSeekClient`` from the loaded ``Config`` (which
+        the runtime context carries), sends a single non-streaming chat
+        completion (semantically — internally we still consume SSE deltas
+        and concatenate), and returns the assistant text. Tools are not
+        offered, so this never recurses back into MCP.
+        """
+        prompt = arguments.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("'prompt' must be a non-empty string")
+        model_override = arguments.get("model")
+        try:
+            from deepseek_tui.client.deepseek import DeepSeekClient
+            from deepseek_tui.config.models import Config
+            from deepseek_tui.protocol.messages import Message
+            from deepseek_tui.protocol.requests import MessageRequest
+            from deepseek_tui.protocol.responses import StreamTextDelta
+
+            cfg = Config()
+            client = DeepSeekClient.from_config(cfg)
+            request = MessageRequest(
+                model=(
+                    model_override
+                    if isinstance(model_override, str) and model_override
+                    else cfg.default_text_model
+                ),
+                messages=[Message.user(prompt)],
+                stream=True,
+            )
+            chunks: list[str] = []
+            async for event in client.stream_chat_completion(request):
+                if isinstance(event, StreamTextDelta):
+                    chunks.append(event.text)
+            await client.close()
+            return {
+                "content": [{"type": "text", "text": "".join(chunks)}],
+                "isError": False,
+            }
+        except Exception as exc:  # noqa: BLE001 — surface to MCP caller
+            return {
+                "content": [{"type": "text", "text": f"deepseek meta-tool failed: {exc}"}],
+                "isError": True,
+            }
+
+    def _resources_list(self) -> dict[str, Any]:
+        """``resources/list`` — workspace root + each saved session JSON."""
+        from deepseek_tui.config.paths import default_config_path
+
+        resources: list[dict[str, Any]] = [
+            {
+                "uri": f"file://{self.workspace}",
+                "name": "workspace",
+                "description": "Workspace root",
+                "mimeType": "inode/directory",
+            }
+        ]
+        sessions_dir = default_config_path().parent / "sessions"
+        if sessions_dir.exists():
+            for path in sorted(sessions_dir.glob("*.json")):
+                resources.append(
+                    {
+                        "uri": f"session://{path.stem}",
+                        "name": path.stem,
+                        "description": f"Saved session ({path.name})",
+                        "mimeType": "application/json",
+                    }
+                )
+        return {"resources": resources, "nextCursor": None}
+
+    def _resources_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        """``resources/read`` — return raw bytes for a known URI."""
+        from deepseek_tui.config.paths import default_config_path
+
+        uri = params.get("uri", "")
+        if not isinstance(uri, str) or not uri:
+            raise ValueError("'uri' is required")
+        if uri.startswith("session://"):
+            stem = uri[len("session://"):]
+            sessions_dir = default_config_path().parent / "sessions"
+            path = sessions_dir / f"{stem}.json"
+            if not path.exists():
+                raise ValueError(f"Session not found: {stem}")
+            text = path.read_text(encoding="utf-8")
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": text,
+                    }
+                ]
+            }
+        if uri.startswith("file://"):
+            file_path = Path(uri[len("file://"):])
+            if not file_path.exists() or file_path.is_dir():
+                raise ValueError(f"File not readable: {file_path}")
+            text = file_path.read_text(encoding="utf-8")
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "text/plain",
+                        "text": text,
+                    }
+                ]
+            }
+        raise ValueError(f"Unsupported URI scheme: {uri}")
 
 
 async def run_mcp_server(workspace: Path) -> None:

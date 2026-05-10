@@ -983,3 +983,50 @@ def cmd_cache(args: str, app: DeepSeekTUI) -> CommandResult:
         "  Hit rate: —\n"
         "  Cached prefix length: —"
     )
+
+
+# ── /log ──────────────────────────────────────────────────────────────────
+
+
+@_register("/log")
+def cmd_log(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Show the active log file path or tail the last N lines.
+
+    Usage:
+        /log              → print current log file path
+        /log tail         → print last 50 lines
+        /log tail 200     → print last 200 lines
+
+    Mirrors the lightweight log-introspection slash command described in
+    the 2026-05-10 logging design doc — full Rust binary doesn't have
+    this exact command but exposes ``tail -f`` instructions in docs.
+    """
+    from deepseek_tui.logging_setup import current_log_path, tail_log
+
+    args = args.strip()
+    path = current_log_path()
+    if not args:
+        if path is None:
+            return CommandResult(output="logging is disabled (Config.logging.enabled=false)")
+        return CommandResult(output=f"log file: {path}\n(use `/log tail` for recent entries)")
+
+    parts = args.split()
+    if parts[0] != "tail":
+        return CommandResult(
+            error=(
+                f"unknown subcommand: {parts[0]} — use '/log' or '/log tail [N]'"
+            )
+        )
+    n = 50
+    if len(parts) > 1:
+        try:
+            n = max(1, min(int(parts[1]), 5000))
+        except ValueError:
+            return CommandResult(error=f"line count must be an integer, got: {parts[1]!r}")
+    lines = tail_log(n)
+    if not lines:
+        if path is None:
+            return CommandResult(output="logging is disabled")
+        return CommandResult(output=f"(no log entries yet at {path})")
+    body = "\n".join(lines)
+    return CommandResult(output=f"-- last {len(lines)} lines from {path} --\n{body}")

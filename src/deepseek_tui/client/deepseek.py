@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -13,6 +15,8 @@ from deepseek_tui.client.chat_messages import build_chat_messages
 from deepseek_tui.client.streaming import OpenAIStreamParser
 from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import StreamEvent
+
+logger = logging.getLogger(__name__)
 
 
 def is_reasoning_model(model: str) -> bool:
@@ -69,10 +73,26 @@ class DeepSeekClient(LLMClient):
         )
 
     def _get_http_client(self) -> httpx.AsyncClient:
-        """Return a persistent httpx client for connection reuse."""
+        """Return a persistent httpx client for connection reuse.
+
+        ``read=None`` lets the per-chunk ``asyncio.wait_for`` in
+        ``stream_chat_completion`` be the sole source of truth for SSE idle
+        timeouts. With a finite httpx ``read`` the global timer can fire
+        first and surface as ``httpx.ReadTimeout`` instead of
+        ``asyncio.TimeoutError``, hitting different retry branches in
+        ``TurnLoop._run_turn_loop`` and confusing transparent-retry
+        accounting. Connect/write timeouts stay bounded so DNS or TLS
+        stalls still surface promptly. Mirrors Rust which treats stream
+        idle timeout independently from request setup.
+        """
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout_seconds),
+                timeout=httpx.Timeout(
+                    connect=self.timeout_seconds,
+                    write=self.timeout_seconds,
+                    read=None,
+                    pool=self.timeout_seconds,
+                ),
                 transport=self.transport,
             )
         return self._http_client
@@ -80,6 +100,7 @@ class DeepSeekClient(LLMClient):
     async def close(self) -> None:
         """Close the persistent HTTP client."""
         if self._http_client is not None and not self._http_client.is_closed:
+            logger.debug("http_client_close base_url=%s", self.base_url)
             await self._http_client.aclose()
             self._http_client = None
 
@@ -92,28 +113,118 @@ class DeepSeekClient(LLMClient):
         payload = self._build_payload(request)
         client = self._get_http_client()
         chunk_timeout = self.timeout_seconds
-        async with aconnect_sse(
-            client,
-            "POST",
-            f"{self.base_url}/v1/chat/completions",
-            headers=headers,
-            json=payload,
-        ) as event_source:
-            sse_iter = event_source.aiter_sse().__aiter__()
-            while True:
-                try:
-                    sse = await asyncio.wait_for(
-                        sse_iter.__anext__(), timeout=chunk_timeout
-                    )
-                except StopAsyncIteration:
-                    break
-                if sse.data == "[DONE]":
-                    break
-                chunk = json.loads(sse.data)
-                for event in parser.parse_chunk(chunk):
-                    yield event
+        # Pre-stream retry on 429 / 5xx / connect errors. Mirrors Rust
+        # client.rs::send_with_retry: only retries before the first byte
+        # of the response body is consumed; once SSE chunks start flowing
+        # the engine's transparent-retry layer takes over.
+        url = f"{self.base_url}/v1/chat/completions"
+        body_bytes = len(json.dumps(payload).encode())
+        logger.info(
+            "http_request method=POST url=%s model=%s msg_count=%d body_bytes=%d",
+            url,
+            request.model,
+            len(payload.get("messages", [])),
+            body_bytes,
+        )
+        request_started = time.monotonic()
+        async for sse_event in self._stream_with_pre_retry(
+            client, url, headers, payload, parser, chunk_timeout
+        ):
+            yield sse_event
         for event in parser.finalize():
             yield event
+        logger.info(
+            "http_response url=%s elapsed_ms=%d",
+            url,
+            int((time.monotonic() - request_started) * 1000),
+        )
+
+    async def _stream_with_pre_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        parser: OpenAIStreamParser,
+        chunk_timeout: float,
+    ) -> AsyncIterator[StreamEvent]:
+        """Yield SSE events; retry connection-phase 429/5xx with backoff.
+
+        The retry loop only fires before the first SSE chunk is yielded.
+        Delays follow Rust client.rs (1s base, ×2 backoff, max 60s) but
+        capped at MAX_PRE_STREAM_RETRIES attempts.
+        """
+        max_retries = 3
+        attempt = 0
+        backoff = 1.0
+        while True:
+            try:
+                async with aconnect_sse(
+                    client, "POST", url, headers=headers, json=payload,
+                ) as event_source:
+                    # Real httpx_sse exposes ``response`` on the event source,
+                    # but tests inject minimal fakes without that attribute.
+                    # When absent, skip the status-code retry path and let the
+                    # SSE iteration speak for itself.
+                    response = getattr(event_source, "response", None)
+                    status = getattr(response, "status_code", None) if response else None
+                    if status is not None and status >= 400 and response is not None:
+                        if attempt < max_retries and (status == 429 or status >= 500):
+                            attempt += 1
+                            logger.warning(
+                                "pre_stream_retry attempt=%d status=%d backoff_s=%.1f",
+                                attempt,
+                                status,
+                                backoff,
+                            )
+                            try:
+                                await response.aread()
+                            except Exception:  # noqa: BLE001 — body read best-effort
+                                pass
+                            await asyncio.sleep(backoff)
+                            backoff = min(backoff * 2, 60.0)
+                            continue
+                        body = ""
+                        try:
+                            body = (await response.aread()).decode(
+                                "utf-8", errors="replace"
+                            )[:512]
+                        except Exception:  # noqa: BLE001
+                            pass
+                        raise httpx.HTTPStatusError(
+                            f"HTTP {status} from {url}: {body}",
+                            request=response.request,
+                            response=response,
+                        )
+
+                    sse_iter = event_source.aiter_sse().__aiter__()
+                    while True:
+                        try:
+                            sse = await asyncio.wait_for(
+                                sse_iter.__anext__(), timeout=chunk_timeout
+                            )
+                        except StopAsyncIteration:
+                            return
+                        if sse.data == "[DONE]":
+                            return
+                        chunk = json.loads(sse.data)
+                        for event in parser.parse_chunk(chunk):
+                            yield event
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
+                logger.warning(
+                    "http_connect_error attempt=%d exception_type=%s message=%s",
+                    attempt,
+                    type(exc).__name__,
+                    str(exc)[:200],
+                )
+                if attempt < max_retries:
+                    attempt += 1
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60.0)
+                    continue
+                raise httpx.NetworkError(
+                    f"connection error after {attempt} retries: {exc}"
+                ) from exc
 
     def _build_payload(self, request: MessageRequest) -> dict[str, Any]:
         payload: dict[str, Any] = {

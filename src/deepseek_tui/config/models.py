@@ -123,6 +123,85 @@ class HooksConfig(BaseModel):
     webhook_urls: list[str] = Field(default_factory=list)
 
 
+class NotificationsConfig(BaseModel):
+    """Terminal notification settings — mirrors Rust ``NotificationsConfig``.
+
+    Today only ``method`` + ``threshold_secs`` are consumed by
+    ``tui.notifications.notify_done_to``; the remaining fields are accepted
+    so user TOML written for the Rust binary doesn't get silently dropped
+    by Pydantic. Wiring them into runtime behavior is a Stage 6 follow-up.
+    """
+
+    method: str | None = None
+    threshold_secs: float | None = None
+    enabled: bool = True
+    include_subagent: bool = False
+    include_task: bool = False
+
+
+class NetworkPolicyConfig(BaseModel):
+    """Network access policy — mirrors Rust ``NetworkPolicyToml``.
+
+    Stage 2.7 deferred OS-level sandboxing; this struct accepts the TOML
+    so configs from the Rust binary load cleanly. ``rules`` and
+    ``amendments`` are stored as raw dicts (Pydantic doesn't enforce the
+    inner shape yet) — wiring them through to ``ExecPolicyEngine`` is
+    tracked in HANDOVER as a follow-up.
+    """
+
+    enabled: bool = False
+    default_action: str = "ask"
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    amendments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SkillsConfig(BaseModel):
+    """[skills] subsection — mirrors Rust ``SkillsConfig``.
+
+    Top-level ``Config.skills_dir`` already covers the install path. The
+    nested table adds registry URL + max install size; both are accepted
+    so user TOML loads, but we don't yet drive a remote registry fetcher.
+    """
+
+    enabled: bool = True
+    registry_url: str | None = None
+    max_install_size_mb: int = 50
+    auto_update: bool = False
+
+
+class MemoryConfig(BaseModel):
+    """[memory] subsection — mirrors Rust ``MemoryConfig``.
+
+    Top-level ``Config.memory_path`` already covers the storage path.
+    The nested table adds opt-in / mode toggles; runtime reads
+    ``Config.memory_enabled`` heritage flag for backwards compat.
+    """
+
+    enabled: bool = True
+    mode: str = "manual"
+    max_entries: int = 500
+
+
+class LoggingConfig(BaseModel):
+    """Per-hour rotating file logging — consumed by :func:`logging_setup.setup_logging`.
+
+    Defaults match the design discussion (2026-05-10): INFO level, text
+    format, ``~/.deepseek/logs/`` rotation directory, 24-hour retention,
+    no console fallback. Tests should leave ``enabled=False`` so they
+    don't spray log files into ``tmp_path``.
+    """
+
+    enabled: bool = True
+    level: str = "INFO"
+    dir: Path = Path("~/.deepseek/logs")
+    console: bool = False
+    keep_hours: int = 24
+    # Optional per-logger level overrides — useful when the user wants
+    # ``deepseek_tui.engine.turn_loop = "DEBUG"`` while leaving the rest
+    # at INFO. Keys are full logger names; values are level strings.
+    per_logger: dict[str, str] = Field(default_factory=dict)
+
+
 class LspSettings(BaseModel):
     """Post-edit LSP diagnostics settings — Stage 4.4.
 
@@ -188,6 +267,23 @@ class Config(BaseModel):
     subagents: SubagentConfig = Field(default_factory=SubagentConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     lsp: LspSettings = Field(default_factory=LspSettings)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    # Top-level subsection mirrors of Rust ``ConfigToml``. Accept the TOML
+    # so user configs written for the Rust binary load cleanly; Stage 6
+    # wires these fields into runtime behavior. ``tools_file`` is recorded
+    # but never read today — same parity intent.
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    network: NetworkPolicyConfig = Field(default_factory=NetworkPolicyConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    tools_file: Path | None = None
+    # Cycle / seam toggles consumed by ``Engine.create``. Mirror Rust
+    # ``cycle_manager.rs`` + ``seam_manager.rs`` opt-in behavior. Off by
+    # default so existing tests stay deterministic; long-running real
+    # sessions can flip these via TOML once they're ready for cycle
+    # archive-and-replay.
+    cycle_enabled: bool = False
+    seam_enabled: bool = False
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +21,11 @@ from deepseek_tui.engine.compaction import (
     should_compact,
 )
 from deepseek_tui.engine.context import compact_tool_result_for_context
+from deepseek_tui.engine.cycle_manager import (
+    CycleConfig,
+    archive_cycle,
+    should_advance_cycle,
+)
 from deepseek_tui.engine.dispatch import format_tool_error
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
@@ -34,6 +41,7 @@ from deepseek_tui.engine.events import (
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.ops import CancelRequestOp, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
+from deepseek_tui.engine.seam_manager import SeamConfig, SeamManager
 from deepseek_tui.engine.tool_catalog import (
     CODE_EXECUTION_TOOL_NAME,
     MULTI_TOOL_PARALLEL_NAME,
@@ -65,6 +73,7 @@ from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.tools.base import ToolError, ToolResult
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
+from deepseek_tui.trace import bind_tool, bind_turn
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.runtime import ToolRuntime
@@ -82,10 +91,14 @@ class Engine:
         tool_context: ToolContext | None = None,
         exec_policy: ExecPolicyEngine | None = None,
         approval_handler: ApprovalHandler | None = None,
-        max_tool_round_trips: int = 3,
+        max_tool_round_trips: int = 100,
         tool_runtime: ToolRuntime | None = None,
         compaction_config: CompactionConfig | None = None,
         skill_registry: object | None = None,
+        default_reasoning_effort: str | None = None,
+        default_temperature: float | None = None,
+        default_top_p: float | None = None,
+        default_extra_body: dict[str, Any] | None = None,
     ) -> None:
         self.handle = handle
         self.client = client
@@ -122,6 +135,26 @@ class Engine:
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
         self.tool_snapshots: dict[str, list[tuple[Path, bytes | None]]] = {}
+        # Sampling / reasoning defaults — populated from Config in
+        # ``Engine.create``. Without these, ``_run_conversation`` would
+        # build a ``MessageRequest`` missing reasoning_effort/temperature
+        # and DeepSeek-R1 / V4 thinking would never activate. Mirrors
+        # Rust ``Engine`` which reads them from EngineConfig per turn.
+        self.default_reasoning_effort = default_reasoning_effort
+        self.default_temperature = default_temperature
+        self.default_top_p = default_top_p
+        self.default_extra_body: dict[str, Any] = dict(default_extra_body or {})
+        # Cycle / seam managers — instantiated but disabled by default. The
+        # full Rust archive-and-replan logic lives in cycle_manager.py /
+        # seam_manager.py; ``Engine`` keeps surface integration minimal:
+        # ``_maybe_advance_cycle`` runs at the start of each conversation
+        # and only fires when the user opts in via ``Config.cycle_enabled``.
+        # See HANDOVER pre-realapi-batch-2 entry for the deferred deep work.
+        self.cycle_config = CycleConfig(enabled=False)
+        self.seam_manager: SeamManager | None = None
+        self._cycle_session_id: str = ""
+        self._cycle_n: int = 0
+        self._cycle_started_at: int = 0
 
     @classmethod
     async def create(
@@ -135,7 +168,7 @@ class Engine:
         default_model: str = "deepseek-chat",
         exec_policy: ExecPolicyEngine | None = None,
         approval_handler: ApprovalHandler | None = None,
-        max_tool_round_trips: int = 3,
+        max_tool_round_trips: int = 100,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
 
@@ -155,7 +188,10 @@ class Engine:
         )
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
-        return cls(
+        # Pull sampling / reasoning defaults out of Config so the per-turn
+        # MessageRequest carries them all the way to DeepSeekClient.
+        provider_cfg = cfg.effective_provider_config()
+        engine = cls(
             handle=handle,
             client=client,
             default_model=default_model,
@@ -164,7 +200,24 @@ class Engine:
             max_tool_round_trips=max_tool_round_trips,
             tool_runtime=runtime,
             skill_registry=skill_reg,
+            default_reasoning_effort=cfg.reasoning_effort,
+            default_temperature=provider_cfg.temperature,
+            default_top_p=None,
+            default_extra_body=dict(provider_cfg.extra_body or {}),
         )
+        # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
+        # and ``Config.seam_enabled`` once those fields exist; today they
+        # default to False so behavior is unchanged from the pre-batch state.
+        engine.cycle_config = CycleConfig(
+            enabled=bool(getattr(cfg, "cycle_enabled", False)),
+        )
+        if bool(getattr(cfg, "seam_enabled", False)):
+            engine.seam_manager = SeamManager(
+                flash_client=client, config=SeamConfig(enabled=True)
+            )
+        engine._cycle_session_id = uuid.uuid4().hex
+        engine._cycle_started_at = int(time.time())
+        return engine
 
     def _render_skills_context(self) -> str | None:
         """Render skills context for system prompt injection."""
@@ -182,41 +235,85 @@ class Engine:
             await self.client.close()
 
     async def run(self) -> None:
-        while True:
-            op = await self.handle.next_op()
-            if isinstance(op, SendMessageOp):
-                await self._handle_send_message(op)
-            elif isinstance(op, CancelRequestOp):
-                continue
+        logger.info(
+            "engine_run_start model=%s session_id=%s",
+            self.default_model,
+            self._cycle_session_id,
+        )
+        try:
+            while True:
+                op = await self.handle.next_op()
+                if isinstance(op, SendMessageOp):
+                    await self._handle_send_message(op)
+                elif isinstance(op, CancelRequestOp):
+                    logger.info("engine_cancel_request reason=%s", op.reason)
+                    # Defense in depth: ensure the cancel_event is set even if
+                    # the caller queued the op without calling handle.cancel().
+                    # ``handle.cancel()`` already sets it before enqueuing, but
+                    # any direct ``send_op(CancelRequestOp(...))`` previously
+                    # silently dropped the cancellation. TurnLoop checks the
+                    # event each chunk, so setting it here propagates cancel
+                    # into any in-flight stream. Mirrors Rust which routes
+                    # cancel through the same op channel.
+                    self.handle.cancel_event.set()
+                    continue
+        except asyncio.CancelledError:
+            logger.info("engine_run_cancelled")
+            raise
 
     async def _handle_send_message(self, op: SendMessageOp) -> None:
-        self.handle.reset_cancel()
-        user_message = Message.user(op.content)
-        working_messages = [*self.session_messages, user_message]
-
-        await self.handle.emit(TurnStartedEvent(user_text=op.content))
-        result = await self._run_conversation(
-            messages=working_messages,
-            model=op.model or self.default_model,
-            system_prompt=build_system_prompt(
-                op.system_prompt,
-                skills_context=self._render_skills_context(),
-            ),
-            max_tokens=op.max_tokens,
-        )
-
-        if result.cancelled:
-            await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
-            return
-
-        self.session_messages = working_messages
-        await self.handle.emit(
-            TurnCompleteEvent(
-                assistant_message=result.assistant_message,
-                usage=result.usage,
+        with bind_turn() as turn_id:
+            self.handle.reset_cancel()
+            user_message = Message.user(op.content)
+            working_messages = [*self.session_messages, user_message]
+            preview = (op.content or "")[:200].replace("\n", " ")
+            logger.info(
+                "turn_start user_text_len=%d preview=%r model=%s session_msgs=%d",
+                len(op.content or ""),
+                preview,
+                op.model or self.default_model,
+                len(self.session_messages),
             )
-        )
-        await self._auto_persist_session()
+            start = time.monotonic()
+
+            await self.handle.emit(TurnStartedEvent(user_text=op.content))
+            result = await self._run_conversation(
+                messages=working_messages,
+                model=op.model or self.default_model,
+                system_prompt=build_system_prompt(
+                    op.system_prompt,
+                    skills_context=self._render_skills_context(),
+                ),
+                max_tokens=op.max_tokens,
+            )
+
+            duration_ms = int((time.monotonic() - start) * 1000)
+            if result.cancelled:
+                logger.info(
+                    "turn_cancelled turn=%s duration_ms=%d", turn_id, duration_ms
+                )
+                await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
+                return
+
+            self.session_messages = working_messages
+            usage = result.usage
+            logger.info(
+                "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
+                "cache_hit=%s reasoning_tokens=%s tool_calls=%d",
+                duration_ms,
+                getattr(usage, "input_tokens", 0) if usage else 0,
+                getattr(usage, "output_tokens", 0) if usage else 0,
+                getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
+                getattr(usage, "reasoning_tokens", 0) if usage else 0,
+                len(result.tool_calls or []),
+            )
+            await self.handle.emit(
+                TurnCompleteEvent(
+                    assistant_message=result.assistant_message,
+                    usage=result.usage,
+                )
+            )
+            await self._auto_persist_session()
 
     async def _run_conversation(
         self,
@@ -229,11 +326,25 @@ class Engine:
         self.turn_counter += 1
         step_error_count = 0
         consecutive_tool_error_steps = 0
-        for _ in range(self.max_tool_round_trips + 1):
+        # Cycle boundary check (opt-in). When the active input grows past
+        # ``cycle_config.threshold_for(model)``, archive the cycle to disk
+        # and continue with a trimmed message list. Best-effort — failures
+        # never block the conversation.
+        if self.cycle_config.enabled:
+            await self._maybe_advance_cycle(messages, model)
+        for round_idx in range(self.max_tool_round_trips + 1):
+            logger.info(
+                "round_start round=%d msg_count=%d tools_count=%d model=%s",
+                round_idx,
+                len(messages),
+                len(tools),
+                model,
+            )
             # Drain steer messages — mid-turn user input (mirrors turn_loop.rs:49-57)
             for steer_text in self.handle.drain_steers():
                 steer_text = steer_text.strip()
                 if steer_text:
+                    logger.info("steer_injected text_len=%d", len(steer_text))
                     messages.append(Message.user(steer_text))
 
             # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
@@ -248,6 +359,9 @@ class Engine:
             # Auto-compact before each LLM call if thresholds exceeded.
             # Mirrors Rust turn_loop.rs:85-168.
             if should_compact(messages, self.compaction_config):
+                logger.info(
+                    "compact_triggered before_count=%d", len(messages)
+                )
                 compact_result = await compact_messages_safe(
                     self.client,
                     messages,
@@ -255,6 +369,11 @@ class Engine:
                     workspace=self.tool_context.working_directory,
                 )
                 messages[:] = compact_result.messages
+                logger.info(
+                    "compact_done after_count=%d summary_attached=%s",
+                    len(messages),
+                    bool(compact_result.summary_prompt),
+                )
                 if compact_result.summary_prompt:
                     system_prompt = f"{system_prompt}\n\n{compact_result.summary_prompt}"
 
@@ -267,6 +386,10 @@ class Engine:
                 system_prompt=system_prompt,
                 tools=tools,
                 max_tokens=max_tokens,
+                temperature=self.default_temperature,
+                top_p=self.default_top_p,
+                reasoning_effort=self.default_reasoning_effort,
+                extra_body=dict(self.default_extra_body),
             )
             result = await self.turn_loop.run(
                 request, self.handle.emit, self.handle.cancel_event, tools=tools
@@ -305,6 +428,9 @@ class Engine:
             else:
                 consecutive_tool_error_steps = 0
 
+        logger.warning(
+            "round_trip_limit_exceeded limit=%d", self.max_tool_round_trips
+        )
         await self.handle.emit(
             ErrorEvent(
                 message="Tool round-trip limit exceeded",
@@ -329,67 +455,96 @@ class Engine:
         api_tools = self.tool_registry.to_api_tools()
 
         for tool_call in tool_calls:
-            try:
-                result = await self._execute_single_tool(
-                    tool_call, api_tools, effective_model
+            with bind_tool(tool_call.id):
+                args_preview = repr(tool_call.arguments)[:200]
+                logger.info(
+                    "tool_call_start name=%s args=%s",
+                    tool_call.name,
+                    args_preview,
                 )
-                if result is None:
+                tool_started = time.monotonic()
+                try:
+                    result = await self._execute_single_tool(
+                        tool_call, api_tools, effective_model
+                    )
+                    duration_ms = int((time.monotonic() - tool_started) * 1000)
+                    if result is None:
+                        logger.warning(
+                            "tool_denied name=%s duration_ms=%d",
+                            tool_call.name,
+                            duration_ms,
+                        )
+                        results.append(
+                            Message.tool_result(
+                                tool_call.id,
+                                f"Tool {tool_call.name} denied by approval policy",
+                                is_error=True,
+                            )
+                        )
+                        continue
+
+                    logger.info(
+                        "tool_call_end name=%s success=%s duration_ms=%d "
+                        "content_bytes=%d",
+                        tool_call.name,
+                        result.success,
+                        duration_ms,
+                        len(result.content or ""),
+                    )
+                    emit_tool_audit(
+                        {
+                            "event": "tool.result",
+                            "tool_id": tool_call.id,
+                            "tool_name": tool_call.name,
+                            "success": result.success,
+                        }
+                    )
+                    await self.handle.emit(
+                        ToolResultEvent(
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.name,
+                            content=result.content,
+                            success=result.success,
+                        )
+                    )
+                    if result.success:
+                        await self._run_post_edit_lsp_hook(
+                            tool_call.name, tool_call.arguments
+                        )
+                    output_for_context = compact_tool_result_for_context(
+                        effective_model, tool_call.name, result
+                    )
                     results.append(
                         Message.tool_result(
                             tool_call.id,
-                            f"Tool {tool_call.name} denied by approval policy",
-                            is_error=True,
+                            output_for_context,
+                            is_error=not result.success,
                         )
                     )
-                    continue
-
-                emit_tool_audit(
-                    {
-                        "event": "tool.result",
-                        "tool_id": tool_call.id,
-                        "tool_name": tool_call.name,
-                        "success": result.success,
-                    }
-                )
-                await self.handle.emit(
-                    ToolResultEvent(
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        content=result.content,
-                        success=result.success,
+                except ToolError as exc:
+                    duration_ms = int((time.monotonic() - tool_started) * 1000)
+                    error_msg = format_tool_error(exc, tool_call.name)
+                    logger.warning(
+                        "tool_call_error name=%s duration_ms=%d error=%s",
+                        tool_call.name,
+                        duration_ms,
+                        error_msg,
                     )
-                )
-                if result.success:
-                    await self._run_post_edit_lsp_hook(
-                        tool_call.name, tool_call.arguments
+                    emit_tool_audit(
+                        {
+                            "event": "tool.result",
+                            "tool_id": tool_call.id,
+                            "tool_name": tool_call.name,
+                            "success": False,
+                            "error": error_msg,
+                        }
                     )
-                output_for_context = compact_tool_result_for_context(
-                    effective_model, tool_call.name, result
-                )
-                results.append(
-                    Message.tool_result(
-                        tool_call.id,
-                        output_for_context,
-                        is_error=not result.success,
+                    await self.handle.emit(ErrorEvent(message=error_msg, retryable=False))
+                    results.append(
+                        Message.tool_result(
+                            tool_call.id, f"Error: {error_msg}", is_error=True
+                        )
                     )
-                )
-            except ToolError as exc:
-                error_msg = format_tool_error(exc, tool_call.name)
-                emit_tool_audit(
-                    {
-                        "event": "tool.result",
-                        "tool_id": tool_call.id,
-                        "tool_name": tool_call.name,
-                        "success": False,
-                        "error": error_msg,
-                    }
-                )
-                await self.handle.emit(ErrorEvent(message=error_msg, retryable=False))
-                results.append(
-                    Message.tool_result(
-                        tool_call.id, f"Error: {error_msg}", is_error=True
-                    )
-                )
         return results
 
     _SNAPSHOT_TOOLS: frozenset[str] = frozenset(
@@ -516,6 +671,9 @@ class Engine:
         cache_status = self.approval_cache.check(cache_key)
 
         if cache_status is ApprovalCacheStatus.APPROVED:
+            logger.info(
+                "approval_cache_hit tool=%s reason=cached_session", tool_call.name
+            )
             await self.handle.emit(
                 ApprovalResolvedEvent(
                     tool_call_id=tool_call.id,
@@ -525,6 +683,11 @@ class Engine:
             )
             return False
 
+        logger.info(
+            "approval_required tool=%s risk=%s",
+            tool_call.name,
+            getattr(approval_request, "risk_level", None),
+        )
         emit_tool_audit(
             {
                 "event": "tool.approval_required",
@@ -540,6 +703,9 @@ class Engine:
         )
         decision = await self.approval_handler.request_approval(
             tool_call.id, approval_request
+        )
+        logger.info(
+            "approval_decision tool=%s decision=%s", tool_call.name, decision.value
         )
         approved = decision in {
             ApprovalDecision.APPROVED,
@@ -611,6 +777,61 @@ class Engine:
             workspace=self.tool_context.working_directory,
         )
         return result.messages
+
+    async def _maybe_advance_cycle(
+        self, messages: list[Message], model: str
+    ) -> None:
+        """Archive a full cycle to disk and trim history when threshold crossed.
+
+        Mirrors Rust ``Engine::maybe_advance_cycle`` (engine.rs:887-888) at the
+        wiring level. The Rust version produces a model-curated briefing via
+        ``produce_briefing``; this minimal port uses a structured-state seed
+        (no LLM call) so it works offline. The deeper ``produce_briefing``
+        path stays available — see ``cycle_manager.produce_briefing`` — and is
+        documented in HANDOVER as a follow-up.
+        """
+        if not messages:
+            return
+        from deepseek_tui.engine.context import estimated_input_tokens
+
+        try:
+            active_tokens = estimated_input_tokens(messages)
+        except Exception:  # noqa: BLE001 — token estimation is best-effort
+            return
+        if not should_advance_cycle(
+            active_tokens,
+            reserved_headroom_tokens=8_000,
+            model=model,
+            config=self.cycle_config,
+            in_flight=False,
+        ):
+            return
+        logger.info(
+            "cycle_advance_triggered cycle_n=%d active_tokens=%d msg_count=%d",
+            self._cycle_n,
+            active_tokens,
+            len(messages),
+        )
+        try:
+            archive_path = archive_cycle(
+                session_id=self._cycle_session_id,
+                cycle_n=self._cycle_n,
+                messages=list(messages),
+                model=model,
+                started=self._cycle_started_at,
+            )
+            logger.info("cycle_archived path=%s", archive_path)
+        except OSError as exc:
+            logger.warning("cycle_archive_failed error=%s", exc)
+            return
+        # Replace history with a minimal seed so the next request fits the
+        # window. The verbatim window of recent turns is preserved.
+        keep = min(8, len(messages))
+        seed = messages[-keep:]
+        messages.clear()
+        messages.extend(seed)
+        self._cycle_n += 1
+        self._cycle_started_at = int(time.time())
 
     # --- Engine-intercepted special tools --------------------------------
 
@@ -735,6 +956,9 @@ class Engine:
         paths = edited_paths_for_tool(tool_name, tool_input)
         if not paths:
             return
+        logger.debug(
+            "lsp_post_edit_hook tool=%s paths=%d", tool_name, len(paths)
+        )
         workspace = self.tool_context.working_directory
         for path in paths:
             absolute = path if path.is_absolute() else workspace / path
