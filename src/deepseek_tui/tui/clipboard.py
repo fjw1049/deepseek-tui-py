@@ -130,12 +130,11 @@ def read_text() -> str | None:
 def clipboard_images_dir(workspace: Path) -> Path:
     """Resolve the directory pasted images should land in.
 
-    Mirrors Rust ``clipboard_images_dir`` (clipboard.rs:142). Prefers
-    ``~/.deepseek/clipboard-images/`` so paths are stable across
-    worktrees; falls back to ``<workspace>/clipboard-images/`` if the
-    home directory is unavailable.
+    Mirrors Rust ``clipboard_images_dir`` (clipboard.rs:142). Project-local
+    since 2026-05-11: pasted images land under ``<workspace>/.deepseek/
+    clipboard-images/`` (or fall back to ``<workspace>/clipboard-images/``
+    when ``HOME`` is unset, for test environments that scrub the env).
     """
-    home = Path.home() if "HOME" in os.environ else None
-    if home is not None:
-        return home / ".deepseek" / "clipboard-images"
+    if "HOME" in os.environ:
+        return workspace / ".deepseek" / "clipboard-images"
     return workspace / "clipboard-images"

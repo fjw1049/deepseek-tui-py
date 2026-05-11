@@ -51,7 +51,10 @@ _DEFAULT_FORMAT = (
 )
 _DEFAULT_DATEFMT = "%Y-%m-%dT%H:%M:%S%z"
 
-DEFAULT_LOG_DIR = Path("~/.deepseek/logs").expanduser()
+# Project-local default. ``DEEPSEEK_HOME`` env override is honored through
+# ``dot_deepseek_dir()`` callers; this constant is the bare fallback when
+# logging starts before Config is loaded.
+DEFAULT_LOG_DIR = Path(".deepseek/logs")
 DEFAULT_KEEP_HOURS = 24
 
 
@@ -108,6 +111,11 @@ def setup_logging(
         setattr(root, _INIT_MARKER, True)
         return None
 
+    # Resolve to an absolute path before handing off to TimedRotatingFileHandler.
+    # The handler stores the filename verbatim and re-resolves on each rotate;
+    # if cwd ever shifts mid-run (tools that chdir), logs would split across
+    # directories. Snapshotting against the cwd at setup time avoids that.
+    cfg_logging.dir = cfg_logging.dir.absolute()
     cfg_logging.dir.mkdir(parents=True, exist_ok=True)
     log_file = cfg_logging.dir / "deepseek.log"
 

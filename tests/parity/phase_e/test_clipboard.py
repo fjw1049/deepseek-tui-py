@@ -30,11 +30,16 @@ def test_pasted_image_labels_format_correctly() -> None:
     assert p.size_label() == "235KB"
 
 
-def test_clipboard_images_dir_uses_home_when_available(tmp_path: Path) -> None:
-    """Mirror behaviour of Rust ``clipboard_images_dir`` (clipboard.rs:142)."""
+def test_clipboard_images_dir_uses_workspace_when_home_available(tmp_path: Path) -> None:
+    """Pasted images land under ``<workspace>/.deepseek/clipboard-images``.
+
+    Mirrors the project-local-state design switch on 2026-05-11. The
+    previous behaviour parked images in ``~/.deepseek/clipboard-images``;
+    moving them next to the workspace makes attachment paths stable across
+    machines and keeps state out of the user's home.
+    """
     with patch.dict("os.environ", {"HOME": str(tmp_path)}):
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            d = clipboard_images_dir(workspace=Path("/dev/null"))
+        d = clipboard_images_dir(workspace=tmp_path)
     assert d == tmp_path / ".deepseek" / "clipboard-images"
 
 

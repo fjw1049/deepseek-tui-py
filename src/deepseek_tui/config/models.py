@@ -49,7 +49,7 @@ class UiConfig(BaseModel):
 
 
 class StateConfig(BaseModel):
-    database_path: Path = Path("~/.deepseek/state.db")
+    database_path: Path = Path(".deepseek/state.db")
     autosave: bool = True
 
 
@@ -186,14 +186,14 @@ class LoggingConfig(BaseModel):
     """Per-hour rotating file logging — consumed by :func:`logging_setup.setup_logging`.
 
     Defaults match the design discussion (2026-05-10): INFO level, text
-    format, ``~/.deepseek/logs/`` rotation directory, 24-hour retention,
-    no console fallback. Tests should leave ``enabled=False`` so they
-    don't spray log files into ``tmp_path``.
+    format, ``./.deepseek/logs/`` rotation directory (project-local since
+    2026-05-11), 24-hour retention, no console fallback. Tests should
+    leave ``enabled=False`` so they don't spray log files into ``tmp_path``.
     """
 
     enabled: bool = True
     level: str = "INFO"
-    dir: Path = Path("~/.deepseek/logs")
+    dir: Path = Path(".deepseek/logs")
     console: bool = False
     keep_hours: int = 24
     # Optional per-logger level overrides — useful when the user wants
@@ -249,10 +249,10 @@ class Config(BaseModel):
     allow_shell: bool = True
     managed_config_path: Path | None = None
     requirements_path: Path | None = None
-    skills_dir: Path = Path("~/.deepseek/skills")
-    mcp_config_path: Path = Path("~/.deepseek/mcp.json")
-    notes_path: Path = Path("~/.deepseek/notes.txt")
-    memory_path: Path = Path("~/.deepseek/memory.md")
+    skills_dir: Path = Path(".deepseek/skills")
+    mcp_config_path: Path = Path(".deepseek/mcp.json")
+    notes_path: Path = Path(".deepseek/notes.txt")
+    memory_path: Path = Path(".deepseek/memory.md")
     max_subagents: int = 10
     instructions: list[Path] = Field(default_factory=list)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)

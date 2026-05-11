@@ -60,23 +60,25 @@ class FileKeyringStore(KeyringStore):
 
     @property
     def backend_name(self) -> str:
-        return "file-based (~/.deepseek/secrets/)"
+        return "file-based (./.deepseek/secrets/)"
 
     @staticmethod
     def default_path() -> Path:
-        """Resolve ``<home>/.deepseek/secrets/secrets.json``.
+        """Resolve ``./.deepseek/secrets/secrets.json``.
 
-        Mirrors `FileKeyringStore::default_path` (Rust lib.rs:202-210).
-        Uses :func:`pathlib.Path.home` which honours ``HOME`` on Unix
-        and ``USERPROFILE`` on Windows.
+        Project-local since 2026-05-11 (was ``~/.deepseek/...``). Each
+        checkout carries its own secret store; cross-project key leakage
+        no longer possible. Override path with the ``DEEPSEEK_HOME``
+        env var when a shared location is required.
         """
+        from deepseek_tui.config.paths import dot_deepseek_dir
+
         try:
-            home = Path.home()
+            return dot_deepseek_dir() / "secrets" / "secrets.json"
         except (RuntimeError, OSError) as err:  # pragma: no cover
             raise SecretsError(
-                "could not resolve home directory for FileKeyringStore"
+                "could not resolve .deepseek directory for FileKeyringStore"
             ) from err
-        return home / ".deepseek" / "secrets" / "secrets.json"
 
     def get(self, key: str) -> str | None:
         with self._lock:

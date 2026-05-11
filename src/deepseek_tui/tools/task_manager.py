@@ -1,7 +1,7 @@
 """Durable task manager.
 
 Mirrors `crates/tui/src/task_manager.rs` (1,845 lines). Persists each task as
-its own JSON file under ``~/.deepseek/tasks/`` and maintains a queue in
+its own JSON file under ``./.deepseek/tasks/`` and maintains a queue in
 ``queue.json`` so tasks survive process restarts.
 """
 
@@ -252,15 +252,17 @@ ExecutorFunc = Callable[[ExecutionTask, asyncio.Event], Awaitable[TaskExecutionR
 def default_tasks_dir() -> Path:
     """Return the default task data directory.
 
-    Mirrors Rust `default_tasks_dir()` (task_manager.rs:1629).
+    Mirrors Rust `default_tasks_dir()` (task_manager.rs:1629). Project-local
+    since 2026-05-11 — tasks persist under ``./.deepseek/tasks/`` so each
+    checkout has its own queue (zombie pytest tasks can no longer poison
+    other projects).
     """
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
     env = os.environ.get("DEEPSEEK_TASKS_DIR", "").strip()
     if env:
         return Path(env)
-    home = Path.home()
-    if home.exists():
-        return home / ".deepseek" / "tasks"
-    return Path(".deepseek") / "tasks"
+    return dot_deepseek_dir() / "tasks"
 
 
 async def _stub_executor(

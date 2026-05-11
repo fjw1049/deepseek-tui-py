@@ -12,8 +12,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from deepseek_tui.config.paths import expand_path
-
 __all__ = [
     "Skill",
     "SkillRegistry",
@@ -31,8 +29,13 @@ SYSTEM_VERSION_MARKER = ".system-installed-version"
 
 
 def default_skills_dir() -> Path:
-    """Return ``~/.deepseek/skills``, expanding ``~``."""
-    return expand_path("~/.deepseek/skills")
+    """Return ``./.deepseek/skills``.
+
+    Project-local since 2026-05-11: skills travel with the checkout.
+    """
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
+    return dot_deepseek_dir() / "skills"
 
 
 @dataclass(frozen=True, slots=True)

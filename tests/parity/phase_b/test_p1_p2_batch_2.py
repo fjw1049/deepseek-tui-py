@@ -87,7 +87,11 @@ def test_deepseek_tui_has_rust_parity_bindings() -> None:
     from deepseek_tui.tui.app import DeepSeekTUI
 
     keys = {b.key for b in DeepSeekTUI.BINDINGS}
-    for required in ("ctrl+r", "ctrl+m", "ctrl+p", "tab", "ctrl+l", "pageup", "pagedown"):
+    # ``ctrl+m`` was removed (terminal-equivalent to Enter, broke composer
+    # submit) and replaced with ``ctrl+o`` for the model picker. ``tab`` was
+    # removed entirely so TextArea-style widgets can receive it for indent.
+    # See commit 45f3afc for the full rationale.
+    for required in ("ctrl+r", "ctrl+o", "ctrl+p", "ctrl+l", "pageup", "pagedown"):
         assert required in keys, f"missing binding: {required}"
 
 

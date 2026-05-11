@@ -532,10 +532,12 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
 
 
 def _memory_path(context: ToolContext) -> Path:
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
     env = os.environ.get("DEEPSEEK_MEMORY_PATH", "").strip()
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".deepseek" / "memory.md"
+    return dot_deepseek_dir() / "memory.md"
 
 
 def _notes_path(context: ToolContext) -> Path:
@@ -543,13 +545,16 @@ def _notes_path(context: ToolContext) -> Path:
 
 
 def _archives_dir(context: ToolContext) -> Path:
-    return Path.home() / ".deepseek" / "sessions" / "cycles"
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
+    return dot_deepseek_dir() / "sessions" / "cycles"
 
 
 def _find_skill(name: str, context: ToolContext) -> Path:
+    # ``~/.claude/skills`` stays in $HOME — that's a Claude-Code convention
+    # owned by a different tool, not part of our ``.deepseek/`` namespace.
     candidates = [
         context.working_directory / ".deepseek" / "skills" / name / "SKILL.md",
-        Path.home() / ".deepseek" / "skills" / name / "SKILL.md",
         Path.home() / ".claude" / "skills" / name / "SKILL.md",
     ]
     for p in candidates:

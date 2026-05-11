@@ -110,8 +110,8 @@ class Session:
     compaction_summary_prompt: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     total_usage: SessionUsage = field(default_factory=SessionUsage)
-    notes_path: Path = field(default_factory=lambda: Path("~/.deepseek/notes.txt"))
-    mcp_config_path: Path = field(default_factory=lambda: Path("~/.deepseek/mcp.json"))
+    notes_path: Path = field(default_factory=lambda: Path(".deepseek/notes.txt"))
+    mcp_config_path: Path = field(default_factory=lambda: Path(".deepseek/mcp.json"))
     project_context: dict[str, Any] | None = None
     cycle_count: int = 0
     current_cycle_started: int = field(default_factory=lambda: _epoch_now())
@@ -132,8 +132,8 @@ class Session:
             workspace=workspace,
             allow_shell=allow_shell,
             trust_mode=trust_mode,
-            notes_path=notes_path or Path("~/.deepseek/notes.txt"),
-            mcp_config_path=mcp_config_path or Path("~/.deepseek/mcp.json"),
+            notes_path=notes_path or Path(".deepseek/notes.txt"),
+            mcp_config_path=mcp_config_path or Path(".deepseek/mcp.json"),
         )
 
     def add_message(self, message: dict[str, Any]) -> None:

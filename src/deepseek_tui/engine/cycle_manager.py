@@ -344,7 +344,9 @@ def build_seed_messages(
 
 
 def _archive_dir_for(session_id: str) -> Path:
-    return Path.home() / ".deepseek" / "sessions" / session_id / "cycles"
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
+    return dot_deepseek_dir() / "sessions" / session_id / "cycles"
 
 
 def _load_handoff_template() -> str:

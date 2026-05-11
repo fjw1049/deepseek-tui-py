@@ -615,7 +615,9 @@ def cmd_queue(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/stash")
 def cmd_stash(args: str, app: DeepSeekTUI) -> CommandResult:
-    stash_dir = Path.home() / ".deepseek" / "stash"
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
+    stash_dir = dot_deepseek_dir() / "stash"
     stash_dir.mkdir(parents=True, exist_ok=True)
 
     sub = args.strip().split(maxsplit=1)
@@ -797,7 +799,9 @@ def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/cycles")
 def cmd_cycles(args: str, app: DeepSeekTUI) -> CommandResult:
-    archive_base = Path.home() / ".deepseek" / "sessions"
+    from deepseek_tui.config.paths import dot_deepseek_dir
+
+    archive_base = dot_deepseek_dir() / "sessions"
     if not archive_base.exists():
         return CommandResult(output="No cycle archives found.")
 

@@ -68,17 +68,40 @@ pytest tests -q   # 应该 1323 passed
 
 ### 配置 API Key
 
+所有运行时数据（config、sessions、tasks、logs、state.db、skills、secrets）默认放在**项目根目录下的 `./.deepseek/`**，每个 clone 互相独立、不会污染（这是 2026-05-11 之后的设计，原来是 `~/.deepseek/`）。该目录已加入 `.gitignore`，不会被提交。
+
 ```bash
-# 方式 1：环境变量（推荐）
+# 方式 1：环境变量（推荐，跨项目复用）
 export DEEPSEEK_API_KEY=sk-your-key-here
 
-# 方式 2：配置文件
-mkdir -p ~/.deepseek
-cp config.example.toml ~/.deepseek/config.toml
+# 方式 2：项目本地配置文件
+mkdir -p .deepseek
+cp config.example.toml .deepseek/config.toml
 # 编辑 api_key 字段
 
-# 方式 3：系统 keyring
-python -c "import keyring; keyring.set_password('deepseek-tui', 'deepseek', 'sk-your-key-here')"
+# 方式 3：项目本地 keyring（默认走文件 keyring，落在 .deepseek/secrets/）
+deepseek-tui login --provider deepseek --api-key sk-your-key-here
+```
+
+#### 用别处的 `.deepseek` 目录（共享配置）
+
+如果想多个项目共用一份配置（例如复用历史 sessions），用 `DEEPSEEK_HOME` 环境变量指向想用的目录：
+
+```bash
+export DEEPSEEK_HOME=~/.deepseek-shared
+deepseek-tui
+```
+
+`DEEPSEEK_HOME` 优先级最高，会覆盖项目本地路径。
+
+#### 从旧版 `~/.deepseek/` 迁移
+
+```bash
+# 把旧的全局配置/会话拷到当前项目（按需挑要的子目录）
+cp -r ~/.deepseek/config.toml ./.deepseek/
+cp -r ~/.deepseek/sessions   ./.deepseek/
+cp -r ~/.deepseek/skills     ./.deepseek/
+# tasks 一般不要拷，旧版可能有僵尸任务
 ```
 
 ### 运行

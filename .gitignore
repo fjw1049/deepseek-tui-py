@@ -21,6 +21,11 @@ dist/
 ~/.deepseek_tui/
 *.db
 
+# Project-local deepseek state (config.toml, sessions, tasks, logs, skills,
+# state.db, secrets). Each clone keeps its own; nothing here should be
+# committed.
+.deepseek/
+
 # IDE
 .vscode/
 .idea/
