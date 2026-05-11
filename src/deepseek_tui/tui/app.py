@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header
+from textual.widgets import Header
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.config.models import Config
@@ -41,6 +41,7 @@ from deepseek_tui.tui.widgets.command_palette import CommandPalette
 from deepseek_tui.tui.widgets.composer import Composer, ComposerHint
 from deepseek_tui.tui.widgets.file_mention import FileMention
 from deepseek_tui.tui.widgets.help_panel import HelpPanel
+from deepseek_tui.tui.widgets.key_hints import KeyHints
 from deepseek_tui.tui.widgets.sidebar import Sidebar
 from deepseek_tui.tui.widgets.slash_menu import SlashMenu
 from deepseek_tui.tui.widgets.status_bar import StatusBar
@@ -63,18 +64,20 @@ class DeepSeekTUI(App[None]):
     """Main TUI application."""
 
     TITLE = "DeepSeek TUI"
-    # Composer chrome trimmed (2026-05-11 polish pass): the original
-    # ``border: tall $accent`` doubled the height and clashed with the
-    # other docked rows. A single thin top rule + tight padding mirrors
-    # the Rust composer block while staying out of the user's way.
-    # ``StatusBar`` and ``ComposerHint`` carry their own dock CSS now.
+    # Composer chrome (2026-05-11 polish pass v2): the composer is the
+    # primary interaction surface, so it gets a full rounded border and
+    # is bumped from 3 → 5 rows (one for each border + 3 for text). The
+    # ``margin-bottom: 1`` carves a blank row between it and the
+    # ``KeyHints`` strip so the muted chip row reads as separate chrome
+    # rather than a continuation of the input.
     CSS = """
     Composer {
         dock: bottom;
         height: auto;
-        min-height: 3;
-        max-height: 10;
-        border-top: solid $accent;
+        min-height: 5;
+        max-height: 12;
+        border: round $accent;
+        margin: 0 1 1 1;
         padding: 0 1;
     }
     """
@@ -126,7 +129,7 @@ class DeepSeekTUI(App[None]):
         yield StatusBar()
         yield ComposerHint()
         yield Composer()
-        yield Footer()
+        yield KeyHints()
 
     async def on_mount(self) -> None:
         logger.info(

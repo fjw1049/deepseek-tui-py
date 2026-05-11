@@ -44,6 +44,15 @@ deepseek-tui = "deepseek_tui.__main__:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/deepseek_tui"]
 
+# Default to the Tsinghua TUNA mirror for package downloads.
+# `default = true` makes it the primary index; uv still falls back to
+# upstream PyPI if a package is missing here (rarely happens — TUNA
+# fully mirrors PyPI within minutes).
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

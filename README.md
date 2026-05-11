@@ -106,11 +106,25 @@ cp -r ~/.deepseek/skills     ./.deepseek/
 
 ### 运行
 
-首次运行前请确认依赖已安装到 venv（`uv sync` 会按 `pyproject.toml` + `uv.lock` 同步并把本仓库以 editable 模式装上）：
+最简单的方式 —— 一条命令搞定 sync + 启动：
+
+```bash
+bash scripts/start-service.sh              # 日常：增量 sync + 启动 TUI
+bash scripts/start-service.sh --fresh      # 清空 .venv 后重建再启动
+bash scripts/start-service.sh -- --help    # `--` 后的参数透传给 deepseek-tui
+```
+
+脚本里内置了几件事：
+
+- `uv sync --inexact` 增量同步，不会剪掉你已装的 dev 依赖（pytest / ruff / mypy 等）
+- `uv run --no-sync` 启动 TUI，避免冗余的二次同步
+- `pyproject.toml` 里 `[[tool.uv.index]]` 默认走清华 TUNA 镜像，国内拉包秒级
+
+需要手动控制每一步时（CI / 排查依赖问题）：
 
 ```bash
 cd deepseek-tui-py
-uv sync                    # 推荐：一步同步依赖 + 本地包
+uv sync                    # 同步依赖 + 本地包（editable 安装）
 source .venv/bin/activate  # 之后 shell 内可直接用 deepseek-tui
 ```
 

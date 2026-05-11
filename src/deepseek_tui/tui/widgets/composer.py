@@ -77,7 +77,7 @@ class Composer(TextArea):
         self._paste_suppress_until: float = 0.0
 
     def on_mount(self) -> None:
-        self.placeholder = "Type a message... (Enter to send, Ctrl+J for newline)"
+        self.placeholder = "Message DeepSeek…  ( ↵ send · Ctrl+J newline · / for commands · @ for files )"
 
     def _paste_window_active(self) -> bool:
         return time.monotonic() < self._paste_suppress_until

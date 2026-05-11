@@ -30,9 +30,11 @@ from __future__ import annotations
 import time
 from typing import Literal
 
+from rich.align import Align
 from rich.console import Group as _Group
 from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
+from rich.panel import Panel
 from rich.text import Text
 from textual import events
 from textual.containers import VerticalScroll
@@ -227,6 +229,107 @@ class _TurnDivider(Static):
         super().__init__("[dim]" + ("─" * width) + "[/]")
 
 
+class _WelcomeCell(Static):
+    """Empty-state greeting shown when the transcript has no messages.
+
+    Mounted on first paint and re-mounted by :meth:`Transcript.clear_messages`;
+    removed lazily as soon as any user / notice / tool / assistant content
+    arrives. Mirrors the empty-state pattern used by Claude Code and Codex
+    TUIs so the cold-start screen feels inviting instead of a void.
+
+    Layout (top → bottom):
+
+    1. Cartoon mascot whale (ASCII art, cyan) — water spout, big eye
+    2. 3-line half-block ``DEEPSEEK TUI`` title
+    3. Clickable hint line: ``☰  Click anywhere to open the palette``
+    4. Two-column key-binding cheat sheet
+    5. ``/help`` footnote
+
+    The whole cell is click-bound to :py:meth:`on_click`, which forwards
+    to ``DeepSeekTUI.action_command_palette``. ``$boost`` hover styling
+    gives a passive visual hint that the surface is interactive.
+    """
+
+    DEFAULT_CSS = """
+    _WelcomeCell { height: auto; margin: 2 0 1 0; }
+    _WelcomeCell:hover { background: $boost; }
+    """
+
+    # Cartoon whale. ~30 cols × 8 rows. Trailing whitespace per line is
+    # deliberate — it preserves the silhouette when ``Align.center``
+    # centres the multi-line block as one unit.
+    _WHALE = (
+        "                  o\n"
+        "                 o\n"
+        "               _____\n"
+        "           _.-'     '-.___\n"
+        "         ,'   ●              '-._\n"
+        "         (         ‿              )\n"
+        "          '.___________________..-'\n"
+        "              ~  ~  ~  ~  ~  ~"
+    )
+
+    # Hand-crafted 3-row half-block rendering of ``DEEPSEEK TUI``.
+    # Each glyph is 3–4 columns wide; a 2-column gap separates the two
+    # words. Width: 53 cols. Uses ``█``/``▀``/``▄`` from the U+25xx
+    # block — universally available in monospace fonts.
+    _TITLE = (
+        "█▀▀▄ █▀▀▀ █▀▀▀ █▀▀▄ ▄▀▀▀ █▀▀▀ █▀▀▀ █ ▄▀  ▀█▀ █  █ ▀█▀\n"
+        "█  █ █▀▀  █▀▀  █▀▀   ▀▀▄ █▀▀  █▀▀  █▀▄    █  █  █  █ \n"
+        "▀▀▀  ▀▀▀▀ ▀▀▀▀ ▀    ▀▀▀  ▀▀▀▀ ▀▀▀▀ ▀  ▀   ▀   ▀▀  ▀▀▀"
+    )
+
+    def __init__(self) -> None:
+        whale = Text(self._WHALE, style="cyan")
+        title = Text(self._TITLE, style="bold green")
+        hint = Text.from_markup(
+            "[bold green]☰[/]  [italic]Click anywhere to open the command "
+            "palette[/]  [dim]·[/]  [italic dim]Ready when you are[/]",
+            justify="center",
+        )
+        hints = Text.from_markup(
+            "  [bold]↵[/]      send                "
+            "[bold]Tab[/]     cycle agent / plan / yolo / ask\n"
+            "  [bold]/[/]      slash commands      "
+            "[bold]@[/]       mention a workspace file\n"
+            "  [bold]Ctrl+K[/]  command palette     "
+            "[bold]Ctrl+R[/]  browse sessions\n"
+            "  [bold]Ctrl+P[/]  file picker         "
+            "[bold]Ctrl+O[/]  switch model\n"
+            "  [bold]Ctrl+B[/]  toggle sidebar      "
+            "[bold]Ctrl+T[/]  toggle thinking",
+        )
+        footnote = Text.from_markup(
+            "[dim]Type [bold]/help[/] anytime for the full command catalog.[/]",
+            justify="center",
+        )
+        body = _Group(
+            Text(""),
+            Align.center(whale),
+            Text(""),
+            Align.center(title),
+            Text(""),
+            hint,
+            Text(""),
+            Align.center(hints),
+            Text(""),
+            footnote,
+            Text(""),
+        )
+        panel = Panel(body, border_style="dim cyan", padding=(0, 3))
+        super().__init__(Align.center(panel))
+
+    def on_click(self, event: events.Click) -> None:  # type: ignore[override]
+        # Forward to the app-level palette action so the welcome card
+        # behaves like a giant ``Ctrl+K`` chip. Errors are swallowed
+        # because the cell can briefly exist before the engine is wired
+        # (no harm if the click lands during that window).
+        try:
+            self.app.action_command_palette()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
 class Transcript(VerticalScroll):
     """Scrollable conversation transcript."""
 
@@ -264,8 +367,33 @@ class Transcript(VerticalScroll):
         # whether the live thinking cells stay collapsed in history or
         # are dropped entirely (mirrors Rust ``ui.show_thinking``).
         self.show_thinking: bool = True
+        # Empty-state greeting; lazy-mounted in ``on_mount`` and removed
+        # on the first piece of real content.
+        self._welcome_cell: _WelcomeCell | None = None
+
+    def on_mount(self) -> None:
+        self._show_welcome_if_empty()
+
+    def _show_welcome_if_empty(self) -> None:
+        if self._messages or self._welcome_cell is not None:
+            return
+        self._welcome_cell = _WelcomeCell()
+        try:
+            self.mount(self._welcome_cell)
+        except Exception:
+            self._welcome_cell = None
+
+    def _hide_welcome(self) -> None:
+        if self._welcome_cell is None:
+            return
+        try:
+            self._welcome_cell.remove()
+        except Exception:
+            pass
+        self._welcome_cell = None
 
     def add_user_message(self, text: str) -> None:
+        self._hide_welcome()
         self._messages.append(f"[bold cyan]You:[/] {text}")
         try:
             self.mount(_UserCell(text))
@@ -274,6 +402,7 @@ class Transcript(VerticalScroll):
             pass
 
     def add_system_message(self, text: str) -> None:
+        self._hide_welcome()
         self._messages.append(f"[bold yellow]System:[/] {text}")
         try:
             self.mount(_NoticeCell(text, severity="info"))
@@ -287,6 +416,7 @@ class Transcript(VerticalScroll):
         """Structured notice — preferred replacement for the System
         catch-all. Preserves the legacy ``_messages`` substring contract
         by prefixing with a capitalised severity label."""
+        self._hide_welcome()
         prefix = severity.title()
         self._messages.append(f"[bold]{prefix}:[/] {text}")
         try:
@@ -325,6 +455,7 @@ class Transcript(VerticalScroll):
             self._current_assistant = None
 
     def append_delta(self, content: str) -> None:
+        self._hide_welcome()
         self._current_buffer += content
         if self._current_assistant is None:
             self._close_open_segments_other_than("assistant")
@@ -340,6 +471,7 @@ class Transcript(VerticalScroll):
             pass
 
     def append_thinking(self, content: str) -> None:
+        self._hide_welcome()
         self._thinking_buffer += content
         if self._thinking_cell is None:
             self._close_open_segments_other_than("thinking")
@@ -361,6 +493,7 @@ class Transcript(VerticalScroll):
         tool_name: str,
         arguments: dict[str, object],
     ) -> None:
+        self._hide_welcome()
         # A tool call is a segment boundary — close any in-flight text
         # or thinking cells so the tool card slots into chronological
         # position; the next text/thinking delta starts a fresh cell
@@ -461,10 +594,14 @@ class Transcript(VerticalScroll):
         self._thinking_cell = None
         self._turn_thinking_cells = []
         self._tool_cells.clear()
+        # ``remove_children`` also unmounts the welcome cell, so drop our
+        # stale reference and let ``_show_welcome_if_empty`` re-create it.
+        self._welcome_cell = None
         try:
             self.remove_children()
         except Exception:
             pass
+        self._show_welcome_if_empty()
 
     def _find_tool_message_idx(self, tool_call_id: str) -> int | None:
         prefix = tool_call_id[:8]
