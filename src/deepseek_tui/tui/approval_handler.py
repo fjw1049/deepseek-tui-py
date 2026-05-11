@@ -42,9 +42,15 @@ class TUIApprovalHandler(ApprovalHandler):
             if not future.done():
                 future.set_result(bool(result))
 
+        risk = getattr(request, "risk_level", None)
+        risk_str = (
+            getattr(risk, "value", None) or (str(risk) if risk is not None else "")
+        )
         dialog = ApprovalDialog(
             tool_name=request.tool_name,
             reason=request.reason,
+            input_summary=getattr(request, "input_summary", "") or "",
+            risk_level=risk_str,
         )
         self._app.push_screen(dialog, _on_dismiss)
 

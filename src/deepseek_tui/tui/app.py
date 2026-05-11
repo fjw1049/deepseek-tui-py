@@ -38,7 +38,7 @@ from deepseek_tui.engine.ops import SendMessageOp
 from deepseek_tui.tui.backtrack import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
 from deepseek_tui.tui.widgets.command_palette import CommandPalette
-from deepseek_tui.tui.widgets.composer import Composer
+from deepseek_tui.tui.widgets.composer import Composer, ComposerHint
 from deepseek_tui.tui.widgets.file_mention import FileMention
 from deepseek_tui.tui.widgets.help_panel import HelpPanel
 from deepseek_tui.tui.widgets.sidebar import Sidebar
@@ -63,18 +63,19 @@ class DeepSeekTUI(App[None]):
     """Main TUI application."""
 
     TITLE = "DeepSeek TUI"
+    # Composer chrome trimmed (2026-05-11 polish pass): the original
+    # ``border: tall $accent`` doubled the height and clashed with the
+    # other docked rows. A single thin top rule + tight padding mirrors
+    # the Rust composer block while staying out of the user's way.
+    # ``StatusBar`` and ``ComposerHint`` carry their own dock CSS now.
     CSS = """
     Composer {
         dock: bottom;
         height: auto;
         min-height: 3;
         max-height: 10;
-        border: tall $accent;
+        border-top: solid $accent;
         padding: 0 1;
-    }
-    StatusBar {
-        dock: bottom;
-        height: 1;
     }
     """
 
@@ -123,6 +124,7 @@ class DeepSeekTUI(App[None]):
         yield SlashMenu()
         yield FileMention()
         yield StatusBar()
+        yield ComposerHint()
         yield Composer()
         yield Footer()
 
@@ -134,6 +136,16 @@ class DeepSeekTUI(App[None]):
         )
         self.query_one(Composer).focus()
         self.query_one(StatusBar).set_status("starting engine...")
+        # Seed the composer hint + transcript thinking visibility from
+        # config so the chrome reflects the active state before the
+        # first turn lands.
+        hint = self.query_one(ComposerHint)
+        hint.set_mode(self._current_mode)
+        if self.config.model:
+            hint.set_model(self.config.model)
+        self.query_one(Transcript).show_thinking = bool(
+            self.config.ui.show_thinking
+        )
         # Run engine startup off the on_mount critical path so the UI
         # becomes interactive immediately. Engine.create can take several
         # seconds (MCP servers, skill discovery, tool runtime wiring); we
@@ -188,6 +200,7 @@ class DeepSeekTUI(App[None]):
         status = self.query_one(StatusBar)
         status.set_model(model)
         status.set_mode("agent")
+        self.query_one(ComposerHint).set_model(model)
         # Apply --resume / --fork before announcing ready so the user sees
         # the restored transcript rather than a blank screen. Errors here
         # are non-fatal: status bar surfaces them and the user can keep
@@ -294,8 +307,8 @@ class DeepSeekTUI(App[None]):
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
         if self._engine is None:
             logger.warning("composer_submit_no_engine")
-            self.query_one(Transcript).add_system_message(
-                "Engine not started. Please configure an API key first."
+            self.query_one(StatusBar).set_status(
+                "no engine — configure API key first"
             )
             return
         preview = (event.text or "")[:200].replace("\n", " ")
@@ -321,9 +334,9 @@ class DeepSeekTUI(App[None]):
         result = dispatch(event.raw_input, self)
         transcript = self.query_one(Transcript)
         if result.output:
-            transcript.add_system_message(result.output)
+            transcript.add_notice(result.output, severity="info")
         if result.error:
-            transcript.add_system_message(f"Error: {result.error}")
+            transcript.add_notice(result.error, severity="error")
         if result.exit_app:
             self.exit()
 
@@ -374,6 +387,10 @@ class DeepSeekTUI(App[None]):
             if isinstance(event, TurnStartedEvent):
                 self._turn_started_at = time.monotonic()
                 status.set_status("thinking...")
+                status.set_started(self._turn_started_at)
+                # Refresh the thinking-visibility flag every turn so the
+                # Ctrl+T toggle takes effect at the next finalize.
+                transcript.show_thinking = bool(self.config.ui.show_thinking)
                 transcript.start_assistant_message()
             elif isinstance(event, TextDeltaEvent):
                 transcript.append_delta(event.text)
@@ -388,32 +405,45 @@ class DeepSeekTUI(App[None]):
                     event.tool_call_id, event.content, event.success
                 )
             elif isinstance(event, ApprovalRequiredEvent):
-                status.set_status("awaiting approval...")
-                transcript.add_system_message(
-                    f"Approval required for tool: "
-                    f"{event.request.tool_name} — {event.request.reason}"
+                # The modal dialog IS the notification — surfacing an
+                # extra "Approval required for X" notice on top of every
+                # tool call clogged the transcript and hid the actual
+                # tool result. Drive the tool cell's header instead.
+                status.set_status(
+                    f"awaiting approval: {event.request.tool_name}"
                 )
+                transcript.mark_tool_awaiting_approval(event.tool_call_id)
             elif isinstance(event, ApprovalResolvedEvent):
                 label = "approved" if event.approved else "denied"
-                transcript.add_system_message(
-                    f"Tool {label}: {event.reason}"
-                )
+                status.set_status(f"tool {label}")
+                if event.approved:
+                    transcript.mark_tool_approved(event.tool_call_id)
+                else:
+                    transcript.mark_tool_denied(
+                        event.tool_call_id, event.reason
+                    )
             elif isinstance(event, SandboxDeniedEvent):
-                transcript.add_system_message(
-                    f"Sandbox denied {event.tool_name}: {event.reason}"
+                # Sandbox denial happens INSTEAD of tool execution — no
+                # ToolResultEvent ever fires for this call. Mark the
+                # cell denied so it doesn't stay stuck at "running".
+                transcript.mark_tool_denied(event.tool_call_id, event.reason)
+                status.set_status(
+                    f"sandbox denied: {event.tool_name}"
                 )
             elif isinstance(event, UserInputRequiredEvent):
                 status.set_status("awaiting user input...")
                 self._handle_user_input_event(event, transcript)
             elif isinstance(event, ErrorEvent):
-                transcript.add_system_message(f"Error: {event.message}")
+                transcript.add_notice(event.message, severity="error")
                 status.set_status("error")
             elif isinstance(event, TurnCancelledEvent):
                 status.set_status("cancelled")
+                status.set_finished()
                 transcript.finalize_message()
                 break
             elif isinstance(event, TurnCompleteEvent):
                 status.set_status("ready")
+                status.set_finished()
                 if event.usage is not None:
                     status.set_tokens(
                         event.usage.input_tokens + event.usage.output_tokens
@@ -444,11 +474,12 @@ class DeepSeekTUI(App[None]):
                 for o in (options if isinstance(options, list) else [])
             ]
             display = f"Question: {question}\nOptions: {', '.join(option_labels)}"
-            transcript.add_system_message(display)
+            transcript.add_notice(display, severity="info")
             if option_labels:
                 response[str(qid)] = option_labels[0]
-                transcript.add_system_message(
-                    f"Auto-selected: {option_labels[0]}"
+                transcript.add_notice(
+                    f"Auto-selected: {option_labels[0]}",
+                    severity="info",
                 )
 
         self.handle.resolve_user_input(event.tool_call_id, response)
@@ -463,9 +494,9 @@ class DeepSeekTUI(App[None]):
                 cmd_result = dispatch(result, self)
                 transcript = self.query_one(Transcript)
                 if cmd_result.output:
-                    transcript.add_system_message(cmd_result.output)
+                    transcript.add_notice(cmd_result.output, severity="info")
                 if cmd_result.error:
-                    transcript.add_system_message(f"Error: {cmd_result.error}")
+                    transcript.add_notice(cmd_result.error, severity="error")
                 if cmd_result.exit_app:
                     self.exit()
 
@@ -504,8 +535,8 @@ class DeepSeekTUI(App[None]):
 
         sessions = self._discover_session_picks()
         if not sessions:
-            self.query_one(Transcript).add_system_message(
-                "No saved sessions found in ~/.deepseek/sessions/"
+            self.query_one(StatusBar).set_status(
+                "no saved sessions in ~/.deepseek/sessions/"
             )
             return
 
@@ -529,6 +560,7 @@ class DeepSeekTUI(App[None]):
             self._engine.default_model = picked
             self.config.model = picked
             self.query_one(StatusBar).set_model(picked)
+            self.query_one(ComposerHint).set_model(picked)
 
         self.push_screen(ModelPicker(), _on_pick)
 
@@ -561,7 +593,7 @@ class DeepSeekTUI(App[None]):
         next_mode = modes[(idx + 1) % len(modes)]
         self._current_mode = next_mode
         self.query_one(StatusBar).set_mode(next_mode)
-        self.query_one(Transcript).add_system_message(f"Mode: {next_mode}")
+        self.query_one(ComposerHint).set_mode(next_mode)
 
     def action_clear_transcript(self) -> None:
         """Clear visible transcript without resetting engine session.
@@ -586,13 +618,16 @@ class DeepSeekTUI(App[None]):
     def action_toggle_thinking(self) -> None:
         """Toggle ``ui.show_thinking`` (Ctrl+T, Rust ``Ctrl+T``).
 
-        Currently advisory: the transcript always shows thinking deltas.
-        Wiring the toggle to actually hide them is documented as a Stage 6
-        follow-up since the cell already streams via ``_ThinkingCell``.
+        The transcript reads the flag at the start of each turn and on
+        ``finalize_message``; live deltas always render so the user can
+        see what's happening *during* a turn, and the collapse/drop
+        decision is taken once the turn ends.
         """
         self.config.ui.show_thinking = not self.config.ui.show_thinking
         state = "on" if self.config.ui.show_thinking else "off"
-        self.query_one(Transcript).add_system_message(f"show_thinking={state}")
+        transcript = self.query_one(Transcript)
+        transcript.show_thinking = bool(self.config.ui.show_thinking)
+        self.query_one(StatusBar).set_status(f"thinking {state}")
 
     @staticmethod
     def _discover_session_picks() -> list[tuple[str, str]]:
@@ -617,8 +652,9 @@ class DeepSeekTUI(App[None]):
         """Esc-Esc backtrack chord (mirrors Rust ``backtrack.rs``).
 
         First Esc primes; second opens the picker. The picker shows up
-        as a system message rather than a full overlay (which is logged
-        as a known simplification in HANDOVER).
+        as a status-bar toast rather than a full overlay (which is logged
+        as a known simplification in HANDOVER) — keeps the transcript
+        clean of chord priming hints.
         """
         engine = self._engine
         total = (
@@ -627,21 +663,21 @@ class DeepSeekTUI(App[None]):
             else 0
         )
         effect = self._backtrack.handle_esc(total)
-        transcript = self.query_one(Transcript)
+        status = self.query_one(StatusBar)
         if effect == EscEffect.PRIME:
-            transcript.add_system_message("Press Esc again to backtrack to a previous turn")
+            status.set_status("Esc again to backtrack")
         elif effect == EscEffect.CANCEL:
-            transcript.add_system_message("Backtrack cancelled")
+            status.set_status("backtrack cancelled")
         elif effect == EscEffect.OPEN_OVERLAY:
-            transcript.add_system_message(
-                f"Backtrack: {total} user turn(s). "
-                f"Press Enter to commit (depth-from-tail = {self._backtrack.selected_idx})."
+            status.set_status(
+                f"backtrack: {total} turn(s); depth={self._backtrack.selected_idx}"
             )
 
     def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
         """Handle session selection from sidebar."""
-        transcript = self.query_one(Transcript)
-        transcript.add_system_message(f"Switching to session: {event.session_id[:8]}...")
+        self.query_one(StatusBar).set_status(
+            f"switching to session {event.session_id[:8]}…"
+        )
         self.query_one(Sidebar).hide_sidebar()
 
     # ── notifications ─────────────────────────────────────────────────

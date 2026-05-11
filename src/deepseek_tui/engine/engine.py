@@ -81,6 +81,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _summarize_call_args(arguments: dict[str, Any] | None) -> str:
+    """Return a short, single-line summary of a tool's arguments.
+
+    Used to enrich :class:`ApprovalRequest.input_summary` so the TUI
+    approval dialog can show *what* is being approved (the actual
+    command or path) rather than just the tool name. Picks the first
+    non-empty value, takes its first line, and caps the length at 200.
+    """
+    if not arguments:
+        return ""
+    for value in arguments.values():
+        if value is None:
+            continue
+        s = str(value).strip()
+        if not s:
+            continue
+        s = s.splitlines()[0]
+        if len(s) > 200:
+            s = s[:199] + "…"
+        return s
+    return ""
+
+
 class Engine:
     def __init__(
         self,
@@ -688,6 +711,17 @@ class Engine:
             tool_call.name,
             getattr(approval_request, "risk_level", None),
         )
+        # The TUI approval dialog needs to surface *what* is being
+        # approved — "exec_shell + medium risk" is useless on its own.
+        # Populate ``input_summary`` from the tool arguments here so the
+        # downstream ApprovalHandler can show the actual command/path.
+        if not getattr(approval_request, "input_summary", ""):
+            summary = _summarize_call_args(tool_call.arguments)
+            if summary:
+                try:
+                    approval_request.input_summary = summary
+                except Exception:  # noqa: BLE001 — frozen models, etc.
+                    pass
         emit_tool_audit(
             {
                 "event": "tool.approval_required",

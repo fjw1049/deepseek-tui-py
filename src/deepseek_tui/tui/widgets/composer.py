@@ -9,9 +9,48 @@ from pathlib import Path
 
 from textual import events
 from textual.message import Message
-from textual.widgets import TextArea
+from textual.widgets import Static, TextArea
 
 PASTE_ENTER_SUPPRESS_WINDOW_SECS: float = 0.120
+
+
+class ComposerHint(Static):
+    """One-line hint strip above the composer.
+
+    Shows the active mode + model + the high-traffic key chords
+    (``↵ send · Ctrl+J newline · Tab mode``). Mirrors the bottom title
+    of Rust's bordered ``ComposerWidget`` block in
+    ``crates/tui/src/tui/widgets/mod.rs``.
+    """
+
+    DEFAULT_CSS = """
+    ComposerHint {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__("")
+        self._mode: str = "agent"
+        self._model: str = ""
+        self._refresh()
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
+        self._refresh()
+
+    def set_model(self, model: str) -> None:
+        self._model = model
+        self._refresh()
+
+    def _refresh(self) -> None:
+        mode = f"[cyan]{self._mode}[/]" if self._mode else "[dim]—[/]"
+        model = f"[bold]{self._model}[/]" if self._model else "[dim]no model[/]"
+        chords = "[dim]↵ send · Ctrl+J newline · Tab mode[/]"
+        self.update(f"{mode}  [dim]·[/]  {model}  [dim]·[/]  {chords}")
 
 
 class Composer(TextArea):
