@@ -83,16 +83,49 @@ python -c "import keyring; keyring.set_password('deepseek-tui', 'deepseek', 'sk-
 
 ### 运行
 
+首次运行前请确认依赖已安装到 venv（`uv sync` 会按 `pyproject.toml` + `uv.lock` 同步并把本仓库以 editable 模式装上）：
+
 ```bash
-# 启动 TUI
+cd deepseek-tui-py
+uv sync                    # 推荐：一步同步依赖 + 本地包
+source .venv/bin/activate  # 之后 shell 内可直接用 deepseek-tui
+```
+
+常用命令：
+
+```bash
+# 启动交互式 TUI（默认）
 deepseek-tui
 
-# 启动 App Server
-deepseek-tui serve --port 8080
+# 健康检查（确认依赖、API key、模型配置都就绪）
+deepseek-tui doctor
 
-# 单次对话
-deepseek-tui prompt "你好"
+# 单次对话（non-interactive，结果走 stdout）
+deepseek-tui -p "你好"
+
+# 启动 App Server（HTTP + SSE，默认监听 127.0.0.1:8787）
+deepseek-tui serve --host 127.0.0.1 --port 8787
+
+# 启动 App Server（stdio JSON-RPC，给上游 agent 调用）
+deepseek-tui serve --stdio
+
+# 用作 MCP server（其他客户端通过 stdio JSON-RPC 调本仓库的工具）
+deepseek-tui mcp-server
+
+# 恢复 / fork 历史会话
+deepseek-tui resume <session-id>
+deepseek-tui fork   <session-id>
+
+# 查看 / 切换登录态
+deepseek-tui auth status
+deepseek-tui login --provider deepseek --api-key sk-...
 ```
+
+#### 常见问题
+
+- **启动后界面静态、按键无响应**：通常是 `~/.deepseek/tasks/` 残留了僵尸任务（pytest 临时目录之类的）。检查 `cat ~/.deepseek/tasks/queue.json`；若有大量条目，备份后清空 `tasks/` 与 `queue.json` 再重启。
+- **`deepseek-tui: command not found`**：venv 没激活或依赖没装。执行 `uv sync && source .venv/bin/activate`。
+- **HTTP 400 `unknown variant 'auto'`**：旧版 `tool_choice` 格式没翻译，已在最新 commit 修复（`client/deepseek.py::_map_tool_choice_for_chat`）。拉取最新代码即可。
 
 ## 项目结构
 

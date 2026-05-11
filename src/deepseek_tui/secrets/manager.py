@@ -79,6 +79,11 @@ class SecretsManager:
             value = provider_config.api_key
             if value.strip():
                 return value
+
+        # Layer 4: top-level config.api_key fallback (used by doctor/CLI).
+        if config.api_key and config.api_key.strip():
+            return config.api_key
+
         return None
 
     # ------------------------------------------------------------------

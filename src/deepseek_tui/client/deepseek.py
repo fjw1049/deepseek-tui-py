@@ -38,6 +38,39 @@ def is_reasoning_model(model: str) -> bool:
     )
 
 
+def _map_tool_choice_for_chat(
+    choice: str | dict[str, Any] | None,
+) -> str | dict[str, Any] | None:
+    """Translate internal tool_choice shape into the chat-completions API shape.
+
+    Mirrors Rust ``client/chat.rs::map_tool_choice_for_chat``. The engine
+    emits ``{"type": "auto"}`` etc. internally, but DeepSeek's
+    ``/v1/chat/completions`` only accepts the OpenAI shapes:
+      - bare string ``"auto" | "none" | "required"``
+      - object ``{"type": "function", "function": {"name": "..."}}``
+
+    Without this mapping the API returns HTTP 400 "unknown variant `auto`".
+    """
+    if choice is None:
+        return None
+    if isinstance(choice, str):
+        return choice
+    if not isinstance(choice, dict):
+        return choice
+    choice_type = choice.get("type")
+    if not isinstance(choice_type, str):
+        return choice
+    if choice_type in ("auto", "none"):
+        return choice_type
+    if choice_type == "any":
+        return "auto"
+    if choice_type == "tool":
+        name = choice.get("name")
+        if isinstance(name, str):
+            return {"type": "function", "function": {"name": name}}
+    return choice
+
+
 class DeepSeekClient(LLMClient):
     def __init__(
         self,
@@ -242,7 +275,9 @@ class DeepSeekClient(LLMClient):
         if request.tools:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
-            payload["tool_choice"] = request.tool_choice
+            mapped = _map_tool_choice_for_chat(request.tool_choice)
+            if mapped is not None:
+                payload["tool_choice"] = mapped
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
         if request.temperature is not None:

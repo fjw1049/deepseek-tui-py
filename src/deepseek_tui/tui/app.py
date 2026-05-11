@@ -67,7 +67,9 @@ class DeepSeekTUI(App[None]):
     Composer {
         dock: bottom;
         height: auto;
+        min-height: 3;
         max-height: 10;
+        border: tall $accent;
         padding: 0 1;
     }
     StatusBar {
@@ -82,15 +84,14 @@ class DeepSeekTUI(App[None]):
         Binding("ctrl+k", "command_palette", "Command Palette"),
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
         Binding("escape", "esc_press", "Backtrack", show=False),
-        Binding("question_mark", "show_help", "Help", show=False),
+        Binding("f1", "show_help", "Help", show=False),
         # Rust-parity bindings (subset). Full Rust catalog has 40+ chords;
         # this batch covers the highest-traffic ones — pickers, mode cycle,
         # transcript scroll. Remaining Rust bindings are documented in the
         #集成债 list as Stage 6 follow-up.
         Binding("ctrl+r", "open_session_picker", "Sessions"),
-        Binding("ctrl+m", "open_model_picker", "Models"),
+        Binding("ctrl+o", "open_model_picker", "Models"),
         Binding("ctrl+p", "open_file_picker", "Files"),
-        Binding("tab", "cycle_mode", "Cycle Mode", show=False),
         Binding("ctrl+l", "clear_transcript", "Clear", show=False),
         Binding("pageup", "transcript_page_up", "PageUp", show=False),
         Binding("pagedown", "transcript_page_down", "PageDown", show=False),
@@ -132,7 +133,12 @@ class DeepSeekTUI(App[None]):
             self._fork_session_id,
         )
         self.query_one(Composer).focus()
-        await self._start_engine()
+        self.query_one(StatusBar).set_status("starting engine...")
+        # Run engine startup off the on_mount critical path so the UI
+        # becomes interactive immediately. Engine.create can take several
+        # seconds (MCP servers, skill discovery, tool runtime wiring); we
+        # don't want keystrokes to queue up behind it.
+        self.run_worker(self._start_engine(), exclusive=True, name="engine-start")
 
     async def _start_engine(self) -> None:
         """Build LLM client + Engine from config and start the engine loop.

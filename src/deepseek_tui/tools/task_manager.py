@@ -699,6 +699,25 @@ def _load_state(
                         summary="Recovered from restart and re-queued",
                     )
                 )
+            # Safety: if a queued task points at a workspace that no longer
+            # exists on disk (common with pytest temp dirs or moved
+            # projects), fail it immediately instead of looping forever on
+            # restart. Without this guard, zombie tasks from old test runs
+            # spawn an Engine per worker tick and starve the event loop.
+            if task.status is TaskStatus.QUEUED:
+                ws = task.workspace
+                if ws and not Path(ws).exists():
+                    now = _utc_now_iso()
+                    task.status = TaskStatus.FAILED
+                    task.error = f"workspace not found: {ws}"
+                    task.ended_at = now
+                    task.timeline.append(
+                        TaskTimelineEntry(
+                            timestamp=now,
+                            kind="failed",
+                            summary=f"workspace not found: {ws}",
+                        )
+                    )
             tasks[task.id] = task
 
     queue: deque[str] = deque()
