@@ -20,6 +20,17 @@ fn make_snapshot(status: SubAgentStatus) -> SubAgentResult {
     }
 }
 
+fn message_text(message: &Message) -> &str {
+    match message.content.first() {
+        Some(ContentBlock::Text { text, .. }) => text.as_str(),
+        other => panic!("expected text content block, got {other:?}"),
+    }
+}
+
+fn estimate_tool_description_tokens_conservative(text: &str) -> usize {
+    text.chars().count().div_ceil(3)
+}
+
 #[test]
 fn test_agent_type_from_str() {
     assert_eq!(
@@ -143,6 +154,59 @@ fn test_implementer_and_verifier_have_distinct_prompts() {
 }
 
 #[test]
+fn test_agent_type_prompts_include_shared_output_contract_once() {
+    for (agent_type, marker) in [
+        (SubAgentType::General, "general-purpose sub-agent"),
+        (SubAgentType::Explore, "exploration sub-agent"),
+        (SubAgentType::Plan, "planning sub-agent"),
+        (SubAgentType::Review, "code review sub-agent"),
+        (SubAgentType::Implementer, "implementation sub-agent"),
+        (SubAgentType::Verifier, "verification sub-agent"),
+        (SubAgentType::Custom, "custom sub-agent"),
+    ] {
+        let prompt = agent_type.system_prompt();
+        assert!(prompt.contains(marker));
+        assert_eq!(
+            prompt.matches("## Output contract (mandatory)").count(),
+            1,
+            "{agent_type:?} prompt should include the shared output contract exactly once"
+        );
+        assert!(prompt.contains("### SUMMARY") && prompt.contains("### BLOCKERS"));
+    }
+}
+
+#[test]
+fn agent_spawn_description_warns_parent_to_verify_self_reports_within_budget() {
+    let tmp = tempdir().expect("tempdir");
+    let manager = new_shared_subagent_manager(tmp.path().to_path_buf(), 1);
+    let tool = AgentSpawnTool::new(manager, stub_runtime());
+    let description = tool.description();
+
+    assert!(
+        description
+            .contains("## Trust model: subagent results are self-reports, not verified facts")
+    );
+    assert!(description.contains("`agent_result` returns the child's narrative summary"));
+    assert!(description.contains("| Side effect | Re-verify with |"));
+    assert!(description.contains("If the child returns a verifiable handle"));
+    for row in [
+        "| URL claimed posted/written | `fetch_url` and check the response |",
+        "| File claimed created | `read_file` or `list_dir` |",
+        "| File claimed edited | `read_file` and check the change is present |",
+        "| HTTP POST/PUT response | inspect status code and body |",
+        "| Git operation | `git_status` / `git_diff` |",
+        "| Test claimed passing | `run_tests` |",
+        "| Process claimed started | `exec_shell` (e.g. `pgrep`, `lsof -i`) |",
+    ] {
+        assert!(description.contains(row));
+    }
+    assert!(
+        estimate_tool_description_tokens_conservative(description) <= 1024,
+        "agent_spawn description exceeds the conservative 1024-token budget"
+    );
+}
+
+#[test]
 fn test_implementer_allowed_tools_include_writes() {
     // Implementer is the write-heavy role; the deprecated
     // `allowed_tools()` advisory list should reflect that the role
@@ -205,6 +269,88 @@ fn test_parse_spawn_request_accepts_items_payload() {
     assert!(parsed.prompt.contains("Analyze module"));
     assert!(parsed.prompt.contains("[mention:$drive](app://drive)"));
     assert_eq!(parsed.agent_type, SubAgentType::Explore);
+}
+
+#[test]
+fn test_parse_spawn_request_accepts_fork_context() {
+    let input = json!({
+        "prompt": "continue from here",
+        "fork_context": true
+    });
+    let parsed = parse_spawn_request(&input).expect("spawn request should parse");
+    assert!(parsed.fork_context);
+
+    let input = json!({
+        "prompt": "continue from here",
+        "inherit_context": true
+    });
+    let parsed = parse_spawn_request(&input).expect("spawn request should parse");
+    assert!(parsed.fork_context);
+}
+
+#[test]
+fn test_delegate_defaults_to_fork_context() {
+    let input = with_default_fork_context(json!({ "prompt": "review current work" }), true);
+    let parsed = parse_spawn_request(&input).expect("delegate request should parse");
+    assert!(parsed.fork_context);
+
+    let input = with_default_fork_context(
+        json!({ "prompt": "fresh exploration", "fork_context": false }),
+        true,
+    );
+    let parsed = parse_spawn_request(&input).expect("delegate override should parse");
+    assert!(!parsed.fork_context);
+}
+
+#[test]
+fn forked_subagent_messages_preserve_parent_prefix_then_append_task() {
+    let parent_system = SystemPrompt::Text("parent system".to_string());
+    let parent_message = Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::Text {
+            text: "parent turn".to_string(),
+            cache_control: None,
+        }],
+    };
+    let fork_context = SubAgentForkContext {
+        system: Some(parent_system.clone()),
+        messages: vec![parent_message.clone()],
+        structured_state_block: Some(
+            "## Cycle State (Auto-Preserved)\n- Mode: `AGENT`".to_string(),
+        ),
+    };
+
+    let assignment = SubAgentAssignment::new("inspect parser".to_string(), Some("worker".into()));
+    let messages = build_initial_subagent_messages(
+        "inspect parser",
+        &assignment,
+        &SubAgentType::General,
+        Some(&fork_context),
+    );
+
+    assert_eq!(
+        subagent_request_system_prompt("child system", Some(&fork_context)),
+        parent_system
+    );
+    assert_eq!(messages.first(), Some(&parent_message));
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[1].role, "system");
+    assert!(message_text(&messages[1]).contains("<deepseek:fork_state>"));
+    assert_eq!(messages[2].role, "system");
+    assert!(message_text(&messages[2]).contains("<deepseek:subagent_context>"));
+    assert_eq!(messages[3].role, "user");
+    assert!(message_text(&messages[3]).contains("inspect parser"));
+}
+
+#[test]
+fn fresh_subagent_messages_keep_existing_single_turn_shape() {
+    let assignment = SubAgentAssignment::new("list files".to_string(), None);
+    let messages =
+        build_initial_subagent_messages("list files", &assignment, &SubAgentType::Explore, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, "user");
+    assert!(message_text(&messages[0]).contains("list files"));
 }
 
 #[test]
@@ -396,6 +542,82 @@ fn test_build_assignment_prompt_includes_metadata() {
     assert!(prompt.contains("Assignment metadata"));
     assert!(prompt.contains("resolved_type: explore"));
     assert!(prompt.contains("role: explorer"));
+}
+
+#[test]
+fn subagent_auto_model_routes_unconfigured_assignments() {
+    let runtime = stub_runtime().with_auto_model(true);
+
+    assert_eq!(
+        fallback_subagent_assignment_route(&runtime, None, "implement the release fix").model,
+        "deepseek-v4-pro"
+    );
+    assert_eq!(
+        fallback_subagent_assignment_route(&runtime, None, "say hello").model,
+        "deepseek-v4-flash"
+    );
+}
+
+#[test]
+fn subagent_auto_route_respects_explicit_or_role_model() {
+    let runtime = stub_runtime().with_auto_model(true);
+
+    assert_eq!(
+        fallback_subagent_assignment_route(
+            &runtime,
+            Some("deepseek-v4-flash".to_string()),
+            "implement the release fix"
+        )
+        .model,
+        "deepseek-v4-flash"
+    );
+}
+
+#[test]
+fn subagent_auto_reasoning_resolves_to_distinct_v4_tiers() {
+    let runtime = stub_runtime().with_reasoning_effort(Some("high".to_string()), true);
+
+    assert_eq!(
+        fallback_subagent_assignment_route(&runtime, None, "quick lookup").reasoning_effort,
+        Some("high".to_string())
+    );
+    assert_eq!(
+        fallback_subagent_assignment_route(&runtime, None, "debug this release failure")
+            .reasoning_effort,
+        Some("max".to_string())
+    );
+}
+
+#[test]
+fn fixed_model_subagent_auto_reasoning_skips_flash_router() {
+    let runtime = stub_runtime().with_reasoning_effort(Some("high".to_string()), true);
+
+    assert!(
+        !should_use_subagent_flash_router(&runtime),
+        "fixed-model auto thinking should resolve locally without a hidden router request"
+    );
+}
+
+#[test]
+fn auto_model_subagent_assignments_still_use_flash_router() {
+    let runtime = stub_runtime().with_auto_model(true);
+
+    assert!(
+        should_use_subagent_flash_router(&runtime),
+        "auto-model sub-agent assignments still need router guidance"
+    );
+}
+
+#[test]
+fn subagent_router_prompt_frames_assignment_as_auto_routing() {
+    let runtime = stub_runtime()
+        .with_auto_model(true)
+        .with_reasoning_effort(Some("high".to_string()), true);
+    let prompt = subagent_router_prompt(&runtime, "inspect one file");
+
+    assert!(prompt.contains("Parent selected model mode: auto"));
+    assert!(prompt.contains("Parent selected thinking mode: auto"));
+    assert!(prompt.contains("inspect one file"));
 }
 
 #[test]
@@ -901,18 +1123,46 @@ fn would_exceed_depth_at_boundary() {
 }
 
 #[test]
-fn child_runtime_increments_depth_and_forces_auto_approve() {
+fn child_runtime_increments_depth_and_preserves_auto_approve() {
     let mut parent = stub_runtime();
     parent.spawn_depth = 1;
     parent.context.auto_approve = false; // parent in suggest mode
     let child = parent.child_runtime();
     assert_eq!(child.spawn_depth, 2, "child depth = parent + 1");
     assert!(
-        child.context.auto_approve,
-        "child must auto-approve regardless of parent mode (spawning IS the approval)"
+        !child.context.auto_approve,
+        "child must inherit parent approval state"
     );
-    // Parent mode is unchanged — the override is on the child only.
     assert!(!parent.context.auto_approve);
+
+    parent.context.auto_approve = true;
+    let auto_child = parent.child_runtime();
+    assert!(
+        auto_child.context.auto_approve,
+        "auto-approved parents should still create auto-approved children"
+    );
+}
+
+#[tokio::test]
+async fn subagent_registry_blocks_approval_tools_without_parent_auto_approve() {
+    let mut runtime = stub_runtime();
+    runtime.context.auto_approve = false;
+    let registry = SubAgentToolRegistry::new(
+        runtime,
+        Some(vec!["exec_shell".to_string()]),
+        Arc::new(Mutex::new(TodoList::new())),
+        Arc::new(Mutex::new(PlanState::default())),
+    );
+
+    let err = registry
+        .execute("agent_test", "exec_shell", json!({"command": "echo hi"}))
+        .await
+        .expect_err("approval-gated child tool should be blocked");
+
+    assert!(
+        err.to_string().contains("requires approval"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -945,6 +1195,39 @@ fn mailbox_propagates_through_child_runtime_chain() {
         grandchild.mailbox.is_some(),
         "grandchild inherits via the cloned Arc inside Mailbox"
     );
+}
+
+#[test]
+fn subagent_rejects_interactive_shell_terminal_takeover() {
+    let err = reject_subagent_terminal_takeover(
+        "exec_shell",
+        &serde_json::json!({
+            "command": "python3 -i",
+            "interactive": true
+        }),
+    )
+    .expect_err("sub-agents must not inherit the parent terminal");
+
+    let msg = err.to_string();
+    assert!(msg.contains("cannot use exec_shell with interactive=true"));
+    assert!(msg.contains("parent TUI terminal"));
+
+    reject_subagent_terminal_takeover(
+        "exec_shell",
+        &serde_json::json!({
+            "command": "cargo check",
+            "interactive": false
+        }),
+    )
+    .expect("non-interactive shell remains allowed");
+    reject_subagent_terminal_takeover(
+        "exec_shell",
+        &serde_json::json!({
+            "command": "cargo test",
+            "background": true
+        }),
+    )
+    .expect("background shell remains allowed");
 }
 
 #[tokio::test]
@@ -1102,6 +1385,9 @@ fn stub_runtime() -> SubAgentRuntime {
     SubAgentRuntime {
         client: stub_client(),
         model: "deepseek-v4-flash".to_string(),
+        auto_model: false,
+        reasoning_effort: None,
+        reasoning_effort_auto: false,
         role_models: std::collections::HashMap::new(),
         context,
         allow_shell: true,
@@ -1111,6 +1397,8 @@ fn stub_runtime() -> SubAgentRuntime {
         max_spawn_depth: DEFAULT_MAX_SPAWN_DEPTH,
         cancel_token: CancellationToken::new(),
         mailbox: None,
+        parent_completion_tx: None,
+        fork_context: None,
     }
 }
 
@@ -1306,4 +1594,147 @@ fn persist_round_trip_preserves_session_boot_id() {
         .find(|s| s.agent_id == "agent_persist")
         .unwrap();
     assert!(snap.from_prior_session);
+}
+
+// === Issue #756: parent-completion wakeup ===
+//
+// When a direct child of the engine finishes, `run_subagent_task` emits
+// a `SubAgentCompletion` on the runtime's `parent_completion_tx`. The
+// engine's turn loop drains that channel before deciding to end the turn.
+// These tests cover the gating logic in `emit_parent_completion` so the
+// parent isn't flooded with grandchild completions and so the function
+// is safe when no channel is wired.
+
+fn runtime_with_depth(
+    spawn_depth: u32,
+    parent_completion_tx: Option<mpsc::UnboundedSender<SubAgentCompletion>>,
+) -> SubAgentRuntime {
+    let mut rt = stub_runtime();
+    rt.spawn_depth = spawn_depth;
+    rt.parent_completion_tx = parent_completion_tx;
+    rt
+}
+
+#[test]
+fn emit_parent_completion_fires_for_direct_child() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubAgentCompletion>();
+    let runtime = runtime_with_depth(1, Some(tx));
+
+    let sent = emit_parent_completion(&runtime, "agent_abc", "summary line\n<sentinel/>");
+
+    assert!(sent, "depth=1 with channel wired should send");
+    let received = rx.try_recv().expect("channel should have one message");
+    assert_eq!(received.agent_id, "agent_abc");
+    assert_eq!(received.payload, "summary line\n<sentinel/>");
+    assert!(rx.try_recv().is_err(), "should be exactly one message");
+}
+
+#[test]
+fn emit_parent_completion_skips_grandchildren() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubAgentCompletion>();
+    let runtime = runtime_with_depth(2, Some(tx));
+
+    let sent = emit_parent_completion(&runtime, "agent_grandchild", "ignored");
+
+    assert!(
+        !sent,
+        "depth=2 grandchild must not fire on the parent channel"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "channel should remain empty for grandchildren"
+    );
+}
+
+#[test]
+fn emit_parent_completion_skips_engine_self() {
+    // depth 0 is the engine itself — the engine never spawns a task at
+    // depth 0, but defend against accidental misuse.
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubAgentCompletion>();
+    let runtime = runtime_with_depth(0, Some(tx));
+
+    let sent = emit_parent_completion(&runtime, "agent_root", "ignored");
+
+    assert!(
+        !sent,
+        "depth=0 must not fire (only depth=1 direct children)"
+    );
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn emit_parent_completion_no_channel_is_noop() {
+    let runtime = runtime_with_depth(1, None);
+
+    let sent = emit_parent_completion(&runtime, "agent_no_chan", "anything");
+
+    assert!(
+        !sent,
+        "missing channel should be a silent no-op, not a panic"
+    );
+}
+
+#[test]
+fn emit_parent_completion_dropped_receiver_does_not_panic() {
+    let (tx, rx) = mpsc::unbounded_channel::<SubAgentCompletion>();
+    drop(rx);
+    let runtime = runtime_with_depth(1, Some(tx));
+
+    // The send returns an error internally but we discard it — the
+    // caller's run_subagent_task does not care whether the engine is
+    // still listening (it might be shutting down).
+    let sent = emit_parent_completion(&runtime, "agent_orphan", "after-rx-drop");
+
+    assert!(
+        sent,
+        "we still attempt the send; the engine being gone is not our problem"
+    );
+}
+
+#[test]
+fn child_runtime_propagates_completion_tx_for_gating() {
+    // The channel is cloned through `child_runtime()` so descendants carry
+    // it. The gate at the send site (`spawn_depth == 1`) is what limits
+    // who actually fires — `child_runtime` simply must not strand it.
+    let (tx, _rx) = mpsc::unbounded_channel::<SubAgentCompletion>();
+    let parent = runtime_with_depth(0, Some(tx));
+
+    let child = parent.child_runtime();
+
+    assert_eq!(child.spawn_depth, 1, "child increments depth");
+    assert!(
+        child.parent_completion_tx.is_some(),
+        "child carries the wakeup channel forward"
+    );
+}
+
+#[test]
+fn subagent_completion_payload_carries_existing_sentinel_format() {
+    // The payload format is the same one already documented in
+    // prompts/base.md: human summary on line 1, `<deepseek:subagent.done>`
+    // sentinel on line 2. This test pins the format so future refactors
+    // don't silently break the model's parsing contract.
+    let mut snap = make_snapshot(SubAgentStatus::Completed);
+    snap.result = Some("Found three errors.".to_string());
+
+    let summary = summarize_subagent_result(&snap);
+    let sentinel = subagent_done_sentinel("agent_test", &snap);
+    let payload = format!("{summary}\n{sentinel}");
+
+    let mut lines = payload.lines();
+    let first = lines.next().expect("first line is summary");
+    let second = lines.next().expect("second line is sentinel");
+    assert!(
+        !first.starts_with("<deepseek:subagent.done>"),
+        "summary should not be the sentinel itself"
+    );
+    assert!(
+        second.starts_with("<deepseek:subagent.done>"),
+        "second line is the sentinel"
+    );
+    assert!(second.ends_with("</deepseek:subagent.done>"));
+    assert!(
+        second.contains("\"agent_id\":\"agent_test\""),
+        "sentinel JSON includes agent_id"
+    );
 }

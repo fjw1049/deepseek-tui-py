@@ -75,6 +75,17 @@ class TurnCancelledEvent:
 class TurnCompleteEvent:
     assistant_message: Message | None
     usage: Usage | None = None
+    # Cumulative session cost (USD) — populated when ``Engine`` knows
+    # how to price the model. ``None`` when pricing is unknown (off-
+    # platform providers, unrecognised model) so the UI can hide rather
+    # than show a misleading zero.
+    session_cost_usd: float | None = None
+    session_cost_cny: float | None = None
+    # Convenience snapshot so the UI can render the cache-hit chip
+    # without having to keep state of its own. Both default to 0 when
+    # the provider didn't return cache details.
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
 
 
 @dataclass(frozen=True, slots=True)

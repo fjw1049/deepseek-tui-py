@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::tui::app::App;
+use crate::tui::app::{App, MentionCompletionCache};
 use crate::working_set::Workspace;
 
 /// Maximum number of `@`-mentions whose contents are inlined into one user
@@ -148,6 +148,9 @@ pub fn find_file_mention_completions(
     limit: usize,
 ) -> Vec<String> {
     let entries = workspace.completions(partial, limit);
+    // #441: re-rank by frecency so files the user mentions a lot float up.
+    // Never-mentioned candidates fall back to the workspace ranker's order.
+    let entries = super::file_frecency::rerank_by_frecency(entries);
     tracing::debug!(
         target: "deepseek_tui::file_mention",
         partial = %partial,
@@ -179,7 +182,7 @@ fn workspace_for_app(app: &App) -> Workspace {
 /// Once the composer widget is extended to render this as a popup, it will
 /// pair with `apply_mention_menu_selection` for the Up/Down/Enter flow.
 #[must_use]
-pub fn visible_mention_menu_entries(app: &App, limit: usize) -> Vec<String> {
+pub fn visible_mention_menu_entries(app: &mut App, limit: usize) -> Vec<String> {
     if app.mention_menu_hidden {
         return Vec::new();
     }
@@ -191,8 +194,30 @@ pub fn visible_mention_menu_entries(app: &App, limit: usize) -> Vec<String> {
     if limit == 0 {
         return Vec::new();
     }
-    let ws = workspace_for_app(app);
-    find_file_mention_completions(&ws, &partial, limit)
+
+    let workspace = app.workspace.clone();
+    let cwd = std::env::current_dir().ok();
+    if let Some(ref cache) = app.composer.mention_completion_cache
+        && cache.workspace == workspace
+        && cache.cwd == cwd
+        && cache.partial == partial
+        && cache.limit == limit
+    {
+        return cache.entries.clone();
+    }
+
+    let ws = Workspace::with_cwd(workspace.clone(), cwd.clone());
+    let entries = find_file_mention_completions(&ws, &partial, limit);
+
+    app.composer.mention_completion_cache = Some(MentionCompletionCache {
+        workspace,
+        cwd,
+        partial,
+        limit,
+        entries: entries.clone(),
+    });
+
+    entries
 }
 
 /// Apply the currently selected `@`-mention popup entry to the composer
@@ -215,6 +240,9 @@ pub fn apply_mention_menu_selection(app: &mut App, entries: &[String]) -> bool {
         .mention_menu_selected
         .min(entries.len().saturating_sub(1));
     let replacement = &entries[selected_idx];
+    // #441: bump this path's frecency before we splice it in. The store
+    // persists asynchronously, so this never blocks input handling.
+    super::file_frecency::record_mention(replacement);
     replace_file_mention(app, byte_start, &partial, replacement);
     app.mention_menu_hidden = false;
     app.status_message = Some(format!("Attached @{replacement}"));
@@ -239,6 +267,8 @@ pub fn try_autocomplete_file_mention(app: &mut App) -> bool {
         return true;
     }
     if candidates.len() == 1 {
+        // #441: a unique-match completion is also a "mention" for ranking.
+        super::file_frecency::record_mention(&candidates[0]);
         replace_file_mention(app, byte_start, &partial, &candidates[0]);
         app.status_message = Some(format!("Attached @{}", candidates[0]));
         return true;

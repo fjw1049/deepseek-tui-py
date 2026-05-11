@@ -237,6 +237,13 @@ class ExecutionTask:
     allow_shell: bool
     trust_mode: bool
     auto_approve: bool
+    # Back-reference to the owning TaskManager, populated by
+    # ``TaskManager._pop_next_task``. Executors propagate it to the
+    # spawned Engine's ``ToolContext.metadata`` so tools like
+    # ``checklist_write`` can forward their snapshots to the durable
+    # task record via :meth:`TaskManager.record_tool_metadata`.
+    # Typed as ``Any`` to avoid a forward reference / circular type.
+    task_manager: Any = None
 
 
 @dataclass(slots=True)
@@ -387,9 +394,25 @@ class TaskManager:
         self._notify.set()
         return task
 
-    async def list_tasks(self, limit: int | None = None) -> list[TaskSummary]:
+    async def list_tasks(
+        self,
+        limit: int | None = None,
+        *,
+        since: str | None = None,
+    ) -> list[TaskSummary]:
+        """List durable tasks (newest first).
+
+        ``since`` is an ISO-8601 timestamp; tasks with ``created_at <
+        since`` are filtered out. Callers like the right info-sidebar
+        use this to avoid surfacing stale `failed` records from prior
+        TUI sessions every time the user opens a fresh chat (issue
+        triaged 2026-05-12 — fresh "hello" was lighting up the panel
+        with last week's pytest-failed tasks).
+        """
         async with self._lock:
             items = [record.summary() for record in self._tasks.values()]
+        if since is not None:
+            items = [s for s in items if s.created_at >= since]
         items.sort(key=lambda s: s.created_at, reverse=True)
         if limit is not None:
             items = items[:limit]
@@ -434,6 +457,108 @@ class TaskManager:
         if token_to_cancel is not None:
             token_to_cancel.set()
         return result
+
+    async def record_tool_metadata(
+        self, id_or_prefix: str, metadata: dict[str, Any]
+    ) -> TaskRecord | None:
+        """Apply ``task_updates`` from a tool's result metadata to the task.
+
+        Mirrors Rust ``TaskManager::record_tool_metadata``
+        (``task_manager.rs:985-1003``). Currently honors the
+        ``task_updates.checklist`` key — see
+        :meth:`_apply_task_update_metadata` for details. Returns the
+        updated record, or ``None`` if the task no longer exists (e.g.
+        was cancelled and removed between events).
+
+        Tools call this via the side-channel set up by
+        :class:`real_task_executor`: ``ToolContext.metadata`` carries a
+        ``task_manager`` reference + ``task_id``; the checklist tools
+        invoke ``manager.record_tool_metadata(task_id, metadata)`` after
+        every successful write. Quiet no-op when ``task_updates`` is
+        missing so non-checklist tools don't have to opt out.
+        """
+        if not isinstance(metadata, dict):
+            return None
+        if "task_updates" not in metadata:
+            return None
+        async with self._lock:
+            try:
+                task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            except KeyError:
+                return None
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            self._apply_task_update_metadata(task, metadata)
+            self._persist_task_locked(task)
+            return task
+
+    def _apply_task_update_metadata(
+        self, task: TaskRecord, metadata: dict[str, Any]
+    ) -> None:
+        """Translate a single ``task_updates`` payload into ``TaskRecord`` mutations.
+
+        Mirrors Rust ``apply_task_update_metadata`` (``task_manager.rs:1360-1452``).
+        Only handles ``checklist`` for now — gate / attempt / artifact /
+        github_event branches from the Rust version are integration debt
+        and live as TODOs until the corresponding tools land in Python.
+        """
+        updates = metadata.get("task_updates")
+        if not isinstance(updates, dict):
+            return
+        checklist_payload = updates.get("checklist")
+        if not isinstance(checklist_payload, dict):
+            return
+        items_raw = checklist_payload.get("items", [])
+        items: list[TaskChecklistItem] = []
+        if isinstance(items_raw, list):
+            for entry in items_raw:
+                if not isinstance(entry, dict):
+                    continue
+                raw_id = entry.get("id")
+                try:
+                    item_id = int(raw_id) if raw_id is not None else 0
+                except (TypeError, ValueError):
+                    continue
+                content = entry.get("content", "")
+                status = entry.get("status", "pending")
+                items.append(
+                    TaskChecklistItem(
+                        id=item_id,
+                        content=str(content),
+                        status=str(status),
+                    )
+                )
+        completion_pct_raw = checklist_payload.get("completion_pct", 0)
+        try:
+            completion_pct = int(completion_pct_raw)
+        except (TypeError, ValueError):
+            completion_pct = 0
+        in_progress_raw = checklist_payload.get("in_progress_id")
+        in_progress_id: int | None
+        if isinstance(in_progress_raw, int):
+            in_progress_id = in_progress_raw
+        elif isinstance(in_progress_raw, str) and in_progress_raw.lstrip("-").isdigit():
+            in_progress_id = int(in_progress_raw)
+        else:
+            in_progress_id = None
+        now = _utc_now_iso()
+        task.checklist = TaskChecklistState(
+            items=items,
+            completion_pct=completion_pct,
+            in_progress_id=in_progress_id,
+            updated_at=now,
+        )
+        task.timeline.append(
+            TaskTimelineEntry(
+                timestamp=now,
+                kind="checklist",
+                summary=(
+                    f"Checklist updated: {len(items)} item(s), "
+                    f"{completion_pct}% complete"
+                ),
+            )
+        )
 
     async def counts(self) -> TaskCounts:
         async with self._lock:
@@ -492,6 +617,7 @@ class TaskManager:
                     allow_shell=task.allow_shell,
                     trust_mode=task.trust_mode,
                     auto_approve=task.auto_approve,
+                    task_manager=self,
                 )
                 cancel = asyncio.Event()
                 self._running_cancel[task_id] = cancel

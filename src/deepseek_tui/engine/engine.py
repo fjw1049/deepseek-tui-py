@@ -145,6 +145,13 @@ class Engine:
         self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
         self.turn_loop = TurnLoop(client, compact_fn=self._emergency_compact)
+        # Cumulative session cost (USD / CNY), accumulated per turn from
+        # the DeepSeek usage payload via the pricing module. Mirrors
+        # Rust ``App.session_cost`` — the footer reads these to render
+        # the cost chip and the ``/cost`` slash command sources from
+        # the same fields.
+        self.session_cost_usd: float = 0.0
+        self.session_cost_cny: float = 0.0
         # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
@@ -330,10 +337,38 @@ class Engine:
                 getattr(usage, "reasoning_tokens", 0) if usage else 0,
                 len(result.tool_calls or []),
             )
+            # Accumulate session cost from the DeepSeek usage payload.
+            # Hidden when pricing is unknown (off-platform providers,
+            # unrecognised model) — the UI also hides the chip in that
+            # case so we don't show $0.00 misleadingly.
+            cache_hit_tokens = 0
+            cache_miss_tokens = 0
+            cost_usd: float | None = None
+            cost_cny: float | None = None
+            if usage is not None:
+                cache_hit_tokens = usage.cache_read_input_tokens
+                cache_miss_tokens = usage.cache_creation_input_tokens
+                from deepseek_tui.client.pricing import (
+                    calculate_turn_cost_estimate_from_usage,
+                )
+
+                model_for_pricing = op.model or self.default_model
+                estimate = calculate_turn_cost_estimate_from_usage(
+                    model_for_pricing, usage
+                )
+                if estimate is not None:
+                    self.session_cost_usd += estimate.usd
+                    self.session_cost_cny += estimate.cny
+                    cost_usd = self.session_cost_usd
+                    cost_cny = self.session_cost_cny
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
                     usage=result.usage,
+                    session_cost_usd=cost_usd,
+                    session_cost_cny=cost_cny,
+                    cache_hit_tokens=cache_hit_tokens,
+                    cache_miss_tokens=cache_miss_tokens,
                 )
             )
             await self._auto_persist_session()

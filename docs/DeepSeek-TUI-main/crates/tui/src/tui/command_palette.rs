@@ -6,7 +6,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    prelude::Stylize,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget, Wrap},
@@ -352,7 +351,6 @@ fn modal_block() -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(palette::BORDER_COLOR))
-        .style(Style::default().bg(palette::DEEPSEEK_INK))
         .padding(Padding::uniform(1))
 }
 
@@ -820,7 +818,7 @@ mod tests {
     #[test]
     fn command_palette_filters_with_section_shortcuts() {
         let entries = vec![
-            palette_entry(PaletteSection::Command, "/agent", "agent command", "/agent"),
+            palette_entry(PaletteSection::Command, "/mode", "mode command", "/mode"),
             palette_entry(
                 PaletteSection::Skill,
                 "skill:search",
@@ -838,7 +836,7 @@ mod tests {
         ];
         let mut view = CommandPaletteView::new(entries);
 
-        view.query = "c:agent".to_string();
+        view.query = "c:mode".to_string();
         view.refilter();
         assert_eq!(view.filtered, vec![0]);
 

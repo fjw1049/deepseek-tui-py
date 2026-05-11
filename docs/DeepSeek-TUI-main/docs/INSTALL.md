@@ -61,6 +61,15 @@ Useful environment variables:
 | `DEEPSEEK_TUI_DISABLE_INSTALL=1`    | Skip the `postinstall` download entirely (CI smoke, vendored binaries)                 |
 | `DEEPSEEK_TUI_OPTIONAL_INSTALL=1`   | Don't fail `npm install` on download/extract errors — useful in CI matrices            |
 
+> **Slow npm download from mainland China?** If `npm install` itself is slow
+> (not just the postinstall binary download), use an npm registry mirror:
+> ```bash
+> npm config set registry https://registry.npmmirror.com
+> npm install -g deepseek-tui
+> ```
+> See also [Section 3](#3-install-via-cargo-any-tier-1-rust-target) if you
+> prefer Cargo over npm.
+
 ---
 
 ## 3. Install via Cargo (any Tier-1 Rust target)
@@ -70,13 +79,50 @@ install from crates.io directly. Both crates are required — the dispatcher
 delegates to the TUI runtime at runtime.
 
 ```bash
-# Requires Rust 1.85+ (https://rustup.rs)
+# Requires Rust 1.88+ (https://rustup.rs)
 cargo install deepseek-tui-cli --locked   # provides `deepseek`
 cargo install deepseek-tui     --locked   # provides `deepseek-tui`
 deepseek --version
 ```
 
-### China / mirror-friendly Cargo registry
+### China / mirror-friendly install
+
+When installing from mainland China, configure mirrors for both **rustup**
+(the Rust toolchain installer) and **Cargo** (the package registry) to avoid
+TLS timeouts and download failures.
+
+**Step 1: Install Rust via a rustup mirror**
+
+```bash
+# PowerShell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+(New-Object Net.WebClient).DownloadFile('https://win.rustup.rs/x86_64', 'rustup-init.exe')
+
+# git-bash / msys2
+export RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+export RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+./rustup-init.exe -y --default-toolchain stable
+
+# Linux / macOS
+export RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+export RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+```
+
+If the TUNA mirror is slow from your network, `rsproxy.cn` is another
+rustup mirror option for Linux/macOS:
+
+```bash
+export RUSTUP_DIST_SERVER=https://rsproxy.cn
+export RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+```
+
+The `RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT` environment variables must
+be set **before** running rustup-init; the toolchain download otherwise hits
+the same TLS handshake problem as the installer.
+
+**Step 2: Configure Cargo registry mirror**
 
 ```toml
 # ~/.cargo/config.toml
@@ -119,6 +165,20 @@ curl -L -o /tmp/deepseek-artifacts-sha256.txt \
 
 (Use `shasum -a 256 -c` instead of `sha256sum` on macOS.)
 
+### Windows Scoop
+
+DeepSeek TUI is listed in Scoop's main bucket:
+
+```powershell
+scoop update
+scoop install deepseek-tui
+deepseek --version
+```
+
+Scoop manifests are maintained outside this repository's release workflow and
+can lag GitHub/npm/Cargo releases. Use npm or manual GitHub release downloads
+when you need the newest version immediately.
+
 ---
 
 ## 5. Build from source
@@ -128,7 +188,7 @@ LoongArch, FreeBSD, and pre-2024 ARM64 distros.
 
 ### Prerequisites
 
-- **Rust** 1.85 or later — install with [rustup](https://rustup.rs).
+- **Rust** 1.88 or later — install with [rustup](https://rustup.rs).
 - **Linux build-time deps** (Debian/Ubuntu/openEuler/Kylin):
   ```bash
   sudo apt-get install -y build-essential pkg-config libdbus-1-dev
@@ -193,6 +253,69 @@ cargo build --release --target aarch64-unknown-linux-gnu -p deepseek-tui
 The same recipe works for `aarch64-unknown-linux-musl` if your distro is
 musl-based.
 
+### Windows build from source
+
+Building on Windows requires the **MSVC C toolchain** from
+[Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+(the free workload-selectable installer, not the full IDE).
+
+**Prerequisites (Windows)**
+
+1. Install Visual Studio 2022 Build Tools — select the **"Desktop development
+   with C++"** workload.
+2. Install [Rust](https://rustup.rs) 1.88+ (see the
+   [China mirror instructions](#china--mirror-friendly-install) above if
+   downloading from mainland China).
+3. Install [Git for Windows](https://git-scm.com/download/win) (provides `git`
+   and the `git-bash` terminal).
+
+**Recommended terminals**: Windows Terminal, `git-bash`, or PowerShell.
+`cmd.exe` works but has a small buffer and limited PATH behavior.
+
+**Setting up the MSVC environment**
+
+Visual Studio Build Tools install `cl.exe` to a versioned directory but do
+**not** add it to `PATH` globally. You must set the environment manually or
+use a Developer Command Prompt. The required variables are:
+
+```powershell
+# Adjust version numbers to match your installation
+$msvc = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207"
+$sdk   = "C:\Program Files (x86)\Windows Kits\10"
+$sdkv  = "10.0.26100.0"
+
+$env:INCLUDE  = "$msvc\include;$msvc\atlmfc\include;$sdk\Include\$sdkv\ucrt;$sdk\Include\$sdkv\um;$sdk\Include\$sdkv\shared"
+$env:LIB      = "$msvc\lib\x64;$msvc\atlmfc\lib\x64;$sdk\Lib\$sdkv\ucrt\x64;$sdk\Lib\$sdkv\um\x64"
+$env:LIBPATH  = "$msvc\lib\x64;$msvc\atlmfc\lib\x64"
+$env:CC       = "$msvc\bin\Hostx64\x64\cl.exe"
+$env:CXX      = "$msvc\bin\Hostx64\x64\cl.exe"
+$env:PATH     = "$msvc\bin\Hostx64\x64;$env:PATH"
+```
+
+Alternatively, open a **"Developer Command Prompt for VS 2022"** (available
+from the Start Menu after installing Build Tools), which runs `vcvars64.bat`
+to configure all of the above automatically. Then add `cargo` to `PATH` inside
+that session and run `cargo build` from the project root.
+
+**Cargo registry mirror** — on Windows the mirror config goes to
+`%USERPROFILE%\.cargo\config.toml`. See [Step 2 above](#china--mirror-friendly-install).
+
+**Build**
+
+```bash
+git clone https://github.com/Hmbown/DeepSeek-TUI.git
+cd DeepSeek-TUI
+set CARGO_HTTP_CHECK_REVOKE=false   # may be needed behind some Chinese ISPs
+cargo build --release
+```
+
+Both binaries appear in `target\release\deepseek.exe` and
+`target\release\deepseek-tui.exe`.
+
+> **Prefer `npm install -g` on Windows unless you need to modify source.**
+> The npm package pulls prebuilt binaries and avoids the C toolchain
+> dependency entirely — see [Section 2](#2-install-via-npm-recommended).
+
 ---
 
 ## 6. Troubleshooting
@@ -232,6 +355,20 @@ Set `DEEPSEEK_TUI_RELEASE_BASE_URL` to a mirrored release-asset directory
 (rsproxy, TUNA, Tencent COS, Aliyun OSS), or skip npm entirely and use the
 Cargo mirror setup in [Section 3](#3-install-via-cargo-any-tier-1-rust-target).
 
+### Debian/Ubuntu: `feature edition2024 is required` from `cargo install`
+
+Some Debian/Ubuntu distro packages ship an older Cargo that cannot parse Rust
+2024 crates. For example, Cargo 1.75.0 fails before building with:
+
+```text
+feature `edition2024` is required
+```
+
+Install current stable Rust through rustup, then rerun the two Cargo install
+commands from [Section 3](#3-install-via-cargo-any-tier-1-rust-target). After
+rustup finishes, `which cargo` should point to `~/.cargo/bin/cargo`, not
+`/usr/bin/cargo`.
+
 ### Debian/Ubuntu: `error: linker 'cc' not found` while building
 
 Install the C toolchain:
@@ -244,6 +381,63 @@ sudo apt-get install -y build-essential pkg-config libdbus-1-dev
 
 `npm i -g` installs into `$(npm prefix -g)/bin`; make sure that directory is on
 your shell's `PATH`. With nvm: `nvm use --lts && hash -r`.
+
+### Windows: `TLS handshake eof` or `CRYPT_E_REVOCATION_OFFLINE` from `rustup-init`
+
+The TLS handshake to `static.rust-lang.org` fails from behind the GFW or
+certain Chinese ISPs. Set the rustup mirror environment variables **before**
+running the installer:
+
+```bash
+# git-bash / msys2
+export RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+export RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+./rustup-init.exe -y --default-toolchain stable
+```
+
+If you see `CRYPT_E_REVOCATION_OFFLINE` from Cargo after Rust is installed,
+also set `CARGO_HTTP_CHECK_REVOKE=false` during `cargo build`.
+
+### Windows: MSVC compiler (`cl.exe`) not found during `cargo build`
+
+Visual Studio Build Tools do not add `cl.exe` to the global `PATH`. Either:
+
+1. Open **"Developer Command Prompt for VS 2022"** from the Start Menu, add
+   `%USERPROFILE%\.cargo\bin` to `PATH` in that window, and run `cargo build`
+   from there; or
+2. Set the MSVC environment variables manually — see the
+   [Windows build from source](#windows-build-from-source) section for the
+   PowerShell snippet.
+
+Verify the compiler is reachable: `cl.exe /?` should print help text.
+
+### Windows: `拒绝访问 (os error 5)` when Cargo executes build scripts
+
+Third-party antivirus software (Huorong, 360, Kaspersky, etc.) may block
+Cargo from executing freshly-compiled build-script binaries
+(e.g. `libsqlite3-sys`, `aws-lc-sys`, `instability`). The error is
+path-agnostic — moving `target-dir` does not help.
+
+**Symptoms**: `could not execute process ... build-script-build (never executed)`
+
+**Workarounds** (pick one):
+
+1. **Add the project's `target/` directory to your AV exclusions list.**
+2. **Close the antivirus software temporarily** during `cargo build`.
+3. **Use `npm install -g deepseek-tui` instead** — the npm package ships
+   prebuilt binaries and skips the Cargo build entirely
+   ([Section 2](#2-install-via-npm-recommended)).
+4. **Use `cargo install deepseek-tui-cli --locked`** from crates.io — this
+   changes the binary path, which some AV tools treat differently.
+
+To verify that the build-script binary itself is valid (not corrupted), locate
+it under `target/debug/build/<crate>/build-script-build` and run it manually:
+
+```bash
+target/debug/build/libsqlite3-sys-*/build-script-build
+# If this runs but panics with "NotPresent" (no C compiler), the binary is
+# fine — the AV is blocking Cargo's process-spawning path specifically.
+```
 
 ---
 

@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_stream::stream;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, Method, StatusCode};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -32,11 +33,13 @@ use crate::automation_manager::{
 use crate::config::{Config, DEFAULT_TEXT_MODEL};
 use crate::mcp::{McpConfig, McpPool};
 use crate::runtime_threads::{
-    CompactThreadRequest, CreateThreadRequest, RuntimeThreadManager, RuntimeThreadManagerConfig,
-    SharedRuntimeThreadManager, StartTurnRequest, SteerTurnRequest, ThreadDetail, ThreadRecord,
-    TurnItemKind, TurnRecord, UpdateThreadRequest,
+    CompactThreadRequest, CreateThreadRequest, ExternalApprovalDecision, RuntimeThreadManager,
+    RuntimeThreadManagerConfig, SharedRuntimeThreadManager, StartTurnRequest, SteerTurnRequest,
+    ThreadDetail, ThreadListFilter, ThreadRecord, TurnItemKind, TurnRecord, UpdateThreadRequest,
+    UsageGroupBy,
 };
 use crate::session_manager::{SavedSession, SessionManager, SessionMetadata, default_sessions_dir};
+use crate::skill_state::SkillStateStore;
 use crate::skills::SkillRegistry;
 use crate::task_manager::{
     NewTaskRequest, SharedTaskManager, TaskManager, TaskManagerConfig, TaskRecord, TaskSummary,
@@ -48,9 +51,15 @@ pub struct RuntimeApiState {
     workspace: PathBuf,
     task_manager: SharedTaskManager,
     runtime_threads: SharedRuntimeThreadManager,
+    cors_origins: Vec<String>,
     sessions_dir: PathBuf,
     mcp_config_path: PathBuf,
     automations: SharedAutomationManager,
+    runtime_token: Option<String>,
+    skill_state: Arc<Mutex<SkillStateStore>>,
+    auth_required: bool,
+    bind_host: String,
+    bind_port: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +67,74 @@ pub struct RuntimeApiOptions {
     pub host: String,
     pub port: u16,
     pub workers: usize,
+    /// Additional CORS origins to allow on top of the built-in defaults
+    /// (`http://localhost:{3000,1420}`, `http://127.0.0.1:{3000,1420}`,
+    /// `tauri://localhost`). Populated by `--cors-origin` (repeatable),
+    /// `DEEPSEEK_CORS_ORIGINS` (comma-separated), and `[runtime_api]
+    /// cors_origins` in `config.toml`. Whalescale#255 / #561.
+    pub cors_origins: Vec<String>,
+    /// Optional bearer token required for `/v1/*` routes. If omitted here,
+    /// `run_http_server` also checks `DEEPSEEK_RUNTIME_TOKEN`.
+    pub auth_token: Option<String>,
+    /// Allow `/v1/*` routes without auth when no token is configured.
+    pub insecure_no_auth: bool,
+}
+
+impl Default for RuntimeApiOptions {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 7878,
+            workers: 2,
+            cors_origins: Vec::new(),
+            auth_token: None,
+            insecure_no_auth: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedRuntimeAuth {
+    token: Option<String>,
+    generated: bool,
+}
+
+fn resolve_runtime_auth(
+    cli_token: Option<String>,
+    env_token: Option<String>,
+    insecure_no_auth: bool,
+) -> ResolvedRuntimeAuth {
+    if let Some(token) = first_nonblank_token(cli_token).or_else(|| first_nonblank_token(env_token))
+    {
+        return ResolvedRuntimeAuth {
+            token: Some(token),
+            generated: false,
+        };
+    }
+    if insecure_no_auth {
+        return ResolvedRuntimeAuth {
+            token: None,
+            generated: false,
+        };
+    }
+    ResolvedRuntimeAuth {
+        token: Some(generate_runtime_token()),
+        generated: true,
+    }
+}
+
+fn first_nonblank_token(token: Option<String>) -> Option<String> {
+    token
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
+}
+
+fn generate_runtime_token() -> String {
+    format!(
+        "dst_{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +202,9 @@ struct TasksQuery {
 struct ThreadsQuery {
     limit: Option<usize>,
     include_archived: Option<bool>,
+    /// When `true`, returns archived threads only (overrides `include_archived`).
+    /// Whalescale#260 / #563.
+    archived_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +212,22 @@ struct ThreadSummaryQuery {
     limit: Option<usize>,
     search: Option<String>,
     include_archived: Option<bool>,
+    /// When `true`, returns archived threads only (overrides `include_archived`).
+    /// Whalescale#260 / #563.
+    archived_only: Option<bool>,
+}
+
+fn resolve_thread_filter(
+    include_archived: Option<bool>,
+    archived_only: Option<bool>,
+) -> ThreadListFilter {
+    if archived_only.unwrap_or(false) {
+        ThreadListFilter::ArchivedOnly
+    } else if include_archived.unwrap_or(false) {
+        ThreadListFilter::IncludeArchived
+    } else {
+        ThreadListFilter::ActiveOnly
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -164,6 +260,7 @@ struct SkillEntry {
     name: String,
     description: String,
     path: PathBuf,
+    enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -171,6 +268,40 @@ struct SkillsResponse {
     directory: PathBuf,
     warnings: Vec<String>,
     skills: Vec<SkillEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetSkillEnabledRequest {
+    enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SetSkillEnabledResponse {
+    name: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct DecideApprovalBody {
+    decision: String,
+    #[serde(default)]
+    remember: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DecideApprovalResponse {
+    ok: bool,
+    approval_id: String,
+    decision: String,
+    delivered: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeInfoResponse {
+    bind_host: String,
+    port: u16,
+    auth_required: bool,
+    version: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -264,14 +395,34 @@ pub async fn run_http_server(
             .map(|h| h.join(".deepseek").join("sessions"))
             .unwrap_or_else(|| PathBuf::from(".deepseek").join("sessions"))
     });
+    let resolved_auth = resolve_runtime_auth(
+        options.auth_token.clone(),
+        std::env::var("DEEPSEEK_RUNTIME_TOKEN").ok(),
+        options.insecure_no_auth,
+    );
+    let runtime_token = resolved_auth.token.clone();
+    let auth_enabled = runtime_token.is_some();
+    let skill_state = SkillStateStore::load_default().unwrap_or_else(|err| {
+        tracing::warn!(
+            "Failed to load skills_state.toml ({}); treating all skills as enabled",
+            err
+        );
+        SkillStateStore::default()
+    });
     let state = RuntimeApiState {
         config: config.clone(),
         workspace,
         task_manager,
         runtime_threads,
+        cors_origins: options.cors_origins.clone(),
         sessions_dir,
         mcp_config_path: config.mcp_config_path(),
         automations,
+        runtime_token: runtime_token.clone(),
+        skill_state: Arc::new(Mutex::new(skill_state)),
+        auth_required: auth_enabled,
+        bind_host: options.host.clone(),
+        bind_port: options.port,
     };
     let app = build_router(state);
 
@@ -283,7 +434,37 @@ pub async fn run_http_server(
         .with_context(|| format!("Failed to bind {addr}"))?;
 
     println!("Runtime API listening on http://{addr}");
-    println!("Security: this server is local-first. Do not expose it to untrusted networks.");
+    if resolved_auth.generated {
+        if let Some(token) = runtime_token.as_deref() {
+            println!("Runtime API auth: generated bearer token for this process.");
+            println!("  Authorization: Bearer {token}");
+            println!("  Set DEEPSEEK_RUNTIME_TOKEN or pass --auth-token for a stable token.");
+        }
+    } else if auth_enabled {
+        println!("Runtime API auth: bearer token required for /v1/* routes.");
+    } else {
+        println!("Runtime API auth: disabled by explicit insecure mode.");
+    }
+    let is_loopback = options.host == "127.0.0.1" || options.host == "::1";
+    if is_loopback {
+        println!("Security: this server is local-first. Do not expose it to untrusted networks.");
+    } else {
+        println!(
+            "Security: bound to {host}; reachable from any peer that can route to this address.",
+            host = options.host
+        );
+        if !auth_enabled {
+            println!(
+                "  WARNING: auth is disabled. Anyone on the network can call /v1/* without authentication."
+            );
+        }
+        println!(
+            "  /v1/runtime/info reports bind_host={host:?}, port={port}, auth_required={auth}.",
+            host = options.host,
+            port = options.port,
+            auth = auth_enabled,
+        );
+    }
     let serve_result = axum::serve(listener, app)
         .await
         .map_err(|e| anyhow!("Runtime API server error: {e}"));
@@ -293,8 +474,7 @@ pub async fn run_http_server(
 }
 
 pub fn build_router(state: RuntimeApiState) -> Router {
-    Router::new()
-        .route("/health", get(health))
+    let api_routes = Router::new()
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/{id}", get(get_session).delete(delete_session))
         .route(
@@ -319,10 +499,12 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         )
         .route("/v1/threads/{id}/compact", post(compact_thread))
         .route("/v1/threads/{id}/events", get(stream_thread_events))
+        .route("/v1/approvals/{approval_id}", post(decide_approval))
         .route("/v1/tasks", get(list_tasks).post(create_task))
         .route("/v1/tasks/{id}", get(get_task))
         .route("/v1/tasks/{id}/cancel", post(cancel_task))
         .route("/v1/skills", get(list_skills))
+        .route("/v1/skills/{name}", post(set_skill_enabled))
         .route("/v1/apps/mcp/servers", get(list_mcp_servers))
         .route("/v1/apps/mcp/tools", get(list_mcp_tools))
         .route(
@@ -339,8 +521,64 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/automations/{id}/pause", post(pause_automation))
         .route("/v1/automations/{id}/resume", post(resume_automation))
         .route("/v1/automations/{id}/runs", get(list_automation_runs))
-        .layer(cors_layer())
+        .route("/v1/usage", get(get_usage))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_runtime_token,
+        ));
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/v1/runtime/info", get(runtime_info))
+        .merge(api_routes)
+        .layer(cors_layer(&state.cors_origins))
         .with_state(state)
+}
+
+async fn require_runtime_token(
+    State(state): State<RuntimeApiState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let Some(expected) = state.runtime_token.as_deref() else {
+        return next.run(req).await;
+    };
+    let authorized = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.strip_prefix("Bearer "))
+        .is_some_and(|token| token == expected)
+        || req
+            .headers()
+            .get("x-deepseek-runtime-token")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|token| token == expected)
+        || token_from_query(req.uri().query()).is_some_and(|token| token == expected);
+
+    if authorized {
+        next.run(req).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": {
+                    "message": "runtime API bearer token required",
+                    "status": StatusCode::UNAUTHORIZED.as_u16(),
+                }
+            })),
+        )
+            .into_response()
+    }
+}
+
+fn token_from_query(query: Option<&str>) -> Option<&str> {
+    query.and_then(|query| {
+        query.split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == "token").then_some(value)
+        })
+    })
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -557,9 +795,10 @@ async fn list_threads(
     State(state): State<RuntimeApiState>,
     Query(query): Query<ThreadsQuery>,
 ) -> Result<Json<Vec<ThreadRecord>>, ApiError> {
+    let filter = resolve_thread_filter(query.include_archived, query.archived_only);
     let threads = state
         .runtime_threads
-        .list_threads(query.include_archived.unwrap_or(false), query.limit)
+        .list_threads(filter, query.limit)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Json(threads))
@@ -571,9 +810,10 @@ async fn list_threads_summary(
 ) -> Result<Json<Vec<ThreadSummary>>, ApiError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let search = query.search.as_deref().map(str::to_ascii_lowercase);
+    let filter = resolve_thread_filter(query.include_archived, query.archived_only);
     let threads = state
         .runtime_threads
-        .list_threads(query.include_archived.unwrap_or(false), Some(limit))
+        .list_threads(filter, Some(limit))
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -588,15 +828,23 @@ async fn list_threads_summary(
         let latest_status =
             latest_turn.map(|turn| format!("{:?}", turn.status).to_ascii_lowercase());
 
-        let title = latest_turn
-            .map(|turn| {
-                if turn.input_summary.trim().is_empty() {
-                    "New Thread".to_string()
-                } else {
-                    truncate_text(&turn.input_summary, 72)
-                }
-            })
-            .unwrap_or_else(|| "New Thread".to_string());
+        let title = thread
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(|t| truncate_text(t, 72))
+            .unwrap_or_else(|| {
+                latest_turn
+                    .map(|turn| {
+                        if turn.input_summary.trim().is_empty() {
+                            "New Thread".to_string()
+                        } else {
+                            truncate_text(&turn.input_summary, 72)
+                        }
+                    })
+                    .unwrap_or_else(|| "New Thread".to_string())
+            });
 
         let preview = detail
             .items
@@ -659,6 +907,7 @@ async fn list_skills(
 ) -> Result<Json<SkillsResponse>, ApiError> {
     let skills_dir = resolve_skills_dir(&state.config, &state.workspace);
     let registry = SkillRegistry::discover(&skills_dir);
+    let skill_state = state.skill_state.lock().await;
     let skills = registry
         .list()
         .iter()
@@ -666,6 +915,7 @@ async fn list_skills(
             name: skill.name.clone(),
             description: skill.description.clone(),
             path: skills_dir.join(&skill.name).join("SKILL.md"),
+            enabled: skill_state.is_enabled(&skill.name),
         })
         .collect();
     Ok(Json(SkillsResponse {
@@ -673,6 +923,74 @@ async fn list_skills(
         warnings: registry.warnings().to_vec(),
         skills,
     }))
+}
+
+async fn set_skill_enabled(
+    State(state): State<RuntimeApiState>,
+    Path(name): Path<String>,
+    Json(req): Json<SetSkillEnabledRequest>,
+) -> Result<Json<SetSkillEnabledResponse>, ApiError> {
+    let skills_dir = resolve_skills_dir(&state.config, &state.workspace);
+    let registry = SkillRegistry::discover(&skills_dir);
+    let exists = registry.list().iter().any(|skill| skill.name == name);
+    if !exists {
+        return Err(ApiError::not_found(format!(
+            "skill '{name}' not found under {}",
+            skills_dir.display()
+        )));
+    }
+
+    let mut store = state.skill_state.lock().await;
+    store
+        .set_enabled(&name, req.enabled)
+        .map_err(|err| ApiError::internal(format!("persist skill state: {err}")))?;
+    Ok(Json(SetSkillEnabledResponse {
+        name,
+        enabled: req.enabled,
+    }))
+}
+
+async fn decide_approval(
+    State(state): State<RuntimeApiState>,
+    Path(approval_id): Path<String>,
+    Json(req): Json<DecideApprovalBody>,
+) -> Result<Json<DecideApprovalResponse>, ApiError> {
+    let decision = match req.decision.as_str() {
+        "allow" => ExternalApprovalDecision::Allow {
+            remember: req.remember,
+        },
+        "deny" => ExternalApprovalDecision::Deny {
+            remember: req.remember,
+        },
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "invalid decision '{other}'; expected \"allow\" or \"deny\""
+            )));
+        }
+    };
+    let delivered = state
+        .runtime_threads
+        .deliver_external_approval(&approval_id, decision);
+    if !delivered {
+        return Err(ApiError::not_found(format!(
+            "no pending approval with id '{approval_id}'"
+        )));
+    }
+    Ok(Json(DecideApprovalResponse {
+        ok: true,
+        approval_id,
+        decision: req.decision,
+        delivered,
+    }))
+}
+
+async fn runtime_info(State(state): State<RuntimeApiState>) -> Json<RuntimeInfoResponse> {
+    Json(RuntimeInfoResponse {
+        bind_host: state.bind_host.clone(),
+        port: state.bind_port,
+        auth_required: state.auth_required,
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 async fn list_mcp_servers(
@@ -1340,41 +1658,119 @@ fn run_git(workspace: &std::path::Path, args: &[&str]) -> Option<String> {
 }
 
 fn resolve_skills_dir(config: &Config, workspace: &std::path::Path) -> PathBuf {
-    let agents_skills = workspace.join(".agents").join("skills");
-    if agents_skills.exists() {
-        return agents_skills;
-    }
-    let local_skills = workspace.join("skills");
-    if local_skills.exists() {
-        return local_skills;
+    // Canonicalize the workspace once so the symlink-containment check below
+    // compares like-for-like. If the workspace can't be canonicalized at all
+    // (e.g. it doesn't exist on disk yet) fall back to the configured global
+    // skills dir rather than risk constructing paths from a non-existent root.
+    let canonical_workspace = match fs::canonicalize(workspace) {
+        Ok(path) => path,
+        Err(_) => return config.skills_dir(),
+    };
+    for candidate in [
+        canonical_workspace.join(".agents").join("skills"),
+        canonical_workspace.join("skills"),
+    ] {
+        // Re-canonicalize the candidate so a `.agents/skills` symlink to e.g.
+        // `/etc` cannot promote arbitrary filesystem locations into the
+        // skills directory. The candidate must still resolve under the
+        // canonicalized workspace root after symlink expansion.
+        if let Ok(canon) = fs::canonicalize(&candidate)
+            && canon.starts_with(&canonical_workspace)
+            && canon.is_dir()
+        {
+            return canon;
+        }
     }
     config.skills_dir()
 }
 
 fn load_mcp_config_or_default(path: &std::path::Path) -> Result<McpConfig, ApiError> {
-    if !path.exists() {
-        return Ok(McpConfig::default());
-    }
-    let raw = fs::read_to_string(path).map_err(|e| {
-        ApiError::internal(format!("Failed to read MCP config {}: {e}", path.display()))
-    })?;
-    serde_json::from_str::<McpConfig>(&raw).map_err(|e| {
-        ApiError::internal(format!(
-            "Failed to parse MCP config {}: {e}",
-            path.display()
-        ))
-    })
+    crate::mcp::load_config(path)
+        .map_err(|e| ApiError::internal(format!("Failed to load MCP config: {e:#}")))
 }
 
-fn cors_layer() -> CorsLayer {
+#[derive(Debug, Deserialize)]
+struct UsageQuery {
+    /// ISO-8601 lower bound (inclusive). When omitted, no lower bound.
+    since: Option<String>,
+    /// ISO-8601 upper bound (inclusive). When omitted, no upper bound.
+    until: Option<String>,
+    /// Bucket key. One of `day` (default), `model`, `provider`, `thread`.
+    group_by: Option<String>,
+}
+
+fn parse_iso8601(raw: &str, field: &str) -> Result<chrono::DateTime<Utc>, ApiError> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| ApiError::bad_request(format!("Invalid {field} (expected RFC 3339): {e}")))
+}
+
+async fn get_usage(
+    State(state): State<RuntimeApiState>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let since = match query.since.as_deref() {
+        Some(raw) => Some(parse_iso8601(raw, "since")?),
+        None => None,
+    };
+    let until = match query.until.as_deref() {
+        Some(raw) => Some(parse_iso8601(raw, "until")?),
+        None => None,
+    };
+    if let (Some(s), Some(u)) = (since, until)
+        && s > u
+    {
+        return Err(ApiError::bad_request("since must be <= until".to_string()));
+    }
+    let group_by = match query.group_by.as_deref().unwrap_or("day") {
+        "day" => UsageGroupBy::Day,
+        "model" => UsageGroupBy::Model,
+        "provider" => UsageGroupBy::Provider,
+        "thread" => UsageGroupBy::Thread,
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "Unsupported group_by '{other}': expected one of day, model, provider, thread"
+            )));
+        }
+    };
+
+    let aggregation = state
+        .runtime_threads
+        .aggregate_usage(since, until, group_by)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(json!(aggregation)))
+}
+
+/// Built-in dev origins always allowed by the runtime API (whalescale#255).
+const DEFAULT_CORS_ORIGINS: &[&str] = &[
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "tauri://localhost",
+];
+
+fn cors_layer(extra_origins: &[String]) -> CorsLayer {
+    let mut origins: Vec<HeaderValue> = DEFAULT_CORS_ORIGINS
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+    for raw in extra_origins {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match HeaderValue::from_str(trimmed) {
+            Ok(value) if !origins.contains(&value) => origins.push(value),
+            Ok(_) => {}
+            Err(err) => tracing::warn!(
+                "Ignoring invalid CORS origin '{trimmed}': {err}; expected scheme://host[:port]"
+            ),
+        }
+    }
     CorsLayer::new()
-        .allow_origin([
-            HeaderValue::from_static("http://localhost:3000"),
-            HeaderValue::from_static("http://127.0.0.1:3000"),
-            HeaderValue::from_static("http://localhost:1420"),
-            HeaderValue::from_static("http://127.0.0.1:1420"),
-            HeaderValue::from_static("tauri://localhost"),
-        ])
+        .allow_origin(origins)
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -1510,9 +1906,67 @@ mod tests {
         }
     }
 
+    #[test]
+    fn runtime_auth_generates_token_by_default() {
+        let auth = resolve_runtime_auth(None, None, false);
+        assert!(auth.generated);
+        let token = auth.token.expect("generated token");
+        assert!(token.starts_with("dst_"));
+        assert!(token.len() > 32);
+    }
+
+    #[test]
+    fn runtime_auth_requires_explicit_insecure_for_no_token() {
+        let auth = resolve_runtime_auth(None, None, true);
+        assert_eq!(
+            auth,
+            ResolvedRuntimeAuth {
+                token: None,
+                generated: false,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_auth_prefers_cli_token_over_env_token() {
+        let auth = resolve_runtime_auth(
+            Some(" cli-token ".to_string()),
+            Some("env-token".to_string()),
+            false,
+        );
+        assert_eq!(
+            auth,
+            ResolvedRuntimeAuth {
+                token: Some("cli-token".to_string()),
+                generated: false,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_auth_ignores_blank_configured_tokens() {
+        let auth = resolve_runtime_auth(Some(" ".to_string()), Some("\t".to_string()), false);
+        assert!(auth.generated);
+        assert!(auth.token.is_some());
+    }
+
     async fn spawn_test_server_with_root(
         root: PathBuf,
         sessions_dir: PathBuf,
+    ) -> Result<
+        Option<(
+            SocketAddr,
+            SharedRuntimeThreadManager,
+            tokio::task::JoinHandle<()>,
+        )>,
+    > {
+        spawn_test_server_with_root_and_token(root, sessions_dir, None).await
+    }
+
+    async fn spawn_test_server_with_root_and_token(
+        root: PathBuf,
+        sessions_dir: PathBuf,
+        runtime_token: Option<String>,
     ) -> Result<
         Option<(
             SocketAddr,
@@ -1564,14 +2018,23 @@ mod tests {
         )?));
         runtime_threads.attach_automation_manager(automations.clone());
 
+        let auth_required = runtime_token.is_some();
         let state = RuntimeApiState {
             config: Config::default(),
             workspace: PathBuf::from("."),
             task_manager: manager,
             runtime_threads: runtime_threads.clone(),
+            cors_origins: Vec::new(),
             sessions_dir,
             mcp_config_path: root.join("mcp.json"),
             automations,
+            runtime_token,
+            skill_state: Arc::new(Mutex::new(
+                SkillStateStore::load_from(root.join("skills_state.toml")).unwrap_or_default(),
+            )),
+            auth_required,
+            bind_host: "127.0.0.1".to_string(),
+            bind_port: 0,
         };
         let app = build_router(state);
         let listener = match TcpListener::bind("127.0.0.1:0").await {
@@ -1730,6 +2193,50 @@ mod tests {
             .error_for_status()?
             .json()
             .await?;
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn runtime_token_guard_protects_v1_routes() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("deepseek-runtime-api-{}", Uuid::new_v4()));
+        let sessions_dir = root.join("sessions");
+        let token = "local-test-token".to_string();
+        let Some((addr, _runtime_threads, handle)) =
+            spawn_test_server_with_root_and_token(root, sessions_dir, Some(token.clone())).await?
+        else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        let health = client
+            .get(format!("http://{addr}/health"))
+            .send()
+            .await?
+            .error_for_status()?;
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let unauthorized = client
+            .get(format!("http://{addr}/v1/threads/summary"))
+            .send()
+            .await?;
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let bearer = client
+            .get(format!("http://{addr}/v1/threads/summary"))
+            .bearer_auth(&token)
+            .send()
+            .await?
+            .error_for_status()?;
+        assert_eq!(bearer.status(), StatusCode::OK);
+
+        let query_token = client
+            .get(format!("http://{addr}/v1/threads/summary?token={token}"))
+            .send()
+            .await?
+            .error_for_status()?;
+        assert_eq!(query_token.status(), StatusCode::OK);
 
         handle.abort();
         Ok(())
@@ -2644,11 +3151,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!("deepseek-session-resume-{}", Uuid::new_v4()));
         let sessions_dir = root.join("sessions");
         fs::create_dir_all(&sessions_dir)?;
-        let session_id = "sess_test_resume";
         let session = json!({
             "schema_version": 1,
             "metadata": {
-                "id": session_id,
+                "id": "sess_test_resume",
                 "title": "Test resume session",
                 "created_at": "2025-01-01T00:00:00Z",
                 "updated_at": "2025-01-01T00:10:00Z",
@@ -2671,7 +3177,7 @@ mod tests {
             "system_prompt": null
         });
         fs::write(
-            sessions_dir.join(format!("{session_id}.json")),
+            sessions_dir.join("sess_test_resume.json"),
             serde_json::to_string_pretty(&session)?,
         )?;
 
@@ -2684,14 +3190,14 @@ mod tests {
 
         let resp = client
             .post(format!(
-                "http://{addr}/v1/sessions/{session_id}/resume-thread"
+                "http://{addr}/v1/sessions/sess_test_resume/resume-thread"
             ))
             .json(&json!({ "model": "deepseek-v4-pro" }))
             .send()
             .await?;
         assert_eq!(resp.status(), StatusCode::CREATED);
         let resumed: serde_json::Value = resp.json().await?;
-        assert_eq!(resumed["session_id"], session_id);
+        assert_eq!(resumed["session_id"], "sess_test_resume");
         assert_eq!(resumed["message_count"], 2);
 
         let thread_id = resumed["thread_id"]
@@ -2725,5 +3231,537 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         handle.abort();
         Ok(())
+    }
+
+    /// #561 / whalescale#255 — extra CORS origins from `RuntimeApiOptions`
+    /// are added on top of the built-in defaults and propagate through to the
+    /// `Access-Control-Allow-Origin` response header for preflight requests.
+    /// Built-in defaults must keep working unchanged.
+    #[tokio::test]
+    async fn cors_layer_appends_extra_origins_and_keeps_defaults() -> Result<()> {
+        // The cors_layer fn is the layer factory — exercise it through a
+        // Router with a single trivial route so we can issue OPTIONS preflights
+        // and observe the response headers.
+        let extra = vec!["http://localhost:5173".to_string()];
+        let layer = cors_layer(&extra);
+        let router: Router = Router::new()
+            .route("/probe", get(|| async { "ok" }))
+            .layer(layer);
+
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return Ok(()),
+            Err(err) => return Err(err.into()),
+        };
+        let addr = listener.local_addr()?;
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+
+        let client = reqwest::Client::new();
+
+        // The user-supplied origin is allowed.
+        let resp = client
+            .request(reqwest::Method::OPTIONS, format!("http://{addr}/probe"))
+            .header("Origin", "http://localhost:5173")
+            .header("Access-Control-Request-Method", "GET")
+            .send()
+            .await?;
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("http://localhost:5173")
+        );
+
+        // A built-in default origin still works.
+        let resp = client
+            .request(reqwest::Method::OPTIONS, format!("http://{addr}/probe"))
+            .header("Origin", "http://localhost:1420")
+            .header("Access-Control-Request-Method", "GET")
+            .send()
+            .await?;
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("http://localhost:1420")
+        );
+
+        // An origin that's neither configured nor a default is rejected
+        // (CorsLayer omits the Allow-Origin header on mismatch).
+        let resp = client
+            .request(reqwest::Method::OPTIONS, format!("http://{addr}/probe"))
+            .header("Origin", "http://malicious.example")
+            .header("Access-Control-Request-Method", "GET")
+            .send()
+            .await?;
+        assert!(
+            resp.headers().get("access-control-allow-origin").is_none(),
+            "non-allowed origin must not be echoed back"
+        );
+
+        handle.abort();
+        Ok(())
+    }
+
+    /// #561 — invalid origins (non-ASCII, etc.) are skipped without aborting
+    /// the layer build.
+    #[test]
+    fn cors_layer_skips_invalid_origins() {
+        let extras = vec![
+            "http://valid.example".to_string(),
+            // Embedded NUL char makes `HeaderValue::from_str` fail.
+            "http://invalid.example\0".to_string(),
+            "  ".to_string(), // whitespace-only is dropped
+        ];
+        // Should not panic.
+        let _ = cors_layer(&extras);
+    }
+
+    /// #562 / whalescale#256 — `PATCH /v1/threads/{id}` accepts the new
+    /// fields (allow_shell, trust_mode, auto_approve, model, mode, title,
+    /// system_prompt). Each is independently optional; an empty string clears
+    /// `title` / `system_prompt` back to None.
+    #[tokio::test]
+    async fn patch_thread_accepts_extended_field_set() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        let created: serde_json::Value = client
+            .post(format!("http://{addr}/v1/threads"))
+            .json(&json!({
+                "model": "deepseek-v4-flash",
+                "mode": "agent"
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let thread_id = created["id"]
+            .as_str()
+            .context("missing thread id")?
+            .to_string();
+
+        // Patch every new field at once.
+        let patched: serde_json::Value = client
+            .patch(format!("http://{addr}/v1/threads/{thread_id}"))
+            .json(&json!({
+                "allow_shell": true,
+                "trust_mode": true,
+                "auto_approve": true,
+                "model": "deepseek-v4-pro",
+                "mode": "yolo",
+                "title": "Whalescale UI test thread",
+                "system_prompt": "You are a useful assistant."
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        assert_eq!(patched["allow_shell"], true);
+        assert_eq!(patched["trust_mode"], true);
+        assert_eq!(patched["auto_approve"], true);
+        assert_eq!(patched["model"], "deepseek-v4-pro");
+        assert_eq!(patched["mode"], "yolo");
+        assert_eq!(patched["title"], "Whalescale UI test thread");
+        assert_eq!(patched["system_prompt"], "You are a useful assistant.");
+
+        // Empty string clears title back to None.
+        let cleared: serde_json::Value = client
+            .patch(format!("http://{addr}/v1/threads/{thread_id}"))
+            .json(&json!({ "title": "" }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert!(
+            cleared["title"].is_null() || !cleared.as_object().unwrap().contains_key("title"),
+            "empty title must serialize as None: {cleared:?}"
+        );
+
+        // Empty patch (no fields) is still rejected.
+        let empty = client
+            .patch(format!("http://{addr}/v1/threads/{thread_id}"))
+            .json(&json!({}))
+            .send()
+            .await?;
+        assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+
+        // Empty model is rejected (validation).
+        let bad_model = client
+            .patch(format!("http://{addr}/v1/threads/{thread_id}"))
+            .json(&json!({ "model": "  " }))
+            .send()
+            .await?;
+        assert_eq!(bad_model.status(), StatusCode::BAD_REQUEST);
+
+        handle.abort();
+        Ok(())
+    }
+
+    /// #563 / whalescale#260 — `archived_only=true` returns archived-only
+    /// (no active threads), distinct from `include_archived=true` which
+    /// returns both.
+    #[tokio::test]
+    async fn list_threads_archived_only_filter_matches_only_archived() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        // Two threads — keep one active, archive the other.
+        let active: serde_json::Value = client
+            .post(format!("http://{addr}/v1/threads"))
+            .json(&json!({}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let active_id = active["id"].as_str().unwrap().to_string();
+
+        let archived: serde_json::Value = client
+            .post(format!("http://{addr}/v1/threads"))
+            .json(&json!({}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let archived_id = archived["id"].as_str().unwrap().to_string();
+
+        client
+            .patch(format!("http://{addr}/v1/threads/{archived_id}"))
+            .json(&json!({ "archived": true }))
+            .send()
+            .await?
+            .error_for_status()?;
+
+        // Default (active only) → only the unarchived one.
+        let active_list: serde_json::Value = client
+            .get(format!("http://{addr}/v1/threads"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let ids: Vec<&str> = active_list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["id"].as_str())
+            .collect();
+        assert!(ids.contains(&active_id.as_str()));
+        assert!(!ids.contains(&archived_id.as_str()));
+
+        // archived_only=true → only the archived one.
+        let archived_list: serde_json::Value = client
+            .get(format!("http://{addr}/v1/threads?archived_only=true"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let ids: Vec<&str> = archived_list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec![archived_id.as_str()]);
+
+        // archived_only=true takes precedence over include_archived=true.
+        let archived_list: serde_json::Value = client
+            .get(format!(
+                "http://{addr}/v1/threads?include_archived=true&archived_only=true"
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let ids: Vec<&str> = archived_list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec![archived_id.as_str()]);
+
+        // Same filter works on the summary endpoint.
+        let summary: serde_json::Value = client
+            .get(format!(
+                "http://{addr}/v1/threads/summary?archived_only=true&limit=10"
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let summary_ids: Vec<&str> = summary
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["id"].as_str())
+            .collect();
+        assert_eq!(summary_ids, vec![archived_id.as_str()]);
+
+        handle.abort();
+        Ok(())
+    }
+
+    /// #564 / whalescale#261 — `GET /v1/usage` aggregates per-turn token +
+    /// cost data. With no threads the response is well-formed and totals are
+    /// zero with empty buckets (never a 404).
+    #[tokio::test]
+    async fn usage_endpoint_returns_empty_aggregation_for_fresh_store() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        let body: serde_json::Value = client
+            .get(format!("http://{addr}/v1/usage"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert_eq!(body["group_by"], "day");
+        assert_eq!(body["totals"]["input_tokens"], 0);
+        assert_eq!(body["totals"]["output_tokens"], 0);
+        assert_eq!(body["totals"]["turns"], 0);
+        assert!(
+            body["buckets"].as_array().unwrap().is_empty(),
+            "buckets must be empty when no turns exist: {body}"
+        );
+
+        // group_by query options are validated.
+        let bad_group = client
+            .get(format!("http://{addr}/v1/usage?group_by=galaxy"))
+            .send()
+            .await?;
+        assert_eq!(bad_group.status(), StatusCode::BAD_REQUEST);
+
+        // Each accepted group_by value succeeds.
+        for gb in ["day", "model", "provider", "thread"] {
+            let resp = client
+                .get(format!("http://{addr}/v1/usage?group_by={gb}"))
+                .send()
+                .await?;
+            assert!(resp.status().is_success(), "group_by={gb} failed: {resp:?}");
+        }
+
+        // Bad ISO-8601 timestamp rejected.
+        let bad_since = client
+            .get(format!("http://{addr}/v1/usage?since=not-a-date"))
+            .send()
+            .await?;
+        assert_eq!(bad_since.status(), StatusCode::BAD_REQUEST);
+
+        // since > until rejected.
+        let inverted = client
+            .get(format!(
+                "http://{addr}/v1/usage?since=2030-01-02T00:00:00Z&until=2030-01-01T00:00:00Z"
+            ))
+            .send()
+            .await?;
+        assert_eq!(inverted.status(), StatusCode::BAD_REQUEST);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn runtime_info_reports_bind_state() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+        let info: serde_json::Value = client
+            .get(format!("http://{addr}/v1/runtime/info"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert_eq!(info["bind_host"], "127.0.0.1");
+        assert_eq!(info["auth_required"], false);
+        assert!(info["version"].is_string());
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn decide_approval_404s_when_nothing_pending() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/v1/approvals/no_such_id"))
+            .json(&json!({ "decision": "allow" }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn decide_approval_400s_on_bad_decision() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/v1/approvals/whatever"))
+            .json(&json!({ "decision": "yolo" }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn decide_approval_delivers_to_runtime() -> Result<()> {
+        let Some((addr, runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+        let rx = runtime_threads.register_pending_approval_for_test("ext_id");
+
+        let resp = client
+            .post(format!("http://{addr}/v1/approvals/ext_id"))
+            .json(&json!({ "decision": "allow", "remember": false }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = resp.json().await?;
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["decision"], "allow");
+        assert_eq!(body["delivered"], true);
+
+        let received = tokio::time::timeout(Duration::from_secs(1), rx).await??;
+        assert_eq!(
+            received,
+            ExternalApprovalDecision::Allow { remember: false }
+        );
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skills_endpoint_includes_enabled_field() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+        let body: serde_json::Value = client
+            .get(format!("http://{addr}/v1/skills"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if let Some(skills) = body["skills"].as_array() {
+            for skill in skills {
+                assert!(skill.get("enabled").is_some());
+            }
+        }
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skill_toggle_endpoint_404s_for_unknown_skill() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/v1/skills/no-such-skill"))
+            .json(&json!({ "enabled": false }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_skills_dir_finds_workspace_local_agents_skills() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path();
+        let local_skills = workspace.join(".agents").join("skills");
+        fs::create_dir_all(&local_skills).expect("create skills dir");
+
+        let config = Config::default();
+        let resolved = resolve_skills_dir(&config, workspace);
+
+        let expected = fs::canonicalize(&local_skills).expect("canonical local skills");
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_skills_dir_finds_workspace_local_skills_fallback() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path();
+        let local_skills = workspace.join("skills");
+        fs::create_dir_all(&local_skills).expect("create skills dir");
+
+        let config = Config::default();
+        let resolved = resolve_skills_dir(&config, workspace);
+
+        let expected = fs::canonicalize(&local_skills).expect("canonical local skills");
+        assert_eq!(resolved, expected);
+    }
+
+    /// A `skills` symlink that points outside the workspace must NOT be
+    /// returned as the resolved skills directory. Containment check ensures
+    /// the canonicalized candidate stays under the canonicalized workspace
+    /// root, so a malicious or misconfigured symlink can't promote
+    /// `/etc` (or any other path) into the skills loader.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_skills_dir_rejects_symlink_escaping_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace_root = tmp.path().join("workspace");
+        let escape_target = tmp.path().join("escape_target");
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        fs::create_dir_all(&escape_target).expect("create escape target");
+
+        let dotagents = workspace_root.join(".agents");
+        fs::create_dir_all(&dotagents).expect("create .agents");
+        let bad_link = dotagents.join("skills");
+        std::os::unix::fs::symlink(&escape_target, &bad_link).expect("symlink");
+
+        let config = Config::default();
+        let resolved = resolve_skills_dir(&config, &workspace_root);
+
+        let canon_escape = fs::canonicalize(&escape_target).expect("canon escape");
+        assert_ne!(
+            resolved, canon_escape,
+            "symlink escaping workspace must not be resolved as skills dir"
+        );
+        assert_eq!(
+            resolved,
+            config.skills_dir(),
+            "with no valid in-workspace skills dir, resolution should fall back to config"
+        );
     }
 }

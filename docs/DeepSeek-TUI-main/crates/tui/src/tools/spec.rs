@@ -7,13 +7,16 @@
 //! - `ToolCapability`: Capabilities and requirements of tools
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::features::Features;
+use crate::lsp::LspManager;
 use crate::network_policy::NetworkPolicyDecider;
+use crate::sandbox::backend::SandboxBackend;
 use crate::tools::shell::{SharedShellManager, new_shared_shell_manager};
 #[allow(unused_imports)]
 pub use deepseek_tools::{
@@ -35,6 +38,10 @@ pub struct RuntimeToolServices {
     pub task_data_dir: Option<PathBuf>,
     pub active_task_id: Option<String>,
     pub active_thread_id: Option<String>,
+    /// Hook executor for `shell_env` injection (#456) and any future
+    /// tool-side hook events. `None` outside the live engine — test
+    /// contexts that don't care about hooks get a no-op.
+    pub hook_executor: Option<std::sync::Arc<crate::hooks::HookExecutor>>,
 }
 
 impl std::fmt::Debug for RuntimeToolServices {
@@ -46,6 +53,7 @@ impl std::fmt::Debug for RuntimeToolServices {
             .field("task_data_dir", &self.task_data_dir)
             .field("active_task_id", &self.active_task_id)
             .field("active_thread_id", &self.active_thread_id)
+            .field("hook_executor", &self.hook_executor.is_some())
             .finish()
     }
 }
@@ -78,6 +86,9 @@ pub struct ToolContext {
     /// Elevated sandbox policy override (used when retrying after sandbox denial).
     /// This overrides the default sandbox behavior for shell commands.
     pub elevated_sandbox_policy: Option<crate::sandbox::SandboxPolicy>,
+    /// Optional user-facing hint for shell commands that fail because the
+    /// active sandbox policy intentionally denies outbound network access.
+    pub shell_network_denied_hint: Option<String>,
     /// Whether tools should auto-approve without safety checks (YOLO mode).
     /// When true, command safety analysis is skipped for shell execution.
     pub auto_approve: bool,
@@ -100,11 +111,33 @@ pub struct ToolContext {
     /// Cancellation token for the active engine turn. Tools that may wait on
     /// external work should observe this so UI cancel can interrupt them.
     pub cancel_token: Option<CancellationToken>,
+    /// Optional external sandbox backend for shell execution.
+    /// When set, exec_shell routes commands through this instead of spawning
+    /// a local process.
+    pub sandbox_backend: Option<std::sync::Arc<dyn SandboxBackend>>,
     /// Path to the user memory file. `None` when the user-memory feature
     /// (#489) is disabled — tools that read or write the file should
     /// short-circuit on `None` rather than fall back to a workspace-local
     /// default.
     pub memory_path: Option<PathBuf>,
+    /// LSP manager for post-edit diagnostics injection (#428). `None` when
+    /// LSP is disabled or the context is constructed in a test that does not
+    /// need diagnostics. Edit tools append a `<diagnostics>` block to their
+    /// result when this is present and the manager is enabled.
+    pub lsp_manager: Option<Arc<LspManager>>,
+
+    /// Large-output router (#548). When `Some`, tool results that exceed the
+    /// configured token threshold are routed through a V4-Flash synthesis
+    /// sub-agent before being returned to the parent context. `None` disables
+    /// routing (e.g. in sub-agents and test contexts to avoid recursion).
+    pub large_output_router: Option<crate::tools::large_output_router::LargeOutputRouter>,
+
+    /// Per-session workshop variable store (#548). Holds the raw content of
+    /// the most recent large-tool routing event so the parent can call
+    /// `promote_to_context` later. `None` when the router is disabled.
+    pub workshop_vars: Option<
+        std::sync::Arc<tokio::sync::Mutex<crate::tools::large_output_router::WorkshopVariables>>,
+    >,
 }
 
 impl ToolContext {
@@ -123,6 +156,7 @@ impl ToolContext {
             notes_path,
             mcp_config_path,
             elevated_sandbox_policy: None,
+            shell_network_denied_hint: None,
             auto_approve: false,
             features: Features::with_defaults(),
             state_namespace: "workspace".to_string(),
@@ -130,7 +164,11 @@ impl ToolContext {
             network_policy: None,
             runtime: RuntimeToolServices::default(),
             cancel_token: None,
+            sandbox_backend: None,
             memory_path: None,
+            lsp_manager: None,
+            large_output_router: None,
+            workshop_vars: None,
         }
     }
 
@@ -152,6 +190,7 @@ impl ToolContext {
             notes_path: notes_path.into(),
             mcp_config_path: mcp_config_path.into(),
             elevated_sandbox_policy: None,
+            shell_network_denied_hint: None,
             auto_approve: false,
             features: Features::with_defaults(),
             state_namespace: "workspace".to_string(),
@@ -159,7 +198,11 @@ impl ToolContext {
             network_policy: None,
             runtime: RuntimeToolServices::default(),
             cancel_token: None,
+            sandbox_backend: None,
             memory_path: None,
+            lsp_manager: None,
+            large_output_router: None,
+            workshop_vars: None,
         }
     }
 
@@ -181,6 +224,7 @@ impl ToolContext {
             notes_path: notes_path.into(),
             mcp_config_path: mcp_config_path.into(),
             elevated_sandbox_policy: None,
+            shell_network_denied_hint: None,
             auto_approve,
             features: Features::with_defaults(),
             state_namespace: "workspace".to_string(),
@@ -188,7 +232,11 @@ impl ToolContext {
             network_policy: None,
             runtime: RuntimeToolServices::default(),
             cancel_token: None,
+            sandbox_backend: None,
             memory_path: None,
+            lsp_manager: None,
+            large_output_router: None,
+            workshop_vars: None,
         }
     }
 
@@ -213,12 +261,29 @@ impl ToolContext {
         self
     }
 
+    /// Attach an external sandbox backend for remote shell execution.
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn with_sandbox_backend(mut self, backend: std::sync::Arc<dyn SandboxBackend>) -> Self {
+        self.sandbox_backend = Some(backend);
+        self
+    }
+
     /// Set the user's trusted external paths (loaded from
     /// `~/.deepseek/workspace-trust.json`). See [`Self::resolve_path`] for
     /// how the list is consulted.
     #[must_use]
     pub fn with_trusted_external_paths(mut self, paths: Vec<PathBuf>) -> Self {
         self.trusted_external_paths = paths;
+        self
+    }
+
+    /// Attach an LSP manager so that edit tools can auto-inject diagnostics
+    /// into their results after a successful file modification (#428).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn with_lsp_manager(mut self, manager: Arc<LspManager>) -> Self {
+        self.lsp_manager = Some(manager);
         self
     }
 
@@ -389,11 +454,62 @@ impl ToolContext {
         self
     }
 
+    /// Set the shell network-denial hint used by network-restricted modes.
+    pub fn with_shell_network_denied_hint(mut self, hint: impl Into<String>) -> Self {
+        self.shell_network_denied_hint = Some(hint.into());
+        self
+    }
+
     /// Set the namespace used for session-scoped tool state.
     pub fn with_state_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.state_namespace = namespace.into();
         self
     }
+
+    /// Attach the large-output router (#548). When set, tool results that
+    /// exceed the configured token threshold are synthesised by a V4-Flash
+    /// sub-agent before being returned to the parent context.
+    #[must_use]
+    pub fn with_large_output_router(
+        mut self,
+        router: crate::tools::large_output_router::LargeOutputRouter,
+        vars: std::sync::Arc<
+            tokio::sync::Mutex<crate::tools::large_output_router::WorkshopVariables>,
+        >,
+    ) -> Self {
+        self.large_output_router = Some(router);
+        self.workshop_vars = Some(vars);
+        self
+    }
+}
+
+/// Gather LSP diagnostics for `paths` using the manager stored in `context`,
+/// and return the rendered `<diagnostics …>` blocks joined by newlines.
+///
+/// Returns an empty string when:
+/// - `context.lsp_manager` is `None`
+/// - the manager's `enabled` flag is `false`
+/// - none of the files produce diagnostics (e.g. all clean, or language unknown)
+///
+/// This function is non-blocking by design: every failure mode (missing LSP
+/// binary, timeout, unknown language) degrades to an empty string rather than
+/// propagating an error to the caller.
+pub async fn lsp_diagnostics_for_paths(context: &ToolContext, paths: &[PathBuf]) -> String {
+    use crate::lsp::render_blocks;
+
+    let manager = match context.lsp_manager.as_ref() {
+        Some(m) if m.config().enabled => m,
+        _ => return String::new(),
+    };
+
+    let mut blocks = Vec::new();
+    for (idx, path) in paths.iter().enumerate() {
+        if let Some(block) = manager.diagnostics_for(path, idx as u64).await {
+            blocks.push(block);
+        }
+    }
+
+    render_blocks(&blocks)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

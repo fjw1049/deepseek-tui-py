@@ -10,7 +10,21 @@
 use crate::models::SystemPrompt;
 use crate::project_context::{ProjectContext, load_project_context_with_parents};
 use crate::tui::app::AppMode;
+use crate::tui::approval::ApprovalMode;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PromptSessionContext<'a> {
+    pub user_memory_block: Option<&'a str>,
+    pub goal_objective: Option<&'a str>,
+    pub project_context_pack_enabled: bool,
+    /// Resolved BCP-47 locale tag for the `## Environment` block in
+    /// the system prompt (e.g. `"en"`, `"zh-Hans"`, `"ja"`). The
+    /// caller is responsible for resolving this from `Settings`; no
+    /// disk I/O happens inside the prompt builder, so the workspace-
+    /// static portion of the system prompt stays cache-friendly.
+    pub locale_tag: &'a str,
+}
 
 /// Conventional location for the structured session-handoff artifact (#32).
 /// A previous session writes it on exit / `/compact`; the next session reads
@@ -24,6 +38,32 @@ pub const HANDOFF_RELATIVE_PATH: &str = ".deepseek/handoff.md";
 /// its own. Files larger than this are truncated with an `[…elided]`
 /// marker rather than skipped entirely so the model still sees the head.
 const INSTRUCTIONS_FILE_MAX_BYTES: usize = 100 * 1024;
+
+/// Render a `## Environment` block listing the resolved locale tag,
+/// runtime version, host platform, login shell, and current working directory.
+///
+/// The block is appended to the workspace-static portion of the
+/// system prompt (after mode prompt + project context, before
+/// configured instructions / skills) so the `## Language` directive
+/// in `prompts/base.md` can reference it without the model having to
+/// guess from the user's first message. `locale_tag` is resolved by
+/// the caller from `Settings` so this function stays I/O-free.
+fn render_environment_block(workspace: &Path, locale_tag: &str) -> String {
+    let deepseek_version = env!("CARGO_PKG_VERSION");
+    let platform = std::env::consts::OS;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".to_string());
+    let pwd = workspace.display();
+
+    format!(
+        "## Environment\n\
+         \n\
+         - lang: {locale_tag}\n\
+         - deepseek_version: {deepseek_version}\n\
+         - platform: {platform}\n\
+         - shell: {shell}\n\
+         - pwd: {pwd}"
+    )
+}
 
 /// Render the `instructions = [...]` config array as a single
 /// system-prompt block (#454). Each path is loaded in declared order;
@@ -117,8 +157,6 @@ pub const COMPACT_TEMPLATE: &str = include_str!("prompts/compact.md");
 /// Legacy base prompt (agent.txt — now decomposed into base.md + overlays).
 /// Still available for callers that haven't migrated to the layered API.
 pub const AGENT_PROMPT: &str = include_str!("prompts/agent.txt");
-pub const YOLO_PROMPT: &str = include_str!("prompts/yolo.txt");
-pub const PLAN_PROMPT: &str = include_str!("prompts/plan.txt");
 
 // ── Personality selection ─────────────────────────────────────────────
 
@@ -164,11 +202,23 @@ fn mode_prompt(mode: AppMode) -> &'static str {
     }
 }
 
-fn approval_prompt(mode: AppMode) -> &'static str {
+fn default_approval_mode_for_mode(mode: AppMode) -> ApprovalMode {
     match mode {
-        AppMode::Agent => SUGGEST_APPROVAL,
+        AppMode::Agent => ApprovalMode::Suggest,
+        AppMode::Yolo => ApprovalMode::Auto,
+        AppMode::Plan => ApprovalMode::Never,
+    }
+}
+
+fn approval_prompt_for_mode(mode: AppMode, approval_mode: ApprovalMode) -> &'static str {
+    match mode {
         AppMode::Yolo => AUTO_APPROVAL,
         AppMode::Plan => NEVER_APPROVAL,
+        AppMode::Agent => match approval_mode {
+            ApprovalMode::Auto => AUTO_APPROVAL,
+            ApprovalMode::Suggest => SUGGEST_APPROVAL,
+            ApprovalMode::Never => NEVER_APPROVAL,
+        },
     }
 }
 
@@ -181,11 +231,19 @@ fn approval_prompt(mode: AppMode) -> &'static str {
 /// Each layer is separated by a blank line for readability in the
 /// rendered prompt (the model sees them as contiguous sections).
 pub fn compose_prompt(mode: AppMode, personality: Personality) -> String {
+    compose_prompt_with_approval(mode, personality, default_approval_mode_for_mode(mode))
+}
+
+pub fn compose_prompt_with_approval(
+    mode: AppMode,
+    personality: Personality,
+    approval_mode: ApprovalMode,
+) -> String {
     let parts: [&str; 4] = [
         BASE_PROMPT.trim(),
         personality.prompt().trim(),
         mode_prompt(mode).trim(),
-        approval_prompt(mode).trim(),
+        approval_prompt_for_mode(mode, approval_mode).trim(),
     ];
 
     let mut out =
@@ -203,6 +261,10 @@ pub fn compose_prompt(mode: AppMode, personality: Personality) -> String {
 /// Compose for the default personality (Calm).
 fn compose_mode_prompt(mode: AppMode) -> String {
     compose_prompt(mode, Personality::Calm)
+}
+
+fn compose_mode_prompt_with_approval(mode: AppMode, approval_mode: ApprovalMode) -> String {
+    compose_prompt_with_approval(mode, Personality::Calm, approval_mode)
 }
 
 // ── Public API ────────────────────────────────────────────────────────
@@ -248,11 +310,11 @@ pub fn system_prompt_for_mode_with_context(
 ///   4. `## Context Management` (compile-time constant, Agent/Yolo only)
 ///   5. compaction handoff template (compile-time constant)
 ///   6. handoff block — file-backed; rewritten by `/compact` and on exit
-///   7. working-set summary — drifts when a new path is observed
 ///
 /// Anything appended after a volatile block forfeits the cache for the rest
-/// of the request. New blocks belong above the handoff/working-set boundary
-/// unless they themselves are turn-volatile.
+/// of the request. New blocks belong above the handoff boundary unless they
+/// themselves are turn-volatile. Working-set metadata is now injected into the
+/// latest user message as per-turn metadata instead of this system prompt.
 pub fn system_prompt_for_mode_with_context_and_skills(
     mode: AppMode,
     workspace: &Path,
@@ -261,23 +323,82 @@ pub fn system_prompt_for_mode_with_context_and_skills(
     instructions: Option<&[PathBuf]>,
     user_memory_block: Option<&str>,
 ) -> SystemPrompt {
-    let mode_prompt = compose_mode_prompt(mode);
+    system_prompt_for_mode_with_context_skills_and_session(
+        mode,
+        workspace,
+        working_set_summary,
+        skills_dir,
+        instructions,
+        PromptSessionContext {
+            user_memory_block,
+            goal_objective: None,
+            project_context_pack_enabled: true,
+            locale_tag: "en",
+        },
+    )
+}
+
+pub fn system_prompt_for_mode_with_context_skills_and_session(
+    mode: AppMode,
+    workspace: &Path,
+    _working_set_summary: Option<&str>,
+    skills_dir: Option<&Path>,
+    instructions: Option<&[PathBuf]>,
+    session_context: PromptSessionContext<'_>,
+) -> SystemPrompt {
+    system_prompt_for_mode_with_context_skills_session_and_approval(
+        mode,
+        workspace,
+        _working_set_summary,
+        skills_dir,
+        instructions,
+        session_context,
+        default_approval_mode_for_mode(mode),
+    )
+}
+
+pub fn system_prompt_for_mode_with_context_skills_session_and_approval(
+    mode: AppMode,
+    workspace: &Path,
+    _working_set_summary: Option<&str>,
+    skills_dir: Option<&Path>,
+    instructions: Option<&[PathBuf]>,
+    session_context: PromptSessionContext<'_>,
+    approval_mode: ApprovalMode,
+) -> SystemPrompt {
+    let mode_prompt = compose_mode_prompt_with_approval(mode, approval_mode);
 
     // Load project context from workspace
     let project_context = load_project_context_with_parents(workspace);
 
-    // 1–2. Mode prompt + project context (or fallback automap).
+    // 1–2. Mode prompt + project context.
+    // `load_project_context_with_parents` auto-generates .deepseek/instructions.md
+    // when no context file exists, so the fallback should always be available.
     let mut full_prompt = if let Some(project_block) = project_context.as_system_block() {
         format!("{}\n\n{}", mode_prompt, project_block)
     } else {
-        // Fallback: Generate an automatic project map summary
-        let summary = crate::utils::summarize_project(workspace);
-        let tree = crate::utils::project_tree(workspace, 2); // Shallow tree for prompt
-        format!(
-            "{}\n\n### Project Structure (Automatic Map)\n**Summary:** {}\n\n**Tree:**\n```\n{}\n```",
-            mode_prompt, summary, tree
-        )
+        // Extremely unlikely: context generation failed (e.g. filesystem error).
+        // Use mode prompt alone rather than panic.
+        tracing::warn!("No project context available and auto-generation failed");
+        mode_prompt
     };
+
+    if session_context.project_context_pack_enabled
+        && let Some(pack) = crate::project_context::generate_project_context_pack(workspace)
+    {
+        full_prompt = format!("{full_prompt}\n\n{pack}");
+    }
+
+    // 2.25. Environment block — locale, platform, shell, pwd. All
+    // four inputs are session-stable (workspace path is fixed for
+    // the run; locale is loaded once by the caller; platform/shell
+    // come from process env). Inserted above instructions/skills so
+    // it remains in the workspace-static cache layer alongside the
+    // mode prompt and project context.
+    full_prompt = format!(
+        "{full_prompt}\n\n{}",
+        render_environment_block(workspace, session_context.locale_tag),
+    );
 
     // 2.5a. Configured `instructions = [...]` files (#454). Loaded
     // and concatenated in declared order. Lives above the skills
@@ -293,17 +414,27 @@ pub fn system_prompt_for_mode_with_context_and_skills(
     // 2.5b. User memory block (#489). Goes above skills/context-management
     // because it's session-stable: the memory file changes when the user
     // edits it via `/memory` or `# foo` quick-add, but not turn-over-turn.
-    if let Some(memory_block) = user_memory_block
+    if let Some(memory_block) = session_context.user_memory_block
         && !memory_block.trim().is_empty()
     {
         full_prompt = format!("{full_prompt}\n\n{memory_block}");
     }
 
+    if let Some(goal_objective) = session_context.goal_objective
+        && !goal_objective.trim().is_empty()
+    {
+        full_prompt = format!(
+            "{full_prompt}\n\n## Current Session Goal\n\n<session_goal>\n{}\n</session_goal>",
+            goal_objective.trim()
+        );
+    }
+
     // 3. Skills block. #432: walks every candidate workspace
     // skills directory (`.agents/skills`, `skills`,
-    // `.opencode/skills`, `.claude/skills`) plus the global
-    // default so skills installed for any AI-tool convention show
-    // up in the catalogue. The legacy single-`skills_dir` path is
+    // `.opencode/skills`, `.claude/skills`, `.cursor/skills`) plus global
+    // `~/.agents/skills` / `~/.deepseek/skills` so skills installed for any
+    // AI-tool convention show up in the catalogue. The legacy
+    // single-`skills_dir` path is
     // honoured as a fallback for callers that don't supply a
     // workspace-aware view; it falls through to the same merged
     // registry when available.
@@ -321,7 +452,15 @@ pub fn system_prompt_for_mode_with_context_and_skills(
              1. Use `/compact` to summarize earlier context and free up space\n\
              2. The system will preserve important information (files you're working on, recent messages, tool results)\n\
              3. After compaction, you'll see a summary of what was discussed and can continue seamlessly\n\n\
-             If you notice context is getting long (>80%), proactively suggest using `/compact` to the user."
+             If you notice context is getting long (>80%), proactively suggest using `/compact` to the user.\n\n\
+             ### Prompt-cache awareness\n\n\
+             DeepSeek caches the longest *byte-stable prefix* of every request and charges roughly 100× less for cache-hit tokens than miss tokens. The system prompt above is layered most-static-first specifically so the prefix stays stable turn-over-turn. To keep cache hits high:\n\
+             - **Working set location:** the current repo working set is stored on new user messages inside a `<turn_meta>` block. Treat it as high-priority turn metadata, not as a stable system-prompt section.\n\
+             - **Append, don't reorder.** New context goes at the end (latest user / tool messages). Reshuffling earlier messages or rewriting their content invalidates the cache for everything after the change.\n\
+             - **Don't paraphrase quoted content.** If you've already read a file, refer to it by path or line range instead of re-quoting it with different formatting.\n\
+             - **Use `/compact` as a hard reset, not a tweak.** Compaction is meant for when the cache is already losing — it intentionally rewrites the prefix to a shorter summary. Don't trigger it for small wins.\n\
+             - **Read once, refer back.** Re-reading the same file produces a different tool-result envelope than the prior read; it's cheaper to scroll back than to re-fetch.\n\
+             - **Footer chip:** the `cache hit %` chip turns red below 40% and yellow below 80%. If it's been red for several turns, that's a signal to consolidate."
         );
     }
 
@@ -337,13 +476,6 @@ pub fn system_prompt_for_mode_with_context_and_skills(
     // 6. Previous-session handoff (file-backed, rewritten by `/compact`).
     if let Some(handoff_block) = load_handoff_block(workspace) {
         full_prompt = format!("{full_prompt}\n\n{handoff_block}");
-    }
-
-    // 7. Working-set summary (drifts when a new path is observed).
-    if let Some(summary) = working_set_summary
-        && !summary.trim().is_empty()
-    {
-        full_prompt = format!("{full_prompt}\n\n{summary}");
     }
 
     SystemPrompt::Text(full_prompt)
@@ -391,6 +523,98 @@ mod tests {
     /// Discriminator unique to the injected handoff block (not present in the
     /// agent prompt's own discussion of the convention).
     const HANDOFF_BLOCK_MARKER: &str = "left a handoff at `.deepseek/handoff.md`";
+
+    #[test]
+    fn render_environment_block_lists_supplied_locale_and_workspace() {
+        let tmp = tempdir().expect("tempdir");
+        let block = render_environment_block(tmp.path(), "zh-Hans");
+        assert!(block.starts_with("## Environment"));
+        assert!(block.contains("- lang: zh-Hans"));
+        assert!(block.contains(&format!(
+            "- deepseek_version: {}",
+            env!("CARGO_PKG_VERSION")
+        )));
+        assert!(block.contains(&format!("- pwd: {}", tmp.path().display())));
+        assert!(block.contains("- platform:"));
+        assert!(block.contains("- shell:"));
+    }
+
+    #[test]
+    fn environment_block_is_inserted_into_system_prompt() {
+        let tmp = tempdir().expect("tempdir");
+        let prompt = match system_prompt_for_mode_with_context_skills_and_session(
+            AppMode::Agent,
+            tmp.path(),
+            None,
+            None,
+            None,
+            PromptSessionContext {
+                user_memory_block: None,
+                goal_objective: None,
+                project_context_pack_enabled: true,
+                locale_tag: "ja",
+            },
+        ) {
+            SystemPrompt::Text(text) => text,
+            SystemPrompt::Blocks(_) => panic!("expected text system prompt"),
+        };
+        assert!(prompt.contains("## Environment"));
+        assert!(prompt.contains("- lang: ja"));
+        assert!(prompt.contains("- deepseek_version:"));
+    }
+
+    #[test]
+    fn project_context_pack_can_be_disabled() {
+        let tmp = tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("README.md"), "# Pack test").expect("write readme");
+        let prompt = match system_prompt_for_mode_with_context_skills_and_session(
+            AppMode::Agent,
+            tmp.path(),
+            None,
+            None,
+            None,
+            PromptSessionContext {
+                user_memory_block: None,
+                goal_objective: None,
+                project_context_pack_enabled: false,
+                locale_tag: "en",
+            },
+        ) {
+            SystemPrompt::Text(text) => text,
+            SystemPrompt::Blocks(_) => panic!("expected text system prompt"),
+        };
+        assert!(!prompt.contains("<project_context_pack>"));
+    }
+
+    #[test]
+    fn project_context_pack_is_before_dynamic_tail() {
+        let tmp = tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("README.md"), "# Pack test").expect("write readme");
+        std::fs::create_dir_all(tmp.path().join(".deepseek")).expect("mkdir");
+        std::fs::write(tmp.path().join(".deepseek").join("handoff.md"), "handoff")
+            .expect("handoff");
+        let prompt = match system_prompt_for_mode_with_context_skills_and_session(
+            AppMode::Agent,
+            tmp.path(),
+            None,
+            None,
+            None,
+            PromptSessionContext {
+                user_memory_block: None,
+                goal_objective: None,
+                project_context_pack_enabled: true,
+                locale_tag: "en",
+            },
+        ) {
+            SystemPrompt::Text(text) => text,
+            SystemPrompt::Blocks(_) => panic!("expected text system prompt"),
+        };
+        assert!(prompt.contains("<project_context_pack>"));
+        assert!(
+            prompt.find("<project_context_pack>").expect("pack")
+                < prompt.find("## Previous Session Handoff").expect("handoff")
+        );
+    }
 
     #[test]
     fn handoff_artifact_is_prepended_to_system_prompt_when_present() {
@@ -450,6 +674,53 @@ mod tests {
         assert!(prompt.contains("Approval Policy: Suggest"));
     }
 
+    /// Gate against shipping a release with a missing CHANGELOG entry — which
+    /// is exactly what happened with v0.8.21 / v0.8.22 (entries had to be
+    /// backfilled in v0.8.23). Asserts the top-of-file CHANGELOG contains a
+    /// `## [X.Y.Z]` heading matching the current `CARGO_PKG_VERSION`. No
+    /// hardcoded version string — the test self-updates with the workspace
+    /// version bump and only fires when the CHANGELOG is the missing piece.
+    ///
+    /// Walks up from `CARGO_MANIFEST_DIR` to find `CHANGELOG.md` instead of
+    /// assuming a fixed `../../CHANGELOG.md` layout. The workspace root is
+    /// the common case, but the walk also tolerates deeper crate layouts and
+    /// the packaged-crate case (where the workspace root has been stripped
+    /// out): if no `CHANGELOG.md` is reachable, the gate quietly skips
+    /// rather than panicking, so consumers running the suite outside the
+    /// workspace checkout don't see a spurious failure.
+    #[test]
+    fn changelog_entry_exists_for_current_package_version() {
+        let version = env!("CARGO_PKG_VERSION");
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let Some(changelog_path) = manifest_dir
+            .ancestors()
+            .map(|dir| dir.join("CHANGELOG.md"))
+            .find(|candidate| candidate.is_file())
+        else {
+            eprintln!(
+                "changelog_entry_exists_for_current_package_version: no \
+                 CHANGELOG.md found above {} — skipping (this gate only \
+                 fires inside a workspace checkout).",
+                manifest_dir.display()
+            );
+            return;
+        };
+
+        let contents = std::fs::read_to_string(&changelog_path).unwrap_or_else(|err| {
+            panic!(
+                "failed to read CHANGELOG.md at {}: {err}",
+                changelog_path.display()
+            )
+        });
+        let header = format!("## [{version}]");
+        assert!(
+            contents.contains(&header),
+            "CHANGELOG.md is missing a `{header}` entry for the current package \
+             version. Add a release section at the top before tagging — see \
+             docs/RELEASE_CHECKLIST.md."
+        );
+    }
+
     #[test]
     fn compose_prompt_deterministic_order() {
         let prompt = compose_prompt(AppMode::Yolo, Personality::Calm);
@@ -472,6 +743,15 @@ mod tests {
         assert!(
             compose_prompt(AppMode::Plan, Personality::Calm).contains("Approval Policy: Never")
         );
+    }
+
+    #[test]
+    fn agent_prompt_can_reflect_never_approval_policy() {
+        let prompt =
+            compose_prompt_with_approval(AppMode::Agent, Personality::Calm, ApprovalMode::Never);
+        assert!(prompt.contains("Mode: Agent"));
+        assert!(prompt.contains("Approval Policy: Never"));
+        assert!(prompt.contains("/config approval_mode suggest"));
     }
 
     #[test]
@@ -504,14 +784,113 @@ mod tests {
     }
 
     #[test]
-    fn when_not_to_use_sections_present() {
+    fn session_goal_is_injected_above_handoff_tail() {
+        let tmp = tempdir().expect("tempdir");
+        let prompt = match system_prompt_for_mode_with_context_skills_and_session(
+            AppMode::Agent,
+            tmp.path(),
+            Some("## Repo Working Set\nsrc/lib.rs"),
+            None,
+            None,
+            PromptSessionContext {
+                user_memory_block: None,
+                goal_objective: Some("Fix transcript corruption"),
+                project_context_pack_enabled: true,
+                locale_tag: "en",
+            },
+        ) {
+            SystemPrompt::Text(text) => text,
+            SystemPrompt::Blocks(_) => panic!("expected text system prompt"),
+        };
+
+        let goal_pos = prompt.find("<session_goal>").expect("goal block");
+        let compact_pos = prompt.find("## Compaction Handoff").expect("compact block");
+
+        assert!(prompt.contains("Fix transcript corruption"));
+        assert!(goal_pos < compact_pos);
+        assert!(!prompt.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn empty_session_goal_is_not_injected() {
+        let tmp = tempdir().expect("tempdir");
+        let prompt = match system_prompt_for_mode_with_context_skills_and_session(
+            AppMode::Agent,
+            tmp.path(),
+            None,
+            None,
+            None,
+            PromptSessionContext {
+                user_memory_block: None,
+                goal_objective: Some("   "),
+                project_context_pack_enabled: true,
+                locale_tag: "en",
+            },
+        ) {
+            SystemPrompt::Text(text) => text,
+            SystemPrompt::Blocks(_) => panic!("expected text system prompt"),
+        };
+
+        assert!(!prompt.contains("<session_goal>"));
+        assert!(!prompt.contains("## Current Session Goal"));
+    }
+
+    #[test]
+    fn tool_selection_guide_avoids_defensive_tool_suppression() {
         let prompt = compose_prompt(AppMode::Agent, Personality::Calm);
-        assert!(prompt.contains("When NOT to use certain tools"));
-        assert!(prompt.contains("### `apply_patch`"));
-        assert!(prompt.contains("### `edit_file`"));
-        assert!(prompt.contains("### `exec_shell`"));
-        assert!(prompt.contains("### `agent_spawn`"));
-        assert!(prompt.contains("### `rlm`"));
+        assert!(prompt.contains("Tool Selection Guide"));
+        assert!(prompt.contains("Use `agent_result`"));
+        assert!(
+            !prompt.contains("When NOT to use certain tools"),
+            "the system prompt should steer tool choice without training the model to avoid available tools"
+        );
+        assert!(
+            !prompt.contains("Don't reach for"),
+            "avoid defensive anti-tool wording in the base prompt"
+        );
+    }
+
+    /// #588: language-mirroring directive must ship in every mode so
+    /// DeepSeek's `reasoning_content` and final reply follow the user's
+    /// language. Structural test — wording is not a test concern, but
+    /// the cross-cutting commitment of #588 is specifically that the
+    /// `reasoning_content` field tracks the user's language (not just
+    /// the visible reply); pin that anchor token so a future edit
+    /// can't silently weaken the section to a generic "respond in the
+    /// user's language" directive while keeping the heading.
+    #[test]
+    fn language_mirroring_section_present_in_all_modes() {
+        for mode in [AppMode::Agent, AppMode::Yolo, AppMode::Plan] {
+            let prompt = compose_prompt(mode, Personality::Calm);
+            assert!(
+                prompt.contains("## Language"),
+                "## Language section missing from mode {mode:?}"
+            );
+            assert!(
+                prompt.contains("reasoning_content"),
+                "## Language section in {mode:?} must mention `reasoning_content` — \
+                 that field name is the structural anchor for the #588 commitment that \
+                 internal reasoning, not just the visible reply, follows the user's language"
+            );
+        }
+    }
+
+    #[test]
+    fn language_mirroring_prioritizes_latest_user_message_over_locale_default() {
+        let prompt = compose_prompt(AppMode::Agent, Personality::Calm);
+        assert!(
+            prompt.contains("latest user message first"),
+            "the language directive must choose the turn language from the user message before \
+             falling back to the environment locale"
+        );
+        assert!(
+            prompt.contains("even when the `lang` field in `## Environment` is `en`"),
+            "Chinese user text must override an English resolved locale for reasoning_content"
+        );
+        assert!(
+            prompt.contains("Use the `lang` field only when"),
+            "environment locale should be an ambiguity fallback, not the primary language source"
+        );
     }
 
     /// #358: rlm guidance was reframed from "first-class" to "specialty
@@ -524,7 +903,7 @@ mod tests {
     fn rlm_specialty_tool_guidance_present() {
         let prompt = compose_prompt(AppMode::Agent, Personality::Calm);
         // Structural: the RLM heading must exist as a section anchor.
-        assert!(prompt.contains("RLM — When to Use It"));
+        assert!(prompt.contains("RLM — How to Use It"));
         // Structural: the word "rlm" must appear multiple times (tool
         // name, section heading, toolbox reference). Just verify the
         // lowercase form — exact wording is NOT a test concern.
@@ -533,14 +912,20 @@ mod tests {
             rlm_count >= 5,
             "RLM guidance present: expected >= 5 mentions of 'rlm', got {rlm_count}"
         );
+        assert!(
+            !prompt.contains("When NOT to use RLM"),
+            "RLM guidance should explain fit and verification without telling the model to avoid the tool"
+        );
     }
 
     #[test]
     fn subagent_done_sentinel_section_present() {
         let prompt = compose_prompt(AppMode::Agent, Personality::Calm);
-        assert!(prompt.contains("Sub-agent completion sentinel"));
+        assert!(prompt.contains("Internal Sub-agent Completion Events"));
         assert!(prompt.contains("<deepseek:subagent.done>"));
+        assert!(prompt.contains("not user input"));
         assert!(prompt.contains("Integration protocol"));
+        assert!(prompt.contains("Do not tell the user they pasted sentinels"));
     }
 
     #[test]
@@ -552,10 +937,8 @@ mod tests {
 
     #[test]
     fn legacy_constants_still_available() {
-        // Verify the old .txt constants still compile and contain expected content
+        // Verify the legacy .txt constant still compiles and contains expected content
         assert!(!AGENT_PROMPT.is_empty());
-        assert!(!YOLO_PROMPT.is_empty());
-        assert!(!PLAN_PROMPT.is_empty());
     }
 
     // ── Cache-prefix stability harness (#263 step 2) ───────────────────────
@@ -612,12 +995,10 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_with_working_set_summary_is_byte_stable_for_constant_summary() {
-        // The `working_set_summary` argument is the volatile surface (suspect
-        // #1 in #263). Independently verifying THIS surface needs a separate
-        // test in working_set.rs; here we just pin that the surrounding
-        // prompt construction faithfully embeds whatever summary it's given
-        // without injecting any non-determinism on its own.
+    fn system_prompt_ignores_working_set_summary_argument() {
+        // Working-set metadata is now injected into the latest user message
+        // per turn. The legacy argument remains for call-site compatibility
+        // but must not reintroduce volatile bytes into the system prompt.
         let tmp = tempdir().expect("tempdir");
         let workspace = tmp.path();
         let summary = "## Repo Working Set\nWorkspace: /tmp/x\n";
@@ -637,16 +1018,18 @@ mod tests {
             &a,
             &b,
         );
-        assert!(a.contains(summary), "summary must be embedded as-is");
+        assert!(
+            !a.contains(summary),
+            "summary must not be embedded in system prompt"
+        );
     }
 
     #[test]
     fn system_prompt_with_handoff_file_is_byte_stable_when_file_is_unchanged() {
-        // Companion to the working-set stability test: if `.deepseek/handoff.md`
-        // hasn't moved between two builds, the rendered prompt must produce
-        // identical bytes. The handoff block is the second volatile surface
-        // (the first is the working-set summary) — both land below the static
-        // boundary in `system_prompt_for_mode_with_context_and_skills`.
+        // If `.deepseek/handoff.md` hasn't moved between two builds, the
+        // rendered prompt must produce identical bytes. The handoff block
+        // lands below the static boundary in
+        // `system_prompt_for_mode_with_context_and_skills`.
         let tmp = tempdir().expect("tempdir");
         let workspace = tmp.path();
         let handoff_dir = workspace.join(".deepseek");
@@ -675,14 +1058,11 @@ mod tests {
     }
 
     #[test]
-    fn handoff_and_working_set_appear_after_static_blocks() {
-        // Cache-prefix invariant: the volatile blocks (handoff, working_set)
-        // must come *after* the static `## Context Management` and the
-        // compaction handoff template (`## Compaction Handoff`) so a churn
-        // in either volatile section doesn't drag the static blocks out of
-        // the cached prefix. Pre-fix ordering placed handoff between the
-        // skills block and `## Context Management`, which busted the cache
-        // every time `/compact` rewrote the file.
+    fn handoff_appears_after_static_blocks_without_working_set() {
+        // Cache-prefix invariant: the handoff block must come after static
+        // `## Context Management` and the compaction handoff template
+        // (`## Compaction Handoff`). Working-set metadata is per-turn user
+        // metadata now, not a system-prompt tail block.
         let tmp = tempdir().expect("tempdir");
         let workspace = tmp.path();
         let handoff_dir = workspace.join(".deepseek");
@@ -705,9 +1085,10 @@ mod tests {
         let handoff_pos = prompt
             .find(HANDOFF_BLOCK_MARKER)
             .expect("handoff block present when fixture file exists");
-        let working_set_pos = prompt
-            .find("## Repo Working Set")
-            .expect("working-set summary present when supplied");
+        assert!(
+            !prompt.contains("## Repo Working Set"),
+            "working-set summary must stay out of the system prompt"
+        );
 
         assert!(
             context_pos < handoff_pos,
@@ -716,10 +1097,6 @@ mod tests {
         assert!(
             compact_pos < handoff_pos,
             "## Compaction Handoff must precede the handoff block"
-        );
-        assert!(
-            handoff_pos < working_set_pos,
-            "handoff block must precede the working-set summary (most-volatile last)"
         );
     }
 

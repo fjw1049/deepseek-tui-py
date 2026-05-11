@@ -109,11 +109,11 @@ Current boundary note (v0.8.6):
 #### DeepSeek API Endpoints
 
 DeepSeek exposes OpenAI-compatible endpoints. The CLI uses:
-- `https://api.deepseek.com/v1/chat/completions` - normal and streaming model turns
-- `https://api.deepseek.com/v1/models` - live model discovery and health checks
+- `https://api.deepseek.com/beta/chat/completions` - default v0.8.16 DeepSeek model turns
+- `https://api.deepseek.com/beta/models` - default v0.8.16 live model discovery and health checks
 
 `https://api.deepseek.com/v1` is accepted for OpenAI SDK compatibility, and
-`https://api.deepseek.com/beta` can be configured for beta-only features such as
+can still be configured explicitly to opt out of beta-only features such as
 strict tool mode, chat prefix completion, and FIM completion. The public
 DeepSeek docs do not document a Responses API path for this workflow; the engine
 drives turns through Chat Completions.
@@ -161,10 +161,13 @@ drives turns through Chat Completions.
 
 ### Security
 
-- **`sandbox/`** - macOS sandboxing support
+- **`sandbox/`** - platform sandbox policy preparation and denial reporting
   - `mod.rs` - Sandbox type definitions
   - `policy.rs` - Sandbox policy configuration
   - `seatbelt.rs` - macOS Seatbelt profile generation
+  - `landlock.rs` - Linux Landlock detection and future helper contract
+  - `windows.rs` - Windows helper contract; not advertised until a Job
+    Object process-containment helper exists
 
 ### Utilities
 
@@ -281,7 +284,10 @@ command = "echo 'Running tool: $TOOL_NAME'"
 1. **Streaming-first**: All LLM responses stream for responsiveness
 2. **Tool safety**: Non-YOLO mode requires approval for destructive operations, including side-effectful MCP tools
 3. **Extensibility**: MCP, skills, and hooks allow customization without code changes
-4. **Cross-platform**: Core works on Linux/macOS/Windows, sandboxing macOS-only
+4. **Cross-platform**: Core works on Linux/macOS/Windows. Sandbox guarantees
+   are platform-specific: macOS Seatbelt is the active policy path; Linux and
+   Windows require helper enforcement before they should be treated as full OS
+   sandboxing.
 5. **Minimal dependencies**: Careful dependency selection for build speed
 6. **Local-first runtime API**: HTTP/SSE endpoints are intended for trusted localhost access and are served by the `crates/tui` runtime today
 

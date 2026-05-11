@@ -6,13 +6,14 @@
 //! - Resuming sessions by ID
 //! - Managing session lifecycle
 
+use crate::artifacts::ArtifactRecord;
 use crate::models::{ContentBlock, Message, SystemPrompt};
 use crate::tui::file_mention::ContextReference;
 use crate::utils::write_atomic;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 /// Maximum number of sessions to retain
@@ -31,6 +32,31 @@ const fn default_session_schema_version() -> u32 {
 
 const fn default_queue_schema_version() -> u32 {
     CURRENT_QUEUE_SCHEMA_VERSION
+}
+
+fn normalize_managed_dir(path: PathBuf) -> std::io::Result<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "managed directory path cannot be empty",
+        ));
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+        )
+    }) && path.is_relative()
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "managed directory path cannot contain traversal components",
+        ));
+    }
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    std::env::current_dir().map(|cwd| cwd.join(path))
 }
 
 /// Persisted queued message for offline/degraded mode.
@@ -96,6 +122,53 @@ pub struct SessionMetadata {
     /// Optional mode label (agent/plan/etc.)
     #[serde(default)]
     pub mode: Option<String>,
+    /// Accumulated cost data for persisted billing and high-water mark.
+    #[serde(default)]
+    pub cost: SessionCostSnapshot,
+}
+
+/// Cost and high-water-mark fields persisted with each session.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct SessionCostSnapshot {
+    /// Accumulated parent-turn session cost in USD.
+    #[serde(default)]
+    pub session_cost_usd: f64,
+    /// Accumulated parent-turn session cost in CNY.
+    #[serde(default)]
+    pub session_cost_cny: f64,
+    /// Accumulated sub-agent/background LLM cost in USD.
+    #[serde(default)]
+    pub subagent_cost_usd: f64,
+    /// Accumulated sub-agent/background LLM cost in CNY.
+    #[serde(default)]
+    pub subagent_cost_cny: f64,
+    /// Max-ever displayed session+subagent cost in USD (preserves #244
+    /// monotonic guarantee across session restarts).
+    #[serde(default)]
+    pub displayed_cost_high_water_usd: f64,
+    /// Max-ever displayed session+subagent cost in CNY.
+    #[serde(default)]
+    pub displayed_cost_high_water_cny: f64,
+}
+
+impl SessionCostSnapshot {
+    /// Session + subagent cost in USD.
+    pub fn total_usd(&self) -> f64 {
+        self.session_cost_usd + self.subagent_cost_usd
+    }
+
+    /// Session + subagent cost in CNY.
+    pub fn total_cny(&self) -> f64 {
+        self.session_cost_cny + self.subagent_cost_cny
+    }
+}
+
+impl SessionMetadata {
+    /// Copy cost fields from another metadata (used when forking a session).
+    #[allow(dead_code)]
+    pub fn copy_cost_from(&mut self, other: &SessionMetadata) {
+        self.cost = other.cost;
+    }
 }
 
 /// A saved session containing full conversation history
@@ -114,9 +187,14 @@ pub struct SavedSession {
     /// `/attach` mentions. Optional for backward-compatible session loads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_references: Vec<SessionContextReference>,
+    /// Metadata registry of large outputs produced during this session.
+    /// Artifact contents are stored in the session-owned artifact directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ArtifactRecord>,
 }
 
 /// Manager for session persistence operations
+#[derive(Debug)]
 pub struct SessionManager {
     /// Directory where sessions are stored
     sessions_dir: PathBuf,
@@ -145,6 +223,7 @@ impl SessionManager {
 
     /// Create a new `SessionManager` with the specified sessions directory
     pub fn new(sessions_dir: PathBuf) -> std::io::Result<Self> {
+        let sessions_dir = normalize_managed_dir(sessions_dir)?;
         // Ensure the sessions directory exists
         fs::create_dir_all(&sessions_dir)?;
         Ok(Self { sessions_dir })
@@ -378,7 +457,12 @@ impl SessionManager {
     /// Delete a session by ID
     pub fn delete_session(&self, id: &str) -> std::io::Result<()> {
         let path = self.validated_session_path(id)?;
-        fs::remove_file(path)
+        fs::remove_file(path)?;
+        let session_dir = self.sessions_dir.join(id.trim());
+        if session_dir.exists() {
+            fs::remove_dir_all(session_dir)?;
+        }
+        Ok(())
     }
 
     /// Clean up old sessions to stay within `MAX_SESSIONS` limit
@@ -436,10 +520,16 @@ impl SessionManager {
         Ok(pruned)
     }
 
-    /// Get the most recent session
-    pub fn get_latest_session(&self) -> std::io::Result<Option<SessionMetadata>> {
+    /// Get the most recent session scoped to the current workspace.
+    pub fn get_latest_session_for_workspace(
+        &self,
+        workspace: &Path,
+    ) -> std::io::Result<Option<SessionMetadata>> {
         let sessions = self.list_sessions()?;
-        Ok(sessions.into_iter().next())
+        Ok(sessions.into_iter().find(|session| {
+            workspace_scope_matches(&session.workspace, workspace)
+                && !is_empty_auto_created_session(session)
+        }))
     }
 
     /// Search sessions by title
@@ -451,6 +541,46 @@ impl SessionManager {
             .into_iter()
             .filter(|s| s.title.to_lowercase().contains(&query_lower))
             .collect())
+    }
+}
+
+pub(crate) fn workspace_scope_matches(saved_workspace: &Path, current_workspace: &Path) -> bool {
+    if paths_equivalent(saved_workspace, current_workspace) {
+        return true;
+    }
+
+    match (
+        find_git_root(saved_workspace),
+        find_git_root(current_workspace),
+    ) {
+        (Some(saved_root), Some(current_root)) => paths_equivalent(&saved_root, &current_root),
+        _ => false,
+    }
+}
+
+fn is_empty_auto_created_session(session: &SessionMetadata) -> bool {
+    session.message_count == 0 && session.title.trim().eq_ignore_ascii_case("New Session")
+}
+
+fn paths_equivalent(lhs: &Path, rhs: &Path) -> bool {
+    let lhs_canonical = fs::canonicalize(lhs).ok();
+    let rhs_canonical = fs::canonicalize(rhs).ok();
+    match (lhs_canonical, rhs_canonical) {
+        (Some(lhs), Some(rhs)) => lhs == rhs,
+        _ => lhs == rhs,
+    }
+}
+
+fn find_git_root(path: &Path) -> Option<PathBuf> {
+    let mut current = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        match current.parent() {
+            Some(parent) if parent != current => current = parent.to_path_buf(),
+            _ => return None,
+        }
     }
 }
 
@@ -505,7 +635,27 @@ pub fn create_saved_session_with_mode(
     system_prompt: Option<&SystemPrompt>,
     mode: Option<&str>,
 ) -> SavedSession {
-    let id = Uuid::new_v4().to_string();
+    create_saved_session_with_id_and_mode(
+        Uuid::new_v4().to_string(),
+        messages,
+        model,
+        workspace,
+        total_tokens,
+        system_prompt,
+        mode,
+    )
+}
+
+/// Create a new `SavedSession` using a caller-owned session id.
+pub fn create_saved_session_with_id_and_mode(
+    id: String,
+    messages: &[Message],
+    model: &str,
+    workspace: &Path,
+    total_tokens: u64,
+    system_prompt: Option<&SystemPrompt>,
+    mode: Option<&str>,
+) -> SavedSession {
     let now = Utc::now();
 
     // Generate title from first user message
@@ -534,6 +684,7 @@ pub fn create_saved_session_with_mode(
             model: model.to_string(),
             workspace: workspace.to_path_buf(),
             mode: mode.map(str::to_string),
+            cost: SessionCostSnapshot::default(),
         },
         messages: capped_messages,
         system_prompt: merge_truncation_note(
@@ -541,6 +692,7 @@ pub fn create_saved_session_with_mode(
             truncation_note,
         ),
         context_references: Vec::new(),
+        artifacts: Vec::new(),
     }
 }
 
@@ -711,6 +863,12 @@ fn system_prompt_to_string(system_prompt: Option<&SystemPrompt>) -> Option<Strin
     }
 }
 
+/// Truncate a session ID to 8 characters for compact display.
+/// Returns a `&str` borrowing from the input — no allocation.
+pub fn truncate_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
 /// Truncate a string to create a title (character-safe for UTF-8)
 fn truncate_title(s: &str, max_len: usize) -> String {
     let s = s.trim();
@@ -732,7 +890,7 @@ pub fn format_session_line(meta: &SessionMetadata) -> String {
 
     format!(
         "{} | {} | {} msgs | {}",
-        &meta.id[..8],
+        truncate_id(&meta.id),
         truncated_title,
         meta.message_count,
         age
@@ -774,6 +932,62 @@ mod tests {
                 cache_control: None,
             }],
         }
+    }
+
+    fn write_session_record(
+        manager: &SessionManager,
+        id: &str,
+        workspace: &Path,
+        updated_at: DateTime<Utc>,
+    ) {
+        let session = SavedSession {
+            schema_version: CURRENT_SESSION_SCHEMA_VERSION,
+            messages: vec![make_test_message("user", "hi")],
+            metadata: SessionMetadata {
+                id: id.to_string(),
+                title: format!("session-{id}"),
+                created_at: updated_at,
+                updated_at,
+                message_count: 1,
+                total_tokens: 0,
+                model: "deepseek-v4-flash".to_string(),
+                workspace: workspace.to_path_buf(),
+                mode: None,
+                cost: SessionCostSnapshot::default(),
+            },
+            system_prompt: None,
+            context_references: Vec::new(),
+            artifacts: Vec::new(),
+        };
+        manager.save_session(&session).expect("save");
+    }
+
+    fn write_empty_session_record(
+        manager: &SessionManager,
+        id: &str,
+        workspace: &Path,
+        updated_at: DateTime<Utc>,
+    ) {
+        let session = SavedSession {
+            schema_version: CURRENT_SESSION_SCHEMA_VERSION,
+            messages: Vec::new(),
+            metadata: SessionMetadata {
+                id: id.to_string(),
+                title: "New Session".to_string(),
+                created_at: updated_at,
+                updated_at,
+                message_count: 0,
+                total_tokens: 0,
+                model: "deepseek-v4-pro".to_string(),
+                workspace: workspace.to_path_buf(),
+                mode: Some("yolo".to_string()),
+                cost: SessionCostSnapshot::default(),
+            },
+            system_prompt: None,
+            context_references: Vec::new(),
+            artifacts: Vec::new(),
+        };
+        manager.save_session(&session).expect("save empty");
     }
 
     #[test]
@@ -821,13 +1035,103 @@ mod tests {
     }
 
     #[test]
+    fn latest_session_for_workspace_ignores_newer_other_directory() {
+        let tmp = tempdir().expect("tempdir");
+        let manager = SessionManager::new(tmp.path().join("sessions")).expect("new");
+        let workspace_a = tmp.path().join("aa").join("aaa");
+        let workspace_b = tmp.path().join("bb").join("bbb");
+        fs::create_dir_all(&workspace_a).expect("mkdir workspace a");
+        fs::create_dir_all(&workspace_b).expect("mkdir workspace b");
+
+        write_session_record(
+            &manager,
+            "current-workspace",
+            &workspace_a,
+            Utc::now() - chrono::Duration::minutes(10),
+        );
+        write_session_record(&manager, "other-workspace", &workspace_b, Utc::now());
+
+        let global = manager
+            .list_sessions()
+            .expect("list")
+            .into_iter()
+            .next()
+            .expect("global latest");
+        assert_eq!(global.id, "other-workspace");
+
+        let scoped = manager
+            .get_latest_session_for_workspace(&workspace_a)
+            .expect("latest for workspace")
+            .expect("scoped latest");
+        assert_eq!(scoped.id, "current-workspace");
+    }
+
+    #[test]
+    fn latest_session_for_workspace_matches_same_git_repository() {
+        let tmp = tempdir().expect("tempdir");
+        let manager = SessionManager::new(tmp.path().join("sessions")).expect("new");
+        let repo = tmp.path().join("repo");
+        let repo_app = repo.join("apps").join("client");
+        let repo_crate = repo.join("crates").join("server");
+        let other_repo = tmp.path().join("other").join("project");
+        fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+        fs::create_dir_all(&repo_app).expect("mkdir repo app");
+        fs::create_dir_all(&repo_crate).expect("mkdir repo crate");
+        fs::create_dir_all(&other_repo).expect("mkdir other repo");
+
+        write_session_record(
+            &manager,
+            "same-repo",
+            &repo_app,
+            Utc::now() - chrono::Duration::minutes(5),
+        );
+        write_session_record(&manager, "other-repo", &other_repo, Utc::now());
+
+        let scoped = manager
+            .get_latest_session_for_workspace(&repo_crate)
+            .expect("latest for workspace")
+            .expect("same repo latest");
+        assert_eq!(scoped.id, "same-repo");
+    }
+
+    #[test]
+    fn latest_session_for_workspace_skips_empty_auto_created_session() {
+        let tmp = tempdir().expect("tempdir");
+        let manager = SessionManager::new(tmp.path().join("sessions")).expect("new");
+        let workspace = tmp.path().join("repo");
+        fs::create_dir_all(&workspace).expect("mkdir workspace");
+
+        write_session_record(
+            &manager,
+            "interrupted-user-turn",
+            &workspace,
+            Utc::now() - chrono::Duration::minutes(5),
+        );
+        write_empty_session_record(&manager, "empty-auto-shell", &workspace, Utc::now());
+
+        let global = manager
+            .list_sessions()
+            .expect("list")
+            .into_iter()
+            .next()
+            .expect("global latest");
+        assert_eq!(global.id, "empty-auto-shell");
+
+        let scoped = manager
+            .get_latest_session_for_workspace(&workspace)
+            .expect("latest for workspace")
+            .expect("scoped latest");
+        assert_eq!(scoped.id, "interrupted-user-turn");
+    }
+
+    #[test]
     fn test_load_by_prefix() {
         let tmp = tempdir().expect("tempdir");
         let manager = SessionManager::new(tmp.path().join("sessions")).expect("new");
 
         let messages = vec![make_test_message("user", "Test session")];
         let session = create_saved_session(&messages, "test-model", tmp.path(), 100, None);
-        let prefix = session.metadata.id[..8].to_string();
+        let prefix = truncate_id(&session.metadata.id).to_string();
         manager.save_session(&session).expect("save");
 
         let loaded = manager.load_session_by_prefix(&prefix).expect("load");
@@ -851,6 +1155,31 @@ mod tests {
     }
 
     #[test]
+    fn delete_session_removes_artifact_directory() {
+        let tmp = tempdir().expect("tempdir");
+        let sessions_dir = tmp.path().join("sessions");
+        let manager = SessionManager::new(sessions_dir.clone()).expect("new");
+
+        let session = create_saved_session(
+            &[make_test_message("user", "artifact session")],
+            "test-model",
+            tmp.path(),
+            100,
+            None,
+        );
+        let session_id = session.metadata.id.clone();
+        let artifact_dir = sessions_dir.join(&session_id).join("artifacts");
+        fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        fs::write(artifact_dir.join("art_call.txt"), "raw output").expect("artifact file");
+
+        manager.save_session(&session).expect("save");
+        manager.delete_session(&session_id).expect("delete");
+
+        assert!(!sessions_dir.join(format!("{session_id}.json")).exists());
+        assert!(!sessions_dir.join(&session_id).exists());
+    }
+
+    #[test]
     fn test_session_id_rejects_invalid_characters() {
         let tmp = tempdir().expect("tempdir");
         let manager = SessionManager::new(tmp.path().join("sessions")).expect("new");
@@ -863,6 +1192,13 @@ mod tests {
         let err = manager
             .delete_session("sess bad")
             .expect_err("invalid id should fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_session_manager_rejects_relative_traversal_dir() {
+        let err = SessionManager::new(PathBuf::from("../sessions"))
+            .expect_err("relative traversal directory should fail");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
@@ -926,6 +1262,30 @@ mod tests {
                 .expect("load checkpoint")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn workspace_scope_matches_subdirectories_in_same_git_checkout() {
+        let tmp = tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        let nested = repo.join("crates").join("tui");
+        fs::create_dir_all(&nested).expect("mkdir nested");
+        fs::write(repo.join(".git"), "gitdir: .git/worktrees/repo").expect("write git marker");
+
+        assert!(workspace_scope_matches(&repo, &nested));
+    }
+
+    #[test]
+    fn workspace_scope_rejects_sibling_git_checkouts() {
+        let tmp = tempdir().expect("tempdir");
+        let first = tmp.path().join("repo-a");
+        let second = tmp.path().join("repo-b");
+        fs::create_dir_all(&first).expect("mkdir first");
+        fs::create_dir_all(&second).expect("mkdir second");
+        fs::write(first.join(".git"), "gitdir: .git/worktrees/a").expect("write first marker");
+        fs::write(second.join(".git"), "gitdir: .git/worktrees/b").expect("write second marker");
+
+        assert!(!workspace_scope_matches(&first, &second));
     }
 
     #[test]
@@ -1016,8 +1376,7 @@ mod tests {
             .expect("present");
         assert!(
             unscoped.session_id.is_none(),
-            "save with None must persist a missing session_id, got {:?}",
-            unscoped.session_id
+            "save with None must persist a missing session_id"
         );
     }
 
@@ -1185,6 +1544,57 @@ mod tests {
         assert_eq!(extracted.title, "weird { title } with braces");
     }
 
+    #[test]
+    fn saved_session_deserializes_without_artifacts_as_empty_registry() {
+        let json = r#"{
+            "schema_version": 1,
+            "metadata": {
+                "id": "legacy-session",
+                "title": "legacy",
+                "created_at": "2026-05-08T00:00:00Z",
+                "updated_at": "2026-05-08T00:00:00Z",
+                "message_count": 0,
+                "total_tokens": 0,
+                "model": "deepseek-v4-pro",
+                "workspace": "/tmp"
+            },
+            "messages": [],
+            "system_prompt": null
+        }"#;
+
+        let session: SavedSession = serde_json::from_str(json).expect("legacy session loads");
+        assert!(session.artifacts.is_empty());
+    }
+
+    #[test]
+    fn save_and_load_session_preserves_artifact_metadata() {
+        let tmp = tempdir().expect("tempdir");
+        let manager = SessionManager::new(tmp.path().join("sessions")).expect("new");
+        let mut session = create_saved_session(
+            &[make_test_message("user", "run tests")],
+            "deepseek-v4-pro",
+            Path::new("/tmp"),
+            0,
+            None,
+        );
+        session.artifacts.push(crate::artifacts::ArtifactRecord {
+            id: "art_call_big".to_string(),
+            kind: crate::artifacts::ArtifactKind::ToolOutput,
+            session_id: session.metadata.id.clone(),
+            tool_call_id: "call-big".to_string(),
+            tool_name: "exec_shell".to_string(),
+            created_at: Utc::now(),
+            byte_size: 512_000,
+            preview: "cargo test output".to_string(),
+            storage_path: PathBuf::from("/tmp/tool_outputs/call-big.txt"),
+        });
+
+        manager.save_session(&session).expect("save");
+        let loaded = manager.load_session(&session.metadata.id).expect("load");
+
+        assert_eq!(loaded.artifacts, session.artifacts);
+    }
+
     // ---- #406 prune_sessions_older_than ----
     //
     // The helper is a building block for the auto-archive design: it
@@ -1201,24 +1611,7 @@ mod tests {
         // to whatever the helper functions emit; we just need a
         // metadata block whose `updated_at` matches the requested
         // value.
-        let session = SavedSession {
-            schema_version: CURRENT_SESSION_SCHEMA_VERSION,
-            messages: vec![make_test_message("user", "hi")],
-            metadata: SessionMetadata {
-                id: id.to_string(),
-                title: format!("session-{id}"),
-                created_at: updated_at,
-                updated_at,
-                message_count: 1,
-                total_tokens: 0,
-                model: "deepseek-v4-flash".to_string(),
-                workspace: PathBuf::from("/tmp"),
-                mode: None,
-            },
-            system_prompt: None,
-            context_references: Vec::new(),
-        };
-        manager.save_session(&session).expect("save");
+        write_session_record(manager, id, Path::new("/tmp"), updated_at);
     }
 
     #[test]

@@ -6,7 +6,8 @@
 
 - **完整的 LLM 对话引擎** — 流式输出、工具调用、多轮推理、容量控制、自动压缩
 - **53+ 内置工具** — 文件操作、Shell、Git、Web、GitHub、任务管理、子代理等
-- **现代 TUI 界面** — 基于 Textual，包含 Sidebar、Markdown 渲染、Diff 查看、快捷键面板
+- **现代 TUI 界面** — 基于 Textual：欢迎卡 + Markdown 渲染 + Diff 查看 + 右侧实时面板（Todos / Tasks / Agents）+ 三列状态条（mode·model·cost / 快捷键 chord / cache%·worked·ctx）
+- **会话计费可视** — `cache 67%` chip 实时显示 prompt cache 命中率，$/¥ 双币 cumulative cost 自动累计（v4-pro 限时折扣自动识别）
 - **多会话持久化** — SQLite 存储，支持会话恢复、fork、检查点
 - **审批策略系统** — ExecPolicy + CommandSafety 4 级安全管道
 - **MCP/LSP 集成** — 外部工具扩展 + 代码编辑后自动诊断
@@ -158,13 +159,6 @@ deepseek-tui auth status
 deepseek-tui login --provider deepseek --api-key sk-...
 ```
 
-#### 常见问题
-
-- **启动后界面静态、按键无响应**：通常是 `./.deepseek/tasks/`（旧版可能在 `~/.deepseek/tasks/`）残留了僵尸任务（pytest 临时目录之类的）。检查 `cat .deepseek/tasks/queue.json`；若有大量条目，备份后清空 `tasks/` 与 `queue.json` 再重启。
-- **`deepseek-tui: command not found`**：venv 没激活或依赖没装。执行 `uv sync && source .venv/bin/activate`。
-- **`ModuleNotFoundError: No module named 'deepseek_tui'`（运行 deepseek-tui 时）**：Python 3.14 的新行为会跳过所有以 `_` 开头的 `.pth` 文件（视为隐藏文件），而 hatchling editable 安装恰好用 `_editable_impl_*.pth` 命名，导致 `src/` 找不到。本仓库已用 `.python-version` 钉到 3.12 规避；如果你 force 用 3.14+，请改用 `pip install -e .` 或等待 hatchling 修复（追踪 [pypa/hatch#1894](https://github.com/pypa/hatch/issues/1894)）。
-- **HTTP 400 `unknown variant 'auto'`**：旧版 `tool_choice` 格式没翻译，已在最新 commit 修复（`client/deepseek.py::_map_tool_choice_for_chat`）。拉取最新代码即可。
-
 ## 项目结构
 
 ```
@@ -244,56 +238,6 @@ show_thinking = true
 database_path = "~/.deepseek/state.db"
 autosave = true
 ```
-
-## 开发
-
-### 运行测试
-
-```bash
-# 全量测试
-pytest tests/ -v
-
-# 仅 parity 测试
-pytest tests/parity/ -v
-
-# 带覆盖率
-pytest tests/ --cov=deepseek_tui --cov-report=term-missing
-```
-
-### 代码质量
-
-```bash
-# Lint
-ruff check src/ tests/
-
-# 格式化
-ruff format src/ tests/
-
-# 类型检查
-mypy src/
-```
-
-### 当前测试状态
-
-- **1323 passed, 4 skipped**（parity + unit + integration，约 7 秒跑完）
-- ruff: All checks passed!
-- mypy: 39 errors（与基线一致，无新增；详见 HANDOVER 集成债清单）
-- 覆盖：protocol / config / secrets / engine / tools / state / TUI / app_server / hooks / MCP / LSP / logging
-
-## 技术栈
-
-| 组件 | 技术选型 |
-|------|---------|
-| TUI | Textual |
-| HTTP Client | httpx + httpx-sse |
-| CLI | Typer |
-| 数据模型 | Pydantic v2 |
-| 持久化 | aiosqlite |
-| App Server | FastAPI + Uvicorn |
-| 密钥 | keyring |
-| 异步 | asyncio + anyio |
-| Lint | ruff |
-| 类型检查 | mypy |
 
 ## 许可证
 

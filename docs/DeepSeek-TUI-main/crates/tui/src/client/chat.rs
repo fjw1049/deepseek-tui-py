@@ -4,18 +4,46 @@
 //! request building (`build_chat_messages*`), and SSE parsing (`parse_sse_chunk`)
 //! all live here.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::time::timeout as tokio_timeout;
 
 /// Default idle timeout for SSE stream reads (300 seconds = 5 minutes).
 /// After this period with no data, the stream is considered stalled and
 /// yields a recoverable error so the caller can retry.
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Default timeout for the initial streaming response headers.
+///
+/// `doctor` uses a bounded non-streaming request, but normal TUI turns first
+/// wait for the SSE response to open. On some Windows/proxy paths that wait can
+/// hang before any stream chunk exists, leaving the UI stuck at "Working...".
+const DEFAULT_STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Reads `DEEPSEEK_STREAM_OPEN_TIMEOUT_SECS` as a bounded override for the
+/// response-header wait. This is intentionally shorter than the per-chunk idle
+/// timeout because it only covers connection setup and upstream header return,
+/// not model thinking time after streaming has started.
+fn stream_open_timeout() -> Duration {
+    stream_open_timeout_from_env(
+        std::env::var("DEEPSEEK_STREAM_OPEN_TIMEOUT_SECS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn stream_open_timeout_from_env(value: Option<&str>) -> Duration {
+    let secs = value
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_STREAM_OPEN_TIMEOUT.as_secs())
+        .clamp(5, 300);
+    Duration::from_secs(secs)
+}
 
 /// Reads the `DEEPSEEK_STREAM_IDLE_TIMEOUT_SECS` env var, falling back to
 /// the default 300s. The parsed value is clamped to [1, 3600] seconds.
@@ -61,7 +89,12 @@ impl DeepSeekClient {
             body["top_p"] = json!(top_p);
         }
         if let Some(tools) = request.tools.as_ref() {
-            body["tools"] = json!(tools.iter().map(tool_to_chat).collect::<Vec<_>>());
+            body["tools"] = json!(
+                tools
+                    .iter()
+                    .map(|tool| tool_to_chat_for_base_url(tool, &self.base_url))
+                    .collect::<Vec<_>>()
+            );
         }
         if let Some(choice) = request.tool_choice.as_ref()
             && let Some(mapped) = map_tool_choice_for_chat(choice)
@@ -75,9 +108,23 @@ impl DeepSeekClient {
         );
 
         let url = api_url(&self.base_url, "chat/completions");
-        let response = self
-            .send_with_retry(|| self.http_client.post(&url).json(&body))
-            .await?;
+        let open_timeout = stream_open_timeout();
+        let response = match tokio_timeout(
+            open_timeout,
+            self.send_with_retry(|| self.http_client.post(&url).json(&body)),
+        )
+        .await
+        {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                anyhow::bail!(
+                    "SSE stream request did not receive response headers after {}s. \
+                     `deepseek doctor` can still pass when non-streaming requests work; \
+                     on Windows or proxy networks, try `DEEPSEEK_FORCE_HTTP1=1` and rerun `deepseek`.",
+                    open_timeout.as_secs()
+                );
+            }
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -116,7 +163,12 @@ impl DeepSeekClient {
             body["top_p"] = json!(top_p);
         }
         if let Some(tools) = request.tools.as_ref() {
-            body["tools"] = json!(tools.iter().map(tool_to_chat).collect::<Vec<_>>());
+            body["tools"] = json!(
+                tools
+                    .iter()
+                    .map(|tool| tool_to_chat_for_base_url(tool, &self.base_url))
+                    .collect::<Vec<_>>()
+            );
         }
         if let Some(choice) = request.tool_choice.as_ref()
             && let Some(mapped) = map_tool_choice_for_chat(choice)
@@ -356,16 +408,575 @@ pub(super) fn build_chat_messages(
         messages,
         model,
         should_replay_reasoning_content(model, None),
+        false,
     )
 }
 
 pub(super) fn build_chat_messages_for_request(request: &MessageRequest) -> Vec<Value> {
-    build_chat_messages_with_reasoning(
-        request.system.as_ref(),
-        &request.messages,
-        &request.model,
-        should_replay_reasoning_content(&request.model, request.reasoning_effort.as_deref()),
+    PromptBuilder::for_request(request).build()
+}
+
+pub(crate) fn inspect_prompt_for_request(request: &MessageRequest) -> PromptInspection {
+    PromptBuilder::for_request(request).inspect()
+}
+
+pub(crate) fn build_cache_warmup_request(request: &MessageRequest) -> MessageRequest {
+    PromptBuilder::for_request(request).build_cache_warmup_request()
+}
+
+struct PromptBuilder<'a> {
+    system: Option<&'a SystemPrompt>,
+    messages: &'a [Message],
+    model: &'a str,
+    reasoning_effort: Option<&'a str>,
+}
+
+impl<'a> PromptBuilder<'a> {
+    fn for_request(request: &'a MessageRequest) -> Self {
+        Self {
+            system: request.system.as_ref(),
+            messages: &request.messages,
+            model: &request.model,
+            reasoning_effort: request.reasoning_effort.as_deref(),
+        }
+    }
+
+    fn build(self) -> Vec<Value> {
+        build_chat_messages_with_reasoning(
+            self.system,
+            self.messages,
+            self.model,
+            should_replay_reasoning_content(self.model, self.reasoning_effort),
+            false,
+        )
+    }
+
+    fn inspect(self) -> PromptInspection {
+        let messages = build_chat_messages_with_reasoning(
+            self.system,
+            self.messages,
+            self.model,
+            should_replay_reasoning_content(self.model, self.reasoning_effort),
+            true,
+        );
+        inspect_wire_messages(&messages)
+    }
+
+    fn build_cache_warmup_request(self) -> MessageRequest {
+        let system = stable_system_prompt(self.system);
+        let mut messages = stable_history_messages(self.messages);
+        messages.push(Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::Text {
+                text: CACHE_WARMUP_USER_TAIL.to_string(),
+                cache_control: None,
+            }],
+        });
+
+        MessageRequest {
+            model: self.model.to_string(),
+            messages,
+            max_tokens: 8,
+            system,
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            thinking: None,
+            reasoning_effort: self.reasoning_effort.map(str::to_string),
+            stream: None,
+            temperature: Some(0.0),
+            top_p: None,
+        }
+    }
+}
+
+pub(crate) const CACHE_WARMUP_USER_TAIL: &str = "请只回复 OK";
+const TOOL_RESULT_SENT_CHAR_BUDGET: usize = 12_000;
+const TOOL_RESULT_HEAD_CHARS: usize = 4_000;
+const TOOL_RESULT_TAIL_CHARS: usize = 4_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptInspection {
+    pub base_static_prefix_hash: String,
+    pub full_request_prefix_hash: String,
+    pub layers: Vec<PromptLayerInspection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptLayerInspection {
+    pub name: String,
+    pub stability: PromptLayerStability,
+    pub char_len: usize,
+    pub sha256: String,
+    pub tool_result: Option<ToolResultInspection>,
+    pub turn_meta: Option<TurnMetaInspection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolResultInspection {
+    pub original_chars: usize,
+    pub sent_chars: usize,
+    pub truncated: bool,
+    pub deduplicated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TurnMetaInspection {
+    pub original_chars: usize,
+    pub sent_chars: usize,
+    pub deduplicated: bool,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptLayerStability {
+    Static,
+    History,
+    Dynamic,
+}
+
+impl PromptLayerStability {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::History => "history",
+            Self::Dynamic => "dynamic",
+        }
+    }
+}
+
+fn inspect_wire_messages(messages: &[Value]) -> PromptInspection {
+    let mut layers = Vec::new();
+    let mut base_static_prefix_parts = Vec::new();
+    let mut full_request_prefix_parts = Vec::new();
+
+    for (index, message) in messages.iter().enumerate() {
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let content = message_content_for_inspect(message);
+        let is_last = index + 1 == messages.len();
+
+        if index == 0 && role == "system" {
+            for (name, stability, body) in split_system_layers(&content) {
+                if stability == PromptLayerStability::Static {
+                    base_static_prefix_parts.push(body.to_string());
+                }
+                if stability != PromptLayerStability::Dynamic {
+                    full_request_prefix_parts.push(body.to_string());
+                }
+                layers.push(prompt_layer(name, stability, body));
+            }
+        } else {
+            let stability = if (is_last && role == "user") || role == "tool" {
+                PromptLayerStability::Dynamic
+            } else {
+                PromptLayerStability::History
+            };
+            let name = if is_last && role == "user" {
+                "User task".to_string()
+            } else {
+                format!("Message #{index} {role}")
+            };
+            if stability != PromptLayerStability::Dynamic {
+                full_request_prefix_parts.push(content.clone());
+            }
+            let mut layer = prompt_layer(name, stability, &content);
+            layer.tool_result = tool_result_inspection_for_message(message);
+            layer.turn_meta = turn_meta_inspection_for_message(message);
+            layers.push(layer);
+        }
+    }
+
+    let base_static_prefix = base_static_prefix_parts.join("\n");
+    let full_request_prefix = full_request_prefix_parts.join("\n");
+
+    PromptInspection {
+        base_static_prefix_hash: sha256_hex(base_static_prefix.as_bytes()),
+        full_request_prefix_hash: sha256_hex(full_request_prefix.as_bytes()),
+        layers,
+    }
+}
+
+fn message_content_for_inspect(message: &Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(content) = message.get("content").and_then(Value::as_str)
+        && !content.is_empty()
+    {
+        parts.push(content.to_string());
+    }
+    if let Some(reasoning) = message.get("reasoning_content").and_then(Value::as_str)
+        && !reasoning.is_empty()
+    {
+        parts.push(reasoning.to_string());
+    }
+    if let Some(tool_calls) = message.get("tool_calls") {
+        parts.push(tool_calls.to_string());
+    }
+    parts.join("\n")
+}
+
+fn tool_result_inspection_for_message(message: &Value) -> Option<ToolResultInspection> {
+    if message.get("role").and_then(Value::as_str) != Some("tool") {
+        return None;
+    }
+    let budget = message.get("_tool_result_budget")?;
+    Some(ToolResultInspection {
+        original_chars: budget
+            .get("original_chars")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())?,
+        sent_chars: budget
+            .get("sent_chars")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())?,
+        truncated: budget
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        deduplicated: budget
+            .get("deduplicated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn turn_meta_inspection_for_message(message: &Value) -> Option<TurnMetaInspection> {
+    let budget = message.get("_turn_meta_budget")?;
+    Some(TurnMetaInspection {
+        original_chars: budget
+            .get("original_chars")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())?,
+        sent_chars: budget
+            .get("sent_chars")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())?,
+        deduplicated: budget
+            .get("deduplicated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        sha256: budget
+            .get("sha256")
+            .and_then(Value::as_str)
+            .map(str::to_string)?,
+    })
+}
+
+fn split_system_layers(content: &str) -> Vec<(String, PromptLayerStability, &str)> {
+    let markers = [
+        ("Project context", "<project_instructions"),
+        ("Project context pack", "## Project Context Pack"),
+        ("Environment", "## Environment"),
+        ("Configured instructions", "<instructions "),
+        ("User memory", "## User Memory"),
+        ("Current session goal", "## Current Session Goal"),
+        ("Skills", "## Skills"),
+        ("Context management", "## Context Management"),
+        ("Compact template", "## Compact"),
+        ("Previous session handoff", "## Previous Session Handoff"),
+    ];
+
+    let mut starts: Vec<(usize, &str)> = markers
+        .iter()
+        .filter_map(|(name, marker)| content.find(marker).map(|idx| (idx, *name)))
+        .collect();
+    starts.sort_by_key(|(idx, _)| *idx);
+
+    let mut layers = Vec::new();
+    let first_marker = starts.first().map_or(content.len(), |(idx, _)| *idx);
+    if first_marker > 0 {
+        layers.push((
+            "Global system prefix".to_string(),
+            PromptLayerStability::Static,
+            content[..first_marker].trim(),
+        ));
+    }
+
+    for (i, (start, name)) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).map_or(content.len(), |(idx, _)| *idx);
+        let stability = if *name == "Previous session handoff" {
+            PromptLayerStability::Dynamic
+        } else if is_static_base_layer(name) {
+            PromptLayerStability::Static
+        } else {
+            PromptLayerStability::History
+        };
+        layers.push(((*name).to_string(), stability, content[*start..end].trim()));
+    }
+
+    if layers.is_empty() {
+        layers.push((
+            "Global system prefix".to_string(),
+            PromptLayerStability::Static,
+            content.trim(),
+        ));
+    }
+    layers
+}
+
+fn is_static_base_layer(name: &str) -> bool {
+    matches!(
+        name,
+        "Global system prefix"
+            | "Environment"
+            | "Skills"
+            | "Project context"
+            | "Project context pack"
+            | "Context management"
+            | "Compact template"
     )
+}
+
+fn stable_system_prompt(system: Option<&SystemPrompt>) -> Option<SystemPrompt> {
+    let instructions = system_to_instructions(system.cloned())?;
+    let stable = split_system_layers(&instructions)
+        .into_iter()
+        .filter_map(|(_, stability, body)| {
+            (stability == PromptLayerStability::Static).then_some(body)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if stable.trim().is_empty() {
+        None
+    } else {
+        Some(SystemPrompt::Text(stable))
+    }
+}
+
+fn stable_history_messages(messages: &[Message]) -> Vec<Message> {
+    let mut end = messages.len();
+    if messages
+        .last()
+        .is_some_and(|message| message.role.as_str() == "user")
+    {
+        end = end.saturating_sub(1);
+    }
+    messages[..end].to_vec()
+}
+
+fn prompt_layer(
+    name: String,
+    stability: PromptLayerStability,
+    content: &str,
+) -> PromptLayerInspection {
+    PromptLayerInspection {
+        name,
+        stability,
+        char_len: content.chars().count(),
+        sha256: sha256_hex(content.as_bytes()),
+        tool_result: None,
+        turn_meta: None,
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[derive(Clone)]
+struct PendingToolCallInfo {
+    tool_name: String,
+    input: Value,
+}
+
+struct SeenToolResult {
+    message_label: String,
+    original_chars: usize,
+}
+
+struct WireToolResult {
+    content: String,
+    original_chars: usize,
+    sent_chars: usize,
+    truncated: bool,
+    deduplicated: bool,
+}
+
+#[derive(Clone)]
+struct TurnMetaBudget {
+    original_chars: usize,
+    sent_chars: usize,
+    deduplicated: bool,
+    sha256: String,
+}
+
+struct LastFullTurnMeta {
+    sha256: String,
+}
+
+fn render_turn_meta_for_wire(
+    text: &str,
+    last_full_turn_meta: &mut Option<LastFullTurnMeta>,
+) -> (String, TurnMetaBudget) {
+    let original_chars = text.chars().count();
+    let sha = sha256_hex(text.as_bytes());
+
+    if last_full_turn_meta
+        .as_ref()
+        .is_some_and(|previous| previous.sha256 == sha)
+    {
+        let rendered =
+            format!("<TURN_META_REF sha=\"{sha}\" original_chars=\"{original_chars}\" />");
+        let budget = TurnMetaBudget {
+            original_chars,
+            sent_chars: rendered.chars().count(),
+            deduplicated: true,
+            sha256: sha,
+        };
+        return (rendered, budget);
+    }
+
+    *last_full_turn_meta = Some(LastFullTurnMeta {
+        sha256: sha.clone(),
+    });
+    (
+        text.to_string(),
+        TurnMetaBudget {
+            original_chars,
+            sent_chars: original_chars,
+            deduplicated: false,
+            sha256: sha,
+        },
+    )
+}
+
+fn is_turn_meta_text(text: &str) -> bool {
+    text.trim_start().starts_with("<turn_meta>")
+}
+
+fn turn_meta_budget_json(turn_meta: &TurnMetaBudget) -> Value {
+    json!({
+        "original_chars": turn_meta.original_chars,
+        "sent_chars": turn_meta.sent_chars,
+        "deduplicated": turn_meta.deduplicated,
+        "sha256": turn_meta.sha256,
+    })
+}
+
+fn compact_tool_result_for_wire(
+    tool_name: &str,
+    input: &Value,
+    content: &str,
+    message_label: &str,
+    seen_tool_results: &mut HashMap<String, SeenToolResult>,
+) -> WireToolResult {
+    let original_chars = content.chars().count();
+    let sha = sha256_hex(content.as_bytes());
+
+    if let Some(previous) = seen_tool_results.get(&sha) {
+        let content = format!(
+            "<TOOL_RESULT_REF sha=\"{}\" original_message=\"{}\" chars=\"{}\" />",
+            sha, previous.message_label, previous.original_chars
+        );
+        return WireToolResult {
+            sent_chars: content.chars().count(),
+            content,
+            original_chars,
+            truncated: false,
+            deduplicated: true,
+        };
+    }
+
+    seen_tool_results.insert(
+        sha.clone(),
+        SeenToolResult {
+            message_label: message_label.to_string(),
+            original_chars,
+        },
+    );
+
+    if original_chars <= TOOL_RESULT_SENT_CHAR_BUDGET {
+        return WireToolResult {
+            content: content.to_string(),
+            original_chars,
+            sent_chars: original_chars,
+            truncated: false,
+            deduplicated: false,
+        };
+    }
+
+    let head = first_chars(content, TOOL_RESULT_HEAD_CHARS);
+    let tail = last_chars(content, TOOL_RESULT_TAIL_CHARS);
+    let kept = head.chars().count() + tail.chars().count();
+    let omitted = original_chars.saturating_sub(kept);
+    let compacted = format!(
+        "[TOOL_RESULT_TRUNCATED]\n\
+         tool_name: {tool_name}\n\
+         command_or_query: {}\n\
+         exit_status: {}\n\
+         original_chars: {original_chars}\n\
+         sha256: {sha}\n\
+         first_chars:\n\
+         {head}\n\n\
+         [... truncated {omitted} chars from middle ...]\n\n\
+         last_chars:\n\
+         {tail}",
+        tool_command_or_query(input),
+        tool_exit_status(content)
+    );
+
+    WireToolResult {
+        sent_chars: compacted.chars().count(),
+        content: compacted,
+        original_chars,
+        truncated: true,
+        deduplicated: false,
+    }
+}
+
+fn tool_command_or_query(input: &Value) -> String {
+    for key in ["command", "cmd", "query", "q", "pattern", "path", "url"] {
+        if let Some(value) = input.get(key) {
+            return summarize_for_metadata(value, 500);
+        }
+    }
+    summarize_for_metadata(input, 500)
+}
+
+fn tool_exit_status(content: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        for key in ["exit_code", "exit_status", "status", "code"] {
+            if let Some(value) = value.get(key) {
+                return summarize_for_metadata(value, 120);
+            }
+        }
+    }
+
+    for line in content.lines().take(20) {
+        let trimmed = line.trim();
+        for prefix in ["Exit code:", "exit code:", "Exit status:", "exit status:"] {
+            if let Some(value) = trimmed.strip_prefix(prefix) {
+                return value.trim().to_string();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+fn summarize_for_metadata(value: &Value, max_chars: usize) -> String {
+    let raw = value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string());
+    let mut summarized = first_chars(&raw.replace('\n', "\\n"), max_chars);
+    if raw.chars().count() > max_chars {
+        summarized.push_str("...");
+    }
+    summarized
+}
+
+fn first_chars(value: &str, count: usize) -> String {
+    value.chars().take(count).collect()
+}
+
+fn last_chars(value: &str, count: usize) -> String {
+    let mut chars: Vec<char> = value.chars().rev().take(count).collect();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 fn build_chat_messages_with_reasoning(
@@ -373,9 +984,12 @@ fn build_chat_messages_with_reasoning(
     messages: &[Message],
     _model: &str,
     include_reasoning: bool,
+    include_tool_budget_metadata: bool,
 ) -> Vec<Value> {
     let mut out = Vec::new();
-    let mut pending_tool_calls: HashSet<String> = HashSet::new();
+    let mut pending_tool_calls: HashMap<String, PendingToolCallInfo> = HashMap::new();
+    let mut seen_tool_results: HashMap<String, SeenToolResult> = HashMap::new();
+    let mut last_full_turn_meta: Option<LastFullTurnMeta> = None;
 
     if let Some(instructions) = system_to_instructions(system.cloned())
         && !instructions.trim().is_empty()
@@ -386,17 +1000,27 @@ fn build_chat_messages_with_reasoning(
         }));
     }
 
-    for message in messages.iter() {
+    for (message_index, message) in messages.iter().enumerate() {
         let role = message.role.as_str();
         let mut text_parts = Vec::new();
         let mut thinking_parts = Vec::new();
         let mut tool_calls = Vec::new();
-        let mut tool_call_ids = Vec::new();
-        let mut tool_results: Vec<(String, Value)> = Vec::new();
+        let mut tool_call_infos = Vec::new();
+        let mut tool_results: Vec<(String, String, String)> = Vec::new();
+        let mut turn_meta_budget: Option<TurnMetaBudget> = None;
 
         for block in &message.content {
             match block {
-                ContentBlock::Text { text, .. } => text_parts.push(text.clone()),
+                ContentBlock::Text { text, .. } => {
+                    if is_turn_meta_text(text) {
+                        let (rendered, budget) =
+                            render_turn_meta_for_wire(text, &mut last_full_turn_meta);
+                        text_parts.push(rendered);
+                        turn_meta_budget = Some(budget);
+                    } else {
+                        text_parts.push(text.clone());
+                    }
+                }
                 ContentBlock::Thinking { thinking } => thinking_parts.push(thinking.clone()),
                 ContentBlock::ToolUse {
                     id,
@@ -421,21 +1045,21 @@ fn build_chat_messages_with_reasoning(
                         });
                     }
                     tool_calls.push(call);
-                    tool_call_ids.push(id.clone());
+                    tool_call_infos.push((
+                        id.clone(),
+                        PendingToolCallInfo {
+                            tool_name: name.clone(),
+                            input: input.clone(),
+                        },
+                    ));
                 }
                 ContentBlock::ToolResult {
                     tool_use_id,
                     content,
                     ..
                 } => {
-                    tool_results.push((
-                        tool_use_id.clone(),
-                        json!({
-                            "role": "tool",
-                            "tool_call_id": tool_use_id,
-                            "content": content,
-                        }),
-                    ));
+                    let message_label = format!("Message #{message_index}");
+                    tool_results.push((tool_use_id.clone(), content.clone(), message_label));
                 }
                 ContentBlock::ServerToolUse { .. }
                 | ContentBlock::ToolSearchToolResult { .. }
@@ -448,19 +1072,18 @@ fn build_chat_messages_with_reasoning(
             let mut reasoning_content = thinking_parts.join("\n");
             let has_text = !content.trim().is_empty();
             let has_tool_calls = !tool_calls.is_empty();
-            // DeepSeek thinking-mode rule: every assistant message in the
-            // conversation must carry its `reasoning_content` when thinking
-            // is enabled. The docs say non-tool-call messages' reasoning is
-            // "ignored", but the API still validates presence and rejects
-            // with a 400 if any assistant message is missing it. If reasoning
-            // was lost (e.g. a session checkpoint from before this rule was
-            // enforced, or a sub-turn with no streamed reasoning text),
-            // substitute a non-empty placeholder so the API accepts the
-            // request.
-            let include_reasoning_for_turn = include_reasoning;
-            let mut has_reasoning =
-                include_reasoning_for_turn && !reasoning_content.trim().is_empty();
-            if include_reasoning_for_turn && !has_reasoning {
+            // Reasoning replay must be a function of the stored message ONLY,
+            // never of later history. DeepSeek's prefix cache hashes the raw
+            // bytes of every message; flipping `reasoning_content` on/off
+            // depending on whether a follow-up user turn exists rewrites a
+            // historical message between turns and busts the cache from that
+            // point onwards. Always emit `reasoning_content` when the model
+            // requires replay AND the stored message carries thinking text.
+            // Tool-call messages with empty thinking still need a placeholder
+            // (DeepSeek 400s without it), but text-only assistant messages
+            // simply omit the field when there's nothing to replay.
+            let mut has_reasoning = include_reasoning && !reasoning_content.trim().is_empty();
+            if include_reasoning && has_tool_calls && !has_reasoning {
                 logging::warn(
                     "Substituting placeholder reasoning_content for DeepSeek tool-call assistant message",
                 );
@@ -492,18 +1115,34 @@ fn build_chat_messages_with_reasoning(
             }
             if has_tool_calls {
                 msg["tool_calls"] = json!(tool_calls);
-                pending_tool_calls = tool_call_ids.into_iter().collect();
+                pending_tool_calls = tool_call_infos.into_iter().collect();
             } else {
                 pending_tool_calls.clear();
             }
             out.push(msg);
+        } else if role == "system" {
+            let content = text_parts.join("\n");
+            if !content.trim().is_empty() {
+                let mut msg = json!({
+                    "role": "system",
+                    "content": content,
+                });
+                if include_tool_budget_metadata && let Some(turn_meta) = &turn_meta_budget {
+                    msg["_turn_meta_budget"] = turn_meta_budget_json(turn_meta);
+                }
+                out.push(msg);
+            }
         } else if role == "user" {
             let content = text_parts.join("\n");
             if !content.trim().is_empty() {
-                out.push(json!({
+                let mut msg = json!({
                     "role": "user",
                     "content": content,
-                }));
+                });
+                if include_tool_budget_metadata && let Some(turn_meta) = &turn_meta_budget {
+                    msg["_turn_meta_budget"] = turn_meta_budget_json(turn_meta);
+                }
+                out.push(msg);
             }
         }
 
@@ -511,8 +1150,28 @@ fn build_chat_messages_with_reasoning(
             if pending_tool_calls.is_empty() {
                 logging::warn("Dropping tool results without matching tool_calls");
             } else {
-                for (tool_id, tool_msg) in tool_results {
-                    if pending_tool_calls.remove(&tool_id) {
+                for (tool_id, content, message_label) in tool_results {
+                    if let Some(tool_info) = pending_tool_calls.remove(&tool_id) {
+                        let wire_result = compact_tool_result_for_wire(
+                            &tool_info.tool_name,
+                            &tool_info.input,
+                            &content,
+                            &message_label,
+                            &mut seen_tool_results,
+                        );
+                        let mut tool_msg = json!({
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "content": wire_result.content,
+                        });
+                        if include_tool_budget_metadata {
+                            tool_msg["_tool_result_budget"] = json!({
+                                "original_chars": wire_result.original_chars,
+                                "sent_chars": wire_result.sent_chars,
+                                "truncated": wire_result.truncated,
+                                "deduplicated": wire_result.deduplicated,
+                            });
+                        }
                         out.push(tool_msg);
                     } else {
                         logging::warn(format!(
@@ -663,6 +1322,28 @@ pub(super) fn tool_to_chat(tool: &Tool) -> Value {
     value
 }
 
+pub(super) fn tool_to_chat_for_base_url(tool: &Tool, base_url: &str) -> Value {
+    let mut value = tool_to_chat(tool);
+    if !deepseek_base_url_supports_strict_tools(base_url)
+        && let Some(function) = value.get_mut("function")
+        && let Some(obj) = function.as_object_mut()
+    {
+        obj.remove("strict");
+    }
+    value
+}
+
+fn deepseek_base_url_supports_strict_tools(base_url: &str) -> bool {
+    let trimmed = base_url.trim_end_matches('/').to_ascii_lowercase();
+    let is_deepseek = trimmed == "https://api.deepseek.com"
+        || trimmed == "https://api.deepseek.com/v1"
+        || trimmed == "https://api.deepseek.com/beta"
+        || trimmed == "https://api.deepseeki.com"
+        || trimmed == "https://api.deepseeki.com/v1"
+        || trimmed == "https://api.deepseeki.com/beta";
+    !is_deepseek || trimmed.ends_with("/beta")
+}
+
 fn map_tool_choice_for_chat(choice: &Value) -> Option<Value> {
     if let Some(choice_str) = choice.as_str() {
         return Some(json!(choice_str));
@@ -685,16 +1366,15 @@ fn map_tool_choice_for_chat(choice: &Value) -> Option<Value> {
 }
 
 /// Final-pass sanitizer over the outgoing chat-completions JSON payload.
-/// Forces a non-empty `reasoning_content` onto every `assistant` message that
-/// carries `tool_calls`, when the model + effort combination requires it.
-/// DeepSeek's thinking-mode API rejects such messages with a 400 error;
-/// substituting a placeholder keeps the conversation chain intact.
+/// Forces a non-empty `reasoning_content` onto assistant messages that carry
+/// `tool_calls`, when the model + effort combination requires it. DeepSeek's
+/// thinking-mode API rejects such messages with a 400 error; substituting a
+/// placeholder keeps the conversation chain intact. Non-tool assistant
+/// reasoning can stay omitted once a later user text turn begins.
 ///
 /// Also tallies the size of all replayed `reasoning_content` and logs it, so
 /// users on `RUST_LOG=deepseek_tui=debug` can see how much of their input
-/// budget is being spent re-sending prior thinking traces (V4 §5.1.1
-/// "Interleaved Thinking" requires the full trace to be replayed across user
-/// message boundaries in tool-calling sessions).
+/// budget is being spent re-sending prior thinking traces.
 pub(super) fn sanitize_thinking_mode_messages(
     body: &mut Value,
     model: &str,
@@ -711,11 +1391,12 @@ pub(super) fn sanitize_thinking_mode_messages(
         if msg.get("role").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
+        let has_tool_calls = msg.get("tool_calls").is_some();
         let needs_placeholder = msg
             .get("reasoning_content")
             .and_then(Value::as_str)
             .is_none_or(|s| s.trim().is_empty());
-        if needs_placeholder {
+        if has_tool_calls && needs_placeholder {
             msg["reasoning_content"] = json!("(reasoning omitted)");
             substitutions = substitutions.saturating_add(1);
             logging::warn(format!(
@@ -825,8 +1506,7 @@ fn log_thinking_mode_violations(body: &Value) {
 
 fn requires_reasoning_content(model: &str) -> bool {
     let lower = model.to_lowercase();
-    lower.contains("deepseek-v3.2")
-        || lower.contains("deepseek-v4")
+    lower.contains("deepseek-v4")
         || lower.contains("reasoner")
         || lower.contains("-reasoning")
         || lower.contains("-thinking")
@@ -914,11 +1594,11 @@ pub(super) fn parse_chat_message(payload: &Value) -> Result<MessageResponse> {
                 .unwrap_or("tool_call")
                 .to_string();
             let function = call.get("function");
-            let name = function
-                .and_then(|f| f.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("tool")
-                .to_string();
+            let name = tool_name_or_fallback(
+                function.and_then(|f| f.get("name")).and_then(Value::as_str),
+                &id,
+                "Non-streaming response",
+            );
             let arguments = function
                 .and_then(|f| f.get("arguments"))
                 .and_then(Value::as_str)
@@ -1196,9 +1876,8 @@ pub(super) fn parse_sse_chunk(
                             let name = tc
                                 .get("function")
                                 .and_then(|f| f.get("name"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string();
+                                .and_then(Value::as_str);
+                            let name = tool_name_or_fallback(name, &id, "Streaming response chunk");
                             let caller = tc.get("caller").and_then(|v| {
                                 v.get("type").and_then(Value::as_str).map(|caller_type| {
                                     ToolCaller {
@@ -1284,12 +1963,45 @@ pub(super) fn parse_sse_chunk(
     events
 }
 
+fn tool_name_or_fallback(name: Option<&str>, id: &str, source: &str) -> String {
+    let trimmed = name.unwrap_or("").trim();
+    if trimmed.is_empty() {
+        logging::warn(format!(
+            "{source} returned an empty tool name for call {id}; using unknown_tool"
+        ));
+        "unknown_tool".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 // === #103 Phase 1: stream-decode diagnostics ===================================
 
 #[cfg(test)]
 mod stream_diagnostics_tests {
     use super::*;
     use reqwest::header::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn stream_open_timeout_defaults_and_clamps_env_values() {
+        assert_eq!(stream_open_timeout_from_env(None), Duration::from_secs(45));
+        assert_eq!(
+            stream_open_timeout_from_env(Some("not-a-number")),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            stream_open_timeout_from_env(Some("1")),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            stream_open_timeout_from_env(Some("120")),
+            Duration::from_secs(120)
+        );
+        assert_eq!(
+            stream_open_timeout_from_env(Some("999")),
+            Duration::from_secs(300)
+        );
+    }
 
     #[test]
     fn format_stream_headers_renders_all_fields_when_present() {
@@ -1481,6 +2193,53 @@ mod stream_decoder_tests {
         );
     }
 
+    #[test]
+    fn decoder_uses_fallback_name_for_empty_streaming_tool_name() {
+        let events = decode_chunk(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_empty","function":{"name":"","arguments":"{}"}}]}}]}"#,
+        );
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                StreamEvent::ContentBlockStart {
+                    content_block: ContentBlockStart::ToolUse { name, .. },
+                    ..
+                } if name == "unknown_tool"
+            )),
+            "empty upstream tool names should render as unknown_tool; got {events:?}"
+        );
+    }
+
+    #[test]
+    fn non_streaming_response_uses_fallback_name_for_missing_tool_name() {
+        let payload: Value = serde_json::from_str(
+            r#"{
+                "id": "chatcmpl_1",
+                "model": "deepseek-v4-pro",
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call_missing",
+                            "function": { "arguments": "{}" }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }"#,
+        )
+        .expect("valid response");
+
+        let parsed = parse_chat_message(&payload).expect("message parses");
+        let tool_name = parsed.content.iter().find_map(|block| match block {
+            ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
+            _ => None,
+        });
+
+        assert_eq!(tool_name, Some("unknown_tool"));
+    }
+
     /// Regression for the parallel-tool-calls-without-id collision (audit
     /// Finding 8): when the upstream chunk omits the `id` field, the
     /// fallback used to be the literal string `"tool_call"` for every
@@ -1539,5 +2298,320 @@ mod stream_decoder_tests {
             })
             .expect("tool-use block present");
         assert_eq!(id, "call_xyz");
+    }
+
+    #[test]
+    fn request_builder_preserves_internal_system_messages() {
+        let messages = vec![Message {
+            role: "system".to_string(),
+            content: vec![ContentBlock::Text {
+                text: "internal runtime event".to_string(),
+                cache_control: None,
+            }],
+        }];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+
+        assert_eq!(built.len(), 1);
+        assert_eq!(built[0]["role"], "system");
+        assert_eq!(built[0]["content"], "internal runtime event");
+    }
+
+    fn tool_use_message(id: &str, name: &str, input: Value) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            content: vec![ContentBlock::ToolUse {
+                id: id.to_string(),
+                name: name.to_string(),
+                input,
+                caller: None,
+            }],
+        }
+    }
+
+    fn tool_result_message(id: &str, content: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: id.to_string(),
+                content: content.to_string(),
+                is_error: None,
+                content_blocks: None,
+            }],
+        }
+    }
+
+    fn user_message_with_turn_meta(turn_meta: &str, task: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: vec![
+                ContentBlock::Text {
+                    text: turn_meta.to_string(),
+                    cache_control: None,
+                },
+                ContentBlock::Text {
+                    text: task.to_string(),
+                    cache_control: None,
+                },
+            ],
+        }
+    }
+
+    fn tool_message_content(messages: &[Value], index: usize) -> &str {
+        messages
+            .iter()
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
+            .nth(index)
+            .and_then(|message| message.get("content").and_then(Value::as_str))
+            .expect("tool message content")
+    }
+
+    fn user_message_content(messages: &[Value], index: usize) -> &str {
+        messages
+            .iter()
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            .nth(index)
+            .and_then(|message| message.get("content").and_then(Value::as_str))
+            .expect("user message content")
+    }
+
+    #[test]
+    fn request_builder_deduplicates_consecutive_identical_turn_meta_for_wire() {
+        let turn_meta = "<turn_meta>\nCurrent local date: 2026-05-09\n</turn_meta>";
+        let messages = vec![
+            user_message_with_turn_meta(turn_meta, "first task"),
+            Message {
+                role: "assistant".to_string(),
+                content: vec![ContentBlock::Text {
+                    text: "first answer".to_string(),
+                    cache_control: None,
+                }],
+            },
+            user_message_with_turn_meta(turn_meta, "second task"),
+        ];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+        let first = user_message_content(&built, 0);
+        let second = user_message_content(&built, 1);
+        let expected_sha = sha256_hex(turn_meta.as_bytes());
+        let expected_ref = format!(
+            "<TURN_META_REF sha=\"{expected_sha}\" original_chars=\"{}\" />",
+            turn_meta.chars().count()
+        );
+
+        assert!(first.starts_with(turn_meta), "got: {first}");
+        assert!(second.starts_with(&expected_ref), "got: {second}");
+        assert!(second.ends_with("second task"), "got: {second}");
+        assert_eq!(
+            second,
+            format!("{expected_ref}\nsecond task"),
+            "ref text must stay stable"
+        );
+    }
+
+    #[test]
+    fn request_builder_keeps_changed_turn_meta_full_and_updates_recent_hash() {
+        let first_meta = "<turn_meta>\nCurrent local date: 2026-05-09\n</turn_meta>";
+        let second_meta =
+            "<turn_meta>\nCurrent local date: 2026-05-09\nWorking set: src/lib.rs\n</turn_meta>";
+        let messages = vec![
+            user_message_with_turn_meta(first_meta, "first task"),
+            user_message_with_turn_meta(second_meta, "second task"),
+        ];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+        let first = user_message_content(&built, 0);
+        let second = user_message_content(&built, 1);
+
+        assert!(first.starts_with(first_meta), "got: {first}");
+        assert!(second.starts_with(second_meta), "got: {second}");
+        assert!(!second.contains("<TURN_META_REF"), "got: {second}");
+    }
+
+    #[test]
+    fn turn_meta_dedup_is_wire_only_and_does_not_mutate_session_message() {
+        let turn_meta = "<turn_meta>\nCurrent local date: 2026-05-09\n</turn_meta>";
+        let messages = vec![
+            user_message_with_turn_meta(turn_meta, "first task"),
+            user_message_with_turn_meta(turn_meta, "second task"),
+        ];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+        assert!(
+            user_message_content(&built, 1).starts_with("<TURN_META_REF"),
+            "got: {}",
+            user_message_content(&built, 1)
+        );
+
+        match &messages[1].content[0] {
+            ContentBlock::Text { text, .. } => assert_eq!(text, turn_meta),
+            other => panic!("expected text block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_inspect_reports_turn_meta_dedup_metadata() {
+        let turn_meta = format!(
+            "<turn_meta>\nCurrent local date: 2026-05-09\n{}\n</turn_meta>",
+            "Working set: src/lib.rs\n".repeat(20)
+        );
+        let request = MessageRequest {
+            model: "deepseek-v4-flash".to_string(),
+            messages: vec![
+                user_message_with_turn_meta(&turn_meta, "first task"),
+                user_message_with_turn_meta(&turn_meta, "second task"),
+            ],
+            max_tokens: 0,
+            system: None,
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            thinking: None,
+            reasoning_effort: None,
+            stream: None,
+            temperature: None,
+            top_p: None,
+        };
+
+        let inspection = inspect_prompt_for_request(&request);
+        let turn_meta_layers: Vec<_> = inspection
+            .layers
+            .iter()
+            .filter_map(|layer| layer.turn_meta.as_ref())
+            .collect();
+
+        assert_eq!(turn_meta_layers.len(), 2);
+        assert_eq!(
+            turn_meta_layers[0].original_chars,
+            turn_meta.chars().count()
+        );
+        assert_eq!(turn_meta_layers[0].sent_chars, turn_meta.chars().count());
+        assert!(!turn_meta_layers[0].deduplicated);
+        assert_eq!(turn_meta_layers[0].sha256, sha256_hex(turn_meta.as_bytes()));
+        assert_eq!(
+            turn_meta_layers[1].original_chars,
+            turn_meta.chars().count()
+        );
+        assert!(turn_meta_layers[1].sent_chars < turn_meta_layers[1].original_chars);
+        assert!(turn_meta_layers[1].deduplicated);
+        assert_eq!(turn_meta_layers[1].sha256, turn_meta_layers[0].sha256);
+    }
+
+    #[test]
+    fn request_builder_truncates_large_tool_result_for_wire() {
+        let long_output = format!("{}{}", "A".repeat(7_000), "Z".repeat(7_000));
+        let messages = vec![
+            tool_use_message(
+                "tool-long",
+                "shell_command",
+                json!({"command": "cargo test"}),
+            ),
+            tool_result_message("tool-long", &long_output),
+        ];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+        let sent = tool_message_content(&built, 0);
+
+        assert!(sent.contains("[TOOL_RESULT_TRUNCATED]"), "got: {sent}");
+        assert!(sent.contains("tool_name: shell_command"), "got: {sent}");
+        assert!(sent.contains("command_or_query: cargo test"), "got: {sent}");
+        assert!(sent.contains("original_chars: 14000"), "got: {sent}");
+        assert!(sent.contains("sha256:"), "got: {sent}");
+        assert!(sent.contains(&"A".repeat(4_000)), "got: {sent}");
+        assert!(sent.contains(&"Z".repeat(4_000)), "got: {sent}");
+        assert!(
+            sent.contains("truncated 6000 chars from middle"),
+            "got: {sent}"
+        );
+        assert_ne!(sent, long_output);
+    }
+
+    #[test]
+    fn request_builder_deduplicates_identical_tool_results_for_wire() {
+        let output = "same tool output";
+        let messages = vec![
+            tool_use_message("tool-1", "read_file", json!({"path": "README.md"})),
+            tool_result_message("tool-1", output),
+            tool_use_message("tool-2", "read_file", json!({"path": "README.md"})),
+            tool_result_message("tool-2", output),
+        ];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+        let first = tool_message_content(&built, 0);
+        let second = tool_message_content(&built, 1);
+
+        assert_eq!(first, output);
+        assert!(
+            second.starts_with("<TOOL_RESULT_REF sha=\""),
+            "got: {second}"
+        );
+        assert!(
+            second.contains("original_message=\"Message #1\""),
+            "got: {second}"
+        );
+        assert!(second.contains("chars=\"16\""), "got: {second}");
+    }
+
+    #[test]
+    fn tool_result_budget_is_wire_only_and_does_not_mutate_session_message() {
+        let long_output = format!("{}{}", "A".repeat(7_000), "Z".repeat(7_000));
+        let messages = vec![
+            tool_use_message(
+                "tool-long",
+                "shell_command",
+                json!({"command": "cargo test"}),
+            ),
+            tool_result_message("tool-long", &long_output),
+        ];
+
+        let built = build_chat_messages(None, &messages, "deepseek-v4-flash");
+        let sent = tool_message_content(&built, 0);
+        assert_ne!(sent, long_output);
+
+        match &messages[1].content[0] {
+            ContentBlock::ToolResult { content, .. } => assert_eq!(content, &long_output),
+            other => panic!("expected tool result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_inspect_reports_tool_result_budget_metadata() {
+        let long_output = format!("{}{}", "A".repeat(7_000), "Z".repeat(7_000));
+        let request = MessageRequest {
+            model: "deepseek-v4-flash".to_string(),
+            messages: vec![
+                tool_use_message("tool-1", "shell_command", json!({"command": "cargo test"})),
+                tool_result_message("tool-1", &long_output),
+                tool_use_message("tool-2", "shell_command", json!({"command": "cargo test"})),
+                tool_result_message("tool-2", &long_output),
+            ],
+            max_tokens: 0,
+            system: None,
+            tools: None,
+            tool_choice: None,
+            metadata: None,
+            thinking: None,
+            reasoning_effort: None,
+            stream: None,
+            temperature: None,
+            top_p: None,
+        };
+
+        let inspection = inspect_prompt_for_request(&request);
+        let tool_layers: Vec<_> = inspection
+            .layers
+            .iter()
+            .filter_map(|layer| layer.tool_result.as_ref())
+            .collect();
+
+        assert_eq!(tool_layers.len(), 2);
+        assert_eq!(tool_layers[0].original_chars, 14_000);
+        assert!(tool_layers[0].sent_chars < tool_layers[0].original_chars);
+        assert!(tool_layers[0].truncated);
+        assert!(!tool_layers[0].deduplicated);
+        assert_eq!(tool_layers[1].original_chars, 14_000);
+        assert!(tool_layers[1].sent_chars < 200);
+        assert!(!tool_layers[1].truncated);
+        assert!(tool_layers[1].deduplicated);
     }
 }

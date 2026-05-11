@@ -3,26 +3,31 @@
 //! This module provides a modular command system inspired by Codex-rs.
 //! Commands are organized by category and dispatched through a central registry.
 
+mod anchor;
 mod attachment;
 mod config;
 mod core;
 mod cycle;
 mod debug;
+mod feedback;
 mod goal;
 mod hooks;
 mod init;
 mod jobs;
 mod mcp;
 mod memory;
+mod network;
 mod note;
 mod provider;
 mod queue;
+mod rename;
 mod restore;
 mod review;
 mod session;
 pub mod share;
 mod skills;
 mod stash;
+mod status;
 mod task;
 mod user_commands;
 
@@ -133,6 +138,12 @@ impl CommandInfo {
 pub const COMMANDS: &[CommandInfo] = &[
     // Core commands
     CommandInfo {
+        name: "anchor",
+        aliases: &[],
+        usage: "/anchor <text> | /anchor list | /anchor remove <n>",
+        description_id: MessageId::CmdAnchorDescription,
+    },
+    CommandInfo {
         name: "help",
         aliases: &["?"],
         usage: "/help [command]",
@@ -199,6 +210,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         description_id: MessageId::CmdLinksDescription,
     },
     CommandInfo {
+        name: "feedback",
+        aliases: &[],
+        usage: "/feedback [bug|feature|security]",
+        description_id: MessageId::CmdFeedbackDescription,
+    },
+    CommandInfo {
         name: "home",
         aliases: &["stats", "overview"],
         usage: "/home",
@@ -209,6 +226,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         aliases: &[],
         usage: "/note <text>",
         description_id: MessageId::CmdNoteDescription,
+    },
+    CommandInfo {
+        name: "memory",
+        aliases: &[],
+        usage: "/memory [show|path|clear|edit|help]",
+        description_id: MessageId::CmdMemoryDescription,
     },
     CommandInfo {
         name: "attach",
@@ -234,7 +257,19 @@ pub const COMMANDS: &[CommandInfo] = &[
         usage: "/mcp [init|add stdio <name> <command> [args...]|add http <name> <url>|enable <name>|disable <name>|remove <name>|validate|reload]",
         description_id: MessageId::CmdMcpDescription,
     },
+    CommandInfo {
+        name: "network",
+        aliases: &[],
+        usage: "/network [list|allow <host>|deny <host>|remove <host>|default <allow|deny|prompt>]",
+        description_id: MessageId::CmdNetworkDescription,
+    },
     // Session commands
+    CommandInfo {
+        name: "rename",
+        aliases: &[],
+        usage: "/rename <new title>",
+        description_id: MessageId::CmdRenameDescription,
+    },
     CommandInfo {
         name: "save",
         aliases: &[],
@@ -297,22 +332,22 @@ pub const COMMANDS: &[CommandInfo] = &[
         description_id: MessageId::CmdConfigDescription,
     },
     CommandInfo {
-        name: "yolo",
+        name: "mode",
         aliases: &[],
-        usage: "/yolo",
-        description_id: MessageId::CmdYoloDescription,
+        usage: "/mode [agent|plan|yolo|1|2|3]",
+        description_id: MessageId::CmdModeDescription,
     },
     CommandInfo {
-        name: "agent",
+        name: "theme",
         aliases: &[],
-        usage: "/agent",
-        description_id: MessageId::CmdAgentDescription,
+        usage: "/theme",
+        description_id: MessageId::CmdThemeDescription,
     },
     CommandInfo {
-        name: "plan",
+        name: "verbose",
         aliases: &[],
-        usage: "/plan",
-        description_id: MessageId::CmdPlanDescription,
+        usage: "/verbose [on|off]",
+        description_id: MessageId::CmdVerboseDescription,
     },
     CommandInfo {
         name: "trust",
@@ -394,8 +429,14 @@ pub const COMMANDS: &[CommandInfo] = &[
         description_id: MessageId::CmdSettingsDescription,
     },
     CommandInfo {
+        name: "status",
+        aliases: &[],
+        usage: "/status",
+        description_id: MessageId::CmdStatusDescription,
+    },
+    CommandInfo {
         name: "statusline",
-        aliases: &["status"],
+        aliases: &[],
         usage: "/statusline",
         description_id: MessageId::CmdStatuslineDescription,
     },
@@ -403,7 +444,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "skills",
         aliases: &[],
-        usage: "/skills [--remote]",
+        usage: "/skills [--remote|sync|<prefix>]",
         description_id: MessageId::CmdSkillsDescription,
     },
     CommandInfo {
@@ -449,7 +490,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "cache",
         aliases: &[],
-        usage: "/cache [count]",
+        usage: "/cache [count|inspect|warmup]",
         description_id: MessageId::CmdCacheDescription,
     },
 ];
@@ -469,6 +510,7 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
     // Match command or alias
     match command {
         // Core commands
+        "anchor" => anchor::anchor(app, arg),
         "help" | "?" => core::help(app, arg),
         "clear" => core::clear(app),
         "exit" | "quit" | "q" => core::exit(),
@@ -480,6 +522,7 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         "hooks" | "hook" => hooks::hooks(app, arg),
         "subagents" | "agents" => core::subagents(app),
         "links" | "dashboard" | "api" => core::deepseek_links(app),
+        "feedback" => feedback::feedback(app, arg),
         "home" | "stats" | "overview" => core::home_dashboard(app),
         "note" => note::note(app, arg),
         "memory" => memory::memory(app, arg),
@@ -487,8 +530,10 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         "task" | "tasks" => task::task(app, arg),
         "jobs" | "job" => jobs::jobs(app, arg),
         "mcp" => mcp::mcp(app, arg),
+        "network" => network::network(app, arg),
 
         // Session commands
+        "rename" => rename::rename(app, arg),
         "save" => session::save(app, arg),
         "sessions" | "resume" => session::sessions(app, arg),
         "load" => session::load(app, arg),
@@ -501,10 +546,11 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         // Config commands
         "config" => config::config_command(app, arg),
         "settings" => config::show_settings(app),
-        "statusline" | "status" => config::status_line(app),
-        "yolo" => config::yolo(app),
-        "agent" => config::agent_mode(app),
-        "plan" => config::plan_mode(app),
+        "status" => status::status(app),
+        "statusline" => config::status_line(app),
+        "mode" => config::mode(app, arg),
+        "theme" => config::theme(app),
+        "verbose" => config::verbose(app, arg),
         "trust" => config::trust(app, arg),
         "logout" => config::logout(app),
 
@@ -555,12 +601,16 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         "set" => CommandResult::error(
             "The /set command was retired. Use /config to edit settings and /settings to inspect current values.",
         ),
-        "normal" => config::normal_mode(app),
         "deepseek" => CommandResult::error(
             "The /deepseek command was renamed. Use /links (aliases: /dashboard, /api).",
         ),
 
         _ => {
+            // Third source: skills (lowest precedence after native and user-config).
+            // Try to run a skill whose name matches the command.
+            if skills::run_skill_by_name(app, command, arg).is_some() {
+                return skills::run_skill_by_name(app, command, arg).unwrap();
+            }
             let suggestions = suggest_command_names(command, 3);
             if suggestions.is_empty() {
                 CommandResult::error(format!(
@@ -598,10 +648,19 @@ pub fn persist_root_string_key(key: &str, value: &str) -> anyhow::Result<std::pa
     config::persist_root_string_key(key, value)
 }
 
+pub fn switch_mode(app: &mut App, mode: crate::tui::app::AppMode) -> String {
+    config::switch_mode(app, mode)
+}
+
 /// Auto-select a model based on request complexity.
 pub fn auto_model_heuristic(input: &str, current_model: &str) -> String {
     config::auto_model_heuristic(input, current_model)
 }
+
+pub use config::{
+    AutoRouteRecommendation, AutoRouteSelection, normalize_auto_route_effort,
+    parse_auto_route_recommendation, resolve_auto_route_with_flash,
+};
 
 /// Execute a Recursive Language Model (RLM) turn — Algorithm 1 from
 /// Zhang et al. (arXiv:2512.24601).
@@ -665,7 +724,13 @@ pub fn get_command_info(name: &str) -> Option<&'static CommandInfo> {
 
 /// Get all command names matching a prefix, including both built-in
 /// static commands and user-defined commands, formatted as `/name`.
-pub fn all_command_names_matching(prefix: &str) -> Vec<String> {
+///
+/// `workspace` is used to also scan workspace-local command directories;
+/// pass `None` when no workspace context is available.
+pub fn all_command_names_matching(
+    prefix: &str,
+    workspace: Option<&std::path::Path>,
+) -> Vec<String> {
     let prefix = prefix.strip_prefix('/').unwrap_or(prefix).to_lowercase();
     let mut result: Vec<String> = COMMANDS
         .iter()
@@ -676,7 +741,7 @@ pub fn all_command_names_matching(prefix: &str) -> Vec<String> {
         .collect();
 
     // Add user-defined commands
-    result.extend(user_commands::user_commands_matching(&prefix));
+    result.extend(user_commands::user_commands_matching(&prefix, workspace));
 
     result.sort();
     result.dedup();
@@ -812,6 +877,7 @@ mod tests {
     fn command_registry_contains_config_and_links_but_not_set_or_deepseek() {
         assert!(COMMANDS.iter().any(|cmd| cmd.name == "config"));
         assert!(COMMANDS.iter().any(|cmd| cmd.name == "links"));
+        assert!(COMMANDS.iter().any(|cmd| cmd.name == "memory"));
         assert!(!COMMANDS.iter().any(|cmd| cmd.name == "set"));
         assert!(!COMMANDS.iter().any(|cmd| cmd.name == "deepseek"));
     }
@@ -867,11 +933,46 @@ mod tests {
     }
 
     #[test]
+    fn cache_inspect_dispatches_through_cache_command() {
+        let mut app = create_test_app();
+        let result = execute("/cache inspect", &mut app);
+        let msg = result.message.expect("cache inspect should return text");
+        assert!(msg.contains("Cache Inspect"));
+        assert!(msg.contains("Base static prefix hash:"));
+        assert!(msg.contains("Full request prefix hash:"));
+        assert!(result.action.is_none());
+    }
+
+    #[test]
+    fn cache_warmup_dispatches_action() {
+        let mut app = create_test_app();
+        let result = execute("/cache warmup", &mut app);
+        assert!(result.message.is_none());
+        assert!(matches!(result.action, Some(AppAction::CacheWarmup)));
+    }
+
+    #[test]
     fn execute_config_opens_config_view_action() {
         let mut app = create_test_app();
         let result = execute("/config", &mut app);
         assert!(result.message.is_none());
         assert!(matches!(result.action, Some(AppAction::OpenConfigView)));
+    }
+
+    #[test]
+    fn execute_verbose_toggles_live_transcript_detail() {
+        let mut app = create_test_app();
+        assert!(!app.verbose_transcript);
+
+        let result = execute("/verbose on", &mut app);
+        assert!(!result.is_error);
+        assert!(app.verbose_transcript);
+        assert!(result.message.unwrap().contains("on"));
+
+        let result = execute("/verbose off", &mut app);
+        assert!(!result.is_error);
+        assert!(!app.verbose_transcript);
+        assert!(result.message.unwrap().contains("off"));
     }
 
     #[test]

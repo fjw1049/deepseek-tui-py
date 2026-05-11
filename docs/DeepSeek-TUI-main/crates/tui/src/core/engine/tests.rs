@@ -1,13 +1,78 @@
 use super::*;
 
-use super::context::WORKING_SET_SUMMARY_MARKER;
 use crate::models::SystemBlock;
+use crate::test_support::lock_test_env;
+use crate::tools::spec::ToolCapability;
 use serde_json::json;
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Instant;
 use tempfile::tempdir;
+
+const WORKING_SET_SUMMARY_MARKER: &str = "## Repo Working Set";
+static CAPACITY_MEMORY_ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+struct ScopedCapacityMemoryDir {
+    previous: Option<OsString>,
+}
+
+impl ScopedCapacityMemoryDir {
+    fn set(path: &Path) -> Self {
+        let previous = std::env::var_os("DEEPSEEK_CAPACITY_MEMORY_DIR");
+        // Safety: capacity-memory tests serialize access with CAPACITY_MEMORY_ENV_LOCK
+        // and restore the original value in Drop.
+        unsafe {
+            std::env::set_var("DEEPSEEK_CAPACITY_MEMORY_DIR", path);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for ScopedCapacityMemoryDir {
+    fn drop(&mut self) {
+        // Safety: capacity-memory tests serialize access with CAPACITY_MEMORY_ENV_LOCK.
+        unsafe {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var("DEEPSEEK_CAPACITY_MEMORY_DIR", previous);
+            } else {
+                std::env::remove_var("DEEPSEEK_CAPACITY_MEMORY_DIR");
+            }
+        }
+    }
+}
+
+struct ScopedDeepSeekApiKey {
+    previous: Option<OsString>,
+}
+
+impl ScopedDeepSeekApiKey {
+    fn set(value: &str) -> Self {
+        let previous = std::env::var_os("DEEPSEEK_API_KEY");
+        // Safety: tests using this helper serialize with lock_test_env() and
+        // restore the original value in Drop.
+        unsafe {
+            std::env::set_var("DEEPSEEK_API_KEY", value);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for ScopedDeepSeekApiKey {
+    fn drop(&mut self) {
+        // Safety: tests using this helper serialize with lock_test_env().
+        unsafe {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var("DEEPSEEK_API_KEY", previous);
+            } else {
+                std::env::remove_var("DEEPSEEK_API_KEY");
+            }
+        }
+    }
+}
 
 fn build_engine_with_capacity(capacity: CapacityControllerConfig) -> Engine {
     let engine_config = EngineConfig {
@@ -16,6 +81,37 @@ fn build_engine_with_capacity(capacity: CapacityControllerConfig) -> Engine {
     };
     let (engine, _handle) = Engine::new(engine_config, &Config::default());
     engine
+}
+
+#[test]
+fn env_only_auth_error_gets_recovery_hint() {
+    let _guard = lock_test_env();
+    let _env = ScopedDeepSeekApiKey::set("stale-env-key");
+    let (engine, _handle) = Engine::new(EngineConfig::default(), &Config::default());
+
+    let message =
+        engine.decorate_auth_error_message("Authentication failed: invalid API key".to_string());
+
+    assert!(message.contains("DEEPSEEK_API_KEY"));
+    assert!(message.contains("no saved config key is present"));
+    assert!(message.contains("deepseek auth status"));
+    assert!(message.contains("deepseek auth set --provider deepseek"));
+}
+
+#[test]
+fn config_auth_error_does_not_blame_env() {
+    let _guard = lock_test_env();
+    let _env = ScopedDeepSeekApiKey::set("stale-env-key");
+    let cfg = Config {
+        api_key: Some("fresh-config-key".to_string()),
+        ..Config::default()
+    };
+    let (engine, _handle) = Engine::new(EngineConfig::default(), &cfg);
+
+    let message =
+        engine.decorate_auth_error_message("Authentication failed: invalid API key".to_string());
+
+    assert_eq!(message, "Authentication failed: invalid API key");
 }
 
 fn make_plan(
@@ -36,6 +132,7 @@ fn make_plan(
         supports_parallel,
         read_only,
         blocked_error: None,
+        guard_result: None,
     }
 }
 
@@ -64,6 +161,27 @@ fn engine_handle_cancel_tracks_latest_turn_token() {
     assert!(engine.cancel_token.is_cancelled());
     assert!(handle.is_cancelled());
     assert!(!stale_token.is_cancelled());
+}
+
+#[test]
+fn engine_initial_prompt_includes_configured_goal() {
+    let config = EngineConfig {
+        goal_objective: Some("Fix goal handoff".to_string()),
+        ..Default::default()
+    };
+    let (engine, _handle) = Engine::new(config, &Config::default());
+    let prompt = match engine.session.system_prompt {
+        Some(SystemPrompt::Text(text)) => text,
+        Some(SystemPrompt::Blocks(blocks)) => blocks
+            .into_iter()
+            .map(|block| block.text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => panic!("expected system prompt"),
+    };
+
+    assert!(prompt.contains("<session_goal>"));
+    assert!(prompt.contains("Fix goal handoff"));
 }
 
 #[test]
@@ -331,8 +449,64 @@ fn turn_tool_registry_builder_keeps_plan_mode_read_only_for_files() {
     assert!(registry.contains("list_dir"));
     assert!(!registry.contains("write_file"));
     assert!(!registry.contains("edit_file"));
+    assert!(!registry.contains("exec_shell"));
+    assert!(!registry.contains("exec_shell_wait"));
+    assert!(!registry.contains("exec_shell_interact"));
+    assert!(!registry.contains("task_shell_start"));
+    assert!(!registry.contains("task_create"));
+    assert!(!registry.contains("task_gate_run"));
+    assert!(!registry.contains("rlm"));
+    assert!(!registry.contains("fim_edit"));
     assert!(registry.contains("update_plan"));
-    assert!(registry.contains("task_create"));
+    assert!(registry.contains("task_list"));
+    assert!(registry.contains("task_read"));
+    assert!(registry.contains("recall_archive"));
+
+    let plan_state_tools = [
+        "checklist_add",
+        "checklist_update",
+        "checklist_write",
+        "todo_add",
+        "todo_update",
+        "todo_write",
+        "update_plan",
+    ];
+    let mut write_or_exec_tools: Vec<String> = registry
+        .all()
+        .into_iter()
+        .filter(|tool| !plan_state_tools.contains(&tool.name()))
+        .filter(|tool| {
+            let capabilities = tool.capabilities();
+            capabilities.contains(&ToolCapability::WritesFiles)
+                || capabilities.contains(&ToolCapability::ExecutesCode)
+        })
+        .map(|tool| tool.name().to_string())
+        .collect();
+    write_or_exec_tools.sort();
+    assert!(
+        write_or_exec_tools.is_empty(),
+        "Plan mode must not register file-writing or code-execution tools: {write_or_exec_tools:?}"
+    );
+}
+
+#[test]
+fn parent_turn_registry_includes_recall_archive_for_investigative_modes() {
+    let (engine, _handle) = Engine::new(EngineConfig::default(), &Config::default());
+
+    for mode in [AppMode::Plan, AppMode::Agent, AppMode::Yolo] {
+        let registry = engine
+            .build_turn_tool_registry_builder(
+                mode,
+                engine.config.todos.clone(),
+                engine.config.plan_state.clone(),
+            )
+            .build(engine.build_tool_context(mode, false));
+
+        assert!(
+            registry.contains("recall_archive"),
+            "parent {mode:?} registry should expose recall_archive"
+        );
+    }
 }
 
 #[test]
@@ -368,22 +542,85 @@ fn agent_and_yolo_modes_elevate_shell_sandbox_to_allow_network() {
     );
 
     let yolo_ctx = engine.build_tool_context(AppMode::Yolo, false);
+    let yolo_policy = yolo_ctx
+        .elevated_sandbox_policy
+        .as_ref()
+        .expect("Yolo mode should elevate the sandbox policy");
+    assert!(yolo_policy.has_network_access());
+    // v0.8.11: YOLO drops to DangerFullAccess (no sandbox) so the user
+    // is not bounced through approval round-trips for legitimate
+    // outside-workspace writes (package installs, sub-agent
+    // workspaces, ~/.cache mutations, etc.). YOLO is opt-in and
+    // already enables trust mode + auto-approve; the sandbox was the
+    // last guardrail and contradicts the contract.
     assert!(
-        yolo_ctx
-            .elevated_sandbox_policy
-            .as_ref()
-            .expect("Yolo mode should elevate the sandbox policy")
-            .has_network_access(),
+        matches!(yolo_policy, crate::sandbox::SandboxPolicy::DangerFullAccess),
+        "Yolo mode must use DangerFullAccess (no sandbox); got {yolo_policy:?}",
     );
 
-    // Plan mode is read-only investigation and does not register the shell
-    // tool, so it intentionally leaves the policy at the strict default.
+    // Plan mode (#1077): the sandbox must actually deny workspace writes.
+    // The previous WorkspaceWrite-with-empty-network policy whitelisted the
+    // workspace as writable, so `python -c "open('f','w').write('x')"`
+    // mutated files inside the workspace despite Plan-mode's intent. Lock
+    // it to ReadOnly: no writes anywhere, no network. The shell tool stays
+    // exposed for read-only inspection (`ls`, `git log`, `grep`, …) and
+    // the per-platform sandbox enforces the rest.
+    let plan_ctx = engine.build_tool_context(AppMode::Plan, false);
+    let plan_policy = plan_ctx
+        .elevated_sandbox_policy
+        .as_ref()
+        .expect("Plan mode should make the shell sandbox policy explicit");
     assert!(
-        engine
-            .build_tool_context(AppMode::Plan, false)
-            .elevated_sandbox_policy
-            .is_none(),
+        matches!(plan_policy, crate::sandbox::SandboxPolicy::ReadOnly),
+        "Plan mode must use ReadOnly sandbox to deny workspace writes (#1077); got {plan_policy:?}",
     );
+    assert!(!plan_policy.has_network_access());
+    assert!(!plan_policy.has_full_disk_write_access());
+    assert!(
+        plan_policy
+            .get_writable_roots(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+            .is_empty(),
+        "ReadOnly policy must enumerate zero writable roots; got {plan_policy:?}",
+    );
+    assert!(
+        plan_ctx
+            .shell_network_denied_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("Plan mode") && hint.contains("read-only")),
+    );
+}
+
+#[test]
+fn sandbox_policy_for_mode_returns_correct_policy_per_mode() {
+    use super::tool_setup::sandbox_policy_for_mode;
+    use crate::sandbox::SandboxPolicy;
+
+    let workspace = PathBuf::from("/tmp/example-workspace");
+
+    // Plan: ReadOnly. The whole point of #1077.
+    assert!(matches!(
+        sandbox_policy_for_mode(AppMode::Plan, &workspace),
+        SandboxPolicy::ReadOnly
+    ));
+
+    // Agent: WorkspaceWrite with workspace as writable root, network on.
+    match sandbox_policy_for_mode(AppMode::Agent, &workspace) {
+        SandboxPolicy::WorkspaceWrite {
+            writable_roots,
+            network_access,
+            ..
+        } => {
+            assert_eq!(writable_roots, vec![workspace.clone()]);
+            assert!(network_access, "Agent mode must allow shell network access");
+        }
+        other => panic!("Agent mode should be WorkspaceWrite; got {other:?}"),
+    }
+
+    // YOLO: DangerFullAccess.
+    assert!(matches!(
+        sandbox_policy_for_mode(AppMode::Yolo, &workspace),
+        SandboxPolicy::DangerFullAccess
+    ));
 }
 
 #[tokio::test]
@@ -438,6 +675,53 @@ fn context_budget_reserves_output_and_headroom() {
 }
 
 #[test]
+fn effective_max_output_tokens_caps_api_request_for_large_window_models() {
+    // V4 models have a 1M context window but the API request cap must stay
+    // well below common provider limits (e.g., 131K total on self-hosted
+    // vLLM/SGLang). The cap should never exceed 65K.
+    let v4_cap = effective_max_output_tokens("deepseek-v4-pro");
+    assert!(
+        v4_cap <= 65_536,
+        "V4 API request cap should be ≤64K, got {v4_cap}"
+    );
+    assert!(
+        v4_cap > 0,
+        "V4 API request cap should be positive, got {v4_cap}"
+    );
+
+    let flash_cap = effective_max_output_tokens("deepseek-v4-flash");
+    assert_eq!(v4_cap, flash_cap);
+}
+
+#[test]
+fn internal_context_budget_unaffected_by_api_request_cap() {
+    // The internal context budget (used for compaction/preflight/recovery)
+    // must still use the full TURN_MAX_OUTPUT_TOKENS headroom, NOT the
+    // smaller API request cap. This ensures long-context V4 sessions don't
+    // compact prematurely.
+    let internal_budget = context_input_budget("deepseek-v4-pro", TURN_MAX_OUTPUT_TOKENS)
+        .expect("V4 should have a known context window");
+    let api_cap_budget = context_input_budget(
+        "deepseek-v4-pro",
+        effective_max_output_tokens("deepseek-v4-pro"),
+    )
+    .expect("V4 should have a known context window");
+
+    // Internal budget reserves 262K for output; API-cap budget would only
+    // reserve 64K. Internal budget must be smaller (more conservative).
+    assert!(
+        internal_budget < api_cap_budget,
+        "Internal budget ({internal_budget}) should be smaller than API-cap budget ({api_cap_budget}) \
+         because it reserves more headroom for output"
+    );
+
+    // Verify the internal budget is what the compaction logic actually uses.
+    let v4_window: usize = 1_000_000;
+    let expected_internal = v4_window - (TURN_MAX_OUTPUT_TOKENS as usize) - 1_024usize;
+    assert_eq!(internal_budget, expected_internal);
+}
+
+#[test]
 fn v4_tool_outputs_keep_large_file_reads_in_context() {
     let content = "0123456789abcdef\n".repeat(2_000);
     let output = ToolResult::success(content.clone());
@@ -477,10 +761,13 @@ fn subagent_results_are_summarized_before_parent_context_insertion() {
     assert!(context.contains("Inspect the RLM rendering path"));
     assert!(context.contains("steps=12"));
     assert!(context.len() < output.content.len());
+    assert!(context.contains("self-report"));
+    assert!(context.contains("verify side effects"));
+    assert!(context.contains("read_file") && context.contains("list_dir"));
 }
 
 #[test]
-fn refresh_system_prompt_places_working_set_after_stable_prefix() {
+fn refresh_system_prompt_leaves_working_set_out_of_system_prompt() {
     let tmp = tempdir().expect("tempdir");
     fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
     fs::write(tmp.path().join("src/lib.rs"), "pub fn sample() {}").expect("write");
@@ -497,20 +784,274 @@ fn refresh_system_prompt_places_working_set_after_stable_prefix() {
 
     engine.refresh_system_prompt(AppMode::Agent);
 
-    let Some(SystemPrompt::Blocks(blocks)) = &engine.session.system_prompt else {
-        panic!("expected structured prompt blocks");
-    };
-    let last = blocks.last().expect("working-set block");
-    assert!(last.text.contains(WORKING_SET_SUMMARY_MARKER));
-    assert!(
-        blocks[..blocks.len() - 1]
+    let prompt = match &engine.session.system_prompt {
+        Some(SystemPrompt::Text(text)) => text.clone(),
+        Some(SystemPrompt::Blocks(blocks)) => blocks
             .iter()
-            .all(|block| !block.text.contains(WORKING_SET_SUMMARY_MARKER))
-    );
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => panic!("expected system prompt"),
+    };
+    assert!(!prompt.contains(WORKING_SET_SUMMARY_MARKER));
 }
 
 #[test]
-fn compaction_summary_stays_before_volatile_working_set() {
+fn working_set_reaches_model_as_turn_metadata() {
+    let tmp = tempdir().expect("tempdir");
+    fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
+    fs::write(tmp.path().join("src/lib.rs"), "pub fn sample() {}").expect("write");
+
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (mut engine, _handle) = Engine::new(config, &Config::default());
+    engine
+        .session
+        .working_set
+        .observe_user_message("please inspect src/lib.rs", tmp.path());
+    let user_msg =
+        engine.user_text_message_with_turn_metadata("please inspect src/lib.rs".to_string());
+    engine.session.add_message(user_msg);
+
+    let messages = engine.messages_with_turn_metadata();
+    let first_block = messages
+        .last()
+        .and_then(|message| message.content.first())
+        .expect("turn metadata block");
+    let ContentBlock::Text { text, .. } = first_block else {
+        panic!("expected text metadata block");
+    };
+    assert!(text.starts_with("<turn_meta>\n"));
+    assert!(text.contains(WORKING_SET_SUMMARY_MARKER));
+    assert!(text.contains("src/lib.rs"));
+}
+
+#[test]
+fn turn_metadata_includes_current_local_date_without_working_set() {
+    let tmp = tempdir().expect("tempdir");
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (mut engine, _handle) = Engine::new(config, &Config::default());
+    let user_msg = engine.user_text_message_with_turn_metadata("what is today's date?".to_string());
+    engine.session.add_message(user_msg);
+
+    let messages = engine.messages_with_turn_metadata();
+    let first_block = messages
+        .last()
+        .and_then(|message| message.content.first())
+        .expect("turn metadata block");
+    let ContentBlock::Text { text, .. } = first_block else {
+        panic!("expected text metadata block");
+    };
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert!(text.starts_with("<turn_meta>\n"));
+    assert!(text.contains(&format!("Current local date: {today}")));
+}
+
+#[test]
+fn user_text_message_keeps_current_turn_input_after_turn_metadata() {
+    let tmp = tempdir().expect("tempdir");
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (engine, _handle) = Engine::new(config, &Config::default());
+
+    let user_msg =
+        engine.user_text_message_with_turn_metadata("explain the cache metrics".to_string());
+
+    let last_text = user_msg
+        .content
+        .iter()
+        .rev()
+        .find_map(|block| {
+            if let ContentBlock::Text { text, .. } = block {
+                Some(text.as_str())
+            } else {
+                None
+            }
+        })
+        .expect("user text block");
+    assert_eq!(last_text, "explain the cache metrics");
+}
+
+#[test]
+fn messages_with_turn_metadata_preserves_stored_messages_for_prefix_cache() {
+    let tmp = tempdir().expect("tempdir");
+    fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
+    fs::write(tmp.path().join("src/lib.rs"), "pub fn sample() {}").expect("write");
+
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (mut engine, _handle) = Engine::new(config, &Config::default());
+    engine
+        .session
+        .working_set
+        .observe_user_message("inspect src/lib.rs", tmp.path());
+
+    let first_user = engine.user_text_message_with_turn_metadata("inspect src/lib.rs".to_string());
+    engine.session.add_message(first_user.clone());
+    let first_request = engine.messages_with_turn_metadata();
+    assert_eq!(first_request, engine.session.messages);
+
+    engine.session.add_message(Message {
+        role: "assistant".to_string(),
+        content: vec![ContentBlock::Text {
+            text: "I inspected it.".to_string(),
+            cache_control: None,
+        }],
+    });
+    engine
+        .session
+        .working_set
+        .observe_user_message("now summarize it", tmp.path());
+    let second_user = engine.user_text_message_with_turn_metadata("now summarize it".to_string());
+    engine.session.add_message(second_user);
+
+    let second_request = engine.messages_with_turn_metadata();
+    assert_eq!(second_request, engine.session.messages);
+    assert_eq!(second_request.first(), Some(&first_user));
+}
+
+/// v0.8.11 regression: tool-result messages serialize to role="tool" on
+/// the wire but are stored as role="user" internally. `<turn_meta>` must
+/// be stored only on actual user-text messages, not retroactively added
+/// to tool-result messages at request time.
+#[test]
+fn turn_metadata_skips_tool_result_messages() {
+    let tmp = tempdir().expect("tempdir");
+    fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
+    fs::write(tmp.path().join("src/lib.rs"), "pub fn sample() {}").expect("write");
+
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (mut engine, _handle) = Engine::new(config, &Config::default());
+    engine
+        .session
+        .working_set
+        .observe_user_message("inspect src/lib.rs", tmp.path());
+
+    // Real user message — should be eligible for injection.
+    let user_msg = engine.user_text_message_with_turn_metadata("inspect src/lib.rs".to_string());
+    engine.session.add_message(user_msg);
+    // Assistant tool-call.
+    engine.session.add_message(Message {
+        role: "assistant".to_string(),
+        content: vec![ContentBlock::ToolUse {
+            id: "call_42".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "src/lib.rs"}),
+            caller: None,
+        }],
+    });
+    // Tool result, stored as role="user" internally.
+    engine.session.add_message(Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: "call_42".to_string(),
+            content: "pub fn sample() {}".to_string(),
+            is_error: None,
+            content_blocks: None,
+        }],
+    });
+
+    let messages = engine.messages_with_turn_metadata();
+
+    // The trailing message is the tool result and MUST be untouched —
+    // no Text block sneaking in front of the ToolResult block.
+    let trailing = messages.last().expect("trailing message");
+    assert_eq!(trailing.role, "user");
+    assert_eq!(trailing.content.len(), 1);
+    assert!(matches!(
+        trailing.content.first(),
+        Some(ContentBlock::ToolResult { .. })
+    ));
+
+    // The earlier real user message already carries the turn_meta prefix.
+    let real_user = messages.first().expect("first user message");
+    assert_eq!(real_user.role, "user");
+    let ContentBlock::Text { text, .. } = real_user.content.first().expect("user text content")
+    else {
+        panic!("expected Text block on real user message");
+    };
+    assert!(text.starts_with("<turn_meta>\n"));
+    assert!(text.contains("src/lib.rs"));
+}
+
+/// When the turn is mid-execution and the trailing user message is a
+/// tool result, no turn_meta is injected at request time. The working_set
+/// surfaces again on the next stored user-text message.
+#[test]
+fn turn_metadata_skips_when_only_tool_results_trail() {
+    let tmp = tempdir().expect("tempdir");
+    fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
+    fs::write(tmp.path().join("src/lib.rs"), "pub fn sample() {}").expect("write");
+
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (mut engine, _handle) = Engine::new(config, &Config::default());
+    engine
+        .session
+        .working_set
+        .observe_user_message("inspect src/lib.rs", tmp.path());
+
+    // Only a tool-result message in history — simulates the corner case
+    // where the prior real user message has already been compacted away
+    // but a tool-result is still pending. We must not retroactively
+    // inject.
+    engine.session.add_message(Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: "call_42".to_string(),
+            content: "pub fn sample() {}".to_string(),
+            is_error: None,
+            content_blocks: None,
+        }],
+    });
+
+    let messages = engine.messages_with_turn_metadata();
+
+    // Returned unchanged: the single tool-result message, no Text
+    // prefix, content length == 1.
+    let only = messages.last().expect("trailing message");
+    assert_eq!(only.content.len(), 1);
+    assert!(matches!(
+        only.content.first(),
+        Some(ContentBlock::ToolResult { .. })
+    ));
+}
+
+#[test]
+fn refresh_system_prompt_is_noop_when_unchanged() {
+    let tmp = tempdir().expect("tempdir");
+    let config = EngineConfig {
+        workspace: tmp.path().to_path_buf(),
+        ..Default::default()
+    };
+    let (mut engine, _handle) = Engine::new(config, &Config::default());
+
+    engine.refresh_system_prompt(AppMode::Agent);
+    let first_hash = engine.session.last_system_prompt_hash;
+    let first_prompt = engine.session.system_prompt.clone();
+    engine.refresh_system_prompt(AppMode::Agent);
+
+    assert_eq!(engine.session.last_system_prompt_hash, first_hash);
+    assert_eq!(engine.session.system_prompt, first_prompt);
+}
+
+#[test]
+fn compaction_summary_stays_in_stable_system_prompt() {
     let tmp = tempdir().expect("tempdir");
     fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write");
@@ -531,20 +1072,18 @@ fn compaction_summary_stays_before_volatile_working_set() {
         cache_control: None,
     }])));
 
-    let Some(SystemPrompt::Blocks(blocks)) = &engine.session.system_prompt else {
-        panic!("expected structured prompt blocks");
+    let prompt = match &engine.session.system_prompt {
+        Some(SystemPrompt::Text(text)) => text.clone(),
+        Some(SystemPrompt::Blocks(blocks)) => blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => panic!("expected system prompt"),
     };
-    let summary_index = blocks
-        .iter()
-        .position(|block| block.text.contains(COMPACTION_SUMMARY_MARKER))
-        .expect("summary block");
-    let working_set_index = blocks
-        .iter()
-        .position(|block| block.text.contains(WORKING_SET_SUMMARY_MARKER))
-        .expect("working-set block");
 
-    assert!(summary_index < working_set_index);
-    assert_eq!(working_set_index, blocks.len() - 1);
+    assert!(prompt.contains(COMPACTION_SUMMARY_MARKER));
+    assert!(!prompt.contains(WORKING_SET_SUMMARY_MARKER));
 }
 
 #[tokio::test]
@@ -614,7 +1153,7 @@ async fn pre_request_refresh_invoked_when_medium_risk() {
     engine.config.model = "deepseek-v3.2-128k".to_string();
 
     let long = "x".repeat(5_000);
-    for _ in 0..200 {
+    for _ in 0..900 {
         engine.session.messages.push(Message {
             role: "user".to_string(),
             content: vec![ContentBlock::Text {
@@ -700,14 +1239,9 @@ async fn post_tool_replay_invoked_when_high_non_severe_risk() {
 
 #[tokio::test]
 async fn error_escalation_triggers_replan_when_severe_or_repeated_failures() {
+    let _env_lock = CAPACITY_MEMORY_ENV_LOCK.lock().await;
     let tmp = tempdir().expect("tempdir");
-    // Safety: scoped to test process; reset at end.
-    unsafe {
-        std::env::set_var(
-            "DEEPSEEK_CAPACITY_MEMORY_DIR",
-            tmp.path().to_string_lossy().to_string(),
-        );
-    }
+    let _env = ScopedCapacityMemoryDir::set(tmp.path());
 
     let capacity = CapacityControllerConfig {
         enabled: true,
@@ -755,9 +1289,60 @@ async fn error_escalation_triggers_replan_when_severe_or_repeated_failures() {
     let records = load_last_k_capacity_records(&engine.session.id, 1).expect("load memory");
     assert!(!records.is_empty());
     assert!(!records[0].canonical_state.goal.is_empty());
-    unsafe {
-        std::env::remove_var("DEEPSEEK_CAPACITY_MEMORY_DIR");
+}
+
+/// v0.8.11: `CapacityControllerConfig::default()` ships with
+/// `enabled = false`. The capacity controller's destructive
+/// interventions (TargetedContextRefresh silently runs compaction;
+/// VerifyAndReplan clears the session message log) silently rewrote
+/// or nuked the user's transcript ("resetting plan" footer +
+/// black-screen symptom). v0.8.11 commits to "trust the model with
+/// the full 1M-token context, only compact on explicit user
+/// /compact" — auto-managing the prefix contradicts that posture.
+/// Power users can still opt in via `capacity.enabled = true`.
+#[tokio::test]
+async fn capacity_disabled_by_default_keeps_messages_intact() {
+    let _env_lock = CAPACITY_MEMORY_ENV_LOCK.lock().await;
+    let tmp = tempdir().expect("tempdir");
+    let _env = ScopedCapacityMemoryDir::set(tmp.path());
+
+    // Default config — what real users get.
+    let mut engine = build_engine_with_capacity(CapacityControllerConfig::default());
+    assert!(
+        !engine.config.capacity.enabled,
+        "capacity controller must be off by default in v0.8.11+"
+    );
+    engine.turn_counter = 6;
+    engine
+        .capacity_controller
+        .mark_turn_start(engine.turn_counter);
+
+    for i in 0..10 {
+        engine.session.messages.push(Message {
+            role: if i % 2 == 0 { "user" } else { "assistant" }.to_string(),
+            content: vec![ContentBlock::Text {
+                text: format!("noise message {i}"),
+                cache_control: None,
+            }],
+        });
     }
+    engine.session.messages.push(Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::Text {
+            text: "Please finish task".to_string(),
+            cache_control: None,
+        }],
+    });
+
+    let before_len = engine.session.messages.len();
+    let turn = TurnContext::new(10);
+    let restarted = engine
+        .run_capacity_error_escalation_checkpoint(&turn, AppMode::Agent, 2, 2, &[])
+        .await;
+
+    // Capacity is disabled → no replan, no message clear.
+    assert!(!restarted);
+    assert_eq!(engine.session.messages.len(), before_len);
 }
 
 #[tokio::test]
@@ -852,7 +1437,7 @@ fn tool_search_activates_discovered_deferred_tools() {
             cache_control: None,
         },
     ];
-    ensure_advanced_tooling(&mut catalog);
+    ensure_advanced_tooling(&mut catalog, AppMode::Agent);
     let mut active = initial_active_tools(&catalog);
     let result = execute_tool_search(
         TOOL_SEARCH_BM25_NAME,
@@ -874,6 +1459,27 @@ async fn code_execution_runs_python_and_returns_result_payload() {
             .expect("code execution should run");
     assert!(result.content.contains("hello from code exec"));
     assert!(result.content.contains("return_code"));
+}
+
+#[test]
+fn plan_mode_catalog_skips_code_execution_tool() {
+    let mut plan_catalog = vec![api_tool("read_file")];
+    ensure_advanced_tooling(&mut plan_catalog, AppMode::Plan);
+    assert!(
+        !plan_catalog
+            .iter()
+            .any(|tool| tool.name == CODE_EXECUTION_TOOL_NAME),
+        "Plan mode must not expose code_execution"
+    );
+
+    let mut agent_catalog = vec![api_tool("read_file")];
+    ensure_advanced_tooling(&mut agent_catalog, AppMode::Agent);
+    assert!(
+        agent_catalog
+            .iter()
+            .any(|tool| tool.name == CODE_EXECUTION_TOOL_NAME),
+        "Agent mode should still expose code_execution"
+    );
 }
 
 #[test]
@@ -1129,11 +1735,11 @@ fn final_tool_input_falls_back_to_initial_when_buffer_empty() {
 }
 
 #[test]
-fn final_tool_input_falls_back_to_initial_when_buffer_unparseable() {
-    // If the model ships partial JSON we never managed to parse, we keep
-    // whatever the per-delta parser last accepted (mirrored into `input`).
+fn final_tool_input_repairs_unparseable_buffer() {
+    // The arg_repair module converts unparseable input to an empty object
+    // {} so dispatch always proceeds. The buffer wins over the initial input.
     let state = tool_state(json!({"command": "echo hi"}), "{not json");
-    assert_eq!(final_tool_input(&state), json!({"command": "echo hi"}));
+    assert_eq!(final_tool_input(&state), json!({}));
 }
 
 // === #103 transparent stream-retry policy =====================================
@@ -1411,12 +2017,24 @@ async fn post_edit_hook_injects_diagnostics_message_before_next_request() {
 
     let last = engine.session.messages.last().expect("message appended");
     assert_eq!(last.role, "user");
-    let text = match &last.content[0] {
+    let meta = match &last.content[0] {
         crate::models::ContentBlock::Text { text, .. } => text.clone(),
         other => panic!("expected text block, got {other:?}"),
     };
-    assert!(text.contains("<diagnostics file=\""));
-    assert!(text.contains("ERROR [1:14] expected i32, found &str"));
+    assert!(meta.starts_with("<turn_meta>\n"));
+    let diagnostic_text = last
+        .content
+        .iter()
+        .find_map(|block| match block {
+            crate::models::ContentBlock::Text { text, .. }
+                if text.contains("<diagnostics file=\"") =>
+            {
+                Some(text)
+            }
+            _ => None,
+        })
+        .expect("diagnostics text block");
+    assert!(diagnostic_text.contains("ERROR [1:14] expected i32, found &str"));
 }
 
 #[tokio::test]

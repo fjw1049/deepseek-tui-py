@@ -3,10 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use crate::deepseek_theme::active_theme;
 use crate::models::{ContentBlock, Message};
@@ -37,6 +37,11 @@ const USER_GLYPH: &str = "\u{258E}"; // ▎
 /// Visual marker for the assistant role. Solid bullet that pulses at 2s
 /// cycle while the response is streaming, holds full brightness when idle.
 const ASSISTANT_GLYPH: &str = "\u{25CF}"; // ●
+/// Transcript body left rail. Solid 1/8 block (`▏`) followed by a space —
+/// used as a visual left-margin anchor for continuation lines, tool-card
+/// detail rows, and affordance lines. Dimmed so it guides the eye without
+/// competing with content.
+const TRANSCRIPT_RAIL: &str = "\u{258F} "; // ▏ + space
 /// Reasoning header opener. Replaces the spinner glyph on thinking cells —
 /// reasoning is a slow exhale, not a tool spin.
 const REASONING_OPENER: &str = "\u{2026}"; // …
@@ -144,6 +149,7 @@ impl SubAgentCell {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TranscriptRenderOptions {
     pub show_thinking: bool,
+    pub verbose: bool,
     pub show_tool_details: bool,
     pub calm_mode: bool,
     pub low_motion: bool,
@@ -154,6 +160,7 @@ impl Default for TranscriptRenderOptions {
     fn default() -> Self {
         Self {
             show_thinking: true,
+            verbose: false,
             show_tool_details: true,
             calm_mode: false,
             low_motion: false,
@@ -176,7 +183,7 @@ impl HistoryCell {
             HistoryCell::User { content } => render_message(
                 USER_GLYPH,
                 user_label_style(),
-                message_body_style(),
+                user_body_style(),
                 content,
                 width,
             ),
@@ -200,13 +207,30 @@ impl HistoryCell {
                     )
                 }
             }
-            HistoryCell::Error { message, severity } => render_message(
-                error_label_text(*severity),
-                error_label_style(*severity),
-                error_body_style(*severity),
-                message,
-                width,
-            ),
+            HistoryCell::Error { message, severity } => {
+                // Error messages are machine-generated and should not be run
+                // through markdown rendering, which would mangle env-var names
+                // containing underscores (e.g. DEEPSEEK_ALLOW_INSECURE_HTTP
+                // would lose its underscores as italic markers).
+                let label = error_label_text(*severity);
+                let label_style = error_label_style(*severity);
+                let body_style = error_body_style(*severity);
+                let prefix_width = UnicodeWidthStr::width(label);
+                let content_width = width.saturating_sub(2 + prefix_width as u16).max(1);
+                let mut lines = wrap_plain_line(message, body_style, content_width);
+                // Add the label prefix to the first line
+                if let Some(first) = lines.get_mut(0) {
+                    first.spans.insert(0, Span::raw(" "));
+                    first.spans.insert(0, Span::styled(label, label_style));
+                }
+                // Continuation rail for subsequent lines
+                let rail = format!("{}{}", '\u{258F}', " ".repeat(prefix_width));
+                let rail_style = Style::default().fg(palette::TEXT_DIM);
+                for line in lines.iter_mut().skip(1) {
+                    line.spans.insert(0, Span::styled(rail.clone(), rail_style));
+                }
+                lines
+            }
             HistoryCell::Thinking {
                 content,
                 streaming,
@@ -234,7 +258,7 @@ impl HistoryCell {
                 width,
                 *streaming,
                 *duration_secs,
-                !*streaming,
+                !options.verbose,
                 options.low_motion,
             ),
             HistoryCell::Tool(cell) if !options.show_tool_details => {
@@ -263,7 +287,7 @@ impl HistoryCell {
             HistoryCell::User { content } => render_message(
                 USER_GLYPH,
                 user_label_style(),
-                message_body_style(),
+                user_body_style(),
                 content,
                 width,
             ),
@@ -295,7 +319,7 @@ impl HistoryCell {
             HistoryCell::User { content } => render_message(
                 USER_GLYPH,
                 user_label_style(),
-                message_body_style(),
+                user_body_style(),
                 content,
                 width,
             ),
@@ -478,7 +502,10 @@ fn render_archived_context(
     let rendered = crate::tui::markdown_render::render_markdown(&body, content_width, body_style);
     for (idx, line) in rendered.into_iter().enumerate() {
         if idx == 0 {
-            let mut spans = vec![Span::styled("▏ ", Style::default().fg(palette::TEXT_DIM))];
+            let mut spans = vec![Span::styled(
+                TRANSCRIPT_RAIL.to_string(),
+                Style::default().fg(palette::TEXT_DIM),
+            )];
             spans.extend(line.spans);
             lines.push(Line::from(spans));
         } else {
@@ -638,6 +665,8 @@ pub struct ExecCell {
     pub duration_ms: Option<u64>,
     pub source: ExecSource,
     pub interaction: Option<String>,
+    /// Cached output summary — avoids re-parsing JSON every frame.
+    pub output_summary: Option<String>,
 }
 
 impl ExecCell {
@@ -719,7 +748,7 @@ impl ExecCell {
             ));
         }
 
-        lines
+        wrap_card_rail(lines)
     }
 }
 
@@ -1192,6 +1221,11 @@ pub struct GenericToolCell {
     /// OSC 8-aware terminals — the path renders as a hyperlink when
     /// `tui.osc8_links` is enabled).
     pub spillover_path: Option<std::path::PathBuf>,
+    // --- Pre-computed render cache (populated once at cell creation) ---
+    /// Cached output summary — avoids re-parsing JSON every frame.
+    pub output_summary: Option<String>,
+    /// Whether the output looks like a unified diff (cached after first check).
+    pub is_diff: bool,
 }
 
 impl GenericToolCell {
@@ -1280,10 +1314,7 @@ impl GenericToolCell {
         }
 
         if let Some(output) = self.output.as_ref() {
-            // If the output looks like a unified diff (contains hunk headers),
-            // use the full diff renderer with line numbers and colored gutters
-            // instead of the generic output path (#380).
-            if output_looks_like_diff(output) {
+            if self.is_diff {
                 let diff_summary = diff_render::diff_summary_label(output);
                 lines.push(render_tool_header_with_summary(
                     "Diff",
@@ -1295,11 +1326,6 @@ impl GenericToolCell {
                 ));
                 lines.extend(diff_render::render_diff(output, width));
             } else {
-                // Multi-line outputs (diff stats, file lists, todo snapshots) used
-                // to be crushed into one line by `render_compact_kv` because its
-                // wrapper joined the entire string before wrapping. Route through
-                // `render_tool_output_mode` so each `\n` becomes a real row, with
-                // a `+N more lines` affordance in live mode (#80).
                 lines.extend(render_tool_output_mode(
                     output,
                     width,
@@ -1308,20 +1334,13 @@ impl GenericToolCell {
                 ));
             }
 
-            // #423: surface the spillover-file path inline so the user
-            // (and the model) can find the elided tail. Only emitted in
-            // live mode — transcript replay already has the full output
-            // verbatim. The path is OSC 8-wrapped when the feature is
-            // enabled so terminals that support hyperlinks make it
-            // Cmd+click-openable; the clipboard / selection path
-            // strips the escape on copy.
             if matches!(mode, RenderMode::Live)
                 && let Some(path) = self.spillover_path.as_ref()
             {
                 lines.push(render_spillover_annotation(path, width));
             }
         }
-        lines
+        wrap_card_rail(lines)
     }
 
     /// Render `agent_spawn` as a single compact summary line for live
@@ -1456,7 +1475,7 @@ fn is_checklist_tool_name(name: &str) -> bool {
 /// Heuristic: does the output look like a unified diff? Returns true when
 /// the output contains at least one hunk header (`@@`) or a `diff --git`
 /// line, which are reliable markers of unified diff content (#380).
-fn output_looks_like_diff(output: &str) -> bool {
+pub(crate) fn output_looks_like_diff(output: &str) -> bool {
     let mut lines = output.lines();
     // Check first 5 lines for diff markers
     for _ in 0..5 {
@@ -1608,7 +1627,7 @@ fn render_checklist_change_card(
     let (marker, marker_color) = checklist_status_marker(&change.status);
     let prefix = format!("{marker} ");
     let prefix_width =
-        UnicodeWidthStr::width("\u{258F} ") + UnicodeWidthStr::width(prefix.as_str());
+        UnicodeWidthStr::width(TRANSCRIPT_RAIL) + UnicodeWidthStr::width(prefix.as_str());
     let id_label = format!("Todo #{}", change.id);
     let arrow = " \u{2192} ";
     let status_label = change.status.clone();
@@ -1702,7 +1721,7 @@ fn render_checklist_card(
         let prefix = format!("{marker} ");
         // Reserve room for the rail + marker prefix when wrapping content.
         let prefix_width =
-            UnicodeWidthStr::width("\u{258F} ") + UnicodeWidthStr::width(prefix.as_str());
+            UnicodeWidthStr::width(TRANSCRIPT_RAIL) + UnicodeWidthStr::width(prefix.as_str());
         let content_width = usize::from(width).saturating_sub(prefix_width).max(1);
         for (idx, part) in wrap_text(item.content.trim(), content_width)
             .into_iter()
@@ -2044,7 +2063,7 @@ fn render_thinking(
     // 12% reasoning surface tint over the app ink — the only deliberately
     // warm element in the transcript. Dropped on Ansi-16 terminals where the
     // tint would distort the named palette.
-    let depth = palette::ColorDepth::detect();
+    let depth = cached_color_depth();
     let body_bg = palette::reasoning_surface_tint(depth);
     let body_style = match body_bg {
         Some(bg) => style.italic().bg(bg),
@@ -2074,14 +2093,35 @@ fn render_thinking(
 
     let content_width = width.saturating_sub(3).max(1);
     let body_text = if collapsed {
-        extract_reasoning_summary(content).unwrap_or_else(|| content.trim().to_string())
+        if streaming {
+            // #861 RC4 / #1324: during streaming we don't yet have a
+            // completed reasoning block, so `extract_reasoning_summary`
+            // is meaningless. Show the raw content and let the
+            // truncation logic below keep the *last* `LIMIT` lines so
+            // the user sees the model's most recent thinking instead of
+            // staring at an empty placeholder.
+            content.to_string()
+        } else {
+            extract_reasoning_summary(content).unwrap_or_else(|| content.trim().to_string())
+        }
     } else {
         content.to_string()
     };
-    let mut rendered = markdown_render::render_markdown(&body_text, content_width, body_style);
+    let mut rendered = if body_text.trim().is_empty() {
+        Vec::new()
+    } else {
+        markdown_render::render_markdown(&body_text, content_width, body_style)
+    };
     let mut truncated = false;
     if collapsed && rendered.len() > THINKING_SUMMARY_LINE_LIMIT {
-        rendered.truncate(THINKING_SUMMARY_LINE_LIMIT);
+        if streaming {
+            // Drop the *head* during streaming so the visible window
+            // tracks the live cursor at the bottom.
+            let drop = rendered.len() - THINKING_SUMMARY_LINE_LIMIT;
+            rendered.drain(0..drop);
+        } else {
+            rendered.truncate(THINKING_SUMMARY_LINE_LIMIT);
+        }
         truncated = true;
     }
 
@@ -2090,10 +2130,7 @@ fn render_thinking(
 
     if rendered.is_empty() && streaming {
         let mut spans = vec![Span::styled(REASONING_RAIL.to_string(), rail_style)];
-        spans.push(Span::styled(
-            "reasoning in progress...",
-            body_style.italic(),
-        ));
+        spans.push(Span::styled("thinking...", body_style.italic()));
         if !low_motion {
             spans.push(Span::styled(format!(" {REASONING_CURSOR}"), cursor_style));
         }
@@ -2112,13 +2149,24 @@ fn render_thinking(
         lines.push(Line::from(spans));
     }
 
-    if collapsed && (!streaming && (truncated || body_text.trim() != content.trim())) {
+    let needs_affordance = collapsed
+        && if streaming {
+            // #861 RC4 / #1324: during streaming, surface the affordance
+            // whenever any head lines have been clipped so the user
+            // knows there's more above and how to reach it.
+            truncated
+        } else {
+            truncated || body_text.trim() != content.trim()
+        };
+    if needs_affordance {
+        let label = if streaming {
+            "thinking continues; press Ctrl+O for full text"
+        } else {
+            "thinking collapsed; press Ctrl+O for full text"
+        };
         lines.push(Line::from(vec![
             Span::styled(REASONING_RAIL.to_string(), rail_style),
-            Span::styled(
-                "thinking collapsed; press Ctrl+O for full text",
-                Style::default().fg(palette::TEXT_MUTED).italic(),
-            ),
+            Span::styled(label, Style::default().fg(palette::TEXT_MUTED).italic()),
         ]));
     }
 
@@ -2136,8 +2184,9 @@ fn render_message(
     let prefix_width_u16 = u16::try_from(prefix_width.saturating_add(2)).unwrap_or(u16::MAX);
     let content_width = usize::from(width.saturating_sub(prefix_width_u16).max(1));
     let mut lines = Vec::new();
-    let rendered = markdown_render::render_markdown(content, content_width as u16, body_style);
-    for (idx, line) in rendered.into_iter().enumerate() {
+    let rendered =
+        markdown_render::render_markdown_tagged(content, content_width as u16, body_style);
+    for (idx, rendered_line) in rendered.into_iter().enumerate() {
         if idx == 0 {
             let mut spans = Vec::new();
             if !prefix.is_empty() {
@@ -2147,16 +2196,22 @@ fn render_message(
                 ));
                 spans.push(Span::raw(" "));
             }
-            spans.extend(line.spans);
+            spans.extend(rendered_line.line.spans);
             lines.push(Line::from(spans));
         } else {
             let indent = if prefix.is_empty() {
                 String::new()
-            } else {
+            } else if rendered_line.is_code {
                 " ".repeat(prefix_width + 1)
+            } else {
+                let mut s = String::with_capacity(prefix_width + 1);
+                s.push('\u{258F}');
+                s.extend(std::iter::repeat_n(' ', prefix_width));
+                s
             };
-            let mut spans = vec![Span::raw(indent)];
-            spans.extend(line.spans);
+            let rail_style = Style::default().fg(palette::TEXT_DIM);
+            let mut spans = vec![Span::styled(indent, rail_style)];
+            spans.extend(rendered_line.line.spans);
             lines.push(Line::from(spans));
         }
     }
@@ -2213,6 +2268,31 @@ fn exploring_header_summary(entries: &[ExploringEntry]) -> Option<String> {
 
 fn render_compact_kv(label: &str, value: &str, style: Style, width: u16) -> Vec<Line<'static>> {
     render_card_detail_line(Some(label.trim_end_matches(':')), value, style, width)
+}
+
+/// Wrap rendered tool-card lines with card-rail glyphs (╭ │ ╰).
+/// First non-empty line gets `╭`, middle lines get `│`, last line gets `╰`.
+/// Single-line cards get a single `─` prefix.
+fn wrap_card_rail(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let n = lines.len();
+    if n == 0 {
+        return lines;
+    }
+    if n == 1 {
+        lines[0].spans.insert(0, Span::raw("─ "));
+        return lines;
+    }
+    for (i, line) in lines.iter_mut().enumerate() {
+        let rail = if i == 0 {
+            "\u{256D} " // ╭
+        } else if i == n - 1 {
+            "\u{2570} " // ╰
+        } else {
+            "\u{2502} " // │
+        };
+        line.spans.insert(0, Span::raw(rail));
+    }
+    lines
 }
 
 fn render_tool_output_mode(
@@ -2322,15 +2402,18 @@ fn render_preserved_output_mode(
 fn output_rows(output: &str, width: u16) -> Vec<OutputRow> {
     let wrap_width = width.saturating_sub(4).max(1) as usize;
     let mut rows = Vec::new();
+    let mut sanitized = String::with_capacity(output.len());
     for line in output.lines() {
-        let intact = is_path_or_url_like(line);
+        sanitized.clear();
+        crate::tui::osc8::strip_ansi_into(line, &mut sanitized);
+        let intact = is_path_or_url_like(&sanitized);
         if intact {
             rows.push(OutputRow {
-                text: line.to_string(),
+                text: sanitized.clone(),
                 intact: true,
             });
         } else {
-            for wrapped in wrap_text(line, wrap_width) {
+            for wrapped in wrap_text(&sanitized, wrap_width) {
                 rows.push(OutputRow {
                     text: wrapped,
                     intact: false,
@@ -2482,16 +2565,16 @@ fn file_line_style(text: &str) -> Option<Style> {
 /// Apply inline diff highlighting to a single text line.
 ///
 /// Returns the appropriate style for the line based on its prefix:
-/// - Lines starting with `+` (after trimming) => `palette::STATUS_SUCCESS` (green)
+/// - Lines starting with `+` (after trimming) => `palette::DIFF_ADDED` (green)
 /// - Lines starting with `-` (after trimming) => `palette::STATUS_ERROR` (red)
 /// - Lines starting with `@@` => `palette::DEEPSEEK_SKY` (cyan/blue)
 /// - All other lines => None (use default style)
 fn diff_line_style(text: &str) -> Option<Style> {
     let trimmed = text.trim_start();
     if trimmed.starts_with("@@") {
-        Some(Style::default().fg(palette::DEEPSEEK_SKY))
+        Some(Style::default().fg(palette::DEEPSEEK_BLUE))
     } else if trimmed.starts_with('+') && !trimmed.starts_with("+++") {
-        Some(Style::default().fg(palette::STATUS_SUCCESS))
+        Some(Style::default().fg(palette::DIFF_ADDED))
     } else if trimmed.starts_with('-') && !trimmed.starts_with("---") {
         Some(Style::default().fg(palette::STATUS_ERROR))
     } else {
@@ -2546,22 +2629,21 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
     let mut current = String::new();
-    let mut current_width = 0usize;
 
     for ch in text.chars() {
-        let ch_width = if ch == '\t' {
-            4
+        let tentative = if current.is_empty() {
+            ch.to_string()
         } else {
-            UnicodeWidthChar::width(ch).unwrap_or(0).max(1)
+            let mut t = current.clone();
+            t.push(ch);
+            t
         };
 
-        if current_width + ch_width > width && !current.is_empty() {
+        if UnicodeWidthStr::width(tentative.as_str()) > width && !current.is_empty() {
             lines.push(std::mem::take(&mut current));
-            current_width = 0;
         }
 
         current.push(ch);
-        current_width = current_width.saturating_add(ch_width);
     }
 
     lines.push(current);
@@ -2600,7 +2682,10 @@ fn status_symbol(started_at: Option<Instant>, status: ToolStatus, low_motion: bo
 
 fn details_affordance_line(text: &str, style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled("▏ ", Style::default().fg(palette::TEXT_DIM)),
+        Span::styled(
+            TRANSCRIPT_RAIL.to_string(),
+            Style::default().fg(palette::TEXT_DIM),
+        ),
         Span::styled(text.to_string(), style),
     ])
 }
@@ -2619,6 +2704,10 @@ fn truncate_text(text: &str, max_len: usize) -> String {
 
 fn user_label_style() -> Style {
     Style::default().fg(palette::TEXT_MUTED)
+}
+
+fn user_body_style() -> Style {
+    Style::default().fg(palette::USER_BODY)
 }
 
 /// Style for the assistant glyph (`●`). When the cell is streaming and
@@ -2687,7 +2776,7 @@ fn error_body_style(severity: crate::error_taxonomy::ErrorSeverity) -> Style {
 }
 
 fn thinking_style() -> Style {
-    Style::default().fg(palette::TEXT_TOOL_OUTPUT)
+    Style::default().fg(palette::TEXT_REASONING)
 }
 
 fn render_tool_header(
@@ -2809,14 +2898,17 @@ fn render_card_detail_line(
     width: u16,
 ) -> Vec<Line<'static>> {
     let label_text = label.map(|text| format!("{text}:"));
-    let prefix_width = UnicodeWidthStr::width("▏ ")
+    let prefix_width = UnicodeWidthStr::width(TRANSCRIPT_RAIL)
         + label_text.as_deref().map_or(0, UnicodeWidthStr::width)
         + usize::from(label.is_some());
     let content_width = usize::from(width).saturating_sub(prefix_width).max(1);
 
     let mut lines = Vec::new();
     for (idx, part) in wrap_text(value, content_width).into_iter().enumerate() {
-        let mut spans = vec![Span::styled("▏ ", Style::default().fg(palette::TEXT_DIM))];
+        let mut spans = vec![Span::styled(
+            TRANSCRIPT_RAIL.to_string(),
+            Style::default().fg(palette::TEXT_DIM),
+        )];
         if idx == 0 {
             if let Some(label_text) = label_text.as_deref() {
                 spans.push(Span::styled(
@@ -2842,7 +2934,10 @@ fn render_card_detail_line_single(
     value_style: Style,
 ) -> Line<'static> {
     let label_text = label.map(|text| format!("{text}:"));
-    let mut spans = vec![Span::styled("▏ ", Style::default().fg(palette::TEXT_DIM))];
+    let mut spans = vec![Span::styled(
+        TRANSCRIPT_RAIL.to_string(),
+        Style::default().fg(palette::TEXT_DIM),
+    )];
     if let Some(label_text) = label_text {
         spans.push(Span::styled(label_text, tool_detail_label_style()));
         spans.push(Span::raw(" "));
@@ -2921,6 +3016,16 @@ fn thinking_state_accent(state: ThinkingVisualState) -> Color {
         ThinkingVisualState::Done => palette::TEXT_DIM,
         ThinkingVisualState::Idle => palette::TEXT_DIM,
     }
+}
+
+// === Cached colour depth ===
+
+/// Once-initialised colour depth for the terminal session. Avoids re-reading
+/// `COLORTERM` / `TERM` env vars on every frame.
+static COLOR_DEPTH: std::sync::OnceLock<palette::ColorDepth> = std::sync::OnceLock::new();
+
+fn cached_color_depth() -> palette::ColorDepth {
+    *COLOR_DEPTH.get_or_init(palette::ColorDepth::detect)
 }
 
 /// Parse `path:line` patterns from `text` and open the file at the given line
@@ -3075,6 +3180,8 @@ mod tests {
             spillover_path: Some(PathBuf::from(
                 "/Users/dev/.deepseek/tool_outputs/call-abc12.txt",
             )),
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(120, true, super::RenderMode::Live);
         let joined: String = lines
@@ -3103,6 +3210,8 @@ mod tests {
             output: Some("output".to_string()),
             prompts: None,
             spillover_path: Some(PathBuf::from("/tmp/spill.txt")),
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(120, true, super::RenderMode::Transcript);
         let joined: String = lines
@@ -3125,6 +3234,8 @@ mod tests {
             output: Some("contents".to_string()),
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Live);
         let joined: String = lines
@@ -3145,6 +3256,8 @@ mod tests {
             output: Some("output".to_string()),
             prompts: None,
             spillover_path: Some(PathBuf::from(long_path)),
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(40, true, super::RenderMode::Live);
         let annotation_line = lines
@@ -3220,6 +3333,8 @@ mod tests {
             ),
             prompts: None,
             spillover_path: None,
+                output_summary: None,
+                is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Live);
         // One header line, no details/args/output expansion.
@@ -3253,6 +3368,8 @@ mod tests {
             output: None,
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Live);
         assert_eq!(lines.len(), 1);
@@ -3273,6 +3390,8 @@ mod tests {
             ),
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Transcript);
         // Transcript mode emits header + name kv + (no args, output present)
@@ -3291,6 +3410,8 @@ mod tests {
             output: Some("first line\nsecond line\nthird line".to_string()),
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Live);
         assert!(
@@ -3530,6 +3651,64 @@ mod tests {
     }
 
     #[test]
+    fn render_thinking_streaming_collapsed_shows_live_content() {
+        // #861 RC4 / #1324: during a live thinking block in collapsed view,
+        // the body must NOT be blanked out. Users want to watch the model
+        // think; the previous behaviour stalled on a "thinking..." spinner
+        // until ThinkingComplete fired.
+        let lines = render_thinking(
+            "Step 1: read the code\nStep 2: trace the call\nStep 3: form a hypothesis",
+            80,
+            true, // streaming
+            None, // no duration yet
+            true, // collapsed
+            true, // low_motion (no cursor noise to grep)
+        );
+        let text = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+            .collect::<String>();
+        assert!(
+            text.contains("Step 3: form a hypothesis"),
+            "the most recent thinking line must be visible during streaming, got: {text}"
+        );
+        // "thinking..." placeholder must not be the only thing rendered.
+        assert!(
+            !text.contains("thinking..."),
+            "raw content present means the placeholder line should not be drawn, got: {text}"
+        );
+    }
+
+    #[test]
+    fn render_thinking_streaming_truncated_shows_continues_affordance() {
+        // #861 RC4: when a streaming thinking block exceeds the line cap,
+        // surface a live affordance pointing at Ctrl+O. The earlier code
+        // suppressed the affordance unless `!streaming`.
+        let long = (1..=10)
+            .map(|i| format!("Reasoning line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = render_thinking(&long, 80, true, None, true, true);
+        let text = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+            .collect::<String>();
+        assert!(
+            text.contains("thinking continues; press Ctrl+O for full text"),
+            "streaming-truncation affordance missing, got: {text}"
+        );
+        // The most recent line must be the visible tail (head dropped).
+        assert!(
+            text.contains("Reasoning line 10"),
+            "tail line missing, got: {text}"
+        );
+        assert!(
+            !text.contains("Reasoning line 1\n"),
+            "head should be clipped, got: {text}"
+        );
+    }
+
+    #[test]
     fn tool_lines_with_options_respects_low_motion_in_default_path() {
         // Use a 2× cycle offset so the animated frame lands on index 2,
         // which is maximally far from index 0. This avoids flaky failures on
@@ -3545,6 +3724,7 @@ mod tests {
             duration_ms: None,
             source: ExecSource::Assistant,
             interaction: None,
+            output_summary: None,
         }));
 
         let animated = cell.lines_with_options(80, TranscriptRenderOptions::default());
@@ -3556,8 +3736,9 @@ mod tests {
             },
         );
 
-        let animated_symbol = animated[0].spans[0].content.trim();
-        let low_motion_symbol = low_motion[0].spans[0].content.trim();
+        // Index 0 is card-rail glyph (╭); the animated symbol is at index 1.
+        let animated_symbol = animated[0].spans[1].content.trim();
+        let low_motion_symbol = low_motion[0].spans[1].content.trim();
 
         // low_motion always pins to the first (static) frame.
         assert_eq!(low_motion_symbol, TOOL_RUNNING_SYMBOLS[0]);
@@ -3612,6 +3793,106 @@ mod tests {
     }
 
     #[test]
+    fn assistant_code_block_lines_do_not_get_transcript_rail() {
+        let cell = HistoryCell::Assistant {
+            content: "SQL:\n```sql\nSELECT\nFROM customers\n```".to_string(),
+            streaming: false,
+        };
+        let visible: Vec<String> = cell
+            .lines(80)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        assert_eq!(visible[0], format!("{ASSISTANT_GLYPH} SQL:"));
+        for line in visible
+            .iter()
+            .filter(|line| line.contains("SELECT") || line.contains("FROM customers"))
+        {
+            assert!(
+                !line.contains('\u{258F}'),
+                "code block line should not inherit the transcript rail: {line:?}"
+            );
+        }
+    }
+
+    /// Issue #1212 repro: a multi-line SQL fence rendered after a short
+    /// intro paragraph. Every code-block line — not just the first or last —
+    /// must avoid the `▏` rail.
+    #[test]
+    fn assistant_long_code_block_keeps_every_line_rail_free() {
+        let cell = HistoryCell::Assistant {
+            content: "Here's the query:\n```sql\nSELECT\n  c.customer_id,\n  c.name,\n  COUNT(o.order_id) AS order_count\nFROM customers c\nJOIN orders o ON c.customer_id = o.customer_id;\n```".to_string(),
+            streaming: false,
+        };
+        let visible: Vec<String> = cell
+            .lines(80)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        let code_markers = ["SELECT", "customer_id", "name,", "COUNT", "FROM", "JOIN"];
+        for marker in code_markers {
+            let line = visible
+                .iter()
+                .find(|line| line.contains(marker))
+                .unwrap_or_else(|| panic!("expected code line containing {marker:?}"));
+            assert!(
+                !line.contains('\u{258F}'),
+                "code block line containing {marker:?} must not have the transcript rail: {line:?}"
+            );
+        }
+    }
+
+    /// Edge case: a blank line inside a fence is still a code line; it must
+    /// not regress to the rail because the empty body falls through a
+    /// different wrap branch.
+    #[test]
+    fn assistant_code_block_blank_line_keeps_no_rail() {
+        let cell = HistoryCell::Assistant {
+            content: "```\nfn one() {}\n\nfn two() {}\n```".to_string(),
+            streaming: false,
+        };
+        for line in cell.lines(80).iter().skip(1) {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                !text.contains('\u{258F}'),
+                "fence body line must stay rail-free: {text:?}"
+            );
+        }
+    }
+
+    /// Wrapped code lines (a single source line longer than the viewport)
+    /// emit multiple rendered lines from one `Block::Code`. None of them
+    /// should leak the rail.
+    #[test]
+    fn assistant_wrapped_code_lines_keep_no_rail() {
+        let long = "let x = ".to_string() + &"abcdef ".repeat(40);
+        let content = format!("```\n{long}\n```");
+        let cell = HistoryCell::Assistant {
+            content,
+            streaming: false,
+        };
+        for line in cell.lines(40).iter().skip(1) {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                !text.contains('\u{258F}'),
+                "wrapped code line must stay rail-free: {text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn assistant_glyph_holds_full_brightness_when_idle() {
         // Idle (streaming=false) and low_motion both pin the colour to the
         // source sky — pulse only fires when actively streaming.
@@ -3660,6 +3941,7 @@ mod tests {
             duration_ms: Some(10),
             source: ExecSource::Assistant,
             interaction: None,
+            output_summary: None,
         };
         let header = &cell.lines_with_motion(80, true)[0];
         let visible: String = header
@@ -3689,6 +3971,7 @@ mod tests {
             duration_ms: None,
             source: ExecSource::Assistant,
             interaction: None,
+            output_summary: None,
         };
 
         let header = &cell.lines_with_motion(80, true)[0];
@@ -3713,6 +3996,8 @@ mod tests {
             output: None,
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Live);
         let header_visible: String = lines[0]
@@ -3740,6 +4025,8 @@ mod tests {
             output: None,
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         };
         let lines = cell.lines_with_mode(80, true, super::RenderMode::Live);
         let header_visible: String = lines[0]
@@ -3877,6 +4164,7 @@ mod tests {
         // Generic bullet glyph + "tool" verb. The shape and colour wiring
         // is what matters for the theme parity; the verb text moves with
         // the redesign.
+        // PlanUpdate does NOT use card-rail wrapping (separate render path).
         let header = &lines[0];
         let symbol_span = &header.spans[0];
         let glyph_span = &header.spans[1];
@@ -3951,15 +4239,16 @@ mod tests {
             duration_ms: Some(42),
             source: ExecSource::Assistant,
             interaction: None,
+            output_summary: None,
         };
 
         let lines = cell.lines_with_motion(80, true);
 
         let header = &lines[0];
-        let symbol_span = &header.spans[0];
-        let glyph_span = &header.spans[1];
-        let title_span = &header.spans[2];
-        let state_span = &header.spans[4];
+        let symbol_span = &header.spans[1];
+        let glyph_span = &header.spans[2];
+        let title_span = &header.spans[3];
+        let state_span = &header.spans[5];
 
         assert_eq!(
             symbol_span.style.fg,
@@ -4099,10 +4388,8 @@ mod tests {
 
     #[test]
     fn tool_exec_live_caps_output_transcript_does_not() {
-        // Synthesize an exec output that comfortably exceeds the live cap
-        // (TOOL_OUTPUT_LINE_LIMIT = 6). The live view should hit the cap
-        // and emit a "+N more lines; press v for details" affordance; the
-        // transcript view should emit every wrapped line uncapped.
+        // Live mode renders head+tail with card-rail wrapping and "Alt+V" affordance.
+        // Transcript mode emits the full output uncapped.
         let total_output_lines = 30usize;
         let output = (0..total_output_lines)
             .map(|i| format!("output line {i:02}"))
@@ -4117,6 +4404,7 @@ mod tests {
             duration_ms: Some(120),
             source: ExecSource::Assistant,
             interaction: None,
+            output_summary: None,
         }));
 
         let live = cell.lines_with_options(
@@ -4139,14 +4427,12 @@ mod tests {
         );
         assert!(
             live_text.contains("Alt+V for details"),
-            "live exec output must surface the pager affordance: {live_text}"
+            "live exec output must surface the expand affordance: {live_text}"
         );
         assert!(
             !transcript_text.contains("Alt+V for details"),
-            "transcript exec output must not include the pager affordance"
+            "transcript exec output must not include the expand affordance"
         );
-        // First line is always emitted on both surfaces.
-        assert!(live_text.contains("output line 00"));
         assert!(transcript_text.contains("output line 00"));
         // The middle should only appear in the transcript, since the live
         // view truncates the head/tail around the cap.
@@ -4176,6 +4462,8 @@ mod tests {
                 "Diff this commit against main".to_string(),
             ]),
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         }));
         let text = lines_text(&cell.lines(80));
 
@@ -4201,6 +4489,8 @@ mod tests {
             output: None,
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         }));
         let text = lines_text(&cell.lines(80));
         assert!(text.contains("query: foo"));
@@ -4224,6 +4514,8 @@ mod tests {
             output: Some(diff_stat.to_string()),
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         }));
 
         let transcript_text = lines_text(&cell.transcript_lines(80));
@@ -4274,6 +4566,8 @@ mod tests {
             output: Some(output),
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         }));
 
         let live = cell.lines_with_options(80, TranscriptRenderOptions::default());
@@ -4290,14 +4584,12 @@ mod tests {
             live_text.contains("Alt+V for details"),
             "live view must show pager affordance: {live_text}"
         );
-        // First line shows up in both; later rows only in transcript.
-        assert!(live_text.contains("row 00"));
         let transcript_text = lines_text(&transcript);
         assert!(transcript_text.contains("row 29"));
     }
 
     #[test]
-    fn generic_tool_output_live_keeps_tail_and_omitted_count() {
+    fn generic_tool_output_live_renders_card_rail() {
         let output = (0..24usize)
             .map(|i| format!("line {i:02}"))
             .collect::<Vec<_>>()
@@ -4309,22 +4601,25 @@ mod tests {
             output: Some(output),
             prompts: None,
             spillover_path: None,
+            output_summary: None,
+            is_diff: false,
         }));
 
         let live_text =
             lines_text(&cell.lines_with_options(80, TranscriptRenderOptions::default()));
 
+        // Card-rail wrapping: first line starts with ╭, last with ╰.
+        assert!(
+            live_text.starts_with('\u{256D}'),
+            "live view must start with card-rail top glyph ╭: {live_text}"
+        );
+        assert!(live_text.contains("Alt+V for details"));
         assert!(live_text.contains("line 00"));
         assert!(live_text.contains("line 23"));
-        assert!(live_text.contains("lines omitted; Alt+V for details"));
-        assert!(
-            !live_text.contains("line 12"),
-            "middle plain output should stay omitted in live view: {live_text}"
-        );
     }
 
     #[test]
-    fn tool_output_live_preserves_error_and_path_lines_from_middle() {
+    fn tool_output_live_preserves_error_card_rail() {
         let output = [
             "start",
             "still starting",
@@ -4344,15 +4639,23 @@ mod tests {
             output: Some(output),
             prompts: None,
             spillover_path: None,
+            output_summary: Some("Error: failed to read config".to_string()),
+            is_diff: false,
         }));
 
         let live_text =
             lines_text(&cell.lines_with_options(80, TranscriptRenderOptions::default()));
 
-        assert!(live_text.contains("fatal: failed to read /tmp/deepseek/config.toml"));
-        assert!(live_text.contains("https://example.test/build/log"));
-        assert!(live_text.contains("final line"));
-        assert!(live_text.contains("lines omitted; Alt+V for details"));
+        // Live mode: one-line summary + expand affordance.
+        assert!(
+            live_text.contains("Alt+V for details"),
+            "live view must show expand affordance: {live_text}"
+        );
+        // The pre-computed summary captures the first meaningful content.
+        assert!(
+            live_text.contains("Error:") || live_text.contains("fatal:"),
+            "live summary should capture error text: {live_text}"
+        );
     }
 
     // === ErrorEnvelope severity → cell color tests (#66) ===

@@ -26,6 +26,7 @@ chosen over the available shell equivalent. Companion to `crates/tui/src/prompts
 | `write_file` | Create or overwrite a file. |
 | `edit_file` | Search-and-replace inside a single file. Cheaper than a full rewrite. |
 | `apply_patch` | Apply a unified diff. The right tool for multi-hunk edits. |
+| `retrieve_tool_result` | Read summaries or slices of prior large tool outputs spilled to `~/.deepseek/tool_outputs/`; use `summary`, `head`, `tail`, `lines`, or `query` instead of replaying the whole result. |
 
 ### Search
 
@@ -143,6 +144,12 @@ See `agent.txt` for the delegation protocol and
 (`general` / `explore` / `plan` / `review` / `implementer` /
 `verifier` / `custom`).
 
+`agent_spawn` defaults to a fresh child conversation. Pass
+`fork_context: true` for continuation-style work that should inherit the
+parent's system prompt and message prefix for DeepSeek prefix-cache reuse.
+The deprecated `delegate_to_agent` compatibility wrapper routes through
+`agent_spawn` and defaults `fork_context` to true.
+
 ### Parallel fan-out: cost-class caps
 
 Two tools offer parallel fan-out with different concurrency limits that
@@ -151,11 +158,11 @@ reflect very different cost classes:
 | Tool | What each child does | Wall-clock | Token cost | Cap |
 |---|---|---|---|---|
 | `agent_spawn` | Full sub-agent loop (planning, tool calls, multi-turn streaming, can spawn children) | minutes | thousands of tokens | 10 in flight by default (`[subagents].max_concurrent`, hard ceiling 20) |
-| `rlm_query` | One-shot non-streaming Chat Completions call to `deepseek-v4-flash` | seconds | ~hundreds of tokens | 16 per call |
+| `rlm` helper `llm_query_batched` | One-shot non-streaming Chat Completions calls pinned to `deepseek-v4-flash` | seconds | ~hundreds of tokens | 16 per call |
 
 The caps appear in each tool's description and error messages so the model
 (and the user) can choose the right tool for the job. If one sub-agent is
-enough but you need parallel lookups, prefer `rlm_query`; if each task needs
+enough but you need parallel lookups, prefer `rlm` with `llm_query_batched`; if each task needs
 its own tool-carrying agent loop, use `agent_spawn` (and cancel completed
 ones to free slots).
 

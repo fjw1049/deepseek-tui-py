@@ -12,8 +12,12 @@ use dotenvy::dotenv;
 use tempfile::NamedTempFile;
 use wait_timeout::ChildExt;
 
+mod acp_server;
+mod artifacts;
 mod audit;
+mod auto_reasoning;
 mod automation_manager;
+mod child_env;
 mod client;
 mod command_safety;
 mod commands;
@@ -23,12 +27,14 @@ mod composer_stash;
 mod config;
 mod config_ui;
 mod core;
+mod cost_status;
 mod cycle_manager;
 mod deepseek_theme;
 mod error_taxonomy;
 mod eval;
 mod execpolicy;
 mod features;
+mod handoff;
 mod hooks;
 mod llm_client;
 mod localization;
@@ -45,7 +51,6 @@ mod project_context;
 mod project_doc;
 mod prompts;
 pub mod repl;
-mod responses_api_proxy;
 mod retry_status;
 pub mod rlm;
 mod runtime_api;
@@ -55,6 +60,7 @@ mod schema_migration;
 mod seam_manager;
 mod session_manager;
 mod settings;
+mod skill_state;
 mod skills;
 mod snapshot;
 mod task_manager;
@@ -72,14 +78,28 @@ use crate::features::{Feature, render_feature_table};
 use crate::llm_client::LlmClient;
 use crate::mcp::{McpConfig, McpPool, McpServerConfig};
 use crate::models::{ContentBlock, Message, MessageRequest, SystemPrompt};
-use crate::session_manager::{SessionManager, create_saved_session};
+use crate::session_manager::{SessionManager, create_saved_session, truncate_id};
 use crate::tui::history::{summarize_tool_args, summarize_tool_output};
+
+#[cfg(windows)]
+fn configure_windows_console_utf8() {
+    use windows::Win32::System::Console::{SetConsoleCP, SetConsoleOutputCP};
+
+    const CP_UTF8: u32 = 65001;
+    unsafe {
+        let _ = SetConsoleCP(CP_UTF8);
+        let _ = SetConsoleOutputCP(CP_UTF8);
+    }
+}
+
+#[cfg(not(windows))]
+fn configure_windows_console_utf8() {}
 
 #[derive(Parser, Debug)]
 #[command(
     name = "deepseek",
     author,
-    version,
+    version = env!("DEEPSEEK_BUILD_VERSION"),
     about = "DeepSeek TUI/CLI for DeepSeek models",
     long_about = "Terminal-native TUI and CLI for DeepSeek models.\n\nRun 'deepseek' to start.\n\nNot affiliated with DeepSeek Inc."
 )]
@@ -92,8 +112,8 @@ struct Cli {
     feature_toggles: FeatureToggles,
 
     /// Send a one-shot prompt (non-interactive)
-    #[arg(short, long)]
-    prompt: Option<String>,
+    #[arg(short, long, value_name = "PROMPT", num_args = 1..)]
+    prompt: Vec<String>,
 
     /// YOLO mode: enable agent tools + shell execution
     #[arg(long)]
@@ -123,15 +143,18 @@ struct Cli {
     #[arg(short, long)]
     resume: Option<String>,
 
-    /// Continue the most recent session
+    /// Continue the most recent session in this workspace
     #[arg(short = 'c', long = "continue")]
     continue_session: bool,
 
-    /// Disable the alternate screen buffer (inline mode)
-    #[arg(long = "no-alt-screen")]
+    /// Deprecated compatibility flag; the interactive TUI always owns the
+    /// alternate screen so terminal scrollback cannot hijack the viewport.
+    #[arg(long = "no-alt-screen", hide = true)]
     no_alt_screen: bool,
 
-    /// Enable TUI mouse capture for internal scrolling and transcript selection
+    /// Enable TUI mouse capture for internal scrolling, transcript selection,
+    /// and scrollbar dragging
+    /// (default off on Windows)
     #[arg(long = "mouse-capture", conflicts_with = "no_mouse_capture")]
     mouse_capture: bool,
 
@@ -176,7 +199,7 @@ enum Commands {
     },
     /// Create default AGENTS.md in current directory
     Init,
-    /// Save a DeepSeek API key to the config file
+    /// Save a DeepSeek API key to the shared user config
     Login {
         /// API key to store (otherwise read from stdin)
         #[arg(long)]
@@ -227,7 +250,7 @@ enum Commands {
         /// Conversation/session id (UUID or prefix)
         #[arg(value_name = "SESSION_ID")]
         session_id: Option<String>,
-        /// Continue the most recent session without a picker
+        /// Continue the most recent session in this workspace without a picker
         #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
         last: bool,
     },
@@ -236,19 +259,22 @@ enum Commands {
         /// Conversation/session id (UUID or prefix)
         #[arg(value_name = "SESSION_ID")]
         session_id: Option<String>,
-        /// Fork the most recent session without a picker
+        /// Fork the most recent session in this workspace without a picker
         #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
         last: bool,
     },
-    /// Internal: run the responses API proxy.
-    #[command(hide = true)]
-    ResponsesApiProxy(responses_api_proxy::Args),
 }
 
 #[derive(Args, Debug, Clone)]
 struct ExecArgs {
     /// Prompt to send to the model
-    prompt: String,
+    #[arg(
+        value_name = "PROMPT",
+        required = true,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    prompt: Vec<String>,
     /// Override model for this run
     #[arg(long)]
     model: Option<String>,
@@ -258,6 +284,10 @@ struct ExecArgs {
     /// Emit machine-readable JSON output
     #[arg(long, default_value_t = false)]
     json: bool,
+}
+
+fn join_prompt_parts(parts: &[String]) -> String {
+    parts.join(" ")
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -388,6 +418,9 @@ struct ServeArgs {
     /// Start runtime HTTP/SSE API server
     #[arg(long)]
     http: bool,
+    /// Start ACP server over stdio for editor clients such as Zed
+    #[arg(long)]
+    acp: bool,
     /// Bind host for HTTP server (default localhost)
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
@@ -397,6 +430,19 @@ struct ServeArgs {
     /// Background task worker count (1-8)
     #[arg(long, default_value_t = 2)]
     workers: usize,
+    /// Additional CORS origin to allow (repeatable). Stacks on top of the
+    /// built-in defaults (localhost:3000, localhost:1420, tauri://localhost).
+    /// Also reads `DEEPSEEK_CORS_ORIGINS` (comma-separated) and
+    /// `[runtime_api] cors_origins` from `config.toml`. Whalescale#255.
+    #[arg(long = "cors-origin", value_name = "URL")]
+    cors_origin: Vec<String>,
+    /// Require this bearer token for `/v1/*` runtime API routes. Also reads
+    /// `DEEPSEEK_RUNTIME_TOKEN` when omitted.
+    #[arg(long = "auth-token", value_name = "TOKEN")]
+    auth_token: Option<String>,
+    /// Disable runtime API auth when no token is configured. Only use on a trusted loopback.
+    #[arg(long = "insecure")]
+    insecure_no_auth: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -533,6 +579,8 @@ enum SandboxCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    configure_windows_console_utf8();
+
     // Set up process panic hook before anything else — writes crash dumps
     // to ~/.deepseek/crashes/ even if the panic happens before tokio is up,
     // and restores the terminal so a panicked TUI doesn't leave the user's
@@ -542,9 +590,16 @@ async fn main() -> Result<()> {
         // Restore the terminal first so the panic message itself, plus the
         // user's shell after exit, are visible. Best-effort — we may not be
         // in raw / alt-screen mode if the panic happens pre-TUI.
-        use crossterm::event::PopKeyboardEnhancementFlags;
+        use crossterm::event::{
+            DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags,
+        };
         use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
         let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        // Best-effort: turn off bracketed paste + mouse capture so the user's
+        // parent shell doesn't get stuck wrapping pastes in `\e[200~…\e[201~`
+        // or printing `\e[<…M` on every click after a TUI panic.
+        let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
         let _ = disable_raw_mode();
         let _ = crossterm::execute!(std::io::stdout(), LeaveAlternateScreen);
 
@@ -615,6 +670,7 @@ async fn main() -> Result<()> {
                     .model
                     .or_else(|| config.default_text_model.clone())
                     .unwrap_or_else(|| config.default_model());
+                let prompt = join_prompt_parts(&args.prompt);
                 if args.auto || cli.yolo {
                     let workspace = cli.workspace.clone().unwrap_or_else(|| {
                         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -627,7 +683,7 @@ async fn main() -> Result<()> {
                     run_exec_agent(
                         &config,
                         &model,
-                        &args.prompt,
+                        &prompt,
                         workspace,
                         max_subagents,
                         true,
@@ -636,9 +692,9 @@ async fn main() -> Result<()> {
                     )
                     .await
                 } else if args.json {
-                    run_one_shot_json(&config, &model, &args.prompt).await
+                    run_one_shot_json(&config, &model, &prompt).await
                 } else {
-                    run_one_shot(&config, &model, &args.prompt).await
+                    run_one_shot(&config, &model, &prompt).await
                 }
             }
             Commands::Review(args) => {
@@ -677,13 +733,18 @@ async fn main() -> Result<()> {
                 let workspace = cli.workspace.clone().unwrap_or_else(|| {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                 });
-                if args.mcp && args.http {
-                    bail!("Choose exactly one server mode: --mcp or --http");
+                let selected_modes = [args.mcp, args.http, args.acp]
+                    .into_iter()
+                    .filter(|selected| *selected)
+                    .count();
+                if selected_modes != 1 {
+                    bail!("Choose exactly one server mode: --mcp, --http, or --acp");
                 }
                 if args.mcp {
                     mcp_server::run_mcp_server(workspace)
                 } else if args.http {
                     let config = load_config_from_cli(&cli)?;
+                    let cors_origins = resolve_cors_origins(&config, &args.cors_origin);
                     runtime_api::run_http_server(
                         config,
                         workspace,
@@ -691,49 +752,55 @@ async fn main() -> Result<()> {
                             host: args.host,
                             port: args.port,
                             workers: args.workers.clamp(1, 8),
+                            cors_origins,
+                            auth_token: args.auth_token,
+                            insecure_no_auth: args.insecure_no_auth,
                         },
                     )
                     .await
+                } else if args.acp {
+                    let config = load_config_from_cli(&cli)?;
+                    let model = config.default_model();
+                    acp_server::run_acp_server(config, model, workspace).await
                 } else {
-                    bail!("No server mode specified. Use --mcp or --http.")
+                    unreachable!("server mode count checked above")
                 }
             }
             Commands::Resume { session_id, last } => {
                 let config = load_config_from_cli(&cli)?;
-                let resume_id = resolve_session_id(session_id, last)?;
+                let workspace = resolve_workspace(&cli);
+                let resume_id = resolve_session_id(session_id, last, &workspace)?;
                 run_interactive(&cli, &config, Some(resume_id), None).await
             }
             Commands::Fork { session_id, last } => {
                 let config = load_config_from_cli(&cli)?;
-                let new_session_id = fork_session(session_id, last)?;
+                let workspace = resolve_workspace(&cli);
+                let new_session_id = fork_session(session_id, last, &workspace)?;
                 run_interactive(&cli, &config, Some(new_session_id), None).await
-            }
-            Commands::ResponsesApiProxy(args) => {
-                responses_api_proxy::run_main(args)?;
-                Ok(())
             }
         };
     }
 
     // One-shot prompt mode
     let config = load_config_from_cli(&cli)?;
-    if let Some(prompt) = cli.prompt {
+    if !cli.prompt.is_empty() {
+        let prompt = join_prompt_parts(&cli.prompt);
         let model = config.default_model();
         return run_one_shot(&config, &model, &prompt).await;
     }
 
-    // Handle session resume
+    // Handle session resume. Plain `deepseek` starts fresh: interrupted
+    // snapshots are preserved for explicit resume, but never auto-attached.
     let resume_session_id = if cli.continue_session {
-        // Get most recent session
-        match session_manager::SessionManager::default_location() {
-            Ok(manager) => manager.get_latest_session().ok().flatten().map(|m| m.id),
-            Err(_) => None,
-        }
+        let workspace = resolve_workspace(&cli);
+        recover_interrupted_checkpoint_for_resume(&workspace)
+            .or_else(|| latest_session_id_for_workspace(&workspace).ok().flatten())
     } else if let Some(id) = cli.resume.clone() {
         Some(id)
     } else if !cli.fresh {
-        // Check for crash-recovery checkpoint (unless --fresh was passed).
-        try_recover_checkpoint()
+        let workspace = resolve_workspace(&cli);
+        preserve_interrupted_checkpoint_for_explicit_resume(&workspace);
+        None
     } else {
         None
     };
@@ -993,6 +1060,46 @@ fn init_plugins_dir(
     Ok((readme_path, example_path, readme_status, example_status))
 }
 
+/// Resolve the user-supplied CORS origins for `deepseek serve --http`.
+///
+/// Sources, in priority order (later sources extend earlier ones):
+/// 1. `--cors-origin URL` flags (repeatable)
+/// 2. `DEEPSEEK_CORS_ORIGINS` env var (comma-separated)
+/// 3. `[runtime_api] cors_origins = [...]` in `config.toml`
+///
+/// The runtime API always allows the built-in dev defaults
+/// (localhost:3000, localhost:1420, tauri://localhost). User entries are
+/// appended on top — empty strings are skipped, and duplicates are deduped
+/// while preserving first-seen order. Whalescale#255 / #561.
+fn resolve_cors_origins(config: &Config, flag_origins: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |raw: &str| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if !out.iter().any(|existing| existing == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    };
+    for o in flag_origins {
+        push(o);
+    }
+    if let Ok(env_value) = std::env::var("DEEPSEEK_CORS_ORIGINS") {
+        for piece in env_value.split(',') {
+            push(piece);
+        }
+    }
+    if let Some(rt) = &config.runtime_api
+        && let Some(list) = &rt.cors_origins
+    {
+        for o in list {
+            push(o);
+        }
+    }
+    out
+}
+
 fn deepseek_home_dir() -> PathBuf {
     dirs::home_dir().map_or_else(|| PathBuf::from(".deepseek"), |h| h.join(".deepseek"))
 }
@@ -1167,6 +1274,7 @@ fn report_write_status(label: &str, path: &Path, status: WriteStatus) {
 enum ApiKeySource {
     Env,
     Config,
+    Keyring,
     Missing,
 }
 
@@ -1176,9 +1284,29 @@ fn resolve_api_key_source(config: &Config) -> ApiKeySource {
         .filter(|k| !k.trim().is_empty())
         .is_some()
     {
-        ApiKeySource::Env
-    } else if config.deepseek_api_key().is_ok() {
+        match std::env::var("DEEPSEEK_API_KEY_SOURCE").ok().as_deref() {
+            Some("config") => return ApiKeySource::Config,
+            Some("keyring") => return ApiKeySource::Keyring,
+            _ => {}
+        }
+    }
+
+    if config
+        .api_key
+        .as_ref()
+        .is_some_and(|k| !k.trim().is_empty())
+        || config
+            .provider_config()
+            .and_then(|entry| entry.api_key.as_ref())
+            .is_some_and(|k| !k.trim().is_empty())
+    {
         ApiKeySource::Config
+    } else if std::env::var("DEEPSEEK_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .is_some()
+    {
+        ApiKeySource::Env
     } else {
         ApiKeySource::Missing
     }
@@ -1217,6 +1345,10 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
             "  {} api_key: set via DEEPSEEK_API_KEY",
             "✓".truecolor(aqua_r, aqua_g, aqua_b)
         ),
+        ApiKeySource::Keyring => println!(
+            "  {} api_key: set via OS keyring",
+            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+        ),
         ApiKeySource::Config => println!(
             "  {} api_key: set via config",
             "✓".truecolor(aqua_r, aqua_g, aqua_b)
@@ -1226,6 +1358,10 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
                 crate::config::ApiProvider::NvidiaNim => (
                     "NVIDIA_API_KEY",
                     "deepseek auth set --provider nvidia-nim --api-key \"...\"",
+                ),
+                crate::config::ApiProvider::Openai => (
+                    "OPENAI_API_KEY",
+                    "deepseek auth set --provider openai --api-key \"...\"",
                 ),
                 crate::config::ApiProvider::Openrouter => (
                     "OPENROUTER_API_KEY",
@@ -1243,8 +1379,15 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
                     "SGLANG_API_KEY",
                     "deepseek auth set --provider sglang --api-key \"...\"",
                 ),
+                crate::config::ApiProvider::Vllm => (
+                    "VLLM_API_KEY",
+                    "deepseek auth set --provider vllm --api-key \"...\"",
+                ),
+                crate::config::ApiProvider::Ollama => {
+                    ("OLLAMA_API_KEY", "deepseek auth set --provider ollama")
+                }
                 crate::config::ApiProvider::Deepseek | crate::config::ApiProvider::DeepseekCN => {
-                    ("DEEPSEEK_API_KEY", "deepseek login --api-key \"...\"")
+                    ("DEEPSEEK_API_KEY", "deepseek auth set --provider deepseek")
                 }
             };
             println!(
@@ -1252,23 +1395,20 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
                 "✗".truecolor(red_r, red_g, red_b),
                 match config.api_provider() {
                     crate::config::ApiProvider::NvidiaNim => "nvidia_nim",
+                    crate::config::ApiProvider::Openai => "openai",
                     crate::config::ApiProvider::Openrouter => "openrouter",
                     crate::config::ApiProvider::Novita => "novita",
                     crate::config::ApiProvider::Fireworks => "fireworks",
                     crate::config::ApiProvider::Sglang => "sglang",
+                    crate::config::ApiProvider::Vllm => "vllm",
+                    crate::config::ApiProvider::Ollama => "ollama",
                     crate::config::ApiProvider::Deepseek
                     | crate::config::ApiProvider::DeepseekCN => "deepseek",
                 }
             );
         }
     }
-    println!(
-        "  · base_url: {}",
-        config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://api.deepseek.com")
-    );
+    println!("  · base_url: {}", config.deepseek_base_url());
     let model = config
         .default_text_model
         .clone()
@@ -1340,7 +1480,7 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
     println!("  {} {}", "·".dimmed(), dotenv_status_line(workspace));
 
     println!();
-    println!("Run `deepseek-tui doctor --json` for a machine-readable check.");
+    println!("Run `deepseek doctor --json` for a machine-readable check.");
     Ok(())
 }
 
@@ -1417,7 +1557,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
 
     // Version info
     println!("{}", "Version Information:".bold());
-    println!("  deepseek-tui: {}", env!("CARGO_PKG_VERSION"));
+    println!("  deepseek-tui: {}", env!("DEEPSEEK_BUILD_VERSION"));
     println!("  rust: {}", rustc_version());
     println!();
 
@@ -1453,44 +1593,105 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     println!();
     println!("{}", "API Keys:".bold());
 
-    // Report the active keyring backend (system / file-based / unavailable).
-    let secrets = deepseek_secrets::Secrets::auto_detect();
-    println!("  · keyring backend: {}", secrets.backend_name());
-
-    // Per-provider state: keyring, env, config file (no values printed).
-    for (slot, env_names) in [
-        ("deepseek", &["DEEPSEEK_API_KEY"][..]),
-        ("nvidia-nim", &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"][..]),
-        ("openrouter", &["OPENROUTER_API_KEY"][..]),
-        ("novita", &["NOVITA_API_KEY"][..]),
+    // Per-provider state: env + config file only (no values printed).
+    // Keep doctor/status prompt-free even for unsigned rebuilt binaries.
+    let dispatcher_api_key_source = std::env::var("DEEPSEEK_API_KEY_SOURCE").ok();
+    for (provider, slot, env_names) in [
+        (
+            crate::config::ApiProvider::Deepseek,
+            "deepseek",
+            &["DEEPSEEK_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::NvidiaNim,
+            "nvidia-nim",
+            &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::Openrouter,
+            "openrouter",
+            &["OPENROUTER_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::Novita,
+            "novita",
+            &["NOVITA_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::Fireworks,
+            "fireworks",
+            &["FIREWORKS_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::Sglang,
+            "sglang",
+            &["SGLANG_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::Vllm,
+            "vllm",
+            &["VLLM_API_KEY"][..],
+        ),
+        (
+            crate::config::ApiProvider::Ollama,
+            "ollama",
+            &["OLLAMA_API_KEY"][..],
+        ),
     ] {
-        let in_keyring = secrets
-            .get(slot)
-            .ok()
-            .flatten()
-            .is_some_and(|v| !v.trim().is_empty());
         let in_env = env_names.iter().any(|n| {
             std::env::var(n)
                 .ok()
                 .filter(|v| !v.trim().is_empty())
                 .is_some()
         });
-        let icon = if in_keyring || in_env {
+        let injected_runtime_key = matches!(
+            dispatcher_api_key_source.as_deref(),
+            Some("keyring" | "env" | "cli")
+        );
+        let in_config = config
+            .provider_config_for(provider)
+            .and_then(|entry| entry.api_key.as_ref())
+            .is_some_and(|v| !v.trim().is_empty())
+            || (matches!(provider, crate::config::ApiProvider::Deepseek)
+                && !injected_runtime_key
+                && config
+                    .api_key
+                    .as_ref()
+                    .is_some_and(|v| !v.trim().is_empty()));
+        let icon = if in_env || in_config {
             "✓".truecolor(aqua_r, aqua_g, aqua_b)
         } else {
             "·".dimmed()
         };
         println!(
-            "  {} {slot}: keyring={}, env={}",
+            "  {} {slot}: env={}, config={}",
             icon,
-            if in_keyring { "yes" } else { "no" },
-            if in_env { "yes" } else { "no" }
+            if in_env { "yes" } else { "no" },
+            if in_config { "yes" } else { "no" }
         );
     }
+    println!("  · credential precedence: ~/.deepseek/config.toml, OS keyring, then env");
 
+    let api_key_source = resolve_api_key_source(config);
     let has_api_key = if config.deepseek_api_key().is_ok() {
+        let source_label = match api_key_source {
+            ApiKeySource::Config => "config.toml",
+            ApiKeySource::Keyring => "OS keyring",
+            ApiKeySource::Env => "environment",
+            ApiKeySource::Missing
+                if matches!(
+                    config.api_provider(),
+                    crate::config::ApiProvider::Sglang
+                        | crate::config::ApiProvider::Vllm
+                        | crate::config::ApiProvider::Ollama
+                ) =>
+            {
+                "optional local auth"
+            }
+            ApiKeySource::Missing => "unknown source",
+        };
         println!(
-            "  {} active provider key resolved",
+            "  {} active provider key resolved from {source_label}",
             "✓".truecolor(aqua_r, aqua_g, aqua_b)
         );
         true
@@ -1499,24 +1700,49 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             "  {} active provider key not configured",
             "✗".truecolor(red_r, red_g, red_b)
         );
-        println!("    Run 'deepseek auth set --provider <name>' to save a key to the OS keyring.");
+        println!(
+            "    Run 'deepseek auth set --provider <name>' to save a key to ~/.deepseek/config.toml."
+        );
         false
     };
 
     // API connectivity test
     println!();
     println!("{}", "API Connectivity:".bold());
+    let api_target = doctor_api_target(config);
+    println!("  · provider: {}", api_target.provider);
+    println!("  · base_url: {}", api_target.base_url);
+    println!("  · model: {}", api_target.model);
+    let strict_tool_mode = doctor_strict_tool_mode_status(config);
+    let strict_icon = match strict_tool_mode.status {
+        "ready" => "✓".truecolor(aqua_r, aqua_g, aqua_b),
+        "fallback_non_beta" | "custom_endpoint" => "!".truecolor(sky_r, sky_g, sky_b),
+        _ => "·".dimmed(),
+    };
+    println!(
+        "  {} strict_tool_mode: {}",
+        strict_icon, strict_tool_mode.message
+    );
+    if let Some(recommended) = strict_tool_mode.recommended_base_url.as_ref() {
+        println!("    Use `base_url = \"{recommended}\"` for DeepSeek strict schemas.");
+    }
+    let capability = crate::config::provider_capability(config.api_provider(), &api_target.model);
+    if let Some(alias) = capability.alias_deprecation.as_ref() {
+        println!(
+            "  ! model alias {} retires {}; switch to {}",
+            alias.alias, alias.retirement_date, alias.replacement
+        );
+    }
     if has_api_key {
-        print!("  {} Testing connection to DeepSeek API...", "·".dimmed());
+        print!("  {} Testing connection...", "·".dimmed());
         use std::io::Write;
         std::io::stdout().flush().ok();
 
         match test_api_connectivity(config).await {
-            Ok(model) => {
+            Ok(()) => {
                 println!(
-                    "\r  {} API connection successful (model: {})",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
-                    model
+                    "\r  {} API connection successful",
+                    "✓".truecolor(aqua_r, aqua_g, aqua_b)
                 );
             }
             Err(e) => {
@@ -1526,13 +1752,32 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                     "✗".truecolor(red_r, red_g, red_b)
                 );
                 if error_msg.contains("401") || error_msg.contains("Unauthorized") {
-                    println!("    Invalid API key. Check your DEEPSEEK_API_KEY or config.toml");
+                    println!(
+                        "    Invalid API key. Check `deepseek auth status`, DEEPSEEK_API_KEY, or config.toml"
+                    );
+                    if matches!(api_key_source, ApiKeySource::Keyring) {
+                        println!(
+                            "    The rejected key came from the OS keyring via the dispatcher."
+                        );
+                        println!(
+                            "    Run `deepseek auth status` to inspect config/keyring/env sources."
+                        );
+                    } else if matches!(api_key_source, ApiKeySource::Env) {
+                        println!(
+                            "    The rejected key came from DEEPSEEK_API_KEY; no saved config key is present."
+                        );
+                        println!(
+                            "    Run `deepseek auth set --provider deepseek` to save a config key that overrides stale env."
+                        );
+                    }
                 } else if error_msg.contains("403") || error_msg.contains("Forbidden") {
                     println!(
                         "    API key lacks permissions. Verify key is active at platform.deepseek.com"
                     );
                 } else if error_msg.contains("timeout") || error_msg.contains("Timeout") {
-                    println!("    Connection timed out. Check your network connection");
+                    for line in doctor_timeout_recovery_lines(config) {
+                        println!("    {line}");
+                    }
                 } else if error_msg.contains("dns") || error_msg.contains("resolve") {
                     println!("    DNS resolution failed. Check your network connection");
                 } else if error_msg.contains("connect") {
@@ -1633,18 +1878,25 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     let global_skills_dir = config.skills_dir();
     let agents_skills_dir = workspace.join(".agents").join("skills");
     let local_skills_dir = workspace.join("skills");
+    let agents_global_skills_dir = crate::skills::agents_global_skills_dir();
     // #432: cross-tool skill discovery dirs. Presence is reported here
     // even though they sit lower in the precedence chain so users can
-    // see at a glance whether a `.opencode/skills/` or `.claude/skills/`
-    // directory is contributing to the merged catalogue.
+    // see at a glance whether a `.opencode/skills/`, `.claude/skills/`,
+    // `.cursor/skills/`, or global agentskills.io directory is contributing
+    // to the merged catalogue.
     let opencode_skills_dir = workspace.join(".opencode").join("skills");
     let claude_skills_dir = workspace.join(".claude").join("skills");
     let selected_skills_dir = if agents_skills_dir.exists() {
-        &agents_skills_dir
+        agents_skills_dir.clone()
     } else if local_skills_dir.exists() {
-        &local_skills_dir
+        local_skills_dir.clone()
+    } else if config.skills_dir.is_none()
+        && let Some(global_agents) = agents_global_skills_dir.as_ref()
+        && global_agents.exists()
+    {
+        global_agents.clone()
     } else {
-        &global_skills_dir
+        global_skills_dir.clone()
     };
 
     let describe_dir = |dir: &Path| -> usize {
@@ -1681,6 +1933,23 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             "·".dimmed(),
             crate::utils::display_path(&agents_skills_dir)
         );
+    }
+
+    if let Some(agents_global_skills_dir) = agents_global_skills_dir.as_ref() {
+        if agents_global_skills_dir.exists() {
+            println!(
+                "  {} global .agents skills dir found at {} ({} items)",
+                "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                crate::utils::display_path(agents_global_skills_dir),
+                describe_dir(agents_global_skills_dir)
+            );
+        } else {
+            println!(
+                "  {} global .agents skills dir not found at {}",
+                "·".dimmed(),
+                crate::utils::display_path(agents_global_skills_dir)
+            );
+        }
     }
 
     if global_skills_dir.exists() {
@@ -1721,9 +1990,15 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     println!(
         "  {} selected skills dir: {}",
         "·".dimmed(),
-        crate::utils::display_path(selected_skills_dir)
+        crate::utils::display_path(&selected_skills_dir)
     );
-    if !agents_skills_dir.exists() && !local_skills_dir.exists() && !global_skills_dir.exists() {
+    if !agents_skills_dir.exists()
+        && !local_skills_dir.exists()
+        && !agents_global_skills_dir
+            .as_ref()
+            .is_some_and(|dir| dir.exists())
+        && !global_skills_dir.exists()
+    {
         println!("    Run `deepseek setup --skills` (or add --local for ./skills).");
     }
 
@@ -1745,7 +2020,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             "·".dimmed(),
             crate::utils::display_path(&tools_dir)
         );
-        println!("    Run `deepseek-tui setup --tools` to scaffold a starter dir.");
+        println!("    Run `deepseek setup --tools` to scaffold a starter dir.");
     }
 
     // Plugins directory
@@ -1766,7 +2041,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             "·".dimmed(),
             crate::utils::display_path(&plugins_dir)
         );
-        println!("    Run `deepseek-tui setup --plugins` to scaffold a starter dir.");
+        println!("    Run `deepseek setup --plugins` to scaffold a starter dir.");
     }
 
     // Storage surfaces (#422 / #440 / #500)
@@ -1865,6 +2140,7 @@ fn run_doctor_json(
     let api_key_state = match resolve_api_key_source(config) {
         ApiKeySource::Env => "env",
         ApiKeySource::Config => "config",
+        ApiKeySource::Keyring => "keyring",
         ApiKeySource::Missing => "missing",
     };
 
@@ -1907,19 +2183,41 @@ fn run_doctor_json(
     let global_skills_dir = config.skills_dir();
     let agents_skills_dir = workspace.join(".agents").join("skills");
     let local_skills_dir = workspace.join("skills");
+    let agents_global_skills_dir = crate::skills::agents_global_skills_dir();
     // #432: cross-tool skill discovery dirs surface in the JSON
     // report so external dashboards can see whether any
-    // `.opencode/skills/` or `.claude/skills/` content is contributing
-    // to the merged catalogue.
+    // `.opencode/skills/`, `.claude/skills/`, `.cursor/skills/`, or
+    // global agentskills.io content is contributing to the merged catalogue.
     let opencode_skills_dir = workspace.join(".opencode").join("skills");
     let claude_skills_dir = workspace.join(".claude").join("skills");
     let selected_skills_dir = if agents_skills_dir.exists() {
         agents_skills_dir.clone()
     } else if local_skills_dir.exists() {
         local_skills_dir.clone()
+    } else if config.skills_dir.is_none()
+        && let Some(global_agents) = agents_global_skills_dir.as_ref()
+        && global_agents.exists()
+    {
+        global_agents.clone()
     } else {
         global_skills_dir.clone()
     };
+    let agents_global_summary = agents_global_skills_dir
+        .as_ref()
+        .map(|path| {
+            json!({
+                "path": path.display().to_string(),
+                "present": path.exists(),
+                "count": skills_count_for(path),
+            })
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "path": null,
+                "present": false,
+                "count": 0,
+            })
+        });
 
     let tools_dir = default_tools_dir();
     let plugins_dir = default_plugins_dir();
@@ -1949,6 +2247,8 @@ fn run_doctor_json(
         "path": memory_path.display().to_string(),
         "file_present": memory_path.exists(),
     });
+    let api_target = doctor_api_target(config);
+    let strict_tool_mode = doctor_strict_tool_mode_status(config);
 
     let report = json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -1958,14 +2258,15 @@ fn run_doctor_json(
         "api_key": {
             "source": api_key_state,
         },
-        "base_url": config
-            .base_url
-            .clone()
-            .unwrap_or_else(|| "https://api.deepseek.com".to_string()),
-        "default_text_model": config
-            .default_text_model
-            .clone()
-            .unwrap_or_else(|| DEFAULT_TEXT_MODEL.to_string()),
+        "base_url": api_target.base_url,
+        "default_text_model": api_target.model,
+        "strict_tool_mode": {
+            "enabled": strict_tool_mode.enabled,
+            "status": strict_tool_mode.status,
+            "function_strict_sent": strict_tool_mode.function_strict_sent,
+            "message": strict_tool_mode.message,
+            "recommended_base_url": strict_tool_mode.recommended_base_url,
+        },
         "memory": memory_summary,
         "mcp": mcp_summary,
         "skills": {
@@ -1980,6 +2281,7 @@ fn run_doctor_json(
                 "present": agents_skills_dir.exists(),
                 "count": skills_count_for(&agents_skills_dir),
             },
+            "agents_global": agents_global_summary,
             "local": {
                 "path": local_skills_dir.display().to_string(),
                 "present": local_skills_dir.exists(),
@@ -2038,7 +2340,7 @@ fn run_doctor_json(
         },
         "api_connectivity": {
             "checked": false,
-            "note": "Skipped in --json mode; run `deepseek-tui doctor` for a live check.",
+            "note": "Skipped in --json mode; run `deepseek doctor` for a live check.",
         },
         "capability": provider_capability_report(config),
     });
@@ -2050,30 +2352,15 @@ fn run_doctor_json(
 /// Build the `capability` section for the machine-readable doctor report.
 ///
 /// Returns a JSON value with the resolved provider, resolved model, context
-/// window, max output, thinking support, cache telemetry support, request
-/// payload mode, and any deprecation notice for legacy aliases.
+/// window, max output, thinking support, cache telemetry support, and request
+/// payload mode.
 fn provider_capability_report(config: &Config) -> serde_json::Value {
     use serde_json::json;
 
     let provider = config.api_provider();
     let model = config.default_model();
 
-    // Detect deprecation for the raw model name (before provider-specific mapping).
-    let raw_model = config
-        .default_text_model
-        .as_deref()
-        .unwrap_or(DEFAULT_TEXT_MODEL);
-    let raw_deprecation = crate::config::deprecation_for_model(raw_model);
-
     let cap = crate::config::provider_capability(provider, &model);
-
-    let deprecation = raw_deprecation.map(|d| {
-        json!({
-            "alias": d.alias,
-            "replacement": d.replacement,
-            "notice": d.notice,
-        })
-    });
 
     json!({
         "resolved_provider": provider.as_str(),
@@ -2083,8 +2370,136 @@ fn provider_capability_report(config: &Config) -> serde_json::Value {
         "thinking_supported": cap.thinking_supported,
         "cache_telemetry_supported": cap.cache_telemetry_supported,
         "request_payload_mode": serde_json::to_value(cap.request_payload_mode).unwrap_or_default(),
-        "deprecation": deprecation,
+        "alias_deprecation": cap.alias_deprecation,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorApiTarget {
+    provider: &'static str,
+    base_url: String,
+    model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorStrictToolModeStatus {
+    enabled: bool,
+    status: &'static str,
+    function_strict_sent: bool,
+    message: String,
+    recommended_base_url: Option<String>,
+}
+
+fn doctor_api_target(config: &Config) -> DoctorApiTarget {
+    let provider = config.api_provider();
+    DoctorApiTarget {
+        provider: provider.as_str(),
+        base_url: config.deepseek_base_url(),
+        model: config.default_model(),
+    }
+}
+
+fn doctor_strict_tool_mode_status(config: &Config) -> DoctorStrictToolModeStatus {
+    if !config.strict_tool_mode.unwrap_or(false) {
+        return DoctorStrictToolModeStatus {
+            enabled: false,
+            status: "disabled",
+            function_strict_sent: false,
+            message: "disabled".to_string(),
+            recommended_base_url: None,
+        };
+    }
+
+    let target = doctor_api_target(config);
+    match known_deepseek_base_url_kind(&target.base_url) {
+        Some(DeepSeekBaseUrlKind::Beta) => DoctorStrictToolModeStatus {
+            enabled: true,
+            status: "ready",
+            function_strict_sent: true,
+            message: "enabled; DeepSeek strict schemas use the beta endpoint".to_string(),
+            recommended_base_url: None,
+        },
+        Some(DeepSeekBaseUrlKind::NonBeta) => {
+            let recommended = recommended_strict_base_url(config, &target.base_url);
+            DoctorStrictToolModeStatus {
+                enabled: true,
+                status: "fallback_non_beta",
+                function_strict_sent: false,
+                message:
+                    "enabled, but function.strict is stripped for this non-beta DeepSeek endpoint"
+                        .to_string(),
+                recommended_base_url: Some(recommended.to_string()),
+            }
+        }
+        None => DoctorStrictToolModeStatus {
+            enabled: true,
+            status: "custom_endpoint",
+            function_strict_sent: true,
+            message: "enabled; function.strict will be sent to this custom endpoint".to_string(),
+            recommended_base_url: None,
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeepSeekBaseUrlKind {
+    Beta,
+    NonBeta,
+}
+
+fn known_deepseek_base_url_kind(base_url: &str) -> Option<DeepSeekBaseUrlKind> {
+    match base_url.trim_end_matches('/').to_ascii_lowercase().as_str() {
+        "https://api.deepseek.com/beta" | "https://api.deepseeki.com/beta" => {
+            Some(DeepSeekBaseUrlKind::Beta)
+        }
+        "https://api.deepseek.com"
+        | "https://api.deepseek.com/v1"
+        | "https://api.deepseeki.com"
+        | "https://api.deepseeki.com/v1" => Some(DeepSeekBaseUrlKind::NonBeta),
+        _ => None,
+    }
+}
+
+fn recommended_strict_base_url(_config: &Config, _base_url: &str) -> &'static str {
+    crate::config::DEFAULT_DEEPSEEK_BASE_URL
+}
+
+fn doctor_timeout_recovery_lines(config: &Config) -> Vec<String> {
+    let target = doctor_api_target(config);
+    let mut lines = vec![format!(
+        "Connection timed out while reaching {}.",
+        target.base_url
+    )];
+
+    match config.api_provider() {
+        crate::config::ApiProvider::Deepseek
+            if target.base_url.contains("api.deepseek.com")
+                && !target.base_url.contains("api.deepseeki.com") =>
+        {
+            lines.push(
+                "If this is a custom DeepSeek-compatible endpoint, set its HTTPS base URL in ~/.deepseek/config.toml and rerun `deepseek doctor`."
+                    .to_string(),
+            );
+        }
+        crate::config::ApiProvider::Deepseek | crate::config::ApiProvider::DeepseekCN => {
+            lines.push(
+                "If this is a custom DeepSeek-compatible endpoint, confirm it serves `/v1/models` and `/v1/chat/completions` over HTTPS."
+                    .to_string(),
+            );
+        }
+        _ => {
+            lines.push(
+                "Confirm the configured provider endpoint is reachable and OpenAI-compatible for `/v1/models` and `/v1/chat/completions`."
+                    .to_string(),
+            );
+        }
+    }
+
+    lines.push(
+        "Run `deepseek doctor --json` and include `base_url`, `default_text_model`, and `api_connectivity` when filing an issue."
+            .to_string(),
+    );
+    lines
 }
 
 fn run_execpolicy_command(command: ExecpolicyCommand) -> Result<()> {
@@ -2135,7 +2550,7 @@ async fn run_models(config: &Config, args: ModelsArgs) -> Result<()> {
 }
 
 /// Test API connectivity by making a minimal request
-async fn test_api_connectivity(config: &Config) -> Result<String> {
+async fn test_api_connectivity(config: &Config) -> Result<()> {
     use crate::client::DeepSeekClient;
     use crate::models::{ContentBlock, Message, MessageRequest};
 
@@ -2167,7 +2582,7 @@ async fn test_api_connectivity(config: &Config) -> Result<String> {
     // Use tokio timeout to catch hanging requests
     let timeout_duration = std::time::Duration::from_secs(15);
     match tokio::time::timeout(timeout_duration, client.create_message(request)).await {
-        Ok(Ok(_response)) => Ok(model),
+        Ok(Ok(_response)) => Ok(()),
         Ok(Err(e)) => Err(e),
         Err(_) => anyhow::bail!("Request timeout after 15 seconds"),
     }
@@ -2242,7 +2657,7 @@ fn list_sessions(limit: usize, search: Option<String>) -> Result<()> {
         "<session-id>".dimmed()
     );
     println!(
-        "Continue latest: {}",
+        "Continue latest in this workspace: {}",
         "deepseek --continue".truecolor(blue_r, blue_g, blue_b)
     );
 
@@ -2329,8 +2744,8 @@ fn run_login(api_key: Option<String>) -> Result<()> {
         Some(key) => key,
         None => read_api_key_from_stdin()?,
     };
-    let path = config::save_api_key(&api_key)?;
-    println!("Saved API key to {}", path.display());
+    let saved = config::save_api_key(&api_key)?;
+    println!("Saved API key to {}", saved.describe());
     Ok(())
 }
 
@@ -2340,9 +2755,14 @@ fn run_logout() -> Result<()> {
     Ok(())
 }
 
-fn resolve_session_id(session_id: Option<String>, last: bool) -> Result<String> {
+fn resolve_session_id(session_id: Option<String>, last: bool, workspace: &Path) -> Result<String> {
     if last {
-        return Ok("latest".to_string());
+        return latest_session_id_for_workspace(workspace)?.ok_or_else(|| {
+            anyhow!(
+                "No saved sessions found for workspace {}. Use `deepseek sessions` to list all sessions, or `deepseek resume <SESSION_ID>` to resume one explicitly.",
+                workspace.display()
+            )
+        });
     }
     if let Some(id) = session_id {
         return Ok(id);
@@ -2350,15 +2770,25 @@ fn resolve_session_id(session_id: Option<String>, last: bool) -> Result<String> 
     pick_session_id()
 }
 
-fn fork_session(session_id: Option<String>, last: bool) -> Result<String> {
+fn latest_session_id_for_workspace(workspace: &Path) -> std::io::Result<Option<String>> {
+    let manager = SessionManager::default_location()?;
+    Ok(manager
+        .get_latest_session_for_workspace(workspace)?
+        .map(|session| session.id))
+}
+
+fn fork_session(session_id: Option<String>, last: bool, workspace: &Path) -> Result<String> {
     let manager = SessionManager::default_location()?;
     let saved = if last {
-        let Some(meta) = manager.get_latest_session()? else {
-            bail!("No saved sessions found.");
+        let Some(meta) = manager.get_latest_session_for_workspace(workspace)? else {
+            bail!(
+                "No saved sessions found for workspace {}.",
+                workspace.display()
+            );
         };
         manager.load_session(&meta.id)?
     } else {
-        let id = resolve_session_id(session_id, false)?;
+        let id = resolve_session_id(session_id, false, workspace)?;
         manager.load_session_by_prefix(&id)?
     };
 
@@ -2374,6 +2804,19 @@ fn fork_session(session_id: Option<String>, last: bool) -> Result<String> {
         system_prompt.as_ref(),
     );
     manager.save_session(&forked)?;
+
+    let source_title = saved.metadata.title.trim();
+    let source_label = if source_title.is_empty() {
+        "session".to_string()
+    } else {
+        format!("\"{source_title}\"")
+    };
+    println!(
+        "Forked {source_label} ({source_id}) → new session {new_id}",
+        source_id = truncate_id(&saved.metadata.id),
+        new_id = truncate_id(&forked.metadata.id),
+    );
+
     Ok(forked.metadata.id)
 }
 
@@ -2418,6 +2861,11 @@ async fn run_review(config: &Config, args: ReviewArgs) -> Result<()> {
         .model
         .or_else(|| config.default_text_model.clone())
         .unwrap_or_else(|| config.default_model());
+    let route = resolve_cli_auto_route(config, &model, &diff).await;
+    let model = route.model;
+    let reasoning_effort = route
+        .reasoning_effort
+        .map(|effort| effort.as_setting().to_string());
 
     let system = SystemPrompt::Text(
         "You are a senior code reviewer. Focus on bugs, risks, behavioral regressions, and missing tests. \
@@ -2443,7 +2891,7 @@ Provide findings ordered by severity with file references, then open questions, 
         tool_choice: None,
         metadata: None,
         thinking: None,
-        reasoning_effort: None,
+        reasoning_effort,
         stream: Some(false),
         temperature: Some(0.2),
         top_p: Some(0.9),
@@ -2504,10 +2952,8 @@ async fn run_pr(
 
     let prompt = format_pr_prompt(number, &view, &diff);
     let resume_session_id = if cli.continue_session {
-        match session_manager::SessionManager::default_location() {
-            Ok(manager) => manager.get_latest_session().ok().flatten().map(|m| m.id),
-            Err(_) => None,
-        }
+        let workspace = resolve_workspace(cli);
+        latest_session_id_for_workspace(&workspace).ok().flatten()
     } else {
         cli.resume.clone()
     };
@@ -2812,7 +3258,7 @@ async fn run_mcp_command(config: &Config, command: McpCommand) -> Result<()> {
                     println!("Connected to all configured MCP servers.");
                 } else {
                     for (name, err) in errors {
-                        eprintln!("Failed to connect {name}: {err}");
+                        eprintln!("Failed to connect {name}: {err:#}");
                     }
                 }
             }
@@ -2929,7 +3375,7 @@ async fn run_mcp_command(config: &Config, command: McpCommand) -> Result<()> {
             }
             eprintln!("MCP validation failed:");
             for (name, err) in errors {
-                eprintln!("  - {name}: {err}");
+                eprintln!("  - {name}: {err:#}");
             }
             bail!("one or more MCP servers failed validation");
         }
@@ -3109,9 +3555,7 @@ fn run_sandbox_command(args: SandboxArgs) -> Result<()> {
         .current_dir(&exec_env.cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    for (key, value) in &exec_env.env {
-        cmd.env(key, value);
-    }
+    child_env::apply_to_command(&mut cmd, child_env::string_map_env(&exec_env.env));
 
     let mut child = cmd
         .spawn()
@@ -3196,26 +3640,29 @@ fn parse_sandbox_policy(
     }
 }
 
-fn should_use_alt_screen(cli: &Cli, config: &Config) -> bool {
-    if cli.no_alt_screen {
-        return false;
-    }
-
-    let mode = config
-        .tui
-        .as_ref()
-        .and_then(|tui| tui.alternate_screen.as_deref())
-        .unwrap_or("auto")
-        .to_ascii_lowercase();
-
-    match mode.as_str() {
-        "always" => true,
-        "never" => false,
-        _ => !is_zellij(),
-    }
+fn should_use_alt_screen(_cli: &Cli, _config: &Config) -> bool {
+    true
 }
 
 fn should_use_mouse_capture(cli: &Cli, config: &Config, use_alt_screen: bool) -> bool {
+    let terminal_emulator = std::env::var("TERMINAL_EMULATOR").ok();
+    let wt_session = std::env::var("WT_SESSION").ok().filter(|s| !s.is_empty());
+    should_use_mouse_capture_with(
+        cli,
+        config,
+        use_alt_screen,
+        terminal_emulator.as_deref(),
+        wt_session.as_deref(),
+    )
+}
+
+fn should_use_mouse_capture_with(
+    cli: &Cli,
+    config: &Config,
+    use_alt_screen: bool,
+    terminal_emulator: Option<&str>,
+    wt_session: Option<&str>,
+) -> bool {
     if !use_alt_screen || cli.no_mouse_capture {
         return false;
     }
@@ -3226,25 +3673,41 @@ fn should_use_mouse_capture(cli: &Cli, config: &Config, use_alt_screen: bool) ->
         .tui
         .as_ref()
         .and_then(|tui| tui.mouse_capture)
-        .unwrap_or(true)
+        .unwrap_or_else(|| default_mouse_capture_enabled(terminal_emulator, wt_session))
 }
 
-fn is_zellij() -> bool {
-    std::env::var_os("ZELLIJ").is_some()
-}
-
-/// Check for a crash-recovery checkpoint and return the session ID if
-/// recovery is possible.
+/// Whether to enable terminal mouse capture by default for this platform/host.
 ///
-/// The checkpoint must exist and its file mtime must be within 24 hours.
-/// On success the checkpoint is persisted as a regular session, cleared,
-/// and a notice is printed to stderr. Returns `None` if there is nothing
-/// to recover.
-fn try_recover_checkpoint() -> Option<String> {
-    let manager = session_manager::SessionManager::default_location().ok()?;
+/// On Windows the default depends on the host: Windows Terminal (which sets
+/// `WT_SESSION`) handles mouse-mode reporting cleanly, so default-on there
+/// gives users in-app text selection and keeps the application's selection
+/// clamped to the transcript area (#1169). Legacy conhost stays default-off
+/// because its mouse-mode reporting can leak SGR escape sequences as raw
+/// text into the composer (#878 / #898).
+///
+/// Off elsewhere only for JetBrains' JediTerm, which advertises mouse
+/// support but forwards the same SGR escape sequences as raw input. The
+/// user can still opt back in with `[tui] mouse_capture = true` in
+/// `~/.deepseek/config.toml` or `--mouse-capture`.
+fn default_mouse_capture_enabled(
+    terminal_emulator: Option<&str>,
+    wt_session: Option<&str>,
+) -> bool {
+    if cfg!(windows) {
+        return wt_session.is_some();
+    }
+    if matches!(terminal_emulator, Some(t) if t.eq_ignore_ascii_case("JetBrains-JediTerm")) {
+        return false;
+    }
+    true
+}
+
+/// Load a recent crash-recovery checkpoint, pruning stale checkpoints first.
+fn load_recent_checkpoint(
+    manager: &session_manager::SessionManager,
+) -> Option<(session_manager::SavedSession, std::time::Duration)> {
     let session = manager.load_checkpoint().ok().flatten()?;
 
-    // Verify the checkpoint file is recent (within 24 hours).
     let home = dirs::home_dir()?;
     let checkpoint_path = home
         .join(".deepseek")
@@ -3255,8 +3718,58 @@ fn try_recover_checkpoint() -> Option<String> {
     let mtime = metadata.modified().ok()?;
     let age = std::time::SystemTime::now().duration_since(mtime).ok()?;
     if age > std::time::Duration::from_secs(24 * 3600) {
-        // Stale checkpoint — clean it up.
         let _ = manager.clear_checkpoint();
+        return None;
+    }
+
+    Some((session, age))
+}
+
+fn checkpoint_age_label(age: std::time::Duration) -> String {
+    if age.as_secs() < 60 {
+        format!("{}s ago", age.as_secs())
+    } else if age.as_secs() < 3600 {
+        format!("{}m ago", age.as_secs() / 60)
+    } else {
+        format!("{}h ago", age.as_secs() / 3600)
+    }
+}
+
+/// Check for a crash-recovery checkpoint and return the session ID if explicit
+/// recovery was requested *and* the checkpoint belongs to the current
+/// workspace.
+///
+/// The checkpoint must exist and its file mtime must be within 24 hours.
+/// **The checkpoint's workspace must also match the resolved launch workspace
+/// after canonicalisation.** If the workspace doesn't match, the checkpoint is
+/// persisted as a regular session (so the user can find it via
+/// `deepseek sessions` / `deepseek resume <id>`) and cleared, but not loaded.
+fn recover_interrupted_checkpoint_for_resume(launch_workspace: &Path) -> Option<String> {
+    let manager = session_manager::SessionManager::default_location().ok()?;
+    let (session, age) = load_recent_checkpoint(&manager)?;
+
+    // Refuse to silently restore a session from another workspace. Compare
+    // against the resolved launch workspace, not the shell cwd, so callers
+    // using `--workspace` cannot accidentally recover a checkpoint from the
+    // directory their shell happened to be in.
+    let session_workspace = session.metadata.workspace.clone();
+    let workspace_matches =
+        session_manager::workspace_scope_matches(&session_workspace, launch_workspace);
+
+    if !workspace_matches {
+        // Persist the checkpoint so the user can find it via `deepseek
+        // sessions`, then clear it so the next launch in this folder doesn't
+        // re-trip the nag. Print a one-line notice pointing at the explicit
+        // resume command — but DO NOT auto-load the session here.
+        let _ = manager.save_session(&session);
+        let _ = manager.clear_checkpoint();
+        eprintln!(
+            "Note: an interrupted session from another workspace ({}) is \
+             available. Run `deepseek sessions` to list saved sessions. Starting \
+             fresh in {}.",
+            session_workspace.display(),
+            launch_workspace.display(),
+        );
         return None;
     }
 
@@ -3270,17 +3783,43 @@ fn try_recover_checkpoint() -> Option<String> {
     // Clear the checkpoint now that it has been recovered.
     let _ = manager.clear_checkpoint();
 
-    // Format age for the notice.
-    let age_str = if age.as_secs() < 60 {
-        format!("{}s ago", age.as_secs())
-    } else if age.as_secs() < 3600 {
-        format!("{}m ago", age.as_secs() / 60)
-    } else {
-        format!("{}h ago", age.as_secs() / 3600)
-    };
+    let age_str = checkpoint_age_label(age);
     eprintln!("Recovered interrupted session ({age_str}). Use --fresh to start fresh.",);
 
     Some(session_id)
+}
+
+/// Preserve an interrupted checkpoint on a normal fresh launch without
+/// attaching it to the new TUI instance. This keeps "open another deepseek in
+/// the same folder" from re-entering the previous in-flight session while still
+/// leaving an explicit resume path.
+fn preserve_interrupted_checkpoint_for_explicit_resume(launch_workspace: &Path) {
+    let Some(manager) = session_manager::SessionManager::default_location().ok() else {
+        return;
+    };
+    let Some((session, age)) = load_recent_checkpoint(&manager) else {
+        return;
+    };
+
+    let session_workspace = session.metadata.workspace.clone();
+    let _ = manager.save_session(&session);
+    let _ = manager.clear_checkpoint();
+
+    let age_str = checkpoint_age_label(age);
+    if session_manager::workspace_scope_matches(&session_workspace, launch_workspace) {
+        eprintln!(
+            "Found an in-flight session snapshot ({age_str}). Starting a new \
+             session. Run `deepseek --continue` to resume it."
+        );
+    } else {
+        eprintln!(
+            "Note: an interrupted session from another workspace ({}) is \
+             available. Run `deepseek sessions` to list saved sessions. Starting \
+             fresh in {}.",
+            session_workspace.display(),
+            launch_workspace.display(),
+        );
+    }
 }
 
 /// Load project-level config from `$WORKSPACE/.deepseek/config.toml` and
@@ -3407,6 +3946,17 @@ async fn run_interactive(
     }
     let config = &merged_config;
 
+    if !cli.skip_onboarding {
+        match crate::config::ensure_config_file_exists(cli.config.clone()) {
+            Ok(Some(path)) => logging::info(format!(
+                "Created first-run config file at {}",
+                path.display()
+            )),
+            Ok(None) => {}
+            Err(err) => logging::warn(format!("Failed to create first-run config file: {err}")),
+        }
+    }
+
     let model = config.default_model();
     let max_subagents = cli.max_subagents.map_or_else(
         || config.max_subagents(),
@@ -3478,14 +4028,42 @@ async fn run_interactive(
     .await
 }
 
+struct CliAutoRoute {
+    model: String,
+    reasoning_effort: Option<crate::tui::app::ReasoningEffort>,
+    auto_model: bool,
+}
+
+async fn resolve_cli_auto_route(config: &Config, model: &str, prompt: &str) -> CliAutoRoute {
+    if model.trim().eq_ignore_ascii_case("auto") {
+        let selection =
+            commands::resolve_auto_route_with_flash(config, prompt, "", "auto", "auto").await;
+        CliAutoRoute {
+            model: selection.model,
+            reasoning_effort: selection.reasoning_effort,
+            auto_model: true,
+        }
+    } else {
+        CliAutoRoute {
+            model: model.to_string(),
+            reasoning_effort: None,
+            auto_model: false,
+        }
+    }
+}
+
 async fn run_one_shot(config: &Config, model: &str, prompt: &str) -> Result<()> {
     use crate::client::DeepSeekClient;
     use crate::models::{ContentBlock, Message, MessageRequest};
 
     let client = DeepSeekClient::new(config)?;
+    let route = resolve_cli_auto_route(config, model, prompt).await;
+    let reasoning_effort = route
+        .reasoning_effort
+        .map(|effort| effort.as_setting().to_string());
 
     let request = MessageRequest {
-        model: model.to_string(),
+        model: route.model,
         messages: vec![Message {
             role: "user".to_string(),
             content: vec![ContentBlock::Text {
@@ -3499,7 +4077,7 @@ async fn run_one_shot(config: &Config, model: &str, prompt: &str) -> Result<()> 
         tool_choice: None,
         metadata: None,
         thinking: None,
-        reasoning_effort: None,
+        reasoning_effort,
         stream: Some(false),
         temperature: None,
         top_p: None,
@@ -3521,8 +4099,13 @@ async fn run_one_shot_json(config: &Config, model: &str, prompt: &str) -> Result
     use crate::models::{ContentBlock, Message, MessageRequest, SystemPrompt};
 
     let client = DeepSeekClient::new(config)?;
+    let route = resolve_cli_auto_route(config, model, prompt).await;
+    let model = route.model;
+    let reasoning_effort = route
+        .reasoning_effort
+        .map(|effort| effort.as_setting().to_string());
     let request = MessageRequest {
-        model: model.to_string(),
+        model: model.clone(),
         messages: vec![Message {
             role: "user".to_string(),
             content: vec![ContentBlock::Text {
@@ -3538,7 +4121,7 @@ async fn run_one_shot_json(config: &Config, model: &str, prompt: &str) -> Result
         tool_choice: None,
         metadata: None,
         thinking: None,
-        reasoning_effort: None,
+        reasoning_effort,
         stream: Some(false),
         temperature: Some(0.2),
         top_p: Some(0.9),
@@ -3578,10 +4161,17 @@ async fn run_exec_agent(
     use crate::core::engine::{EngineConfig, spawn_engine};
     use crate::core::events::Event;
     use crate::core::ops::Op;
-    use crate::models::{compaction_message_threshold_for_model, compaction_threshold_for_model};
+    use crate::models::compaction_threshold_for_model;
     use crate::tools::plan::new_shared_plan_state;
     use crate::tools::todo::new_shared_todo_list;
     use crate::tui::app::AppMode;
+
+    let route = resolve_cli_auto_route(config, model, prompt).await;
+    let auto_model = route.auto_model;
+    let effective_model = route.model;
+    let effective_reasoning_effort = route
+        .reasoning_effort
+        .map(|effort| effort.as_setting().to_string());
 
     // Compaction defaults to disabled in v0.6.6: the checkpoint-restart cycle
     // architecture (issue #124) handles long-context resets via fresh contexts
@@ -3590,9 +4180,8 @@ async fn run_exec_agent(
     // or direct engine config keep their old behavior.
     let compaction = CompactionConfig {
         enabled: false,
-        model: model.to_string(),
-        token_threshold: compaction_threshold_for_model(model),
-        message_threshold: compaction_message_threshold_for_model(model),
+        model: effective_model.clone(),
+        token_threshold: compaction_threshold_for_model(&effective_model),
         ..Default::default()
     };
 
@@ -3606,7 +4195,7 @@ async fn run_exec_agent(
         .map(crate::config::LspConfigToml::into_runtime);
 
     let engine_config = EngineConfig {
-        model: model.to_string(),
+        model: effective_model.clone(),
         workspace: workspace.clone(),
         allow_shell: auto_approve || config.allow_shell(),
         trust_mode,
@@ -3614,6 +4203,7 @@ async fn run_exec_agent(
         mcp_config_path: config.mcp_config_path(),
         skills_dir: config.skills_dir(),
         instructions: config.instructions_paths(),
+        project_context_pack_enabled: config.project_context_pack_enabled(),
         max_steps: 100,
         max_subagents,
         features: config.features(),
@@ -3630,6 +4220,14 @@ async fn run_exec_agent(
         subagent_model_overrides: config.subagent_model_overrides(),
         memory_enabled: config.memory_enabled(),
         memory_path: config.memory_path(),
+        strict_tool_mode: config.strict_tool_mode.unwrap_or(false),
+        goal_objective: None,
+        locale_tag: crate::localization::resolve_locale(
+            &crate::settings::Settings::load().unwrap_or_default().locale,
+        )
+        .tag()
+        .to_string(),
+        workshop: config.workshop.clone(),
     };
 
     let engine_handle = spawn_engine(engine_config, config);
@@ -3640,15 +4238,27 @@ async fn run_exec_agent(
     };
 
     engine_handle
-        .send(Op::send(
-            prompt,
+        .send(Op::SendMessage {
+            content: prompt.to_string(),
             mode,
-            model,
-            None,
-            auto_approve || config.allow_shell(),
+            model: effective_model.clone(),
+            goal_objective: None,
+            reasoning_effort: effective_reasoning_effort,
+            reasoning_effort_auto: auto_model,
+            auto_model,
+            allow_shell: auto_approve || config.allow_shell(),
             trust_mode,
             auto_approve,
-        ))
+            approval_mode: if auto_approve {
+                crate::tui::approval::ApprovalMode::Auto
+            } else {
+                config
+                    .approval_policy
+                    .as_deref()
+                    .and_then(crate::tui::approval::ApprovalMode::from_config_value)
+                    .unwrap_or_default()
+            },
+        })
         .await?;
 
     #[derive(serde::Serialize)]
@@ -3669,7 +4279,7 @@ async fn run_exec_agent(
     }
     let mut summary = ExecSummary {
         mode: "agent".to_string(),
-        model: model.to_string(),
+        model: effective_model,
         prompt: prompt.to_string(),
         ..ExecSummary::default()
     };
@@ -3803,6 +4413,175 @@ async fn run_exec_agent(
 }
 
 #[cfg(test)]
+mod doctor_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn doctor_api_target_reports_default_endpoint() {
+        let config = Config::default();
+
+        let target = doctor_api_target(&config);
+
+        assert_eq!(target.provider, "deepseek");
+        assert_eq!(target.base_url, crate::config::DEFAULT_DEEPSEEK_BASE_URL);
+        assert_eq!(target.model, crate::config::DEFAULT_TEXT_MODEL);
+    }
+
+    #[test]
+    fn doctor_api_target_routes_deepseek_cn_alias_to_beta_endpoint() {
+        let config = Config {
+            provider: Some("deepseek-cn".to_string()),
+            ..Default::default()
+        };
+
+        let target = doctor_api_target(&config);
+
+        assert_eq!(target.provider, "deepseek-cn");
+        assert_eq!(target.base_url, crate::config::DEFAULT_DEEPSEEKCN_BASE_URL);
+        assert_eq!(target.base_url, crate::config::DEFAULT_DEEPSEEK_BASE_URL);
+        assert_eq!(target.model, crate::config::DEFAULT_TEXT_MODEL);
+    }
+
+    #[test]
+    fn strict_tool_mode_doctor_reports_disabled_by_default() {
+        let config = Config::default();
+
+        let status = doctor_strict_tool_mode_status(&config);
+
+        assert!(!status.enabled);
+        assert_eq!(status.status, "disabled");
+        assert!(!status.function_strict_sent);
+        assert!(status.recommended_base_url.is_none());
+    }
+
+    #[test]
+    fn strict_tool_mode_doctor_accepts_default_beta_endpoint() {
+        let config = Config {
+            strict_tool_mode: Some(true),
+            ..Default::default()
+        };
+
+        let status = doctor_strict_tool_mode_status(&config);
+
+        assert!(status.enabled);
+        assert_eq!(status.status, "ready");
+        assert!(status.function_strict_sent);
+        assert!(status.message.contains("beta endpoint"));
+        assert!(status.recommended_base_url.is_none());
+    }
+
+    #[test]
+    fn strict_tool_mode_doctor_warns_for_non_beta_deepseek_endpoint() {
+        let config = Config {
+            strict_tool_mode: Some(true),
+            base_url: Some("https://api.deepseek.com".to_string()),
+            ..Default::default()
+        };
+
+        let status = doctor_strict_tool_mode_status(&config);
+
+        assert_eq!(status.status, "fallback_non_beta");
+        assert!(!status.function_strict_sent);
+        assert_eq!(
+            status.recommended_base_url.as_deref(),
+            Some(crate::config::DEFAULT_DEEPSEEK_BASE_URL)
+        );
+    }
+
+    #[test]
+    fn strict_tool_mode_doctor_accepts_deepseek_cn_alias_default_endpoint() {
+        let config = Config {
+            provider: Some("deepseek-cn".to_string()),
+            strict_tool_mode: Some(true),
+            ..Default::default()
+        };
+
+        let status = doctor_strict_tool_mode_status(&config);
+
+        assert_eq!(status.status, "ready");
+        assert!(status.function_strict_sent);
+        assert!(status.message.contains("beta endpoint"));
+        assert!(status.recommended_base_url.is_none());
+    }
+
+    #[test]
+    fn strict_tool_mode_doctor_marks_custom_endpoint_as_forwarded() {
+        let config = Config {
+            provider: Some("vllm".to_string()),
+            strict_tool_mode: Some(true),
+            ..Default::default()
+        };
+
+        let status = doctor_strict_tool_mode_status(&config);
+
+        assert_eq!(status.status, "custom_endpoint");
+        assert!(status.function_strict_sent);
+        assert!(status.message.contains("custom endpoint"));
+    }
+
+    #[test]
+    fn provider_capability_report_exposes_alias_deprecation_for_deepseek_chat() {
+        let config = Config {
+            default_text_model: Some("deepseek-chat".to_string()),
+            ..Default::default()
+        };
+
+        let report = provider_capability_report(&config);
+
+        assert_eq!(report["resolved_model"], "deepseek-chat");
+        assert_eq!(report["context_window"], 1_000_000);
+        assert_eq!(report["thinking_supported"], true);
+        assert_eq!(
+            report["alias_deprecation"]["replacement"],
+            "deepseek-v4-flash"
+        );
+        assert_eq!(
+            report["alias_deprecation"]["retirement_utc"],
+            "2026-07-24T15:59:00Z"
+        );
+    }
+
+    #[test]
+    fn provider_capability_report_leaves_canonical_flash_alias_metadata_null() {
+        let config = Config {
+            default_text_model: Some("deepseek-v4-flash".to_string()),
+            ..Default::default()
+        };
+
+        let report = provider_capability_report(&config);
+
+        assert_eq!(report["resolved_model"], "deepseek-v4-flash");
+        assert!(report["alias_deprecation"].is_null());
+    }
+
+    #[test]
+    fn timeout_recovery_keeps_default_deepseek_users_on_default_endpoint() {
+        let config = Config::default();
+
+        let text = doctor_timeout_recovery_lines(&config).join("\n");
+
+        assert!(text.contains("api.deepseek.com"));
+        assert!(text.contains("custom DeepSeek-compatible endpoint"));
+        assert!(!text.contains("provider = \"deepseek-cn\""));
+        assert!(text.contains("deepseek doctor --json"));
+    }
+
+    #[test]
+    fn timeout_recovery_for_custom_provider_checks_openai_compatibility() {
+        let config = Config {
+            provider: Some("vllm".to_string()),
+            ..Default::default()
+        };
+
+        let text = doctor_timeout_recovery_lines(&config).join("\n");
+
+        assert!(text.contains("/v1/models"));
+        assert!(text.contains("/v1/chat/completions"));
+        assert!(!text.contains("api.deepseeki.com"));
+    }
+}
+
+#[cfg(test)]
 mod terminal_mode_tests {
     use super::*;
     use clap::Parser;
@@ -3812,11 +4591,111 @@ mod terminal_mode_tests {
     }
 
     #[test]
+    fn prompt_flag_accepts_split_prompt_words_for_windows_cmd_shims() {
+        let cli = parse_cli(&["deepseek", "-p", "hello", "world"]);
+
+        assert_eq!(cli.prompt, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn exec_accepts_split_prompt_words_for_windows_cmd_shims() {
+        let cli = parse_cli(&["deepseek", "exec", "hello", "world"]);
+        let Some(Commands::Exec(args)) = cli.command else {
+            panic!("expected exec command");
+        };
+
+        assert_eq!(args.prompt, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn exec_keeps_flags_before_split_prompt_words() {
+        let cli = parse_cli(&["deepseek", "exec", "--json", "hello", "world"]);
+        let Some(Commands::Exec(args)) = cli.command else {
+            panic!("expected exec command");
+        };
+
+        assert!(args.json);
+        assert_eq!(args.prompt, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn alternate_screen_defaults_on_in_auto_mode() {
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config::default();
+
+        assert!(should_use_alt_screen(&cli, &config));
+    }
+
+    #[test]
+    fn no_alt_screen_flag_is_accepted_but_keeps_alternate_screen() {
+        let cli = parse_cli(&["deepseek", "--no-alt-screen"]);
+        let config = Config::default();
+
+        assert!(should_use_alt_screen(&cli, &config));
+    }
+
+    #[test]
+    fn config_never_is_accepted_but_keeps_alternate_screen() {
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config {
+            tui: Some(crate::config::TuiConfig {
+                alternate_screen: Some("never".to_string()),
+                mouse_capture: None,
+                terminal_probe_timeout_ms: None,
+                status_items: None,
+                osc8_links: None,
+                composer_arrows_scroll: None,
+                notification_condition: None,
+            }),
+            ..Config::default()
+        };
+
+        assert!(should_use_alt_screen(&cli, &config));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
     fn mouse_capture_defaults_on_when_alternate_screen_is_active() {
         let cli = parse_cli(&["deepseek"]);
         let config = Config::default();
 
-        assert!(should_use_mouse_capture(&cli, &config, true));
+        assert!(should_use_mouse_capture_with(
+            &cli, &config, true, None, None
+        ));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn mouse_capture_defaults_off_on_legacy_windows_console() {
+        // Legacy conhost (no `WT_SESSION`) keeps the v0.8.x default-off
+        // behavior: mouse-mode reporting on legacy console can leak SGR
+        // escapes into the composer.
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config::default();
+
+        assert!(!should_use_mouse_capture_with(
+            &cli, &config, true, None, None
+        ));
+    }
+
+    // #1169: Windows Terminal sets `WT_SESSION` and handles mouse-mode
+    // reporting cleanly, so default-on there gives users in-app text
+    // selection (and the side-effect of clamping selection to the
+    // transcript region instead of the terminal painting across the
+    // sidebar via native selection).
+    #[test]
+    #[cfg(windows)]
+    fn mouse_capture_defaults_on_in_windows_terminal() {
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config::default();
+
+        assert!(should_use_mouse_capture_with(
+            &cli,
+            &config,
+            true,
+            None,
+            Some("{a3a3b3a8-aa00-0000-0000-000000000000}"),
+        ));
     }
 
     #[test]
@@ -3824,7 +4703,9 @@ mod terminal_mode_tests {
         let cli = parse_cli(&["deepseek", "--no-mouse-capture"]);
         let config = Config::default();
 
-        assert!(!should_use_mouse_capture(&cli, &config, true));
+        assert!(!should_use_mouse_capture_with(
+            &cli, &config, true, None, None
+        ));
     }
 
     #[test]
@@ -3837,11 +4718,15 @@ mod terminal_mode_tests {
                 terminal_probe_timeout_ms: None,
                 status_items: None,
                 osc8_links: None,
+                composer_arrows_scroll: None,
+                notification_condition: None,
             }),
             ..Config::default()
         };
 
-        assert!(!should_use_mouse_capture(&cli, &config, true));
+        assert!(!should_use_mouse_capture_with(
+            &cli, &config, true, None, None
+        ));
     }
 
     #[test]
@@ -3849,7 +4734,9 @@ mod terminal_mode_tests {
         let cli = parse_cli(&["deepseek", "--mouse-capture"]);
         let config = Config::default();
 
-        assert!(should_use_mouse_capture(&cli, &config, true));
+        assert!(should_use_mouse_capture_with(
+            &cli, &config, true, None, None
+        ));
     }
 
     #[test]
@@ -3862,11 +4749,15 @@ mod terminal_mode_tests {
                 terminal_probe_timeout_ms: None,
                 status_items: None,
                 osc8_links: None,
+                composer_arrows_scroll: None,
+                notification_condition: None,
             }),
             ..Config::default()
         };
 
-        assert!(should_use_mouse_capture(&cli, &config, true));
+        assert!(should_use_mouse_capture_with(
+            &cli, &config, true, None, None
+        ));
     }
 
     #[test]
@@ -3874,7 +4765,85 @@ mod terminal_mode_tests {
         let cli = parse_cli(&["deepseek", "--mouse-capture"]);
         let config = Config::default();
 
-        assert!(!should_use_mouse_capture(&cli, &config, false));
+        assert!(!should_use_mouse_capture_with(
+            &cli, &config, false, None, None
+        ));
+    }
+
+    // Issue #878 / #898: JetBrains JediTerm advertises mouse support but
+    // forwards SGR mouse-event escapes as raw input characters, producing
+    // the "input box auto-fills with garbled characters when I move the
+    // mouse" failure mode in PyCharm/IDEA terminals. Default the capture
+    // off when we see TERMINAL_EMULATOR=JetBrains-JediTerm; explicit
+    // config / --mouse-capture still wins.
+
+    #[test]
+    fn mouse_capture_defaults_off_in_jetbrains_jediterm() {
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config::default();
+
+        assert!(!should_use_mouse_capture_with(
+            &cli,
+            &config,
+            true,
+            Some("JetBrains-JediTerm"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn jetbrains_default_off_is_case_insensitive() {
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config::default();
+
+        // JetBrains has occasionally varied the casing across releases;
+        // a case-insensitive match keeps the protection in place.
+        assert!(!should_use_mouse_capture_with(
+            &cli,
+            &config,
+            true,
+            Some("jetbrains-jediterm"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn mouse_capture_flag_overrides_jetbrains_default() {
+        let cli = parse_cli(&["deepseek", "--mouse-capture"]);
+        let config = Config::default();
+
+        assert!(should_use_mouse_capture_with(
+            &cli,
+            &config,
+            true,
+            Some("JetBrains-JediTerm"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn config_mouse_capture_true_overrides_jetbrains_default() {
+        let cli = parse_cli(&["deepseek"]);
+        let config = Config {
+            tui: Some(crate::config::TuiConfig {
+                alternate_screen: None,
+                mouse_capture: Some(true),
+                terminal_probe_timeout_ms: None,
+                status_items: None,
+                osc8_links: None,
+                composer_arrows_scroll: None,
+                notification_condition: None,
+            }),
+            ..Config::default()
+        };
+
+        assert!(should_use_mouse_capture_with(
+            &cli,
+            &config,
+            true,
+            Some("JetBrains-JediTerm"),
+            None,
+        ));
     }
 }
 
@@ -4291,6 +5260,13 @@ mod setup_helper_tests {
     use std::collections::BTreeSet;
     use tempfile::TempDir;
 
+    // Serialize tests that mutate process-global env vars. Without this,
+    // `cargo test` runs them in parallel and they race on `DEEPSEEK_API_KEY`,
+    // causing intermittent CI failures (one test reads while another's set
+    // is still active). `unwrap_or_else` recovers from poisoning so a panic
+    // in one test doesn't cascade through the whole module.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn init_tools_dir_creates_readme_and_example() {
         let tmp = TempDir::new().unwrap();
@@ -4422,6 +5398,97 @@ mod setup_helper_tests {
         assert!(!dir.exists());
     }
 
+    fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
+        let prev_home = std::env::var_os("HOME");
+        let prev_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::set_var("HOME", home);
+            std::env::set_var("USERPROFILE", home);
+        }
+        let result = f();
+        unsafe {
+            match prev_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_userprofile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn plain_launch_preserves_checkpoint_but_starts_fresh() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        with_home(tmp.path(), || {
+            let manager = SessionManager::default_location().expect("manager");
+            let messages = vec![Message {
+                role: "user".to_string(),
+                content: vec![ContentBlock::Text {
+                    text: "in flight".to_string(),
+                    cache_control: None,
+                }],
+            }];
+            let session = create_saved_session(&messages, "test-model", &workspace, 0, None);
+            let session_id = session.metadata.id.clone();
+            manager.save_checkpoint(&session).expect("save checkpoint");
+
+            preserve_interrupted_checkpoint_for_explicit_resume(&workspace);
+
+            assert!(
+                manager
+                    .load_checkpoint()
+                    .expect("load checkpoint")
+                    .is_none(),
+                "normal launch should clear latest checkpoint after preserving it"
+            );
+            assert!(
+                manager.load_session(&session_id).is_ok(),
+                "normal launch should keep an explicit resume target"
+            );
+        });
+    }
+
+    #[test]
+    fn continue_recovers_same_workspace_checkpoint() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        with_home(tmp.path(), || {
+            let manager = SessionManager::default_location().expect("manager");
+            let messages = vec![Message {
+                role: "user".to_string(),
+                content: vec![ContentBlock::Text {
+                    text: "continue me".to_string(),
+                    cache_control: None,
+                }],
+            }];
+            let session = create_saved_session(&messages, "test-model", &workspace, 0, None);
+            let session_id = session.metadata.id.clone();
+            manager.save_checkpoint(&session).expect("save checkpoint");
+
+            let recovered = recover_interrupted_checkpoint_for_resume(&workspace);
+
+            assert_eq!(recovered.as_deref(), Some(session_id.as_str()));
+            assert!(
+                manager
+                    .load_checkpoint()
+                    .expect("load checkpoint")
+                    .is_none(),
+                "--continue should consume the checkpoint"
+            );
+            assert!(manager.load_session(&session_id).is_ok());
+        });
+    }
+
     #[test]
     fn dotenv_status_points_to_example_when_present() {
         let tmp = TempDir::new().unwrap();
@@ -4454,6 +5521,7 @@ mod setup_helper_tests {
             "RUST_LOG",
             "DEEPSEEK_APPROVAL_POLICY",
             "DEEPSEEK_SANDBOX_MODE",
+            "DEEPSEEK_YOLO",
         ] {
             assert!(
                 keys.contains(required),
@@ -4499,13 +5567,12 @@ mod setup_helper_tests {
 
     #[test]
     fn resolve_api_key_source_reports_env_when_set() {
-        // Snapshot env so we can restore it.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let prev = std::env::var("DEEPSEEK_API_KEY").ok();
-        // SAFETY: tests in this binary may run in parallel; use a marker that
-        // is unmistakably a test value so concurrent reads can detect it.
-        // To avoid clobbering CI keys we save/restore around the assertion.
+        let prev_source = std::env::var("DEEPSEEK_API_KEY_SOURCE").ok();
         unsafe {
             std::env::set_var("DEEPSEEK_API_KEY", "test-helper-value");
+            std::env::remove_var("DEEPSEEK_API_KEY_SOURCE");
         }
         let cfg = Config::default();
         let source = resolve_api_key_source(&cfg);
@@ -4513,7 +5580,58 @@ mod setup_helper_tests {
             Some(value) => unsafe { std::env::set_var("DEEPSEEK_API_KEY", value) },
             None => unsafe { std::env::remove_var("DEEPSEEK_API_KEY") },
         }
+        match prev_source {
+            Some(value) => unsafe { std::env::set_var("DEEPSEEK_API_KEY_SOURCE", value) },
+            None => unsafe { std::env::remove_var("DEEPSEEK_API_KEY_SOURCE") },
+        }
         assert_eq!(source, ApiKeySource::Env);
+    }
+
+    #[test]
+    fn resolve_api_key_source_reports_dispatcher_keyring() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("DEEPSEEK_API_KEY").ok();
+        let prev_source = std::env::var("DEEPSEEK_API_KEY_SOURCE").ok();
+        unsafe {
+            std::env::set_var("DEEPSEEK_API_KEY", "test-helper-value");
+            std::env::set_var("DEEPSEEK_API_KEY_SOURCE", "keyring");
+        }
+        let cfg = Config::default();
+        let source = resolve_api_key_source(&cfg);
+        match prev {
+            Some(value) => unsafe { std::env::set_var("DEEPSEEK_API_KEY", value) },
+            None => unsafe { std::env::remove_var("DEEPSEEK_API_KEY") },
+        }
+        match prev_source {
+            Some(value) => unsafe { std::env::set_var("DEEPSEEK_API_KEY_SOURCE", value) },
+            None => unsafe { std::env::remove_var("DEEPSEEK_API_KEY_SOURCE") },
+        }
+        assert_eq!(source, ApiKeySource::Keyring);
+    }
+
+    #[test]
+    fn resolve_api_key_source_prefers_config_over_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("DEEPSEEK_API_KEY").ok();
+        let prev_source = std::env::var("DEEPSEEK_API_KEY_SOURCE").ok();
+        unsafe {
+            std::env::set_var("DEEPSEEK_API_KEY", "stale-env-key");
+            std::env::remove_var("DEEPSEEK_API_KEY_SOURCE");
+        }
+        let cfg = Config {
+            api_key: Some("fresh-config-key".to_string()),
+            ..Config::default()
+        };
+        let source = resolve_api_key_source(&cfg);
+        match prev {
+            Some(value) => unsafe { std::env::set_var("DEEPSEEK_API_KEY", value) },
+            None => unsafe { std::env::remove_var("DEEPSEEK_API_KEY") },
+        }
+        match prev_source {
+            Some(value) => unsafe { std::env::set_var("DEEPSEEK_API_KEY_SOURCE", value) },
+            None => unsafe { std::env::remove_var("DEEPSEEK_API_KEY_SOURCE") },
+        }
+        assert_eq!(source, ApiKeySource::Config);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 pub mod apply_patch;
 pub mod approval_cache;
+pub mod arg_repair;
 pub mod automation;
 pub mod diagnostics;
 pub mod diff_format;
@@ -10,9 +11,12 @@ pub mod file_search;
 pub mod finance;
 
 pub mod fetch_url;
+pub mod fim;
 pub mod git;
 pub mod git_history;
 pub mod github;
+pub mod large_output_router;
+pub mod notify;
 pub mod parallel;
 pub mod plan;
 pub mod project;
@@ -22,6 +26,7 @@ pub mod remember;
 pub mod revert_turn;
 pub mod review;
 pub mod rlm;
+pub mod schema_sanitize;
 pub mod search;
 pub mod shell;
 mod shell_output;
@@ -31,6 +36,7 @@ pub mod subagent;
 pub mod tasks;
 pub mod test_runner;
 pub mod todo;
+pub mod tool_result_retrieval;
 pub mod truncate;
 pub mod user_input;
 pub mod validate_data;

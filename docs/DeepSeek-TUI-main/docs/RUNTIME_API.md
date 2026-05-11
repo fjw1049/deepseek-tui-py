@@ -1,172 +1,285 @@
-# Runtime API (HTTP/SSE)
+# Runtime API & Integration Contract
 
-DeepSeek TUI can expose a local runtime API for external clients:
+DeepSeek TUI exposes a local runtime API through `deepseek serve --http` and
+machine-readable health via `deepseek doctor --json`. It also exposes
+`deepseek serve --acp` for editor clients that speak the Agent Client Protocol
+over stdio. This document is the stable integration contract for native macOS
+workbench applications (and other local supervisors) that embed the DeepSeek
+engine without screen-scraping terminal output.
 
-```bash
-deepseek serve --http --host 127.0.0.1 --port 7878 --workers 2
+## Architecture
+
+```
+macOS workbench (or any local supervisor)
+        │
+        ├─ deepseek doctor --json   → machine-readable health & capability
+        ├─ deepseek serve --http    → HTTP/SSE runtime API
+        ├─ deepseek serve --acp     → ACP stdio agent for editors such as Zed
+        ├─ deepseek serve --mcp     → MCP stdio server
+        └─ deepseek [args]          → interactive TUI session
 ```
 
-Defaults:
-- bind: `127.0.0.1:7878`
-- workers: `2` (clamped to `1..8`)
+The engine runs as a local-only process. All APIs bind to `localhost` by
+default. No hosted relay, no provider-token custody, no secret leakage.
 
-Implementation note:
-- The current production runtime lives in `crates/tui` (`runtime_api.rs`, `runtime_threads.rs`, `task_manager.rs`).
-- Workspace crate extraction is in progress, but external behavior should be read from the `crates/tui` implementation today.
+## ACP stdio adapter: `deepseek serve --acp`
 
-## Security Model (Local-First)
+`deepseek serve --acp` speaks JSON-RPC 2.0 over newline-delimited stdio for
+ACP-compatible editor clients. The initial adapter implements the ACP baseline:
 
-- The server is designed for trusted local use.
-- There is no built-in auth, user isolation, or TLS termination.
-- Do not expose this API directly to untrusted networks.
-- If remote access is required, place it behind your own authenticated reverse proxy/VPN.
+- `initialize`
+- `session/new`
+- `session/prompt`
+- `session/cancel`
 
-## Runtime Data Model
+Prompt requests are routed through the configured DeepSeek client and current
+default model. Responses are emitted as `session/update` agent message chunks
+followed by a `session/prompt` response with `stopReason: "end_turn"`.
 
-The runtime uses a durable Thread/Turn/Item lifecycle.
+The adapter is intentionally conservative: it does not yet expose shell tools,
+file-write tools, checkpoint replay, or session loading through ACP. Use
+`deepseek serve --http` for the full local runtime API and `deepseek serve --mcp`
+when another client needs DeepSeek's tools as MCP tools.
 
-- `ThreadRecord`
-  - `id`, `created_at`, `updated_at`
-  - `model`, `workspace`, `mode`
-  - `task_id` (optional durable task link)
-  - `coherence_state`: `healthy|getting_crowded|refreshing_context|verifying_recent_work|resetting_plan`
-  - `system_prompt` (optional text)
-  - `latest_turn_id`, `latest_response_bookmark`, `archived`
-- `TurnRecord`
-  - `id`, `thread_id`
-  - `status`: `queued|in_progress|completed|failed|interrupted|canceled`
-  - timestamps, duration, usage, error summary
-- `TurnItemRecord`
-  - `id`, `turn_id`
-  - `kind`: `user_message|agent_message|tool_call|file_change|command_execution|context_compaction|status|error`
-  - lifecycle `status`: `queued|in_progress|completed|failed|interrupted|canceled`
-  - `metadata` (optional tool result metadata; used for task checklist/gate/artifact updates)
+## Capability endpoint: `deepseek doctor --json`
 
-The event log is append-only with global monotonic `seq` for replay/resume.
+Returns a JSON object describing the current installation's readiness state.
+Suitable for health-check polling from a macOS workbench.
 
-Session resume note:
-- Saved session `system_prompt` currently round-trips as plain text. Structured `SystemPrompt::Blocks` metadata is not preserved when resuming into runtime threads.
+```bash
+deepseek doctor --json
+```
 
-Restart note:
-- If the process restarts while a turn or item is `queued` or `in_progress`, the recovered record is marked `interrupted` with an `"Interrupted by process restart"` error instead of remaining stuck in a live state.
+### Response schema (key fields)
 
-Approval note:
-- `auto_approve` applies to the runtime approval bridge and the engine tool context. When enabled for a thread/turn/task, approval-required tools are auto-approved in the non-interactive runtime path, shell safety checks run in auto-approved mode, and spawned subagents inherit that effective setting for their own tool context.
-- If omitted when creating a thread or starting `/v1/stream`, `auto_approve` defaults to `false`.
+| Field | Type | Description |
+|---|---|---|
+| `version` | string | Installed version (e.g. `"0.8.9"`) |
+| `config_path` | string | Resolved config file path |
+| `config_present` | bool | Whether the config file exists |
+| `workspace` | string | Default workspace directory |
+| `api_key.source` | string | `env`, `config`, or `missing` |
+| `base_url` | string | API base URL |
+| `default_text_model` | string | Default model |
+| `memory.enabled` | bool | Whether the memory feature is on |
+| `memory.path` | string | Path to memory file |
+| `memory.file_present` | bool | Whether memory file exists |
+| `mcp.config_path` | string | MCP config file path |
+| `mcp.present` | bool | Whether MCP config exists |
+| `mcp.servers` | array | Per-server health: `{name, enabled, status, detail}` |
+| `skills.selected` | string | Resolved skills directory |
+| `skills.global.path` / `.present` / `.count` | — | DeepSeek global skills dir (`~/.deepseek/skills`) |
+| `skills.agents.path` / `.present` / `.count` | — | Workspace `.agents/skills/` dir |
+| `skills.agents_global.path` / `.present` / `.count` | — | agentskills.io global skills dir (`~/.agents/skills`) |
+| `skills.local.path` / `.present` / `.count` | — | `skills/` dir |
+| `skills.opencode.path` / `.present` / `.count` | — | `.opencode/skills/` dir |
+| `skills.claude.path` / `.present` / `.count` | — | `.claude/skills/` dir |
+| `tools.path` / `.present` / `.count` | — | Global tools directory |
+| `plugins.path` / `.present` / `.count` | — | Global plugins directory |
+| `sandbox.available` | bool | Whether sandbox is supported on this OS |
+| `sandbox.kind` | string or null | Sandbox kind (e.g. `"macos_seatbelt"`) |
+| `storage.spillover.path` / `.present` / `.count` | — | Tool output spillover dir |
+| `storage.stash.path` / `.present` / `.count` | — | Composer stash |
 
-## Endpoints
+### Example
 
-### Health and Session
+```json
+{
+  "version": "0.8.9",
+  "config_path": "/Users/you/.deepseek/config.toml",
+  "config_present": true,
+  "workspace": "/Users/you/projects/deepseek-tui",
+  "api_key": {
+    "source": "env"
+  },
+  "base_url": "https://api.deepseek.com/beta",
+  "default_text_model": "deepseek-v4-pro",
+  "memory": {
+    "enabled": false,
+    "path": "/Users/you/.deepseek/memory.md",
+    "file_present": true
+  },
+  "mcp": {
+    "config_path": "/Users/you/.deepseek/mcp.json",
+    "present": true,
+    "servers": [
+      {"name": "filesystem", "enabled": true, "status": "ok", "detail": "ready"}
+    ]
+  },
+  "sandbox": {
+    "available": true,
+    "kind": "macos_seatbelt"
+  }
+}
+```
 
+## HTTP/SSE runtime API: `deepseek serve --http`
+
+```bash
+deepseek serve --http [--host 127.0.0.1] [--port 7878] [--workers 2] [--auth-token TOKEN]
+```
+
+Defaults: host `127.0.0.1`, port `7878`, 2 workers (clamped 1–8).
+
+The server binds to `localhost` by default. Configuration is via CLI flags —
+there is no `[app_server]` config section.
+
+By default, existing local behavior is unchanged and `/v1/*` routes are not
+authenticated. To require a bearer token for `/v1/*` routes, pass
+`--auth-token TOKEN` or set `DEEPSEEK_RUNTIME_TOKEN=TOKEN` before starting the
+server. `/health` remains public for local process supervision and readiness
+checks.
+
+Authenticated clients can provide the token as `Authorization: Bearer TOKEN`,
+`X-DeepSeek-Runtime-Token: TOKEN`, or `?token=TOKEN` for EventSource-style
+clients that cannot set custom headers.
+
+### Endpoints
+
+**Health**
 - `GET /health`
+
+**Sessions** (legacy session manager)
 - `GET /v1/sessions?limit=50&search=<substring>`
 - `GET /v1/sessions/{id}`
 - `DELETE /v1/sessions/{id}`
 - `POST /v1/sessions/{id}/resume-thread`
+
+**Threads** (durable runtime data model)
+- `GET /v1/threads?limit=50&include_archived=false&archived_only=false`
+- `GET /v1/threads/summary?limit=50&search=<optional>&include_archived=false&archived_only=false`
+- `POST /v1/threads`
+- `GET /v1/threads/{id}`
+- `PATCH /v1/threads/{id}` (see body shape below)
+- `POST /v1/threads/{id}/resume`
+- `POST /v1/threads/{id}/fork`
+
+`archived_only=true` returns archived threads only (mutually overrides
+`include_archived`). Default behavior is unchanged: `include_archived=false`
+and `archived_only=false` returns active threads. Added in v0.8.10 (#563).
+
+`PATCH /v1/threads/{id}` body — every field is optional, missing means
+"no change". At least one field must be present. `title` and `system_prompt`
+accept an empty string to clear a previously-set value. Added in v0.8.10 (#562):
+
+```json
+{
+  "archived": true,
+  "allow_shell": false,
+  "trust_mode": false,
+  "auto_approve": false,
+  "model": "deepseek-v4-pro",
+  "mode": "agent",
+  "title": "User-set thread title",
+  "system_prompt": "You are a useful assistant."
+}
+```
+
+**Turns** (within a thread)
+- `POST /v1/threads/{id}/turns`
+- `POST /v1/threads/{id}/turns/{turn_id}/steer`
+- `POST /v1/threads/{id}/turns/{turn_id}/interrupt`
+- `POST /v1/threads/{id}/compact` (manual compaction)
+
+**Events** (SSE replay + live stream)
+- `GET /v1/threads/{id}/events?since_seq=<u64>`
+
+**Compatibility stream** (one-shot, backwards-compatible)
+- `POST /v1/stream`
+
+**Tasks** (durable background work)
+- `GET /v1/tasks`
+- `POST /v1/tasks`
+- `GET /v1/tasks/{id}`
+- `POST /v1/tasks/{id}/cancel`
+
+**Automations** (scheduled recurring work)
+- `GET /v1/automations`
+- `POST /v1/automations`
+- `GET /v1/automations/{id}`
+- `PATCH /v1/automations/{id}`
+- `DELETE /v1/automations/{id}`
+- `POST /v1/automations/{id}/run`
+- `POST /v1/automations/{id}/pause`
+- `POST /v1/automations/{id}/resume`
+- `GET /v1/automations/{id}/runs?limit=20`
+
+**Introspection**
 - `GET /v1/workspace/status`
 - `GET /v1/skills`
 - `GET /v1/apps/mcp/servers`
 - `GET /v1/apps/mcp/tools?server=<optional>`
 
-Resume session request body (all fields optional):
+**Usage** (token/cost aggregation across threads)
+- `GET /v1/usage?since=<rfc3339>&until=<rfc3339>&group_by=<day|model|provider|thread>`
+
+`since` / `until` are inclusive RFC 3339 timestamps and may be omitted (no
+bound). `group_by` defaults to `day`. Buckets are sorted by ascending key.
+Empty time ranges produce empty `buckets` (never a 404). Cost is computed via
+the model→pricing map; turns whose model has no pricing entry contribute
+tokens but `0.0` cost. Added in v0.8.10 (#564).
 
 ```json
 {
-  "model": "deepseek-v4-pro",
-  "mode": "agent"
+  "since": "2026-04-01T00:00:00Z",
+  "until": "2026-04-30T23:59:59Z",
+  "group_by": "day",
+  "totals": {
+    "input_tokens": 12345,
+    "output_tokens": 6789,
+    "cached_tokens": 0,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.012,
+    "turns": 42
+  },
+  "buckets": [
+    {
+      "key": "2026-04-30",
+      "input_tokens": 1234,
+      "output_tokens": 678,
+      "cached_tokens": 0,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.001,
+      "turns": 3
+    }
+  ]
 }
 ```
 
-Resume session response:
+## Runtime data model
 
-```json
-{
-  "thread_id": "thr_1234abcd",
-  "session_id": "sess_5678efgh",
-  "message_count": 24,
-  "summary": "Resumed session 'Refactor plan' (24 messages) into thread thr_1234abcd"
-}
-```
+The runtime uses a durable Thread/Turn/Item lifecycle.
 
-### Compatibility Stream (Single Turn)
+- **ThreadRecord** — `id`, `created_at`, `updated_at`, `model`, `workspace`,
+  `mode`, `task_id`, `coherence_state`, `system_prompt`, `latest_turn_id`,
+  `latest_response_bookmark`, `archived`
+- **TurnRecord** — `id`, `thread_id`, `status` (`queued|in_progress|completed|
+  failed|interrupted|canceled`), timestamps, duration, usage, error summary
+- **TurnItemRecord** — `id`, `turn_id`, `kind` (`user_message|agent_message|
+  tool_call|file_change|command_execution|context_compaction|status|error`),
+  lifecycle `status`, `metadata`
 
-- `POST /v1/stream`
+Events are append-only with a global monotonic `seq` for replay/resume.
 
-Backwards-compatible one-shot SSE wrapper. Internally creates an archived runtime thread+turn.
+### Restart semantics
 
-Request body:
+- If the process restarts while a turn or item is `queued` or `in_progress`,
+  the recovered record is marked `interrupted` with an `"Interrupted by
+  process restart"` error.
+- Task execution performs its own recovery on top of the same persisted
+  thread/turn store.
 
-```json
-{
-  "prompt": "Summarize recent commits",
-  "model": "deepseek-v4-pro",
-  "mode": "agent",
-  "workspace": ".",
-  "allow_shell": false,
-  "trust_mode": false,
-  "auto_approve": true
-}
-```
+### Approval model
 
-Typical SSE events:
-- `turn.started`
-- `message.delta`
-- `tool.started`
-- `tool.progress`
-- `tool.completed`
-- `approval.required`
-- `sandbox.denied`
-- `status`
-- `error`
-- `turn.completed`
-- `done`
+- The `auto_approve` flag applies to the runtime approval bridge and engine
+  tool context. When enabled for a thread/turn/task, approval-required tools
+  are auto-approved in the non-interactive runtime path, shell safety checks
+  run in auto-approved mode, and spawned sub-agents inherit that setting.
+- When omitted, `auto_approve` defaults to `false`.
 
-### Thread Lifecycle
+### SSE event stream
 
-- `POST /v1/threads`
-- `GET /v1/threads?limit=50&include_archived=false`
-- `GET /v1/threads/summary?limit=50&search=<optional>&include_archived=false`
-- `GET /v1/threads/{id}`
-- `PATCH /v1/threads/{id}` (currently supports `{ "archived": true|false }`)
-- `POST /v1/threads/{id}/resume`
-- `POST /v1/threads/{id}/fork`
-
-Create thread request example:
-
-```json
-{
-  "model": "deepseek-v4-pro",
-  "workspace": ".",
-  "mode": "agent",
-  "allow_shell": false,
-  "trust_mode": false,
-  "auto_approve": true,
-  "archived": false,
-  "task_id": "task_1234abcd"
-}
-```
-
-### Turn Lifecycle
-
-- `POST /v1/threads/{id}/turns`
-- `POST /v1/threads/{id}/turns/{turn_id}/steer`
-- `POST /v1/threads/{id}/turns/{turn_id}/interrupt`
-- `POST /v1/threads/{id}/compact`
-
-Notes:
-- Only one active turn is allowed per thread (`409 Conflict` on overlap).
-- `interrupt` returns quickly and marks `turn.interrupt_requested`.
-- Terminal turn status becomes `interrupted` only after cleanup completes.
-- Manual compaction is exposed as a turn with `context_compaction` item lifecycle events.
-- Archiving/unarchiving threads updates persisted thread state and emits `thread.updated`.
-
-### Replayable Events
-
-- `GET /v1/threads/{id}/events?since_seq=<u64>`
-
-Returns SSE replay backlog, then live events for that thread.
-
-SSE payload shape:
+The SSE event payload shape:
 
 ```json
 {
@@ -183,95 +296,71 @@ SSE payload shape:
 }
 ```
 
-Common event names:
-- `thread.started`
-- `thread.forked`
-- `turn.started`
-- `turn.lifecycle`
-- `turn.steered`
-- `turn.interrupt_requested`
-- `turn.completed`
-- `item.started`
-- `item.delta`
-- `item.completed`
-- `item.failed`
-- `item.interrupted`
-- `approval.required`
-- `sandbox.denied`
-- `coherence.state`
+Common event names: `thread.started`, `thread.forked`, `turn.started`,
+`turn.lifecycle`, `turn.steered`, `turn.interrupt_requested`,
+`turn.completed`, `item.started`, `item.delta`, `item.completed`,
+`item.failed`, `item.interrupted`, `approval.required`, `sandbox.denied`,
+`coherence.state`.
 
-Compaction visibility:
-- auto compaction emits `item.started`/`item.completed` with item kind `context_compaction` and `auto=true`
-- manual compaction emits the same with `auto=false`
+## Security boundary
 
-Coherence visibility:
-- `coherence.state` is a machine-readable session-health signal derived from
-  existing capacity and compaction events. The payload includes `state`,
-  `label`, `description`, `reason`, and the updated `thread`.
-- Normal clients should show the `label` or `description`, not internal
-  capacity scores or formulas.
+- **Localhost only**. The server binds to `127.0.0.1` by default. Set
+  `--host 0.0.0.0` only when you have a reverse-proxy / VPN that
+  authenticates. The runtime does not provide user isolation or TLS.
+- **Optional token guard**. `--auth-token` or `DEEPSEEK_RUNTIME_TOKEN`
+  requires a matching bearer token for `/v1/*` routes. This is a local
+  convenience guard, not a replacement for TLS, VPN, or a trusted reverse
+  proxy on public networks.
+- **No provider-token custody**. The server never returns the API key. The
+  `api_key.source` capability field reports `env`, `config`, or `missing` —
+  never the key itself.
+- **No hosted relay**. The app-server is a local process under the user's
+  control. There is no cloud component.
+- **Capability responses** never leak secrets, file contents, or session
+  message bodies. They report *metadata*: presence, counts, status flags.
 
-### Background Tasks
+### CORS allow-list
 
-- `GET /v1/tasks`
-- `POST /v1/tasks`
-- `GET /v1/tasks/{id}`
-- `POST /v1/tasks/{id}/cancel`
+The runtime API ships with a built-in dev-origin allow-list:
+`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:1420`,
+`http://127.0.0.1:1420`, `tauri://localhost`. To add additional origins (e.g.
+when developing a UI on Vite's default `:5173`), use any of:
 
-Tasks execute through the same runtime thread/turn pipeline and include:
-- linked `thread_id` / `turn_id`
-- runtime event count
-- timeline + tool summaries + artifact references
-- subordinate checklist state from `checklist_*` / legacy `todo_*` tools
-- structured verification gates from `task_gate_run` / completed `task_shell_wait`
-- PR attempt metadata and patch artifacts
-- guarded GitHub write events
+- CLI flag (repeatable): `deepseek serve --http --cors-origin http://localhost:5173`
+- Env var (comma-separated): `DEEPSEEK_CORS_ORIGINS="http://localhost:5173,http://localhost:8080"`
+- Config (`~/.deepseek/config.toml`):
+  ```toml
+  [runtime_api]
+  cors_origins = ["http://localhost:5173"]
+  ```
 
-Durable tasks are the model-visible work object. Checklist/todo state is progress
-inside the active task/thread, not a parallel task system.
+User-supplied origins **stack on top of** the built-in defaults; they do not
+replace them. Wildcard origins are not supported — the explicit allow-list
+model is preserved. Added in v0.8.10 (#561).
 
-Task-aware model-visible tools:
-- `task_create`, `task_list`, `task_read`, `task_cancel`
-- `task_gate_run`
-- `task_shell_start`, `task_shell_wait`
-- `pr_attempt_record`, `pr_attempt_list`, `pr_attempt_read`, `pr_attempt_preflight`
-- `github_issue_context`, `github_pr_context`, `github_comment`, `github_close_issue`
+## Session lifecycle (native UI supervision)
 
-### Automations
+| Operation | Endpoint |
+|---|---|
+| List sessions | `GET /v1/sessions` |
+| Get session | `GET /v1/sessions/{id}` |
+| Delete session | `DELETE /v1/sessions/{id}` |
+| Resume into thread | `POST /v1/sessions/{id}/resume-thread` |
+| Create thread | `POST /v1/threads` |
+| List threads | `GET /v1/threads` |
+| Attach to events | `GET /v1/threads/{id}/events?since_seq=0` |
+| Send message | `POST /v1/threads/{id}/turns` |
+| Steer | `POST /v1/threads/{id}/turns/{turn_id}/steer` |
+| Interrupt | `POST /v1/threads/{id}/turns/{turn_id}/interrupt` |
+| Compact | `POST /v1/threads/{id}/compact` |
 
-- `GET /v1/automations`
-- `POST /v1/automations`
-- `GET /v1/automations/{id}`
-- `PATCH /v1/automations/{id}`
-- `DELETE /v1/automations/{id}`
-- `POST /v1/automations/{id}/run`
-- `POST /v1/automations/{id}/pause`
-- `POST /v1/automations/{id}/resume`
-- `GET /v1/automations/{id}/runs?limit=20`
+## Compatibility tests
 
-RRULE support is intentionally constrained to:
-- hourly: `FREQ=HOURLY;INTERVAL=<hours>[;BYDAY=MO,TU,...]`
-- weekly: `FREQ=WEEKLY;BYDAY=...;BYHOUR=<0-23>;BYMINUTE=<0-59>`
+Contract snapshots live in `crates/protocol/tests/`. Run:
 
-Automations are persisted under `~/.deepseek/automations` (override with `DEEPSEEK_AUTOMATIONS_DIR`).
-Each run is executed as a normal background task and links to task/thread/turn ids.
+```bash
+cargo test -p deepseek-protocol --test parity_protocol --locked
+```
 
-The same automation manager is exposed to the model through `automation_*`
-tools. Create/update/delete/run operations require approval; `automation_run`
-and scheduled runs enqueue ordinary durable tasks rather than using a separate
-execution path.
-
-## Persistence
-
-Runtime store (default under task data root):
-- `runtime/threads/*.json`
-- `runtime/turns/*.json`
-- `runtime/items/*.json`
-- `runtime/events/{thread_id}.jsonl`
-- `runtime/state.json` (monotonic sequence)
-
-Task store:
-- default `~/.deepseek/tasks` (override with `DEEPSEEK_TASKS_DIR`)
-
-Both runtime and task state are restart-aware.
-Queued or in-progress runtime turns reload as `interrupted`; task execution performs its own recovery on top of the same persisted thread/turn store.
+This validates that the app-server's event schema hasn't drifted from the
+documented contract. CI runs this on every push to `main` and on release tags.

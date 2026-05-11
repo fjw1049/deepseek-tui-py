@@ -18,31 +18,67 @@ use crate::models::{
 };
 
 /// Configuration for conversation compaction behavior.
+///
+/// v0.8.11 simplified this from the prior token-OR-message-count trigger
+/// to a token-only trigger gated by an absolute floor. The
+/// `message_threshold` field was removed: its only purpose was to fire
+/// compaction on long sessions of small messages, which is exactly the
+/// case where rewriting the V4 prefix cache is least valuable. Token
+/// budget is the right signal; message count was a 128K-era heuristic.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompactionConfig {
     pub enabled: bool,
     pub token_threshold: usize,
-    pub message_threshold: usize,
     pub model: String,
     pub cache_summary: bool,
+    /// Hard floor — `should_compact` returns `false` when total session
+    /// tokens fall below this number, regardless of `enabled` or
+    /// `token_threshold`. Defaults to [`MINIMUM_AUTO_COMPACTION_TOKENS`]
+    /// (500K) for v0.8.11+. Tests that want to exercise the threshold
+    /// logic at small fixture sizes can set this to `0` to disable the
+    /// floor.
+    pub auto_floor_tokens: usize,
 }
 
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            // ON BY DEFAULT since v0.8.6 (#402 P0 survivability).
-            // Long-running sessions need automatic compaction to stay
-            // within the model's context budget. Users who prefer the
-            // previous behaviour can opt out via `auto_compact = false`
-            // in settings or `compaction.enabled = false` in config.
+            // ON BY DEFAULT since v0.8.6 (#402 P0 survivability) — but the
+            // engine-level `auto_compact` setting was flipped OFF in v0.8.11
+            // (#665) so this default is mostly a fallback for code paths
+            // that build a `CompactionConfig` without going through
+            // `compaction_threshold_for_model_and_effort`. Real per-model
+            // values are still derived through that helper.
             enabled: true,
-            token_threshold: 50000,
-            message_threshold: 50,
+            // v0.8.11: 50K was a 128K-era leftover that biased every
+            // unconfigured caller toward "compact almost immediately on V4."
+            // Bumped to 800K (80% of V4's 1M window) so the dead-code
+            // default no longer lies. Real call sites override this via
+            // `compaction_threshold_for_model_and_effort`.
+            token_threshold: 800_000,
             model: DEFAULT_TEXT_MODEL.to_string(),
             cache_summary: true,
+            auto_floor_tokens: MINIMUM_AUTO_COMPACTION_TOKENS,
         }
     }
 }
+
+/// Hard floor for automatic compaction in v0.8.11+.
+///
+/// Below this token count, `should_compact` returns `false` regardless of
+/// `enabled` or `token_threshold`. The point of the floor is V4 prefix-cache
+/// economics: compaction rewrites the stable prefix, which destroys the KV
+/// cache. At low token counts the prefix cache is healthy and compaction's
+/// cost (full re-prefill at miss prices) dwarfs its benefit (a tiny budget
+/// reclaim). Above the floor compaction can still be net-positive — cache
+/// is already pressured, the prefix has drifted, and freeing budget matters.
+///
+/// Manual `/compact` slash command bypasses this floor with explicit user
+/// agency.
+///
+/// Constant rather than configurable for v0.8.11. If anyone needs to dial
+/// it (smaller models, opinionated workflows), we can add a setting later.
+pub const MINIMUM_AUTO_COMPACTION_TOKENS: usize = 500_000;
 
 pub const KEEP_RECENT_MESSAGES: usize = 4;
 const RECENT_WORKING_SET_WINDOW: usize = 12;
@@ -60,6 +96,7 @@ const LARGE_CONTEXT_SUMMARY_INPUT_HEAD_CHARS: usize = 72_000;
 const LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS: usize = 36_000;
 const LARGE_CONTEXT_SUMMARY_MAX_TOKENS: u32 = 2_048;
 const LARGE_CONTEXT_WINDOW_TOKENS: u32 = 500_000;
+const CACHE_ALIGNED_SUMMARY_CONTEXT_BUDGET_PERCENT: usize = 85;
 
 #[derive(Debug, Clone, Copy)]
 struct SummaryInputLimits {
@@ -584,6 +621,21 @@ pub fn should_compact(
         return false;
     }
 
+    // v0.8.11: hard floor enforcement. Below the floor (default 500K tokens
+    // — see `MINIMUM_AUTO_COMPACTION_TOKENS`), automatic compaction is
+    // refused because rewriting the prefix kills V4's prefix cache for
+    // little budget recovery. Manual `/compact` and the `compact_now` tool
+    // bypass this floor by going through different code paths.
+    if config.auto_floor_tokens > 0 {
+        let total_session_tokens: usize = messages
+            .iter()
+            .map(|m| estimate_tokens_for_message(m, false))
+            .sum();
+        if total_session_tokens < config.auto_floor_tokens {
+            return false;
+        }
+    }
+
     let plan = plan_compaction(
         messages,
         workspace,
@@ -596,7 +648,6 @@ pub fn should_compact(
         .iter()
         .map(|&idx| estimate_tokens_for_message(&messages[idx], false))
         .sum();
-    let pinned_count = plan.pinned_indices.len();
 
     let token_estimate: usize = plan
         .summarize_indices
@@ -607,21 +658,19 @@ pub fn should_compact(
 
     // Pinned messages consume part of the budget, so compact earlier when needed.
     let effective_token_threshold = config.token_threshold.saturating_sub(pinned_tokens);
-    let effective_message_threshold = config.message_threshold.saturating_sub(pinned_count);
 
-    // Always compact if we exceed the token threshold, even with few unpinned messages.
-    if token_estimate > effective_token_threshold && effective_token_threshold > 0 {
-        return true;
+    // Token-only trigger (v0.8.11): the prior message-count branch was a
+    // 128K-era heuristic that fired compaction on long chats of small
+    // messages — exactly the case where rewriting the V4 prefix cache is
+    // most wasteful. Token budget is the only signal that maps to actual
+    // model context pressure.
+    if effective_token_threshold == 0 {
+        return message_count >= MIN_SUMMARIZE_MESSAGES;
     }
-
-    let enough_unpinned = message_count >= MIN_SUMMARIZE_MESSAGES
-        || effective_token_threshold == 0
-        || effective_message_threshold == 0;
-    if !enough_unpinned {
+    if message_count < MIN_SUMMARIZE_MESSAGES {
         return false;
     }
-
-    token_estimate > effective_token_threshold || message_count > effective_message_threshold
+    token_estimate > effective_token_threshold
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> &str {
@@ -648,6 +697,134 @@ fn tail_chars(text: &str, max_chars: usize) -> String {
         .nth(start_char)
         .map_or(0, |(idx, _)| idx);
     text[start_idx..].to_string()
+}
+
+#[derive(Debug, Clone)]
+struct ToolUseInfo {
+    name: String,
+    key: String,
+    args_preview: String,
+}
+
+fn tool_use_key(name: &str, input: &serde_json::Value) -> String {
+    format!(
+        "{name}:{}",
+        serde_json::to_string(input).unwrap_or_else(|_| input.to_string())
+    )
+}
+
+fn tool_args_preview(input: &serde_json::Value) -> String {
+    let raw = serde_json::to_string(input).unwrap_or_else(|_| input.to_string());
+    truncate_chars(&raw, 120).to_string()
+}
+
+fn collect_tool_uses(messages: &[Message]) -> HashMap<String, ToolUseInfo> {
+    let mut tool_uses = HashMap::new();
+    for message in messages {
+        for block in &message.content {
+            if let ContentBlock::ToolUse {
+                id, name, input, ..
+            } = block
+            {
+                tool_uses.insert(
+                    id.clone(),
+                    ToolUseInfo {
+                        name: name.clone(),
+                        key: tool_use_key(name, input),
+                        args_preview: tool_args_preview(input),
+                    },
+                );
+            }
+        }
+    }
+    tool_uses
+}
+
+struct ToolResultPruneCandidate {
+    message_idx: usize,
+    block_idx: usize,
+    key: String,
+    tool_name: String,
+    args_preview: String,
+    original_len: usize,
+}
+
+/// Mechanically prune old verbose tool results before paying for an LLM summary.
+///
+/// The most recent `protected_window` messages stay byte-for-byte intact. Older
+/// duplicate tool results keep the freshest full body and replace earlier
+/// copies with one-line summaries; non-duplicate old results are summarized only
+/// when they exceed the normal summary snippet size.
+pub fn prune_tool_results(messages: &mut [Message], protected_window: usize) -> usize {
+    let cutoff = messages.len().saturating_sub(protected_window);
+    if cutoff == 0 {
+        return 0;
+    }
+
+    let tool_uses = collect_tool_uses(messages);
+    let mut candidates = Vec::new();
+    let mut latest_by_key: HashMap<String, usize> = HashMap::new();
+    let mut count_by_key: HashMap<String, usize> = HashMap::new();
+
+    for (message_idx, message) in messages.iter().take(cutoff).enumerate() {
+        for (block_idx, block) in message.content.iter().enumerate() {
+            let ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } = block
+            else {
+                continue;
+            };
+            let Some(info) = tool_uses.get(tool_use_id) else {
+                continue;
+            };
+            latest_by_key.insert(info.key.clone(), message_idx);
+            *count_by_key.entry(info.key.clone()).or_insert(0) += 1;
+            candidates.push(ToolResultPruneCandidate {
+                message_idx,
+                block_idx,
+                key: info.key.clone(),
+                tool_name: info.name.clone(),
+                args_preview: info.args_preview.clone(),
+                original_len: content.len(),
+            });
+        }
+    }
+
+    let mut bytes_saved = 0usize;
+    for candidate in candidates {
+        let duplicate_count = count_by_key.get(&candidate.key).copied().unwrap_or(0);
+        let is_latest_duplicate = duplicate_count > 1
+            && latest_by_key.get(&candidate.key) == Some(&candidate.message_idx);
+        if is_latest_duplicate {
+            continue;
+        }
+        if duplicate_count <= 1 && candidate.original_len <= SUMMARY_TOOL_RESULT_SNIPPET_CHARS {
+            continue;
+        }
+
+        let summary = format!(
+            "[{}] tool result pruned ({} bytes; args: {})",
+            candidate.tool_name, candidate.original_len, candidate.args_preview
+        );
+        if summary.len() >= candidate.original_len {
+            continue;
+        }
+
+        if let ContentBlock::ToolResult {
+            content,
+            content_blocks,
+            ..
+        } = &mut messages[candidate.message_idx].content[candidate.block_idx]
+        {
+            bytes_saved = bytes_saved.saturating_add(content.len().saturating_sub(summary.len()));
+            *content = summary;
+            *content_blocks = None;
+        }
+    }
+
+    bytes_saved
 }
 
 /// Result of a compaction operation with metadata.
@@ -698,6 +875,39 @@ pub async fn compact_messages_safe(
     const MAX_RETRIES: u32 = 3;
     const BASE_DELAY_MS: u64 = 1000;
 
+    let mut pruned_messages = messages.to_vec();
+    let pruned_bytes = prune_tool_results(&mut pruned_messages, KEEP_RECENT_MESSAGES);
+    let compaction_input: &[Message] = if pruned_bytes > 0 {
+        logging::info(format!(
+            "Local tool-result prune saved {pruned_bytes} bytes before LLM compaction"
+        ));
+        let was_over_threshold = should_compact(
+            messages,
+            config,
+            workspace,
+            external_pins,
+            external_working_set_paths,
+        );
+        let now_under_threshold = !should_compact(
+            &pruned_messages,
+            config,
+            workspace,
+            external_pins,
+            external_working_set_paths,
+        );
+        if was_over_threshold && now_under_threshold {
+            return Ok(CompactionResult {
+                messages: pruned_messages,
+                summary_prompt: None,
+                removed_messages: Vec::new(),
+                retries_used: 0,
+            });
+        }
+        &pruned_messages
+    } else {
+        messages
+    };
+
     let mut last_error: Option<anyhow::Error> = None;
 
     for attempt in 0..MAX_RETRIES {
@@ -709,7 +919,7 @@ pub async fn compact_messages_safe(
 
         match compact_messages(
             client,
-            messages,
+            compaction_input,
             config,
             workspace,
             external_pins,
@@ -737,6 +947,44 @@ pub async fn compact_messages_safe(
 
     Err(last_error
         .unwrap_or_else(|| anyhow::anyhow!("Compaction failed after {MAX_RETRIES} retries")))
+}
+
+fn read_workspace_anchors(workspace: Option<&Path>) -> Vec<String> {
+    let Some(ws) = workspace else {
+        return Vec::new();
+    };
+
+    let anchors_path = ws.join(".deepseek").join("anchors.md");
+    let Ok(content) = std::fs::read_to_string(anchors_path) else {
+        return Vec::new();
+    };
+
+    content
+        .split("\n---\n")
+        .map(str::trim)
+        .filter(|anchor| !anchor.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn anchor_summary_section(workspace: Option<&Path>) -> String {
+    let anchors = read_workspace_anchors(workspace);
+    if anchors.is_empty() {
+        return String::new();
+    }
+
+    let mut section = String::from(
+        "## Pinned Facts (User Anchors)\n\n\
+         The following facts were explicitly anchored by the user with `/anchor`. \
+         Preserve them across compaction cycles.\n\n",
+    );
+
+    for anchor in anchors {
+        let _ = writeln!(section, "- {anchor}");
+    }
+
+    section.push_str("\n---\n\n");
+    section
 }
 
 pub async fn compact_messages(
@@ -774,11 +1022,14 @@ pub async fn compact_messages(
     // Extract workflow context (files touched, tasks in progress, etc.)
     let workflow_context = extract_workflow_context(&to_summarize, workspace);
 
+    let anchors_section = anchor_summary_section(workspace);
+
     // Build new message list with enhanced summary as system block
     let summary_block = SystemBlock {
         block_type: "text".to_string(),
         text: format!(
-            "## 📋 Conversation Summary (Auto-Generated)\n\n\
+            "{anchors_section}\
+             ## 📋 Conversation Summary (Auto-Generated)\n\n\
              {summary}\n\n\
              ---\n\n\
              ## 🔍 Workflow Context\n\n\
@@ -819,6 +1070,183 @@ async fn create_summary(
     model: &str,
 ) -> Result<String> {
     let limits = summary_input_limits_for_model(model);
+    let used_cache_aligned = should_use_cache_aligned_summary(model, messages);
+    let request = if used_cache_aligned {
+        build_cache_aligned_summary_request(model, messages, limits)
+    } else {
+        build_formatted_summary_request(model, messages, limits)
+    };
+
+    let response = client.create_message(request).await?;
+    // Compaction summary calls are billed by DeepSeek; route the
+    // tokens through the side-channel so the dashboard total
+    // matches the website (#526).
+    crate::cost_status::report(&response.model, &response.usage);
+
+    // #584: emit one debug-level event per summary call so the
+    // V4 cache-aligned win is observable post-deploy without
+    // adding UI surface. The event is emitted with
+    // `target = "compaction"`, so the filter is
+    // `RUST_LOG=compaction=debug` (the module-path form
+    // `deepseek_tui::compaction=debug` does NOT match — `EnvFilter`
+    // matches the explicit target string when one is set).
+    log_summary_cache_telemetry(used_cache_aligned, &response.usage);
+
+    // Extract text from response
+    let summary = response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(summary)
+}
+
+/// Cache-hit percentage for a compaction summary call.
+///
+/// Denominator is `input_tokens` (the total prompt size), not
+/// `cache_hit + cache_miss`. Some providers populate
+/// `prompt_cache_hit_tokens` but not `prompt_cache_miss_tokens` — using
+/// the sum as the denominator there reports an inflated 100% even when
+/// most of the prompt was uncached. Anchoring on `input_tokens` matches
+/// how the rest of the codebase (cost reporting, `/cache`) infers
+/// missing miss counts. (#584)
+fn summary_cache_hit_percent(cache_hit: u32, input_tokens: u32) -> f64 {
+    if input_tokens > 0 {
+        (f64::from(cache_hit) * 100.0) / f64::from(input_tokens)
+    } else {
+        0.0
+    }
+}
+
+/// Emit one `tracing::debug!` event per compaction summary call so the
+/// path choice (cache-aligned vs fallback) and the resulting cache-hit
+/// rate are observable. Both raw token counts and the percentage are
+/// included; on providers that don't return cache-token fields the
+/// counts are reported as `0` and the percentage as `0.0`. (#584)
+fn log_summary_cache_telemetry(used_cache_aligned: bool, usage: &crate::models::Usage) {
+    let path = if used_cache_aligned {
+        "cache_aligned"
+    } else {
+        "fallback"
+    };
+    let cache_hit = usage.prompt_cache_hit_tokens.unwrap_or(0);
+    let cache_miss = usage.prompt_cache_miss_tokens.unwrap_or(0);
+    let cache_hit_pct = summary_cache_hit_percent(cache_hit, usage.input_tokens);
+    tracing::debug!(
+        target: "compaction",
+        "compaction summary call: path={} prompt_tokens={} cache_hit_tokens={} cache_miss_tokens={} cache_hit_pct={:.1}",
+        path,
+        usage.input_tokens,
+        cache_hit,
+        cache_miss,
+        cache_hit_pct,
+    );
+}
+
+/// Decide whether to use the cache-aligned summary path
+/// ([`build_cache_aligned_summary_request`]) or the fallback
+/// ([`build_formatted_summary_request`]). Returns `true` when both
+/// gates hold:
+///
+/// 1. The model has a known large context window
+///    (≥ `LARGE_CONTEXT_WINDOW_TOKENS`, currently V4-scale).
+/// 2. Replaying the message prefix plus a ~512-token instruction
+///    still fits within `CACHE_ALIGNED_SUMMARY_CONTEXT_BUDGET_PERCENT`
+///    of that budget.
+///
+/// ## Why the two paths produce slightly different prompts (#584)
+///
+/// The two summary requests are *intentionally* framed differently:
+///
+/// - **Cache-aligned** replays the original `messages` verbatim
+///   with `system: None` and appends the summary instruction as
+///   the final `user` turn. The model sees the conversation as if
+///   it were its own history. This is what lets the V4 prefix cache
+///   hit on the bulk of the request (#572).
+/// - **Fallback** reformats the conversation into a flat
+///   `User:/Assistant:` transcript inside a single `user` message
+///   and adds a "You are a helpful assistant that creates concise
+///   conversation summaries." system prompt. The model sees a
+///   transcript of someone else's conversation.
+///
+/// The empirical bar is that V4 produces equivalent summaries
+/// either way; the post-#572 review noted this fork is worth
+/// documenting but not yet worth unifying. The fallback's
+/// external-transcript framing is also more conservative for the
+/// older / smaller models the cache-aligned path explicitly
+/// excludes, so dropping the system prompt would risk regressing
+/// those models without a corresponding gain. If we ever want to
+/// unify, land it in a separate PR backed by an A/B summary-quality
+/// evaluation rather than as a drive-by cleanup.
+///
+/// `create_summary` emits a `tracing::debug!` event under
+/// `target = "compaction"` after each call so the path choice and
+/// cache-hit rate are observable post-deploy without UI surface.
+fn should_use_cache_aligned_summary(model: &str, messages: &[Message]) -> bool {
+    let Some(window) = context_window_for_model(model) else {
+        return false;
+    };
+    if window < LARGE_CONTEXT_WINDOW_TOKENS {
+        return false;
+    }
+
+    let budget = usize::try_from(window).unwrap_or(usize::MAX)
+        * CACHE_ALIGNED_SUMMARY_CONTEXT_BUDGET_PERCENT
+        / 100;
+    let summary_prompt_tokens = 512usize;
+    estimate_tokens(messages).saturating_add(summary_prompt_tokens) <= budget
+}
+
+fn summary_instruction(word_limit: usize) -> String {
+    format!(
+        "Summarize the conversation above in a concise but comprehensive way. \
+         Preserve key information, decisions made, exact file paths, commands, \
+         errors, and tool-result facts needed to continue the work. \
+         Tool outputs may be abbreviated only when they are repetitive. \
+         Keep it under {word_limit} words."
+    )
+}
+
+fn build_cache_aligned_summary_request(
+    model: &str,
+    messages: &[Message],
+    limits: SummaryInputLimits,
+) -> MessageRequest {
+    let mut request_messages = messages.to_vec();
+    request_messages.push(Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::Text {
+            text: summary_instruction(limits.word_limit),
+            cache_control: None,
+        }],
+    });
+
+    MessageRequest {
+        model: model.to_string(),
+        messages: request_messages,
+        max_tokens: limits.max_tokens,
+        system: None,
+        tools: None,
+        tool_choice: None,
+        metadata: None,
+        thinking: None,
+        reasoning_effort: None,
+        stream: Some(false),
+        temperature: Some(0.3),
+        top_p: None,
+    }
+}
+
+fn build_formatted_summary_request(
+    model: &str,
+    messages: &[Message],
+    limits: SummaryInputLimits,
+) -> MessageRequest {
     // Format messages for summarization
     let mut conversation_text = String::new();
     for msg in messages {
@@ -861,18 +1289,14 @@ async fn create_summary(
             format!("{head}\n\n[... {omitted} characters omitted before summary ...]\n\n{tail}");
     }
 
-    let request = MessageRequest {
+    MessageRequest {
         model: model.to_string(),
         messages: vec![Message {
             role: "user".to_string(),
             content: vec![ContentBlock::Text {
                 text: format!(
-                    "Summarize the following conversation in a concise but comprehensive way. \
-                     Preserve key information, decisions made, exact file paths, commands, \
-                     errors, and tool-result facts needed to continue the work. \
-                     Tool outputs may be abbreviated only when they are repetitive. \
-                     Keep it under {} words.\n\n---\n\n{conversation_text}",
-                    limits.word_limit
+                    "{}\n\n---\n\n{conversation_text}",
+                    summary_instruction(limits.word_limit)
                 ),
                 cache_control: None,
             }],
@@ -889,22 +1313,7 @@ async fn create_summary(
         stream: Some(false),
         temperature: Some(0.3),
         top_p: None,
-    };
-
-    let response = client.create_message(request).await?;
-
-    // Extract text from response
-    let summary = response
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text, .. } => Some(text.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    Ok(summary)
+    }
 }
 
 /// Extract workflow context from messages (files touched, tasks, etc.)
@@ -1062,6 +1471,57 @@ mod tests {
         }
     }
 
+    fn tool_use(id: &str, name: &str, input: serde_json::Value) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            content: vec![ContentBlock::ToolUse {
+                id: id.to_string(),
+                name: name.to_string(),
+                input,
+                caller: None,
+            }],
+        }
+    }
+
+    fn tool_result(id: &str, content: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: id.to_string(),
+                content: content.to_string(),
+                is_error: None,
+                content_blocks: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn anchor_summary_section_is_empty_without_workspace_or_file() {
+        assert!(anchor_summary_section(None).is_empty());
+
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        assert!(anchor_summary_section(Some(tmpdir.path())).is_empty());
+    }
+
+    #[test]
+    fn anchor_summary_section_parses_anchor_file_into_bullets() {
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let deepseek_dir = tmpdir.path().join(".deepseek");
+        std::fs::create_dir_all(&deepseek_dir).unwrap();
+        std::fs::write(
+            deepseek_dir.join("anchors.md"),
+            "\n---\nDo not touch .ssh\n---\nStatus field is unreliable\n",
+        )
+        .unwrap();
+
+        let section = anchor_summary_section(Some(tmpdir.path()));
+
+        assert!(section.contains("## Pinned Facts (User Anchors)"));
+        assert!(section.contains("- Do not touch .ssh\n"));
+        assert!(section.contains("- Status field is unreliable\n"));
+        assert!(!section.contains("\n---\nDo not touch"));
+    }
+
     #[test]
     fn truncate_chars_respects_unicode_boundaries() {
         let text = "abc😀é";
@@ -1070,6 +1530,73 @@ mod tests {
         assert_eq!(truncate_chars(text, 3), "abc");
         assert_eq!(truncate_chars(text, 4), "abc😀");
         assert_eq!(truncate_chars(text, 5), "abc😀é");
+    }
+
+    #[test]
+    fn prune_tool_results_summarizes_old_verbose_outputs() {
+        let verbose = "x".repeat(SUMMARY_TOOL_RESULT_SNIPPET_CHARS + 80);
+        let mut messages = vec![
+            tool_use("call-1", "read_file", json!({"path": "Cargo.toml"})),
+            tool_result("call-1", &verbose),
+            msg("user", "recent question"),
+            msg("assistant", "recent answer"),
+        ];
+
+        let saved = prune_tool_results(&mut messages, 2);
+
+        assert!(saved > 0);
+        let ContentBlock::ToolResult { content, .. } = &messages[1].content[0] else {
+            panic!("expected tool result");
+        };
+        assert!(content.contains("[read_file] tool result pruned"));
+        assert!(content.contains("Cargo.toml"));
+        assert!(content.len() < verbose.len());
+    }
+
+    #[test]
+    fn prune_tool_results_preserves_protected_tail() {
+        let verbose = "x".repeat(SUMMARY_TOOL_RESULT_SNIPPET_CHARS + 80);
+        let mut messages = vec![
+            msg("user", "older context"),
+            tool_use("call-1", "read_file", json!({"path": "Cargo.toml"})),
+            tool_result("call-1", &verbose),
+        ];
+
+        let saved = prune_tool_results(&mut messages, 2);
+
+        assert_eq!(saved, 0);
+        let ContentBlock::ToolResult { content, .. } = &messages[2].content[0] else {
+            panic!("expected tool result");
+        };
+        assert_eq!(content, &verbose);
+    }
+
+    #[test]
+    fn prune_tool_results_dedupes_identical_reads_but_keeps_latest_full_body() {
+        let first = "first ".repeat(80);
+        let second = "second ".repeat(80);
+        let mut messages = vec![
+            tool_use("call-1", "read_file", json!({"path": "Cargo.toml"})),
+            tool_result("call-1", &first),
+            tool_use("call-2", "read_file", json!({"path": "Cargo.toml"})),
+            tool_result("call-2", &second),
+            msg("user", "tail"),
+        ];
+
+        let saved = prune_tool_results(&mut messages, 1);
+
+        assert!(saved > 0);
+        let ContentBlock::ToolResult { content: older, .. } = &messages[1].content[0] else {
+            panic!("expected older tool result");
+        };
+        assert!(older.contains("tool result pruned"));
+        let ContentBlock::ToolResult {
+            content: latest, ..
+        } = &messages[3].content[0]
+        else {
+            panic!("expected latest tool result");
+        };
+        assert_eq!(latest, &second);
     }
 
     #[test]
@@ -1107,6 +1634,64 @@ mod tests {
         assert!(v4.input_max_chars > legacy.input_max_chars);
         assert!(v4.tool_result_snippet_chars > legacy.tool_result_snippet_chars);
         assert!(v4.max_tokens > legacy.max_tokens);
+    }
+
+    #[test]
+    fn cache_aligned_summary_is_used_for_v4_scale_contexts() {
+        let messages = vec![msg("user", "Please edit crates/tui/src/compaction.rs")];
+
+        assert!(should_use_cache_aligned_summary(
+            "deepseek-v4-flash",
+            &messages
+        ));
+        assert!(!should_use_cache_aligned_summary(
+            "deepseek-v3.2-128k",
+            &messages
+        ));
+    }
+
+    /// #584: the summary cache-hit percentage must be computed against
+    /// `input_tokens`, not `cache_hit + cache_miss`. Providers that
+    /// only populate `prompt_cache_hit_tokens` (and leave the miss
+    /// field at `None`) would otherwise be reported as a flat 100%
+    /// hit rate even when most of the prompt was uncached.
+    #[test]
+    fn summary_cache_hit_percent_uses_input_tokens_as_denominator() {
+        // Both fields populated and consistent.
+        assert!((summary_cache_hit_percent(800, 1000) - 80.0).abs() < f64::EPSILON);
+        // No cache hit at all.
+        assert!((summary_cache_hit_percent(0, 1000) - 0.0).abs() < f64::EPSILON);
+        // Full cache hit.
+        assert!((summary_cache_hit_percent(1000, 1000) - 100.0).abs() < f64::EPSILON);
+        // Partial-telemetry guard: provider reports `cache_hit` only,
+        // miss is unknown (treated as 0 by the caller). Naive
+        // `hit / (hit + miss)` would have reported 100%; against
+        // `input_tokens` the answer is the real share.
+        assert!((summary_cache_hit_percent(200, 1000) - 20.0).abs() < f64::EPSILON);
+        // Defensive: zero `input_tokens` short-circuits without a
+        // divide-by-zero.
+        assert!((summary_cache_hit_percent(0, 0) - 0.0).abs() < f64::EPSILON);
+        assert!((summary_cache_hit_percent(50, 0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cache_aligned_summary_request_preserves_message_prefix() {
+        let messages = vec![
+            msg("user", "Please edit crates/tui/src/compaction.rs"),
+            msg("assistant", "I will inspect the file."),
+        ];
+        let limits = summary_input_limits_for_model("deepseek-v4-pro");
+        let request = build_cache_aligned_summary_request("deepseek-v4-pro", &messages, limits);
+
+        assert_eq!(request.system, None);
+        assert_eq!(&request.messages[..messages.len()], &messages[..]);
+        assert_eq!(request.messages.len(), messages.len() + 1);
+        let last = request.messages.last().expect("summary instruction");
+        assert_eq!(last.role, "user");
+        assert!(matches!(
+            &last.content[..],
+            [ContentBlock::Text { text, .. }] if text.contains("conversation above")
+        ));
     }
 
     #[test]
@@ -1222,17 +1807,22 @@ mod tests {
         assert!(!should_compact(&messages, &config, None, None, None));
     }
 
+    /// v0.8.11: message-count is no longer a compaction trigger. Long
+    /// chats of small messages stay uncompacted because rewriting the V4
+    /// prefix cache for a tiny budget reclaim is net-negative. Only token
+    /// pressure (and the explicit `/compact` slash command) trigger
+    /// compaction.
     #[test]
-    fn should_compact_respects_message_threshold() {
+    fn message_count_no_longer_triggers_compaction() {
         let config = CompactionConfig {
             enabled: true,
-            token_threshold: 1_000_000, // Very high
-            message_threshold: 5,
+            token_threshold: 1_000_000,
+            auto_floor_tokens: 0,
             ..Default::default()
         };
 
-        // Under threshold
-        let few_messages: Vec<Message> = (0..4)
+        // 200 tiny messages, well above the prior message threshold.
+        let many_messages: Vec<Message> = (0..200)
             .map(|_| Message {
                 role: "user".to_string(),
                 content: vec![ContentBlock::Text {
@@ -1241,19 +1831,9 @@ mod tests {
                 }],
             })
             .collect();
-        assert!(!should_compact(&few_messages, &config, None, None, None));
-
-        // Over threshold
-        let many_messages: Vec<Message> = (0..10)
-            .map(|_| Message {
-                role: "user".to_string(),
-                content: vec![ContentBlock::Text {
-                    text: "x".to_string(),
-                    cache_control: None,
-                }],
-            })
-            .collect();
-        assert!(should_compact(&many_messages, &config, None, None, None));
+        // Token total stays minuscule so the token threshold is not hit;
+        // without the prior message-count trigger, no compaction.
+        assert!(!should_compact(&many_messages, &config, None, None, None));
     }
 
     #[test]
@@ -1351,7 +1931,6 @@ mod tests {
         let config = CompactionConfig {
             enabled: true,
             token_threshold: 10,
-            message_threshold: 2,
             ..Default::default()
         };
 
@@ -1362,44 +1941,12 @@ mod tests {
         assert!(!should_compact(&messages, &config, None, None, None));
     }
 
-    #[test]
-    fn should_compact_counts_only_unpinned_messages() {
-        let config = CompactionConfig {
-            enabled: true,
-            token_threshold: 1_000_000,
-            message_threshold: 5,
-            ..Default::default()
-        };
-
-        let mut messages: Vec<Message> = (0..7)
-            .map(|i| msg("user", &format!("noise message {i}")))
-            .collect();
-        messages.push(msg("user", "Focus on src/core/engine.rs"));
-        messages.extend((0..4).map(|i| msg("assistant", &format!("recent {i}"))));
-
-        assert!(should_compact(&messages, &config, None, None, None));
-    }
-
-    #[test]
-    fn should_compact_when_pins_consume_budget() {
-        let config = CompactionConfig {
-            enabled: true,
-            token_threshold: 50,
-            message_threshold: 50,
-            ..Default::default()
-        };
-
-        let mut messages = vec![msg("user", "noise 0"), msg("assistant", "noise 1")];
-        messages.extend((0..4).map(|_| {
-            msg(
-                "assistant",
-                &format!("{} src/core/engine.rs", "x".repeat(400)),
-            )
-        }));
-
-        // Pinned recent messages exceed the token budget, so unpinned noise should trigger compaction.
-        assert!(should_compact(&messages, &config, None, None, None));
-    }
+    // v0.8.11: removed `should_compact_counts_only_unpinned_messages` and
+    // `should_compact_when_pins_consume_budget` — both tested the
+    // message-count compaction trigger that v0.8.11 deleted. The
+    // pinned-tokens accounting they exercised is still tested by
+    // `should_compact_ignores_fully_pinned_context` below; the rest of
+    // their setup has no contemporary contract to pin.
 
     #[test]
     fn enforce_tool_call_pairs_removes_orphaned_tool_call() {
@@ -1655,8 +2202,8 @@ mod tests {
     fn test_should_compact_token_threshold_triggers() {
         let config = CompactionConfig {
             enabled: true,
-            token_threshold: 100,    // Low threshold for testing
-            message_threshold: 1000, // High message threshold
+            token_threshold: 100, // Low threshold for testing
+            auto_floor_tokens: 0,
             ..Default::default()
         };
 
@@ -1674,7 +2221,6 @@ mod tests {
         let config = CompactionConfig {
             enabled: true,
             token_threshold: 1000,
-            message_threshold: 1000,
             ..Default::default()
         };
 
@@ -1682,6 +2228,63 @@ mod tests {
         let messages: Vec<Message> = (0..5).map(|_| msg("user", "short")).collect();
 
         assert!(!should_compact(&messages, &config, None, None, None));
+    }
+
+    /// v0.8.11: the 500K hard floor blocks auto-compaction even when the
+    /// token-percentage threshold would otherwise fire. This is the V4
+    /// prefix-cache protection — below 500K total tokens, rewriting the
+    /// prefix loses cache for tiny budget gains.
+    #[test]
+    fn auto_compaction_floor_blocks_below_500k_even_when_threshold_says_yes() {
+        let config = CompactionConfig {
+            enabled: true,
+            token_threshold: 100, // would normally fire instantly
+            // Use the production default explicitly so this test pins the
+            // floor's contract rather than relying on `Default`.
+            auto_floor_tokens: MINIMUM_AUTO_COMPACTION_TOKENS,
+            ..Default::default()
+        };
+
+        let messages: Vec<Message> = (0..10).map(|_| msg("user", &"x".repeat(50))).collect();
+        // Total tokens way under 500K, so floor blocks compaction.
+        assert!(!should_compact(&messages, &config, None, None, None));
+    }
+
+    /// v0.8.11: when total tokens cross the 500K floor, the existing
+    /// threshold/message-count logic takes over again.
+    #[test]
+    fn auto_compaction_floor_yields_to_threshold_logic_above_500k() {
+        let config = CompactionConfig {
+            enabled: true,
+            token_threshold: 2_000_000,
+            auto_floor_tokens: MINIMUM_AUTO_COMPACTION_TOKENS,
+            ..Default::default()
+        };
+
+        // Each message ~500 tokens; 1100 messages → ~550K total tokens.
+        // That's above the floor (500K) AND below the deliberately high
+        // token_threshold, so auto-compaction stays off — by threshold,
+        // not floor.
+        let messages: Vec<Message> = (0..1100).map(|_| msg("user", &"x".repeat(2000))).collect();
+        assert!(!should_compact(&messages, &config, None, None, None));
+
+        // Crank threshold below total → compaction fires now that we're
+        // past the floor.
+        let config_lower = CompactionConfig {
+            token_threshold: 100_000,
+            ..config
+        };
+        assert!(should_compact(&messages, &config_lower, None, None, None));
+    }
+
+    /// `CompactionConfig::default()` ships with the 500K floor on by
+    /// default — production callers via `..Default::default()` get the
+    /// safety guarantee automatically.
+    #[test]
+    fn compaction_config_default_carries_500k_floor() {
+        let config = CompactionConfig::default();
+        assert_eq!(config.auto_floor_tokens, MINIMUM_AUTO_COMPACTION_TOKENS);
+        assert_eq!(config.auto_floor_tokens, 500_000);
     }
 
     #[test]
@@ -1977,7 +2580,6 @@ mod tests {
         let _config = CompactionConfig {
             enabled: true,
             token_threshold: 1000,
-            message_threshold: 5,
             ..Default::default()
         };
 
@@ -1993,9 +2595,7 @@ mod tests {
             msg("assistant", "recent 2"),
         ];
 
-        // Should compact because:
-        // - More than message_threshold (5) unpinned messages
-        // - src/main.rs mention pins message 0
+        // src/main.rs mention should pin message 0 in the plan.
         let plan = plan_compaction(
             &messages,
             Some(&workspace),

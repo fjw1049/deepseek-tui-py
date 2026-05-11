@@ -39,6 +39,23 @@ pub use mailbox::{Mailbox, MailboxEnvelope, MailboxMessage, MailboxReceiver};
 
 // === Constants ===
 
+/// Global ownership table for cache-aware resident file sub-agents (#529).
+/// Maps file path → agent id. Agents hold a lease on a file while running;
+/// the lease is released when the agent reaches a terminal state.
+static RESIDENT_LEASES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::OnceLock::new();
+
+/// Release all resident file leases held by `agent_id`. Called when an
+/// agent transitions to a terminal state (completed, failed, cancelled).
+fn release_resident_leases_for(agent_id: &str) {
+    if let Some(lock) = RESIDENT_LEASES.get()
+        && let Ok(mut guard) = lock.lock()
+    {
+        guard.retain(|_, owner| owner != agent_id);
+    }
+}
+
 const DEFAULT_MAX_STEPS: u32 = 100;
 const TOOL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Per-step LLM API call timeout. Each `create_message` request must complete
@@ -56,31 +73,59 @@ const SUBAGENT_RESTART_REASON: &str = "Interrupted by process restart";
 
 const VALID_SUBAGENT_TYPES: &str = "general, explore, plan, review, implementer, verifier, custom, \
      worker, explorer, awaiter, default, implement, builder, verify, validator, tester";
+/// Whale species names rotated through `whale_nickname_for_index` to label
+/// sub-agents in the UI. English and Simplified-Chinese names are interleaved
+/// so any newly spawned agent has a roughly even chance of either — the goal
+/// is friendly variety, not a strict locale match.
 pub const WHALE_NICKNAMES: &[&str] = &[
     "Blue",
+    "蓝鲸",
     "Humpback",
+    "座头鲸",
     "Sperm",
+    "抹香鲸",
     "Fin",
+    "长须鲸",
     "Sei",
+    "塞鲸",
     "Bryde's",
+    "布氏鲸",
     "Minke",
+    "小须鲸",
     "Antarctic Minke",
+    "南极小须鲸",
     "Gray",
+    "灰鲸",
     "Bowhead",
+    "弓头鲸",
     "North Atlantic Right",
+    "北大西洋露脊鲸",
     "North Pacific Right",
+    "北太平洋露脊鲸",
     "Southern Right",
+    "南露脊鲸",
     "Beluga",
+    "白鲸",
     "Narwhal",
+    "独角鲸",
     "Orca",
+    "虎鲸",
     "Pilot",
+    "领航鲸",
     "False Killer",
+    "伪虎鲸",
     "Pygmy Killer",
+    "小虎鲸",
     "Melon-headed",
+    "瓜头鲸",
     "Beaked",
+    "喙鲸",
     "Cuvier's Beaked",
+    "柯氏喙鲸",
     "Baird's Beaked",
+    "贝氏喙鲸",
     "Blainville's Beaked",
+    "柏氏喙鲸",
 ];
 
 /// Removal version for deprecated tool aliases.
@@ -225,15 +270,16 @@ impl SubAgentType {
     /// Get the system prompt for this agent type.
     #[must_use]
     pub fn system_prompt(&self) -> String {
-        match self {
-            Self::General => GENERAL_AGENT_PROMPT.to_string(),
-            Self::Explore => EXPLORE_AGENT_PROMPT.to_string(),
-            Self::Plan => PLAN_AGENT_PROMPT.to_string(),
-            Self::Review => REVIEW_AGENT_PROMPT.to_string(),
-            Self::Implementer => IMPLEMENTER_AGENT_PROMPT.to_string(),
-            Self::Verifier => VERIFIER_AGENT_PROMPT.to_string(),
-            Self::Custom => CUSTOM_AGENT_PROMPT.to_string(),
-        }
+        let role_intro = match self {
+            Self::General => GENERAL_AGENT_INTRO,
+            Self::Explore => EXPLORE_AGENT_INTRO,
+            Self::Plan => PLAN_AGENT_INTRO,
+            Self::Review => REVIEW_AGENT_INTRO,
+            Self::Implementer => IMPLEMENTER_AGENT_INTRO,
+            Self::Verifier => VERIFIER_AGENT_INTRO,
+            Self::Custom => CUSTOM_AGENT_INTRO,
+        };
+        format!("{role_intro}{SUBAGENT_OUTPUT_FORMAT}")
     }
 
     /// Get the default allowed tools for this agent type.
@@ -388,6 +434,7 @@ fn is_false(b: &bool) -> bool {
 pub(crate) struct SubAgentSpawnOptions {
     pub model: Option<String>,
     pub nickname: Option<String>,
+    pub fork_context: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -442,6 +489,14 @@ struct SpawnRequest {
     /// into separate git worktrees: parent runs `git worktree add` first,
     /// then spawns children with the worktree path as `cwd`.
     cwd: Option<PathBuf>,
+    /// Optional file path for cache-aware resident mode (#529). When set,
+    /// the child's prompt is prefixed with the file contents for prefix-cache
+    /// locality. A global ownership table prevents two agents from holding
+    /// a resident lease on the same file simultaneously.
+    resident_file: Option<String>,
+    /// When true, seed the child with the parent's system prompt and message
+    /// prefix before appending the child task.
+    fork_context: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -498,6 +553,32 @@ impl Default for PersistedSubAgentState {
 /// `[runtime] max_spawn_depth = N` in `~/.deepseek/config.toml`.
 pub const DEFAULT_MAX_SPAWN_DEPTH: u32 = 3;
 
+/// Terminal-state notification emitted to the engine's parent turn loop
+/// when one of its direct children finishes (issue #756). Carries the
+/// already-rendered `<deepseek:subagent.done>` sentinel that the model
+/// expects in the transcript per `prompts/base.md`.
+#[derive(Debug, Clone)]
+pub struct SubAgentCompletion {
+    /// The completing child's agent id. Held for routing/logging — the
+    /// engine's turn loop does not currently key on it (it just injects
+    /// the payload), but downstream tooling and tests need the field.
+    #[allow(dead_code)]
+    pub agent_id: String,
+    /// Human summary on line 1, sentinel on line 2. Same payload shape as
+    /// `Event::AgentComplete::result`.
+    pub payload: String,
+}
+
+/// Parent transcript snapshot available to sub-agents that opt into context
+/// forking. The system prompt and leading messages are kept byte-identical to
+/// the parent request so DeepSeek's prefix cache can reuse the warmed prefix.
+#[derive(Clone, Debug)]
+pub struct SubAgentForkContext {
+    pub system: Option<SystemPrompt>,
+    pub messages: Vec<Message>,
+    pub structured_state_block: Option<String>,
+}
+
 /// Runtime configuration for spawning sub-agents.
 ///
 /// Carries everything a child needs to (a) build its own tool registry —
@@ -507,6 +588,9 @@ pub const DEFAULT_MAX_SPAWN_DEPTH: u32 = 3;
 pub struct SubAgentRuntime {
     pub client: DeepSeekClient,
     pub model: String,
+    pub auto_model: bool,
+    pub reasoning_effort: Option<String>,
+    pub reasoning_effort_auto: bool,
     pub role_models: HashMap<String, String>,
     pub context: ToolContext,
     pub allow_shell: bool,
@@ -528,6 +612,14 @@ pub struct SubAgentRuntime {
     /// whole spawn tree publishes into one ordered, fan-out-able mailbox.
     /// `None` only when no consumer is wired (legacy entry points / tests).
     pub mailbox: Option<Mailbox>,
+    /// Wakeup channel for the engine's parent turn loop (issue #756). Only
+    /// the engine's direct children fire on this — propagated to descendants
+    /// via clone but gated to `spawn_depth == 1` at the send site so the
+    /// parent isn't flooded with grandchild completions it didn't directly
+    /// orchestrate. `None` when no consumer is wired (tests / legacy paths).
+    pub parent_completion_tx: Option<mpsc::UnboundedSender<SubAgentCompletion>>,
+    /// Snapshot of the request prefix visible to an opt-in forked child.
+    pub fork_context: Option<SubAgentForkContext>,
 }
 
 impl SubAgentRuntime {
@@ -547,6 +639,9 @@ impl SubAgentRuntime {
         Self {
             client,
             model,
+            auto_model: false,
+            reasoning_effort: None,
+            reasoning_effort_auto: false,
             role_models: HashMap::new(),
             context,
             allow_shell,
@@ -556,7 +651,29 @@ impl SubAgentRuntime {
             max_spawn_depth: DEFAULT_MAX_SPAWN_DEPTH,
             cancel_token: CancellationToken::new(),
             mailbox: None,
+            parent_completion_tx: None,
+            fork_context: None,
         }
+    }
+
+    /// Attach the wakeup channel so the engine's parent turn loop can resume
+    /// when this runtime's direct children finish (issue #756). The channel
+    /// is propagated to descendants via clone, but only `spawn_depth == 1`
+    /// agents fire on it — see `run_subagent_task`.
+    #[must_use]
+    pub fn with_parent_completion_tx(
+        mut self,
+        tx: mpsc::UnboundedSender<SubAgentCompletion>,
+    ) -> Self {
+        self.parent_completion_tx = Some(tx);
+        self
+    }
+
+    /// Attach the current parent request prefix for `fork_context` spawns.
+    #[must_use]
+    pub fn with_fork_context(mut self, context: SubAgentForkContext) -> Self {
+        self.fork_context = Some(context);
+        self
     }
 
     /// Attach a `Mailbox` so this runtime (and every descendant — children
@@ -596,6 +713,27 @@ impl SubAgentRuntime {
         self
     }
 
+    /// Preserve whether the parent session is using per-turn model routing.
+    #[must_use]
+    pub fn with_auto_model(mut self, auto_model: bool) -> Self {
+        self.auto_model = auto_model;
+        self
+    }
+
+    /// Preserve the parent's thinking configuration. `reasoning_effort_auto`
+    /// stays true even when the parent turn itself was sent with a concrete
+    /// flash-router recommendation, so children can resolve their own tier.
+    #[must_use]
+    pub fn with_reasoning_effort(
+        mut self,
+        reasoning_effort: Option<String>,
+        reasoning_effort_auto: bool,
+    ) -> Self {
+        self.reasoning_effort = reasoning_effort;
+        self.reasoning_effort_auto = reasoning_effort_auto;
+        self
+    }
+
     /// Return a child runtime that is deliberately detached from the parent
     /// turn cancellation token. Background sub-agents should keep running when
     /// the parent turn is cancelled; explicit agent cancellation still
@@ -610,21 +748,23 @@ impl SubAgentRuntime {
     }
 
     /// Build a child runtime cloning this one, incrementing `spawn_depth`,
-    /// deriving a child cancellation token, and forcing `auto_approve` on
-    /// the child's `ToolContext`. Used at spawn entry to construct the
-    /// runtime the new sub-agent will see.
+    /// and deriving a child cancellation token. Used at spawn entry to
+    /// construct the runtime the new sub-agent will see.
     ///
-    /// The `auto_approve` override is deliberate: spawning IS the approval.
-    /// Per-tool prompts inside a child would break delegation, so children
-    /// inherit a YOLO-equivalent context regardless of the parent's mode.
-    /// The workspace boundary + sandbox profile still apply.
+    /// Children inherit the parent's approval state. A non-auto parent can
+    /// still delegate read-only investigation, but approval-gated child tools
+    /// are blocked by the sub-agent registry instead of being silently run
+    /// without a prompt.
     #[must_use]
     pub fn child_runtime(&self) -> Self {
         let mut child_context = self.context.clone();
-        child_context.auto_approve = true;
+        child_context.auto_approve = self.context.auto_approve;
         Self {
             client: self.client.clone(),
             model: self.model.clone(),
+            auto_model: self.auto_model,
+            reasoning_effort: self.reasoning_effort.clone(),
+            reasoning_effort_auto: self.reasoning_effort_auto,
             role_models: self.role_models.clone(),
             context: child_context,
             allow_shell: self.allow_shell,
@@ -634,6 +774,8 @@ impl SubAgentRuntime {
             max_spawn_depth: self.max_spawn_depth,
             cancel_token: self.cancel_token.child_token(),
             mailbox: self.mailbox.clone(),
+            parent_completion_tx: self.parent_completion_tx.clone(),
+            fork_context: self.fork_context.clone(),
         }
     }
 
@@ -656,7 +798,8 @@ pub struct SubAgent {
     pub result: Option<String>,
     pub steps_taken: u32,
     pub started_at: Instant,
-    /// `None` = full registry inheritance (v0.6.6 default).
+    /// `None` = full registry inheritance, with approval-gated tools still
+    /// blocked unless the parent runtime is auto-approved.
     /// `Some(list)` = explicit narrow allowlist (Custom agents, legacy).
     pub allowed_tools: Option<Vec<String>>,
     /// Stable id of the manager that spawned this agent (#405). Compared
@@ -998,6 +1141,7 @@ impl SubAgentManager {
             prompt,
             assignment,
             allowed_tools: tools,
+            fork_context: options.fork_context,
             started_at,
             max_steps,
             input_rx,
@@ -1038,6 +1182,7 @@ impl SubAgentManager {
             let mut changed = false;
             if agent.status == SubAgentStatus::Running {
                 agent.status = SubAgentStatus::Cancelled;
+                release_resident_leases_for(&agent.id);
                 if let Some(handle) = agent.task_handle.take() {
                     handle.abort();
                 }
@@ -1102,6 +1247,7 @@ impl SubAgentManager {
                 prompt: agent.prompt.clone(),
                 assignment: agent.assignment.clone(),
                 allowed_tools: agent.allowed_tools.clone(),
+                fork_context: false,
                 started_at: restarted_at,
                 max_steps: self.max_steps,
                 input_rx,
@@ -1342,6 +1488,7 @@ impl SubAgentManager {
         let mut changed = false;
         if let Some(agent) = self.agents.get_mut(agent_id) {
             agent.status = SubAgentStatus::Failed(error);
+            release_resident_leases_for(agent_id);
             agent.task_handle = None;
             changed = true;
         }
@@ -1435,11 +1582,13 @@ impl ToolSpec for AgentSpawnTool {
     }
 
     fn description(&self) -> &'static str {
-        "Spawn a background sub-agent for a focused task. Returns an agent_id immediately; \
-         follow with agent_result to retrieve the final result. Default cap of 10 concurrent \
-         sub-agents (configurable via `[subagents].max_concurrent`); each is a full sub-agent \
-         loop, so cancel or wait if you hit the cap. For parallel one-shot LLM queries, just \
-         emit multiple tool calls in one turn — the dispatcher runs them in parallel."
+        concat!(
+            "Spawn a background sub-agent for a focused task. Returns an agent_id immediately; follow with agent_result to retrieve the final result. Default cap of 10 concurrent sub-agents (configurable via `[subagents].max_concurrent`); each is a full sub-agent loop, so cancel or wait if you hit the cap. For parallel one-shot LLM queries, just emit multiple tool calls in one turn — the dispatcher runs them in parallel.\n\n",
+            "## Trust model: subagent results are self-reports, not verified facts\n\n",
+            "`agent_result` returns the child's narrative summary of what happened. For operations with external side effects, the child's summary may be wrong. Re-verify before reporting success to the user:\n\n",
+            "| Side effect | Re-verify with |\n|---|---|\n| URL claimed posted/written | `fetch_url` and check the response |\n| File claimed created | `read_file` or `list_dir` |\n| File claimed edited | `read_file` and check the change is present |\n| HTTP POST/PUT response | inspect status code and body |\n| Git operation | `git_status` / `git_diff` |\n| Test claimed passing | `run_tests` |\n| Process claimed started | `exec_shell` (e.g. `pgrep`, `lsof -i`) |\n\n",
+            "If the child returns a verifiable handle (URL, file path, exit code, commit SHA), check it. If it doesn't, ask the child to return one or verify yourself before proceeding."
+        )
     }
 
     fn input_schema(&self) -> Value {
@@ -1488,7 +1637,7 @@ impl ToolSpec for AgentSpawnTool {
                 "allowed_tools": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Explicit tool allowlist (required for custom type). Default behavior is full registry inheritance from the parent."
+                    "description": "Explicit tool allowlist (required for custom type). Default behavior is full registry inheritance from the parent; approval-gated tools still require an auto-approved parent."
                 },
                 "model": {
                     "type": "string",
@@ -1497,6 +1646,14 @@ impl ToolSpec for AgentSpawnTool {
                 "cwd": {
                     "type": "string",
                     "description": "Optional working directory for the child. Must be inside the parent's workspace (use a relative path or an absolute path under the workspace root). Used for the parallel-worktree pattern: parent runs `git worktree add .worktrees/feature-x ...` then spawns the child with `cwd: \".worktrees/feature-x\"`."
+                },
+                "resident_file": {
+                    "type": "string",
+                    "description": "Optional file path for cache-aware resident mode. When set, the child's system prefix is augmented with the full contents of this file so DeepSeek's prefix cache stays warm across follow-up send_input calls. Only one agent may hold a resident lease on a given file at a time — a second spawn with the same path receives a conflict warning in the result."
+                },
+                "fork_context": {
+                    "type": "boolean",
+                    "description": "When true, inherit the parent's system prompt and conversation prefix before appending this task. This preserves DeepSeek prefix-cache reuse and gives the child full parent context. Defaults to false for independent exploration."
                 }
             }
         })
@@ -1558,23 +1715,63 @@ impl ToolSpec for AgentSpawnTool {
         };
 
         // Derive the child's runtime as a durable background job: it keeps
-        // its own cancellation token, forces auto_approve, and optionally
-        // overrides cwd if the caller passed one (used for the parallel-
-        // worktree pattern).
+        // its own cancellation token, inherits the parent approval state, and
+        // optionally overrides cwd if the caller passed one (used for the
+        // parallel-worktree pattern).
         let mut child_runtime = self.runtime.background_runtime();
         if let Some(cwd) = validated_cwd {
             child_runtime.context.workspace = cwd;
         }
-        let effective_model = match spawn_request.model.clone() {
-            Some(model) => model,
+        let configured_model = match spawn_request.model.clone() {
+            Some(model) => Some(model),
             None => configured_model_for_role_or_type(
                 &self.runtime,
                 spawn_request.assignment.role.as_deref(),
                 &spawn_request.agent_type,
-            )?
-            .unwrap_or_else(|| self.runtime.model.clone()),
+            )?,
         };
-        child_runtime.model = effective_model.clone();
+
+        // Cache-aware resident mode (#529): prepend file contents to the prompt
+        // so the child's prefix is byte-stable for DeepSeek prefix caching.
+        let (effective_prompt, resident_conflict) =
+            if let Some(ref file_path) = spawn_request.resident_file {
+                let abs_path = if std::path::Path::new(file_path).is_absolute() {
+                    std::path::PathBuf::from(file_path)
+                } else {
+                    self.runtime.context.workspace.join(file_path)
+                };
+                let file_contents = std::fs::read_to_string(&abs_path)
+                    .unwrap_or_else(|e| format!("<!-- resident_file read error: {e} -->"));
+                let prefixed = format!(
+                    "<!-- resident_file: {file_path} -->\n```\n{file_contents}\n```\n\n{}",
+                    spawn_request.prompt
+                );
+                // Check ownership (best-effort, non-blocking).
+                let conflict = {
+                    let leases = RESIDENT_LEASES
+                        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+                    let mut guard = leases.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(owner) = guard.get(file_path) {
+                        Some(format!(
+                            "Warning: agent {owner} already holds a resident lease on {file_path}"
+                        ))
+                    } else {
+                        guard.insert(file_path.clone(), "pending".to_string());
+                        None
+                    }
+                };
+                (prefixed, conflict)
+            } else {
+                (spawn_request.prompt, None)
+            };
+
+        let route =
+            resolve_subagent_assignment_route(&self.runtime, configured_model, &effective_prompt)
+                .await;
+        child_runtime.model = route.model.clone();
+        child_runtime.reasoning_effort = route.reasoning_effort.clone();
+        child_runtime.reasoning_effort_auto = false;
+        let effective_model = route.model;
 
         let mut manager = self.manager.write().await;
 
@@ -1583,22 +1780,40 @@ impl ToolSpec for AgentSpawnTool {
                 Arc::clone(&self.manager),
                 child_runtime,
                 spawn_request.agent_type,
-                spawn_request.prompt,
+                effective_prompt,
                 spawn_request.assignment,
                 spawn_request.allowed_tools,
                 SubAgentSpawnOptions {
                     model: Some(effective_model),
                     nickname: None,
+                    fork_context: spawn_request.fork_context,
                 },
             )
             .map_err(|e| ToolError::execution_failed(format!("Failed to spawn sub-agent: {e}")))?;
 
+        // Replace the "pending" lease placeholder with the real agent id now that
+        // the manager has assigned one. Without this, `release_resident_leases_for`
+        // (which matches by agent id at terminal-state transitions) can never find
+        // the entry — leases would stay stamped as "pending" forever, defeating the
+        // release machinery added in #660.
+        if let Some(ref file_path) = spawn_request.resident_file
+            && let Some(lock) = RESIDENT_LEASES.get()
+            && let Ok(mut guard) = lock.lock()
+            && let Some(owner) = guard.get_mut(file_path)
+            && owner == "pending"
+        {
+            *owner = result.agent_id.clone();
+        }
+
         let mut tool_result = if self.name == "spawn_agent" {
-            let payload = json!({
+            let mut payload = json!({
                 "agent_id": result.agent_id.clone(),
                 "nickname": result.nickname.clone(),
                 "model": result.model.clone()
             });
+            if let Some(ref warning) = resident_conflict {
+                payload["resident_conflict"] = json!(warning);
+            }
             ToolResult::json(&payload).map_err(|e| ToolError::execution_failed(e.to_string()))?
         } else {
             ToolResult::json(&result).map_err(|e| ToolError::execution_failed(e.to_string()))?
@@ -2294,7 +2509,8 @@ impl ToolSpec for AgentWaitTool {
     }
 }
 
-/// Tool to delegate a task to a specialized agent (alias for agent_spawn).
+/// Compatibility delegate tool. It routes through `agent_spawn`, but defaults
+/// to `fork_context=true` because delegation is usually continuation work.
 pub struct DelegateToAgentTool {
     manager: SharedSubAgentManager,
     runtime: SubAgentRuntime,
@@ -2315,8 +2531,9 @@ impl ToolSpec for DelegateToAgentTool {
     }
 
     fn description(&self) -> &'static str {
-        "Delegate a task to a specialized sub-agent. This is an alias for agent_spawn — same schema, \
-         same behavior. Use `type` (or `agent_name`, `agent_type`) to pick the agent flavor."
+        "Delegate a task to a specialized sub-agent. Compatibility wrapper around agent_spawn; \
+         defaults fork_context=true so the child inherits the parent transcript. Use `type` \
+         (or `agent_name`, `agent_type`) to pick the agent flavor."
     }
 
     fn input_schema(&self) -> Value {
@@ -2366,6 +2583,10 @@ impl ToolSpec for DelegateToAgentTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Explicit tool allowlist (required for custom type)"
+                },
+                "fork_context": {
+                    "type": "boolean",
+                    "description": "When true, inherit the parent's system prompt and conversation prefix before appending this task. delegate_to_agent defaults this to true."
                 }
             }
         })
@@ -2384,6 +2605,7 @@ impl ToolSpec for DelegateToAgentTool {
 
     async fn execute(&self, input: Value, context: &ToolContext) -> Result<ToolResult, ToolError> {
         let spawn_tool = AgentSpawnTool::new(self.manager.clone(), self.runtime.clone());
+        let input = with_default_fork_context(input, true);
         let result = spawn_tool.execute(input, context).await?;
         Ok(wrap_with_deprecation_notice(
             result,
@@ -2420,6 +2642,64 @@ fn build_subagent_system_prompt(
     }
 }
 
+fn subagent_request_system_prompt(
+    subagent_system_prompt: &str,
+    fork_context: Option<&SubAgentForkContext>,
+) -> SystemPrompt {
+    fork_context
+        .and_then(|context| context.system.clone())
+        .unwrap_or_else(|| SystemPrompt::Text(subagent_system_prompt.to_string()))
+}
+
+fn build_initial_subagent_messages(
+    prompt: &str,
+    assignment: &SubAgentAssignment,
+    agent_type: &SubAgentType,
+    fork_context: Option<&SubAgentForkContext>,
+) -> Vec<Message> {
+    let mut messages = fork_context
+        .map(|context| context.messages.clone())
+        .unwrap_or_default();
+
+    if let Some(context) = fork_context {
+        if let Some(state) = context
+            .structured_state_block
+            .as_deref()
+            .map(str::trim)
+            .filter(|state| !state.is_empty())
+        {
+            messages.push(system_text_message(format!(
+                "<deepseek:fork_state>\n{state}\n</deepseek:fork_state>"
+            )));
+        }
+
+        messages.push(system_text_message(format!(
+            "<deepseek:subagent_context>\n{}\n</deepseek:subagent_context>",
+            build_subagent_system_prompt(agent_type, assignment)
+        )));
+    }
+
+    messages.push(Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::Text {
+            text: build_assignment_prompt(prompt, assignment, agent_type),
+            cache_control: None,
+        }],
+    });
+
+    messages
+}
+
+fn system_text_message(text: String) -> Message {
+    Message {
+        role: "system".to_string(),
+        content: vec![ContentBlock::Text {
+            text,
+            cache_control: None,
+        }],
+    }
+}
+
 struct SubAgentTask {
     manager_handle: SharedSubAgentManager,
     runtime: SubAgentRuntime,
@@ -2428,7 +2708,9 @@ struct SubAgentTask {
     prompt: String,
     assignment: SubAgentAssignment,
     /// `None` = full registry inheritance. `Some(list)` = explicit narrow.
+    /// Approval-gated tools still require an auto-approved parent runtime.
     allowed_tools: Option<Vec<String>>,
+    fork_context: bool,
     started_at: Instant,
     max_steps: u32,
     input_rx: mpsc::UnboundedReceiver<SubAgentInput>,
@@ -2443,6 +2725,7 @@ async fn run_subagent_task(task: SubAgentTask) {
         task.prompt,
         task.assignment,
         task.allowed_tools,
+        task.fork_context,
         task.started_at,
         task.max_steps,
         task.input_rx,
@@ -2486,13 +2769,44 @@ async fn run_subagent_task(task: SubAgentTask) {
         let _ = mb.send(envelope);
     }
 
+    let payload = format!("{summary}\n{sentinel}");
+
+    // Wake the engine's parent turn loop if this is one of its direct
+    // children (issue #756). Gating by `spawn_depth == 1` means the parent
+    // only sees completions for agents it directly orchestrated, not for
+    // grandchildren spawned recursively inside its children.
+    emit_parent_completion(&task.runtime, &task.agent_id, &payload);
+
     if let Some(event_tx) = task.runtime.event_tx {
-        let payload = format!("{summary}\n{sentinel}");
         let _ = event_tx.try_send(Event::AgentComplete {
             id: task.agent_id,
             result: payload,
         });
     }
+}
+
+/// Notify the engine's parent turn loop that a direct child finished
+/// (issue #756). Returns `true` if a send was attempted, `false` if the
+/// notification was skipped because this isn't a direct child or no channel
+/// is wired. Skips silently when the channel sender has no receiver — the
+/// engine outlives the runtime, so a dropped receiver means we're shutting
+/// down anyway.
+pub(crate) fn emit_parent_completion(
+    runtime: &SubAgentRuntime,
+    agent_id: &str,
+    payload: &str,
+) -> bool {
+    if runtime.spawn_depth != 1 {
+        return false;
+    }
+    let Some(tx) = runtime.parent_completion_tx.as_ref() else {
+        return false;
+    };
+    let _ = tx.send(SubAgentCompletion {
+        agent_id: agent_id.to_string(),
+        payload: payload.to_string(),
+    });
+    true
 }
 
 /// Build a `<deepseek:subagent.done>` JSON sentinel for a successful child.
@@ -2529,13 +2843,25 @@ async fn run_subagent(
     prompt: String,
     assignment: SubAgentAssignment,
     allowed_tools: Option<Vec<String>>,
+    fork_context: bool,
     started_at: Instant,
     max_steps: u32,
     mut input_rx: mpsc::UnboundedReceiver<SubAgentInput>,
 ) -> Result<SubAgentResult> {
     let system_prompt = build_subagent_system_prompt(&agent_type, &assignment);
+    let fork_context = fork_context
+        .then_some(runtime.fork_context.as_ref())
+        .flatten();
+    let request_system = subagent_request_system_prompt(&system_prompt, fork_context);
+    let mut messages =
+        build_initial_subagent_messages(&prompt, &assignment, &agent_type, fork_context);
+    let runtime_for_tools = runtime.clone().with_fork_context(SubAgentForkContext {
+        system: Some(request_system.clone()),
+        messages: messages.clone(),
+        structured_state_block: None,
+    });
     let tool_registry = SubAgentToolRegistry::new(
-        runtime.clone(),
+        runtime_for_tools,
         allowed_tools.clone(),
         Arc::new(Mutex::new(TodoList::new())),
         Arc::new(Mutex::new(PlanState::default())),
@@ -2557,14 +2883,6 @@ async fn run_subagent(
         &agent_id,
         format!("started ({})", agent_type.as_str()),
     );
-
-    let mut messages = vec![Message {
-        role: "user".to_string(),
-        content: vec![ContentBlock::Text {
-            text: build_assignment_prompt(&prompt, &assignment, &agent_type),
-            cache_control: None,
-        }],
-    }];
 
     let mut steps = 0;
     let mut final_result: Option<String> = None;
@@ -2631,12 +2949,12 @@ async fn run_subagent(
             model: runtime.model.clone(),
             messages: messages.clone(),
             max_tokens: 4096,
-            system: Some(SystemPrompt::Text(system_prompt.clone())),
+            system: Some(request_system.clone()),
             tools: Some(tools.clone()),
             tool_choice: Some(json!({ "type": "auto" })),
             metadata: None,
             thinking: None,
-            reasoning_effort: None,
+            reasoning_effort: runtime.reasoning_effort.clone(),
             stream: Some(false),
             temperature: None,
             top_p: None,
@@ -2793,6 +3111,8 @@ async fn run_subagent(
             });
         }
     }
+
+    release_resident_leases_for(&agent_id);
 
     Ok(SubAgentResult {
         agent_id,
@@ -3110,6 +3430,14 @@ fn parse_spawn_request(input: &Value) -> Result<SpawnRequest, ToolError> {
 
     let cwd = parse_optional_cwd(input)?;
     let model = parse_optional_subagent_model(input, "model")?;
+    let resident_file = input
+        .get("resident_file")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty());
+    let fork_context =
+        parse_optional_bool(input, &["fork_context", "forkContext", "inherit_context"])
+            .unwrap_or(false);
 
     Ok(SpawnRequest {
         prompt: prompt.clone(),
@@ -3118,7 +3446,29 @@ fn parse_spawn_request(input: &Value) -> Result<SpawnRequest, ToolError> {
         allowed_tools,
         model,
         cwd,
+        resident_file,
+        fork_context,
     })
+}
+
+fn parse_optional_bool(input: &Value, names: &[&str]) -> Option<bool> {
+    names
+        .iter()
+        .find_map(|name| input.get(*name))
+        .and_then(Value::as_bool)
+}
+
+fn with_default_fork_context(mut input: Value, default: bool) -> Value {
+    let Some(object) = input.as_object_mut() else {
+        return input;
+    };
+    if !object.contains_key("fork_context")
+        && !object.contains_key("forkContext")
+        && !object.contains_key("inherit_context")
+    {
+        object.insert("fork_context".to_string(), Value::Bool(default));
+    }
+    input
 }
 
 pub(crate) fn normalize_requested_subagent_model(
@@ -3155,6 +3505,171 @@ pub(crate) fn configured_model_for_role_or_type(
         }
     }
     Ok(None)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SubAgentResolvedRoute {
+    pub(crate) model: String,
+    pub(crate) reasoning_effort: Option<String>,
+}
+
+pub(crate) async fn resolve_subagent_assignment_route(
+    runtime: &SubAgentRuntime,
+    configured_model: Option<String>,
+    prompt: &str,
+) -> SubAgentResolvedRoute {
+    let explicit_model = configured_model.is_some();
+    let mut route = fallback_subagent_assignment_route(runtime, configured_model, prompt);
+
+    if should_use_subagent_flash_router(runtime)
+        && let Ok(Some(recommendation)) = subagent_flash_router(runtime, prompt).await
+    {
+        if runtime.auto_model && !explicit_model {
+            route.model = recommendation.model;
+        }
+        if runtime.reasoning_effort_auto {
+            route.reasoning_effort = recommendation
+                .reasoning_effort
+                .map(|effort| effort.as_setting().to_string())
+                .or(route.reasoning_effort);
+        }
+    }
+
+    route
+}
+
+fn should_use_subagent_flash_router(runtime: &SubAgentRuntime) -> bool {
+    runtime.auto_model
+}
+
+fn fallback_subagent_assignment_route(
+    runtime: &SubAgentRuntime,
+    configured_model: Option<String>,
+    prompt: &str,
+) -> SubAgentResolvedRoute {
+    let model = if let Some(model) = configured_model {
+        model
+    } else if runtime.auto_model {
+        crate::commands::auto_model_heuristic(prompt, &runtime.model)
+    } else {
+        runtime.model.clone()
+    };
+
+    let reasoning_effort = if runtime.reasoning_effort_auto {
+        let effort = match crate::auto_reasoning::select(false, prompt) {
+            crate::tui::app::ReasoningEffort::Low | crate::tui::app::ReasoningEffort::Medium => {
+                crate::tui::app::ReasoningEffort::High
+            }
+            other => other,
+        };
+        Some(effort.as_setting().to_string())
+    } else {
+        runtime.reasoning_effort.clone()
+    };
+
+    SubAgentResolvedRoute {
+        model,
+        reasoning_effort,
+    }
+}
+
+async fn subagent_flash_router(
+    runtime: &SubAgentRuntime,
+    prompt: &str,
+) -> Result<Option<crate::commands::AutoRouteRecommendation>> {
+    if cfg!(test) {
+        return Ok(None);
+    }
+
+    let request = MessageRequest {
+        model: "deepseek-v4-flash".to_string(),
+        messages: vec![Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::Text {
+                text: subagent_router_prompt(runtime, prompt),
+                cache_control: None,
+            }],
+        }],
+        max_tokens: 96,
+        system: Some(SystemPrompt::Text(
+            SUBAGENT_ROUTER_SYSTEM_PROMPT.to_string(),
+        )),
+        tools: None,
+        tool_choice: None,
+        metadata: None,
+        thinking: None,
+        reasoning_effort: Some("off".to_string()),
+        stream: Some(false),
+        temperature: Some(0.0),
+        top_p: None,
+    };
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(4),
+        runtime.client.create_message(request),
+    )
+    .await??;
+    Ok(crate::commands::parse_auto_route_recommendation(
+        &message_response_text(&response.content),
+    ))
+}
+
+const SUBAGENT_ROUTER_SYSTEM_PROMPT: &str = "\
+You are the DeepSeek TUI sub-agent routing manager. Return only compact JSON: \
+{\"model\":\"deepseek-v4-flash|deepseek-v4-pro\",\"thinking\":\"off|high|max\"}. \
+Treat each child assignment like a customer request entering a team queue: decide the least \
+sufficient worker and thinking budget for that assignment. Do not treat being a sub-agent as \
+important by itself. Use Flash for trivial, read-only, status, lookup, or single-step work. \
+Use Pro for coding, debugging, release work, multi-file changes, security, architecture, \
+high-risk decisions, ambiguous requests, or work likely to need tool-call judgment. Use thinking \
+off for trivial no-tool work, high for ordinary reasoning, and max only for hard, risky, \
+multi-step, uncertain, or tool-heavy work.";
+
+fn subagent_router_prompt(runtime: &SubAgentRuntime, prompt: &str) -> String {
+    format!(
+        "Parent selected model mode: {}\nParent selected thinking mode: {}\n\nSub-agent assignment:\n{}\n\nReturn JSON only.",
+        if runtime.auto_model { "auto" } else { "fixed" },
+        if runtime.reasoning_effort_auto {
+            "auto"
+        } else {
+            runtime
+                .reasoning_effort
+                .as_deref()
+                .unwrap_or("provider-default")
+        },
+        truncate_subagent_router_prompt(prompt, 4_000)
+    )
+}
+
+fn truncate_subagent_router_prompt(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = text.chars().take(max_chars).collect::<String>();
+    out.push_str("\n[truncated]");
+    out
+}
+
+fn message_response_text(blocks: &[ContentBlock]) -> String {
+    let mut out = String::new();
+    for block in blocks {
+        match block {
+            ContentBlock::Text { text, .. } => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(text);
+            }
+            ContentBlock::Thinking { thinking } => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(thinking);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn parse_optional_subagent_model(input: &Value, key: &str) -> Result<Option<String>, ToolError> {
@@ -3264,14 +3779,16 @@ fn emit_agent_progress(
 /// Two modes:
 /// - **Full inheritance** (`allowed_tools = None`): the child sees the same
 ///   tool surface as the parent's Agent mode — every tool family including
-///   `with_subagent_tools` (so it can recurse). This is the v0.6.6 default.
+///   `with_subagent_tools` (so it can recurse). Approval-gated tools are
+///   callable only when the parent runtime is auto-approved.
 /// - **Explicit narrow** (`allowed_tools = Some(list)`): legacy / Custom
 ///   path. The registry still builds the full surface, but only the listed
 ///   tool names are visible to the model and callable.
 struct SubAgentToolRegistry {
-    /// `None` → full inheritance (no filter applied). `Some(list)` →
+    /// `None` → full inheritance (no allowlist filter applied). `Some(list)` →
     /// only the listed tools are visible to the model and callable.
     allowed_tools: Option<Vec<String>>,
+    auto_approve: bool,
     registry: ToolRegistry,
 }
 
@@ -3301,6 +3818,7 @@ impl SubAgentToolRegistry {
 
         Self {
             allowed_tools: explicit_allowed_tools,
+            auto_approve: runtime.context.auto_approve,
             registry,
         }
     }
@@ -3340,11 +3858,38 @@ impl SubAgentToolRegistry {
         if !self.is_tool_allowed(name) {
             return Err(anyhow!("Tool {name} not allowed for this sub-agent"));
         }
+        if !self.auto_approve {
+            let Some(spec) = self.registry.get(name) else {
+                return Err(anyhow!("Tool {name} is not registered"));
+            };
+            if spec.approval_requirement() != ApprovalRequirement::Auto {
+                return Err(anyhow!(
+                    "Tool {name} requires approval and cannot run inside this sub-agent unless the parent session is auto-approved"
+                ));
+            }
+        }
+        reject_subagent_terminal_takeover(name, &input)?;
         self.registry
             .execute(name, input)
             .await
             .map_err(|e| anyhow!(e))
     }
+}
+
+fn reject_subagent_terminal_takeover(name: &str, input: &Value) -> Result<()> {
+    let wants_interactive_shell = name == "exec_shell"
+        && input
+            .get("interactive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    if wants_interactive_shell {
+        return Err(anyhow!(
+            "Sub-agents run in the background and cannot use exec_shell with interactive=true \
+             because that would take over the parent TUI terminal. Use non-interactive \
+             exec_shell, background=true, tty=true, or task_shell_start instead."
+        ));
+    }
+    Ok(())
 }
 
 /// Resolve the effective allowed-tools list for a child.
@@ -3386,10 +3931,10 @@ fn build_allowed_tools(
         ));
     }
 
-    // Default: full registry inheritance from the parent. The child sees
-    // every tool the parent has, including the sub-agent management family
-    // (so it can recurse). Sandbox + workspace + depth cap remain the
-    // safety net.
+    // Default: full registry inheritance from the parent. The child sees every
+    // tool the parent has, including the sub-agent management family. The
+    // registry execution guard still blocks approval-gated tools unless the
+    // parent runtime is auto-approved.
     Ok(None)
 }
 
@@ -3423,179 +3968,54 @@ fn truncate_preview(text: &str) -> String {
     }
 }
 
-// === System prompts ===
-//
-// Each per-agent-type prompt is composed from two parts:
-//
-//   1. A short role-specific intro that names the agent's job, its scope,
-//      and any role-specific tactics or stop conditions.
-//   2. The shared `subagent_output_format.md` block, which is the single
-//      source of truth for the SUMMARY / EVIDENCE / CHANGES / RISKS /
-//      BLOCKERS contract, the stop condition, and the typed-tool-surface
-//      conventions. Tweaks to the contract live in that one file.
-//
-// `concat!` resolves at compile time, so the per-type constants remain
-// `&'static str` and `system_prompt()` keeps its `String` return type.
-// The `include_str!` calls inside each `concat!` all point at the same
-// file, so the format is defined once even though it's inlined many times.
+const SUBAGENT_OUTPUT_FORMAT: &str = include_str!("../../prompts/subagent_output_format.md");
 
-const GENERAL_AGENT_PROMPT: &str = concat!(
+const GENERAL_AGENT_INTRO: &str = concat!(
     "You are a general-purpose sub-agent spawned to handle a specific task autonomously.\n",
-    "\n",
-    "Your scope is exactly what the parent assigned to you. Do not expand the\n",
-    "objective — if you discover related work that needs doing, surface it under\n",
-    "RISKS or BLOCKERS rather than starting it. Work autonomously: the parent is\n",
-    "not available to answer questions mid-run.\n",
-    "\n",
-    "Plan before you act. Use `checklist_write` for any multi-step task so your work\n",
-    "is visible in the parent's sidebar. For complex initiatives, layer\n",
-    "`update_plan` (strategy) above `checklist_write` (tactics).\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+    "Stay inside the assigned scope; put adjacent work under RISKS/BLOCKERS.\n",
+    "Plan multi-step work with `checklist_write`; add `update_plan` for complex strategy.\n\n"
 );
 
-const EXPLORE_AGENT_PROMPT: &str = concat!(
-    "You are an exploration sub-agent. Your job is to map the relevant region\n",
-    "of the codebase fast and report what is there. You are read-only by\n",
-    "convention — do not write, patch, or run side-effectful commands. If the\n",
-    "task seems to require a write, stop and put it under BLOCKERS.\n",
-    "\n",
-    "Method:\n",
-    "- Start with `list_dir` and `file_search` to orient.\n",
-    "- Use `grep_files` (NOT `exec_shell rg`) to find call sites, type defs,\n",
-    "  and string literals. Prefer narrow, structured queries over broad scans.\n",
-    "- Read each candidate file with `read_file`. Skim, then quote line ranges.\n",
-    "- Stop reading once you have enough evidence — exhaustive sweeps are not\n",
-    "  the goal. The parent will spawn a follow-up explorer if needed.\n",
-    "\n",
-    "EVIDENCE is the load-bearing section for explorers. Cite every file you\n",
-    "read with `path:line-range` and one line per finding. The parent uses your\n",
-    "EVIDENCE list as a working set for the next turn, so be precise.\n",
-    "\n",
-    "CHANGES will almost always be \"None.\" for an explorer.\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+const EXPLORE_AGENT_INTRO: &str = concat!(
+    "You are an exploration sub-agent. Map the relevant code quickly and stay read-only.\n",
+    "Use list_dir/file_search, grep_files, and read_file; stop once evidence is sufficient.\n",
+    "EVIDENCE is load-bearing: cite `path:line-range` for each finding.\n",
+    "CHANGES will almost always be \"None.\" for an explorer.\n\n"
 );
 
-const PLAN_AGENT_PROMPT: &str = concat!(
-    "You are a planning sub-agent. Your job is to take an objective and\n",
-    "produce a prioritized, executable plan — not to execute it. Keep writes\n",
-    "to a minimum (notes and plan artifacts only); avoid patches and shell\n",
-    "side effects.\n",
-    "\n",
-    "Method:\n",
-    "- Read enough of the codebase to ground the plan in reality. A plan\n",
-    "  written without `read_file` evidence is a guess.\n",
-    "- Decompose the objective into ordered, verifiable steps. Each step names\n",
-    "  the artifact it produces and the check that proves it works.\n",
-    "- Surface trade-offs explicitly. If two approaches are viable, name both\n",
-    "  and pick one with a reason — don't leave the parent with a fork.\n",
-    "- Use `update_plan` to record the high-level strategy and `checklist_write` to\n",
-    "  emit the granular backlog. The parent (and the user) reads these from\n",
-    "  the sidebar after you finish.\n",
-    "\n",
-    "Prioritization: order todos by the dependency graph first, then by the\n",
-    "ratio of risk reduced to effort spent. Tag each item with `[P0]` / `[P1]`\n",
-    "/ `[P2]` so the parent can pick a slice without re-reading the whole plan.\n",
-    "\n",
-    "CHANGES should list the plan artifacts you wrote (e.g. `update_plan` rows,\n",
-    "`checklist_write` ids, any notes). Do not include speculative future edits.\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+const PLAN_AGENT_INTRO: &str = concat!(
+    "You are a planning sub-agent. Produce a grounded, prioritized plan, not patches.\n",
+    "Read enough code to avoid guessing; each step names its artifact and verification.\n",
+    "Use update_plan/checklist_write for plan artifacts and explain key trade-offs.\n",
+    "CHANGES should list plan artifacts only, not future speculative edits.\n\n"
 );
 
-const REVIEW_AGENT_PROMPT: &str = concat!(
-    "You are a code review sub-agent. Your job is to read the code under\n",
-    "review and emit a severity-scored list of findings. You are read-only by\n",
-    "convention — do not patch the code under review even if a fix is obvious;\n",
-    "describe the fix in the finding so the parent can apply it.\n",
-    "\n",
-    "Method:\n",
-    "- Read the diff or files end-to-end with `read_file` before scoring.\n",
-    "- Use `grep_files` to check for sibling call sites, similar patterns\n",
-    "  elsewhere, and existing tests covering the same surface.\n",
-    "- For each finding, score severity as one of:\n",
-    "    BLOCKER  — correctness, security, data loss, or contract break.\n",
-    "    MAJOR    — likely bug, missing error path, perf regression at scale.\n",
-    "    MINOR    — style, naming, redundancy, suboptimal but correct code.\n",
-    "    NIT      — taste; reasonable people may disagree.\n",
-    "- Order EVIDENCE bullets by severity, BLOCKER first. Each bullet:\n",
-    "  `[SEVERITY] path:line-range — one-line description; suggested fix`.\n",
-    "- Be constructive. Cite the failure mode, not the author.\n",
-    "\n",
-    "If you find no issues at MAJOR or above, say so plainly in SUMMARY — a\n",
-    "clean review is a valid result and the parent benefits from knowing it.\n",
-    "\n",
-    "CHANGES will almost always be \"None.\" for a reviewer.\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+const REVIEW_AGENT_INTRO: &str = concat!(
+    "You are a code review sub-agent. Stay read-only and report severity-scored findings.\n",
+    "Read the diff/files, grep sibling patterns/tests, then order EVIDENCE by severity.\n",
+    "Use BLOCKER/MAJOR/MINOR/NIT and include path:line-range plus suggested fix.\n",
+    "If no MAJOR+ issues exist, say so plainly in SUMMARY.\n",
+    "CHANGES will almost always be \"None.\" for a reviewer.\n\n"
 );
 
-const CUSTOM_AGENT_PROMPT: &str = concat!(
-    "You are a custom sub-agent. The parent has given you a narrowed tool\n",
-    "registry — only the tools you see at runtime are available. Do not try\n",
-    "to reach for a tool that is not registered; if the task needs one, put\n",
-    "the gap under BLOCKERS and stop.\n",
-    "\n",
-    "Stay tightly scoped to the assigned objective. The parent chose Custom\n",
-    "specifically to constrain you — do not expand into adjacent work.\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+const CUSTOM_AGENT_INTRO: &str = concat!(
+    "You are a custom sub-agent with a narrowed tool registry.\n",
+    "Use only tools available at runtime; put missing capabilities under BLOCKERS and stop.\n",
+    "Stay tightly scoped to the assigned objective.\n\n"
 );
 
-const IMPLEMENTER_AGENT_PROMPT: &str = concat!(
-    "You are an implementation sub-agent. Your job is to land the change\n",
-    "the parent assigned to you — write the code, modify the files, satisfy\n",
-    "the contract — with the *minimum* surrounding edit. You do not refactor\n",
-    "adjacent code. You do not rename unused variables. You do not 'tidy up'\n",
-    "while you're in the file. If you see related work that should happen,\n",
-    "surface it under RISKS or BLOCKERS rather than starting it.\n",
-    "\n",
-    "Method:\n",
-    "- Read the target file(s) end-to-end before editing. Edits made without\n",
-    "  reading the file produce structurally wrong patches.\n",
-    "- Prefer `edit_file` (single search/replace) for narrow changes.\n",
-    "  Reach for `apply_patch` only when the change spans multiple hunks\n",
-    "  or is structurally tricky.\n",
-    "- After every batch of edits, run a quick verification: a relevant\n",
-    "  `cargo check` / `npm run lint` / `pytest -k <test>` so you don't\n",
-    "  hand the parent a half-baked implementation.\n",
-    "- If the change requires writing tests, write them first or alongside\n",
-    "  the implementation — never as a follow-up the parent has to ask for.\n",
-    "\n",
-    "CHANGES is the load-bearing section for implementers. List every file\n",
-    "you modified with a one-line summary of what changed and why. The parent\n",
-    "uses CHANGES to decide what to inspect next.\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+const IMPLEMENTER_AGENT_INTRO: &str = concat!(
+    "You are an implementation sub-agent. Land the assigned change with minimal surrounding edits.\n",
+    "Read target files before editing; prefer edit_file for narrow changes and apply_patch for hunks.\n",
+    "Run relevant verification after edit batches; write needed tests with the implementation.\n",
+    "CHANGES is load-bearing: list every modified file with a one-line why.\n\n"
 );
 
-const VERIFIER_AGENT_PROMPT: &str = concat!(
-    "You are a verification sub-agent. Your job is to *run* the project's\n",
-    "test suite (or other validation gates) and report pass/fail with the\n",
-    "evidence the parent needs to act. You are read-only by convention —\n",
-    "do not patch failing tests, do not 'fix' lints, do not modify code.\n",
-    "If a fix seems obvious, describe it under RISKS so the parent can\n",
-    "spawn an Implementer.\n",
-    "\n",
-    "Method:\n",
-    "- Run the right gate for the language: `cargo test --workspace`,\n",
-    "  `npm test`, `pytest`, `go test ./...`. Use `run_tests` when it's\n",
-    "  available; fall back to `exec_shell` when the project has a custom\n",
-    "  invocation.\n",
-    "- Run lints if requested: `cargo clippy -- -D warnings`,\n",
-    "  `npm run lint`, `ruff check .`. Don't run lints the parent didn't\n",
-    "  ask for; lint noise drowns the signal you were spawned to surface.\n",
-    "- Capture the exact failing assertion plus the stack trace / file:line\n",
-    "  in EVIDENCE. A failure summarised as 'cargo test failed' is useless;\n",
-    "  the parent needs the actual panic.\n",
-    "\n",
-    "OUTCOME goes at the top of SUMMARY: PASS / FAIL / FLAKY. If FLAKY,\n",
-    "say which test and how many runs you tried.\n",
-    "\n",
-    "CHANGES will almost always be \"None.\" for a verifier.\n",
-    "\n",
-    include_str!("../../prompts/subagent_output_format.md"),
+const VERIFIER_AGENT_INTRO: &str = concat!(
+    "You are a verification sub-agent. Run requested gates and stay read-only.\n",
+    "Report PASS/FAIL/FLAKY at the top of SUMMARY with exact command evidence.\n",
+    "Capture failing assertion and file:line; put obvious fixes under RISKS.\n",
+    "CHANGES will almost always be \"None.\" for a verifier.\n\n"
 );
 
 // === Tests ===

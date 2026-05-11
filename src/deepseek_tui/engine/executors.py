@@ -34,6 +34,12 @@ async def real_task_executor(
     Mirrors Rust ``TaskExecutor::run`` (task_manager.rs:1380).
     Creates a fresh Engine, sends the task prompt, collects streamed text
     until TurnComplete or cancellation.
+
+    Threads ``task.id`` + ``task.task_manager`` into the spawned
+    Engine's ``ToolContext.metadata`` so checklist tools can route their
+    snapshots back to :meth:`TaskManager.record_tool_metadata` — the
+    Python analog of Rust's ``TaskExecutionEvent::ToolCompleted`` event
+    channel (``task_manager.rs:1183-1238``).
     """
     from deepseek_tui.tools.task_manager import TaskExecutionResult
 
@@ -42,6 +48,8 @@ async def real_task_executor(
         workspace=Path(task.workspace),
         allow_shell=task.allow_shell,
         auto_approve=task.auto_approve,
+        task_id=task.id,
+        task_manager=task.task_manager,
     )
 
     try:
@@ -145,6 +153,8 @@ async def _create_engine_for_execution(
     auto_approve: bool = True,
     allowed_tools: list[str] | None = None,
     config: object | None = None,
+    task_id: str | None = None,
+    task_manager: object | None = None,
 ) -> tuple[object, EngineHandle, asyncio.Task[None]]:
     """Create a lightweight Engine + handle for executor use.
 
@@ -158,6 +168,11 @@ async def _create_engine_for_execution(
     *config* may be passed from the parent Engine so provider/model/api_key
     settings are inherited. When omitted, the user's config file is loaded
     from the default path instead of using an empty default.
+
+    *task_id* / *task_manager* are stashed on the new Engine's
+    ``ToolContext.metadata`` so tools running inside a durable task can
+    forward their ``task_updates`` payloads to the owning
+    :class:`~deepseek_tui.tools.task_manager.TaskManager`.
     """
     from deepseek_tui.client.deepseek import DeepSeekClient
     from deepseek_tui.config.loader import ConfigLoader
@@ -186,6 +201,13 @@ async def _create_engine_for_execution(
     if allowed_tools is not None:
         allowed_set = set(allowed_tools)
         engine.tool_registry.filter_by_names(allowed_set)
+
+    # Side-channel for Task ↔ checklist persistence. See
+    # ``tools/todo_tools.py::_forward_to_task_manager``.
+    if task_id is not None:
+        engine.tool_context.metadata["task_id"] = task_id
+    if task_manager is not None:
+        engine.tool_context.metadata["task_manager"] = task_manager
 
     engine_task = asyncio.create_task(engine.run())
     return engine, handle, engine_task

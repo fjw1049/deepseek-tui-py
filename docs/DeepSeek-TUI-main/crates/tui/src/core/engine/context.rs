@@ -6,7 +6,7 @@
 
 use crate::compaction::estimate_tokens;
 use crate::error_taxonomy::ErrorCategory;
-use crate::models::{Message, SystemBlock, SystemPrompt, context_window_for_model};
+use crate::models::{Message, SystemPrompt, context_window_for_model};
 use crate::tools::spec::ToolResult;
 
 /// Max output tokens requested for normal agent turns. Generous on purpose:
@@ -16,6 +16,30 @@ use crate::tools::spec::ToolResult;
 /// `max_tokens` near pressure; hard-cycle/preflight checks reserve this budget
 /// plus safety headroom before sending the next request.
 pub(super) const TURN_MAX_OUTPUT_TOKENS: u32 = 262_144;
+
+/// Safe max output tokens sent in the API request. This must be low enough to
+/// work with providers that have smaller context limits than the model's native
+/// window (e.g., self-hosted vLLM/SGLang with `--max-model-len 131072`).
+/// DeepSeek's API will still produce as many tokens as needed for thinking;
+/// this cap just prevents HTTP 400 from providers with tight limits.
+const API_MAX_OUTPUT_TOKENS: u32 = 65_536;
+
+/// Compute the effective `max_tokens` to send in the API request for a given
+/// model. Uses `API_MAX_OUTPUT_TOKENS` (64K) which fits within common provider
+/// limits (128K+ total). For non-V4 models with smaller context windows, caps
+/// at half the context window.
+pub(super) fn effective_max_output_tokens(model: &str) -> u32 {
+    let window = context_window_for_model(model).unwrap_or(128_000);
+    if window >= 500_000 {
+        // V4-class models on large-context providers: use 64K which is safe
+        // for most deployments while still allowing substantial output.
+        API_MAX_OUTPUT_TOKENS
+    } else {
+        // Smaller models: cap at half the context window (leave room for input)
+        let capped = window / 2;
+        capped.min(API_MAX_OUTPUT_TOKENS)
+    }
+}
 /// Keep this many most recent messages when emergency trimming is required.
 pub(super) const MIN_RECENT_MESSAGES_TO_KEEP: usize = 4;
 /// Allow a few emergency recovery attempts before failing the turn.
@@ -40,7 +64,6 @@ const LARGE_CONTEXT_WINDOW_TOKENS: u32 = 500_000;
 const TOOL_RESULT_METADATA_SUMMARY_CHARS: usize = 320;
 
 pub(super) const COMPACTION_SUMMARY_MARKER: &str = "Conversation Summary (Auto-Generated)";
-pub(super) const WORKING_SET_SUMMARY_MARKER: &str = "## Repo Working Set";
 
 #[derive(Debug, Clone, Copy)]
 struct ToolResultContextLimits {
@@ -191,6 +214,9 @@ fn compact_subagent_tool_result_for_context(tool_name: &str, raw: &str) -> Optio
     };
 
     let mut out = String::from("[sub-agent result summarized for parent context]\n");
+    out.push_str(
+        "Child results are self-reports; verify side effects with tools like read_file or list_dir before claiming success.\n",
+    );
     out.push_str("Use `agent_result` again only if you need the full raw payload.\n");
     for (idx, snapshot) in snapshots.iter().enumerate() {
         if idx >= 8 {
@@ -285,56 +311,6 @@ pub(super) fn extract_compaction_summary_prompt(
             }
         }
         None => None,
-    }
-}
-
-pub(super) fn remove_working_set_summary(prompt: Option<&SystemPrompt>) -> Option<SystemPrompt> {
-    match prompt {
-        Some(SystemPrompt::Blocks(blocks)) => {
-            let filtered: Vec<SystemBlock> = blocks
-                .iter()
-                .filter(|block| !block.text.contains(WORKING_SET_SUMMARY_MARKER))
-                .cloned()
-                .collect();
-            if filtered.is_empty() {
-                None
-            } else {
-                Some(SystemPrompt::Blocks(filtered))
-            }
-        }
-        Some(SystemPrompt::Text(text)) => Some(SystemPrompt::Text(text.clone())),
-        None => None,
-    }
-}
-
-pub(super) fn append_working_set_summary(
-    prompt: Option<SystemPrompt>,
-    working_set_summary: Option<&str>,
-) -> Option<SystemPrompt> {
-    let Some(summary) = working_set_summary.map(str::trim).filter(|s| !s.is_empty()) else {
-        return prompt;
-    };
-    let working_set_block = SystemBlock {
-        block_type: "text".to_string(),
-        text: summary.to_string(),
-        cache_control: None,
-    };
-
-    match prompt {
-        Some(SystemPrompt::Text(text)) => Some(SystemPrompt::Blocks(vec![
-            SystemBlock {
-                block_type: "text".to_string(),
-                text,
-                cache_control: None,
-            },
-            working_set_block,
-        ])),
-        Some(SystemPrompt::Blocks(mut blocks)) => {
-            blocks.retain(|block| !block.text.contains(WORKING_SET_SUMMARY_MARKER));
-            blocks.push(working_set_block);
-            Some(SystemPrompt::Blocks(blocks))
-        }
-        None => Some(SystemPrompt::Blocks(vec![working_set_block])),
     }
 }
 

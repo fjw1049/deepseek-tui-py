@@ -26,9 +26,10 @@ impl Engine {
         let mut context_recovery_attempts = 0u8;
         let mut tool_catalog = tools.unwrap_or_default();
         if !tool_catalog.is_empty() {
-            ensure_advanced_tooling(&mut tool_catalog);
+            ensure_advanced_tooling(&mut tool_catalog, mode);
         }
         let mut active_tool_names = initial_active_tools(&tool_catalog);
+        let mut loop_guard = LoopGuard::default();
 
         // Transparent stream-retry counter: when the chunked-transfer
         // connection dies mid-stream and we got nothing useful out of it
@@ -54,14 +55,8 @@ impl Engine {
                 self.session
                     .working_set
                     .observe_user_message(&steer, &self.session.workspace);
-                self.add_session_message(Message {
-                    role: "user".to_string(),
-                    content: vec![ContentBlock::Text {
-                        text: steer.clone(),
-                        cache_control: None,
-                    }],
-                })
-                .await;
+                self.add_session_message(self.user_text_message_with_turn_metadata(steer.clone()))
+                    .await;
                 let _ = self
                     .tx_event
                     .send(Event::status(format!(
@@ -219,7 +214,7 @@ impl Engine {
 
             // Build the request
             let force_update_plan_this_step = force_update_plan_first && turn.tool_calls.is_empty();
-            let active_tools = if tool_catalog.is_empty() {
+            let mut active_tools = if tool_catalog.is_empty() {
                 None
             } else {
                 Some(active_tools_for_step(
@@ -228,20 +223,36 @@ impl Engine {
                     force_update_plan_this_step,
                 ))
             };
+            if self.config.strict_tool_mode
+                && let Some(tools) = active_tools.as_mut()
+            {
+                crate::tools::schema_sanitize::prepare_tools_for_strict_mode(tools);
+            }
+
+            // Resolve `auto` reasoning_effort to a concrete tier (#663).
+            let effective_reasoning_effort = resolve_auto_effort(
+                self.session.reasoning_effort.as_deref(),
+                &self.session.messages,
+            );
+
             let request = MessageRequest {
                 model: self.session.model.clone(),
-                messages: self.session.messages.clone(),
-                max_tokens: TURN_MAX_OUTPUT_TOKENS,
+                messages: self.messages_with_turn_metadata(),
+                max_tokens: effective_max_output_tokens(&self.session.model),
                 system: self.session.system_prompt.clone(),
                 tools: active_tools.clone(),
                 tool_choice: if active_tools.is_some() {
-                    Some(json!({ "type": "auto" }))
+                    if self.config.strict_tool_mode {
+                        Some(json!("required"))
+                    } else {
+                        Some(json!({ "type": "auto" }))
+                    }
                 } else {
                     None
                 },
                 metadata: None,
                 thinking: None,
-                reasoning_effort: self.session.reasoning_effort.clone(),
+                reasoning_effort: effective_reasoning_effort,
                 stream: Some(true),
                 temperature: None,
                 top_p: None,
@@ -258,7 +269,7 @@ impl Engine {
                     s
                 }
                 Err(e) => {
-                    let message = e.to_string();
+                    let message = self.decorate_auth_error_message(e.to_string());
                     if is_context_length_error_message(&message)
                         && context_recovery_attempts < MAX_CONTEXT_RECOVERY_ATTEMPTS
                         && self
@@ -316,7 +327,8 @@ impl Engine {
             // budget restarts with the fresh stream.
             let mut stream_start = Instant::now();
             let mut stream_content_bytes: usize = 0;
-            let chunk_timeout = Duration::from_secs(STREAM_CHUNK_TIMEOUT_SECS);
+            let chunk_timeout_secs = stream_chunk_timeout_secs();
+            let chunk_timeout = Duration::from_secs(chunk_timeout_secs);
             let max_duration = Duration::from_secs(STREAM_MAX_DURATION_SECS);
 
             // Process stream events
@@ -329,7 +341,7 @@ impl Engine {
                             Ok(None) => None, // stream ended normally
                             Err(_) => {
                                 let envelope = StreamError::Stall {
-                                    timeout_secs: STREAM_CHUNK_TIMEOUT_SECS,
+                                    timeout_secs: chunk_timeout_secs,
                                 }
                                 .into_envelope();
                                 crate::logging::warn(&envelope.message);
@@ -398,7 +410,7 @@ impl Engine {
                     }
                     Err(e) => {
                         stream_errors = stream_errors.saturating_add(1);
-                        let message = e.to_string();
+                        let message = self.decorate_auth_error_message(e.to_string());
                         // #103: when the stream errors before any content was
                         // streamed AND we still have retry budget, transparently
                         // resend the request. DeepSeek has not billed for any
@@ -428,7 +440,9 @@ impl Engine {
                                     continue;
                                 }
                                 Err(retry_err) => {
-                                    let retry_msg = format!("Stream retry failed: {retry_err}");
+                                    let retry_msg = self.decorate_auth_error_message(format!(
+                                        "Stream retry failed: {retry_err}"
+                                    ));
                                     turn_error.get_or_insert(retry_msg.clone());
                                     let _ = self
                                         .tx_event
@@ -807,15 +821,90 @@ impl Engine {
                         self.session
                             .working_set
                             .observe_user_message(&steer, &self.session.workspace);
-                        self.add_session_message(Message {
-                            role: "user".to_string(),
-                            content: vec![ContentBlock::Text {
-                                text: steer,
-                                cache_control: None,
-                            }],
-                        })
-                        .await;
+                        self.add_session_message(self.user_text_message_with_turn_metadata(steer))
+                            .await;
                     }
+                    turn.next_step();
+                    continue;
+                }
+
+                // Sub-agent completion handoff (issue #756). The model finished
+                // streaming with no tool calls — but if it has direct children
+                // still running (or completions queued from children that
+                // finished while we were inferring), surface their
+                // `<deepseek:subagent.done>` sentinels into the transcript and
+                // resume instead of ending the turn. This fulfils the contract
+                // already documented in `prompts/base.md`: the parent is
+                // promised it'll see the sentinel when a child finishes.
+                let mut completions: Vec<crate::tools::subagent::SubAgentCompletion> = Vec::new();
+                while let Ok(c) = self.rx_subagent_completion.try_recv() {
+                    completions.push(c);
+                }
+                if completions.is_empty() {
+                    let running = {
+                        let mgr = self.subagent_manager.read().await;
+                        mgr.running_count()
+                    };
+                    if running > 0 {
+                        let _ = self
+                            .tx_event
+                            .send(Event::status(format!(
+                                "Waiting on {running} sub-agent(s) to complete..."
+                            )))
+                            .await;
+                        tokio::select! {
+                            biased;
+                            () = self.cancel_token.cancelled() => {
+                                let _ = self
+                                    .tx_event
+                                    .send(Event::status(
+                                        "Request cancelled while waiting for sub-agents",
+                                    ))
+                                    .await;
+                                return (TurnOutcomeStatus::Interrupted, None);
+                            }
+                            Some(c) = self.rx_subagent_completion.recv() => {
+                                completions.push(c);
+                                while let Ok(extra) = self.rx_subagent_completion.try_recv() {
+                                    completions.push(extra);
+                                }
+                            }
+                            Some(steer) = self.rx_steer.recv() => {
+                                let trimmed = steer.trim().to_string();
+                                if !trimmed.is_empty() {
+                                    self.session
+                                        .working_set
+                                        .observe_user_message(&trimmed, &self.session.workspace);
+                                    self.add_session_message(
+                                        self.user_text_message_with_turn_metadata(trimmed.clone()),
+                                    )
+                                    .await;
+                                    let _ = self
+                                        .tx_event
+                                        .send(Event::status(format!(
+                                            "Steer input accepted: {}",
+                                            summarize_text(&trimmed, 120)
+                                        )))
+                                        .await;
+                                }
+                                turn.next_step();
+                                continue;
+                            }
+                        }
+                    }
+                }
+                if !completions.is_empty() {
+                    let count = completions.len();
+                    for c in completions {
+                        self.add_session_message(subagent_completion_runtime_message(&c.payload))
+                            .await;
+                    }
+                    let _ = self
+                        .tx_event
+                        .send(Event::status(format!(
+                            "Resuming turn with {count} sub-agent completion(s)"
+                        )))
+                        .await;
                     turn.next_step();
                     continue;
                 }
@@ -869,13 +958,9 @@ impl Engine {
                                 } else {
                                     format!("[REPL round {round_num} output]\n{}", round.stdout)
                                 };
-                                self.add_session_message(Message {
-                                    role: "user".to_string(),
-                                    content: vec![ContentBlock::Text {
-                                        text: feedback,
-                                        cache_control: None,
-                                    }],
-                                })
+                                self.add_session_message(
+                                    self.user_text_message_with_turn_metadata(feedback),
+                                )
                                 .await;
                             }
                             Err(e) => {
@@ -885,15 +970,11 @@ impl Engine {
                                         "REPL round {round_num} failed: {e}"
                                     )))
                                     .await;
-                                self.add_session_message(Message {
-                                    role: "user".to_string(),
-                                    content: vec![ContentBlock::Text {
-                                        text: format!(
-                                            "[REPL round {round_num} execution failed]\n{e}"
-                                        ),
-                                        cache_control: None,
-                                    }],
-                                })
+                                self.add_session_message(
+                                    self.user_text_message_with_turn_metadata(format!(
+                                        "[REPL round {round_num} execution failed]\n{e}"
+                                    )),
+                                )
                                 .await;
                             }
                         }
@@ -941,9 +1022,9 @@ impl Engine {
             };
 
             let mut plans: Vec<ToolExecutionPlan> = Vec::with_capacity(tool_uses.len());
-            for (index, tool) in tool_uses.iter().enumerate() {
+            for (index, tool) in tool_uses.iter_mut().enumerate() {
                 let tool_id = tool.id.clone();
-                let tool_name = tool.name.clone();
+                let mut tool_name = tool.name.clone();
                 let tool_input = tool.input.clone();
                 let tool_caller = tool.caller.clone();
                 crate::logging::info(format!(
@@ -963,6 +1044,24 @@ impl Engine {
                 let mut supports_parallel = false;
                 let mut read_only = false;
                 let mut blocked_error: Option<ToolError> = None;
+                let mut guard_result: Option<ToolResult> = None;
+
+                if mode == AppMode::Plan
+                    && matches!(
+                        tool_name.as_str(),
+                        "exec_shell"
+                            | "exec_shell_wait"
+                            | "exec_shell_interact"
+                            | "exec_wait"
+                            | "exec_interact"
+                            | CODE_EXECUTION_TOOL_NAME
+                    )
+                {
+                    blocked_error = Some(ToolError::permission_denied(format!(
+                        "Tool '{tool_name}' is unavailable in Plan mode"
+                    )));
+                }
+
                 if maybe_activate_requested_deferred_tool(
                     &tool_name,
                     &tool_catalog,
@@ -975,7 +1074,41 @@ impl Engine {
                         )))
                         .await;
                 }
-                let tool_def = tool_catalog.iter().find(|def| def.name == tool_name);
+                let mut tool_def = tool_catalog.iter().find(|def| def.name == tool_name);
+
+                // Resolve hallucinated tool names when the model emits a
+                // non-canonical variant (Read_file, readFile, read-file, etc.).
+                if tool_def.is_none()
+                    && let Some(registry) = tool_registry
+                    && let Some(canonical) = registry.resolve(&tool_name)
+                {
+                    crate::logging::info(format!(
+                        "Resolved hallucinated tool name '{}' -> '{}'",
+                        tool_name, canonical
+                    ));
+                    tool_def = tool_catalog.iter().find(|d| d.name == canonical);
+                    if tool_def.is_some() {
+                        tool_name = canonical.to_string();
+                        // Update the tool_uses entry so the result is
+                        // attributed to the canonical name.
+                        tool.name = tool_name.clone();
+                        // Re-run the deferred-activation check with the
+                        // canonical name.
+                        if maybe_activate_requested_deferred_tool(
+                            &tool_name,
+                            &tool_catalog,
+                            &mut active_tool_names,
+                        ) {
+                            let _ = self
+                                .tx_event
+                                .send(Event::status(format!(
+                                    "Auto-loaded deferred tool '{}' after resolving '{}'.",
+                                    tool_name, tool_name
+                                )))
+                                .await;
+                        }
+                    }
+                }
 
                 if !caller_allowed_for_tool(tool_caller.as_ref(), tool_def) {
                     blocked_error = Some(ToolError::permission_denied(format!(
@@ -1021,6 +1154,17 @@ impl Engine {
                     read_only = true;
                 }
 
+                if blocked_error.is_none()
+                    && let AttemptDecision::Block(message) =
+                        loop_guard.record_attempt(&tool_name, &tool_input)
+                {
+                    crate::logging::warn(message.clone());
+                    guard_result = Some(
+                        ToolResult::success(message)
+                            .with_metadata(json!({"loop_guard": "identical_tool_call"})),
+                    );
+                }
+
                 plans.push(ToolExecutionPlan {
                     index,
                     id: tool_id,
@@ -1033,6 +1177,7 @@ impl Engine {
                     supports_parallel,
                     read_only,
                     blocked_error,
+                    guard_result,
                 });
             }
 
@@ -1060,6 +1205,26 @@ impl Engine {
             if parallel_allowed {
                 let mut tool_tasks = FuturesUnordered::new();
                 for plan in plans {
+                    if let Some(result) = plan.guard_result.clone() {
+                        let result = Ok(result);
+                        let _ = self
+                            .tx_event
+                            .send(Event::ToolCallComplete {
+                                id: plan.id.clone(),
+                                name: plan.name.clone(),
+                                result: result.clone(),
+                            })
+                            .await;
+                        outcomes[plan.index] = Some(ToolExecOutcome {
+                            index: plan.index,
+                            id: plan.id,
+                            name: plan.name,
+                            input: plan.input,
+                            started_at: Instant::now(),
+                            result,
+                        });
+                        continue;
+                    }
                     if let Some(err) = plan.blocked_error.clone() {
                         outcomes[plan.index] = Some(ToolExecOutcome {
                             index: plan.index,
@@ -1075,6 +1240,7 @@ impl Engine {
                     let lock = tool_exec_lock.clone();
                     let mcp_pool = mcp_pool.clone();
                     let tx_event = self.tx_event.clone();
+                    let session_id = self.session.id.clone();
                     let started_at = Instant::now();
 
                     tool_tasks.push(async move {
@@ -1097,7 +1263,12 @@ impl Engine {
                         // correlate large-output episodes with disk usage.
                         if let Ok(tool_result) = result.as_mut()
                             && let Some(path) =
-                                crate::tools::truncate::apply_spillover(tool_result, &plan.id)
+                                crate::tools::truncate::apply_spillover_with_artifact(
+                                    tool_result,
+                                    &plan.id,
+                                    &plan.name,
+                                    &session_id,
+                                )
                         {
                             emit_tool_audit(json!({
                                 "event": "tool.spillover",
@@ -1136,6 +1307,27 @@ impl Engine {
                     let tool_name = plan.name.clone();
                     let tool_input = plan.input.clone();
                     let tool_caller = plan.caller.clone();
+
+                    if let Some(result) = plan.guard_result.clone() {
+                        let result = Ok(result);
+                        let _ = self
+                            .tx_event
+                            .send(Event::ToolCallComplete {
+                                id: tool_id.clone(),
+                                name: tool_name.clone(),
+                                result: result.clone(),
+                            })
+                            .await;
+                        outcomes[plan.index] = Some(ToolExecOutcome {
+                            index: plan.index,
+                            id: tool_id,
+                            name: tool_name,
+                            input: tool_input,
+                            started_at: Instant::now(),
+                            result,
+                        });
+                        continue;
+                    }
 
                     if let Some(err) = plan.blocked_error.clone() {
                         let result = Err(err);
@@ -1382,14 +1574,18 @@ impl Engine {
 
                     // #500: spill outsized tool outputs to disk before the
                     // result fans out to the model context and the UI cell.
-                    // Both consumers see the same truncated content + the
-                    // `spillover_path` metadata pointing at the full file.
+                    // Both consumers see the same artifact reference block +
+                    // metadata pointing at the session-owned full file.
                     // Emit a discrete `tool.spillover` audit event so
                     // operators can correlate large-output episodes with
                     // disk-usage growth in `~/.deepseek/tool_outputs/`.
                     if let Ok(tool_result) = result.as_mut()
-                        && let Some(path) =
-                            crate::tools::truncate::apply_spillover(tool_result, &tool_id)
+                        && let Some(path) = crate::tools::truncate::apply_spillover_with_artifact(
+                            tool_result,
+                            &tool_id,
+                            &tool_name,
+                            &self.session.id,
+                        )
                     {
                         emit_tool_audit(json!({
                             "event": "tool.spillover",
@@ -1426,6 +1622,7 @@ impl Engine {
             // denial that should not.
             let mut step_error_categories: Vec<ErrorCategory> = Vec::new();
             let mut stop_after_plan_tool = false;
+            let mut loop_guard_halt: Option<String> = None;
 
             for outcome in outcomes.into_iter().flatten() {
                 let duration = outcome.started_at.elapsed();
@@ -1438,6 +1635,16 @@ impl Engine {
 
                 match outcome.result {
                     Ok(output) => {
+                        match loop_guard.record_outcome(&outcome.name, output.success) {
+                            OutcomeDecision::Continue => {}
+                            OutcomeDecision::Warn(message) => {
+                                crate::logging::warn(message.clone());
+                                let _ = self.tx_event.send(Event::status(message)).await;
+                            }
+                            OutcomeDecision::Halt(message) => {
+                                loop_guard_halt.get_or_insert(message);
+                            }
+                        }
                         emit_tool_audit(json!({
                             "event": "tool.result",
                             "tool_id": outcome.id.clone(),
@@ -1480,6 +1687,16 @@ impl Engine {
                         .await;
                     }
                     Err(e) => {
+                        match loop_guard.record_outcome(&outcome.name, false) {
+                            OutcomeDecision::Continue => {}
+                            OutcomeDecision::Warn(message) => {
+                                crate::logging::warn(message.clone());
+                                let _ = self.tx_event.send(Event::status(message)).await;
+                            }
+                            OutcomeDecision::Halt(message) => {
+                                loop_guard_halt.get_or_insert(message);
+                            }
+                        }
                         let envelope: ErrorEnvelope = e.clone().into();
                         emit_tool_audit(json!({
                             "event": "tool.result",
@@ -1521,6 +1738,12 @@ impl Engine {
                 break;
             }
 
+            if let Some(message) = loop_guard_halt {
+                crate::logging::warn(message.clone());
+                let _ = self.tx_event.send(Event::status(message)).await;
+                break;
+            }
+
             if self
                 .run_capacity_post_tool_checkpoint(
                     turn,
@@ -1542,14 +1765,8 @@ impl Engine {
                     self.session
                         .working_set
                         .observe_user_message(&steer, &self.session.workspace);
-                    self.add_session_message(Message {
-                        role: "user".to_string(),
-                        content: vec![ContentBlock::Text {
-                            text: steer,
-                            cache_control: None,
-                        }],
-                    })
-                    .await;
+                    self.add_session_message(self.user_text_message_with_turn_metadata(steer))
+                        .await;
                 }
             }
 
@@ -1573,16 +1790,6 @@ impl Engine {
                 continue;
             }
 
-            if consecutive_tool_error_steps >= 3 {
-                let _ = self
-                    .tx_event
-                    .send(Event::status(
-                        "Stopping after repeated tool failures. Try a narrower scope or adjust approvals.",
-                    ))
-                    .await;
-                break;
-            }
-
             turn.next_step();
         }
 
@@ -1593,5 +1800,130 @@ impl Engine {
             return (TurnOutcomeStatus::Failed, Some(err));
         }
         (TurnOutcomeStatus::Completed, None)
+    }
+
+    pub(super) fn messages_with_turn_metadata(&self) -> Vec<Message> {
+        // `<turn_meta>` is stored on user-text messages when the message is
+        // appended. Do not rewrite historical messages at request time: doing
+        // so makes the API prefix differ from the bytes sent in earlier turns
+        // and destroys DeepSeek's KV prefix cache reuse.
+        self.session.messages.clone()
+    }
+}
+
+fn subagent_completion_runtime_message(payload: &str) -> Message {
+    Message {
+        role: "system".to_string(),
+        content: vec![ContentBlock::Text {
+            text: format!(
+                "<deepseek:runtime_event kind=\"subagent_completion\" visibility=\"internal\">\n\
+This is an internal runtime event, not user input. Use the sub-agent completion \
+data below to continue coordinating the current task. Do not tell the user they \
+pasted sentinels, do not explain the sentinel protocol, and do not quote the raw \
+XML unless the user explicitly asks to debug sub-agent internals.\n\n\
+{payload}\n\
+</deepseek:runtime_event>"
+            ),
+            cache_control: None,
+        }],
+    }
+}
+
+/// Resolve an `"auto"` reasoning-effort tier to a concrete value.
+///
+/// When the configured effort is `"auto"`, inspects the last user message
+/// and calls [`crate::auto_reasoning::select`] to pick the actual tier.
+/// Non-`"auto"` values pass through unchanged.
+fn resolve_auto_effort(reasoning_effort: Option<&str>, messages: &[Message]) -> Option<String> {
+    match reasoning_effort {
+        Some("auto") => {
+            // Find the last user message in the conversation.
+            let last_msg = messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| {
+                    m.content
+                        .iter()
+                        .filter_map(|block| {
+                            if let ContentBlock::Text { text, .. } = block {
+                                if is_turn_metadata_text(text) {
+                                    None
+                                } else {
+                                    Some(text.as_str())
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<&str>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+
+            // is_subagent is false here — handle_deepseek_turn runs in the
+            // main engine (not a sub-agent's inner loop). Sub-agents have
+            // their own turn pass and can pass is_subagent=true when they
+            // call this function directly.
+            let tier = crate::auto_reasoning::select(false, &last_msg);
+            let resolved = tier.as_setting().to_string();
+            tracing::debug!(
+                reasoning_effort = %resolved,
+                is_subagent = false,
+                "auto_reasoning: resolved auto tier from user message"
+            );
+            Some(resolved)
+        }
+        Some(other) => Some(other.to_string()),
+        None => None,
+    }
+}
+
+fn is_turn_metadata_text(text: &str) -> bool {
+    text.trim_start().starts_with("<turn_meta>")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subagent_completion_handoff_is_internal_system_message() {
+        let message = subagent_completion_runtime_message(
+            "Build passed\n<deepseek:subagent.done>{\"agent_id\":\"agent_a\"}</deepseek:subagent.done>",
+        );
+
+        assert_eq!(message.role, "system");
+        let text = match &message.content[0] {
+            ContentBlock::Text { text, .. } => text,
+            other => panic!("expected text block, got {other:?}"),
+        };
+        assert!(text.contains("internal runtime event, not user input"));
+        assert!(text.contains("Do not tell the user they pasted sentinels"));
+        assert!(text.contains("<deepseek:subagent.done>"));
+        assert!(text.contains("Build passed"));
+    }
+
+    #[test]
+    fn resolve_auto_effort_ignores_stored_turn_metadata() {
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: vec![
+                ContentBlock::Text {
+                    text: "<turn_meta>\nRecent errors: src/failing.rs\n</turn_meta>".to_string(),
+                    cache_control: None,
+                },
+                ContentBlock::Text {
+                    text: "hello".to_string(),
+                    cache_control: None,
+                },
+            ],
+        }];
+
+        assert_eq!(
+            resolve_auto_effort(Some("auto"), &messages),
+            Some("high".to_string()),
+            "auto thinking should classify the user request, not stored metadata"
+        );
     }
 }

@@ -299,6 +299,64 @@ pub fn classify_command(tokens: &[&str]) -> String {
     positional[0].clone()
 }
 
+/// Return `true` when an allow-rule `pattern` (a command-prefix string such
+/// as `"git status"`) matches the concrete `command` string using the
+/// arity-aware prefix classification from [`classify_command`].
+///
+/// This is the canonical entry point for config `allow` / `auto_allow` rule
+/// evaluation.  It correctly handles:
+///
+/// * `"git status"` → matches `git status -s`, `git status --porcelain`;
+///   does **not** match `git push origin main`.
+/// * `"npm run dev"` → matches only `npm run dev`, not `npm run build`.
+/// * `"cargo check"` → matches `cargo check --workspace`.
+/// * `"make"` → matches `make all`, `make clean` (arity 1).
+///
+/// For allow rules that contain wildcards (`*`) or regex metacharacters, the
+/// caller should additionally invoke the pattern-matching path from
+/// `crate::execpolicy::matcher::pattern_matches`.
+///
+/// # Examples
+///
+/// ```
+/// # use deepseek_tui::command_safety::prefix_allow_matches;
+/// assert!( prefix_allow_matches("git status",    "git status --porcelain"));
+/// assert!(!prefix_allow_matches("git status",    "git push origin main"));
+/// assert!( prefix_allow_matches("cargo check",   "cargo check --workspace"));
+/// assert!( prefix_allow_matches("npm run dev",   "npm run dev"));
+/// assert!(!prefix_allow_matches("npm run dev",   "npm run build"));
+/// ```
+pub fn prefix_allow_matches(pattern: &str, command: &str) -> bool {
+    // Normalise the pattern: trim + lowercase + collapse whitespace.
+    let pattern_norm: String = pattern
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    if tokens.is_empty() {
+        return pattern_norm.is_empty();
+    }
+
+    // Primary path: arity-aware classification.
+    let canonical = classify_command(&tokens);
+    if canonical == pattern_norm {
+        return true;
+    }
+
+    // Fallback: normalised exact match for patterns not in the arity table
+    // (e.g. exact-match rules like `"ls -la"` that lack a dictionary entry).
+    let command_norm: String = command
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    command_norm == pattern_norm || command_norm.starts_with(&format!("{pattern_norm} "))
+}
+
 /// Safety classification of a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SafetyLevel {
@@ -524,6 +582,18 @@ pub fn analyze_command(command: &str) -> SafetyAnalysis {
         );
     }
 
+    if command.contains('\0') {
+        return SafetyAnalysis::dangerous(
+            command,
+            vec!["Command contains a null byte".to_string()],
+            vec!["Strip embedded null bytes before retrying".to_string()],
+        );
+    }
+
+    if let Some(analysis) = analyze_destructive_patterns(command) {
+        return analysis;
+    }
+
     if command.contains("&&") || command.contains("||") || command.contains(';') {
         // Chains of known-safe commands (cargo/git/zig/npm/etc.) are
         // routine for build+test workflows. Instead of hard-blocking,
@@ -556,7 +626,9 @@ pub fn analyze_command(command: &str) -> SafetyAnalysis {
         );
     }
 
-    // Check for dangerous patterns first
+    // Check for dangerous patterns first. The token-aware pass above handles
+    // spacing and quoting variants; these literal patterns remain as a compact
+    // fallback for legacy shapes.
     for (pattern, reason) in DANGEROUS_PATTERNS {
         if command_lower.contains(&pattern.to_lowercase()) {
             return SafetyAnalysis::dangerous(
@@ -651,6 +723,231 @@ pub fn analyze_command(command: &str) -> SafetyAnalysis {
     )
 }
 
+fn analyze_destructive_patterns(command: &str) -> Option<SafetyAnalysis> {
+    if primary_shell_command_is(command, "eval") {
+        return Some(SafetyAnalysis::dangerous(
+            command,
+            vec!["Command invokes shell eval".to_string()],
+            vec!["Avoid evaluating dynamically generated shell input".to_string()],
+        ));
+    }
+
+    if pipes_remote_content_to_shell(command) {
+        return Some(SafetyAnalysis::dangerous(
+            command,
+            vec!["Piping remote content directly to shell is dangerous".to_string()],
+            vec!["Download the script first and review it before execution".to_string()],
+        ));
+    }
+
+    for segment in split_command_segments(command) {
+        let tokens = shell_words(&segment);
+        let Some(start) = primary_token_index(&tokens) else {
+            continue;
+        };
+        match tokens[start].as_str() {
+            "rm" => {
+                if let Some(reason) = dangerous_rm_reason(&tokens[start + 1..]) {
+                    return Some(SafetyAnalysis::dangerous(
+                        command,
+                        vec![reason],
+                        vec!["Review the deletion target before retrying".to_string()],
+                    ));
+                }
+            }
+            "find" => {
+                if let Some(analysis) = analyze_find_mutation(command, &tokens[start + 1..]) {
+                    return Some(analysis);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn split_command_segments(command: &str) -> Vec<String> {
+    command
+        .replace("&&", "\n")
+        .replace("||", "\n")
+        .replace(';', "\n")
+        .split('\n')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn shell_words(segment: &str) -> Vec<String> {
+    shlex::split(segment).unwrap_or_else(|| {
+        segment
+            .split_whitespace()
+            .map(|token| token.trim_matches(['"', '\'']).to_string())
+            .collect()
+    })
+}
+
+fn primary_token_index(tokens: &[String]) -> Option<usize> {
+    let mut idx = 0;
+    while idx < tokens.len() {
+        let token = tokens[idx].as_str();
+        if token == "env" {
+            idx += 1;
+            while idx < tokens.len()
+                && (tokens[idx].starts_with('-') || is_env_assignment(&tokens[idx]))
+            {
+                idx += 1;
+            }
+            continue;
+        }
+        if is_env_assignment(token) {
+            idx += 1;
+            continue;
+        }
+        return Some(idx);
+    }
+    None
+}
+
+fn is_env_assignment(token: &str) -> bool {
+    let Some((name, _value)) = token.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+}
+
+fn primary_shell_command_is(command: &str, expected: &str) -> bool {
+    split_command_segments(command).into_iter().any(|segment| {
+        let tokens = shell_words(&segment);
+        primary_token_index(&tokens)
+            .and_then(|idx| tokens.get(idx))
+            .is_some_and(|token| token == expected)
+    })
+}
+
+fn pipes_remote_content_to_shell(command: &str) -> bool {
+    split_command_segments(command).into_iter().any(|segment| {
+        let parts: Vec<&str> = segment.split('|').collect();
+        if parts.len() < 2 {
+            return false;
+        }
+        parts.windows(2).any(|window| {
+            let left = window[0].to_ascii_lowercase();
+            if !(left.contains("curl") || left.contains("wget")) {
+                return false;
+            }
+            let right_tokens = shell_words(window[1]);
+            primary_token_index(&right_tokens)
+                .and_then(|idx| right_tokens.get(idx))
+                .is_some_and(|token| matches!(token.as_str(), "sh" | "bash" | "zsh"))
+        })
+    })
+}
+
+fn dangerous_rm_reason(args: &[String]) -> Option<String> {
+    let mut recursive = false;
+    let mut force = false;
+    let mut targets = Vec::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "--" => continue,
+            "--recursive" | "--dir" => recursive = true,
+            "--force" => force = true,
+            flag if flag.starts_with('-') && !flag.starts_with("--") => {
+                recursive |= flag.chars().any(|ch| matches!(ch, 'r' | 'R'));
+                force |= flag.chars().any(|ch| ch == 'f');
+            }
+            target => targets.push(target),
+        }
+    }
+
+    if !(recursive || force) {
+        return None;
+    }
+
+    for target in targets {
+        if is_root_delete_target(target) {
+            return Some("Recursive or forced deletion targets the root filesystem".to_string());
+        }
+        if is_home_delete_target(target) {
+            return Some("Recursive or forced deletion targets the home directory".to_string());
+        }
+        if target_contains_parent_escape(target) {
+            return Some("Recursive or forced deletion may escape the workspace".to_string());
+        }
+    }
+
+    None
+}
+
+fn analyze_find_mutation(command: &str, args: &[String]) -> Option<SafetyAnalysis> {
+    let has_delete = args.iter().any(|arg| arg == "-delete");
+    let execs_rm = args
+        .windows(2)
+        .any(|pair| pair[0] == "-exec" && pair[1] == "rm");
+    if !(has_delete || execs_rm) {
+        return None;
+    }
+
+    let targets: Vec<&str> = args
+        .iter()
+        .take_while(|arg| !arg.starts_with('-'))
+        .map(String::as_str)
+        .collect();
+    if targets.iter().any(|target| {
+        is_root_delete_target(target)
+            || is_home_delete_target(target)
+            || target_contains_parent_escape(target)
+    }) {
+        return Some(SafetyAnalysis::dangerous(
+            command,
+            vec!["find mutation targets a broad or external path".to_string()],
+            vec!["Restrict the find root to a workspace-relative path".to_string()],
+        ));
+    }
+
+    Some(SafetyAnalysis::requires_approval(
+        command,
+        vec!["find command may delete files".to_string()],
+    ))
+}
+
+fn is_root_delete_target(target: &str) -> bool {
+    let normalized = target.trim_matches(['"', '\'']).replace('\\', "/");
+    normalized == "/"
+        || normalized == "/*"
+        || normalized == "//"
+        || normalized.starts_with("/*/")
+        || normalized.starts_with("/.")
+}
+
+fn is_home_delete_target(target: &str) -> bool {
+    let normalized = target.trim_matches(['"', '\'']).replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    lower == "~"
+        || lower.starts_with("~/")
+        || lower == "$home"
+        || lower.starts_with("$home/")
+        || lower == "${home}"
+        || lower.starts_with("${home}/")
+}
+
+fn target_contains_parent_escape(target: &str) -> bool {
+    target
+        .replace('\\', "/")
+        .split('/')
+        .any(|component| component == "..")
+}
+
 /// Check if a command is known to be safe
 fn is_safe_command(command: &str) -> bool {
     let command_lower = command.to_lowercase();
@@ -717,28 +1014,68 @@ fn is_workspace_safe_command(command: &str) -> bool {
 
 /// Check if a path escapes the workspace
 pub fn path_escapes_workspace(path: &str, workspace: &str) -> bool {
-    let path_lower = path.to_lowercase();
+    let path_lower = normalize_safety_path(path);
+    let workspace_lower = normalize_safety_path(workspace);
 
     // Check for obvious escape patterns
-    if path_lower.starts_with('/') && !path_lower.starts_with(workspace) {
-        return true;
-    }
-
     if path_lower.starts_with("~/") || path_lower.starts_with("$home") {
         return true;
     }
 
-    // Check for ../ traversal
-    if path.contains("..") {
-        // Count the ../ sequences and check if they escape
-        let workspace_depth = workspace.matches('/').count();
-        let escape_count = path.matches("..").count();
-        if escape_count > workspace_depth {
+    if is_absolute_safety_path(&path_lower) {
+        let path_components = lexical_components(&path_lower);
+        let workspace_components = lexical_components(&workspace_lower);
+        return !components_start_with(&path_components, &workspace_components);
+    }
+
+    // Walk the path components. Track depth relative to the workspace root:
+    // non-`..` components increment depth, `..` components decrement it.
+    // If depth ever goes negative, the path escapes the workspace boundary.
+    // This correctly distinguishes genuine traversal like `../outside` from
+    // names that happen to contain consecutive dots like `foo..bar`.
+    let mut depth: i32 = 0;
+    for component in path_lower.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => depth -= 1,
+            _ => depth += 1,
+        }
+        if depth < 0 {
             return true;
         }
     }
 
     false
+}
+
+fn normalize_safety_path(path: &str) -> String {
+    path.trim().replace('\\', "/").to_lowercase()
+}
+
+fn is_absolute_safety_path(path: &str) -> bool {
+    path.starts_with('/')
+        || path
+            .as_bytes()
+            .get(1..3)
+            .is_some_and(|bytes| bytes[0] == b':' && bytes[1] == b'/')
+}
+
+fn lexical_components(path: &str) -> Vec<&str> {
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            _ => components.push(component),
+        }
+    }
+    components
+}
+
+fn components_start_with(path: &[&str], prefix: &[&str]) -> bool {
+    path.len() >= prefix.len() && path.iter().zip(prefix.iter()).all(|(a, b)| a == b)
 }
 
 /// Parse a command and extract the primary command name
@@ -850,6 +1187,85 @@ mod tests {
     }
 
     #[test]
+    fn test_destructive_patterns_handle_spacing_and_quotes() {
+        assert_eq!(analyze_command("rm  -rf  /").level, SafetyLevel::Dangerous);
+        assert_eq!(
+            analyze_command("rm -rf \"/\"").level,
+            SafetyLevel::Dangerous
+        );
+        assert_eq!(analyze_command("rm -fr -- /").level, SafetyLevel::Dangerous);
+        assert_eq!(
+            analyze_command("FOO=bar rm -rf $HOME").level,
+            SafetyLevel::Dangerous
+        );
+    }
+
+    #[test]
+    fn test_destructive_patterns_scan_chained_segments() {
+        assert_eq!(
+            analyze_command("echo ok; rm -rf /").level,
+            SafetyLevel::Dangerous
+        );
+    }
+
+    #[test]
+    fn test_find_delete_requires_approval_or_blocks_broad_roots() {
+        assert_eq!(
+            analyze_command("find / -delete").level,
+            SafetyLevel::Dangerous
+        );
+        assert_eq!(
+            analyze_command("find . -delete").level,
+            SafetyLevel::RequiresApproval
+        );
+    }
+
+    #[test]
+    fn test_eval_invocation_is_blocked_without_substring_false_positive() {
+        assert_eq!(
+            analyze_command("eval $(echo test | base64 -d)").level,
+            SafetyLevel::Dangerous
+        );
+        assert_ne!(
+            analyze_command("cargo run --bin deepseek -- eval").level,
+            SafetyLevel::Dangerous
+        );
+    }
+
+    #[test]
+    fn test_null_byte_is_blocked() {
+        assert_eq!(
+            analyze_command("ls\0 -la").level,
+            SafetyLevel::Dangerous,
+            "embedded NUL byte must be rejected as dangerous"
+        );
+        assert_eq!(
+            analyze_command("echo hello\0world").level,
+            SafetyLevel::Dangerous
+        );
+    }
+
+    #[test]
+    fn test_eval_substring_is_not_misclassified() {
+        // Words like `evaluate` / `evaluation` / `cargo run -- eval`
+        // contain the substring "eval" but are not eval invocations.
+        // Guard against the naive `command.contains("eval")` regression
+        // — these should stay safe / workspace-safe, never Dangerous.
+        let evaluate_safe = analyze_command("cargo run --bin deepseek -- eval").level;
+        assert_ne!(
+            evaluate_safe,
+            SafetyLevel::Dangerous,
+            "running the eval harness should not be classified as dangerous"
+        );
+        let evaluator = analyze_command("python evaluator.py --suite default").level;
+        assert_ne!(
+            evaluator,
+            SafetyLevel::Dangerous,
+            "running an evaluator script should not be classified as dangerous"
+        );
+    }
+
+    #[test]
     fn test_privileged_commands() {
         assert_eq!(
             analyze_command("sudo rm file").level,
@@ -912,6 +1328,52 @@ mod tests {
         assert!(!path_escapes_workspace(
             "./src/main.rs",
             "/home/user/project"
+        ));
+    }
+
+    #[test]
+    fn test_path_escapes_workspace_doesnt_flag_double_dot_in_names() {
+        // Names like `foo..bar` should NOT be flagged as path traversal
+        assert!(!path_escapes_workspace(
+            "some..file.txt",
+            "/home/user/project"
+        ));
+        assert!(!path_escapes_workspace(
+            "./dir..name/file.txt",
+            "/home/user/project"
+        ));
+    }
+
+    #[test]
+    fn test_path_escapes_workspace_detects_genuine_traversal() {
+        assert!(path_escapes_workspace("../outside", "/home/user/project"));
+        assert!(path_escapes_workspace(
+            "..\\outside",
+            "C:\\Users\\me\\project"
+        ));
+        assert!(path_escapes_workspace(
+            "./subdir/../../etc/passwd",
+            "/home/user/project"
+        ));
+        assert!(path_escapes_workspace(
+            "/home/user/project/../secret",
+            "/home/user/project"
+        ));
+        assert!(path_escapes_workspace(
+            "C:\\Users\\me\\project\\..\\secret",
+            "C:\\Users\\me\\project"
+        ));
+    }
+
+    #[test]
+    fn test_path_escapes_workspace_allows_absolute_workspace_children() {
+        assert!(!path_escapes_workspace(
+            "/home/user/project/src/main.rs",
+            "/home/user/project"
+        ));
+        assert!(!path_escapes_workspace(
+            "C:\\Users\\me\\project\\src\\main.rs",
+            "C:\\Users\\me\\project"
         ));
     }
 

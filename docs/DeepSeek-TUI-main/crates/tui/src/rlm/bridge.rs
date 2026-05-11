@@ -86,14 +86,16 @@ impl RlmBridge {
     async fn dispatch_llm(
         &self,
         prompt: String,
-        model: Option<String>,
+        _model: Option<String>,
         max_tokens: Option<u32>,
         system: Option<String>,
     ) -> SingleResp {
         let request = MessageRequest {
-            model: model
-                .filter(|m| !m.is_empty())
-                .unwrap_or_else(|| self.child_model.clone()),
+            // The Python helper accepts `model=` for older snippets, but it is
+            // intentionally not authoritative. RLM child calls are pinned to
+            // the tool's configured child model so model-generated Python
+            // cannot silently upgrade cheap fanout work to an expensive model.
+            model: self.child_model.clone(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: vec![ContentBlock::Text {
@@ -143,23 +145,18 @@ impl RlmBridge {
 
         {
             let mut u = self.usage.lock().await;
-            u.input_tokens = u.input_tokens.saturating_add(response.usage.input_tokens);
-            u.output_tokens = u.output_tokens.saturating_add(response.usage.output_tokens);
+            super::add_usage_with_prompt_cache(&mut u, &response.usage);
         }
 
         SingleResp { text, error: None }
     }
 
-    async fn dispatch_llm_batch(&self, prompts: Vec<String>, model: Option<String>) -> BatchResp {
+    async fn dispatch_llm_batch(&self, prompts: Vec<String>, _model: Option<String>) -> BatchResp {
         if let Some(resp) = batch_guard(prompts.len()) {
             return resp;
         }
 
-        let model = Arc::new(
-            model
-                .filter(|m| !m.is_empty())
-                .unwrap_or_else(|| self.child_model.clone()),
-        );
+        let model = Arc::new(self.child_model.clone());
 
         let futures = prompts.into_iter().map(|prompt| {
             let model = Arc::clone(&model);
@@ -174,12 +171,12 @@ impl RlmBridge {
         }
     }
 
-    async fn dispatch_rlm(&self, prompt: String, model: Option<String>) -> SingleResp {
+    async fn dispatch_rlm(&self, prompt: String, _model: Option<String>) -> SingleResp {
         if self.depth_remaining == 0 {
             // Budget exhausted — fall back to a one-shot child completion
             // rather than returning an error. Matches the paper's behaviour
             // ("sub_RLM gracefully degrades to llm_query at depth=0").
-            return self.dispatch_llm(prompt, model, None, None).await;
+            return self.dispatch_llm(prompt, None, None, None).await;
         }
 
         // Build a drain channel to absorb status events from the nested
@@ -192,9 +189,7 @@ impl RlmBridge {
             async move { while rx.recv().await.is_some() {} },
         );
 
-        let child_model = model
-            .filter(|m| !m.is_empty())
-            .unwrap_or_else(|| self.child_model.clone());
+        let child_model = self.child_model.clone();
 
         // Recursive call. The dyn-erasure on `run_rlm_turn_inner` breaks
         // the `bridge → turn → bridge` opaque-future cycle.
@@ -213,8 +208,7 @@ impl RlmBridge {
 
         {
             let mut u = self.usage.lock().await;
-            u.input_tokens = u.input_tokens.saturating_add(result.usage.input_tokens);
-            u.output_tokens = u.output_tokens.saturating_add(result.usage.output_tokens);
+            super::add_usage_with_prompt_cache(&mut u, &result.usage);
         }
 
         SingleResp {
@@ -223,16 +217,14 @@ impl RlmBridge {
         }
     }
 
-    async fn dispatch_rlm_batch(&self, prompts: Vec<String>, model: Option<String>) -> BatchResp {
+    async fn dispatch_rlm_batch(&self, prompts: Vec<String>, _model: Option<String>) -> BatchResp {
         if let Some(resp) = batch_guard(prompts.len()) {
             return resp;
         }
 
-        let model = Arc::new(model);
-        let futures = prompts.into_iter().map(|p| {
-            let model = Arc::clone(&model);
-            async move { self.dispatch_rlm(p, (*model).clone()).await }
-        });
+        let futures = prompts
+            .into_iter()
+            .map(|p| async move { self.dispatch_rlm(p, None).await });
         BatchResp {
             results: join_all(futures).await,
         }
@@ -290,7 +282,7 @@ mod tests {
     use super::*;
     use crate::llm_client::mock::MockLlmClient;
 
-    fn mock_response(text: &str, input_tokens: u32, output_tokens: u32) -> MessageResponse {
+    fn mock_response_with_usage(text: &str, usage: Usage) -> MessageResponse {
         MessageResponse {
             id: "mock_msg".to_string(),
             r#type: "message".to_string(),
@@ -303,12 +295,19 @@ mod tests {
             stop_reason: Some("end_turn".to_string()),
             stop_sequence: None,
             container: None,
-            usage: Usage {
+            usage,
+        }
+    }
+
+    fn mock_response(text: &str, input_tokens: u32, output_tokens: u32) -> MessageResponse {
+        mock_response_with_usage(
+            text,
+            Usage {
                 input_tokens,
                 output_tokens,
                 ..Usage::default()
             },
-        }
+        )
     }
 
     fn bridge_for(mock: Arc<MockLlmClient>, depth_remaining: u32) -> RlmBridge {
@@ -341,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn llm_dispatch_uses_trait_backed_mock_client() {
+    async fn llm_dispatch_pins_configured_child_model() {
         let mock = Arc::new(MockLlmClient::new(Vec::new()));
         mock.push_message_response(mock_response("child answer", 7, 11));
         let bridge = bridge_for(Arc::clone(&mock), 1);
@@ -365,7 +364,7 @@ mod tests {
 
         let captured = mock.captured_requests();
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].model, "override-model");
+        assert_eq!(captured[0].model, "child-model");
         assert_eq!(captured[0].max_tokens, 123);
         assert_eq!(
             captured[0].system,
@@ -378,7 +377,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn llm_batch_dispatch_preserves_result_count_and_usage() {
+    async fn llm_dispatch_preserves_prompt_cache_usage() {
+        let mock = Arc::new(MockLlmClient::new(Vec::new()));
+        mock.push_message_response(mock_response_with_usage(
+            "cached child answer",
+            Usage {
+                input_tokens: 1000,
+                output_tokens: 100,
+                prompt_cache_hit_tokens: Some(800),
+                prompt_cache_miss_tokens: Some(200),
+                ..Usage::default()
+            },
+        ));
+        let bridge = bridge_for(Arc::clone(&mock), 1);
+
+        let response = bridge
+            .dispatch(RpcRequest::Llm {
+                prompt: "child prompt".to_string(),
+                model: None,
+                max_tokens: None,
+                system: None,
+            })
+            .await;
+
+        match response {
+            RpcResponse::Single(single) => {
+                assert_eq!(single.text, "cached child answer");
+                assert!(single.error.is_none());
+            }
+            other => panic!("expected single response, got {other:?}"),
+        }
+
+        let usage = bridge.usage.lock().await;
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 100);
+        assert_eq!(usage.prompt_cache_hit_tokens, Some(800));
+        assert_eq!(usage.prompt_cache_miss_tokens, Some(200));
+    }
+
+    #[tokio::test]
+    async fn llm_batch_dispatch_pins_configured_child_model() {
         let mock = Arc::new(MockLlmClient::new(Vec::new()));
         mock.push_message_response(mock_response("one", 1, 2));
         mock.push_message_response(mock_response("two", 3, 4));
@@ -410,7 +448,7 @@ mod tests {
         assert!(
             captured
                 .iter()
-                .all(|request| request.model == "batch-model")
+                .all(|request| request.model == "child-model")
         );
 
         let usage = bridge.usage.lock().await;
@@ -419,7 +457,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rlm_dispatch_at_depth_zero_falls_back_to_plain_llm_query() {
+    async fn rlm_dispatch_at_depth_zero_pins_configured_child_model() {
         let mock = Arc::new(MockLlmClient::new(Vec::new()));
         mock.push_message_response(mock_response("fallback answer", 3, 5));
         let bridge = bridge_for(Arc::clone(&mock), 0);
@@ -445,6 +483,6 @@ mod tests {
 
         let captured = mock.captured_requests();
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].model, "override-model");
+        assert_eq!(captured[0].model, "child-model");
     }
 }

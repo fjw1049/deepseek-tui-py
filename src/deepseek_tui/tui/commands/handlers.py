@@ -87,6 +87,50 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output=f"Model set to: {requested} (unverified — not in registry)")
 
 
+# ── /mode ────────────────────────────────────────────────────────────────
+
+_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask")
+
+
+@_register("/mode")
+def cmd_mode(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Switch or cycle the active mode.
+
+    Usage:
+        /mode               — cycle through agent → plan → yolo → ask → agent
+        /mode plan          — switch directly to ``plan``
+        /mode agent|yolo|ask
+    """
+    arg = args.strip().lower()
+    if not arg:
+        # No argument → behave like the Shift+Tab chord.
+        cycle = getattr(app, "action_cycle_mode", None)
+        if callable(cycle):
+            cycle()
+            current = getattr(app, "_interaction_mode", "agent")
+            return CommandResult(output=f"Mode → {current}")
+        return CommandResult(error="cycle_mode action unavailable")
+
+    if arg not in _VALID_MODES:
+        return CommandResult(
+            error=(
+                f"Unknown mode: {arg!r}. Valid: " + ", ".join(_VALID_MODES)
+            )
+        )
+    # Direct switch — drive the same code path action_cycle_mode uses
+    # so the StatusBar / ComposerHint refresh consistently.
+    app._interaction_mode = arg  # type: ignore[attr-defined]
+    try:
+        from deepseek_tui.tui.widgets.composer import ComposerHint
+        from deepseek_tui.tui.widgets.status_bar import StatusBar
+
+        app.query_one(StatusBar).set_mode(arg)
+        app.query_one(ComposerHint).set_mode(arg)
+    except Exception:  # noqa: BLE001 — best-effort UI refresh
+        pass
+    return CommandResult(output=f"Mode → {arg}")
+
+
 # ── /models ──────────────────────────────────────────────────────────────
 
 @_register("/models")
@@ -401,7 +445,8 @@ def _toml_value(raw: str) -> str:
 
 @_register("/agent")
 def cmd_agent(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Switched to Agent mode.")
+    """Switch to Agent mode (shortcut for ``/mode agent``)."""
+    return cmd_mode("agent", app)
 
 
 # ── /plan ────────────────────────────────────────────────────────────────

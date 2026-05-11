@@ -41,7 +41,7 @@ from deepseek_tui.tui.widgets.command_palette import CommandPalette
 from deepseek_tui.tui.widgets.composer import Composer, ComposerHint
 from deepseek_tui.tui.widgets.file_mention import FileMention
 from deepseek_tui.tui.widgets.help_panel import HelpPanel
-from deepseek_tui.tui.widgets.key_hints import KeyHints
+from deepseek_tui.tui.widgets.info_sidebar import InfoSidebar, InfoSidebarData
 from deepseek_tui.tui.widgets.sidebar import Sidebar
 from deepseek_tui.tui.widgets.slash_menu import SlashMenu
 from deepseek_tui.tui.widgets.status_bar import StatusBar
@@ -96,6 +96,7 @@ class DeepSeekTUI(App[None]):
         Binding("ctrl+r", "open_session_picker", "Sessions"),
         Binding("ctrl+o", "open_model_picker", "Models"),
         Binding("ctrl+p", "open_file_picker", "Files"),
+        Binding("ctrl+i", "toggle_info_sidebar", "Info", show=False),
         Binding("ctrl+l", "clear_transcript", "Clear", show=False),
         Binding("pageup", "transcript_page_up", "PageUp", show=False),
         Binding("pagedown", "transcript_page_down", "PageDown", show=False),
@@ -114,22 +115,27 @@ class DeepSeekTUI(App[None]):
         self.handle = handle or EngineHandle()
         self._engine: Engine | None = None
         self._engine_task: asyncio.Task[None] | None = None
-        self._current_mode: str = "agent"  # persisted across cycle_mode toggles
+        self._interaction_mode: str = "agent"  # persisted across cycle_mode toggles
         self._resume_session_id = resume_session_id
         self._fork_session_id = fork_session_id
         self._turn_started_at: float | None = None
         self._backtrack = BacktrackState()
+        # ISO-8601 UTC timestamp captured at engine boot; the right
+        # info-sidebar uses it to filter ``TaskManager.list_tasks`` so
+        # the panel only surfaces tasks born this session — stale
+        # ``failed`` records from prior runs no longer clutter the view.
+        self._session_started_at_iso: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Sidebar()
+        yield InfoSidebar()
         yield Transcript()
         yield SlashMenu()
         yield FileMention()
-        yield StatusBar()
         yield ComposerHint()
         yield Composer()
-        yield KeyHints()
+        yield StatusBar()
 
     async def on_mount(self) -> None:
         logger.info(
@@ -138,12 +144,19 @@ class DeepSeekTUI(App[None]):
             self._fork_session_id,
         )
         self.query_one(Composer).focus()
-        self.query_one(StatusBar).set_status("starting engine...")
-        # Seed the composer hint + transcript thinking visibility from
-        # config so the chrome reflects the active state before the
-        # first turn lands.
+        # Seed StatusBar + ComposerHint with mode/model *before* the
+        # engine starts so the bottom chrome already shows them (chord
+        # chips and model name should be visible the instant the TUI
+        # paints — not delayed behind ``Engine.create``).
+        status = self.query_one(StatusBar)
+        status.set_status("starting engine...")
+        status.set_mode(self._interaction_mode)
+        if self.config.model:
+            status.set_model(self.config.model)
+        elif self.config.default_text_model:
+            status.set_model(self.config.default_text_model)
         hint = self.query_one(ComposerHint)
-        hint.set_mode(self._current_mode)
+        hint.set_mode(self._interaction_mode)
         if self.config.model:
             hint.set_model(self.config.model)
         self.query_one(Transcript).show_thinking = bool(
@@ -161,6 +174,8 @@ class DeepSeekTUI(App[None]):
         When no API key is configured, push the onboarding screen and
         retry once the user supplies one.
         """
+        from datetime import datetime, timezone
+
         from deepseek_tui.engine.engine import Engine
         from deepseek_tui.tui.approval_handler import TUIApprovalHandler
         from deepseek_tui.tui.screens.onboarding import (
@@ -168,6 +183,12 @@ class DeepSeekTUI(App[None]):
             is_onboarded,
             mark_onboarded,
         )
+
+        # Stamp the session start before any engine work — the info
+        # sidebar filters tasks against this so historical failures
+        # don't bleed into a fresh interaction.
+        if self._session_started_at_iso is None:
+            self._session_started_at_iso = datetime.now(timezone.utc).isoformat()
 
         client = self._build_client()
         if client is None:
@@ -324,8 +345,8 @@ class DeepSeekTUI(App[None]):
         transcript.add_user_message(event.text)
         # Prepend active mode so Engine adapts behaviour (plan/yolo/ask vs agent).
         content = event.text
-        if self._current_mode != "agent":
-            content = f"[mode:{self._current_mode}] {content}"
+        if self._interaction_mode != "agent":
+            content = f"[mode:{self._interaction_mode}] {content}"
         await self.handle.send_op(SendMessageOp(content=content))
         self.run_worker(self._listen_events())
 
@@ -451,11 +472,30 @@ class DeepSeekTUI(App[None]):
                     status.set_tokens(
                         event.usage.input_tokens + event.usage.output_tokens
                     )
+                # Cost + cache chips are populated only when the event
+                # actually carries them (off-platform providers leave
+                # cost None so the chip stays hidden).
+                if event.session_cost_usd is not None:
+                    status.set_cost(
+                        event.session_cost_usd,
+                        event.session_cost_cny or 0.0,
+                    )
+                if event.cache_hit_tokens or event.cache_miss_tokens:
+                    status.set_cache(
+                        event.cache_hit_tokens, event.cache_miss_tokens
+                    )
                 transcript.finalize_message()
+                await self._refresh_info_sidebar()
                 self._maybe_notify_turn_done()
                 break
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
+            # Refresh the right info-sidebar opportunistically on the
+            # high-traffic events that mutate its data (tool results
+            # alter todos/tasks/agents). Refresh is cheap (three list
+            # reads + format) so debouncing is not needed yet.
+            if isinstance(event, ToolResultEvent):
+                await self._refresh_info_sidebar()
 
     # ── user input handling ─────────────────────────────────────────
 
@@ -521,6 +561,13 @@ class DeepSeekTUI(App[None]):
 
     def action_toggle_sidebar(self) -> None:
         self.query_one(Sidebar).toggle()
+
+    def action_toggle_info_sidebar(self) -> None:
+        """Toggle the right-side Todos / Tasks / Agents panel (Ctrl+I)."""
+        try:
+            self.query_one(InfoSidebar).toggle()
+        except Exception:
+            pass
 
     def action_show_help(self) -> None:
         self.push_screen(HelpPanel())
@@ -594,7 +641,7 @@ class DeepSeekTUI(App[None]):
         except ValueError:
             idx = 0
         next_mode = modes[(idx + 1) % len(modes)]
-        self._current_mode = next_mode
+        self._interaction_mode = next_mode
         self.query_one(StatusBar).set_mode(next_mode)
         self.query_one(ComposerHint).set_mode(next_mode)
 
@@ -682,6 +729,109 @@ class DeepSeekTUI(App[None]):
             f"switching to session {event.session_id[:8]}…"
         )
         self.query_one(Sidebar).hide_sidebar()
+
+    # ── info sidebar refresh ──────────────────────────────────────────
+
+    async def _refresh_info_sidebar(self) -> None:
+        """Fetch live engine state and push it into the right info sidebar.
+
+        Cheap to call: 3 list reads + format. ``ToolResultEvent`` and
+        ``TurnCompleteEvent`` both invoke this so Todos/Tasks/Agents
+        update without waiting for the next user turn.
+        """
+        if self._engine is None:
+            return
+        try:
+            sidebar = self.query_one(InfoSidebar)
+        except Exception:
+            return
+
+        # --- Todos: read from the in-memory store TodoWriteTool writes to.
+        todos_raw = self._engine.tool_context.metadata.get("todos") or {}
+        items_raw = todos_raw.get("items", []) if isinstance(todos_raw, dict) else []
+        todo_items: list[dict[str, object]] = []
+        completed = 0
+        in_progress_id: int | None = None
+        for item in items_raw:
+            status = getattr(item, "status", "pending")
+            content = getattr(item, "content", getattr(item, "text", ""))
+            item_id = getattr(item, "id", "?")
+            todo_items.append(
+                {"id": item_id, "content": content, "status": status}
+            )
+            if status == "completed":
+                completed += 1
+            if status == "in_progress" and isinstance(item_id, str) and item_id.isdigit():
+                in_progress_id = int(item_id)
+        total = len(todo_items)
+        pct = round(completed * 100 / total) if total else 0
+
+        # --- Tasks: durable TaskManager snapshot, filtered to this
+        # session so stale ``failed`` records from earlier runs don't
+        # clutter a fresh interaction.
+        tasks_data: list[dict[str, object]] = []
+        manager = self._engine.tool_context.task_manager
+        if manager is not None:
+            try:
+                summaries = await manager.list_tasks(
+                    limit=5, since=self._session_started_at_iso
+                )
+            except Exception:
+                summaries = []
+            for s in summaries:
+                tasks_data.append(
+                    {
+                        "id": s.id,
+                        "status": (
+                            s.status.value
+                            if hasattr(s.status, "value")
+                            else str(s.status)
+                        ),
+                        "prompt_summary": s.prompt_summary,
+                        "duration_ms": s.duration_ms,
+                        "created_at": s.created_at,
+                    }
+                )
+
+        # --- Agents: SubAgentManager snapshot (newest 5).
+        agents_data: list[dict[str, object]] = []
+        sub_mgr = self._engine.tool_context.subagent_manager
+        if sub_mgr is not None:
+            try:
+                snaps = sub_mgr.list_agents()
+            except Exception:
+                snaps = []
+            for s in snaps[:5]:
+                status_obj = getattr(s, "status", None)
+                status_str = (
+                    status_obj.kind.value
+                    if status_obj is not None and hasattr(status_obj, "kind")
+                    else str(status_obj or "?")
+                )
+                atype = getattr(s, "agent_type", None)
+                atype_str = (
+                    atype.value
+                    if atype is not None and hasattr(atype, "value")
+                    else str(atype or "?")
+                )
+                agents_data.append(
+                    {
+                        "agent_id": getattr(s, "agent_id", "?"),
+                        "agent_type": atype_str,
+                        "status": status_str,
+                        "duration_ms": getattr(s, "duration_ms", None),
+                    }
+                )
+
+        sidebar.update_data(
+            InfoSidebarData(
+                todos=todo_items,
+                todos_completion_pct=pct,
+                todos_in_progress_id=in_progress_id,
+                tasks=tasks_data,
+                agents=agents_data,
+            )
+        )
 
     # ── notifications ─────────────────────────────────────────────────
 

@@ -6,7 +6,8 @@
 //! keybinding list from [`crate::tui::keybindings::KEYBINDINGS`] so neither
 //! can drift from the wired-up handlers.
 //!
-//! Keys: any printable character extends the filter, `Backspace` shrinks it,
+//! Keys: any printable character extends the filter, `Backspace` (or `Ctrl+H`)
+//! shrinks it,
 //! `↑`/`↓` (or `Ctrl+P`/`Ctrl+N`) move the selection, `PgUp`/`PgDn` jump by
 //! ten rows, `Home`/`End` jump to ends, and `Esc` closes. Pressing `?` again
 //! at the call-site (`tui::ui`) also toggles the overlay closed.
@@ -284,6 +285,14 @@ impl ModalView for HelpView {
                 self.refilter();
                 ViewAction::None
             }
+            // Terminals where stty erase == ^H send Ctrl+H instead of
+            // Backspace (DEL). Treat it identically so the filter input
+            // works across all platforms (#958).
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.query.pop();
+                self.refilter();
+                ViewAction::None
+            }
             KeyCode::Char(c)
                 if !c.is_control()
                     && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
@@ -474,24 +483,24 @@ mod tests {
     #[test]
     fn substring_filter_narrows_to_command() {
         let mut view = HelpView::new();
-        type_filter(&mut view, "yolo");
+        type_filter(&mut view, "mode yolo");
         assert!(!view.filtered.is_empty());
         // Every filtered entry should genuinely contain the query in its
         // searchable haystack — no false positives slipped past.
         for idx in &view.filtered {
             assert!(
                 view.entries[*idx].haystack.contains("yolo"),
-                "entry {:?} leaked through `yolo` filter",
+                "entry {:?} leaked through `mode yolo` filter",
                 view.entries[*idx]
             );
         }
-        // The `/yolo` command must survive the filter; it's the canonical
-        // single-term match.
+        // The unified `/mode` command must surface when filtering for a
+        // concrete mode value.
         assert!(
             view.filtered
                 .iter()
-                .any(|idx| view.entries[*idx].label == "/yolo"),
-            "/yolo should match the `yolo` filter"
+                .any(|idx| view.entries[*idx].label == "/mode"),
+            "/mode should match the `mode yolo` filter"
         );
     }
 
@@ -548,6 +557,19 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_h_widens_match_set() {
+        let mut view = HelpView::new();
+        type_filter(&mut view, "yolox");
+        let narrow = view.filtered.len();
+        view.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        let wider = view.filtered.len();
+        assert!(
+            wider > narrow,
+            "Ctrl+H must behave as Backspace, broadening the matching set (was {narrow}, now {wider})"
+        );
+    }
+
+    #[test]
     fn esc_closes_overlay() {
         let mut view = HelpView::new();
         let action = view.handle_key(key(KeyCode::Esc));
@@ -596,14 +618,14 @@ mod tests {
     #[test]
     fn render_with_filter_shows_only_matching_section_and_status() {
         let mut view = HelpView::new();
-        type_filter(&mut view, "yolo");
+        type_filter(&mut view, "mode yolo");
         let area = Rect::new(0, 0, 96, 24);
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
 
         let dump = buffer_text(&buf, area);
         assert!(
-            dump.contains("Filter: yolo"),
+            dump.contains("Filter: mode yolo"),
             "filter echo missing:\n{dump}"
         );
         assert!(
@@ -611,12 +633,12 @@ mod tests {
             "match counter missing in dump:\n{dump}"
         );
         assert!(
-            dump.contains("/yolo"),
-            "expected /yolo command in filtered render:\n{dump}"
+            dump.contains("/mode"),
+            "expected /mode command in filtered render:\n{dump}"
         );
         assert!(
-            !dump.contains("/agent"),
-            "non-matching commands should not render under a `yolo` filter:\n{dump}"
+            !dump.contains("/model"),
+            "non-matching commands should not render under a `mode yolo` filter:\n{dump}"
         );
     }
 

@@ -134,6 +134,11 @@ REGISTRY: list[CommandEntry] = [
     ),
     CommandEntry("/export", "Export to markdown", _S),
     CommandEntry("/config", "Open configuration editor", _C),
+    CommandEntry(
+        "/mode",
+        "Switch or cycle mode (agent / plan / yolo / ask)",
+        _C,
+    ),
     CommandEntry("/yolo", "Enable YOLO mode", _C, p0=False),
     CommandEntry("/agent", "Switch to agent mode", _C),
     CommandEntry("/plan", "Switch to plan mode", _C),

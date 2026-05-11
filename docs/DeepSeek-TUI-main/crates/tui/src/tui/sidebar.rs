@@ -10,12 +10,12 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::Widget,
-    style::{Style, Stylize},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::deepseek_theme::active_theme;
+use crate::deepseek_theme::Theme;
 use crate::palette;
 use crate::tools::plan::StepStatus;
 use crate::tools::subagent::SubAgentStatus;
@@ -26,37 +26,108 @@ use super::history::{HistoryCell, ToolCell, ToolStatus};
 use super::subagent_routing::active_fanout_counts;
 use super::ui::truncate_line_to_width;
 
+/// Tolerance for floating-point cost comparison in the sidebar breakdown.
+/// Must be large enough that accumulated f64 error across hundreds of turns
+/// does not prematurely hide the session+agents breakdown.
+const COST_EQ_TOLERANCE: f64 = 1e-6;
+
 pub fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if area.width < 24 || area.height < 8 {
         // Paint a styled block over the area so stale cells from a previous
         // (wider) frame don't persist as bleed-through artifacts (#400).
         Block::default()
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
+            .style(Style::default().bg(app.ui_theme.surface_bg))
             .render(area, f.buffer_mut());
         return;
     }
 
     match app.sidebar_focus {
-        SidebarFocus::Auto => {
-            let sections = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(25),
-                    Constraint::Min(6),
-                ])
-                .split(area);
-
-            render_sidebar_plan(f, sections[0], app);
-            render_sidebar_todos(f, sections[1], app);
-            render_sidebar_tasks(f, sections[2], app);
-            render_sidebar_subagents(f, sections[3], app);
-        }
+        SidebarFocus::Auto => render_sidebar_auto(f, area, app),
         SidebarFocus::Plan => render_sidebar_plan(f, area, app),
         SidebarFocus::Todos => render_sidebar_todos(f, area, app),
         SidebarFocus::Tasks => render_sidebar_tasks(f, area, app),
         SidebarFocus::Agents => render_sidebar_subagents(f, area, app),
+        SidebarFocus::Context => render_context_panel(f, area, app),
+    }
+}
+
+/// Build the Auto-mode panel stack. Empty panels collapse to zero height so
+/// non-empty ones get the full sidebar real estate. Without this, Plan got
+/// clipped because Todos/Tasks/Agents each reserved 25% of the height even
+/// when they had nothing to show. Plan is always rendered (it owns the
+/// session-wide empty-state hint).
+fn render_sidebar_auto(f: &mut Frame, area: Rect, app: &App) {
+    #[derive(Clone, Copy)]
+    enum Panel {
+        Plan,
+        Todos,
+        Tasks,
+        Agents,
+        Context,
+    }
+
+    let todos_empty = app
+        .todos
+        .try_lock()
+        .map(|todos| todos.snapshot().items.is_empty())
+        .unwrap_or(false); // assume non-empty when locked so we don't hide updating data
+    let tasks_empty = app.runtime_turn_id.is_none() && app.task_panel.is_empty();
+    let agents_empty = app.subagent_cache.is_empty()
+        && app.agent_progress.is_empty()
+        && active_fanout_counts(app).is_none()
+        && !foreground_rlm_running(app);
+
+    let mut visible: Vec<Panel> = Vec::with_capacity(5);
+    visible.push(Panel::Plan);
+    if !todos_empty {
+        visible.push(Panel::Todos);
+    }
+    if !tasks_empty {
+        visible.push(Panel::Tasks);
+    }
+    if !agents_empty {
+        visible.push(Panel::Agents);
+    }
+    if app.context_panel {
+        visible.push(Panel::Context);
+    }
+
+    let constraints: Vec<Constraint> = match visible.len() {
+        1 => vec![Constraint::Min(0)],
+        2 => vec![Constraint::Percentage(50), Constraint::Min(0)],
+        3 => vec![
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Min(0),
+        ],
+        4 => vec![
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Min(6),
+        ],
+        _ => vec![
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Min(6),
+        ],
+    };
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    for (panel, rect) in visible.iter().zip(sections.iter()) {
+        match panel {
+            Panel::Plan => render_sidebar_plan(f, *rect, app),
+            Panel::Todos => render_sidebar_todos(f, *rect, app),
+            Panel::Tasks => render_sidebar_tasks(f, *rect, app),
+            Panel::Agents => render_sidebar_subagents(f, *rect, app),
+            Panel::Context => render_context_panel(f, *rect, app),
+        }
     }
 }
 
@@ -80,7 +151,7 @@ fn render_sidebar_plan(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let theme = active_theme();
+    let theme = Theme::for_palette_mode(app.ui_theme.mode);
     let content_width = area.width.saturating_sub(4) as usize;
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(usize::from(area.height).max(4));
 
@@ -210,7 +281,7 @@ fn render_sidebar_plan(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    render_sidebar_section(f, area, "Plan", lines);
+    render_sidebar_section(f, area, "Plan", lines, app);
 }
 
 /// One-line hint shown when the Plan section has nothing to display
@@ -290,7 +361,7 @@ fn render_sidebar_todos(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    render_sidebar_section(f, area, "Todos", lines);
+    render_sidebar_section(f, area, "Todos", lines, app);
 }
 
 fn render_sidebar_tasks(f: &mut Frame, area: Rect, app: &App) {
@@ -384,7 +455,7 @@ fn render_sidebar_tasks(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    render_sidebar_section(f, area, "Tasks", lines);
+    render_sidebar_section(f, area, "Tasks", lines, app);
 }
 
 fn render_sidebar_subagents(f: &mut Frame, area: Rect, app: &App) {
@@ -437,7 +508,7 @@ fn render_sidebar_subagents(f: &mut Frame, area: Rect, app: &App) {
     };
     let lines = subagent_navigator_lines(&summary, content_width);
 
-    render_sidebar_section(f, area, "Agents", lines);
+    render_sidebar_section(f, area, "Agents", lines, app);
 }
 
 /// Minimal projection of the data the sub-agent sidebar needs. Lifted out
@@ -546,16 +617,161 @@ pub fn subagent_navigator_lines(
     lines
 }
 
-fn render_sidebar_section(f: &mut Frame, area: Rect, title: &str, lines: Vec<Line<'static>>) {
+/// Session-context panel (#504) — consolidated session state overview.
+///
+/// Surfaces at-a-glance: working set, token usage / context %, running
+/// cost, MCP server count, LSP toggle state, cycle count, and memory
+/// file size + mtime. Each section is a compact one-liner so the panel
+/// reads as a dashboard rather than a scrolling list.
+fn render_context_panel(f: &mut Frame, area: Rect, app: &App) {
+    if area.height < 3 {
+        return;
+    }
+
+    let content_width = area.width.saturating_sub(4) as usize;
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(usize::from(area.height).max(4));
+
+    // ── Working set ──────────────────────────────────────────────
+    let ws_name = app
+        .workspace
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("(root)")
+        .to_string();
+    lines.push(Line::from(vec![
+        Span::styled(
+            truncate_line_to_width(&ws_name, content_width.max(1)),
+            Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+        ),
+        Span::styled(
+            format!("  {}", app.workspace_context.as_deref().unwrap_or("")),
+            Style::default().fg(palette::TEXT_DIM),
+        ),
+    ]));
+
+    // ── Token usage ──────────────────────────────────────────────
+    let total_tokens = app.session.total_conversation_tokens;
+    let window = crate::models::context_window_for_model(&app.model).unwrap_or(1_048_576);
+    let pct = if window > 0 {
+        ((total_tokens as f64 / window as f64) * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let bar_width = content_width.min(20);
+    let filled = ((pct / 100.0) * bar_width as f64) as usize;
+    let bar = format!(
+        "[{}{}] {:.0}%",
+        "█".repeat(filled),
+        "░".repeat(bar_width.saturating_sub(filled)),
+        pct
+    );
+    lines.push(Line::from(Span::styled(
+        format!(
+            "context: {}/{} tokens  {}",
+            total_tokens,
+            window,
+            truncate_line_to_width(&bar, content_width.saturating_sub(32).max(8))
+        ),
+        Style::default().fg(palette::TEXT_MUTED),
+    )));
+
+    // ── Session cost ─────────────────────────────────────────────
+    let total_cost = app.displayed_session_cost_for_currency(app.cost_currency);
+    let session_cost = app.session_cost_for_currency(app.cost_currency);
+    let agent_cost = app.subagent_cost_for_currency(app.cost_currency);
+    let real_total = session_cost + agent_cost;
+    // Only show the additive breakdown when it matches the displayed
+    // total; when the high-water mark is in effect (post-reconciliation),
+    // the breakdown would not sum to the displayed value (#244).
+    let cost_line = if (total_cost - real_total).abs() < COST_EQ_TOLERANCE {
+        format!(
+            "cost: {} (session {} + agents {})",
+            app.format_cost_amount(total_cost),
+            app.format_cost_amount(session_cost),
+            app.format_cost_amount(agent_cost)
+        )
+    } else {
+        format!("cost: {}", app.format_cost_amount(total_cost),)
+    };
+    lines.push(Line::from(Span::styled(
+        cost_line,
+        Style::default().fg(palette::TEXT_MUTED),
+    )));
+
+    // ── MCP servers ──────────────────────────────────────────────
+    if app.mcp_configured_count > 0 {
+        let restart_hint = if app.mcp_restart_required {
+            " (restart needed)"
+        } else {
+            ""
+        };
+        lines.push(Line::from(Span::styled(
+            format!(
+                "mcp: {} server(s){}",
+                app.mcp_configured_count, restart_hint
+            ),
+            Style::default().fg(palette::TEXT_MUTED),
+        )));
+    }
+
+    // ── LSP ──────────────────────────────────────────────────────
+    let lsp_label = if app.lsp_enabled { "on" } else { "off" };
+    lines.push(Line::from(Span::styled(
+        format!("lsp: {}", lsp_label),
+        Style::default().fg(palette::TEXT_MUTED),
+    )));
+
+    // ── Cycles ───────────────────────────────────────────────────
+    if app.cycle_count > 0 {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "cycles: {} crossed, {} briefing(s)",
+                app.cycle_count,
+                app.cycle_briefings.len()
+            ),
+            Style::default().fg(palette::TEXT_MUTED),
+        )));
+    }
+
+    // ── Memory ───────────────────────────────────────────────────
+    if app.use_memory {
+        let size_hint = std::fs::metadata(&app.memory_path)
+            .map(|m| m.len())
+            .map(|bytes| {
+                if bytes >= 1024 * 1024 {
+                    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+                } else if bytes >= 1024 {
+                    format!("{:.1} KB", bytes as f64 / 1024.0)
+                } else {
+                    format!("{} B", bytes)
+                }
+            })
+            .unwrap_or_else(|_| "—".to_string());
+        lines.push(Line::from(Span::styled(
+            format!("memory: {} ({})", app.memory_path.display(), size_hint),
+            Style::default().fg(palette::TEXT_MUTED),
+        )));
+    }
+
+    render_sidebar_section(f, area, "Session", lines, app);
+}
+
+fn render_sidebar_section(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line<'static>>,
+    app: &App,
+) {
     if area.width < 4 || area.height < 3 {
         // Clear stale cells before bailing out (#400).
         Block::default()
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
+            .style(Style::default().bg(app.ui_theme.surface_bg))
             .render(area, f.buffer_mut());
         return;
     }
 
-    let theme = active_theme();
+    let theme = Theme::for_palette_mode(app.ui_theme.mode);
     // Truncate the panel title so it always fits within the section width
     // even after a resize. The title occupies up to 4 chars of border chrome
     // (two spaces + one space on each side), so the max title length is

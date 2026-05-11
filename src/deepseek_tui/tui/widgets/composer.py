@@ -47,10 +47,8 @@ class ComposerHint(Static):
         self._refresh()
 
     def _refresh(self) -> None:
-        mode = f"[cyan]{self._mode}[/]" if self._mode else "[dim]—[/]"
-        model = f"[bold]{self._model}[/]" if self._model else "[dim]no model[/]"
-        chords = "[dim]↵ send · Ctrl+J newline · Tab mode[/]"
-        self.update(f"{mode}  [dim]·[/]  {model}  [dim]·[/]  {chords}")
+        chords = "[dim]↵ send · ⌃J newline · ⇧⇥ mode[/]"
+        self.update(chords)
 
 
 class Composer(TextArea):
@@ -77,7 +75,10 @@ class Composer(TextArea):
         self._paste_suppress_until: float = 0.0
 
     def on_mount(self) -> None:
-        self.placeholder = "Message DeepSeek…  ( ↵ send · Ctrl+J newline · / for commands · @ for files )"
+        self.placeholder = (
+            "Message DeepSeek…  "
+            "( ↵ send · Ctrl+J newline · / for commands · @ for files )"
+        )
 
     def _paste_window_active(self) -> bool:
         return time.monotonic() < self._paste_suppress_until
@@ -131,6 +132,18 @@ class Composer(TextArea):
         if event.key == "escape":
             event.prevent_default()
             self.post_message(self.TextChanged(""))
+            return
+
+        # Shift+Tab cycles agent/plan/yolo/ask modes. ``Tab`` itself is
+        # consumed by the underlying TextArea for indentation, so we
+        # route mode-switching through Shift+Tab — Codex / Claude Code
+        # use the same chord for the same reason.
+        if event.key == "shift+tab":
+            event.stop()
+            event.prevent_default()
+            action = getattr(self.app, "action_cycle_mode", None)
+            if callable(action):
+                action()
             return
 
         await super()._on_key(event)

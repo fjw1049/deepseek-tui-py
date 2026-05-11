@@ -1,14 +1,19 @@
 //! Config commands: config, settings, mode switches, trust, logout
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::CommandResult;
+use crate::client::DeepSeekClient;
 use crate::config::{COMMON_DEEPSEEK_MODELS, clear_api_key, normalize_model_name};
 use crate::config_ui::{ConfigUiMode, parse_mode};
+use crate::llm_client::LlmClient;
 use crate::localization::resolve_locale;
+use crate::models::{ContentBlock, Message, MessageRequest, MessageResponse, SystemPrompt};
 use crate::settings::Settings;
-use crate::tui::app::{App, AppAction, AppMode, OnboardingState, SidebarFocus};
+use crate::tui::app::{App, AppAction, AppMode, OnboardingState, ReasoningEffort, SidebarFocus};
 use crate::tui::approval::ApprovalMode;
+use anyhow::Result;
 
 /// Open the interactive config editor.
 ///
@@ -39,7 +44,7 @@ pub fn show_config(_app: &mut App, arg: Option<&str>) -> CommandResult {
 /// - `/config tui` / `/config web` / `/config native` — open a specific
 ///   editor mode (web requires the `web` build feature).
 /// - `/config <key>` — shows the current value of a setting.
-/// - `/config <key> <value>` — sets a runtime value (session only, no --save).
+/// - `/config <key> <value>` — sets a runtime value (session only, add --save to persist).
 pub fn config_command(app: &mut App, arg: Option<&str>) -> CommandResult {
     let raw = arg.map(str::trim).unwrap_or("");
     if raw.is_empty() {
@@ -58,8 +63,18 @@ pub fn config_command(app: &mut App, arg: Option<&str>) -> CommandResult {
         // `/config <key>` — show current value
         show_single_setting(app, token)
     } else {
-        // `/config <key> <value>` — set value
-        set_config_value(app, parts[0], parts[1], false)
+        // `/config <key> <value> [--save|-s]` — set value, optionally persist
+        let raw_value = parts[1];
+        let persist = raw_value.ends_with(" --save") || raw_value.ends_with(" -s");
+        let value = if persist {
+            raw_value
+                .strip_suffix(" --save")
+                .or_else(|| raw_value.strip_suffix(" -s"))
+                .unwrap_or(raw_value)
+        } else {
+            raw_value
+        };
+        set_config_value(app, parts[0], value, persist)
     }
 }
 
@@ -91,13 +106,23 @@ fn show_single_setting(app: &App, key: &str) -> CommandResult {
     let value = match key.as_str() {
         "model" => {
             if app.auto_model {
-                Some("auto (auto-select by request complexity)".to_string())
+                let mut label = "auto (auto-select model per turn)".to_string();
+                if let Some(effective) = app.last_effective_model.as_deref()
+                    && effective != "auto"
+                {
+                    label.push_str(&format!("; last: {effective}"));
+                }
+                Some(label)
             } else {
                 Some(app.model.clone())
             }
         }
         "approval_mode" | "approval" => Some(app.approval_mode.label().to_string()),
         "locale" | "language" => Some(locale_display(app.ui_locale).to_string()),
+        "background_color" | "background" | "bg" => {
+            crate::palette::hex_rgb_string(app.ui_theme.surface_bg)
+                .or_else(|| Some("(default)".to_string()))
+        }
         "auto_compact" | "compact" => {
             Some(if app.auto_compact { "true" } else { "false" }.to_string())
         }
@@ -116,6 +141,13 @@ fn show_single_setting(app: &App, key: &str) -> CommandResult {
         "transcript_spacing" | "spacing" => {
             Some(spacing_display(app.transcript_spacing).to_string())
         }
+        "cost_currency" | "currency" => Some(
+            match app.cost_currency {
+                crate::pricing::CostCurrency::Usd => "usd",
+                crate::pricing::CostCurrency::Cny => "cny",
+            }
+            .to_string(),
+        ),
         _ => {
             let known = Settings::available_settings()
                 .iter()
@@ -146,6 +178,31 @@ pub fn show_settings(app: &mut App) -> CommandResult {
 /// Open the `/statusline` multi-select picker for configuring footer items.
 pub fn status_line(_app: &mut App) -> CommandResult {
     CommandResult::action(AppAction::OpenStatusPicker)
+}
+
+/// Toggle whether the live transcript renders full thinking detail.
+pub fn verbose(app: &mut App, arg: Option<&str>) -> CommandResult {
+    let next = match arg.map(str::trim).filter(|s| !s.is_empty()) {
+        None => !app.verbose_transcript,
+        Some(raw) => match raw.to_ascii_lowercase().as_str() {
+            "on" | "true" | "1" | "yes" => true,
+            "off" | "false" | "0" | "no" => false,
+            "toggle" => !app.verbose_transcript,
+            _ => {
+                return CommandResult::error(
+                    "Usage: /verbose [on|off]. Compact thinking remains available when verbose is off.",
+                );
+            }
+        },
+    };
+
+    app.verbose_transcript = next;
+    app.mark_history_updated();
+    CommandResult::message(if next {
+        "Verbose transcript on: live thinking renders in full."
+    } else {
+        "Verbose transcript off: live thinking stays compact."
+    })
 }
 
 /// Persist `tui.status_items` to `~/.deepseek/config.toml` without disturbing
@@ -225,7 +282,7 @@ pub fn persist_root_string_key(key: &str, value: &str) -> anyhow::Result<PathBuf
 /// Resolve the path to `~/.deepseek/config.toml` (or
 /// `$DEEPSEEK_CONFIG_PATH`). Mirrors what `Config::load` accepts so we
 /// never write to a different file than the one we read.
-fn config_toml_path() -> anyhow::Result<PathBuf> {
+pub(super) fn config_toml_path() -> anyhow::Result<PathBuf> {
     use anyhow::Context;
     if let Ok(env) = std::env::var("DEEPSEEK_CONFIG_PATH") {
         let trimmed = env.trim();
@@ -247,16 +304,20 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
             if value.trim().eq_ignore_ascii_case("auto") {
                 app.auto_model = true;
                 app.model = "auto".to_string();
+                app.last_effective_model = None;
+                app.reasoning_effort = ReasoningEffort::Auto;
+                app.last_effective_reasoning_effort = None;
                 app.update_model_compaction_budget();
                 app.session.last_prompt_tokens = None;
                 app.session.last_completion_tokens = None;
                 return CommandResult::with_message_and_action(
-                    "model = auto (auto-select by request complexity)".to_string(),
+                    "model = auto (auto-select model and thinking per turn)".to_string(),
                     AppAction::UpdateCompaction(app.compaction_config()),
                 );
             }
             // Clear auto mode when a specific model is set
             app.auto_model = false;
+            app.last_effective_model = None;
             let Some(model) = normalize_model_name(value) else {
                 return CommandResult::error(format!(
                     "Invalid model '{value}'. Expected a DeepSeek model ID. Common models: {}",
@@ -273,19 +334,14 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
             );
         }
         "approval_mode" | "approval" => {
-            let mode = match value.to_lowercase().as_str() {
-                "auto" => Some(ApprovalMode::Auto),
-                "suggest" | "suggested" | "on-request" | "untrusted" => Some(ApprovalMode::Suggest),
-                "never" => Some(ApprovalMode::Never),
-                _ => None,
-            };
+            let mode = ApprovalMode::from_config_value(value);
             return match mode {
                 Some(m) => {
                     app.approval_mode = m;
                     CommandResult::message(format!("approval_mode = {}", m.label()))
                 }
                 None => CommandResult::error(
-                    "Invalid approval_mode. Use: auto, suggest/on-request/untrusted, never",
+                    "Invalid approval_mode. Use: auto, suggest/on-request/untrusted, never/deny",
                 ),
             };
         }
@@ -356,6 +412,20 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
             app.ui_locale = resolve_locale(&settings.locale);
             app.needs_redraw = true;
         }
+        "background_color" | "background" | "bg" => {
+            let base_theme = crate::palette::UiTheme::detect();
+            app.ui_theme = settings
+                .background_color
+                .as_deref()
+                .and_then(crate::palette::parse_hex_rgb_color)
+                .map_or(base_theme, |color| base_theme.with_background_color(color));
+            app.needs_redraw = true;
+        }
+        "cost_currency" | "currency" => {
+            app.cost_currency = crate::pricing::CostCurrency::from_setting(&settings.cost_currency)
+                .unwrap_or(crate::pricing::CostCurrency::Usd);
+            app.needs_redraw = true;
+        }
         "composer_density" | "composer" => {
             app.composer_density =
                 crate::tui::app::ComposerDensity::from_setting(&settings.composer_density);
@@ -385,7 +455,13 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
         }
         "default_model" => {
             if let Some(ref model) = settings.default_model {
+                app.auto_model = model.trim().eq_ignore_ascii_case("auto");
                 app.model.clone_from(model);
+                app.last_effective_model = None;
+                if app.auto_model {
+                    app.reasoning_effort = ReasoningEffort::Auto;
+                    app.last_effective_reasoning_effort = None;
+                }
                 app.update_model_compaction_budget();
                 app.session.last_prompt_tokens = None;
                 app.session.last_completion_tokens = None;
@@ -404,6 +480,11 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
 
     let display_value = match key.as_str() {
         "default_mode" | "mode" => settings.default_mode.clone(),
+        "cost_currency" | "currency" => settings.cost_currency.clone(),
+        "background_color" | "background" | "bg" => settings
+            .background_color
+            .clone()
+            .unwrap_or_else(|| "default".to_string()),
         _ => value.to_string(),
     };
 
@@ -457,30 +538,58 @@ pub fn set_config(app: &mut App, args: Option<&str>) -> CommandResult {
     set_config_value(app, &key, value, should_save)
 }
 
-/// Enable YOLO mode (shell + trust + auto-approve)
-pub fn yolo(app: &mut App) -> CommandResult {
-    app.set_mode(AppMode::Yolo);
-    CommandResult::message("YOLO mode enabled - shell + trust + auto-approve!")
+/// Select the TUI operating mode.
+pub fn mode(app: &mut App, arg: Option<&str>) -> CommandResult {
+    let Some(arg) = arg.filter(|value| !value.trim().is_empty()) else {
+        return CommandResult::action(AppAction::OpenModePicker);
+    };
+    match parse_mode_arg(arg) {
+        Some(mode) => CommandResult::message(switch_mode(app, mode)),
+        None => CommandResult::error("Usage: /mode [agent|plan|yolo|1|2|3]"),
+    }
 }
 
-/// Legacy alias for the removed normal mode.
-pub fn normal_mode(app: &mut App) -> CommandResult {
-    app.set_mode(AppMode::Agent);
-    CommandResult::message("Normal mode was removed. Switched to Agent mode.")
+pub fn switch_mode(app: &mut App, mode: AppMode) -> String {
+    if app.set_mode(mode) {
+        format!("Switched to {} mode.", mode_display_name(mode))
+    } else {
+        format!("Already in {} mode.", mode_display_name(mode))
+    }
 }
 
-/// Enable agent mode (autonomous tool use with approvals)
-pub fn agent_mode(app: &mut App) -> CommandResult {
-    app.set_mode(AppMode::Agent);
-    CommandResult::message("Agent mode enabled.")
+fn parse_mode_arg(arg: &str) -> Option<AppMode> {
+    match arg.trim().to_ascii_lowercase().as_str() {
+        "agent" | "1" => Some(AppMode::Agent),
+        "plan" | "2" => Some(AppMode::Plan),
+        "yolo" | "3" => Some(AppMode::Yolo),
+        _ => None,
+    }
 }
 
-/// Enable plan mode (tool planning, then choose execution route)
-pub fn plan_mode(app: &mut App) -> CommandResult {
-    app.set_mode(AppMode::Plan);
-    CommandResult::message(
-        "Plan mode enabled. Describe your goal and I will create a plan before execution.",
-    )
+fn mode_display_name(mode: AppMode) -> &'static str {
+    match mode {
+        AppMode::Agent => "Agent",
+        AppMode::Plan => "Plan",
+        AppMode::Yolo => "YOLO",
+    }
+}
+
+/// Toggle between dark and light theme.
+pub fn theme(app: &mut App) -> CommandResult {
+    let new_theme = match app.ui_theme.mode {
+        crate::palette::PaletteMode::Dark => {
+            crate::palette::UiTheme::for_mode(crate::palette::PaletteMode::Light)
+        }
+        crate::palette::PaletteMode::Light => {
+            crate::palette::UiTheme::for_mode(crate::palette::PaletteMode::Dark)
+        }
+    };
+    app.ui_theme = new_theme;
+    let label = match new_theme.mode {
+        crate::palette::PaletteMode::Dark => "dark",
+        crate::palette::PaletteMode::Light => "light",
+    };
+    CommandResult::message(format!("Theme switched to {label}."))
 }
 
 /// Manage workspace-level trust and the per-path allowlist.
@@ -604,14 +713,6 @@ fn expand_tilde(raw: &str) -> String {
 /// Default → Flash (cost savings).
 pub fn auto_model_heuristic(input: &str, _current_model: &str) -> String {
     let len = input.chars().count();
-    // Short messages → Flash
-    if len < 100 {
-        return "deepseek-v4-flash".to_string();
-    }
-    // Long complex requests → Pro
-    if len > 500 {
-        return "deepseek-v4-pro".to_string();
-    }
     let lower = input.to_lowercase();
     let complex_keywords = [
         "refactor",
@@ -630,8 +731,247 @@ pub fn auto_model_heuristic(input: &str, _current_model: &str) -> String {
     if complex_keywords.iter().any(|kw| lower.contains(kw)) {
         return "deepseek-v4-pro".to_string();
     }
+    // Short messages → Flash
+    if len < 100 {
+        return "deepseek-v4-flash".to_string();
+    }
+    // Long complex requests → Pro
+    if len > 500 {
+        return "deepseek-v4-pro".to_string();
+    }
     // Default to Flash for cost savings
     "deepseek-v4-flash".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoRouteRecommendation {
+    pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoRouteSource {
+    FlashRouter,
+    Heuristic,
+}
+
+impl AutoRouteSource {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            AutoRouteSource::FlashRouter => "flash-router",
+            AutoRouteSource::Heuristic => "heuristic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoRouteSelection {
+    pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
+    pub source: AutoRouteSource,
+}
+
+pub const AUTO_MODEL_ROUTER_SYSTEM_PROMPT: &str = "\
+You are the DeepSeek TUI auto-routing classifier. Return only compact JSON: \
+{\"model\":\"deepseek-v4-flash|deepseek-v4-pro\",\"thinking\":\"off|high|max\"}. \
+Use deepseek-v4-flash for trivial, conversational, status, or single-step work. \
+Use deepseek-v4-pro for coding, debugging, release work, multi-step tasks, high-risk decisions, \
+tool-heavy work, ambiguous requests, or anything that benefits from deeper reasoning. \
+Use thinking off only for trivial no-tool answers, high for ordinary reasoning, and max for \
+agentic, coding, multi-file, release, architecture, debugging, security, tool-heavy, or uncertain work.";
+
+/// Parse the Flash router's JSON-only response.
+///
+/// The runtime treats classifier output as untrusted: only known V4 model IDs
+/// and supported reasoning tiers are accepted. Anything else falls back to the
+/// deterministic heuristic.
+pub fn parse_auto_route_recommendation(raw: &str) -> Option<AutoRouteRecommendation> {
+    let json = extract_first_json_object(raw)?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let model = value.get("model").and_then(serde_json::Value::as_str)?;
+    let model = normalize_auto_route_model(model)?;
+    let reasoning_effort = value
+        .get("thinking")
+        .or_else(|| value.get("reasoning_effort"))
+        .or_else(|| value.get("effort"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(parse_auto_route_reasoning_effort);
+
+    Some(AutoRouteRecommendation {
+        model: model.to_string(),
+        reasoning_effort,
+    })
+}
+
+fn extract_first_json_object(raw: &str) -> Option<&str> {
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    (end >= start).then_some(&raw[start..=end])
+}
+
+fn normalize_auto_route_model(model: &str) -> Option<&'static str> {
+    match model.trim().to_ascii_lowercase().as_str() {
+        "deepseek-v4-pro" | "v4-pro" | "pro" => Some("deepseek-v4-pro"),
+        "deepseek-v4-flash" | "v4-flash" | "flash" => Some("deepseek-v4-flash"),
+        _ => None,
+    }
+}
+
+fn parse_auto_route_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "off" | "disabled" | "none" | "false" => Some(ReasoningEffort::Off),
+        "low" | "minimal" | "medium" | "mid" => Some(ReasoningEffort::High),
+        "high" => Some(ReasoningEffort::High),
+        "max" | "maximum" | "xhigh" => Some(ReasoningEffort::Max),
+        _ => None,
+    }
+}
+
+#[must_use]
+pub fn normalize_auto_route_effort(effort: ReasoningEffort) -> ReasoningEffort {
+    match effort {
+        ReasoningEffort::Low | ReasoningEffort::Medium => ReasoningEffort::High,
+        other => other,
+    }
+}
+
+pub async fn resolve_auto_route_with_flash(
+    config: &crate::config::Config,
+    latest_request: &str,
+    recent_context: &str,
+    selected_model_mode: &str,
+    selected_thinking_mode: &str,
+) -> AutoRouteSelection {
+    match auto_route_flash_recommendation(
+        config,
+        latest_request,
+        recent_context,
+        selected_model_mode,
+        selected_thinking_mode,
+    )
+    .await
+    {
+        Ok(Some(recommendation)) => AutoRouteSelection {
+            model: recommendation.model,
+            reasoning_effort: recommendation.reasoning_effort,
+            source: AutoRouteSource::FlashRouter,
+        },
+        Ok(None) | Err(_) => fallback_auto_route(latest_request, selected_model_mode),
+    }
+}
+
+fn fallback_auto_route(latest_request: &str, selected_model_mode: &str) -> AutoRouteSelection {
+    AutoRouteSelection {
+        model: auto_model_heuristic(latest_request, selected_model_mode),
+        reasoning_effort: Some(normalize_auto_route_effort(crate::auto_reasoning::select(
+            false,
+            latest_request,
+        ))),
+        source: AutoRouteSource::Heuristic,
+    }
+}
+
+async fn auto_route_flash_recommendation(
+    config: &crate::config::Config,
+    latest_request: &str,
+    recent_context: &str,
+    selected_model_mode: &str,
+    selected_thinking_mode: &str,
+) -> Result<Option<AutoRouteRecommendation>> {
+    if cfg!(test) {
+        return Ok(None);
+    }
+
+    let client = DeepSeekClient::new(config)?;
+    let request = MessageRequest {
+        model: "deepseek-v4-flash".to_string(),
+        messages: vec![Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::Text {
+                text: auto_route_prompt(
+                    latest_request,
+                    recent_context,
+                    selected_model_mode,
+                    selected_thinking_mode,
+                ),
+                cache_control: None,
+            }],
+        }],
+        max_tokens: 96,
+        system: Some(SystemPrompt::Text(
+            AUTO_MODEL_ROUTER_SYSTEM_PROMPT.to_string(),
+        )),
+        tools: None,
+        tool_choice: None,
+        metadata: None,
+        thinking: None,
+        reasoning_effort: Some("off".to_string()),
+        stream: Some(false),
+        temperature: Some(0.0),
+        top_p: None,
+    };
+
+    let response =
+        tokio::time::timeout(Duration::from_secs(4), client.create_message(request)).await??;
+    Ok(parse_auto_route_recommendation(&message_response_text(
+        &response,
+    )))
+}
+
+fn auto_route_prompt(
+    latest_request: &str,
+    recent_context: &str,
+    selected_model_mode: &str,
+    selected_thinking_mode: &str,
+) -> String {
+    format!(
+        "Session mode: agent\nSelected model mode: {}\nSelected thinking mode: {}\n\nRecent context:\n{}\n\nLatest user request:\n{}\n\nReturn JSON only.",
+        selected_model_mode,
+        selected_thinking_mode,
+        if recent_context.trim().is_empty() {
+            "No prior context."
+        } else {
+            recent_context
+        },
+        truncate_for_auto_router(latest_request, 4_000)
+    )
+}
+
+fn message_response_text(response: &MessageResponse) -> String {
+    let mut out = String::new();
+    for block in &response.content {
+        match block {
+            ContentBlock::Text { text, .. } | ContentBlock::ToolResult { content: text, .. } => {
+                append_router_text(&mut out, text);
+            }
+            ContentBlock::Thinking { thinking } => {
+                append_router_text(&mut out, thinking);
+            }
+            ContentBlock::ToolUse { name, .. } => {
+                append_router_text(&mut out, &format!("[tool call: {name}]"));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn append_router_text(out: &mut String, text: &str) {
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(text);
+}
+
+fn truncate_for_auto_router(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 /// Toggle LSP diagnostics on/off or show status.
@@ -700,10 +1040,12 @@ mod tests {
         home: Option<OsString>,
         userprofile: Option<OsString>,
         deepseek_config_path: Option<OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
         fn new(home: &Path) -> Self {
+            let lock = crate::test_support::lock_test_env();
             let home_str = OsString::from(home.as_os_str());
             let config_path = home.join(".deepseek").join("config.toml");
             let config_str = OsString::from(config_path.as_os_str());
@@ -711,7 +1053,7 @@ mod tests {
             let userprofile_prev = env::var_os("USERPROFILE");
             let deepseek_config_prev = env::var_os("DEEPSEEK_CONFIG_PATH");
 
-            // Safety: test-only environment mutation guarded by a global mutex.
+            // Safety: test-only environment mutation guarded by process-wide mutex.
             unsafe {
                 env::set_var("HOME", &home_str);
                 env::set_var("USERPROFILE", &home_str);
@@ -722,6 +1064,7 @@ mod tests {
                 home: home_prev,
                 userprofile: userprofile_prev,
                 deepseek_config_path: deepseek_config_prev,
+                _lock: lock,
             }
         }
     }
@@ -792,9 +1135,10 @@ mod tests {
     }
 
     #[test]
-    fn test_yolo_command_sets_all_flags() {
+    fn test_mode_yolo_sets_all_flags() {
         let mut app = create_test_app();
-        let _ = yolo(&mut app);
+        let result = mode(&mut app, Some("yolo"));
+        assert!(result.message.unwrap().contains("Switched to YOLO mode"));
         assert!(app.allow_shell);
         assert!(app.trust_mode);
         assert!(app.yolo);
@@ -803,14 +1147,30 @@ mod tests {
     }
 
     #[test]
-    fn test_mode_switch_commands() {
+    fn test_mode_switch_command_accepts_names_and_numbers() {
         let mut app = create_test_app();
-        let _ = normal_mode(&mut app);
+        let _ = mode(&mut app, Some("agent"));
         assert_eq!(app.mode, AppMode::Agent);
-        let _ = agent_mode(&mut app);
-        assert_eq!(app.mode, AppMode::Agent);
-        let _ = plan_mode(&mut app);
+        let _ = mode(&mut app, Some("2"));
         assert_eq!(app.mode, AppMode::Plan);
+        let _ = mode(&mut app, Some("3"));
+        assert_eq!(app.mode, AppMode::Yolo);
+    }
+
+    #[test]
+    fn test_mode_without_arg_opens_picker() {
+        let mut app = create_test_app();
+        let result = mode(&mut app, None);
+        assert!(result.message.is_none());
+        assert!(matches!(result.action, Some(AppAction::OpenModePicker)));
+    }
+
+    #[test]
+    fn test_mode_rejects_unknown_value() {
+        let mut app = create_test_app();
+        let result = mode(&mut app, Some("fast"));
+        assert!(result.is_error);
+        assert!(result.message.unwrap().contains("Usage: /mode"));
     }
 
     #[test]
@@ -865,6 +1225,21 @@ mod tests {
     }
 
     #[test]
+    fn test_set_model_auto_enables_auto_thinking() {
+        let mut app = create_test_app();
+        app.reasoning_effort = ReasoningEffort::Off;
+
+        let result = set_config(&mut app, Some("model auto"));
+
+        assert!(result.message.is_some());
+        assert!(app.auto_model);
+        assert_eq!(app.model, "auto");
+        assert_eq!(app.reasoning_effort, ReasoningEffort::Auto);
+        assert!(app.last_effective_model.is_none());
+        assert!(app.last_effective_reasoning_effort.is_none());
+    }
+
+    #[test]
     fn test_set_model_accepts_future_deepseek_model_id() {
         let mut app = create_test_app();
         let result = set_config(&mut app, Some("model deepseek-v4"));
@@ -884,8 +1259,46 @@ mod tests {
     }
 
     #[test]
+    fn auto_route_recommendation_parses_strict_json() {
+        let rec =
+            parse_auto_route_recommendation(r#"{"model":"deepseek-v4-pro","thinking":"max"}"#)
+                .expect("valid router response should parse");
+
+        assert_eq!(rec.model, "deepseek-v4-pro");
+        assert_eq!(rec.reasoning_effort, Some(ReasoningEffort::Max));
+    }
+
+    #[test]
+    fn auto_route_recommendation_accepts_wrapped_json_aliases() {
+        let rec =
+            parse_auto_route_recommendation(r#"route: {"model":"flash","reasoning_effort":"off"}"#)
+                .expect("wrapped router response should parse");
+
+        assert_eq!(rec.model, "deepseek-v4-flash");
+        assert_eq!(rec.reasoning_effort, Some(ReasoningEffort::Off));
+    }
+
+    #[test]
+    fn auto_route_recommendation_normalizes_legacy_low_medium_to_high() {
+        let rec = parse_auto_route_recommendation(
+            r#"{"model":"deepseek-v4-pro","reasoning_effort":"medium"}"#,
+        )
+        .expect("medium should parse for back-compat");
+
+        assert_eq!(rec.model, "deepseek-v4-pro");
+        assert_eq!(rec.reasoning_effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn auto_route_recommendation_rejects_unknown_model() {
+        assert!(
+            parse_auto_route_recommendation(r#"{"model":"some-other-model","thinking":"max"}"#,)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn test_set_default_mode_normal_save_reports_normalized_value() {
-        let _lock = lock_test_env();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -907,6 +1320,32 @@ mod tests {
         let settings_path = Settings::path().unwrap();
         let saved = fs::read_to_string(settings_path).unwrap();
         assert!(saved.contains("default_mode = \"agent\""));
+    }
+
+    #[test]
+    fn config_command_cost_currency_save_persists_value() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "deepseek-tui-cost-currency-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        let result = config_command(&mut app, Some("cost_currency cny --save"));
+        let msg = result.message.unwrap();
+
+        assert_eq!(msg, "cost_currency = cny (saved)");
+        assert_eq!(app.cost_currency, crate::pricing::CostCurrency::Cny);
+
+        let settings_path = Settings::path().unwrap();
+        let saved = fs::read_to_string(settings_path).unwrap();
+        assert!(saved.contains("cost_currency = \"cny\""));
     }
 
     #[test]
@@ -988,7 +1427,6 @@ mod tests {
 
     #[test]
     fn test_logout_clears_api_key_state() {
-        let _lock = lock_test_env();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1038,7 +1476,6 @@ mod tests {
 
     #[test]
     fn persist_status_items_writes_tui_section_to_config_toml() {
-        let _lock = lock_test_env();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1070,7 +1507,6 @@ mod tests {
 
     #[test]
     fn persist_status_items_preserves_existing_unrelated_keys() {
-        let _lock = lock_test_env();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

@@ -58,6 +58,11 @@ pub struct SettingsSection {
     pub show_thinking: bool,
     pub show_tool_details: bool,
     pub locale: UiLocale,
+    #[schemars(
+        title = "Background color",
+        description = "Main TUI background color as #RRGGBB"
+    )]
+    pub background_color: Option<String>,
     pub composer_density: ComposerDensityValue,
     pub composer_border: bool,
     pub transcript_spacing: TranscriptSpacingValue,
@@ -67,6 +72,7 @@ pub struct SettingsSection {
     pub sidebar_focus: SidebarFocusValue,
     #[schemars(range(min = 0))]
     pub max_history: usize,
+    pub cost_currency: CostCurrencyValue,
     pub default_model: Option<String>,
 }
 
@@ -183,12 +189,20 @@ pub enum DefaultModeValue {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum CostCurrencyValue {
+    Usd,
+    Cny,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SidebarFocusValue {
     Auto,
     Plan,
     Todos,
     Tasks,
     Agents,
+    Context,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -198,6 +212,7 @@ pub enum ReasoningEffortValue {
     Low,
     Medium,
     High,
+    Auto,
     Max,
 }
 
@@ -258,6 +273,7 @@ pub fn build_document(app: &App, config: &Config) -> Result<ConfigUiDocument> {
             show_thinking: settings.show_thinking,
             show_tool_details: settings.show_tool_details,
             locale: UiLocale::from_setting(&settings.locale)?,
+            background_color: settings.background_color.clone(),
             composer_density: settings.composer_density.as_str().into(),
             composer_border: settings.composer_border,
             transcript_spacing: settings.transcript_spacing.as_str().into(),
@@ -265,6 +281,7 @@ pub fn build_document(app: &App, config: &Config) -> Result<ConfigUiDocument> {
             sidebar_width: settings.sidebar_width_percent,
             sidebar_focus: settings.sidebar_focus.as_str().into(),
             max_history: settings.max_input_history,
+            cost_currency: CostCurrencyValue::from_setting(&settings.cost_currency)?,
             default_model,
         },
         config: ConfigSection {
@@ -414,6 +431,13 @@ pub fn apply_document(
         ),
         ("locale", doc.settings.locale.as_setting()),
         (
+            "background_color",
+            doc.settings
+                .background_color
+                .as_deref()
+                .unwrap_or("default"),
+        ),
+        (
             "composer_density",
             doc.settings.composer_density.as_setting(),
         ),
@@ -426,6 +450,7 @@ pub fn apply_document(
         ("sidebar_width", &doc.settings.sidebar_width.to_string()),
         ("sidebar_focus", doc.settings.sidebar_focus.as_setting()),
         ("max_history", &doc.settings.max_history.to_string()),
+        ("cost_currency", doc.settings.cost_currency.as_setting()),
         ("mcp_config_path", doc.config.mcp_config_path.as_str()),
     ] {
         let result = commands::set_config_value(app, key, value, persist);
@@ -537,7 +562,9 @@ pub fn open_browser(url: &str) -> Result<()> {
 }
 
 fn validate_document(doc: &ConfigUiDocument) -> Result<()> {
-    if normalize_model_name(&doc.runtime.model).is_none() {
+    if !doc.runtime.model.trim().eq_ignore_ascii_case("auto")
+        && normalize_model_name(&doc.runtime.model).is_none()
+    {
         bail!("invalid model '{}'", doc.runtime.model);
     }
     if doc.config.mcp_config_path.trim().is_empty() {
@@ -555,6 +582,7 @@ fn reload_runtime_config(app: &mut App, config: &mut Config) -> Result<()> {
             .reasoning_effort()
             .unwrap_or_else(|| app.reasoning_effort.as_setting()),
     );
+    app.last_effective_reasoning_effort = None;
     app.update_model_compaction_budget();
     app.mcp_config_path = reloaded.mcp_config_path();
     app.skills_dir = reloaded.skills_dir();
@@ -582,6 +610,7 @@ fn apply_reasoning_effort(
 ) -> Result<()> {
     let effort: ReasoningEffort = value.into();
     app.reasoning_effort = effort;
+    app.last_effective_reasoning_effort = None;
     app.update_model_compaction_budget();
     if persist {
         commands::persist_root_string_key("reasoning_effort", effort.as_setting())?;
@@ -658,6 +687,25 @@ impl DefaultModeValue {
     }
 }
 
+impl CostCurrencyValue {
+    fn from_setting(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "usd" => Ok(Self::Usd),
+            "cny" | "rmb" | "yuan" => Ok(Self::Cny),
+            other => {
+                anyhow::bail!("Invalid cost_currency '{other}': expected usd, cny, rmb, or yuan")
+            }
+        }
+    }
+
+    fn as_setting(self) -> &'static str {
+        match self {
+            Self::Usd => "usd",
+            Self::Cny => "cny",
+        }
+    }
+}
+
 impl SidebarFocusValue {
     fn as_setting(self) -> &'static str {
         match self {
@@ -666,6 +714,7 @@ impl SidebarFocusValue {
             Self::Todos => "todos",
             Self::Tasks => "tasks",
             Self::Agents => "agents",
+            Self::Context => "context",
         }
     }
 }
@@ -687,6 +736,7 @@ impl From<ReasoningEffort> for ReasoningEffortValue {
             ReasoningEffort::Low => Self::Low,
             ReasoningEffort::Medium => Self::Medium,
             ReasoningEffort::High => Self::High,
+            ReasoningEffort::Auto => Self::Auto,
             ReasoningEffort::Max => Self::Max,
         }
     }
@@ -699,6 +749,7 @@ impl ReasoningEffortValue {
             ReasoningEffort::Low => Self::Low,
             ReasoningEffort::Medium => Self::Medium,
             ReasoningEffort::High => Self::High,
+            ReasoningEffort::Auto => Self::Auto,
             ReasoningEffort::Max => Self::Max,
         }
     }
@@ -711,6 +762,7 @@ impl From<ReasoningEffortValue> for ReasoningEffort {
             ReasoningEffortValue::Low => Self::Low,
             ReasoningEffortValue::Medium => Self::Medium,
             ReasoningEffortValue::High => Self::High,
+            ReasoningEffortValue::Auto => Self::Auto,
             ReasoningEffortValue::Max => Self::Max,
         }
     }
@@ -754,6 +806,7 @@ impl From<&str> for SidebarFocusValue {
             SidebarFocus::Todos => Self::Todos,
             SidebarFocus::Tasks => Self::Tasks,
             SidebarFocus::Agents => Self::Agents,
+            SidebarFocus::Context => Self::Context,
         }
     }
 }
@@ -837,12 +890,101 @@ mod tests {
 
     #[test]
     fn build_document_reflects_app_state() {
-        let app = app();
+        let mut app = app();
+        app.auto_model = false;
+        app.model = "deepseek-v4-pro".to_string();
+        app.reasoning_effort = ReasoningEffort::Max;
         let config = Config::default();
         let doc = build_document(&app, &config).expect("document");
         assert_eq!(doc.runtime.model, app.model);
         assert_eq!(doc.runtime.approval_mode, ApprovalModeValue::Suggest);
         assert_eq!(doc.config.reasoning_effort, ReasoningEffortValue::Max);
+    }
+
+    #[test]
+    fn build_document_reflects_cost_currency_from_settings() {
+        let _lock = lock_test_env();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_root = std::env::temp_dir().join(format!(
+            "deepseek-config-ui-cost-currency-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(temp_root.join(".deepseek")).expect("config dir");
+        let config_path = temp_root.join(".deepseek").join("config.toml");
+        fs::write(&config_path, "").expect("seed config");
+        fs::write(
+            temp_root.join(".deepseek").join("settings.toml"),
+            r#"
+cost_currency = "cny"
+"#,
+        )
+        .expect("seed settings");
+
+        let old_config_path = std::env::var_os("DEEPSEEK_CONFIG_PATH");
+        // Safety: test-only environment mutation guarded by a module mutex.
+        unsafe {
+            std::env::set_var("DEEPSEEK_CONFIG_PATH", &config_path);
+        }
+
+        let app = app();
+        let config = Config::default();
+        let doc = build_document(&app, &config).expect("document");
+
+        assert_eq!(doc.settings.cost_currency, CostCurrencyValue::Cny);
+        // Safety: restore the guarded test-only environment mutation above.
+        unsafe {
+            if let Some(value) = old_config_path {
+                std::env::set_var("DEEPSEEK_CONFIG_PATH", value);
+            } else {
+                std::env::remove_var("DEEPSEEK_CONFIG_PATH");
+            }
+        }
+    }
+
+    #[test]
+    fn build_document_reflects_background_color_from_settings() {
+        let _lock = lock_test_env();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_root = std::env::temp_dir().join(format!(
+            "deepseek-config-ui-background-color-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(temp_root.join(".deepseek")).expect("config dir");
+        let config_path = temp_root.join(".deepseek").join("config.toml");
+        fs::write(&config_path, "").expect("seed config");
+        fs::write(
+            temp_root.join(".deepseek").join("settings.toml"),
+            r##"
+background_color = "#1A1B26"
+"##,
+        )
+        .expect("seed settings");
+
+        let old_config_path = std::env::var_os("DEEPSEEK_CONFIG_PATH");
+        unsafe {
+            std::env::set_var("DEEPSEEK_CONFIG_PATH", &config_path);
+        }
+
+        let app = app();
+        let config = Config::default();
+        let doc = build_document(&app, &config).expect("document");
+
+        assert_eq!(doc.settings.background_color.as_deref(), Some("#1a1b26"));
+        unsafe {
+            if let Some(value) = old_config_path {
+                std::env::set_var("DEEPSEEK_CONFIG_PATH", value);
+            } else {
+                std::env::remove_var("DEEPSEEK_CONFIG_PATH");
+            }
+        }
     }
 
     #[test]
@@ -906,6 +1048,7 @@ mcp_config_path = "disk-mcp.json"
         doc.runtime.model = "deepseek-v4-flash".to_string();
         doc.config.reasoning_effort = ReasoningEffortValue::Low;
         doc.config.mcp_config_path = "session-mcp.json".to_string();
+        doc.settings.cost_currency = CostCurrencyValue::Cny;
 
         let outcome = apply_document(doc, &mut app, &mut config, false).expect("apply");
 
@@ -914,6 +1057,7 @@ mcp_config_path = "disk-mcp.json"
         assert_eq!(app.model, "deepseek-v4-flash");
         assert_eq!(app.reasoning_effort, ReasoningEffort::Low);
         assert_eq!(app.mcp_config_path, PathBuf::from("session-mcp.json"));
+        assert_eq!(app.cost_currency, crate::pricing::CostCurrency::Cny);
         assert_eq!(
             config.reasoning_effort.as_deref(),
             Some(ReasoningEffort::Low.as_setting())

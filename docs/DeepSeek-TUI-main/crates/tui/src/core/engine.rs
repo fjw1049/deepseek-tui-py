@@ -8,6 +8,8 @@
 //! - Tool execution orchestration
 
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -23,7 +25,7 @@ use crate::client::DeepSeekClient;
 use crate::compaction::{
     CompactionConfig, compact_messages_safe, merge_system_prompts, should_compact,
 };
-use crate::config::{Config, DEFAULT_MAX_SUBAGENTS, DEFAULT_TEXT_MODEL};
+use crate::config::{ApiProvider, Config, DEFAULT_MAX_SUBAGENTS, DEFAULT_TEXT_MODEL};
 use crate::cycle_manager::{
     CycleBriefing, CycleConfig, StructuredState, archive_cycle, build_seed_messages,
     estimate_briefing_tokens, produce_briefing, should_advance_cycle,
@@ -35,8 +37,8 @@ use crate::mcp::McpPool;
 #[cfg(test)]
 use crate::models::ToolCaller;
 use crate::models::{
-    ContentBlock, ContentBlockStart, DEFAULT_CONTEXT_WINDOW_TOKENS, Delta, Message, MessageRequest,
-    StreamEvent, SystemPrompt, Tool, Usage,
+    ContentBlock, ContentBlockStart, Delta, LEGACY_DEEPSEEK_CONTEXT_WINDOW_TOKENS, Message,
+    MessageRequest, StreamEvent, SystemPrompt, Tool, Usage,
 };
 use crate::prompts;
 use crate::seam_manager::{SeamConfig, SeamManager};
@@ -45,7 +47,8 @@ use crate::tools::shell::{SharedShellManager, new_shared_shell_manager};
 use crate::tools::spec::RuntimeToolServices;
 use crate::tools::spec::{ApprovalRequirement, ToolError, ToolResult};
 use crate::tools::subagent::{
-    Mailbox, SharedSubAgentManager, SubAgentRuntime, SubAgentType, new_shared_subagent_manager,
+    Mailbox, SharedSubAgentManager, SubAgentCompletion, SubAgentForkContext, SubAgentRuntime,
+    SubAgentType, new_shared_subagent_manager, resolve_subagent_assignment_route,
 };
 use crate::tools::todo::{SharedTodoList, new_shared_todo_list};
 use crate::tools::user_input::{UserInputRequest, UserInputResponse};
@@ -92,6 +95,7 @@ pub struct EngineConfig {
     /// `instructions = [...]` config (or the per-project override).
     /// Resolved via `expand_path` so `~` works.
     pub instructions: Vec<PathBuf>,
+    pub project_context_pack_enabled: bool,
     /// Maximum number of assistant steps before stopping.
     pub max_steps: u32,
     /// Maximum number of concurrently active subagents.
@@ -139,6 +143,17 @@ pub struct EngineConfig {
     /// Path to the user memory file (#489). Always populated; only
     /// consulted when `memory_enabled` is `true`.
     pub memory_path: PathBuf,
+    pub goal_objective: Option<String>,
+    /// Resolved BCP-47 locale tag (e.g. `"en"`, `"zh-Hans"`, `"ja"`)
+    /// for the `## Environment` block in the system prompt. The
+    /// caller resolves this from `Settings` once at engine
+    /// construction; the engine never touches disk for it.
+    pub locale_tag: String,
+    /// When true, force `tool_choice: "required"` and opt compatible function
+    /// schemas into DeepSeek beta strict mode.
+    pub strict_tool_mode: bool,
+    /// Workshop / large-tool-output routing (#548). `None` disables routing.
+    pub workshop: Option<crate::tools::large_output_router::WorkshopConfig>,
 }
 
 impl Default for EngineConfig {
@@ -152,6 +167,7 @@ impl Default for EngineConfig {
             mcp_config_path: PathBuf::from("mcp.json"),
             skills_dir: crate::skills::default_skills_dir(),
             instructions: Vec::new(),
+            project_context_pack_enabled: true,
             max_steps: 100,
             max_subagents: DEFAULT_MAX_SUBAGENTS,
             features: Features::with_defaults(),
@@ -168,6 +184,10 @@ impl Default for EngineConfig {
             subagent_model_overrides: HashMap::new(),
             memory_enabled: false,
             memory_path: PathBuf::from("./memory.md"),
+            strict_tool_mode: false,
+            goal_objective: None,
+            locale_tag: "en".to_string(),
+            workshop: None,
         }
     }
 }
@@ -282,6 +302,7 @@ pub struct Engine {
     config: EngineConfig,
     deepseek_client: Option<DeepSeekClient>,
     deepseek_client_error: Option<String>,
+    api_key_env_only_recovery: Option<String>,
     session: Session,
     subagent_manager: SharedSubAgentManager,
     shell_manager: SharedShellManager,
@@ -291,6 +312,14 @@ pub struct Engine {
     rx_user_input: mpsc::Receiver<UserInputDecision>,
     rx_steer: mpsc::Receiver<String>,
     tx_event: mpsc::Sender<Event>,
+    /// Wakeup channel for the parent turn loop when a direct child sub-agent
+    /// terminates (issue #756). Cloned into `SubAgentRuntime` so the runtime
+    /// can fan completion events back into the engine.
+    tx_subagent_completion: mpsc::UnboundedSender<SubAgentCompletion>,
+    /// Receiver paired with `tx_subagent_completion`. Drained at the
+    /// turn-loop's empty-tool_uses branch to surface `<deepseek:subagent.done>`
+    /// sentinels into the parent's transcript before deciding to end the turn.
+    pub(super) rx_subagent_completion: mpsc::UnboundedReceiver<SubAgentCompletion>,
     cancel_token: CancellationToken,
     shared_cancel_token: Arc<StdMutex<CancellationToken>>,
     tool_exec_lock: Arc<RwLock<()>>,
@@ -304,6 +333,15 @@ pub struct Engine {
     /// — when LSP is disabled in config, this is an inert manager that
     /// always returns `None` from `diagnostics_for`.
     lsp_manager: Arc<crate::lsp::LspManager>,
+    /// Session-scoped workshop variable store (#548). Shared across all tool
+    /// calls so `last_tool_result` persists within the session and can be
+    /// promoted to the parent context via `promote_to_context`.
+    workshop_vars: Option<
+        std::sync::Arc<tokio::sync::Mutex<crate::tools::large_output_router::WorkshopVariables>>,
+    >,
+    /// External sandbox backend (#516). When `Some`, exec_shell routes commands
+    /// through this instead of spawning a local process.
+    sandbox_backend: Option<std::sync::Arc<dyn crate::sandbox::backend::SandboxBackend>>,
     /// Diagnostics collected during the current step's tool calls. Drained
     /// and forwarded as a synthetic user message before the next API call.
     pending_lsp_blocks: Vec<crate::lsp::DiagnosticBlock>,
@@ -325,6 +363,45 @@ impl Engine {
         }
     }
 
+    fn env_only_api_key_recovery_hint(api_config: &Config) -> Option<String> {
+        if !crate::config::active_provider_uses_env_only_api_key(api_config) {
+            return None;
+        }
+
+        let provider = api_config.api_provider();
+        let env_var = match provider {
+            ApiProvider::Deepseek | ApiProvider::DeepseekCN => "DEEPSEEK_API_KEY",
+            ApiProvider::NvidiaNim => "NVIDIA_API_KEY/NVIDIA_NIM_API_KEY",
+            ApiProvider::Openai => "OPENAI_API_KEY",
+            ApiProvider::Openrouter => "OPENROUTER_API_KEY",
+            ApiProvider::Novita => "NOVITA_API_KEY",
+            ApiProvider::Fireworks => "FIREWORKS_API_KEY",
+            ApiProvider::Sglang => "SGLANG_API_KEY",
+            ApiProvider::Vllm => "VLLM_API_KEY",
+            ApiProvider::Ollama => "OLLAMA_API_KEY",
+        };
+
+        Some(format!(
+            "The rejected key came from {env_var}; no saved config key is present.\n\
+             Run `deepseek auth status` to inspect credential sources, then \
+             `deepseek auth set --provider {provider}` to save a valid key in ~/.deepseek/config.toml, \
+             or remove the stale export and open a fresh shell.",
+            provider = provider.as_str()
+        ))
+    }
+
+    pub(super) fn decorate_auth_error_message(&self, message: String) -> String {
+        let Some(hint) = self.api_key_env_only_recovery.as_ref() else {
+            return message;
+        };
+        if crate::error_taxonomy::classify_error_message(&message) != ErrorCategory::Authentication
+            || message.contains("no saved config key is present")
+        {
+            return message;
+        }
+        format!("{message}\n\n{hint}")
+    }
+
     /// Create a new engine with the given configuration
     pub fn new(config: EngineConfig, api_config: &Config) -> (Self, EngineHandle) {
         let (tx_op, rx_op) = mpsc::channel(32);
@@ -332,6 +409,7 @@ impl Engine {
         let (tx_approval, rx_approval) = mpsc::channel(64);
         let (tx_user_input, rx_user_input) = mpsc::channel(32);
         let (tx_steer, rx_steer) = mpsc::channel(64);
+        let (tx_subagent_completion, rx_subagent_completion) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
         let shared_cancel_token = Arc::new(StdMutex::new(cancel_token.clone()));
         let tool_exec_lock = Arc::new(RwLock::new(()));
@@ -341,6 +419,7 @@ impl Engine {
             Ok(client) => (Some(client), None),
             Err(err) => (None, Some(err.to_string())),
         };
+        let api_key_env_only_recovery = Self::env_only_api_key_recovery_hint(api_config);
 
         let mut session = Session::new(
             config.model.clone(),
@@ -350,21 +429,29 @@ impl Engine {
             config.notes_path.clone(),
             config.mcp_config_path.clone(),
         );
-
-        // Set up system prompt with project context (default to agent mode)
-        let working_set_summary = session.working_set.summary_block(&config.workspace);
+        // Set up stable system prompt with project context (default to agent mode).
+        // Per-turn working-set metadata is injected into the latest user
+        // message at request time so file churn does not rewrite this prefix.
         let user_memory_block =
             crate::memory::compose_block(config.memory_enabled, &config.memory_path);
-        let system_prompt = prompts::system_prompt_for_mode_with_context_and_skills(
-            AppMode::Agent,
-            &config.workspace,
-            None,
-            Some(&config.skills_dir),
-            Some(&config.instructions),
-            user_memory_block.as_deref(),
-        );
-        session.system_prompt =
-            append_working_set_summary(Some(system_prompt), working_set_summary.as_deref());
+        let system_prompt =
+            prompts::system_prompt_for_mode_with_context_skills_session_and_approval(
+                AppMode::Agent,
+                &config.workspace,
+                None,
+                Some(&config.skills_dir),
+                Some(&config.instructions),
+                prompts::PromptSessionContext {
+                    user_memory_block: user_memory_block.as_deref(),
+                    goal_objective: config.goal_objective.as_deref(),
+                    project_context_pack_enabled: config.project_context_pack_enabled,
+                    locale_tag: &config.locale_tag,
+                },
+                session.approval_mode,
+            );
+        let stable_prompt = Some(system_prompt);
+        session.last_system_prompt_hash = Some(system_prompt_hash(stable_prompt.as_ref()));
+        session.system_prompt = stable_prompt;
 
         let subagent_manager =
             new_shared_subagent_manager(config.workspace.clone(), config.max_subagents);
@@ -415,10 +502,36 @@ impl Engine {
             None => crate::lsp::LspManager::disabled(),
         });
 
+        // Workshop variable store (#548). Created unconditionally so the Arc
+        // can be handed to every ToolContext; routing is gated on the router
+        // field being Some rather than on the vars Arc being present.
+        let workshop_vars: Option<
+            std::sync::Arc<
+                tokio::sync::Mutex<crate::tools::large_output_router::WorkshopVariables>,
+            >,
+        > = if config.workshop.is_some() {
+            Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+                crate::tools::large_output_router::WorkshopVariables::default(),
+            )))
+        } else {
+            None
+        };
+
+        // External sandbox backend (#516). Logged but non-fatal: if the
+        // backend fails to construct, the engine continues with local
+        // execution as the fallback.
+        let sandbox_backend = crate::sandbox::backend::create_backend(api_config)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to create sandbox backend: {e}");
+                None
+            })
+            .map(std::sync::Arc::from);
+
         let mut engine = Engine {
             config,
             deepseek_client,
             deepseek_client_error,
+            api_key_env_only_recovery,
             session,
             subagent_manager,
             shell_manager,
@@ -428,6 +541,8 @@ impl Engine {
             rx_user_input,
             rx_steer,
             tx_event,
+            tx_subagent_completion,
+            rx_subagent_completion,
             cancel_token: cancel_token.clone(),
             shared_cancel_token: shared_cancel_token.clone(),
             tool_exec_lock,
@@ -437,6 +552,8 @@ impl Engine {
             turn_counter: 0,
             lsp_manager,
             pending_lsp_blocks: Vec::new(),
+            workshop_vars,
+            sandbox_backend,
         };
         engine.rehydrate_latest_canonical_state();
 
@@ -461,19 +578,27 @@ impl Engine {
                     content,
                     mode,
                     model,
+                    goal_objective,
                     reasoning_effort,
+                    reasoning_effort_auto,
+                    auto_model,
                     allow_shell,
                     trust_mode,
                     auto_approve,
+                    approval_mode,
                 } => {
                     self.handle_send_message(
                         content,
                         mode,
                         model,
+                        goal_objective,
                         reasoning_effort,
+                        reasoning_effort_auto,
+                        auto_model,
                         allow_shell,
                         trust_mode,
                         auto_approve,
+                        approval_mode,
                     )
                     .await;
                 }
@@ -510,7 +635,7 @@ impl Engine {
                         continue;
                     };
 
-                    let runtime = SubAgentRuntime::new(
+                    let mut runtime = SubAgentRuntime::new(
                         client,
                         self.session.model.clone(),
                         // Sub-agents don't inherit YOLO mode - use Agent mode defaults
@@ -520,8 +645,17 @@ impl Engine {
                         Arc::clone(&self.subagent_manager),
                     )
                     .with_role_models(self.config.subagent_model_overrides.clone())
+                    .with_auto_model(self.session.auto_model)
+                    .with_reasoning_effort(
+                        self.session.reasoning_effort.clone(),
+                        self.session.reasoning_effort_auto,
+                    )
                     .with_max_spawn_depth(self.config.max_spawn_depth)
                     .background_runtime();
+                    let route = resolve_subagent_assignment_route(&runtime, None, &prompt).await;
+                    runtime.model = route.model;
+                    runtime.reasoning_effort = route.reasoning_effort;
+                    runtime.reasoning_effort_auto = false;
 
                     let result = {
                         let mut manager = self.subagent_manager.write().await;
@@ -569,6 +703,7 @@ impl Engine {
                         .await;
                 }
                 Op::SetModel { model } => {
+                    self.session.auto_model = model.trim().eq_ignore_ascii_case("auto");
                     self.session.model = model;
                     self.config.model.clone_from(&self.session.model);
                     let _ = self
@@ -591,15 +726,22 @@ impl Engine {
                         .await;
                 }
                 Op::SyncSession {
+                    session_id,
                     messages,
                     system_prompt,
                     model,
                     workspace,
                 } => {
+                    if let Some(session_id) = session_id {
+                        self.session.id = session_id;
+                    } else if messages.is_empty() && system_prompt.is_none() {
+                        self.session.id = uuid::Uuid::new_v4().to_string();
+                    }
                     self.session.messages = messages;
                     self.session.compaction_summary_prompt =
                         extract_compaction_summary_prompt(system_prompt.clone());
                     self.session.system_prompt = system_prompt;
+                    self.session.auto_model = model.trim().eq_ignore_ascii_case("auto");
                     self.session.model = model;
                     self.session.workspace = workspace.clone();
                     self.config.model.clone_from(&self.session.model);
@@ -653,10 +795,14 @@ impl Engine {
                         new_message,
                         mode,
                         self.session.model.clone(),
+                        self.config.goal_objective.clone(),
                         self.session.reasoning_effort.clone(),
+                        self.session.reasoning_effort_auto,
+                        self.session.auto_model,
                         self.session.allow_shell,
                         self.session.trust_mode,
                         self.session.auto_approve,
+                        self.session.approval_mode,
                     )
                     .await;
                 }
@@ -665,12 +811,23 @@ impl Engine {
                 }
             }
         }
+
+        // #420: graceful MCP shutdown — send SIGTERM and give stdio servers
+        // a brief window to exit before drop fires SIGKILL via kill_on_drop.
+        // Best-effort: pool may not exist (no MCP configured) and the lock
+        // can fail under contention; either way the kill_on_drop fallback
+        // still reaps the children.
+        if let Some(pool) = self.mcp_pool.as_ref() {
+            let mut guard = pool.lock().await;
+            guard.shutdown_all().await;
+        }
     }
 
     async fn emit_session_updated(&self) {
         let _ = self
             .tx_event
             .send(Event::SessionUpdated {
+                session_id: self.session.id.clone(),
                 messages: self.session.messages.clone(),
                 system_prompt: self.session.system_prompt.clone(),
                 model: self.session.model.clone(),
@@ -684,6 +841,40 @@ impl Engine {
         self.emit_session_updated().await;
     }
 
+    fn turn_metadata_block(&self) -> ContentBlock {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let working_set_summary = self
+            .session
+            .working_set
+            .summary_block(&self.config.workspace)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let summary = if let Some(working_set_summary) = working_set_summary {
+            format!("Current local date: {today}\n{working_set_summary}")
+        } else {
+            format!("Current local date: {today}")
+        };
+
+        ContentBlock::Text {
+            text: format!("<turn_meta>\n{summary}\n</turn_meta>"),
+            cache_control: None,
+        }
+    }
+
+    fn user_text_message_with_turn_metadata(&self, text: String) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: vec![
+                self.turn_metadata_block(),
+                ContentBlock::Text {
+                    text,
+                    cache_control: None,
+                },
+            ],
+        }
+    }
+
     /// Handle a send message operation
     #[allow(clippy::too_many_arguments)]
     async fn handle_send_message(
@@ -691,10 +882,14 @@ impl Engine {
         content: String,
         mode: AppMode,
         model: String,
+        goal_objective: Option<String>,
         reasoning_effort: Option<String>,
+        reasoning_effort_auto: bool,
+        auto_model: bool,
         allow_shell: bool,
         trust_mode: bool,
         auto_approve: bool,
+        approval_mode: crate::tui::approval::ApprovalMode,
     ) {
         // Reset cancel token for fresh turn (in case previous was cancelled)
         self.reset_cancel_token();
@@ -707,6 +902,16 @@ impl Engine {
         self.turn_counter = self.turn_counter.saturating_add(1);
         self.capacity_controller.mark_turn_start(self.turn_counter);
 
+        // Emit turn started event IMMEDIATELY so the UI knows the turn is
+        // active. The snapshot below can take 30+ seconds on slow filesystems
+        // (e.g. WSL2 /mnt/c) and must not delay the TurnStarted event.
+        let _ = self
+            .tx_event
+            .send(Event::TurnStarted {
+                turn_id: turn.id.clone(),
+            })
+            .await;
+
         // Snapshot the workspace BEFORE we touch a single tool. Run the git
         // work on the blocking pool so the async runtime stays responsive;
         // failure is non-fatal (the helper logs at WARN).
@@ -716,14 +921,6 @@ impl Engine {
             let _ = tokio::task::spawn_blocking(move || pre_turn_snapshot(&pre_workspace, pre_seq))
                 .await;
         }
-
-        // Emit turn started event
-        let _ = self
-            .tx_event
-            .send(Event::TurnStarted {
-                turn_id: turn.id.clone(),
-            })
-            .await;
 
         // A new turn means any leftover retry banner (success cleared
         // it, failure pinned it) is no longer relevant — reset to idle
@@ -759,23 +956,25 @@ impl Engine {
         let force_update_plan_first = should_force_update_plan_first(mode, &content);
 
         // Add user message to session
-        let user_msg = Message {
-            role: "user".to_string(),
-            content: vec![ContentBlock::Text {
-                text: content,
-                cache_control: None,
-            }],
-        };
+        let user_msg = self.user_text_message_with_turn_metadata(content);
         self.session.add_message(user_msg);
 
         self.session.model = model;
         self.config.model.clone_from(&self.session.model);
+        self.config.goal_objective = goal_objective;
         self.session.reasoning_effort = reasoning_effort;
+        self.session.reasoning_effort_auto = reasoning_effort_auto;
+        self.session.auto_model = auto_model;
         self.session.allow_shell = allow_shell;
         self.config.allow_shell = allow_shell;
         self.session.trust_mode = trust_mode;
         self.config.trust_mode = trust_mode;
         self.session.auto_approve = auto_approve;
+        self.session.approval_mode = if auto_approve {
+            crate::tui::approval::ApprovalMode::Auto
+        } else {
+            approval_mode
+        };
 
         // Update system prompt to match current mode and include persisted compaction context.
         self.refresh_system_prompt(mode);
@@ -787,6 +986,26 @@ impl Engine {
 
         let tool_context = self.build_tool_context(mode, auto_approve);
         let builder = self.build_turn_tool_registry_builder(mode, todo_list, plan_state);
+
+        let fork_context_for_runtime = if self.config.features.enabled(Feature::Subagents) {
+            let state = StructuredState::capture(
+                mode.label(),
+                self.config.workspace.clone(),
+                std::env::current_dir().ok(),
+                &self.session.working_set,
+                &self.config.todos,
+                &self.config.plan_state,
+                Some(&self.subagent_manager),
+            )
+            .await;
+            Some(SubAgentForkContext {
+                system: self.session.system_prompt.clone(),
+                messages: self.messages_with_turn_metadata(),
+                structured_state_block: state.to_system_block(),
+            })
+        } else {
+            None
+        };
 
         // Mailbox for structured sub-agent envelopes (#128/#130). One per
         // turn: the receiver is drained by a short-lived task that converts
@@ -833,7 +1052,16 @@ impl Engine {
                             Arc::clone(&self.subagent_manager),
                         )
                         .with_role_models(self.config.subagent_model_overrides.clone())
-                        .with_max_spawn_depth(self.config.max_spawn_depth);
+                        .with_auto_model(self.session.auto_model)
+                        .with_reasoning_effort(
+                            self.session.reasoning_effort.clone(),
+                            self.session.reasoning_effort_auto,
+                        )
+                        .with_max_spawn_depth(self.config.max_spawn_depth)
+                        .with_parent_completion_tx(self.tx_subagent_completion.clone());
+                        if let Some(context) = fork_context_for_runtime.clone() {
+                            rt = rt.with_fork_context(context);
+                        }
                         if let Some((mailbox, cancel_token)) = mailbox_for_runtime.as_ref() {
                             rt = rt
                                 .with_mailbox(mailbox.clone())
@@ -863,9 +1091,9 @@ impl Engine {
         } else {
             Vec::new()
         };
-        let tools = tool_registry
-            .as_ref()
-            .map(|registry| build_model_tool_catalog(registry.to_api_tools(), mcp_tools, mode));
+        let tools = tool_registry.as_ref().map(|registry| {
+            build_model_tool_catalog(registry.to_api_tools_with_cache(true), mcp_tools, mode)
+        });
 
         // Main turn loop
         let (status, error) = self
@@ -909,7 +1137,7 @@ impl Engine {
         if self.config.snapshots_enabled {
             let post_workspace = self.session.workspace.clone();
             let post_seq = self.turn_counter;
-            tokio::task::spawn_blocking(move || {
+            crate::utils::spawn_blocking_supervised("post-turn-snapshot", move || {
                 post_turn_snapshot(&post_workspace, post_seq);
             });
         }
@@ -1159,7 +1387,10 @@ impl Engine {
             .token_threshold
             .min(target_budget.saturating_sub(1))
             .max(1);
-        forced_config.message_threshold = forced_config.message_threshold.max(1);
+        // v0.8.11: forced compaction (capacity guardrail) bypasses the floor
+        // because we're at a hard ceiling and have to free budget regardless
+        // of cache cost.
+        forced_config.auto_floor_tokens = 0;
 
         match compact_messages_safe(
             client,
@@ -1262,26 +1493,33 @@ impl Engine {
             ctx = ctx.with_network_policy(decider.clone());
         }
 
-        match mode {
-            // Plan mode is read-only investigation; the shell tool is not
-            // registered, so leaving the sandbox policy at the seatbelt-strict
-            // default is fine.
-            AppMode::Plan => ctx,
-            // Agent and Yolo both register the shell tool. The sandbox-default
-            // policy denies all outbound network — including DNS — which
-            // breaks ordinary developer commands (cargo fetch, npm install,
-            // curl, yt-dlp, …) without buying the user any safety the
-            // application-level NetworkPolicy / approval flow doesn't already
-            // provide. Elevate to workspace-write + network. (#273)
-            AppMode::Agent | AppMode::Yolo => {
-                ctx.with_elevated_sandbox_policy(crate::sandbox::SandboxPolicy::WorkspaceWrite {
-                    writable_roots: vec![self.session.workspace.clone()],
-                    network_access: true,
-                    exclude_tmpdir: false,
-                    exclude_slash_tmp: false,
-                })
-            }
+        // Wire the large-output router (#548). Only attaches when the
+        // [workshop] config table is present; sub-agents don't inherit the
+        // router (their ToolContext is built separately) to prevent recursive
+        // routing of the synthesis call itself.
+        if let Some(workshop_cfg) = self.config.workshop.as_ref()
+            && let Some(vars_arc) = self.workshop_vars.as_ref()
+        {
+            let router =
+                crate::tools::large_output_router::LargeOutputRouter::new(workshop_cfg.clone());
+            ctx = ctx.with_large_output_router(router, vars_arc.clone());
         }
+
+        // Wire the external sandbox backend (#516). exec_shell checks this
+        // field and routes commands through the backend instead of spawning
+        // a local process when it's set.
+        if let Some(backend) = self.sandbox_backend.as_ref() {
+            ctx = ctx.with_sandbox_backend(std::sync::Arc::clone(backend));
+        }
+
+        let policy = sandbox_policy_for_mode(mode, &self.session.workspace);
+        let mut ctx = ctx.with_elevated_sandbox_policy(policy);
+        if matches!(mode, AppMode::Plan) {
+            ctx = ctx.with_shell_network_denied_hint(
+                "Shell command blocked: Plan mode runs shell commands in a read-only sandbox — no writes, no network. Use Agent mode (`/mode agent`) for any command that creates or modifies files, or that needs network access.",
+            );
+        }
+        ctx
     }
 
     async fn ensure_mcp_pool(&mut self) -> Result<Arc<AsyncMutex<McpPool>>, ToolError> {
@@ -1313,7 +1551,7 @@ impl Engine {
             let _ = self
                 .tx_event
                 .send(Event::status(format!(
-                    "Failed to connect MCP server '{server}': {err}"
+                    "Failed to connect MCP server '{server}': {err:#}"
                 )))
                 .await;
         }
@@ -1625,24 +1863,29 @@ impl Engine {
 
     /// Refresh the system prompt based on current mode and context.
     fn refresh_system_prompt(&mut self, mode: AppMode) {
-        let working_set_summary = self
-            .session
-            .working_set
-            .summary_block(&self.config.workspace);
         let user_memory_block =
             crate::memory::compose_block(self.config.memory_enabled, &self.config.memory_path);
-        let base = prompts::system_prompt_for_mode_with_context_and_skills(
+        let base = prompts::system_prompt_for_mode_with_context_skills_session_and_approval(
             mode,
             &self.config.workspace,
             None,
             Some(&self.config.skills_dir),
             Some(&self.config.instructions),
-            user_memory_block.as_deref(),
+            prompts::PromptSessionContext {
+                user_memory_block: user_memory_block.as_deref(),
+                goal_objective: self.config.goal_objective.as_deref(),
+                project_context_pack_enabled: self.config.project_context_pack_enabled,
+                locale_tag: &self.config.locale_tag,
+            },
+            self.session.approval_mode,
         );
         let stable_prompt =
             merge_system_prompts(Some(&base), self.session.compaction_summary_prompt.clone());
-        self.session.system_prompt =
-            append_working_set_summary(stable_prompt, working_set_summary.as_deref());
+        let stable_hash = system_prompt_hash(stable_prompt.as_ref());
+        if self.session.last_system_prompt_hash != Some(stable_hash) {
+            self.session.system_prompt = stable_prompt;
+            self.session.last_system_prompt_hash = Some(stable_hash);
+        }
     }
 
     fn merge_compaction_summary(&mut self, summary_prompt: Option<SystemPrompt>) {
@@ -1653,16 +1896,34 @@ impl Engine {
             self.session.compaction_summary_prompt.as_ref(),
             summary_prompt.clone(),
         );
-        let current_without_working_set =
-            remove_working_set_summary(self.session.system_prompt.as_ref());
-        let merged = merge_system_prompts(current_without_working_set.as_ref(), summary_prompt);
-        let working_set_summary = self
-            .session
-            .working_set
-            .summary_block(&self.config.workspace);
-        self.session.system_prompt =
-            append_working_set_summary(merged, working_set_summary.as_deref());
+        let merged = merge_system_prompts(self.session.system_prompt.as_ref(), summary_prompt);
+        self.session.last_system_prompt_hash = Some(system_prompt_hash(merged.as_ref()));
+        self.session.system_prompt = merged;
     }
+}
+
+fn system_prompt_hash(prompt: Option<&SystemPrompt>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    match prompt {
+        Some(SystemPrompt::Text(text)) => {
+            0u8.hash(&mut hasher);
+            text.hash(&mut hasher);
+        }
+        Some(SystemPrompt::Blocks(blocks)) => {
+            1u8.hash(&mut hasher);
+            for block in blocks {
+                block.block_type.hash(&mut hasher);
+                block.text.hash(&mut hasher);
+                if let Some(cache_control) = &block.cache_control {
+                    cache_control.cache_type.hash(&mut hasher);
+                }
+            }
+        }
+        None => {
+            2u8.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 /// Spawn the engine in a background task
@@ -1752,12 +2013,12 @@ mod context;
 pub(crate) use context::compact_tool_result_for_context;
 use context::{
     COMPACTION_SUMMARY_MARKER, MAX_CONTEXT_RECOVERY_ATTEMPTS, MIN_RECENT_MESSAGES_TO_KEEP,
-    TURN_MAX_OUTPUT_TOKENS, append_working_set_summary, context_input_budget,
+    TURN_MAX_OUTPUT_TOKENS, context_input_budget, effective_max_output_tokens,
     estimate_input_tokens_conservative, extract_compaction_summary_prompt,
-    is_context_length_error_message, remove_working_set_summary, summarize_text,
-    turn_response_headroom_tokens,
+    is_context_length_error_message, summarize_text, turn_response_headroom_tokens,
 };
 mod dispatch;
+mod loop_guard;
 mod lsp_hooks;
 mod streaming;
 mod tool_catalog;
@@ -1773,15 +2034,16 @@ use self::dispatch::{
     parse_parallel_tool_calls, parse_tool_input, should_force_update_plan_first,
     should_parallelize_tool_batch, should_stop_after_plan_tool,
 };
+use self::loop_guard::{AttemptDecision, LoopGuard, OutcomeDecision};
 #[cfg(test)]
 use self::lsp_hooks::{edited_paths_for_tool, parse_patch_paths};
 #[cfg(test)]
 use self::streaming::TOOL_CALL_START_MARKERS;
 use self::streaming::{
     ContentBlockKind, FAKE_WRAPPER_NOTICE, MAX_STREAM_ERRORS_BEFORE_FAIL,
-    MAX_TRANSPARENT_STREAM_RETRIES, STREAM_CHUNK_TIMEOUT_SECS, STREAM_MAX_CONTENT_BYTES,
-    STREAM_MAX_DURATION_SECS, ToolUseState, contains_fake_tool_wrapper, filter_tool_call_delta,
-    should_transparently_retry_stream,
+    MAX_TRANSPARENT_STREAM_RETRIES, STREAM_MAX_CONTENT_BYTES, STREAM_MAX_DURATION_SECS,
+    ToolUseState, contains_fake_tool_wrapper, filter_tool_call_delta,
+    should_transparently_retry_stream, stream_chunk_timeout_secs,
 };
 use self::tool_catalog::{
     CODE_EXECUTION_TOOL_NAME, MULTI_TOOL_PARALLEL_NAME, REQUEST_USER_INPUT_NAME,
@@ -1792,6 +2054,7 @@ use self::tool_catalog::{
 #[cfg(test)]
 use self::tool_catalog::{TOOL_SEARCH_BM25_NAME, should_default_defer_tool};
 use self::tool_execution::emit_tool_audit;
+use self::tool_setup::sandbox_policy_for_mode;
 
 #[cfg(test)]
 mod tests;

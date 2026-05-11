@@ -4,6 +4,18 @@ use crate::tools::spec::ToolContext;
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
+// `env_lock` exists only to serialize Unix-only env-mutating tests.
+// Windows builds gate that test out, so the helper would be dead code
+// under `-Dwarnings` if the import + helper were unconditional.
+#[cfg(unix)]
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(unix)]
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn echo_command(message: &str) -> String {
     format!("echo {message}")
 }
@@ -47,6 +59,82 @@ fn echo_stdin_command() -> String {
     {
         "cat".to_string()
     }
+}
+
+fn network_restricted_context(tmp: &std::path::Path) -> ToolContext {
+    ToolContext::new(tmp)
+        .with_elevated_sandbox_policy(ExecutionSandboxPolicy::WorkspaceWrite {
+            writable_roots: vec![tmp.to_path_buf()],
+            network_access: false,
+            exclude_tmpdir: false,
+            exclude_slash_tmp: false,
+        })
+        .with_shell_network_denied_hint(
+            "Shell command blocked: Plan mode runs shell commands in a network-restricted sandbox.",
+        )
+}
+
+fn failed_network_shell_result(stdout: &str, stderr: &str) -> ShellResult {
+    ShellResult {
+        task_id: None,
+        status: ShellStatus::Failed,
+        exit_code: Some(6),
+        stdout: stdout.to_string(),
+        stderr: stderr.to_string(),
+        duration_ms: 25,
+        stdout_len: stdout.len(),
+        stderr_len: stderr.len(),
+        stdout_omitted: 0,
+        stderr_omitted: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        sandboxed: true,
+        sandbox_type: Some("seatbelt".to_string()),
+        sandbox_denied: false,
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn shell_execution_scrubs_parent_env_and_keeps_explicit_env() {
+    let _guard = env_lock().lock().expect("env lock");
+    let previous = std::env::var_os("DEEPSEEK_CHILD_ENV_SHELL_SECRET");
+    unsafe {
+        std::env::set_var("DEEPSEEK_CHILD_ENV_SHELL_SECRET", "parent-secret");
+    }
+
+    let tmp = tempdir().expect("tempdir");
+    let mut manager = ShellManager::new(tmp.path().to_path_buf());
+    let mut extra = std::collections::HashMap::new();
+    extra.insert(
+        "DEEPSEEK_CHILD_ENV_EXPLICIT".to_string(),
+        "explicit-value".to_string(),
+    );
+
+    let result = manager
+        .execute_with_options_env(
+            "printf '%s\\n%s\\n' \"${DEEPSEEK_CHILD_ENV_SHELL_SECRET-unset}\" \"${DEEPSEEK_CHILD_ENV_EXPLICIT-unset}\"",
+            None,
+            5000,
+            false,
+            None,
+            false,
+            None,
+            extra,
+        )
+        .expect("execute");
+
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("DEEPSEEK_CHILD_ENV_SHELL_SECRET", value);
+        },
+        None => unsafe {
+            std::env::remove_var("DEEPSEEK_CHILD_ENV_SHELL_SECRET");
+        },
+    }
+
+    assert_eq!(result.status, ShellStatus::Completed);
+    assert_eq!(result.stdout, "unset\nexplicit-value\n");
 }
 
 #[test]
@@ -230,6 +318,58 @@ fn test_truncate_with_meta_reports_omission_counts() {
     assert!(meta.original_len >= long_output.len());
     assert!(meta.omitted > 0);
     assert!(truncated.contains("bytes omitted"));
+}
+
+#[test]
+fn network_restricted_hint_detects_silent_curl_failure() {
+    let tmp = tempdir().expect("tempdir");
+    let ctx = network_restricted_context(tmp.path());
+    let result = failed_network_shell_result("000", "");
+
+    let hint = shell_network_restricted_hint(
+        &ctx,
+        "curl -s -o /dev/null -w '%{http_code}' https://api.github.com",
+        &result,
+    )
+    .expect("network-restricted hint");
+
+    assert!(hint.contains("Plan mode"));
+}
+
+#[test]
+fn network_restricted_hint_ignores_local_failures() {
+    let tmp = tempdir().expect("tempdir");
+    let ctx = network_restricted_context(tmp.path());
+    let result = failed_network_shell_result("", "No such file or directory");
+
+    assert!(shell_network_restricted_hint(&ctx, "cat missing.txt", &result).is_none());
+}
+
+#[test]
+fn shell_delta_result_surfaces_network_restricted_hint() {
+    let tmp = tempdir().expect("tempdir");
+    let ctx = network_restricted_context(tmp.path());
+    let result = failed_network_shell_result("000", "");
+
+    let tool_result = build_shell_delta_tool_result(
+        ShellDeltaResult {
+            command: "gh issue list".to_string(),
+            result,
+            stdout_total_len: 3,
+            stderr_total_len: 0,
+        },
+        &ctx,
+    );
+
+    assert!(!tool_result.success);
+    assert!(tool_result.content.starts_with("Shell command blocked"));
+    let metadata = tool_result.metadata.expect("metadata");
+    assert_eq!(
+        metadata
+            .get("sandbox_network_restricted")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]

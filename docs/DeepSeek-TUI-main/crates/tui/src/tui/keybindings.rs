@@ -99,7 +99,7 @@ pub const KEYBINDINGS: &[KeybindingEntry] = &[
         section: KeybindingSection::Navigation,
     },
     KeybindingEntry {
-        chord: "Home / End",
+        chord: "Ctrl+Home / Ctrl+End",
         description_id: crate::localization::MessageId::KbJumpTopBottom,
         section: KeybindingSection::Navigation,
     },
@@ -117,6 +117,11 @@ pub const KEYBINDINGS: &[KeybindingEntry] = &[
     KeybindingEntry {
         chord: "← / →",
         description_id: crate::localization::MessageId::KbMoveCursor,
+        section: KeybindingSection::Editing,
+    },
+    KeybindingEntry {
+        chord: "Home / End",
+        description_id: crate::localization::MessageId::KbJumpLineStartEnd,
         section: KeybindingSection::Editing,
     },
     KeybindingEntry {
@@ -145,7 +150,7 @@ pub const KEYBINDINGS: &[KeybindingEntry] = &[
         section: KeybindingSection::Editing,
     },
     KeybindingEntry {
-        chord: "Ctrl+J / Alt+Enter",
+        chord: "Ctrl+J / Alt+Enter / Shift+Enter",
         description_id: crate::localization::MessageId::KbInsertNewline,
         section: KeybindingSection::Editing,
     },

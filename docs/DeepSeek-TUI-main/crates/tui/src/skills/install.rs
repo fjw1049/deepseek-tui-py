@@ -24,8 +24,11 @@
 //!   only created (via atomic rename) once the tarball clears every check.
 //!   Half-installed skills can never appear on disk.
 //! * Path traversal rejection covers both `..` segments and absolute paths.
-//!   Symlinks inside the archive are also rejected — there's no use case for
-//!   them in a SKILL.md bundle and they're a notorious foothold for escape.
+//!   Symlinks inside the selected skill subtree are rejected — there's no use
+//!   case for them in a SKILL.md bundle and they're a notorious foothold for
+//!   escape. Multi-skill repository archives may contain unrelated symlinks
+//!   outside that selected subtree; those entries are ignored and never
+//!   extracted.
 //! * No `+x` is granted on extracted files. The optional `/skill trust <name>`
 //!   command writes a `.trusted` marker; tool-execution gating is a separate
 //!   concern that lives next to the tool registry.
@@ -36,11 +39,22 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::network_policy::{Decision, NetworkPolicy, host_from_url};
+
+/// Cache directory for registry-synced skills.
+///
+/// Lives at `~/.deepseek/cache/skills/` so it's separate from user-installed
+/// skills and can be blown away without losing anything irreplaceable.
+pub fn default_cache_skills_dir() -> PathBuf {
+    dirs::home_dir().map_or_else(
+        || PathBuf::from("/tmp/deepseek/cache/skills"),
+        |p| p.join(".deepseek").join("cache").join("skills"),
+    )
+}
 
 /// Default registry. Falls back to a community-curated `index.json` hosted on
 /// GitHub raw; users can override via `[skills] registry_url` in config.toml.
@@ -227,8 +241,9 @@ pub enum InstallError {
 ///    [`InstallOutcome::NetworkDenied`]; `Prompt` returns
 ///    [`InstallOutcome::NeedsApproval`] without touching disk.
 /// 3. Stream the tarball into a tempfile (capped at `max_size`).
-/// 4. Validate the archive (path-traversal, size, no symlinks, SKILL.md present
-///    with required frontmatter fields) into a sibling `<name>.tmp/` directory.
+/// 4. Validate the archive (path-traversal, size, no symlinks in the selected
+///    skill subtree, SKILL.md present with required frontmatter fields) into a
+///    sibling `<name>.tmp/` directory.
 /// 5. Atomic-rename `<name>.tmp/` → `<name>/`.
 /// 6. Write `.installed-from` and return [`InstalledSkill`].
 ///
@@ -491,6 +506,315 @@ pub async fn fetch_registry(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Registry sync (issue #433)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Outcome of a single skill entry during [`sync_registry`].
+#[derive(Debug, Clone)]
+pub enum SkillSyncOutcome {
+    /// Skill downloaded and written to the cache directory.
+    Downloaded { name: String, path: PathBuf },
+    /// Cached bytes match the upstream ETag / SHA-256; nothing written.
+    Fresh { name: String },
+    /// Skill download failed; the error is non-fatal so the sync continues.
+    Failed { name: String, reason: String },
+    /// Network policy blocked the download host.
+    Denied { name: String, host: String },
+    /// Network policy requires user approval for the download host.
+    NeedsApproval { name: String, host: String },
+}
+
+/// Overall result of [`sync_registry`].
+#[derive(Debug)]
+pub enum SyncResult {
+    /// Sync completed. `outcomes` contains one entry per skill in the index.
+    Done { outcomes: Vec<SkillSyncOutcome> },
+    /// The registry fetch was blocked by network policy.
+    RegistryDenied(String),
+    /// The registry fetch requires user approval.
+    RegistryNeedsApproval(String),
+}
+
+/// Freshness metadata written alongside each cached skill so subsequent syncs
+/// can skip unchanged content.
+#[derive(Debug, Serialize, Deserialize)]
+struct CacheMeta {
+    /// ETag returned by the server for the primary asset, if any.
+    #[serde(default)]
+    etag: Option<String>,
+    /// SHA-256 hex digest of the downloaded bytes.
+    sha256: String,
+    /// Source URL the asset was fetched from.
+    url: String,
+}
+
+/// Sync the remote registry to the local cache.
+///
+/// For every skill listed in `index.json` this function:
+///
+/// 1. Resolves the download URL (same logic as `install`).
+/// 2. Checks the cached [`CacheMeta`] (etag + sha256) for freshness; skips
+///    the download if unchanged.
+/// 3. Downloads SKILL.md (and any companion files if the source is a tarball)
+///    into `<cache_dir>/<name>/`.
+/// 4. Writes updated [`CacheMeta`] so the next sync is fast.
+///
+/// Failures per-skill are non-fatal: [`SkillSyncOutcome::Failed`] is recorded
+/// and the sync continues. The caller decides how to surface per-skill errors.
+pub async fn sync_registry(
+    network: &NetworkPolicy,
+    registry_url: &str,
+    cache_dir: &Path,
+    max_size: u64,
+) -> Result<SyncResult> {
+    let doc = match fetch_registry(network, registry_url).await? {
+        RegistryFetchResult::Loaded(doc) => doc,
+        RegistryFetchResult::Denied(host) => return Ok(SyncResult::RegistryDenied(host)),
+        RegistryFetchResult::NeedsApproval(host) => {
+            return Ok(SyncResult::RegistryNeedsApproval(host));
+        }
+    };
+
+    let mut outcomes = Vec::new();
+
+    for (name, entry) in &doc.skills {
+        let outcome = sync_one_skill(name, entry, network, cache_dir, max_size).await;
+        outcomes.push(outcome);
+    }
+
+    Ok(SyncResult::Done { outcomes })
+}
+
+/// Sync a single skill entry from the registry into the cache directory.
+async fn sync_one_skill(
+    name: &str,
+    entry: &RegistryEntry,
+    network: &NetworkPolicy,
+    cache_dir: &Path,
+    max_size: u64,
+) -> SkillSyncOutcome {
+    // Resolve the source to a concrete URL list.
+    let source = match InstallSource::parse(&entry.source) {
+        Ok(s) => s,
+        Err(err) => {
+            return SkillSyncOutcome::Failed {
+                name: name.to_string(),
+                reason: format!("invalid source spec '{}': {err:#}", entry.source),
+            };
+        }
+    };
+
+    // Registry sources in index.json must not point back at another registry.
+    if matches!(source, InstallSource::Registry(_)) {
+        return SkillSyncOutcome::Failed {
+            name: name.to_string(),
+            reason: format!("registry entry for '{name}' must not point to another registry entry"),
+        };
+    }
+
+    let urls = match &source {
+        InstallSource::GitHubRepo(repo) => vec![
+            format!("https://github.com/{repo}/archive/refs/heads/main.tar.gz"),
+            format!("https://github.com/{repo}/archive/refs/heads/master.tar.gz"),
+        ],
+        InstallSource::DirectUrl(url) => vec![url.clone()],
+        InstallSource::Registry(_) => unreachable!("guarded above"),
+    };
+
+    // Check the first downloadable URL against any cached meta.
+    let skill_cache_dir = cache_dir.join(name);
+    let meta_path = skill_cache_dir.join(".cache-meta.json");
+
+    // Try each candidate URL in order.
+    for url in &urls {
+        let host = match host_from_url(url) {
+            Some(h) => h,
+            None => continue,
+        };
+        match network.decide(&host) {
+            Decision::Allow => {}
+            Decision::Deny => {
+                return SkillSyncOutcome::Denied {
+                    name: name.to_string(),
+                    host,
+                };
+            }
+            Decision::Prompt => {
+                return SkillSyncOutcome::NeedsApproval {
+                    name: name.to_string(),
+                    host,
+                };
+            }
+        }
+
+        // Perform a HEAD request (or conditional GET) for freshness. We use a
+        // simple GET with If-None-Match when we have an ETag, falling back to
+        // an unconditional GET for servers that don't support ETags.
+        let existing_meta: Option<CacheMeta> = meta_path
+            .exists()
+            .then(|| {
+                fs::read_to_string(&meta_path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+            })
+            .flatten();
+
+        // Build the request — add If-None-Match if we have a cached ETag.
+        let client = reqwest::Client::new();
+        let mut req = client.get(url);
+        if let Some(ref meta) = existing_meta
+            && let Some(ref etag) = meta.etag
+        {
+            req = req.header("If-None-Match", etag);
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(err) => {
+                // Network error — try the next candidate URL.
+                let _ = err;
+                continue;
+            }
+        };
+
+        let status = resp.status();
+
+        // 304 Not Modified: cached copy is still fresh.
+        if status == reqwest::StatusCode::NOT_MODIFIED {
+            return SkillSyncOutcome::Fresh {
+                name: name.to_string(),
+            };
+        }
+
+        if status == reqwest::StatusCode::NOT_FOUND {
+            // Try next URL (main → master fallback).
+            continue;
+        }
+
+        if !status.is_success() {
+            return SkillSyncOutcome::Failed {
+                name: name.to_string(),
+                reason: format!("GET {url} returned HTTP {status}"),
+            };
+        }
+
+        // Capture ETag before consuming the response body.
+        let etag = resp
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let compressed_cap = max_size.saturating_mul(4);
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(err) => {
+                return SkillSyncOutcome::Failed {
+                    name: name.to_string(),
+                    reason: format!("failed to read body from {url}: {err:#}"),
+                };
+            }
+        };
+        if bytes.len() as u64 > compressed_cap {
+            return SkillSyncOutcome::Failed {
+                name: name.to_string(),
+                reason: format!(
+                    "download from {url} exceeds compressed size cap ({} bytes)",
+                    compressed_cap
+                ),
+            };
+        }
+
+        // Compute SHA-256 of the downloaded bytes.
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let sha256 = format!("{:x}", hasher.finalize());
+
+        // Short-circuit: if the hash matches the cached one, we're fresh even
+        // without a 304 (some CDNs strip ETags on redirects).
+        if let Some(ref meta) = existing_meta
+            && meta.sha256 == sha256
+            && meta.url == *url
+        {
+            return SkillSyncOutcome::Fresh {
+                name: name.to_string(),
+            };
+        }
+
+        // Determine whether this is a tarball or a plain SKILL.md.
+        // Heuristic: the URL ends with `.tar.gz` or `.tgz`, or the content
+        // starts with the gzip magic bytes (0x1f 0x8b).
+        let is_tarball =
+            url.ends_with(".tar.gz") || url.ends_with(".tgz") || bytes.starts_with(&[0x1f, 0x8b]);
+
+        let final_path: PathBuf = if is_tarball {
+            // Extract into a temp staging dir, then rename atomically.
+            let staged = match stage_tarball(&bytes, cache_dir, max_size) {
+                Ok(s) => s,
+                Err(err) => {
+                    return SkillSyncOutcome::Failed {
+                        name: name.to_string(),
+                        reason: format!("tarball extraction failed: {err:#}"),
+                    };
+                }
+            };
+            // Move staged dir into its final location, replacing any prior cache.
+            let dest = cache_dir.join(name);
+            if dest.exists() {
+                let _ = fs::remove_dir_all(&dest);
+            }
+            if let Err(err) = fs::rename(&staged.staged_path, &dest) {
+                let _ = fs::remove_dir_all(&staged.staged_path);
+                return SkillSyncOutcome::Failed {
+                    name: name.to_string(),
+                    reason: format!("failed to move staged skill into cache: {err:#}"),
+                };
+            }
+            dest
+        } else {
+            // Plain SKILL.md (or other companion text file). Write directly.
+            if let Err(err) = fs::create_dir_all(&skill_cache_dir) {
+                return SkillSyncOutcome::Failed {
+                    name: name.to_string(),
+                    reason: format!("failed to create cache dir: {err:#}"),
+                };
+            }
+            let skill_md_path = skill_cache_dir.join("SKILL.md");
+            if let Err(err) = fs::write(&skill_md_path, &bytes) {
+                return SkillSyncOutcome::Failed {
+                    name: name.to_string(),
+                    reason: format!("failed to write SKILL.md to cache: {err:#}"),
+                };
+            }
+            skill_cache_dir.clone()
+        };
+
+        // Write the updated freshness metadata.
+        let meta = CacheMeta {
+            etag,
+            sha256,
+            url: url.clone(),
+        };
+        let meta_json = serde_json::to_string(&meta).unwrap_or_default();
+        let _ = fs::write(final_path.join(".cache-meta.json"), meta_json);
+
+        return SkillSyncOutcome::Downloaded {
+            name: name.to_string(),
+            path: final_path,
+        };
+    }
+
+    // All candidate URLs exhausted without a successful response.
+    SkillSyncOutcome::Failed {
+        name: name.to_string(),
+        reason: format!(
+            "all candidate URLs for '{}' failed or were not found",
+            entry.source
+        ),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -733,8 +1057,8 @@ struct TarballScan {
 }
 
 /// First pass: locate SKILL.md, validate frontmatter, compute total size,
-/// reject path-traversal / symlink entries. We do not write anything in this
-/// pass; that's the second pass's job.
+/// reject path-traversal entries and symlinks inside the selected install
+/// subtree. We do not write anything in this pass; that's the second pass's job.
 fn scan_tarball(bytes: &[u8], max_size: u64) -> Result<TarballScan> {
     let cursor = std::io::Cursor::new(bytes);
     let gz = GzDecoder::new(cursor);
@@ -742,7 +1066,8 @@ fn scan_tarball(bytes: &[u8], max_size: u64) -> Result<TarballScan> {
 
     let mut total_size: u64 = 0;
     let mut prefix: Option<String> = None;
-    let mut skill_md_relative: Option<(String, Vec<u8>)> = None;
+    let mut skill_md_relative: Option<(SkillMdCandidate, Vec<u8>)> = None;
+    let mut link_paths: Vec<String> = Vec::new();
 
     for entry in archive
         .entries()
@@ -751,9 +1076,6 @@ fn scan_tarball(bytes: &[u8], max_size: u64) -> Result<TarballScan> {
         let mut entry = entry.context("failed to read tar entry")?;
         let header = entry.header().clone();
         let entry_type = header.entry_type();
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(InstallError::SymlinkRejected.into());
-        }
         let path = entry
             .path()
             .context("tar entry has invalid path")?
@@ -795,54 +1117,105 @@ fn scan_tarball(bytes: &[u8], max_size: u64) -> Result<TarballScan> {
             }
         }
 
-        // SKILL.md detection. Match either:
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            link_paths.push(path_str);
+            continue;
+        }
+
+        // SKILL.md detection. Match the same workflow layouts that runtime
+        // discovery understands:
         //   * `<prefix>/SKILL.md`
-        //   * `<prefix>/skills/<name>/SKILL.md`
+        //   * `<prefix>/*/skills/<name>/SKILL.md`
+        //   * `<prefix>/<name>/SKILL.md`
         if entry_type.is_file() {
             let stripped = strip_prefix(&path_str, prefix.as_deref().unwrap_or(""));
-            if stripped.eq_ignore_ascii_case("SKILL.md")
-                || stripped.starts_with("skills/")
-                    && stripped.ends_with("/SKILL.md")
-                    && stripped.matches('/').count() == 2
-            {
+            if let Some(candidate) = skill_md_candidate(&stripped) {
                 let mut buf = Vec::new();
                 entry
                     .read_to_end(&mut buf)
                     .context("failed to read SKILL.md from archive")?;
-                // Prefer the first match — we don't support multi-skill
-                // archives where a tarball ships several SKILL.mds at once.
-                if skill_md_relative.is_none() {
-                    skill_md_relative = Some((stripped.to_string(), buf));
+                // Prefer the most explicit match: repo-root SKILL.md first,
+                // then known skill-directory layouts, then a single nested
+                // `<name>/SKILL.md` repository.
+                let replace = skill_md_relative
+                    .as_ref()
+                    .is_none_or(|(current, _)| candidate.rank < current.rank);
+                if replace {
+                    skill_md_relative = Some((candidate, buf));
                 }
             }
         }
     }
 
     let prefix = prefix.unwrap_or_default();
-    let (skill_md_path, skill_md_bytes) = skill_md_relative
+    let (skill_md, skill_md_bytes) = skill_md_relative
         .ok_or(InstallError::MissingSkillMd)
         .map_err(anyhow::Error::from)?;
+
+    for link_path in link_paths {
+        if is_within_selected_root(&link_path, &prefix, &skill_md.skill_root) {
+            return Err(InstallError::SymlinkRejected.into());
+        }
+    }
 
     // Parse frontmatter to extract the skill name. We reuse the same parser
     // shape as `SkillRegistry::parse_skill` but inline it here so we don't
     // depend on the discovery module's private function.
     let name = parse_frontmatter_name(&skill_md_bytes)?;
 
-    let skill_root = if skill_md_path == "SKILL.md" {
-        String::new()
-    } else {
-        // strip trailing /SKILL.md
-        skill_md_path
-            .strip_suffix("/SKILL.md")
-            .unwrap_or("")
-            .to_string()
-    };
-
     Ok(TarballScan {
         skill_name: name,
         prefix,
-        skill_root,
+        skill_root: skill_md.skill_root,
     })
+}
+
+struct SkillMdCandidate {
+    rank: u8,
+    skill_root: String,
+}
+
+fn skill_md_candidate(stripped_path: &str) -> Option<SkillMdCandidate> {
+    if stripped_path.eq_ignore_ascii_case("SKILL.md") {
+        return Some(SkillMdCandidate {
+            rank: 0,
+            skill_root: String::new(),
+        });
+    }
+
+    let parts: Vec<&str> = stripped_path.split('/').collect();
+    if parts
+        .last()
+        .is_none_or(|last| !last.eq_ignore_ascii_case("SKILL.md"))
+    {
+        return None;
+    }
+
+    // Common workflow-pack layouts:
+    // `skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`,
+    // `.claude/skills/<name>/SKILL.md`, and nested package layouts such as
+    // `packages/foo/skills/<name>/SKILL.md`.
+    if parts.len() >= 3 {
+        let container = parts[parts.len() - 3];
+        let name = parts[parts.len() - 2];
+        if container.eq_ignore_ascii_case("skills") && !name.is_empty() {
+            return Some(SkillMdCandidate {
+                rank: 1,
+                skill_root: parts[..parts.len() - 1].join("/"),
+            });
+        }
+    }
+
+    // Single-skill repos sometimes keep their root tidy with
+    // `<skill-name>/SKILL.md` plus sibling docs at repo root.
+    if parts.len() == 2 && !parts[0].is_empty() {
+        return Some(SkillMdCandidate {
+            rank: 2,
+            skill_root: parts[0].to_string(),
+        });
+    }
+
+    None
 }
 
 fn extract_into(scan: &TarballScan, bytes: &[u8], dest: &Path, max_size: u64) -> Result<()> {
@@ -866,9 +1239,6 @@ fn extract_into(scan: &TarballScan, bytes: &[u8], dest: &Path, max_size: u64) ->
         let mut entry = entry.context("failed to read tar entry")?;
         let header = entry.header().clone();
         let entry_type = header.entry_type();
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(InstallError::SymlinkRejected.into());
-        }
         let path = entry
             .path()
             .context("tar entry has invalid path")?
@@ -894,6 +1264,9 @@ fn extract_into(scan: &TarballScan, bytes: &[u8], dest: &Path, max_size: u64) ->
         let stripped_path = Path::new(&stripped);
         if !is_safe_path(stripped_path) {
             return Err(InstallError::PathTraversal(stripped).into());
+        }
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            return Err(InstallError::SymlinkRejected.into());
         }
 
         let target = dest.join(stripped_path);
@@ -936,6 +1309,24 @@ fn extract_into(scan: &TarballScan, bytes: &[u8], dest: &Path, max_size: u64) ->
         }
     }
     Ok(())
+}
+
+fn selected_root(prefix: &str, skill_root: &str) -> String {
+    if skill_root.is_empty() {
+        prefix.to_string()
+    } else if prefix.is_empty() {
+        skill_root.to_string()
+    } else {
+        format!("{prefix}/{skill_root}")
+    }
+}
+
+fn is_within_selected_root(path: &str, prefix: &str, skill_root: &str) -> bool {
+    let root = selected_root(prefix, skill_root);
+    if root.is_empty() {
+        return true;
+    }
+    path == root || path.starts_with(&format!("{root}/"))
 }
 
 /// Ensure a tar path has no `..` segments and is not absolute.

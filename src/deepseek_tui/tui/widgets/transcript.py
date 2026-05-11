@@ -289,15 +289,17 @@ class _WelcomeCell(Static):
         )
         hints = Text.from_markup(
             "  [bold]↵[/]      send                "
-            "[bold]Tab[/]     cycle agent / plan / yolo / ask\n"
+            "[bold]⇧⇥[/]      cycle agent / plan / yolo / ask\n"
             "  [bold]/[/]      slash commands      "
             "[bold]@[/]       mention a workspace file\n"
             "  [bold]Ctrl+K[/]  command palette     "
             "[bold]Ctrl+R[/]  browse sessions\n"
             "  [bold]Ctrl+P[/]  file picker         "
             "[bold]Ctrl+O[/]  switch model\n"
-            "  [bold]Ctrl+B[/]  toggle sidebar      "
-            "[bold]Ctrl+T[/]  toggle thinking",
+            "  [bold]Ctrl+B[/]  session sidebar     "
+            "[bold]Ctrl+I[/]  info sidebar\n"
+            "  [bold]Ctrl+T[/]  toggle thinking     "
+            "[bold]Ctrl+L[/]  clear transcript",
         )
         footnote = Text.from_markup(
             "[dim]Type [bold]/help[/] anytime for the full command catalog.[/]",
