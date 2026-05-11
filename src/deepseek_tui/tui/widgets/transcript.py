@@ -15,32 +15,39 @@ from __future__ import annotations
 
 import time
 
+from rich.markup import escape
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from deepseek_tui.tui.frame_rate_limiter import FrameRateLimiter
 from deepseek_tui.tui.widgets.tool_cell import ToolCell
 
+# All cell-rendering paths run user / LLM / tool content through
+# ``rich.markup.escape`` before interpolating into the ``[bold]...[/]``
+# style templates. A single literal ``[/]`` in a log line, code snippet,
+# or pasted error caused the whole transcript worker to crash with
+# ``MarkupError`` — see 2026-05-11 grep_files-over-logs reproduction.
+
 
 class _UserCell(Static):
     DEFAULT_CSS = "._UserCell { margin: 0 0 1 0; }"
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[bold cyan]You:[/] {text}")
+        super().__init__(f"[bold cyan]You:[/] {escape(text)}")
 
 
 class _SystemCell(Static):
     DEFAULT_CSS = "._SystemCell { margin: 0 0 1 0; color: $warning; }"
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[bold yellow]System:[/] {text}")
+        super().__init__(f"[bold yellow]System:[/] {escape(text)}")
 
 
 class _ThinkingCell(Static):
     DEFAULT_CSS = "._ThinkingCell { margin: 0 0 1 0; color: $text-muted; }"
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[dim italic]Thinking: {text}[/]")
+        super().__init__(f"[dim italic]Thinking: {escape(text)}[/]")
 
 
 class _AssistantCell(Static):
@@ -74,7 +81,7 @@ class _AssistantCell(Static):
 
     def _refresh(self, force: bool) -> None:
         cursor = "" if self._finalized else "[blink]▌[/]"
-        self.update(f"[bold green]Assistant:[/] {self._buffer}{cursor}")
+        self.update(f"[bold green]Assistant:[/] {escape(self._buffer)}{cursor}")
 
 
 class Transcript(VerticalScroll):
@@ -145,13 +152,13 @@ class Transcript(VerticalScroll):
                 pass
         else:
             self._thinking_cell.update(
-                f"[dim italic]Thinking: {self._thinking_buffer}[/]"
+                f"[dim italic]Thinking: {escape(self._thinking_buffer)}[/]"
             )
 
     def add_tool_call(
         self, tool_call_id: str, tool_name: str, arguments: dict[str, object]
     ) -> None:
-        entry = f"[bold magenta]⏳ {tool_name}[/] [dim]({tool_call_id[:8]})[/]"
+        entry = f"[bold magenta]⏳ {escape(tool_name)}[/] [dim]({tool_call_id[:8]})[/]"
         self._messages.append(entry)
         cell = ToolCell(tool_name, tool_call_id)
         self._tool_cells[tool_call_id] = cell
