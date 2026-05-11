@@ -146,8 +146,9 @@ deepseek-tui login --provider deepseek --api-key sk-...
 
 #### 常见问题
 
-- **启动后界面静态、按键无响应**：通常是 `~/.deepseek/tasks/` 残留了僵尸任务（pytest 临时目录之类的）。检查 `cat ~/.deepseek/tasks/queue.json`；若有大量条目，备份后清空 `tasks/` 与 `queue.json` 再重启。
+- **启动后界面静态、按键无响应**：通常是 `./.deepseek/tasks/`（旧版可能在 `~/.deepseek/tasks/`）残留了僵尸任务（pytest 临时目录之类的）。检查 `cat .deepseek/tasks/queue.json`；若有大量条目，备份后清空 `tasks/` 与 `queue.json` 再重启。
 - **`deepseek-tui: command not found`**：venv 没激活或依赖没装。执行 `uv sync && source .venv/bin/activate`。
+- **`ModuleNotFoundError: No module named 'deepseek_tui'`（运行 deepseek-tui 时）**：Python 3.14 的新行为会跳过所有以 `_` 开头的 `.pth` 文件（视为隐藏文件），而 hatchling editable 安装恰好用 `_editable_impl_*.pth` 命名，导致 `src/` 找不到。本仓库已用 `.python-version` 钉到 3.12 规避；如果你 force 用 3.14+，请改用 `pip install -e .` 或等待 hatchling 修复（追踪 [pypa/hatch#1894](https://github.com/pypa/hatch/issues/1894)）。
 - **HTTP 400 `unknown variant 'auto'`**：旧版 `tool_choice` 格式没翻译，已在最新 commit 修复（`client/deepseek.py::_map_tool_choice_for_chat`）。拉取最新代码即可。
 
 ## 项目结构
