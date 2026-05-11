@@ -51,6 +51,22 @@ def build_fastapi_app(runtime: AppRuntime) -> Any:
     app = FastAPI(title="deepseek-app-server", version="0.1.0")
     app.state.runtime = runtime
 
+    # Wire durable thread manager so /threads/* routes are reachable.
+    # RuntimeThreadManagerConfig.data_dir defaults next to the config file.
+    from deepseek_tui.app_server.runtime_threads import RuntimeThreadManagerConfig
+    from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
+    from deepseek_tui.config.paths import default_config_path
+
+    _mgr_cfg = RuntimeThreadManagerConfig(
+        data_dir=default_config_path().parent / "threads",
+        task_data_dir=default_config_path().parent / "tasks",
+    )
+    app.state.thread_manager = RuntimeThreadManager(
+        config=runtime.config,
+        workspace=Path.cwd(),
+        manager_cfg=_mgr_cfg,
+    )
+
     # Per-request access log: method/path/status/duration. ``uvicorn.access``
     # is silenced in :mod:`logging_setup` so this is the single source of
     # truth for HTTP traffic during real-API testing.

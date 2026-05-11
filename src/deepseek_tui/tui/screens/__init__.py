@@ -1,6 +1,5 @@
 """TUI screens."""
 
-from deepseek_tui.tui.screens.chat import ChatScreen
-from deepseek_tui.tui.screens.config_ui import ConfigScreen
+from deepseek_tui.tui.screens.onboarding import OnboardingScreen
 
-__all__ = ["ChatScreen", "ConfigScreen"]
+__all__ = ["OnboardingScreen"]

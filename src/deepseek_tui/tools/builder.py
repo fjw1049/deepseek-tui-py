@@ -24,6 +24,7 @@ from deepseek_tui.tools.knowledge_tools import (
     RlmQueryTool,
     SkillLoadTool,
 )
+from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.mcp_tools import (
     ListMcpResourcesTool,
     ListMcpResourceTemplatesTool,
@@ -169,6 +170,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(NoteTool())
     registry.register(PlanUpdateTool())
     registry.register(RlmQueryTool())
+    registry.register(RlmTool(client=None, root_model=cfg.default_text_model or "deepseek-chat"))
     registry.register(SkillLoadTool())
 
     # Engine-intercepted special tools (always active)

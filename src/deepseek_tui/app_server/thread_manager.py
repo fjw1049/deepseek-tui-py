@@ -526,9 +526,10 @@ class RuntimeThreadManager:
         from deepseek_tui.engine.engine import Engine
 
         handle = EngineHandle()
-        engine = Engine(
+        engine = await Engine.create(
             handle=handle,
             client=self._get_llm_client(),
+            config=self.config,
             default_model=thread.model,
         )
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
@@ -549,7 +550,7 @@ class RuntimeThreadManager:
     def _get_llm_client(self) -> LLMClient:
         if self._llm_client is not None:
             return self._llm_client
-        from deepseek_tui.client.deepseek_client import DeepSeekClient
+        from deepseek_tui.client.deepseek import DeepSeekClient
 
         provider_cfg = self.config.effective_provider_config()
         return DeepSeekClient(

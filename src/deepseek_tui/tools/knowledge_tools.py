@@ -187,7 +187,7 @@ class ReviewTool(ToolSpec):
         config = Config()
         client = DeepSeekClient.from_config(config)
 
-        from deepseek_tui.client.models import MessageRequest
+        from deepseek_tui.protocol.requests import MessageRequest
 
         request = MessageRequest(
             model="deepseek-chat",
@@ -197,9 +197,9 @@ class ReviewTool(ToolSpec):
         )
 
         result_text: list[str] = []
-        from deepseek_tui.client.events import StreamTextDelta
+        from deepseek_tui.protocol.responses import StreamTextDelta
 
-        async for event in client.stream_chat_completion(request):
+        async for event in client.stream_with_retry(request):
             if isinstance(event, StreamTextDelta):
                 result_text.append(event.text)
 

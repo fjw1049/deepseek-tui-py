@@ -109,6 +109,7 @@ class DeepSeekTUI(App[None]):
         self.handle = handle or EngineHandle()
         self._engine: Engine | None = None
         self._engine_task: asyncio.Task[None] | None = None
+        self._current_mode: str = "agent"  # persisted across cycle_mode toggles
         self._resume_session_id = resume_session_id
         self._fork_session_id = fork_session_id
         self._turn_started_at: float | None = None
@@ -299,7 +300,11 @@ class DeepSeekTUI(App[None]):
         )
         transcript = self.query_one(Transcript)
         transcript.add_user_message(event.text)
-        await self.handle.send_op(SendMessageOp(content=event.text))
+        # Prepend active mode so Engine adapts behaviour (plan/yolo/ask vs agent).
+        content = event.text
+        if self._current_mode != "agent":
+            content = f"[mode:{self._current_mode}] {content}"
+        await self.handle.send_op(SendMessageOp(content=content))
         self.run_worker(self._listen_events())
 
     # ── slash command handling ────────────────────────────────────────
@@ -548,6 +553,7 @@ class DeepSeekTUI(App[None]):
         except ValueError:
             idx = 0
         next_mode = modes[(idx + 1) % len(modes)]
+        self._current_mode = next_mode
         self.query_one(StatusBar).set_mode(next_mode)
         self.query_one(Transcript).add_system_message(f"Mode: {next_mode}")
 

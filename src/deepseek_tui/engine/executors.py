@@ -144,6 +144,7 @@ async def _create_engine_for_execution(
     allow_shell: bool = True,
     auto_approve: bool = True,
     allowed_tools: list[str] | None = None,
+    config: object | None = None,
 ) -> tuple[object, EngineHandle, asyncio.Task[None]]:
     """Create a lightweight Engine + handle for executor use.
 
@@ -153,12 +154,21 @@ async def _create_engine_for_execution(
     When *allowed_tools* is provided (SubAgent use-case), only tools whose
     names appear in the list are kept in the registry — mirrors Rust
     ``SubAgent::allowed_tools`` filtering (mod.rs:810-825).
+
+    *config* may be passed from the parent Engine so provider/model/api_key
+    settings are inherited. When omitted, the user's config file is loaded
+    from the default path instead of using an empty default.
     """
     from deepseek_tui.client.deepseek import DeepSeekClient
+    from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import Config
     from deepseek_tui.engine.engine import Engine
 
-    config = Config()
+    if config is None:
+        try:
+            config = ConfigLoader().load()
+        except Exception:  # noqa: BLE001
+            config = Config()
     handle = EngineHandle()
 
     client = DeepSeekClient.from_config(config)

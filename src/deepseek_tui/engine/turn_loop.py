@@ -220,7 +220,7 @@ class TurnLoop:
                 system_prompt=request.system_prompt,
                 tools=active_tools or [],
                 tool_choice={"type": "auto"} if active_tools else None,
-                max_tokens=TURN_MAX_OUTPUT_TOKENS,
+                max_tokens=request.max_tokens or TURN_MAX_OUTPUT_TOKENS,
                 # Forward reasoning / sampling controls from the upstream
                 # request so non-streaming Engine config (Config.reasoning_effort
                 # etc.) reaches the LLM client. Without this propagation the
