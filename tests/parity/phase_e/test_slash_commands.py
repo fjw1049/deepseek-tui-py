@@ -1,7 +1,9 @@
 """Slash command registry and dispatcher parity tests.
 
-Mirrors Rust ``crates/tui/src/commands/mod.rs`` test coverage:
-- All 52 commands are registered
+Mirrors Rust ``crates/tui/src/commands/mod.rs`` test coverage. After the
+2026-05-12 fake-command cleanup the local registry is a subset (~40
+commands) of the Rust catalog; assertions reflect that subset:
+- The full registry is registered
 - Aliases resolve correctly
 - P0 handlers return valid CommandResult
 - Unknown commands produce an error
@@ -22,8 +24,11 @@ from deepseek_tui.tui.commands import (
 
 
 class TestRegistry:
-    def test_has_at_least_50_commands(self) -> None:
-        assert len(REGISTRY) >= 50
+    def test_registry_within_expected_range(self) -> None:
+        # Lower bound guards against accidental over-deletion; upper bound
+        # flags if someone re-adds the 2026-05-12 cleanup victims without
+        # going through this audit.
+        assert 35 <= len(REGISTRY) <= 50
 
     def test_all_names_start_with_slash(self) -> None:
         for entry in REGISTRY:
@@ -40,14 +45,14 @@ class TestRegistry:
         assert len(all_aliases) == len(set(all_aliases))
 
     def test_expected_commands_present(self) -> None:
-        """Mirror of Rust root_help_surface test."""
+        """Mirror of Rust root_help_surface test (subset after cleanup)."""
         expected = [
             "/help", "/clear", "/exit", "/model", "/models",
             "/provider", "/config", "/agent", "/plan", "/yolo",
-            "/export", "/save", "/sessions", "/init", "/trust",
+            "/export", "/save", "/sessions", "/init",
             "/context", "/tokens", "/system", "/undo", "/retry",
-            "/edit", "/links", "/home", "/note", "/cost",
-            "/settings", "/statusline", "/logout",
+            "/links", "/home", "/note", "/cost",
+            "/settings", "/logout",
         ]
         names = {e.name for e in REGISTRY}
         for cmd in expected:

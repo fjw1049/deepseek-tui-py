@@ -72,10 +72,6 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/models", "List available models", _E, p0=False),
     CommandEntry("/provider", "Switch LLM backend", _E, p0=False),
     CommandEntry(
-        "/queue", "View or edit queued messages",
-        _S, ("/queued",), p0=False,
-    ),
-    CommandEntry(
         "/stash", "Park or restore a draft",
         _S, ("/park",), p0=False,
     ),
@@ -96,10 +92,6 @@ REGISTRY: list[CommandEntry] = [
         _D, ("/stats", "/overview"),
     ),
     CommandEntry("/note", "Append to notes file", _S),
-    CommandEntry(
-        "/attach", "Attach image/video media",
-        _T, ("/image", "/media"), p0=False,
-    ),
     CommandEntry(
         "/task", "Manage background tasks",
         _T, ("/tasks",), p0=False,
@@ -124,14 +116,6 @@ REGISTRY: list[CommandEntry] = [
         "/cycles", "List cycle handoffs",
         _S, p0=False,
     ),
-    CommandEntry(
-        "/cycle", "Show cycle briefing",
-        _S, p0=False,
-    ),
-    CommandEntry(
-        "/recall", "Search cycle archives",
-        _S, p0=False,
-    ),
     CommandEntry("/export", "Export to markdown", _S),
     CommandEntry("/config", "Open configuration editor", _C),
     CommandEntry(
@@ -142,11 +126,9 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/yolo", "Enable YOLO mode", _C, p0=False),
     CommandEntry("/agent", "Switch to agent mode", _C),
     CommandEntry("/plan", "Switch to plan mode", _C),
-    CommandEntry("/trust", "Manage workspace trust", _C, p0=False),
     CommandEntry("/logout", "Clear API key", _C),
     CommandEntry("/tokens", "Show token usage", _D),
     CommandEntry("/system", "Show system prompt", _D),
-    CommandEntry("/edit", "Revise last message", _E),
     CommandEntry(
         "/diff", "Show file changes",
         _D, p0=False,
@@ -154,17 +136,7 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/undo", "Remove last message pair", _S),
     CommandEntry("/retry", "Retry last request", _E),
     CommandEntry("/init", "Generate AGENTS.md", _T),
-    CommandEntry("/lsp", "Toggle LSP diagnostics", _C, p0=False),
-    CommandEntry("/share", "Export as shareable URL", _T, p0=False),
-    CommandEntry(
-        "/goal", "Set session goal",
-        _E, p0=False,
-    ),
     CommandEntry("/settings", "Show persistent settings", _D),
-    CommandEntry(
-        "/statusline", "Configure footer",
-        _C, ("/status",),
-    ),
     CommandEntry(
         "/skills", "List local skills",
         _T, p0=False,
@@ -174,20 +146,7 @@ REGISTRY: list[CommandEntry] = [
         _T, p0=False,
     ),
     CommandEntry("/review", "Code review", _T, p0=False),
-    CommandEntry(
-        "/restore", "Roll back to snapshot",
-        _T, p0=False,
-    ),
-    CommandEntry(
-        "/rlm", "Recursive LLM turn",
-        _E, ("/recursive",), p0=False,
-    ),
     CommandEntry("/cost", "Session cost breakdown", _D),
-    CommandEntry("/profile", "Switch config profile", _C, p0=False),
-    CommandEntry(
-        "/cache", "Prefix-cache stats",
-        _D, p0=False,
-    ),
     CommandEntry(
         "/log", "Show log file path; '/log tail [N]' prints last N lines",
         _D,

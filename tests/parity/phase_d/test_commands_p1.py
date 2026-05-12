@@ -1,7 +1,8 @@
 """Parity tests for P1 slash commands and CLI subcommands.
 
-Validates the 30 P1 slash command handlers and enhanced CLI subcommands
-against the behavioral expectations from the Rust reference.
+Validates the remaining P1 slash command handlers (after the 2026-05-12
+fake-command cleanup) and enhanced CLI subcommands against the behavioral
+expectations from the Rust reference.
 """
 from __future__ import annotations
 
@@ -58,12 +59,6 @@ class TestProviderCommand:
         assert "Unknown provider" in result.error
 
 
-class TestQueueCommand:
-    def test_empty_queue(self, fake_app):
-        result = _dispatch("/queue", fake_app)
-        assert "empty" in result.output.lower()
-
-
 class TestStashCommand:
     def test_list_empty(self, fake_app, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -94,30 +89,6 @@ class TestSubagentsCommand:
     def test_no_agents(self, fake_app):
         result = _dispatch("/subagents", fake_app)
         assert result.error or "No active" in (result.output or "")
-
-
-class TestAttachCommand:
-    def test_no_args(self, fake_app):
-        result = _dispatch("/attach", fake_app)
-        assert result.error
-
-    def test_file_not_found(self, fake_app):
-        result = _dispatch("/attach /nonexistent/file.png", fake_app)
-        assert result.error
-        assert "not found" in result.error.lower()
-
-    def test_unsupported_format(self, fake_app, tmp_path):
-        f = tmp_path / "test.xyz"
-        f.write_text("data")
-        result = _dispatch(f"/attach {f}", fake_app)
-        assert result.error
-        assert "Unsupported" in result.error
-
-    def test_supported_format(self, fake_app, tmp_path):
-        f = tmp_path / "test.png"
-        f.write_bytes(b"\x89PNG")
-        result = _dispatch(f"/attach {f}", fake_app)
-        assert "Attached" in result.output
 
 
 class TestTaskCommand:
@@ -155,61 +126,16 @@ class TestCyclesCommand:
         assert "No cycle" in result.output
 
 
-class TestCycleCommand:
-    def test_current_cycle(self, fake_app):
-        result = _dispatch("/cycle", fake_app)
-        assert "cycle" in result.output.lower()
-
-
-class TestRecallCommand:
-    def test_no_query(self, fake_app):
-        result = _dispatch("/recall", fake_app)
-        assert result.error
-
-    def test_with_query(self, fake_app):
-        result = _dispatch("/recall test query", fake_app)
-        assert "Searching" in result.output
-
-
 class TestYoloCommand:
     def test_enable(self, fake_app):
         result = _dispatch("/yolo", fake_app)
         assert result.error or "YOLO" in (result.output or "")
 
 
-class TestTrustCommand:
-    def test_trust_cwd(self, fake_app):
-        result = _dispatch("/trust", fake_app)
-        assert "trusted" in result.output.lower()
-
-
 class TestDiffCommand:
     def test_diff_output(self, fake_app):
         result = _dispatch("/diff", fake_app)
         assert result.output or result.error
-
-
-class TestLspCommand:
-    def test_lsp_status(self, fake_app):
-        result = _dispatch("/lsp", fake_app)
-        assert "LSP" in result.output
-
-
-class TestShareCommand:
-    def test_share_creates_file(self, fake_app, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        result = _dispatch("/share", fake_app)
-        assert "Exported" in result.output
-
-
-class TestGoalCommand:
-    def test_no_args_shows_info(self, fake_app):
-        result = _dispatch("/goal", fake_app)
-        assert "No session goal" in result.output
-
-    def test_set_goal(self, fake_app):
-        result = _dispatch("/goal complete the migration", fake_app)
-        assert "complete the migration" in result.output
 
 
 class TestSkillsCommand:
@@ -242,51 +168,10 @@ class TestReviewCommand:
         assert result.output or result.error
 
 
-class TestRestoreCommand:
-    def test_no_args(self, fake_app):
-        result = _dispatch("/restore", fake_app)
-        assert result.error
-
-    def test_with_id(self, fake_app):
-        result = _dispatch("/restore abc123", fake_app)
-        assert "abc123" in result.output
-
-
-class TestRlmCommand:
-    def test_no_args(self, fake_app):
-        result = _dispatch("/rlm", fake_app)
-        assert result.error
-
-    def test_with_query(self, fake_app):
-        result = _dispatch("/rlm analyze this code", fake_app)
-        assert "queued" in result.output.lower()
-
-
-class TestProfileCommand:
-    def test_show_current(self, fake_app):
-        result = _dispatch("/profile", fake_app)
-        assert "default" in result.output.lower()
-
-    def test_switch(self, fake_app):
-        result = _dispatch("/profile work", fake_app)
-        assert "work" in result.output
-
-
-class TestCacheCommand:
-    def test_show_stats(self, fake_app):
-        result = _dispatch("/cache", fake_app)
-        assert "cache" in result.output.lower()
-
-
 # ─── Alias resolution tests ──────────────────────────────────────────────
 
 
 class TestAliasResolution:
-    def test_queued_alias(self):
-        from deepseek_tui.tui.commands import resolve
-        assert resolve("/queued") is not None
-        assert resolve("/queued").name == "/queue"
-
     def test_park_alias(self):
         from deepseek_tui.tui.commands import resolve
         assert resolve("/park") is not None
@@ -301,17 +186,6 @@ class TestAliasResolution:
         from deepseek_tui.tui.commands import resolve
         assert resolve("/agents") is not None
         assert resolve("/agents").name == "/subagents"
-
-    def test_image_alias(self):
-        from deepseek_tui.tui.commands import resolve
-        assert resolve("/image") is not None
-        assert resolve("/image").name == "/attach"
-
-    def test_recursive_alias(self):
-        from deepseek_tui.tui.commands import resolve
-        assert resolve("/recursive") is not None
-        assert resolve("/recursive").name == "/rlm"
-
 
 # ─── Command Registry completeness test ──────────────────────────────────
 

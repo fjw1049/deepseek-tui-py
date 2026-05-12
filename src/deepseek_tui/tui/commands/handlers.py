@@ -487,14 +487,6 @@ def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output="YOLO mode enabled — all tool approvals auto-accepted.")
 
 
-# ── /trust ───────────────────────────────────────────────────────────────
-
-@_register("/trust")
-def cmd_trust(args: str, app: DeepSeekTUI) -> CommandResult:
-    cwd = Path.cwd()
-    return CommandResult(output=f"Workspace trusted: {cwd}")
-
-
 # ── /logout ──────────────────────────────────────────────────────────────
 
 @_register("/logout")
@@ -548,13 +540,6 @@ def cmd_system(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output=f"System prompt:\n{prompt}")
 
 
-# ── /edit ────────────────────────────────────────────────────────────────
-
-@_register("/edit")
-def cmd_edit(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Edit last message — requires Engine integration (Stage 6)")
-
-
 # ── /undo ────────────────────────────────────────────────────────────────
 
 @_register("/undo")
@@ -606,13 +591,6 @@ def cmd_settings(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(error=f"Failed to load settings: {exc}")
 
 
-# ── /statusline ──────────────────────────────────────────────────────────
-
-@_register("/statusline")
-def cmd_statusline(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Status line configuration — requires TUI widget integration")
-
-
 # ── /cost ────────────────────────────────────────────────────────────────
 
 @_register("/cost")
@@ -647,13 +625,6 @@ def cmd_cost(args: str, app: DeepSeekTUI) -> CommandResult:
     ]
 
     return CommandResult(output="\n".join(lines))
-
-
-# ── /queue ───────────────────────────────────────────────────────────────
-
-@_register("/queue")
-def cmd_queue(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Message queue is empty.")
 
 
 # ── /stash ───────────────────────────────────────────────────────────────
@@ -727,22 +698,6 @@ def cmd_subagents(args: str, app: DeepSeekTUI) -> CommandResult:
         label = a.nickname or a.agent_type or a.agent_id[:8]
         lines.append(f"  {label:<20} [{status}]")
     return CommandResult(output="\n".join(lines))
-
-
-# ── /attach ──────────────────────────────────────────────────────────────
-
-@_register("/attach")
-def cmd_attach(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(error="Usage: /attach <filepath>")
-    path = Path(args.strip()).expanduser()
-    if not path.exists():
-        return CommandResult(error=f"File not found: {path}")
-    suffix = path.suffix.lower()
-    supported = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".pdf"}
-    if suffix not in supported:
-        return CommandResult(error=f"Unsupported format: {suffix}")
-    return CommandResult(output=f"Attached: {path.name} ({path.stat().st_size} bytes)")
 
 
 # ── /task ────────────────────────────────────────────────────────────────
@@ -863,24 +818,6 @@ def cmd_cycles(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output="Cycle archives:\n\n" + "\n".join(archives))
 
 
-# ── /cycle ───────────────────────────────────────────────────────────────
-
-@_register("/cycle")
-def cmd_cycle(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Current cycle: 0 (no cycle boundary crossed yet)")
-
-
-# ── /recall ──────────────────────────────────────────────────────────────
-
-@_register("/recall")
-def cmd_recall(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(error="Usage: /recall <query>")
-    return CommandResult(
-        output=f"Searching cycle archives for: {args.strip()}\nNo matches found."
-    )
-
-
 # ── /diff ────────────────────────────────────────────────────────────────
 
 @_register("/diff")
@@ -900,36 +837,6 @@ def cmd_diff(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"Changes:\n{output}")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return CommandResult(error="git not available.")
-
-
-# ── /lsp ─────────────────────────────────────────────────────────────────
-
-@_register("/lsp")
-def cmd_lsp(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="LSP diagnostics integration is active.")
-
-
-# ── /share ───────────────────────────────────────────────────────────────
-
-@_register("/share")
-def cmd_share(args: str, app: DeepSeekTUI) -> CommandResult:
-    export_path = Path(f"deepseek-share-{int(time.time())}.md")
-    export_path.write_text(
-        f"# Shared Conversation\n\n"
-        f"Exported at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"(Conversation history attached once Engine is fully wired.)\n",
-        encoding="utf-8",
-    )
-    return CommandResult(output=f"Exported shareable file: {export_path}")
-
-
-# ── /goal ────────────────────────────────────────────────────────────────
-
-@_register("/goal")
-def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(output="No session goal set. Usage: /goal <description>")
-    return CommandResult(output=f"Session goal set: {args.strip()}")
 
 
 # ── /skills ──────────────────────────────────────────────────────────────
@@ -993,45 +900,6 @@ def cmd_review(args: str, app: DeepSeekTUI) -> CommandResult:
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return CommandResult(error="git not available.")
-
-
-# ── /restore ─────────────────────────────────────────────────────────────
-
-@_register("/restore")
-def cmd_restore(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(error="Usage: /restore <checkpoint-id>")
-    return CommandResult(output=f"Restored to checkpoint: {args.strip()}")
-
-
-# ── /rlm ─────────────────────────────────────────────────────────────────
-
-@_register("/rlm")
-def cmd_rlm(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(error="Usage: /rlm <query>")
-    return CommandResult(output=f"Recursive LLM query queued: {args.strip()}")
-
-
-# ── /profile ─────────────────────────────────────────────────────────────
-
-@_register("/profile")
-def cmd_profile(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(output="Current profile: default")
-    return CommandResult(output=f"Switched to profile: {args.strip()}")
-
-
-# ── /cache ───────────────────────────────────────────────────────────────
-
-@_register("/cache")
-def cmd_cache(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(
-        output="Prefix cache stats:\n"
-        "  Status: active\n"
-        "  Hit rate: —\n"
-        "  Cached prefix length: —"
-    )
 
 
 # ── /log ──────────────────────────────────────────────────────────────────
