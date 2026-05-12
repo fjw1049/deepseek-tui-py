@@ -99,7 +99,7 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
     """
     engine, handle, engine_task = await _create_engine_for_execution(
         model=agent.model,
-        workspace=Path("."),
+        workspace=agent.workspace,
         allow_shell=True,
         auto_approve=True,
         allowed_tools=agent.allowed_tools,
@@ -155,6 +155,7 @@ async def _create_engine_for_execution(
     config: object | None = None,
     task_id: str | None = None,
     task_manager: object | None = None,
+    trust_mode: bool = False,  # Subagents use sandboxed paths by default
 ) -> tuple[object, EngineHandle, asyncio.Task[None]]:
     """Create a lightweight Engine + handle for executor use.
 
@@ -173,11 +174,16 @@ async def _create_engine_for_execution(
     ``ToolContext.metadata`` so tools running inside a durable task can
     forward their ``task_updates`` payloads to the owning
     :class:`~deepseek_tui.tools.task_manager.TaskManager`.
+
+    *trust_mode* controls whether paths outside workspace are allowed.
+    Subagents default to False (sandboxed to workspace), while tasks
+    default to their configured value.
     """
     from deepseek_tui.client.deepseek import DeepSeekClient
     from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import Config
     from deepseek_tui.engine.engine import Engine
+    from deepseek_tui.engine.approval import AutoApprovalHandler
 
     if config is None:
         try:
@@ -188,6 +194,9 @@ async def _create_engine_for_execution(
 
     client = DeepSeekClient.from_config(config)
 
+    # Use AutoApprovalHandler for subagents/tasks when auto_approve=True
+    approval_handler = AutoApprovalHandler() if auto_approve else None
+
     engine = await Engine.create(
         handle=handle,
         client=client,
@@ -195,7 +204,11 @@ async def _create_engine_for_execution(
         working_directory=workspace.resolve(),  # noqa: ASYNC240
         default_model=model,
         max_tool_round_trips=10,
+        approval_handler=approval_handler,
     )
+
+    # Override trust_mode for subagents (mirrors Rust context inheritance)
+    engine.tool_context.trust_mode = trust_mode
 
     # Filter registry down to allowed_tools (Rust: SubAgent scope restriction)
     if allowed_tools is not None:

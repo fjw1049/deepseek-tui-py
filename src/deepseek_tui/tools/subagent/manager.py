@@ -96,6 +96,12 @@ class SubAgentType(str, Enum):
 _SUBAGENT_PROMPTS: dict[str, str] = {
     "general": (
         "You are a general-purpose sub-agent spawned to handle a specific task autonomously.\n\n"
+        "CRITICAL: File operations are sandboxed to the workspace directory.\n"
+        "- ALWAYS use relative paths (e.g., 'script.py', './src/utils.py', 'bubble_sort.py')\n"
+        "- NEVER use absolute paths (e.g., '/tmp/...', '/Users/...', '~/...', '/var/...')\n"
+        "- If the parent's prompt mentions an absolute path like '/tmp/file.py', ignore the path\n"
+        "  and use just the filename 'file.py' instead\n"
+        "- All file operations are relative to the workspace root\n\n"
         "Your scope is exactly what the parent assigned to you. Do not expand the\n"
         "objective — if you discover related work that needs doing, surface it under\n"
         "RISKS or BLOCKERS rather than starting it. Work autonomously: the parent is\n"
@@ -146,6 +152,12 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "You are an implementation sub-agent. Your job is to land the change\n"
         "the parent assigned — write the code, modify the files, satisfy the\n"
         "contract — with the minimum surrounding edit. Do not refactor adjacent code.\n\n"
+        "CRITICAL: File operations are sandboxed to the workspace directory.\n"
+        "- ALWAYS use relative paths (e.g., 'script.py', './src/utils.py', 'bubble_sort.py')\n"
+        "- NEVER use absolute paths (e.g., '/tmp/...', '/Users/...', '~/...', '/var/...')\n"
+        "- If the parent's prompt mentions an absolute path like '/tmp/file.py', ignore the path\n"
+        "  and use just the filename 'file.py' instead\n"
+        "- All file operations are relative to the workspace root\n\n"
         "Method:\n"
         "- Read target file(s) end-to-end before editing.\n"
         "- Prefer `edit_file` for narrow changes, `apply_patch` for multi-hunk.\n"
@@ -168,6 +180,12 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "registry — only the tools you see at runtime are available. Do not try\n"
         "to reach for a tool that is not registered; if the task needs one, put\n"
         "the gap under BLOCKERS and stop.\n\n"
+        "CRITICAL: File operations are sandboxed to the workspace directory.\n"
+        "- ALWAYS use relative paths (e.g., 'script.py', './src/utils.py', 'bubble_sort.py')\n"
+        "- NEVER use absolute paths (e.g., '/tmp/...', '/Users/...', '~/...', '/var/...')\n"
+        "- If the parent's prompt mentions an absolute path like '/tmp/file.py', ignore the path\n"
+        "  and use just the filename 'file.py' instead\n"
+        "- All file operations are relative to the workspace root\n\n"
         "Stay tightly scoped to the assigned objective."
     ),
 }
@@ -295,6 +313,7 @@ class SubAgent:
         nickname: str | None,
         allowed_tools: list[str] | None,
         session_boot_id: str,
+        workspace: Path | None = None,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -308,6 +327,7 @@ class SubAgent:
         self.started_at_ms: int = _epoch_ms()
         self.allowed_tools = allowed_tools
         self.session_boot_id = session_boot_id
+        self.workspace = workspace or Path.cwd()
         self.cancel_token: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
@@ -413,6 +433,7 @@ class SubAgentManager:
                 nickname=request.nickname,
                 allowed_tools=request.allowed_tools,
                 session_boot_id=self._session_boot_id,
+                workspace=self.workspace,
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()
@@ -661,6 +682,7 @@ class SubAgentManager:
                 nickname=raw.get("nickname"),
                 allowed_tools=raw.get("allowed_tools") or None,
                 session_boot_id=raw.get("session_boot_id", ""),
+                workspace=self.workspace,
             )
             # Restore id from persisted record, overwriting the freshly
             # generated one.

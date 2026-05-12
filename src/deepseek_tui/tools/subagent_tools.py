@@ -84,26 +84,58 @@ class AgentSpawnTool(ToolSpec):
     def description(self) -> str:
         return (
             "Spawn a background sub-agent. Sub-agents run with a filtered "
-            "toolset and inherit the workspace configuration from the session."
+            "toolset and inherit the workspace configuration from the session. "
+            "Use 'type' parameter to specify agent type (general, implementer, etc.), "
+            "and 'nickname' for custom display names."
         )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "prompt": {"type": "string"},
-                "message": {"type": "string"},
-                "objective": {"type": "string"},
-                "type": {"type": "string"},
-                "agent_type": {"type": "string"},
-                "agent_name": {"type": "string"},
-                "role": {"type": "string"},
+                "prompt": {
+                    "type": "string",
+                    "description": "The task prompt for the sub-agent"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Alias for prompt"
+                },
+                "objective": {
+                    "type": "string",
+                    "description": "Alias for prompt"
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Agent type: general, explore, plan, review, implementer, verifier, custom",
+                    "enum": ["general", "explore", "plan", "review", "implementer", "verifier", "custom"]
+                },
+                "agent_type": {
+                    "type": "string",
+                    "description": "Alias for type",
+                    "enum": ["general", "explore", "plan", "review", "implementer", "verifier", "custom"]
+                },
+                "agent_name": {
+                    "type": "string",
+                    "description": "DEPRECATED: Use 'type' instead. This parameter is for backward compatibility only."
+                },
+                "role": {
+                    "type": "string",
+                    "description": "Optional role description for the agent"
+                },
                 "allowed_tools": {
                     "type": "array",
                     "items": {"type": "string"},
+                    "description": "Explicit tool allowlist (required for custom type)"
                 },
-                "model": {"type": "string"},
-                "nickname": {"type": "string"},
+                "model": {
+                    "type": "string",
+                    "description": "Optional model override (e.g., 'deepseek-chat', 'deepseek-v4-pro')"
+                },
+                "nickname": {
+                    "type": "string",
+                    "description": "Optional display name for the agent (does not affect agent type)"
+                },
             },
         }
 
@@ -123,7 +155,15 @@ class AgentSpawnTool(ToolSpec):
         raw_type = _pick_str(input_data, "type", "agent_type", "agent_name") or "general"
         agent_type = SubAgentType.parse(raw_type)
         if agent_type is None:
-            raise ToolError(f"Unknown sub-agent type: {raw_type}")
+            valid_types = ", ".join([
+                "general", "explore", "plan", "review",
+                "implementer", "verifier", "custom"
+            ])
+            raise ToolError(
+                f"Unknown sub-agent type: {raw_type}. "
+                f"Valid types: {valid_types}. "
+                f"Use 'nickname' parameter for custom display names."
+            )
         role = _pick_str(input_data, "role")
         allowed_raw = input_data.get("allowed_tools")
         allowed_tools: list[str] | None = None

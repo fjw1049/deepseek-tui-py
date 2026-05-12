@@ -88,9 +88,34 @@ def _summarize_call_args(arguments: dict[str, Any] | None) -> str:
     approval dialog can show *what* is being approved (the actual
     command or path) rather than just the tool name. Picks the first
     non-empty value, takes its first line, and caps the length at 200.
+
+    Prioritizes semantically important keys (prompt, command, path, etc.)
+    over arbitrary parameter order to show the most relevant information.
     """
     if not arguments:
         return ""
+
+    # Priority keys that are most informative for approval decisions
+    priority_keys = [
+        "prompt", "message", "objective",  # Sub-agent / task descriptions
+        "command", "cmd",                   # Shell commands
+        "path", "file_path", "source_path", "dest_path",  # File operations
+        "content", "text", "input",         # Content being written/sent
+    ]
+
+    # First pass: check priority keys
+    for key in priority_keys:
+        if key in arguments:
+            value = arguments[key]
+            if value is not None:
+                s = str(value).strip()
+                if s:
+                    s = s.splitlines()[0]
+                    if len(s) > 200:
+                        s = s[:199] + "…"
+                    return s
+
+    # Second pass: fallback to any non-empty value
     for value in arguments.values():
         if value is None:
             continue

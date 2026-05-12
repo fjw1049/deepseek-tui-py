@@ -151,3 +151,30 @@ def compose_prompt(mode: AppMode, personality: Personality = Personality.CALM) -
         mode.approval_prompt().strip(),
     ]
     return "\n\n".join(parts)
+
+
+def load_prompt(name: str) -> str:
+    """Load a prompt by name (for backward compatibility).
+
+    Maps prompt names to their corresponding loader functions.
+    Used by SubAgentType.system_prompt() to load subagent_output_format.
+    """
+    name_lower = name.lower().replace("-", "_")
+    loaders = {
+        "subagent_output_format": SUBAGENT_OUTPUT_FORMAT,
+        "base": BASE_PROMPT,
+        "calm_personality": CALM_PERSONALITY,
+        "playful_personality": PLAYFUL_PERSONALITY,
+        "agent_mode": AGENT_MODE,
+        "plan_mode": PLAN_MODE,
+        "yolo_mode": YOLO_MODE,
+        "auto_approval": AUTO_APPROVAL,
+        "suggest_approval": SUGGEST_APPROVAL,
+        "never_approval": NEVER_APPROVAL,
+        "compact_template": COMPACT_TEMPLATE,
+        "cycle_handoff": CYCLE_HANDOFF,
+    }
+    loader = loaders.get(name_lower)
+    if loader is None:
+        raise ValueError(f"Unknown prompt name: {name}")
+    return loader()

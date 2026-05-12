@@ -31,5 +31,16 @@ class ToolContext:
             try:
                 resolved.relative_to(workspace)
             except ValueError as exc:
-                raise ValueError(f"path escapes workspace: {path}") from exc
+                # Path escapes workspace - extract filename and use it in workspace
+                # This handles cases where LLM generates absolute paths like /home/user/file.py
+                filename = resolved.name
+                if filename:
+                    resolved = (workspace / filename).resolve()
+                    # Verify the new path is in workspace
+                    try:
+                        resolved.relative_to(workspace)
+                    except ValueError:
+                        raise ValueError(f"path escapes workspace: {path}") from exc
+                else:
+                    raise ValueError(f"path escapes workspace: {path}") from exc
         return resolved
