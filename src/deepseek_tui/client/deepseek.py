@@ -18,6 +18,19 @@ from deepseek_tui.protocol.responses import StreamEvent
 
 logger = logging.getLogger(__name__)
 
+# Global API concurrency limiter — shared across all DeepSeekClient instances
+# within the same event loop. Prevents event-loop starvation when many
+# subagents issue concurrent streaming requests.
+_GLOBAL_API_SEMAPHORE: asyncio.Semaphore | None = None
+DEFAULT_MAX_CONCURRENT_REQUESTS = 6
+
+
+def _get_api_semaphore() -> asyncio.Semaphore:
+    global _GLOBAL_API_SEMAPHORE
+    if _GLOBAL_API_SEMAPHORE is None:
+        _GLOBAL_API_SEMAPHORE = asyncio.Semaphore(DEFAULT_MAX_CONCURRENT_REQUESTS)
+    return _GLOBAL_API_SEMAPHORE
+
 
 def is_reasoning_model(model: str) -> bool:
     """Check if a model supports reasoning_content output.
@@ -160,12 +173,13 @@ class DeepSeekClient(LLMClient):
             body_bytes,
         )
         request_started = time.monotonic()
-        async for sse_event in self._stream_with_pre_retry(
-            client, url, headers, payload, parser, chunk_timeout
-        ):
-            yield sse_event
-        for event in parser.finalize():
-            yield event
+        async with _get_api_semaphore():
+            async for sse_event in self._stream_with_pre_retry(
+                client, url, headers, payload, parser, chunk_timeout
+            ):
+                yield sse_event
+            for event in parser.finalize():
+                yield event
         logger.info(
             "http_response url=%s elapsed_ms=%d",
             url,

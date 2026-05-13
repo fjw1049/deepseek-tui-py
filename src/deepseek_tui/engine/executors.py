@@ -216,9 +216,18 @@ async def _create_engine_for_execution(
             config = ConfigLoader().load()
         except Exception:  # noqa: BLE001
             config = Config()
+
+    # Child engines don't need their own TaskManager — subagents/tasks should
+    # not create durable tasks. Other features (subagents, mcp) are preserved
+    # so child engines can still use MCP tools or spawn nested agents if needed.
+    lightweight_features = config.features.model_copy(update={
+        "tasks": False,
+    })
+    child_config = config.model_copy(update={"features": lightweight_features})
+
     handle = EngineHandle()
 
-    client = DeepSeekClient.from_config(config)
+    client = DeepSeekClient.from_config(child_config)
 
     # Use AutoApprovalHandler for subagents/tasks when auto_approve=True
     approval_handler = AutoApprovalHandler() if auto_approve else None
@@ -226,11 +235,12 @@ async def _create_engine_for_execution(
     engine = await Engine.create(
         handle=handle,
         client=client,
-        config=config,
+        config=child_config,
         working_directory=workspace.resolve(),  # noqa: ASYNC240
         default_model=model,
         max_tool_round_trips=10,
         approval_handler=approval_handler,
+        skip_skills=True,
     )
 
     # Override trust_mode for subagents (mirrors Rust context inheritance)

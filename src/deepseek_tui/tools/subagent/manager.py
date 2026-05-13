@@ -39,6 +39,8 @@ MAX_RESULT_TIMEOUT_MS = 3_600_000
 SUBAGENT_STATE_SCHEMA_VERSION = 1
 SUBAGENT_STATE_FILE = "subagents.v1.json"
 SUBAGENT_RESTART_REASON = "Interrupted by process restart"
+PRUNE_MAX_TERMINAL_AGENTS = 20
+PRUNE_STALE_AGE_MS = 24 * 60 * 60 * 1000  # 24 hours
 
 
 class SubAgentType(str, Enum):
@@ -697,6 +699,33 @@ class SubAgentManager:
             duration_ms = raw.get("duration_ms", 0)
             agent.started_at_ms = _epoch_ms() - max(0, int(duration_ms))
             self._agents[agent.id] = agent
+        self._prune_stale_agents()
+
+    def _prune_stale_agents(self) -> None:
+        """Remove old terminal agents to bound state file size."""
+        now_ms = _epoch_ms()
+        to_keep: dict[str, SubAgent] = {}
+        terminal_candidates: list[tuple[int, str, SubAgent]] = []
+
+        for agent_id, agent in self._agents.items():
+            if not agent.status.is_terminal():
+                to_keep[agent_id] = agent
+                continue
+            if agent.session_boot_id == self._session_boot_id:
+                to_keep[agent_id] = agent
+                continue
+            age_ms = now_ms - agent.started_at_ms
+            if age_ms > PRUNE_STALE_AGE_MS:
+                continue
+            terminal_candidates.append((agent.started_at_ms, agent_id, agent))
+
+        terminal_candidates.sort(key=lambda t: t[0], reverse=True)
+        for _, agent_id, agent in terminal_candidates[:PRUNE_MAX_TERMINAL_AGENTS]:
+            to_keep[agent_id] = agent
+
+        if len(to_keep) < len(self._agents):
+            self._agents = to_keep
+            self._persist_best_effort()
 
 
 @dataclass(slots=True)

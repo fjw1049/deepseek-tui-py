@@ -224,6 +224,7 @@ class Engine:
         exec_policy: ExecPolicyEngine | None = None,
         approval_handler: ApprovalHandler | None = None,
         max_tool_round_trips: int = 100,
+        skip_skills: bool = False,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
 
@@ -242,7 +243,7 @@ class Engine:
             mode=mode,
         )
         # Discover skills for system prompt injection
-        skill_reg = discover_in_workspace(workspace=working_directory)
+        skill_reg = None if skip_skills else discover_in_workspace(workspace=working_directory)
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()
