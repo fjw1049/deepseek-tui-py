@@ -6,6 +6,7 @@ All 10 tools delegate to ``context.subagent_manager``.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from typing import Any
 
@@ -231,10 +232,11 @@ class AgentResultTool(ToolSpec):
                 snapshot = await manager.get_result(agent_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
+        payload = _result_to_json(snapshot)
         return ToolResult(
             success=True,
-            content=f"{snapshot.agent_id} [{snapshot.status.kind.value}]",
-            metadata=_result_to_json(snapshot),
+            content=json.dumps(payload, ensure_ascii=False),
+            metadata=payload,
         )
 
 
@@ -520,10 +522,11 @@ class AgentWaitTool(ToolSpec):
             snapshots = await manager.wait(agent_ids, mode=mode, timeout_ms=timeout_ms)
         except (KeyError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
+        payload = [_result_to_json(s) for s in snapshots]
         return ToolResult(
             success=True,
-            content=f"waited on {len(snapshots)} agent(s) [mode={mode}]",
-            metadata={"agents": [_result_to_json(s) for s in snapshots]},
+            content=json.dumps(payload, ensure_ascii=False),
+            metadata={"agents": payload},
         )
 
 
