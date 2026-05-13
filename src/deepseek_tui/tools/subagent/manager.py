@@ -189,7 +189,12 @@ _PATH_DISCIPLINE = (
     "All file paths are relative to the ``pwd`` listed in the\n"
     "``## Environment`` block above. Use relative paths only — absolute\n"
     "paths outside the workspace are rejected by the tool layer with a\n"
-    "``path escapes workspace`` error, which costs you a turn."
+    "``path escapes workspace`` error, which costs you a turn.\n\n"
+    "Never write to ``/tmp``, ``/var/tmp``, ``~``, or any path starting\n"
+    "with ``/`` outside the workspace. For throwaway benchmark or probe\n"
+    "scripts, write them to a workspace-relative filename like\n"
+    "``bench.py`` or ``_probe.py`` (no leading slash); they will land\n"
+    "next to your code and remain inside the sandbox."
 )
 
 _WRITE_CAPABLE_ROLES = {"general", "implementer", "custom"}
