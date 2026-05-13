@@ -7,7 +7,8 @@ dock layout (the row vanished when stacked with ``ComposerHint`` and
 ``Composer`` on the same edge); collapsing to one Static + one
 internal grid sidesteps the layout fight entirely while keeping the
 ``mode·model·cost  /  chord chips  /  cache·worked·ctx`` layout the
-user designed off the Rust footer.
+user designed off the Rust footer. Middle chord hints omit ``⇧⇥ mode``
+and ``⌃O models`` (shortcuts still work); only ``⌃P`` / ``⌃R`` remain.
 
 Legacy parity (phase-E tests): the ``_status``, ``_model``, ``_mode``,
 ``_tokens`` attributes plus the legacy setters
@@ -40,10 +41,8 @@ class StatusBar(Static):
     """
 
     _MIDDLE_CHORDS: tuple[tuple[str, str], ...] = (
-        ("⇧⇥", "mode"),
         ("⌃P", "files"),
         ("⌃R", "sessions"),
-        ("⌃O", "models"),
     )
 
     _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
