@@ -628,6 +628,30 @@ class Engine:
                             tool_call.id, f"Error: {error_msg}", is_error=True
                         )
                     )
+                except Exception as exc:  # noqa: BLE001
+                    duration_ms = int((time.monotonic() - tool_started) * 1000)
+                    error_msg = f"{tool_call.name}: {type(exc).__name__}: {exc}"
+                    logger.warning(
+                        "tool_call_unexpected_error name=%s duration_ms=%d error=%s",
+                        tool_call.name,
+                        duration_ms,
+                        error_msg,
+                    )
+                    emit_tool_audit(
+                        {
+                            "event": "tool.result",
+                            "tool_id": tool_call.id,
+                            "tool_name": tool_call.name,
+                            "success": False,
+                            "error": error_msg,
+                        }
+                    )
+                    await self.handle.emit(ErrorEvent(message=error_msg, retryable=False))
+                    results.append(
+                        Message.tool_result(
+                            tool_call.id, f"Error: {error_msg}", is_error=True
+                        )
+                    )
         return results
 
     _SNAPSHOT_TOOLS: frozenset[str] = frozenset(

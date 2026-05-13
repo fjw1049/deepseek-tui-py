@@ -19,6 +19,7 @@ from deepseek_tui.engine.events import (
     TextDeltaEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
+    UserInputRequiredEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
 
@@ -64,15 +65,21 @@ async def real_task_executor(
                 await handle.cancel("task_cancelled")
                 break
 
+            if engine_task.done():
+                exc = engine_task.exception()
+                if exc:
+                    error_msg = f"engine crashed: {exc}"
+                break
+
             if isinstance(event, TextDeltaEvent):
                 collected_text.append(event.text)
             elif isinstance(event, ErrorEvent):
-                # See real_subagent_executor: tool errors arrive here AND
-                # in messages as is_error results. Don't abort — model
-                # self-corrects next turn. Capture last error so we can
-                # surface it if the turn never completes normally.
                 error_msg = event.message
                 collected_text.append(f"\n[tool error] {event.message}\n")
+            elif isinstance(event, UserInputRequiredEvent):
+                future = handle.pending_user_inputs.get(event.tool_call_id)
+                if future and not future.done():
+                    future.set_result({"error": "Tasks cannot request user input"})
             elif isinstance(event, TurnCompleteEvent):
                 break
             elif isinstance(event, TurnCancelledEvent):
@@ -122,19 +129,21 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
                 await handle.cancel("subagent_cancelled")
                 raise asyncio.CancelledError
 
+            if engine_task.done():
+                exc = engine_task.exception()
+                if exc:
+                    raise RuntimeError(f"engine crashed: {exc}") from exc
+                break
+
             if isinstance(event, TextDeltaEvent):
                 collected_text.append(event.text)
                 agent.steps_taken += 1
             elif isinstance(event, ErrorEvent):
-                # Tool failures are surfaced as ErrorEvent by engine.py:625
-                # AND simultaneously fed back into messages as is_error tool
-                # results. Mirroring Rust ``run_subagent`` (mod.rs:3079-3082):
-                # tool errors do not abort the agent — the model sees the
-                # error in its next turn and self-corrects. We collect the
-                # text for visibility but keep the loop running. Truly fatal
-                # turns (context overflow, stream death) end via
-                # TurnComplete/TurnCancelled below.
                 collected_text.append(f"\n[tool error] {event.message}\n")
+            elif isinstance(event, UserInputRequiredEvent):
+                future = handle.pending_user_inputs.get(event.tool_call_id)
+                if future and not future.done():
+                    future.set_result({"error": "Sub-agents cannot request user input"})
             elif isinstance(event, TurnCompleteEvent):
                 break
             elif isinstance(event, TurnCancelledEvent):

@@ -46,6 +46,8 @@ class StatusBar(Static):
         ("⌃O", "models"),
     )
 
+    _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
     def __init__(self) -> None:
         super().__init__("")
         self._status: str = "ready"
@@ -59,6 +61,10 @@ class StatusBar(Static):
         self._currency: CostCurrency = CostCurrency.USD
         self._cache_hit_tokens: int = 0
         self._cache_miss_tokens: int = 0
+        self._spinning: bool = False
+        self._spin_phase: str = ""
+        self._spin_frame: int = 0
+        self._spin_timer = None
 
     def on_mount(self) -> None:
         self._refresh()
@@ -84,11 +90,37 @@ class StatusBar(Static):
     def set_started(self, ts: float | None = None) -> None:
         self._started_at = ts if ts is not None else time.monotonic()
         self._finished_at = None
+        self._start_spinner("thinking")
         self._refresh()
 
     def set_finished(self) -> None:
         if self._started_at is not None and self._finished_at is None:
             self._finished_at = time.monotonic()
+        self._stop_spinner()
+        self._refresh()
+
+    def set_phase(self, phase: str) -> None:
+        """Update the spinner phase label (e.g. tool name)."""
+        if self._spinning:
+            self._spin_phase = phase
+            self._refresh()
+
+    def _start_spinner(self, phase: str = "") -> None:
+        self._spinning = True
+        self._spin_phase = phase
+        self._spin_frame = 0
+        if self._spin_timer is None:
+            self._spin_timer = self.set_interval(1 / 12, self._tick_spinner)
+
+    def _stop_spinner(self) -> None:
+        self._spinning = False
+        self._spin_phase = ""
+        if self._spin_timer is not None:
+            self._spin_timer.stop()
+            self._spin_timer = None
+
+    def _tick_spinner(self) -> None:
+        self._spin_frame = (self._spin_frame + 1) % len(self._SPINNER_FRAMES)
         self._refresh()
 
     # --- new setters -------------------------------------------------
@@ -111,6 +143,10 @@ class StatusBar(Static):
 
     def _left_markup(self) -> Text:
         parts: list[str] = []
+        if self._spinning:
+            frame = self._SPINNER_FRAMES[self._spin_frame]
+            label = self._spin_phase or "working"
+            parts.append(f"[bold cyan]{frame}[/] [cyan]{label}[/]")
         if self._mode:
             parts.append(f"[cyan]{self._mode}[/]")
         if self._model:
@@ -118,7 +154,7 @@ class StatusBar(Static):
         cost_chip = self._cost_chip()
         if cost_chip:
             parts.append(cost_chip)
-        if self._status and self._status != "ready":
+        if not self._spinning and self._status and self._status != "ready":
             parts.append(f"[dim]{self._status}[/]")
         if not parts:
             return Text("")

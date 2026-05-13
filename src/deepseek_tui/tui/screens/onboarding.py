@@ -35,14 +35,14 @@ class OnboardingStep(str, enum.Enum):
 
 
 def default_marker_path() -> Path:
-    """``~/.deepseek/.onboarded`` — first-run completion flag.
+    """Mirror Rust ``default_marker_path`` (onboarding/mod.rs:134).
 
-    Mirrors Rust ``default_marker_path`` (onboarding/mod.rs:134). User-level
-    so the wizard only runs once per machine, not once per checkout.
+    Project-local since 2026-05-11 — each checkout decides whether the
+    user has finished its own onboarding.
     """
-    from deepseek_tui.config.paths import user_onboarded_marker_path
+    from deepseek_tui.config.paths import dot_deepseek_dir
 
-    return user_onboarded_marker_path()
+    return dot_deepseek_dir() / ".onboarded"
 
 
 def is_onboarded() -> bool:

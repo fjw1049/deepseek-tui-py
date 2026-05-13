@@ -85,22 +85,23 @@ class SubAgentType(str, Enum):
         """Return the system prompt for this agent type.
 
         Mirrors Rust ``SubAgentType::system_prompt`` (mod.rs:227-237).
-        For write-capable roles, appends ``_PATH_DISCIPLINE`` so they
-        explicitly reference the ``## Environment`` block's ``pwd``.
         """
         from deepseek_tui.prompts import load_prompt
 
         output_contract = load_prompt("subagent_output_format")
         base = _SUBAGENT_PROMPTS.get(self.value, "")
-        sections = [s for s in (base, output_contract) if s]
-        if self.value in _WRITE_CAPABLE_ROLES:
-            sections.append(_PATH_DISCIPLINE)
-        return "\n\n".join(sections)
+        return f"{base}\n\n{output_contract}" if base else output_contract
 
 
 _SUBAGENT_PROMPTS: dict[str, str] = {
     "general": (
         "You are a general-purpose sub-agent spawned to handle a specific task autonomously.\n\n"
+        "CRITICAL: File operations are sandboxed to the workspace directory.\n"
+        "- ALWAYS use relative paths (e.g., 'script.py', './src/utils.py', 'bubble_sort.py')\n"
+        "- NEVER use absolute paths (e.g., '/tmp/...', '/Users/...', '~/...', '/var/...')\n"
+        "- If the parent's prompt mentions an absolute path like '/tmp/file.py', ignore the path\n"
+        "  and use just the filename 'file.py' instead\n"
+        "- All file operations are relative to the workspace root\n\n"
         "Your scope is exactly what the parent assigned to you. Do not expand the\n"
         "objective — if you discover related work that needs doing, surface it under\n"
         "RISKS or BLOCKERS rather than starting it. Work autonomously: the parent is\n"
@@ -151,6 +152,12 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "You are an implementation sub-agent. Your job is to land the change\n"
         "the parent assigned — write the code, modify the files, satisfy the\n"
         "contract — with the minimum surrounding edit. Do not refactor adjacent code.\n\n"
+        "CRITICAL: File operations are sandboxed to the workspace directory.\n"
+        "- ALWAYS use relative paths (e.g., 'script.py', './src/utils.py', 'bubble_sort.py')\n"
+        "- NEVER use absolute paths (e.g., '/tmp/...', '/Users/...', '~/...', '/var/...')\n"
+        "- If the parent's prompt mentions an absolute path like '/tmp/file.py', ignore the path\n"
+        "  and use just the filename 'file.py' instead\n"
+        "- All file operations are relative to the workspace root\n\n"
         "Method:\n"
         "- Read target file(s) end-to-end before editing.\n"
         "- Prefer `edit_file` for narrow changes, `apply_patch` for multi-hunk.\n"
@@ -173,31 +180,15 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "registry — only the tools you see at runtime are available. Do not try\n"
         "to reach for a tool that is not registered; if the task needs one, put\n"
         "the gap under BLOCKERS and stop.\n\n"
+        "CRITICAL: File operations are sandboxed to the workspace directory.\n"
+        "- ALWAYS use relative paths (e.g., 'script.py', './src/utils.py', 'bubble_sort.py')\n"
+        "- NEVER use absolute paths (e.g., '/tmp/...', '/Users/...', '~/...', '/var/...')\n"
+        "- If the parent's prompt mentions an absolute path like '/tmp/file.py', ignore the path\n"
+        "  and use just the filename 'file.py' instead\n"
+        "- All file operations are relative to the workspace root\n\n"
         "Stay tightly scoped to the assigned objective."
     ),
 }
-
-
-# Shared path discipline for any sub-agent that writes files. The
-# ``## Environment`` block injected by the engine (see
-# ``engine/prompts.py::render_environment_block``) names the actual ``pwd``;
-# this directive points the agent at it. Appended to roles that may write
-# files (general / implementer / custom); read-only roles skip it since
-# they don't touch the filesystem.
-_PATH_DISCIPLINE = (
-    "## Paths\n\n"
-    "All file paths are relative to the ``pwd`` listed in the\n"
-    "``## Environment`` block above. Use relative paths only — absolute\n"
-    "paths outside the workspace are rejected by the tool layer with a\n"
-    "``path escapes workspace`` error, which costs you a turn.\n\n"
-    "Never write to ``/tmp``, ``/var/tmp``, ``~``, or any path starting\n"
-    "with ``/`` outside the workspace. For throwaway benchmark or probe\n"
-    "scripts, write them to a workspace-relative filename like\n"
-    "``bench.py`` or ``_probe.py`` (no leading slash); they will land\n"
-    "next to your code and remain inside the sandbox."
-)
-
-_WRITE_CAPABLE_ROLES = {"general", "implementer", "custom"}
 
 
 class SubAgentStatusKind(str, Enum):
