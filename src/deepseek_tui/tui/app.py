@@ -298,9 +298,9 @@ class DeepSeekTUI(App[None]):
         """Map a session id to a JSON path under ``~/.deepseek/sessions``."""
         from pathlib import Path
 
-        from deepseek_tui.config.paths import default_config_path
+        from deepseek_tui.config.paths import user_sessions_dir
 
-        sessions_dir = default_config_path().parent / "sessions"
+        sessions_dir = user_sessions_dir()
         if session_id in {"current", "latest"}:
             return sessions_dir / "current.json"
         absolute = Path(session_id).expanduser()
@@ -682,9 +682,9 @@ class DeepSeekTUI(App[None]):
     @staticmethod
     def _discover_session_picks() -> list[tuple[str, str]]:
         """Read ``~/.deepseek/sessions/*.json`` into picker tuples."""
-        from deepseek_tui.config.paths import default_config_path
+        from deepseek_tui.config.paths import user_sessions_dir
 
-        sessions_dir = default_config_path().parent / "sessions"
+        sessions_dir = user_sessions_dir()
         if not sessions_dir.exists():
             return []
         items: list[tuple[str, str]] = []

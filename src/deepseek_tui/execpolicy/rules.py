@@ -219,15 +219,15 @@ class ExecPolicyConfig:
 
 
 def default_execpolicy_path() -> Path | None:
-    """Return ``./.deepseek/execpolicy.toml`` or ``None`` if unavailable.
+    """``~/.deepseek/execpolicy.toml`` — or ``None`` if HOME unavailable.
 
-    Mirrors Rust ``default_execpolicy_path`` (rules.rs:67-69). Project-local
-    since 2026-05-11 so policy files travel with the repo.
+    Mirrors Rust ``default_execpolicy_path`` (execpolicy/rules.rs:72-74).
+    User-level — policy travels with the operator, not with each checkout.
     """
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    from deepseek_tui.config.paths import user_execpolicy_path
 
     try:
-        return dot_deepseek_dir() / "execpolicy.toml"
+        return user_execpolicy_path()
     except (RuntimeError, OSError):  # pragma: no cover — platform quirks
         return None
 

@@ -51,9 +51,9 @@ _DEFAULT_FORMAT = (
 )
 _DEFAULT_DATEFMT = "%Y-%m-%dT%H:%M:%S%z"
 
-# Project-local default. ``DEEPSEEK_HOME`` env override is honored through
-# ``dot_deepseek_dir()`` callers; this constant is the bare fallback when
-# logging starts before Config is loaded.
+# Project-local default. ``project_logs_dir(workspace)`` is the typed
+# helper for callers that have a workspace handle; this constant is the
+# bare fallback used before Config is loaded.
 DEFAULT_LOG_DIR = Path(".deepseek/logs")
 DEFAULT_KEEP_HOURS = 24
 

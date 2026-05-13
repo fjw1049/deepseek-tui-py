@@ -21,6 +21,18 @@ class ToolContext:
     subagent_manager: SubAgentManager | None = None
 
     def resolve_path(self, path: str) -> Path:
+        """Resolve ``path`` against the workspace, refusing escapes.
+
+        Mirrors Rust ``PathEscape`` (tools/src/lib.rs:67-75): when the
+        resolved path falls outside ``working_directory``, raise
+        ``ValueError`` instead of silently rewriting it. The negative
+        signal lets the LLM self-correct on the next turn — without it,
+        absolute-path hallucinations (``/home/user/foo.py``) keep
+        succeeding and the model never learns.
+
+        ``trust_mode`` bypasses the check (used for system-initiated
+        operations that must touch e.g. ``~/.deepseek``).
+        """
         workspace = self.working_directory.expanduser().resolve()
         candidate = Path(path).expanduser()
         if candidate.is_absolute():
@@ -31,16 +43,8 @@ class ToolContext:
             try:
                 resolved.relative_to(workspace)
             except ValueError as exc:
-                # Path escapes workspace - extract filename and use it in workspace
-                # This handles cases where LLM generates absolute paths like /home/user/file.py
-                filename = resolved.name
-                if filename:
-                    resolved = (workspace / filename).resolve()
-                    # Verify the new path is in workspace
-                    try:
-                        resolved.relative_to(workspace)
-                    except ValueError:
-                        raise ValueError(f"path escapes workspace: {path}") from exc
-                else:
-                    raise ValueError(f"path escapes workspace: {path}") from exc
+                raise ValueError(
+                    f"path escapes workspace: {path!r} "
+                    f"(workspace: {workspace}). Use a relative path."
+                ) from exc
         return resolved

@@ -532,22 +532,47 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
 
 
 def _memory_path(context: ToolContext) -> Path:
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    """``~/.deepseek/memory.md`` — cross-project long-term memory.
+
+    Mirrors Rust ``tui/config.rs:1930``. ``DEEPSEEK_MEMORY_PATH`` overrides
+    for tests.
+    """
+    from deepseek_tui.config.paths import user_memory_path
 
     env = os.environ.get("DEEPSEEK_MEMORY_PATH", "").strip()
     if env:
         return Path(env).expanduser()
-    return dot_deepseek_dir() / "memory.md"
+    return user_memory_path()
 
 
 def _notes_path(context: ToolContext) -> Path:
-    return context.working_directory / ".deepseek" / "notes.md"
+    """``~/.deepseek/notes.txt`` — user scratch notes (Rust .txt format).
+
+    ``DEEPSEEK_NOTES_PATH`` env var overrides (used by tests to isolate
+    writes from the real ``~/.deepseek/notes.txt``).
+    """
+    from deepseek_tui.config.paths import user_notes_path
+
+    env = os.environ.get("DEEPSEEK_NOTES_PATH", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return user_notes_path()
 
 
 def _archives_dir(context: ToolContext) -> Path:
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    """Cycle archive search root.
 
-    return dot_deepseek_dir() / "sessions" / "cycles"
+    Rust cycle archives live at ``~/.deepseek/sessions/<id>/cycles/``
+    (cycle_manager.rs:460-475); ``_bm25_search`` recurses under this root
+    to find every session's cycles. ``DEEPSEEK_ARCHIVES_DIR`` env var
+    overrides (used by tests to isolate from the real sessions tree).
+    """
+    from deepseek_tui.config.paths import user_sessions_dir
+
+    env = os.environ.get("DEEPSEEK_ARCHIVES_DIR", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return user_sessions_dir()
 
 
 def _find_skill(name: str, context: ToolContext) -> Path:
@@ -616,7 +641,10 @@ def _bm25_search(
         return []
 
     documents: list[dict[str, Any]] = []
-    for path in sorted(archives_dir.glob("*.jsonl")):
+    # Walk any ``*.jsonl`` under ``archives_dir`` so we pick up both the
+    # real layout (``sessions/<id>/cycles/*.jsonl`` per Rust
+    # cycle_manager.rs:460-475) and tests that stage flat files.
+    for path in sorted(archives_dir.rglob("*.jsonl")):
         cycle_num = _extract_cycle_num(path.name)
         if cycle_filter is not None and cycle_num != cycle_filter:
             continue

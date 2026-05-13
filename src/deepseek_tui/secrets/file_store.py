@@ -64,20 +64,19 @@ class FileKeyringStore(KeyringStore):
 
     @staticmethod
     def default_path() -> Path:
-        """Resolve ``./.deepseek/secrets/secrets.json``.
+        """Resolve ``~/.deepseek/secrets/secrets.json``.
 
-        Project-local since 2026-05-11 (was ``~/.deepseek/...``). Each
-        checkout carries its own secret store; cross-project key leakage
-        no longer possible. Override path with the ``DEEPSEEK_HOME``
-        env var when a shared location is required.
+        User-level: credentials must NOT live under a project checkout,
+        otherwise they ship with the repo or leak across clones. Mirrors
+        Rust's secret store location. ``DEEPSEEK_HOME`` env var overrides.
         """
-        from deepseek_tui.config.paths import dot_deepseek_dir
+        from deepseek_tui.config.paths import user_deepseek_dir
 
         try:
-            return dot_deepseek_dir() / "secrets" / "secrets.json"
+            return user_deepseek_dir() / "secrets" / "secrets.json"
         except (RuntimeError, OSError) as err:  # pragma: no cover
             raise SecretsError(
-                "could not resolve .deepseek directory for FileKeyringStore"
+                "could not resolve ~/.deepseek directory for FileKeyringStore"
             ) from err
 
     def get(self, key: str) -> str | None:

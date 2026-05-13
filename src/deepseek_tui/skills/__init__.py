@@ -29,13 +29,13 @@ SYSTEM_VERSION_MARKER = ".system-installed-version"
 
 
 def default_skills_dir() -> Path:
-    """Return ``./.deepseek/skills``.
+    """``~/.deepseek/skills`` — user-level skill registry.
 
-    Project-local since 2026-05-11: skills travel with the checkout.
+    Stage 3.3 will add project-level overlay (``<ws>/.deepseek/skills``).
     """
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    from deepseek_tui.config.paths import user_skills_dir
 
-    return dot_deepseek_dir() / "skills"
+    return user_skills_dir()
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,11 +10,11 @@ from deepseek_tui.config.models import Config
 from deepseek_tui.config.paths import (
     DEFAULT_MANAGED_CONFIG_PATH,
     DEFAULT_REQUIREMENTS_PATH,
-    default_config_path,
     dotenv_path,
     expand_path,
     load_dotenv_file,
     project_config_path,
+    user_config_path,
 )
 
 try:
@@ -81,7 +81,7 @@ class ConfigLoader:
             Path.cwd() / "deepseek-tui.toml",
             Path.cwd() / ".deepseek-tui.toml",
             Path.home() / ".config" / "deepseek-tui" / "config.toml",
-            default_config_path(),
+            user_config_path(),
         ]
         for candidate in candidates:
             if candidate.exists():

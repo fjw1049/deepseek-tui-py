@@ -213,7 +213,7 @@ class McpStdioServer:
 
     def _resources_list(self) -> dict[str, Any]:
         """``resources/list`` — workspace root + each saved session JSON."""
-        from deepseek_tui.config.paths import default_config_path
+        from deepseek_tui.config.paths import user_sessions_dir
 
         resources: list[dict[str, Any]] = [
             {
@@ -223,7 +223,7 @@ class McpStdioServer:
                 "mimeType": "inode/directory",
             }
         ]
-        sessions_dir = default_config_path().parent / "sessions"
+        sessions_dir = user_sessions_dir()
         if sessions_dir.exists():
             for path in sorted(sessions_dir.glob("*.json")):
                 resources.append(
@@ -238,14 +238,14 @@ class McpStdioServer:
 
     def _resources_read(self, params: dict[str, Any]) -> dict[str, Any]:
         """``resources/read`` — return raw bytes for a known URI."""
-        from deepseek_tui.config.paths import default_config_path
+        from deepseek_tui.config.paths import user_sessions_dir
 
         uri = params.get("uri", "")
         if not isinstance(uri, str) or not uri:
             raise ValueError("'uri' is required")
         if uri.startswith("session://"):
             stem = uri[len("session://"):]
-            sessions_dir = default_config_path().parent / "sessions"
+            sessions_dir = user_sessions_dir()
             path = sessions_dir / f"{stem}.json"
             if not path.exists():
                 raise ValueError(f"Session not found: {stem}")

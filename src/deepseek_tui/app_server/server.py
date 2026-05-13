@@ -55,11 +55,11 @@ def build_fastapi_app(runtime: AppRuntime) -> Any:
     # RuntimeThreadManagerConfig.data_dir defaults next to the config file.
     from deepseek_tui.app_server.runtime_threads import RuntimeThreadManagerConfig
     from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_tasks_dir, user_threads_dir
 
     _mgr_cfg = RuntimeThreadManagerConfig(
-        data_dir=default_config_path().parent / "threads",
-        task_data_dir=default_config_path().parent / "tasks",
+        data_dir=user_threads_dir(),
+        task_data_dir=user_tasks_dir(),
     )
     app.state.thread_manager = RuntimeThreadManager(
         config=runtime.config,

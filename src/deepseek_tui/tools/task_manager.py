@@ -257,19 +257,15 @@ ExecutorFunc = Callable[[ExecutionTask, asyncio.Event], Awaitable[TaskExecutionR
 
 
 def default_tasks_dir() -> Path:
-    """Return the default task data directory.
+    """``~/.deepseek/tasks/`` — cross-project task queue.
 
-    Mirrors Rust `default_tasks_dir()` (task_manager.rs:1629). Project-local
-    since 2026-05-11 — tasks persist under ``./.deepseek/tasks/`` so each
-    checkout has its own queue (zombie pytest tasks can no longer poison
-    other projects).
+    Mirrors Rust ``default_tasks_dir`` (task_manager.rs:1629). User-level so
+    background tasks survive across project switches. ``DEEPSEEK_TASKS_DIR``
+    env var overrides.
     """
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    from deepseek_tui.config.paths import user_tasks_dir
 
-    env = os.environ.get("DEEPSEEK_TASKS_DIR", "").strip()
-    if env:
-        return Path(env)
-    return dot_deepseek_dir() / "tasks"
+    return user_tasks_dir()
 
 
 async def _stub_executor(

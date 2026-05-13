@@ -222,8 +222,8 @@ def doctor(
     loaded = _load_config(config, profile, provider, model)
     typer.echo(f"  provider: {loaded.provider}")
     typer.echo(f"  model: {loaded.model or loaded.default_text_model}")
-    from deepseek_tui.config.paths import default_config_path
-    typer.echo(f"  config path: {default_config_path()}")
+    from deepseek_tui.config.paths import user_config_path
+    typer.echo(f"  config path: {user_config_path()}")
 
     api_key = loaded.api_key or loaded.effective_provider_config().api_key
     typer.echo(f"  api_key: {'set' if api_key else 'NOT SET'}")
@@ -532,8 +532,8 @@ def config_list(
 @config_app.command("path")
 def config_path() -> None:
     """Print the config file path."""
-    from deepseek_tui.config.paths import default_config_path
-    typer.echo(default_config_path())
+    from deepseek_tui.config.paths import user_config_path
+    typer.echo(user_config_path())
 
 
 @config_app.command("show")
@@ -568,9 +568,9 @@ def _config_get_value(config: Config, key: str) -> str | None:
 
 def _cli_config_write(key: str, value: str | None) -> None:
     """Set or unset a key in the config TOML file."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_config_path
 
-    config_path = default_config_path()
+    config_path = user_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
@@ -676,11 +676,11 @@ app.add_typer(thread_app, name="thread")
 
 def _open_session_manager() -> tuple[Any, Any]:
     """Open Database + SessionManager. Returns (db, manager) or (None, None)."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_state_db_path
     from deepseek_tui.state.database import Database
     from deepseek_tui.state.session_manager import SessionManager
 
-    db_path = default_config_path().parent / "state.db"
+    db_path = user_state_db_path()
     if not db_path.exists():
         return None, None
     db = Database(db_path)
@@ -1004,12 +1004,12 @@ def sessions(
     limit: int = typer.Option(20, "--limit", help="Max sessions to show."),
 ) -> None:
     """List saved TUI sessions."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_state_db_path
     from deepseek_tui.state.database import Database
     from deepseek_tui.state.session_manager import SessionManager
 
     async def _list() -> None:
-        db_path = default_config_path().parent / "state.db"
+        db_path = user_state_db_path()
         if not db_path.exists():
             typer.echo("No saved sessions.")
             return
@@ -1070,14 +1070,18 @@ def fork(
 @app.command()
 def setup() -> None:
     """Bootstrap MCP config and/or skills directories."""
-    from deepseek_tui.config.paths import default_config_path
-    config_dir = default_config_path().parent
+    from deepseek_tui.config.paths import (
+        user_deepseek_dir,
+        user_mcp_config_path,
+        user_skills_dir,
+    )
+    config_dir = user_deepseek_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
-    mcp_path = config_dir / "mcp.json"
+    mcp_path = user_mcp_config_path()
     if not mcp_path.exists():
         mcp_path.write_text("{}\n", encoding="utf-8")
         typer.echo(f"Created {mcp_path}")
-    skills_dir = config_dir / "skills"
+    skills_dir = user_skills_dir()
     skills_dir.mkdir(parents=True, exist_ok=True)
     typer.echo(f"Skills directory: {skills_dir}")
     typer.echo("Setup complete.")
@@ -1088,9 +1092,9 @@ def mcp(
     config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Manage MCP servers."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_mcp_config_path
 
-    mcp_path = default_config_path().parent / "mcp.json"
+    mcp_path = user_mcp_config_path()
     if not mcp_path.exists():
         typer.echo("No MCP servers configured.")
         typer.echo(f"Config expected at: {mcp_path}")
@@ -1171,12 +1175,12 @@ def metrics(
     config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Print a usage rollup from the audit log."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_state_db_path
     from deepseek_tui.state.database import Database
     from deepseek_tui.state.session_manager import SessionManager
 
     async def _metrics() -> None:
-        db_path = default_config_path().parent / "state.db"
+        db_path = user_state_db_path()
         if not db_path.exists():
             total_sessions = 0
         else:

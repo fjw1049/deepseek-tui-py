@@ -83,7 +83,9 @@ async def test_remember_multiple_entries(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
-async def test_note_appends_entry(tmp_path: Path) -> None:
+async def test_note_appends_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    notes_file = tmp_path / "notes.txt"
+    monkeypatch.setenv("DEEPSEEK_NOTES_PATH", str(notes_file))
     ctx = _make_context(tmp_path)
     tool = NoteTool()
 
@@ -91,7 +93,6 @@ async def test_note_appends_entry(tmp_path: Path) -> None:
     assert result.success
     assert "Note appended" in result.content
 
-    notes_file = tmp_path / ".deepseek" / "notes.md"
     assert notes_file.exists()
     body = notes_file.read_text()
     assert "checkpoint reached" in body
@@ -243,7 +244,8 @@ def test_bm25_search_no_archives(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_recall_archive_no_dir(tmp_path: Path) -> None:
+async def test_recall_archive_no_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_ARCHIVES_DIR", str(tmp_path / "nonexistent"))
     ctx = _make_context(tmp_path)
     tool = RecallArchiveTool()
 

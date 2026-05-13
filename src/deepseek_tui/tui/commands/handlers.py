@@ -394,9 +394,9 @@ def cmd_config(args: str, app: DeepSeekTUI) -> CommandResult:
 
 def _config_write(key: str, value: str | None) -> CommandResult:
     """Set or unset a key in ~/.deepseek/config.toml."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_config_path
 
-    config_path = default_config_path()
+    config_path = user_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
@@ -631,9 +631,9 @@ def cmd_cost(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/stash")
 def cmd_stash(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    from deepseek_tui.config.paths import user_stash_dir
 
-    stash_dir = dot_deepseek_dir() / "stash"
+    stash_dir = user_stash_dir()
     stash_dir.mkdir(parents=True, exist_ok=True)
 
     sub = args.strip().split(maxsplit=1)
@@ -752,9 +752,9 @@ def cmd_jobs(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/mcp")
 def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_mcp_config_path
 
-    mcp_path = default_config_path().parent / "mcp.json"
+    mcp_path = user_mcp_config_path()
     if not mcp_path.exists():
         return CommandResult(output="No MCP servers configured.")
     try:
@@ -799,9 +799,9 @@ def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/cycles")
 def cmd_cycles(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    from deepseek_tui.config.paths import user_sessions_dir
 
-    archive_base = dot_deepseek_dir() / "sessions"
+    archive_base = user_sessions_dir()
     if not archive_base.exists():
         return CommandResult(output="No cycle archives found.")
 
@@ -843,9 +843,10 @@ def cmd_diff(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/skills")
 def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import default_config_path
+    # TODO(stage-3.3): merge user-level + project-level skills directories.
+    from deepseek_tui.config.paths import user_skills_dir
 
-    skills_dir = default_config_path().parent / "skills"
+    skills_dir = user_skills_dir()
     if not skills_dir.is_dir():
         return CommandResult(output="No skills installed.")
 
@@ -866,9 +867,9 @@ def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
     if not args.strip():
         return CommandResult(error="Usage: /skill <name>")
 
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_skills_dir
 
-    skills_dir = default_config_path().parent / "skills"
+    skills_dir = user_skills_dir()
     skill_path = skills_dir / args.strip() / "SKILL.md"
     if not skill_path.exists():
         return CommandResult(error=f"Skill not found: {args.strip()}")

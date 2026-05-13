@@ -844,9 +844,9 @@ class Engine:
         Mirrors Rust ``Engine::auto_save_session`` behavior. Silent on failure.
         """
         try:
-            from deepseek_tui.config.paths import default_config_path
+            from deepseek_tui.config.paths import user_sessions_dir
 
-            sessions_dir = default_config_path().parent / "sessions"
+            sessions_dir = user_sessions_dir()
             sessions_dir.mkdir(parents=True, exist_ok=True)
             session_file = sessions_dir / "current.json"
             import json as _json
