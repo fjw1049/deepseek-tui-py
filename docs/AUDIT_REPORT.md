@@ -1,538 +1,214 @@
-# DeepSeek-TUI Python 移植完整性审核报告
+# DeepSeek-TUI Python 移植代码审核报告（修订版）
 
-**审核日期**: 2026-05-12  
-**项目**: deepseek-tui-py-main (Python 移植版)  
-**参考**: DeepSeek-TUI Rust 原始实现  
-**审核范围**: Task/Subagent/Todo/Skill 四大系统
-
----
-
-## 执行摘要
-
-本次审核对比了 Python 移植版与 Rust 原始实现，发现了 **4 个安全漏洞**、**15 个功能缺失**、**12 个实现 Bug**，以及 **10 个未注册工具**。
-
-### 严重性分级
-
-- **P0 (阻断性)**: 5 个 - 安全漏洞和核心功能缺失
-- **P1 (高优先级)**: 8 个 - 功能不完整或有明显 Bug
-- **P2 (中优先级)**: 14 个 - 次要功能缺失或优化项
-
-### 系统完整性评分
-
-| 系统 | 完整性 | 关键问题 |
-|------|--------|----------|
-| **Task** | 62% | 缺少 git 集成、artifact 写入 |
-| **Subagent** | 6.25/10 | 缺少 cleanup、验证不足 |
-| **Todo** | 75% | Schema 验证缺失、约束未实现 |
-| **Skill** | 55% | 4 个安全漏洞、递归发现缺失 |
+**审核日期**: 2026-05-13
+**项目**: deepseek-tui-py-main
+**方法**: 阅读源码逐行核实；行号、方法名、Schema 字段都以仓库当前 HEAD 为准
+**修订说明**: 本文件取代旧版审核报告。旧版混淆"设计 stub"与"实现 Bug"、把已存在但换名的方法记为"缺失"、把 OR 验证模式记为"Schema 漏洞"、并幻觉了一批不存在的类名（Cron*Tool / ScheduleWakeupTool / TodoDeleteTool）。本版只保留经代码核实的结论。
 
 ---
 
-## 一、工具注册审核
+## 一、复核摘要
 
-### 1.1 未注册工具清单
-
-以下 **10 个工具已实现但未在 `builder.py` 中注册**：
-
-#### Automation Tools (8 个)
-- `CronCreateTool` - 创建定时任务
-- `CronDeleteTool` - 删除定时任务
-- `CronListTool` - 列出定时任务
-- `ScheduleWakeupTool` - 调度唤醒
-- `TodoWriteTool` - 写入 Todo
-- `TodoAddTool` - 添加 Todo 项
-- `TodoUpdateTool` - 更新 Todo 项
-- `TodoDeleteTool` - 删除 Todo 项
-
-#### Web Tools (2 个)
-- `FinanceTool` - 金融数据查询
-- `WebRunTool` - Web 运行工具
-
-**文件位置**:
-- `src/deepseek_tui/tools/automation_tools.py` (已实现)
-- `src/deepseek_tui/tools/web_tools.py` (已实现)
-- `src/deepseek_tui/tools/builder.py:75-192` (未注册)
-
-**影响**: 这些工具虽然已实现，但 LLM 无法调用，导致功能不可用。
+| 系统 | 真实问题数 | 旧版误报数 | 主要发现 |
+|------|------------|------------|----------|
+| 工具注册 | 3 项待决策 | 7 项幻觉类名 | 真正未注册的是 `Automation*Tool` 8 个 + `WebRunTool` + `FinanceTool`（其中 Finance 是 stub） |
+| Task | 1 个真缺失 + 3 个待决策 | 3 个 Bug 误判（皆为有意 stub / 设计分工） | TaskGate / PrAttemptRecord / Preflight 都是按"记录器 + 外部执行"设计，不是 Bug |
+| Subagent | 2 个真缺失 + 2 个可选优化 | 2 个反向错误 | `cleanup` 实名 `shutdown` 已存在；`assign` 实际有 `_require_agent` 校验；7 种 agent 类型已定义 |
+| Todo | 1 个真缺失 | 3 个 Schema 误判 | Schema 用"两字段 OR"运行时校验，不是缺漏；唯一真问题是单 in-progress 约束未做 |
+| Skill | 2 个真 P0 + 3 个 P1 + 多个 P2 | 2 个 P0 被夸大 | Gzip bomb 和网络白名单确为 P0；路径遍历 / symlink 风险被旧版高估 |
 
 ---
 
-## 二、Task 系统审核
+## 二、工具注册
 
-### 2.1 完整性评分: 62%
+### 2.1 真实情况
 
-**已实现**: 11 个工具全部注册，基础 CRUD 功能完整  
-**缺失**: Git 集成、Artifact 写入、事件流处理
+`builder.py` 的注册分支按 feature flag 组织。逐项核实：
 
-### 2.2 关键 Bug (P0)
+- **Todo 工具**已注册：`TodoListTool / TodoWriteTool / TodoAddTool / TodoUpdateTool` 各注册 `canonical=True/False` 两次（builder.py:95-109）。旧版"TodoWrite/Add/Update 未注册"是错的。
+- **`TodoDeleteTool` 不存在**于 todo_tools.py，旧版凭空虚构。
+- **`CronCreateTool / CronDeleteTool / CronListTool / ScheduleWakeupTool` 不存在**于 automation_tools.py，旧版凭空虚构（疑似把 Claude Code 的工具名套了过来）。
 
-#### Bug #1: TaskGateRunTool 不执行命令
-**位置**: `task_tools.py:185-248`  
-**问题**: 工具仅记录命令到 gate，但不实际执行  
-**Rust 参考**: `task_tools.rs:1058-1120` 使用 `tokio::process::Command`
+### 2.2 实际未注册的工具
 
-```python
-# 当前实现 (错误)
-gate_id = manager.add_gate(task_id, command)
-return {"gate_id": gate_id}  # 仅返回 ID，未执行
+#### Automation Tools（automation_tools.py，8 个类，均未注册）
 
-# 应该实现
-gate_id = manager.add_gate(task_id, command)
-result = await manager.execute_gate(gate_id)  # 执行命令
-return {"gate_id": gate_id, "output": result}
-```
+`AutomationCreateTool / AutomationListTool / AutomationReadTool / AutomationUpdateTool / AutomationPauseTool / AutomationResumeTool / AutomationDeleteTool / AutomationRunTool`
 
-**影响**: 用户期望的命令不会被执行，导致工作流中断。
+**状态**：实现存在，但 store 完全在 `ToolContext.metadata` 字典里（automation_tools.py:261-272），进程退出即丢；trigger / action 只是字符串，没有调度执行后端。属于半成品脚手架。
 
-#### Bug #2: PrAttemptRecordTool 不调用 git
-**位置**: `task_tools.py:405-479`  
-**问题**: 缺少 `git diff` 和 `git apply` 调用  
-**Rust 参考**: `task_tools.rs:1458-1520`
+**待决策**：注册（需先决定持久化与触发执行如何接管）/ 删除 / 保留待用。
 
-```python
-# 缺失的实现
-diff_output = subprocess.run(
-    ["git", "diff", "--cached"],
-    capture_output=True, text=True
-).stdout
+#### Web Tools
 
-subprocess.run(
-    ["git", "apply", "--check"],
-    input=diff_output, text=True
-)
-```
-
-**影响**: PR 尝试记录不包含实际 diff，无法验证补丁可应用性。
-
-#### Bug #3: PrAttemptPreflightTool 不运行 git apply --check
-**位置**: `task_tools.py:558-604`  
-**问题**: 缺少预检查逻辑  
-**Rust 参考**: `task_tools.rs:1622-1680`
-
-**影响**: 无法在提交前验证补丁是否会产生冲突。
-
-### 2.3 缺失功能 (P1)
-
-#### 缺失 #1: TaskManager.write_task_artifact()
-**Rust 参考**: `manager.rs:1245-1280`  
-**影响**: 无法将任务输出写入 artifact 文件
-
-#### 缺失 #2: TaskExecutionEvent 流处理
-**Rust 参考**: `manager.rs:890-920`  
-**影响**: 无法实时监控任务执行状态
-
-#### 缺失 #3: Schema 版本不一致
-**问题**: Python 使用 Task v1，Rust 已升级到 v2  
-**影响**: 跨版本数据不兼容
-
-### 2.4 Python 改进项 ✅
-
-**改进 #1**: Workspace 存在性检查  
-**位置**: `task_manager.py:819-832`  
-**优势**: Python 在恢复任务前检查 workspace 是否存在，Rust 无此检查
+- `WebRunTool`（web_tools.py:93-149）：依赖 Playwright，未注册。可在 `cfg.features.web_search` 分支加注册，或新增 `features.web_run` 独立 flag。
+- `FinanceTool`（web_tools.py:152-183）：**stub** —— 直接返回 `"(finance stub for {ticker} ...)"`，metadata `stub: True`。注册它等于把假数据暴露给 LLM，建议**先不注册**，要么实现真实数据源、要么删除。
 
 ---
 
-## 三、Subagent 系统审核
+## 三、Task 系统
 
-### 3.1 完整性评分: 6.25/10
+### 3.1 行数与注册
 
-**已实现**: 10 个工具全部注册，基础通信功能完整  
-**缺失**: Cleanup 方法、参数验证、深度限制
+- `task_tools.py` 671 行 ✅
+- `task_manager.py` **888 行**（旧版误写 872）
+- `cfg.features.tasks` 分支共注册 11 个工具（builder.py:146-160）：TaskCreate / TaskList / TaskRead / TaskCancel / TaskGateRun / TaskShellStart / TaskShellWait / PrAttemptRecord / PrAttemptList / PrAttemptRead / PrAttemptPreflight ✅
 
-### 3.2 关键 Bug (P0)
+### 3.2 旧版误判（澄清）
 
-#### Bug #1: 缺少 cleanup() 方法
-**位置**: `subagent/manager.py` (整个文件)  
-**Rust 参考**: `mod.rs:1458-1470`
+| 旧版条目 | 真实情况 |
+|----------|----------|
+| Bug #1：TaskGateRunTool 不执行命令 | **不是 Bug，是设计分工。** 该工具是**记录器**：接收 exit_code / status / duration_ms 并 append 到 `task.gates`（task_tools.py:241-243）。命令执行由 `TaskShellStartTool / TaskShellWaitTool` 负责。 |
+| Bug #2：PrAttemptRecordTool 不调用 git | **不是 Bug，是设计分工。** 该工具记录 `TaskAttemptRecord` 元数据（含 `patch_path` 字段，task_tools.py:451-471）。git 操作由 shell 工具完成。 |
+| Bug #3：PrAttemptPreflightTool 不做 `git apply --check` | **是 stub，不是 Bug。** 工具自己的 description 写明 `(stub: returns a diagnostics summary)`（task_tools.py:565）。返回 base_ref / head_ref / existing_attempts 计数。要不要做成真预检查是产品决定，不是缺陷。 |
 
-```rust
-// Rust 实现
-pub async fn cleanup(&mut self) {
-    for (_, child) in self.children.drain() {
-        child.handle.abort();
-    }
-    self.mailbox.close();
-}
-```
+### 3.3 真实缺失 / 待决策
 
-**影响**: 
-- 子 agent 进程不会被清理
-- Mailbox 通道不会关闭
-- **内存泄漏风险**
-
-#### Bug #2: assign() 缺少参数验证
-**位置**: `subagent/manager.py:457-478`  
-**问题**: 不验证 `agent_id` 是否存在
-
-```python
-# 当前实现 (错误)
-def assign(self, agent_id: str, task_id: str):
-    self.assignments[agent_id] = task_id  # 直接赋值
-
-# 应该实现
-def assign(self, agent_id: str, task_id: str):
-    if agent_id not in self.children:
-        raise ValueError(f"Agent {agent_id} not found")
-    self.assignments[agent_id] = task_id
-```
-
-**影响**: 可能分配任务给不存在的 agent，导致任务丢失。
-
-#### Bug #3: spawn() 缺少 max_spawn_depth 检查
-**位置**: `subagent/manager.py:402-426`  
-**Rust 参考**: `mod.rs:1120-1135`
-
-```rust
-// Rust 实现
-if self.spawn_depth >= MAX_SPAWN_DEPTH {
-    return Err("Maximum spawn depth exceeded");
-}
-```
-
-**影响**: 无限递归 spawn 可能导致资源耗尽。
-
-#### Bug #4: wait() 轮询间隔过短
-**位置**: `subagent/manager.py:538`  
-**问题**: 50ms vs Rust 的 250ms
-
-```python
-# 当前实现
-await asyncio.sleep(0.05)  # 50ms
-
-# 应该改为
-await asyncio.sleep(0.25)  # 250ms
-```
-
-**影响**: CPU 占用过高，尤其在等待多个 agent 时。
-
-#### Bug #5: AgentAssignTool 缺少验证
-**位置**: `subagent_tools.py:AgentAssignTool`  
-**问题**: 不检查 agent_id 和 task_id 有效性
-
-### 3.3 缺失功能 (P1)
-
-#### 缺失 #1: 6 种 agent 类型定义
-**Rust 参考**: `types.rs:45-120`  
-**Python 状态**: 仅有字符串标识，无类型定义
-
-#### 缺失 #2: Mailbox 消息优先级
-**Rust 参考**: `mailbox.rs:80-95`  
-**影响**: 无法优先处理紧急消息
+- **Schema v1（task_manager.py:23 `CURRENT_TASK_SCHEMA_VERSION = 1`）**：是否升 v2 取决于是否要与 Rust 端跨读。无明确兼容需求时不动。
+- **`write_task_artifact()` 没有同名方法**：但 TaskShellWaitTool 直接 `task.artifacts.append(TaskArtifactRef(...))`（task_tools.py:376-382）。如果将来要从更多入口写 artifact，可以抽个方法；目前不是缺陷。
+- **TaskExecutionEvent 流处理**：Python 用 `TaskTimelineEntry`（task_manager.py:47-51）维护事件序列。语义不同但功能在。是否需要更细粒度的执行事件由 UI 需求决定。
+- **改进 ✅**：恢复 QUEUED 任务时检查 workspace 是否存在（task_manager.py:835-848）。
 
 ---
 
-## 四、Todo 系统审核
+## 四、Subagent 系统
 
-### 4.1 完整性评分: 75%
+### 4.1 行数与注册
 
-**已实现**: 8 个工具 (4 todo + 4 checklist 别名)  
-**缺失**: Schema 必填字段、单一 in-progress 约束
+- `subagent_tools.py` **580 行**（旧版误写 541）
+- `subagent/manager.py` **750 行**（旧版误写 728）
+- `cfg.features.subagents` 分支注册 10 个工具（builder.py:162-175）：AgentSpawn / AgentResult / AgentCancel / AgentClose / AgentResume / AgentList / AgentSendInput / AgentAssign / AgentWait / DelegateToAgent ✅
 
-### 4.2 关键 Bug (P1)
+### 4.2 旧版误判（澄清）
 
-#### Bug #1: TodoWriteTool Schema 缺少必填字段
-**位置**: `todo_tools.py:228-258`
+| 旧版条目 | 真实情况 |
+|----------|----------|
+| Bug #1：缺少 `cleanup()` | **方法名错。** 实际叫 `shutdown()`（manager.py:561-574），取消所有子任务并清理。功能完整。建议保留 `shutdown` 名（与 asyncio 习惯一致），不必改成 `cleanup`。 |
+| Bug #2：`assign()` 不验证 agent_id | **反向错误。** `assign()`（manager.py:478-499）第 487 行调用 `self._require_agent(agent_id)`（定义在 577-581 行），不存在则抛错。验证存在。 |
+| Bug #5：AgentAssignTool 缺验证 | **位置描述误导。** 工具层薄（subagent_tools.py:455-476），但调用 `manager.assign()` 时由 `_require_agent` 兜住。可考虑在工具层提前给出更友好的错误信息，但不是漏洞。 |
+| 缺失 #1：6 种 agent 类型未定义 | **反向错误。** manager.py:44-51 定义了 **7 种**：GENERAL / EXPLORE / PLAN / REVIEW / IMPLEMENTER / VERIFIER / CUSTOM。 |
 
-```python
-# 当前 Schema (错误)
-"required": []  # 空数组
+### 4.3 真实问题
 
-# 应该是
-"required": ["items"]
-```
-
-**影响**: 可以创建空的 Todo 列表，违反业务逻辑。
-
-#### Bug #2: TodoAddTool Schema 缺少 required
-**位置**: `todo_tools.py:325-340`
-
-```python
-# 缺少
-"required": ["content"]
-```
-
-**影响**: 可以添加空内容的 Todo 项。
-
-#### Bug #3: TodoUpdateTool Schema 缺少 status 必填
-**位置**: `todo_tools.py:395-418`
-
-```python
-# 缺少
-"required": ["id", "status"]
-```
-
-**影响**: 更新时可能不指定状态，导致数据不一致。
-
-#### Bug #4: 单一 in-progress 约束未实现
-**位置**: `todo_tools.py:345-373` (TodoAddTool) 和 `423-454` (TodoUpdateTool)  
-**Rust 参考**: `todo_tools.rs:280-295`
-
-```rust
-// Rust 实现
-let in_progress_count = state.items.iter()
-    .filter(|item| item.status == TodoStatus::InProgress)
-    .count();
-if in_progress_count >= 1 {
-    return Err("Only one item can be in-progress");
-}
-```
-
-**影响**: 可以同时有多个 in-progress 项，违反 Todo 系统设计原则。
+| # | 问题 | 位置 | 严重度 | 说明 |
+|---|------|------|--------|------|
+| S-1 | `spawn()` 无深度上限 | manager.py:422-447 | P2 | `MAX_SPAWN_DEPTH` 常量定义在 35 行，但只在 SubAgentRuntime（714-724）里用；spawn 主路径未消费。子 agent 递归 spawn 时无保护。 |
+| S-2 | `wait()` 轮询 50ms | manager.py:559 `await asyncio.sleep(min(0.05, remaining))` | P3 | 等待多个 agent 时 CPU 占用偏高。是否提到 250ms 看实测，不影响正确性。 |
+| S-3 | Mailbox 无消息优先级 | mailbox.py:31-50 `MailboxMessage` 字段 | P3 | 当前 FIFO。是否要 priority 取决于消息量与紧急消息场景。 |
 
 ---
 
-## 五、Skill 系统审核
+## 五、Todo 系统
 
-### 5.1 完整性评分: 55%
+### 5.1 现状
 
-**已实现**: SkillLoadTool、基础安装、系统 skill  
-**缺失**: 递归发现、安全防护、多 URL 支持
+- 4 个工具类：`TodoWriteTool / TodoAddTool / TodoUpdateTool / TodoListTool`（无 TodoDeleteTool）。
+- builder.py:95-109 每个类注册两次（canonical 真假各一）→ 8 个工具名称。✅
+- 数据 store：`ToolContext.metadata['todos']`（内存）；通过 `_forward_to_task_manager`（todo_tools.py:167-191）转发到 TaskManager 持久化为 `TaskRecord.checklist`。
 
-### 5.2 安全漏洞 (P0)
+### 5.2 旧版误判（澄清）
 
-#### 漏洞 #1: 路径遍历攻击
-**位置**: `skills/install.py:174`  
-**问题**: 无验证的 tarball 提取
+旧版把 "input_schema 顶层未声明 `required: [...]`" 直接当作 Schema 漏洞，但本仓库的 Todo 工具用的是**两字段 OR + 运行时校验**模式（兼容 canonical / legacy 两组字段名）：
 
-```python
-# 当前实现 (危险)
-rel = member.name[len(prefix) + 1:]
-target = dest / rel  # 未验证 rel 是否包含 ../
+| 旧版条目 | 真实情况 |
+|----------|----------|
+| Bug #1：TodoWriteTool 应 `required: ["items"]` | execute 强制 "提供 todos（canonical）或 items（legacy）"。Schema 顶层若写死 `required: ["items"]` 反而会拒绝合法的 canonical 调用。 |
+| Bug #2：TodoAddTool 应 `required: ["content"]` | 同上，`content / text` 二选一。 |
+| Bug #3：TodoUpdateTool 应 `required: ["id", "status"]` | `item_id` 已在 required 中（todo_tools.py:417）；`status` 故意可选 —— 更新可能只改 content / activeForm 而不动状态。 |
 
-# 应该实现
-rel = member.name[len(prefix) + 1:]
-if ".." in Path(rel).parts or Path(rel).is_absolute():
-    raise SecurityError("Path traversal detected")
-target = dest / rel
-```
+### 5.3 真实问题
 
-**风险**: 恶意 tarball 可写入 `../../etc/passwd` 或其他系统文件。
-
-#### 漏洞 #2: Symlink 攻击
-**位置**: `skills/install.py:164-184`  
-**问题**: 不检查 symlink
-
-```python
-# 应该添加
-if member.issym() or member.islnk():
-    raise SecurityError("Symlinks not allowed")
-```
-
-**风险**: Symlink 可能指向系统文件或逃逸目录。
-
-#### 漏洞 #3: 磁盘空间耗尽 (Gzip Bomb)
-**位置**: `skills/install.py:159-160`  
-**问题**: 无大小限制
-
-```python
-# 应该添加
-MAX_SIZE = 5 * 1024 * 1024  # 5 MiB
-total_size = 0
-for member in tar.getmembers():
-    total_size += member.size
-    if total_size > MAX_SIZE:
-        raise SecurityError("Archive too large")
-```
-
-**风险**: 恶意压缩包可能解压出 GB 级文件。
-
-#### 漏洞 #4: 网络策略缺失
-**位置**: `skills/install.py:139-195`  
-**Rust 参考**: `install.rs:234-274`
-
-**风险**: 无法控制哪些主机可以下载 skill。
-
-### 5.3 实现 Bug (P1)
-
-#### Bug #1: 前缀检测错误
-**位置**: `skills/install.py:169`
-
-```python
-# 当前实现 (错误)
-prefix = members[0].name.split("/", 1)[0]
-# 如果第一个成员是文件 (无 /)，prefix 为整个文件名
-
-# 应该实现
-first_path = Path(members[0].name)
-if len(first_path.parts) > 1:
-    prefix = first_path.parts[0]
-else:
-    prefix = ""
-```
-
-#### Bug #2: 相对路径计算错误
-**位置**: `skills/install.py:174`
-
-```python
-# 当前实现 (错误)
-rel = member.name[len(prefix) + 1:]
-# 如果 prefix 为空，len(prefix) + 1 = 1，会跳过第一个字符
-
-# 应该实现
-rel = member.name[len(prefix):].lstrip("/")
-```
-
-#### Bug #3: SKILL.md 位置检查不完整
-**位置**: `skills/install.py:190`
-
-```python
-# 当前实现 (不完整)
-if not (dest / "SKILL.md").exists():
-    raise ValueError("No SKILL.md found")
-
-# 应该支持多种布局
-skill_md_paths = [
-    dest / "SKILL.md",
-    dest / name / "SKILL.md",
-    dest / "skills" / name / "SKILL.md"
-]
-if not any(p.exists() for p in skill_md_paths):
-    raise ValueError("No SKILL.md found")
-```
-
-### 5.4 缺失功能 (P1)
-
-| 功能 | Rust | Python | 影响 |
-|------|------|--------|------|
-| 递归发现 (vendor/skill) | ✅ | ❌ | 无法发现嵌套布局 |
-| 多搜索路径 (8 个) | ✅ | ⚠️ (2 个) | 兼容性差 |
-| Symlink 跟踪 | ✅ | ❌ | 无法处理链接目录 |
-| 纯 Markdown 支持 | ✅ | ❌ | 需要 frontmatter |
-| 多 URL 回退 (main/master) | ✅ | ❌ | master-only 仓库失败 |
-| 直接 URL 安装 | ✅ | ❌ | 仅支持 github: 格式 |
-| 两阶段验证 | ✅ | ❌ | 失败时留下半安装目录 |
-| 临时目录 + 原子重命名 | ✅ | ❌ | 不支持事务性安装 |
+| # | 问题 | 位置 | 严重度 | 说明 |
+|---|------|------|--------|------|
+| T-1 | 单一 in-progress 约束未实现 | TodoAddTool.execute（todo_tools.py:345-373）、TodoUpdateTool.execute（423-454） | P1 | 业务规则要求同一时刻只有一个 in_progress 项。当前两个 execute 都不数量校验，可同时存在多个 in_progress。`_snapshot`（135-138）只读取 `in_progress_id` 不做约束。 |
 
 ---
 
-## 六、修复优先级建议
+## 六、Skill 系统
 
-### P0 (立即修复)
-1. **Skill 系统 4 个安全漏洞** - 路径遍历、symlink、大小限制、网络策略
-2. **Subagent cleanup() 缺失** - 内存泄漏风险
-3. **Task gate 不执行命令** - 核心功能失效
+### 6.1 旧版定级修正
 
-### P1 (本周修复)
-4. **注册 10 个缺失工具** - automation_tools + web_tools
-5. **Todo Schema 验证** - 4 个必填字段 + in-progress 约束
-6. **Subagent 参数验证** - assign/spawn 检查
-7. **Task PR git 集成** - diff + apply --check
-8. **Skill 3 个提取 Bug** - 前缀、路径、SKILL.md 检查
+旧版把 4 项全部列 P0。逐项核实后只有 2 项是真 P0，另外 2 项被高估：
 
-### P2 (下个迭代)
-9. **Skill 递归发现** - 支持 vendor/skill 布局
-10. **Subagent 深度限制** - MAX_SPAWN_DEPTH
-11. **Task artifact 写入** - write_task_artifact()
-12. **Skill 多 URL 支持** - 直接 URL + 注册表
+| # | 问题 | 实际严重度 | 备注 |
+|---|------|------------|------|
+| K-1 | 无下载/解压大小上限（Gzip bomb） | **真 P0** | install.py:159-160 `resp.read()` 一次性读全响应，无 MAX_SIZE，无解压量上限。可被恶意 tarball 直接 OOM。 |
+| K-2 | 无网络白名单 + 仅 main 分支 | **真 P0** | install.py:154-156 硬编码 `github.com/{owner}/{repo}/archive/refs/heads/main.tar.gz`。无主机白名单；master-only 仓库会失败；任何 GitHub 账号 repo 都可装。 |
+| K-3 | 路径遍历无显式 guard | **P1**（旧版 P0 高估） | install.py:174-177 未做 `resolve().relative_to(dest)`。Python 3.12+ tarfile filter 有隐式防护，但**不应依赖**。建议显式校验。 |
+| K-4 | symlink 未显式处理 | **P2**（旧版 P0 高估） | 提取循环用 `member.isfile() / isdir()` 二分支（install.py:180+），symlink 落到 else 被**默默跳过**——不会被利用，但也不告警。建议显式拒绝并记录。 |
 
----
+### 6.2 实现 Bug
 
-## 七、测试建议
+| # | 问题 | 位置 | 严重度 |
+|---|------|------|--------|
+| K-5 | 顶层目录前缀检测：`prefix = members[0].name.split("/", 1)[0]`，第一成员是文件时返回整个文件名 | install.py:169 | P1 |
+| K-6 | 相对路径计算：`rel = member.name[len(prefix) + 1:]`，prefix 为空时跳首字符 | install.py:174 | P2（GitHub tarball 实际很难触发，但逻辑不健壮） |
+| K-7 | 只检查 `dest/SKILL.md`，不支持嵌套布局 | install.py:190 | P1 |
 
-### 7.1 安全测试
-```bash
-# 测试路径遍历防护
-tar czf evil.tar.gz --transform 's,^,../../,' /tmp/test.txt
-python -m deepseek_tui.skills.install github:attacker/evil-skill
+### 6.3 缺失功能（按需求决定是否要做）
 
-# 测试 symlink 拒绝
-ln -s /etc/passwd symlink
-tar czf symlink.tar.gz symlink
-python -m deepseek_tui.skills.install ./symlink.tar.gz
-
-# 测试大小限制
-dd if=/dev/zero bs=1M count=10 | gzip > bomb.tar.gz
-python -m deepseek_tui.skills.install ./bomb.tar.gz
-```
-
-### 7.2 功能测试
-```python
-# 测试 Task gate 执行
-task_id = manager.create_task("test")
-gate_id = manager.add_gate(task_id, "echo hello")
-result = manager.get_gate_output(gate_id)
-assert result == "hello\n"
-
-# 测试 Todo in-progress 约束
-todo.add_item("item1", status="in_progress")
-with pytest.raises(ValueError):
-    todo.add_item("item2", status="in_progress")
-
-# 测试 Subagent cleanup
-manager.spawn("test-agent")
-manager.cleanup()
-assert len(manager.children) == 0
-```
-
-### 7.3 集成测试
-```bash
-# 测试完整 Skill 安装流程
-deepseek-tui skill install github:anthropics/skill-creator
-deepseek-tui skill list
-deepseek-tui skill load skill-creator
-
-# 测试 Task + Subagent 协作
-deepseek-tui task create "parent-task"
-deepseek-tui agent spawn worker --task parent-task
-deepseek-tui agent wait worker
-deepseek-tui task status parent-task
-```
+| 功能 | 现状 | 建议 |
+|------|------|------|
+| 递归发现（vendor/skill 嵌套） | 未实现 | 看实际仓库布局是否需要 |
+| 多搜索路径 | 2 处 | 与 Rust 8 处的差异是否影响使用是产品决定 |
+| 多 URL 回退（main → master） | 未实现 | 与 K-2 一并修 |
+| 直接 URL 安装 | 仅 `github:` 前缀 | 看是否需要 |
+| 临时目录 + 原子 rename | 未实现 | 提升安装失败时的清理保证；与 K-1 一并修可减少半成品目录 |
 
 ---
 
-## 八、文件路径索引
+## 七、修复路径建议（按优先级）
 
-### Task 系统
-- 工具实现: `src/deepseek_tui/tools/task_tools.py` (671 行)
-- 管理器: `src/deepseek_tui/tools/task_manager.py` (872 行)
-- Rust 参考: `docs/DeepSeek-TUI-main/crates/tui/src/tools/task_tools.rs`
+### P0（建议尽快）
+1. **K-1 大小上限**：`urlopen` 改流式读取，limit `MAX_DOWNLOAD_BYTES`；解压前累加 `member.size`，超阈值抛错。
+2. **K-2 网络白名单 + main/master 回退**：抽 `_resolve_archive_url(source)`，host 白名单（默认 `github.com`），先试 main 再试 master。
 
-### Subagent 系统
-- 工具实现: `src/deepseek_tui/tools/subagent_tools.py` (541 行)
-- 管理器: `src/deepseek_tui/tools/subagent/manager.py` (728 行)
-- Rust 参考: `docs/DeepSeek-TUI-main/crates/tui/src/tools/subagent/mod.rs`
+### P1（建议本周）
+3. **K-3 路径遍历显式 guard**：每个 `target` 做 `target.resolve().relative_to(dest.resolve())`，越界抛错。
+4. **K-5 顶层前缀检测**：用 `Path(members[0].name).parts[0]` 并显式判空。
+5. **K-7 SKILL.md 多布局**：候选路径 `[dest/SKILL.md, dest/<name>/SKILL.md]` 任一存在即可。
+6. **T-1 单 in-progress 约束**：`TodoAddTool / TodoUpdateTool` 在 execute 写回前数 `in_progress` 数量，>1 抛 `ToolError`。
 
-### Todo 系统
-- 工具实现: `src/deepseek_tui/tools/todo_tools.py` (完整)
-- Rust 参考: `docs/DeepSeek-TUI-main/crates/tui/src/tools/todo_tools.rs`
+### P2（按需）
+7. **S-1 spawn 深度检查**：spawn 时 `if parent.depth >= MAX_SPAWN_DEPTH: raise`，把 depth 字段传下去。
+8. **K-4 symlink 显式拒绝**：循环里 `if member.issym() or member.islnk(): warn + skip`。
+9. **K-6 路径计算健壮化**：`rel = member.name[len(prefix):].lstrip("/")`。
+10. **决策：8 个 Automation*Tool**——注册（需补持久化）/ 删除 / 留作 TODO 标记。
+11. **决策：WebRunTool**——加 `features.web_run` flag 默认关；或删除。
+12. **决策：FinanceTool**——删除或换真实数据源。**不要直接注册 stub**。
 
-### Skill 系统
-- 核心模块: `src/deepseek_tui/skills/__init__.py`
-- 安装逻辑: `src/deepseek_tui/skills/install.py`
-- 系统 skill: `src/deepseek_tui/skills/system.py`
-- Rust 参考: `docs/DeepSeek-TUI-main/crates/tui/src/skills/`
-
-### 工具注册
-- 注册入口: `src/deepseek_tui/tools/builder.py:75-192`
-- 缺失工具: `automation_tools.py`, `web_tools.py`
-
----
-
-## 九、总结
-
-本次审核发现 Python 移植版在功能完整性上达到 **60-75%**，但存在 **4 个严重安全漏洞** 和 **多个核心功能缺失**。
-
-**关键发现**:
-- ✅ 基础 CRUD 功能完整
-- ✅ 工具注册机制正确
-- ⚠️ Git 集成严重不足
-- ⚠️ 安全防护几乎缺失
-- ❌ 资源清理机制缺失
-- ❌ 参数验证不足
-
-**建议行动**:
-1. **立即修复** 4 个安全漏洞 (Skill 系统)
-2. **本周完成** 10 个工具注册 + Schema 验证
-3. **下个迭代** 补全 git 集成 + cleanup 方法
-
-**预计工作量**: 
-- P0 修复: 2-3 天
-- P1 修复: 5-7 天
-- P2 完善: 10-14 天
+### P3（可选优化）
+13. **S-2** wait 轮询节流到 250ms（实测决定）。
+14. **S-3** Mailbox priority 字段（看消息量）。
+15. **Task** PrAttemptPreflightTool 是否要从 stub 升级为真 `git apply --check`（产品决定）。
 
 ---
 
-**报告生成时间**: 2026-05-12  
-**审核工具**: Claude Code + 4 个并行审核 Agent  
-**代码行数**: 2812 行 (Python) vs 4500+ 行 (Rust)
+## 八、文件路径索引（已校正）
+
+| 文件 | 实际行数 |
+|------|----------|
+| src/deepseek_tui/tools/task_tools.py | 671 |
+| src/deepseek_tui/tools/task_manager.py | 888 |
+| src/deepseek_tui/tools/subagent_tools.py | 580 |
+| src/deepseek_tui/tools/subagent/manager.py | 750 |
+| src/deepseek_tui/tools/todo_tools.py | （以仓库 HEAD 为准） |
+| src/deepseek_tui/tools/automation_tools.py | （未注册，8 类） |
+| src/deepseek_tui/tools/web_tools.py | （`WebRunTool` / `FinanceTool` 未注册） |
+| src/deepseek_tui/tools/builder.py | 200（注册入口） |
+| src/deepseek_tui/skills/install.py | （安全相关核心） |
+
+---
+
+## 九、与旧版的差异一览
+
+| 旧版断言 | 修订结论 |
+|----------|----------|
+| 10 个工具未注册 | 实际未注册的是 8 个 `Automation*Tool` + `WebRunTool` + `FinanceTool`，且其中 `FinanceTool` 是 stub。Cron* / Schedule* / TodoDelete 几个类**不存在**。Todo 三个工具**已注册**。 |
+| Task Bug #1/#2/#3 | 全部撤回，三者均为有意 stub 或设计分工。 |
+| Subagent 缺 cleanup() | 撤回，方法名为 `shutdown()`。 |
+| Subagent assign 不验证 | 撤回，有 `_require_agent` 校验。 |
+| Subagent 缺 6 种 agent 类型 | 撤回，已定义 7 种。 |
+| Todo Schema 三个 Bug | 全部撤回，OR + 运行时校验是合法设计。 |
+| Skill 4 个 P0 安全漏洞 | 仅 K-1 / K-2 是真 P0；K-3 降 P1；K-4 降 P2。 |
+| 评分 60-75% | 不再使用百分比评分（缺乏可验证基准）；改为按 P0/P1/P2/P3 列具体待办。 |
