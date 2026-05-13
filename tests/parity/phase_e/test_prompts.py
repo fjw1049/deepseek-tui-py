@@ -20,12 +20,10 @@ from deepseek_tui.prompts import (
     CYCLE_HANDOFF,
     NEVER_APPROVAL,
     PLAN_MODE,
-    PLAN_PROMPT,
     PLAYFUL_PERSONALITY,
     SUBAGENT_OUTPUT_FORMAT,
     SUGGEST_APPROVAL,
     YOLO_MODE,
-    YOLO_PROMPT,
     AppMode,
     Personality,
     compose_prompt,
@@ -73,12 +71,6 @@ class TestPromptFilesLoad:
 
     def test_legacy_agent_txt(self) -> None:
         assert len(AGENT_PROMPT()) > 10
-
-    def test_legacy_yolo_txt(self) -> None:
-        assert len(YOLO_PROMPT()) > 10
-
-    def test_legacy_plan_txt(self) -> None:
-        assert len(PLAN_PROMPT()) > 10
 
 
 class TestComposition:
@@ -129,8 +121,6 @@ class TestComposition:
     def test_legacy_constants_non_empty(self) -> None:
         """Mirror of Rust `legacy_constants_still_available`."""
         assert AGENT_PROMPT()
-        assert YOLO_PROMPT()
-        assert PLAN_PROMPT()
 
 
 class TestBuildSystemPrompt:

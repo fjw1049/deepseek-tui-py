@@ -141,6 +141,17 @@ When context is deep (past a soft seam): cache reasoning conclusions in concise 
 
 Multiple `tool_calls` in one turn run in parallel. `web_search` returns `ref_id`s — cite as `(ref_id)`.
 
+## File paths
+
+The file tools (`write_file`, `edit_file`, `apply_patch`, `read_file`, `list_dir`) operate inside the workspace. Paths that resolve outside the workspace are rejected with `PathEscape` unless the user has trusted them explicitly.
+
+- **Default to workspace-relative paths.** `write_file path="notes.md"` lands at `<workspace>/notes.md`. Don't prepend the absolute workspace prefix and don't write to `~/`, `/tmp`, or other absolute locations.
+- **One-shot scripts go in `scratch/`.** Throwaway code — benchmarks, demos, "let me try this", quick reproductions for a user question — belongs at `scratch/<name>.py`, not at the workspace root. The directory is created on first write. Treat it as ungit-tracked scratch space; the user should add `scratch/` to `.gitignore` if they care.
+- **Real artifacts go in their proper home.** Files the user asked you to create as part of the project (modules, tests, docs) go in the matching source directory, not `scratch/`.
+- **Absolute paths only when the user gave one.** If the user says "write to `/Users/me/foo.py`", use that path verbatim — they've authorized it. Otherwise, stay relative.
+
+When in doubt about whether something is "real" or "throwaway": ask. A misplaced `bubble_sort.py` at the project root is harder to clean up than a one-line clarifying question.
+
 ## When NOT to use certain tools
 
 ### `apply_patch`

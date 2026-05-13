@@ -80,17 +80,10 @@ def SUBAGENT_OUTPUT_FORMAT() -> str:  # noqa: N802
     return _get("subagent_output_format.md")
 
 
-# Legacy .txt prompts (kept for backwards compatibility)
+# Legacy .txt prompt (kept for backwards compatibility with docs/SUBAGENTS.md
+# and TOOL_SURFACE.md references; mirrors Rust upstream which still ships agent.txt).
 def AGENT_PROMPT() -> str:  # noqa: N802
     return _get("agent.txt")
-
-
-def YOLO_PROMPT() -> str:  # noqa: N802
-    return _get("yolo.txt")
-
-
-def PLAN_PROMPT() -> str:  # noqa: N802
-    return _get("plan.txt")
 
 
 # ── Enums ────────────────────────────────────────────────────────────────
