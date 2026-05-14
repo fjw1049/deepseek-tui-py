@@ -69,12 +69,7 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/clear", "Clear conversation history", _S),
     CommandEntry("/exit", "Exit the application", _S, ("/quit", "/q")),
     CommandEntry("/model", "Switch or view current model", _E),
-    CommandEntry("/models", "List available models", _E, p0=False),
     CommandEntry("/provider", "Switch LLM backend", _E, p0=False),
-    CommandEntry(
-        "/stash", "Park or restore a draft",
-        _S, ("/park",), p0=False,
-    ),
     CommandEntry(
         "/hooks", "List lifecycle hooks",
         _D, ("/hook",), p0=False,
@@ -83,15 +78,6 @@ REGISTRY: list[CommandEntry] = [
         "/subagents", "List sub-agent status",
         _T, ("/agents",), p0=False,
     ),
-    CommandEntry(
-        "/links", "DeepSeek dashboard links",
-        _D, ("/dashboard", "/api"),
-    ),
-    CommandEntry(
-        "/home", "Home dashboard with stats",
-        _D, ("/stats", "/overview"),
-    ),
-    CommandEntry("/note", "Append to notes file", _S),
     CommandEntry(
         "/task", "Manage background tasks",
         _T, ("/tasks",), p0=False,
@@ -112,10 +98,6 @@ REGISTRY: list[CommandEntry] = [
         _S, p0=False,
     ),
     CommandEntry("/context", "Context inspector", _D, ("/ctx",)),
-    CommandEntry(
-        "/cycles", "List cycle handoffs",
-        _S, p0=False,
-    ),
     CommandEntry("/export", "Export to markdown", _S),
     CommandEntry("/config", "Open configuration editor", _C),
     CommandEntry(
@@ -133,7 +115,6 @@ REGISTRY: list[CommandEntry] = [
         "/diff", "Show file changes",
         _D, p0=False,
     ),
-    CommandEntry("/undo", "Remove last message pair", _S),
     CommandEntry("/retry", "Retry last request", _E),
     CommandEntry("/init", "Generate AGENTS.md", _T),
     CommandEntry("/settings", "Show persistent settings", _D),
@@ -145,7 +126,6 @@ REGISTRY: list[CommandEntry] = [
         "/skill", "Activate/install a skill",
         _T, p0=False,
     ),
-    CommandEntry("/review", "Code review", _T, p0=False),
     CommandEntry("/cost", "Session cost breakdown", _D),
     CommandEntry(
         "/log", "Show log file path; '/log tail [N]' prints last N lines",

@@ -71,9 +71,9 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
 
     if not args.strip():
-        model = getattr(app, "_config", None)
-        if model and hasattr(model, "model"):
-            return CommandResult(output=f"Current model: {model.model or model.default_text_model}")
+        cfg = getattr(app, "config", None)
+        if cfg is not None:
+            return CommandResult(output=f"Current model: {cfg.model or cfg.default_text_model}")
         return CommandResult(output="Current model: (unknown — config not attached)")
 
     requested = args.strip()
@@ -131,20 +131,6 @@ def cmd_mode(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output=f"Mode → {arg}")
 
 
-# ── /models ──────────────────────────────────────────────────────────────
-
-@_register("/models")
-def cmd_models(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
-
-    lines: list[str] = ["Available models:\n"]
-    for prov_name, defaults in PROVIDER_DEFAULTS.items():
-        lines.append(f"  {defaults.model} ({prov_name})")
-        if defaults.flash_model:
-            lines.append(f"  {defaults.flash_model} ({prov_name}, flash)")
-    return CommandResult(output="\n".join(lines))
-
-
 # ── /provider ────────────────────────────────────────────────────────────
 
 @_register("/provider")
@@ -152,7 +138,7 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
 
     if not args.strip():
-        cfg = getattr(app, "_config", None)
+        cfg = getattr(app, "config", None)
         current = cfg.provider if cfg else "unknown"
         return CommandResult(output=f"Current provider: {current}")
 
@@ -161,46 +147,6 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"Provider switched to: {requested}")
     available = ", ".join(PROVIDER_DEFAULTS.keys())
     return CommandResult(error=f"Unknown provider: {requested}. Available: {available}")
-
-
-# ── /links ───────────────────────────────────────────────────────────────
-
-@_register("/links")
-def cmd_links(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output=(
-        "DeepSeek Links:\n"
-        "  Dashboard:  https://platform.deepseek.com\n"
-        "  API Docs:   https://api-docs.deepseek.com\n"
-        "  Status:     https://status.deepseek.com\n"
-        "  GitHub:     https://github.com/deepseek-ai"
-    ))
-
-
-# ── /home ────────────────────────────────────────────────────────────────
-
-@_register("/home")
-def cmd_home(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output=(
-        "DeepSeek TUI — Home\n"
-        "  Type a message to start a conversation.\n"
-        "  Type /help for available commands.\n"
-        "  Type /model to switch models.\n"
-        "  Type /config to adjust settings."
-    ))
-
-
-# ── /note ────────────────────────────────────────────────────────────────
-
-@_register("/note")
-def cmd_note(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(error="Usage: /note <text>")
-
-    notes_path = Path("~/.deepseek/notes.md").expanduser()
-    notes_path.parent.mkdir(parents=True, exist_ok=True)
-    with notes_path.open("a", encoding="utf-8") as f:
-        f.write(f"\n- [{time.strftime('%Y-%m-%d %H:%M')}] {args.strip()}\n")
-    return CommandResult(output=f"Note saved to {notes_path}")
 
 
 # ── /save ────────────────────────────────────────────────────────────────
@@ -394,9 +340,9 @@ def cmd_config(args: str, app: DeepSeekTUI) -> CommandResult:
 
 def _config_write(key: str, value: str | None) -> CommandResult:
     """Set or unset a key in ~/.deepseek/config.toml."""
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_config_path
 
-    config_path = default_config_path()
+    config_path = user_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
@@ -540,20 +486,6 @@ def cmd_system(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output=f"System prompt:\n{prompt}")
 
 
-# ── /undo ────────────────────────────────────────────────────────────────
-
-@_register("/undo")
-def cmd_undo(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Restore the most recent file-modifying tool snapshot."""
-    engine = getattr(app, "_engine", None)
-    if engine is None:
-        return CommandResult(error="Engine not started — cannot undo")
-    success, message = engine.undo_last_tool()
-    if success:
-        return CommandResult(output=message)
-    return CommandResult(error=message)
-
-
 # ── /retry ───────────────────────────────────────────────────────────────
 
 @_register("/retry")
@@ -627,52 +559,11 @@ def cmd_cost(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output="\n".join(lines))
 
 
-# ── /stash ───────────────────────────────────────────────────────────────
-
-@_register("/stash")
-def cmd_stash(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import dot_deepseek_dir
-
-    stash_dir = dot_deepseek_dir() / "stash"
-    stash_dir.mkdir(parents=True, exist_ok=True)
-
-    sub = args.strip().split(maxsplit=1)
-    action = sub[0] if sub else "list"
-
-    if action == "list":
-        files = sorted(stash_dir.glob("*.md"))
-        if not files:
-            return CommandResult(output="Stash is empty.")
-        lines = ["Stashed drafts:\n"]
-        for f in files[-10:]:
-            lines.append(f"  {f.stem}")
-        return CommandResult(output="\n".join(lines))
-
-    if action == "push":
-        content = sub[1] if len(sub) > 1 else ""
-        if not content:
-            return CommandResult(error="Usage: /stash push <text>")
-        name = f"stash-{int(time.time())}"
-        (stash_dir / f"{name}.md").write_text(content, encoding="utf-8")
-        return CommandResult(output=f"Stashed as: {name}")
-
-    if action == "pop":
-        files = sorted(stash_dir.glob("*.md"))
-        if not files:
-            return CommandResult(error="Stash is empty.")
-        last = files[-1]
-        content = last.read_text(encoding="utf-8")
-        last.unlink()
-        return CommandResult(output=f"Popped:\n{content}")
-
-    return CommandResult(error="Usage: /stash [list|push <text>|pop]")
-
-
 # ── /hooks ───────────────────────────────────────────────────────────────
 
 @_register("/hooks")
 def cmd_hooks(args: str, app: DeepSeekTUI) -> CommandResult:
-    cfg = getattr(app, "_config", None)
+    cfg = getattr(app, "config", None)
     if cfg and hasattr(cfg, "hooks") and cfg.hooks:
         hooks_data = cfg.hooks.model_dump() if hasattr(cfg.hooks, "model_dump") else {}
         return CommandResult(output=f"Hooks config:\n{json.dumps(hooks_data, indent=2)}")
@@ -752,9 +643,9 @@ def cmd_jobs(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/mcp")
 def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.config.paths import user_mcp_config_path
 
-    mcp_path = default_config_path().parent / "mcp.json"
+    mcp_path = user_mcp_config_path()
     if not mcp_path.exists():
         return CommandResult(output="No MCP servers configured.")
     try:
@@ -795,29 +686,6 @@ def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output="Context compaction triggered.")
 
 
-# ── /cycles ──────────────────────────────────────────────────────────────
-
-@_register("/cycles")
-def cmd_cycles(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import dot_deepseek_dir
-
-    archive_base = dot_deepseek_dir() / "sessions"
-    if not archive_base.exists():
-        return CommandResult(output="No cycle archives found.")
-
-    archives: list[str] = []
-    for session_dir in sorted(archive_base.iterdir()):
-        cycles_dir = session_dir / "cycles"
-        if cycles_dir.is_dir():
-            count = len(list(cycles_dir.glob("*.jsonl")))
-            if count > 0:
-                archives.append(f"  {session_dir.name}: {count} cycle(s)")
-
-    if not archives:
-        return CommandResult(output="No cycle archives found.")
-    return CommandResult(output="Cycle archives:\n\n" + "\n".join(archives))
-
-
 # ── /diff ────────────────────────────────────────────────────────────────
 
 @_register("/diff")
@@ -843,9 +711,9 @@ def cmd_diff(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/skills")
 def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.skills import default_skills_dir
 
-    skills_dir = default_config_path().parent / "skills"
+    skills_dir = default_skills_dir()
     if not skills_dir.is_dir():
         return CommandResult(output="No skills installed.")
 
@@ -866,9 +734,9 @@ def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
     if not args.strip():
         return CommandResult(error="Usage: /skill <name>")
 
-    from deepseek_tui.config.paths import default_config_path
+    from deepseek_tui.skills import default_skills_dir
 
-    skills_dir = default_config_path().parent / "skills"
+    skills_dir = default_skills_dir()
     skill_path = skills_dir / args.strip() / "SKILL.md"
     if not skill_path.exists():
         return CommandResult(error=f"Skill not found: {args.strip()}")
@@ -876,30 +744,6 @@ def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
     if len(content) > 2000:
         content = content[:2000] + "\n... (truncated)"
     return CommandResult(output=content)
-
-
-# ── /review ──────────────────────────────────────────────────────────────
-
-@_register("/review")
-def cmd_review(args: str, app: DeepSeekTUI) -> CommandResult:
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["git", "diff", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            return CommandResult(error="Not a git repository or no changes to review.")
-        diff = result.stdout.strip()
-        if not diff:
-            return CommandResult(output="No changes to review.")
-        return CommandResult(
-            output=f"Review scope: {len(diff.splitlines())} lines of diff. "
-            f"Submit to LLM for code review."
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return CommandResult(error="git not available.")
 
 
 # ── /log ──────────────────────────────────────────────────────────────────

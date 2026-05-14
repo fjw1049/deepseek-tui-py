@@ -40,9 +40,9 @@ def default_marker_path() -> Path:
     Project-local since 2026-05-11 — each checkout decides whether the
     user has finished its own onboarding.
     """
-    from deepseek_tui.config.paths import dot_deepseek_dir
+    from deepseek_tui.config.paths import project_deepseek_dir
 
-    return dot_deepseek_dir() / ".onboarded"
+    return project_deepseek_dir() / ".onboarded"
 
 
 def is_onboarded() -> bool:
