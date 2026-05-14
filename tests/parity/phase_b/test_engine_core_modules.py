@@ -35,11 +35,11 @@ from deepseek_tui.engine.dispatch import (
     caller_allowed_for_tool,
     format_tool_error,
     parse_parallel_tool_calls,
-    parse_tool_input,
     should_force_update_plan_first,
     should_parallelize_tool_batch,
     should_stop_after_plan_tool,
 )
+from deepseek_tui.engine.tool_parser import parse_tool_input
 from deepseek_tui.engine.tool_catalog import (
     TOOL_SEARCH_BM25_NAME,
     TOOL_SEARCH_REGEX_NAME,

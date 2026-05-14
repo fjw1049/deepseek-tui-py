@@ -3,7 +3,6 @@
 Mirrors `crates/tui/src/core/engine/dispatch.rs:1-354`.
 
 Owns:
-  * Streaming-buffer parsing into finalized JSON tool input.
   * The ``multi_tool_use.parallel`` payload parser.
   * Policy predicates: parallel batch, plan-mode stop/force, MCP safety.
   * Tool execution plan/outcome types.
@@ -11,7 +10,6 @@ Owns:
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -115,89 +113,6 @@ def format_tool_error(err: Exception, tool_name: str) -> str:
             "Adjust approval mode or request permission."
         )
     return msg
-
-
-# --- Streaming buffer parsing (Rust dispatch.rs:130-213) ------------------
-
-
-def parse_tool_input(buffer: str) -> dict[str, Any] | None:
-    """Parse a streamed tool input buffer into a JSON dict.
-
-    Tries in order: raw JSON, code-fence-stripped, double-encoded string,
-    balanced-segment extraction.
-    """
-    trimmed = buffer.strip()
-    if not trimmed:
-        return None
-
-    # 1. Direct JSON parse
-    try:
-        val = json.loads(trimmed)
-        if isinstance(val, dict):
-            return val
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # 2. Strip code fences
-    stripped = _strip_code_fences(trimmed)
-    if stripped:
-        try:
-            val = json.loads(stripped)
-            if isinstance(val, dict):
-                return val
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # 3. Double-encoded string
-    try:
-        outer = json.loads(trimmed)
-        if isinstance(outer, str):
-            val = json.loads(outer)
-            if isinstance(val, dict):
-                return val
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # 4. Balanced segment extraction
-    segment = _extract_json_segment(trimmed)
-    if segment:
-        try:
-            val = json.loads(segment)
-            if isinstance(val, dict):
-                return val
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    return None
-
-
-def _strip_code_fences(text: str) -> str | None:
-    if "```" not in text:
-        return None
-    lines = [ln for ln in text.splitlines() if not ln.strip().startswith("```")]
-    stripped = "\n".join(lines).strip()
-    return stripped or None
-
-
-def _extract_json_segment(text: str) -> str | None:
-    return _extract_balanced_segment(text, "{", "}") or _extract_balanced_segment(
-        text, "[", "]"
-    )
-
-
-def _extract_balanced_segment(text: str, open_ch: str, close_ch: str) -> str | None:
-    start = text.find(open_ch)
-    if start < 0:
-        return None
-    depth = 0
-    for i, ch in enumerate(text[start:], start):
-        if ch == open_ch:
-            depth += 1
-        elif ch == close_ch:
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
 
 
 # --- Parallel tool calls (Rust dispatch.rs:215-259) -----------------------
