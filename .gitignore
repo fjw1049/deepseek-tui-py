@@ -16,6 +16,7 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.worktrees/
 
 # State / local data
 ~/.deepseek_tui/
@@ -31,6 +32,7 @@ dist/
 .idea/
 *.swp
 .DS_Store
+scratch/*
 
 # Claude Code local settings (do not commit tool-permission files)
 .claude/settings.local.json
