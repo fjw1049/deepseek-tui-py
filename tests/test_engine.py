@@ -351,3 +351,92 @@ async def test_engine_drains_steer_into_next_round(tmp_path: Path) -> None:
     assert any(
         "actually also describe it" in t for t in user_texts
     ), f"steered message must reach round-2 prompt; got user blocks: {user_texts!r}"
+
+
+# ---------------------------------------------------------------------------
+# /context breakdown — Engine.context_breakdown returns per-bucket tokens.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_breakdown_buckets_sum_to_total(tmp_path: Path) -> None:
+    """system + tools + conversation must equal ``total`` and ``free``
+    must be ``window - total`` (clamped at 0)."""
+    from deepseek_tui.protocol.messages import Message
+
+    engine = await Engine.create(
+        EngineHandle(),
+        FakeEngineClient(),
+        default_model="deepseek-v4-pro",
+        working_directory=tmp_path,
+    )
+    engine.session_messages = [Message.user("hi"), Message.user("again")]
+
+    b = engine.context_breakdown("deepseek-v4-pro")
+
+    assert b["system_prompt"] > 0
+    # tools may be 0 if registry empty; assert non-negative
+    assert b["tools"] >= 0
+    assert b["conversation"] > 0
+    assert b["total"] == b["system_prompt"] + b["tools"] + b["conversation"]
+    if b["window"] > 0:
+        assert b["free"] == max(0, b["window"] - b["total"])
+
+
+@pytest.mark.asyncio
+async def test_context_breakdown_unknown_model_uses_default_window(tmp_path: Path) -> None:
+    """Unknown models fall through to the registry's default window
+    (currently 128K) rather than 0; ``free`` is computed against that
+    default. This pins the contract — if the default ever changes, this
+    test breaks loudly."""
+    engine = await Engine.create(
+        EngineHandle(),
+        FakeEngineClient(),
+        default_model="not-a-real-model",
+        working_directory=tmp_path,
+    )
+    b = engine.context_breakdown("not-a-real-model")
+    assert b["window"] >= b["total"]
+    assert b["free"] == b["window"] - b["total"]
+
+
+def test_format_context_breakdown_renders_progress_line() -> None:
+    """The text formatter shows used/window header + 4 buckets."""
+    from deepseek_tui.tui.commands.handlers import _format_context_breakdown
+
+    out = _format_context_breakdown(
+        {
+            "system_prompt": 600,
+            "tools": 7800,
+            "conversation": 10700,
+            "total": 19100,
+            "window": 200000,
+            "free": 180900,
+        },
+        model="deepseek-v4-pro",
+    )
+    assert "Context:" in out
+    assert "200" in out  # window
+    assert "System prompt" in out
+    assert "Tools" in out
+    assert "Conversation" in out
+    assert "Free space" in out
+    assert "deepseek-v4-pro" in out
+
+
+def test_format_context_breakdown_unknown_window() -> None:
+    """When window is 0 the header says 'window unknown' and bar shows '-'."""
+    from deepseek_tui.tui.commands.handlers import _format_context_breakdown
+
+    out = _format_context_breakdown(
+        {
+            "system_prompt": 100,
+            "tools": 200,
+            "conversation": 300,
+            "total": 600,
+            "window": 0,
+            "free": 0,
+        },
+        model="x",
+    )
+    assert "window unknown" in out

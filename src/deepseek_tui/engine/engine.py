@@ -299,6 +299,68 @@ class Engine:
 
         return render_available_skills_context(self.skill_registry) or None
 
+    def context_breakdown(self, model: str | None = None) -> dict[str, int]:
+        """Estimate token occupancy by category for the next request.
+
+        Returns ``{bucket_name: tokens, ..., "total": int, "window": int}``.
+        Buckets:
+
+        - ``system_prompt`` — full system prompt body (incl. skills section)
+        - ``tools`` — JSON schema of every tool the registry will send
+        - ``conversation`` — accumulated user/assistant/tool messages
+        - ``free`` — derived as ``window - total``, clamped at 0
+
+        ``window`` reads ``context_window_for_model``; ``model`` defaults
+        to ``self.default_model``.
+
+        Token counts use the same conservative ``len*1.5`` estimator as
+        :func:`engine.context.estimated_input_tokens` so the numbers
+        match what the capacity / compaction subsystems already act on.
+        """
+        import json as _json
+
+        from deepseek_tui.config.provider_registry import context_window_for_model
+        from deepseek_tui.engine.context import (
+            _estimate_text_tokens_conservative,
+            estimated_input_tokens,
+        )
+        from deepseek_tui.engine.prompts import build_system_prompt
+
+        target_model = model or self.default_model
+
+        system_text = build_system_prompt(
+            None,
+            skills_context=self._render_skills_context(),
+            working_set_summary=self.working_set.summary() or None,
+        )
+        system_tokens = _estimate_text_tokens_conservative(system_text)
+
+        try:
+            api_tools = self.tool_registry.to_api_tools()
+        except Exception:  # noqa: BLE001 — registry may raise during boot
+            api_tools = []
+        tools_json = _json.dumps(api_tools, ensure_ascii=False)
+        tools_tokens = _estimate_text_tokens_conservative(tools_json)
+
+        conv_tokens = (
+            estimated_input_tokens(self.session_messages)
+            if self.session_messages
+            else 0
+        )
+
+        total = system_tokens + tools_tokens + conv_tokens
+        window = context_window_for_model(target_model) or 0
+        free = max(0, window - total) if window else 0
+
+        return {
+            "system_prompt": system_tokens,
+            "tools": tools_tokens,
+            "conversation": conv_tokens,
+            "total": total,
+            "window": window,
+            "free": free,
+        }
+
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""
         if self.tool_runtime is not None:

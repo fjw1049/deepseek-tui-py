@@ -505,10 +505,6 @@ class DeepSeekTUI(App[None]):
                         event.session_cost_usd,
                         event.session_cost_cny or 0.0,
                     )
-                if event.cache_hit_tokens or event.cache_miss_tokens:
-                    status.set_cache(
-                        event.cache_hit_tokens, event.cache_miss_tokens
-                    )
                 transcript.finalize_message()
                 await self._refresh_info_sidebar()
                 self._maybe_notify_turn_done()

@@ -271,33 +271,89 @@ def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/context")
 def cmd_context(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Render the session-context inspector.
+    """Render a Cursor-style context budget breakdown.
 
-    Mirror Rust slash ``/context``. Builds an :class:`InspectorSnapshot`
-    from whatever live state the app exposes — for now that's just the
-    model + workspace path, since the API-message stream and reference
-    log live in the engine. As more state surfaces on ``DeepSeekTUI``
-    (api_messages, references, tool details), they get wired in here.
+    Reads ``Engine.context_breakdown()`` for live per-bucket token
+    counts (system prompt + tools schema + conversation history),
+    formats a fixed-width table with a percent bar. Falls back to the
+    minimal model + workspace dump from the legacy InspectorSnapshot
+    when no engine has been wired (e.g. before first turn).
     """
     from pathlib import Path
 
-    from deepseek_tui.tui.widgets.context_inspector import (
-        InspectorSnapshot,
-        build_context_inspector_text,
-    )
-
+    engine = getattr(app, "_engine", None)
     config = getattr(app, "config", None)
     model = getattr(config, "model", None) or "unknown"
     workspace = Path(
         getattr(config, "workspace", None) or "."
     ).expanduser()
 
-    snapshot = InspectorSnapshot(
-        model=model,
-        workspace=workspace,
-        history_cells=0,
-    )
-    return CommandResult(output=build_context_inspector_text(snapshot))
+    if engine is None:
+        from deepseek_tui.tui.widgets.context_inspector import (
+            InspectorSnapshot,
+            build_context_inspector_text,
+        )
+
+        snapshot = InspectorSnapshot(
+            model=model,
+            workspace=workspace,
+            history_cells=0,
+        )
+        return CommandResult(output=build_context_inspector_text(snapshot))
+
+    breakdown = engine.context_breakdown(model)
+    return CommandResult(output=_format_context_breakdown(breakdown, model))
+
+
+def _format_context_breakdown(b: dict[str, int], model: str) -> str:
+    """Render the breakdown dict as a fixed-width text block.
+
+    Layout::
+
+        Context: 33.4K / 200K (17%)
+        ├─ System prompt   603  (1.8%)
+        ├─ Tools          7.8K  (23.4%)
+        ├─ Conversation   10.7K (32.0%)
+        └─ Free space    180.9K (90.5%)
+    """
+    total = int(b.get("total", 0))
+    window = int(b.get("window", 0))
+
+    def fmt_tokens(n: int) -> str:
+        if n >= 10_000:
+            return f"{n / 1000:.1f}K"
+        if n >= 1_000:
+            return f"{n / 1000:.1f}K"
+        return str(n)
+
+    def pct(n: int) -> str:
+        if window <= 0:
+            return "  -  "
+        return f"{100.0 * n / window:5.1f}%"
+
+    lines = []
+    if window > 0:
+        used_pct = 100.0 * total / window
+        lines.append(
+            f"Context: {fmt_tokens(total)} / {fmt_tokens(window)} ({used_pct:.0f}%)"
+        )
+    else:
+        lines.append(f"Context: {fmt_tokens(total)} (window unknown)")
+
+    rows: list[tuple[str, str, int]] = [
+        ("System prompt", "├─", int(b.get("system_prompt", 0))),
+        ("Tools",         "├─", int(b.get("tools", 0))),
+        ("Conversation",  "├─", int(b.get("conversation", 0))),
+        ("Free space",    "└─", int(b.get("free", 0))),
+    ]
+    label_w = max(len(label) for _, label, _ in rows)
+    for label, branch, n in rows:
+        lines.append(
+            f"  {branch} {label:<{label_w}}  {fmt_tokens(n):>6}  ({pct(n)})"
+        )
+    lines.append("")
+    lines.append(f"Model: {model}")
+    return "\n".join(lines)
 
 
 # ── /export ──────────────────────────────────────────────────────────────

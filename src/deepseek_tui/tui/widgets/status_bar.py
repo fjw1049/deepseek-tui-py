@@ -13,7 +13,7 @@ and ``⌃O models`` (shortcuts still work); only ``⌃P`` / ``⌃R`` remain.
 Legacy parity (phase-E tests): the ``_status``, ``_model``, ``_mode``,
 ``_tokens`` attributes plus the legacy setters
 (``set_status`` / ``set_model`` / ``set_mode`` / ``set_tokens``)
-remain. ``set_cost`` / ``set_cache`` / ``set_currency`` are the new
+remain. ``set_cost`` / ``set_currency`` are the new
 hooks the engine drives off ``TurnCompleteEvent``.
 """
 from __future__ import annotations
@@ -58,8 +58,6 @@ class StatusBar(Static):
         self._cost_usd: float = 0.0
         self._cost_cny: float = 0.0
         self._currency: CostCurrency = CostCurrency.USD
-        self._cache_hit_tokens: int = 0
-        self._cache_miss_tokens: int = 0
         self._spinning: bool = False
         self._spin_phase: str = ""
         self._spin_frame: int = 0
@@ -129,11 +127,6 @@ class StatusBar(Static):
         self._cost_cny = max(0.0, cny)
         self._refresh()
 
-    def set_cache(self, hit_tokens: int, miss_tokens: int) -> None:
-        self._cache_hit_tokens = max(0, hit_tokens)
-        self._cache_miss_tokens = max(0, miss_tokens)
-        self._refresh()
-
     def set_currency(self, currency: CostCurrency) -> None:
         self._currency = currency
         self._refresh()
@@ -171,9 +164,6 @@ class StatusBar(Static):
 
     def _right_markup(self) -> Text:
         parts: list[Text] = []
-        cache_chip = self._cache_chip()
-        if cache_chip is not None:
-            parts.append(cache_chip)
         if self._started_at is not None:
             end = (
                 self._finished_at
@@ -199,18 +189,6 @@ class StatusBar(Static):
             out.append_text(p)
         return out
 
-    def _cache_chip(self) -> Text | None:
-        total = self._cache_hit_tokens + self._cache_miss_tokens
-        if total == 0:
-            return None
-        pct = min(100.0, max(0.0, 100.0 * self._cache_hit_tokens / total))
-        if pct > 80.0:
-            style = "green"
-        elif pct >= 40.0:
-            style = "yellow"
-        else:
-            style = "red"
-        return Text(f"cache {pct:.0f}%", style=f"dim {style}")
 
     def _refresh(self) -> None:
         # Three columns: left auto-wide, middle expanding (chord chips
