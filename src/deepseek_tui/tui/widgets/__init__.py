@@ -4,7 +4,7 @@ from .composer import Composer
 from .diff_viewer import DiffScreen, DiffViewer
 from .file_mention import FileMention
 from .help_panel import HelpPanel
-from .markdown_render import AssistantMarkdownCell, MarkdownCell, MarkdownRenderer
+from .pager import PagerScreen, PagerState
 from .pickers import FilePicker, ModelPicker, ModePicker, ProviderPicker, SessionPicker
 from .sidebar import Sidebar, SidebarEntry
 from .slash_menu import SlashMenu
@@ -14,7 +14,6 @@ from .transcript import Transcript
 
 __all__ = [
     "ApprovalDialog",
-    "AssistantMarkdownCell",
     "CommandPalette",
     "Composer",
     "DiffScreen",
@@ -22,10 +21,10 @@ __all__ = [
     "FileMention",
     "FilePicker",
     "HelpPanel",
-    "MarkdownCell",
-    "MarkdownRenderer",
     "ModelPicker",
     "ModePicker",
+    "PagerScreen",
+    "PagerState",
     "ProviderPicker",
     "SessionPicker",
     "Sidebar",

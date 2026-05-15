@@ -122,6 +122,20 @@ def _coerce_status(value: object, *, default: TodoStatus = "pending") -> TodoSta
     )
 
 
+def _enforce_single_in_progress(items: list[TodoItem]) -> None:
+    """Enforce the "at most one item in_progress" invariant.
+
+    Mirrors Rust ``TodoStore::ensure_single_in_progress`` (todo.rs:498).
+    Called on every write path (add / update / write) before persisting.
+    """
+    in_progress_ids = [i.id for i in items if i.status == "in_progress"]
+    if len(in_progress_ids) > 1:
+        raise ToolError(
+            f"only one item may be in_progress at a time; "
+            f"already in progress: {in_progress_ids}"
+        )
+
+
 def _snapshot(store: dict[str, Any]) -> dict[str, Any]:
     """Serialise the store into the format Rust's ``TodoListSnapshot`` uses.
 
@@ -289,12 +303,14 @@ class TodoWriteTool(ToolSpec):
             raise ToolError("provide either 'todos' (canonical) or 'items' (legacy)")
 
         store = _todo_store(context)
-        store["items"] = []
-        store["next_id"] = 1
+        new_items: list[TodoItem] = []
+        next_id = 1
         for content, status in normalised:
-            item = TodoItem(id=str(store["next_id"]), content=content, status=status)
-            store["next_id"] += 1
-            store["items"].append(item)
+            new_items.append(TodoItem(id=str(next_id), content=content, status=status))
+            next_id += 1
+        _enforce_single_in_progress(new_items)
+        store["items"] = new_items
+        store["next_id"] = next_id
 
         metadata = _build_result_metadata(store, tool_name=self.name())
         _forward_to_task_manager(context, metadata)
@@ -353,6 +369,8 @@ class TodoAddTool(ToolSpec):
         status = _coerce_status(input_data.get("status"))
         store = _todo_store(context)
         item = TodoItem(id=str(store["next_id"]), content=content, status=status)
+        candidate_items = list(store["items"]) + [item]
+        _enforce_single_in_progress(candidate_items)
         store["next_id"] += 1
         store["items"].append(item)
         metadata = _build_result_metadata(store, tool_name=self.name())
@@ -427,6 +445,8 @@ class TodoUpdateTool(ToolSpec):
         new_content = _optional_string(input_data, "content")
         if new_content is None:
             new_content = _optional_string(input_data, "text")
+        prev_content = item.content
+        prev_status = item.status
         if new_content is not None:
             item.content = new_content
         if "status" in input_data:
@@ -438,6 +458,12 @@ class TodoUpdateTool(ToolSpec):
             else:
                 raise ToolError("done must be a boolean")
         store = _todo_store(context)
+        try:
+            _enforce_single_in_progress(list(store["items"]))
+        except ToolError:
+            item.content = prev_content
+            item.status = prev_status
+            raise
         metadata = _build_result_metadata(store, tool_name=self.name())
         metadata["item"] = {
             "id": item.id,

@@ -90,99 +90,6 @@ class WebSearchTool(ToolSpec):
         )
 
 
-class WebRunTool(ToolSpec):
-    def name(self) -> str:
-        return "web_run"
-
-    def description(self) -> str:
-        return "Execute a JavaScript snippet in a headless browser context."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string"},
-                "script": {"type": "string"},
-            },
-            "required": ["url", "script"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.NETWORK, ToolCapability.EXECUTES_CODE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        url = _require_string(input_data, "url")
-        script = _require_string(input_data, "script")
-        try:
-            from playwright.async_api import async_playwright  # type: ignore[import-not-found]
-        except ImportError:
-            return ToolResult(
-                success=False,
-                content=(
-                    "web_run requires Playwright. Install with:\n"
-                    "  pip install playwright && playwright install chromium\n"
-                    "Then retry the call."
-                ),
-                metadata={"url": url, "script": script, "missing_dependency": "playwright"},
-            )
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                try:
-                    page = await browser.new_page()
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                    result = await page.evaluate(script)
-                finally:
-                    await browser.close()
-            import json as _json
-
-            return ToolResult(
-                success=True,
-                content=_json.dumps(result, ensure_ascii=False, default=str),
-                metadata={"url": url},
-            )
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(
-                success=False,
-                content=f"web_run failed: {exc}",
-                metadata={"url": url, "error": str(exc)},
-            )
-
-
-class FinanceTool(ToolSpec):
-    def name(self) -> str:
-        return "finance"
-
-    def description(self) -> str:
-        return "Fetch financial market data for a ticker symbol."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "ticker": {"type": "string"},
-                "period": {"type": "string"},
-            },
-            "required": ["ticker"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.NETWORK]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        ticker = _require_string(input_data, "ticker")
-        period = _optional_string(input_data, "period") or "1d"
-        return ToolResult(
-            success=True,
-            content=f"(finance stub for {ticker} period={period})",
-            metadata={
-                "ticker": ticker,
-                "period": period,
-                "stub": True,
-            },
-        )
-
-
 class _DuckDuckGoResultParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -255,13 +162,4 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
         return None
     if not isinstance(value, int):
         raise ToolError(f"{key} must be an integer")
-    return value
-
-
-def _optional_string(input_data: dict[str, object], key: str) -> str | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
     return value

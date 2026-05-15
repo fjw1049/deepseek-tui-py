@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.tools.automation_tools import (
+    AutomationCreateTool,
+    AutomationDeleteTool,
+    AutomationListTool,
+    AutomationPauseTool,
+    AutomationReadTool,
+    AutomationResumeTool,
+    AutomationRunTool,
+    AutomationUpdateTool,
+)
 from deepseek_tui.tools.file_tools import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from deepseek_tui.tools.git_tools import (
     GitBlameTool,
@@ -24,7 +34,6 @@ from deepseek_tui.tools.knowledge_tools import (
     RlmQueryTool,
     SkillLoadTool,
 )
-from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.mcp_tools import (
     ListMcpResourcesTool,
     ListMcpResourceTemplatesTool,
@@ -33,6 +42,7 @@ from deepseek_tui.tools.mcp_tools import (
 )
 from deepseek_tui.tools.parallel_tool import MultiToolUseParallelTool
 from deepseek_tui.tools.registry import ToolRegistry
+from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.search_tools import FileSearchTool, GrepFilesTool
 from deepseek_tui.tools.shell_tools import (
     ExecShellCancelTool,
@@ -171,6 +181,19 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             AgentAssignTool(),
             AgentWaitTool(),
             DelegateToAgentTool(),
+        ]:
+            registry.register(tool)
+
+    if cfg.features.automations:
+        for tool in [
+            AutomationCreateTool(),
+            AutomationListTool(),
+            AutomationReadTool(),
+            AutomationUpdateTool(),
+            AutomationPauseTool(),
+            AutomationResumeTool(),
+            AutomationDeleteTool(),
+            AutomationRunTool(),
         ]:
             registry.register(tool)
 

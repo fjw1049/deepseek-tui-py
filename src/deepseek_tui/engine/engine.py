@@ -53,6 +53,7 @@ from deepseek_tui.engine.tool_catalog import (
 )
 from deepseek_tui.engine.tool_execution import emit_tool_audit
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
+from deepseek_tui.engine.working_set import WorkingSet
 from deepseek_tui.execpolicy.approval_cache import (
     ApprovalCache,
     ApprovalCacheStatus,
@@ -177,6 +178,17 @@ class Engine:
         # the same fields.
         self.session_cost_usd: float = 0.0
         self.session_cost_cny: float = 0.0
+        # 2026-05-15: cumulative cache hit/miss tokens across the whole
+        # session. Intentional deviation from Rust ``footer_cache_spans``
+        # (ui.rs:7377), which displays only ``last_prompt_cache_hit_tokens``
+        # — i.e. the most recent turn. DeepSeek's prefix cache means
+        # every turn after the first has a near-100% hit ratio, so the
+        # per-turn number is constant ~99% and carries no information.
+        # The session-cumulative ratio actually shows the user how much
+        # prompt-bytes they have saved.
+        # See HANDOVER §九 ``cache_chip.2026-05-15 cumulative``.
+        self.session_cache_hit_total: int = 0
+        self.session_cache_miss_total: int = 0
         # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
@@ -210,6 +222,11 @@ class Engine:
         self._cycle_session_id: str = ""
         self._cycle_n: int = 0
         self._cycle_started_at: int = 0
+        # Working-set tracker — observes user messages and tool calls to
+        # surface relevant file paths for compaction pinning + system-prompt
+        # injection. Mirrors Rust ``WorkingSet`` (working_set.rs). One per
+        # Engine instance: workspace lives on tool_context.working_directory.
+        self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
 
     @classmethod
     async def create(
@@ -319,84 +336,103 @@ class Engine:
     async def _handle_send_message(self, op: SendMessageOp) -> None:
         with bind_turn() as turn_id:
             self.handle.reset_cancel()
-            user_message = Message.user(op.content)
-            working_messages = [*self.session_messages, user_message]
-            preview = (op.content or "")[:200].replace("\n", " ")
+            self.handle._mark_turn_active()
+            try:
+                await self._handle_send_message_inner(op, turn_id)
+            finally:
+                self.handle._mark_turn_idle()
+
+    async def _handle_send_message_inner(
+        self, op: SendMessageOp, turn_id: str
+    ) -> None:
+        user_message = Message.user(op.content)
+        working_messages = [*self.session_messages, user_message]
+        self.working_set.observe_user_message(op.content or "")
+        preview = (op.content or "")[:200].replace("\n", " ")
+        logger.info(
+            "turn_start user_text_len=%d preview=%r model=%s session_msgs=%d",
+            len(op.content or ""),
+            preview,
+            op.model or self.default_model,
+            len(self.session_messages),
+        )
+        start = time.monotonic()
+
+        await self.handle.emit(TurnStartedEvent(user_text=op.content))
+        result = await self._run_conversation(
+            messages=working_messages,
+            model=op.model or self.default_model,
+            system_prompt=build_system_prompt(
+                op.system_prompt,
+                skills_context=self._render_skills_context(),
+                working_set_summary=self.working_set.summary() or None,
+            ),
+            max_tokens=op.max_tokens,
+        )
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        if result.cancelled:
             logger.info(
-                "turn_start user_text_len=%d preview=%r model=%s session_msgs=%d",
-                len(op.content or ""),
-                preview,
-                op.model or self.default_model,
-                len(self.session_messages),
+                "turn_cancelled turn=%s duration_ms=%d", turn_id, duration_ms
             )
-            start = time.monotonic()
+            await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
+            return
 
-            await self.handle.emit(TurnStartedEvent(user_text=op.content))
-            result = await self._run_conversation(
-                messages=working_messages,
-                model=op.model or self.default_model,
-                system_prompt=build_system_prompt(
-                    op.system_prompt,
-                    skills_context=self._render_skills_context(),
-                ),
-                max_tokens=op.max_tokens,
+        self.session_messages = working_messages
+        usage = result.usage
+        logger.info(
+            "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
+            "cache_hit=%s reasoning_tokens=%s tool_calls=%d",
+            duration_ms,
+            getattr(usage, "input_tokens", 0) if usage else 0,
+            getattr(usage, "output_tokens", 0) if usage else 0,
+            getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
+            getattr(usage, "reasoning_tokens", 0) if usage else 0,
+            len(result.tool_calls or []),
+        )
+        # Accumulate session cost from the DeepSeek usage payload.
+        # Hidden when pricing is unknown (off-platform providers,
+        # unrecognised model) — the UI also hides the chip in that
+        # case so we don't show $0.00 misleadingly.
+        cache_hit_tokens = 0
+        cache_miss_tokens = 0
+        cost_usd: float | None = None
+        cost_cny: float | None = None
+        if usage is not None:
+            # Accumulate cache hit/miss across the session so the
+            # status-bar chip reflects "how much prompt traffic the
+            # cache has saved you so far" instead of "what fraction
+            # of this single turn was a prefix hit" (the latter is
+            # nearly always 99%+ on a multi-turn DeepSeek session
+            # and conveys no information).
+            self.session_cache_hit_total += usage.cache_read_input_tokens
+            self.session_cache_miss_total += usage.cache_creation_input_tokens
+            cache_hit_tokens = self.session_cache_hit_total
+            cache_miss_tokens = self.session_cache_miss_total
+            from deepseek_tui.client.pricing import (
+                calculate_turn_cost_estimate_from_usage,
             )
 
-            duration_ms = int((time.monotonic() - start) * 1000)
-            if result.cancelled:
-                logger.info(
-                    "turn_cancelled turn=%s duration_ms=%d", turn_id, duration_ms
-                )
-                await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
-                return
-
-            self.session_messages = working_messages
-            usage = result.usage
-            logger.info(
-                "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
-                "cache_hit=%s reasoning_tokens=%s tool_calls=%d",
-                duration_ms,
-                getattr(usage, "input_tokens", 0) if usage else 0,
-                getattr(usage, "output_tokens", 0) if usage else 0,
-                getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
-                getattr(usage, "reasoning_tokens", 0) if usage else 0,
-                len(result.tool_calls or []),
+            model_for_pricing = op.model or self.default_model
+            estimate = calculate_turn_cost_estimate_from_usage(
+                model_for_pricing, usage
             )
-            # Accumulate session cost from the DeepSeek usage payload.
-            # Hidden when pricing is unknown (off-platform providers,
-            # unrecognised model) — the UI also hides the chip in that
-            # case so we don't show $0.00 misleadingly.
-            cache_hit_tokens = 0
-            cache_miss_tokens = 0
-            cost_usd: float | None = None
-            cost_cny: float | None = None
-            if usage is not None:
-                cache_hit_tokens = usage.cache_read_input_tokens
-                cache_miss_tokens = usage.cache_creation_input_tokens
-                from deepseek_tui.client.pricing import (
-                    calculate_turn_cost_estimate_from_usage,
-                )
-
-                model_for_pricing = op.model or self.default_model
-                estimate = calculate_turn_cost_estimate_from_usage(
-                    model_for_pricing, usage
-                )
-                if estimate is not None:
-                    self.session_cost_usd += estimate.usd
-                    self.session_cost_cny += estimate.cny
-                    cost_usd = self.session_cost_usd
-                    cost_cny = self.session_cost_cny
-            await self.handle.emit(
-                TurnCompleteEvent(
-                    assistant_message=result.assistant_message,
-                    usage=result.usage,
-                    session_cost_usd=cost_usd,
-                    session_cost_cny=cost_cny,
-                    cache_hit_tokens=cache_hit_tokens,
-                    cache_miss_tokens=cache_miss_tokens,
-                )
+            if estimate is not None:
+                self.session_cost_usd += estimate.usd
+                self.session_cost_cny += estimate.cny
+                cost_usd = self.session_cost_usd
+                cost_cny = self.session_cost_cny
+        await self.handle.emit(
+            TurnCompleteEvent(
+                assistant_message=result.assistant_message,
+                usage=result.usage,
+                session_cost_usd=cost_usd,
+                session_cost_cny=cost_cny,
+                cache_hit_tokens=cache_hit_tokens,
+                cache_miss_tokens=cache_miss_tokens,
             )
-            await self._auto_persist_session()
+        )
+        await self._auto_persist_session()
 
     async def _run_conversation(
         self,
@@ -581,6 +617,13 @@ class Engine:
                             "tool_name": tool_call.name,
                             "success": result.success,
                         }
+                    )
+                    self.working_set.observe_tool_call(
+                        tool_call.name,
+                        tool_call.arguments
+                        if isinstance(tool_call.arguments, dict)
+                        else None,
+                        result.content,
                     )
                     await self.handle.emit(
                         ToolResultEvent(

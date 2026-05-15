@@ -23,12 +23,14 @@ from rich.console import RenderableType
 from rich.markup import escape
 from rich.text import Text
 from textual import events
+from textual.binding import Binding
 from textual.widgets import Static
 
 from deepseek_tui.tui.widgets.diff_viewer import (
     parse_unified_diff,
     render_diff_to_rich,
 )
+from deepseek_tui.tui.widgets.pager import PagerScreen
 
 _DETAIL_RAIL = "▏"
 _TOOL_HEADER_SUMMARY_LIMIT = 56
@@ -121,6 +123,16 @@ class ToolCell(Static):
     """One tool call as a structured card."""
 
     DEFAULT_CSS = "ToolCell { margin: 0 0 1 0; }"
+    # ``o`` opens the full tool output in a PagerScreen modal so long
+    # tool results (head/tail-truncated by ``_head_tail_preview``) can be
+    # read in full with vim-style scrolling + search. Mirrors Rust
+    # ``pager.rs`` keymap. The cell must be focusable for the binding to
+    # fire; clicking the cell focuses it (Textual default) and the user
+    # then presses ``o``.
+    can_focus = True
+    BINDINGS = [
+        Binding("o", "open_pager", "Open in pager", show=False),
+    ]
 
     def __init__(
         self,
@@ -187,6 +199,19 @@ class ToolCell(Static):
         """
         self._collapsed = not self._collapsed
         self._refresh()
+
+    def action_open_pager(self) -> None:
+        """Push a ``PagerScreen`` modal with the full tool output.
+
+        Bound to the ``o`` key (Rust pager parity). No-op when the tool
+        hasn't produced output yet, so an empty modal doesn't pop over
+        a still-running call.
+        """
+        if not self._result:
+            return
+        lines = self._result.splitlines() or [self._result]
+        title = f"{self.tool_name} · {self._status}"
+        self.app.push_screen(PagerScreen(title=title, lines=lines))
 
     def _elapsed_str(self) -> str:
         if self._finished_at is None:

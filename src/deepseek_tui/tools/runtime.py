@@ -8,6 +8,8 @@ fully-operational ToolContext with:
 - SubAgentManager (Stage 3.2) attached with its Mailbox
 - McpManager (Stage 4.3) attached via ``ToolContext.metadata`` so the
   mcp_tools dispatchers can reach it
+- AutomationManager + scheduler loop (2026-05-15) attached when
+  ``features.automations`` is enabled
 - Policy (Stage 2.5) attached
 - workspace rooted at the caller-supplied cwd
 
@@ -17,7 +19,8 @@ drain managers cleanly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,15 @@ from deepseek_tui.config.models import Config
 from deepseek_tui.execpolicy.policy import Policy
 from deepseek_tui.lsp import LSP_MANAGER_KEY, LspConfig, LspManager
 from deepseek_tui.mcp.manager import McpManager
+from deepseek_tui.tools.automation_manager import (
+    AutomationManager,
+    default_automations_dir,
+)
+from deepseek_tui.tools.automation_scheduler import (
+    AutomationSchedulerConfig,
+    run_scheduler_loop,
+)
+from deepseek_tui.tools.automation_tools import AUTOMATION_MANAGER_KEY
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
@@ -50,6 +62,9 @@ class ToolRuntime:
     mailbox: Mailbox | None
     mcp_manager: McpManager | None
     lsp_manager: LspManager | None
+    automation_manager: AutomationManager | None = None
+    _automation_scheduler_task: asyncio.Task[None] | None = None
+    _automation_cancel: asyncio.Event | None = field(default=None)
 
     async def __aenter__(self) -> ToolRuntime:
         return self
@@ -58,6 +73,17 @@ class ToolRuntime:
         await self.shutdown()
 
     async def shutdown(self) -> None:
+        if self._automation_cancel is not None:
+            self._automation_cancel.set()
+        if self._automation_scheduler_task is not None:
+            try:
+                await asyncio.wait_for(
+                    self._automation_scheduler_task, timeout=5.0
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self._automation_scheduler_task.cancel()
+            except Exception:  # noqa: BLE001
+                pass
         if self.mailbox is not None:
             self.mailbox.close()
         if self.subagent_manager is not None:
@@ -80,6 +106,8 @@ async def create_tool_runtime(
     subagent_state_path: Path | None = None,
     mcp_manager: McpManager | None = None,
     start_mcp: bool = False,
+    automation_data_dir: Path | None = None,
+    automation_tick_interval_secs: float = 15.0,
 ) -> ToolRuntime:
     """Build a fully-wired :class:`ToolRuntime`.
 
@@ -152,6 +180,47 @@ async def create_tool_runtime(
     if lsp is not None:
         metadata[LSP_MANAGER_KEY] = lsp
 
+    automation_manager: AutomationManager | None = None
+    automation_cancel: asyncio.Event | None = None
+    automation_task: asyncio.Task[None] | None = None
+    if cfg.features.automations:
+        # Hard dependency: automations have no executor of their own —
+        # every fire ends up calling ``TaskManager.add_task``. Fail
+        # fast at construction time rather than letting the LLM call
+        # ``automation_run`` and discover the missing dependency at
+        # runtime. Mirrors Rust ``registry.rs::with_runtime_task_tools``
+        # which registers task + automation tools together.
+        if not cfg.features.tasks:
+            raise ValueError(
+                "features.automations requires features.tasks=True "
+                "(automations fire by enqueueing tasks)"
+            )
+        automation_root = (
+            automation_data_dir
+            if automation_data_dir is not None
+            else default_automations_dir()
+        )
+        automation_manager = AutomationManager.open(automation_root)
+        metadata[AUTOMATION_MANAGER_KEY] = automation_manager
+        # AutomationRunTool reaches the TaskManager through the same
+        # context.metadata bag — Rust does this through ``runtime``.
+        # The ``features.tasks`` guard above guarantees task_manager is
+        # not None here.
+        assert task_manager is not None
+        metadata["task_manager"] = task_manager
+        automation_cancel = asyncio.Event()
+        automation_task = asyncio.create_task(
+            run_scheduler_loop(
+                automation_manager,
+                task_manager,
+                automation_cancel,
+                AutomationSchedulerConfig(
+                    tick_interval_secs=automation_tick_interval_secs,
+                ),
+            ),
+            name="automation-scheduler",
+        )
+
     context = ToolContext(
         working_directory=workspace,
         trust_mode=getattr(cfg, "trust_mode", False),
@@ -169,6 +238,9 @@ async def create_tool_runtime(
         mailbox=mailbox,
         mcp_manager=mcp,
         lsp_manager=lsp,
+        automation_manager=automation_manager,
+        _automation_scheduler_task=automation_task,
+        _automation_cancel=automation_cancel,
     )
 
 

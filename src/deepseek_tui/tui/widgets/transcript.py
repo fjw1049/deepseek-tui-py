@@ -394,11 +394,14 @@ class Transcript(VerticalScroll):
             pass
         self._welcome_cell = None
 
-    def add_user_message(self, text: str) -> None:
+    def add_user_message(self, text: str, *, queued: bool = False) -> None:
         self._hide_welcome()
-        self._messages.append(f"[bold cyan]You:[/] {text}")
+        label = "You (queued)" if queued else "You"
+        prefix = "[bold yellow]" if queued else "[bold cyan]"
+        self._messages.append(f"{prefix}{label}:[/] {text}")
         try:
-            self.mount(_UserCell(text))
+            cell_text = f"⏳ {text}" if queued else text
+            self.mount(_UserCell(cell_text))
             self.scroll_end(animate=False)
         except Exception:
             pass

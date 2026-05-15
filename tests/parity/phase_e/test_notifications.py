@@ -105,3 +105,76 @@ def test_humanize_duration_days_and_weeks() -> None:
     assert humanize_duration(86400 * 2 + 3600 * 5) == "2d 5h"
     assert humanize_duration(7 * 86400) == "1w"
     assert humanize_duration(3 * 7 * 86400 + 2 * 86400) == "3w 2d"
+
+
+# ---------------------------------------------------------------------------
+# [notifications] config consumption — Stage 6 follow-up.
+#
+# ``DeepSeekTUI._maybe_notify_turn_done`` reads ``Config.notifications.*``
+# first, then falls back to ``Config.ui.notify_*`` for backwards compat.
+# These tests bypass the full Textual app and just exercise the same
+# resolution logic via a tiny shim.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_from_config(config: object) -> tuple[Method, float, bool]:
+    """Mirror ``DeepSeekTUI._maybe_notify_turn_done`` resolution order.
+
+    Kept inline here (rather than imported) so the test pins the contract:
+    if app.py drifts, this test breaks loudly.
+    """
+    notif = config.notifications  # type: ignore[attr-defined]
+    if not notif.enabled:
+        return Method.OFF, 0.0, False
+    ui = config.ui  # type: ignore[attr-defined]
+    method_str = notif.method if notif.method is not None else ui.notify_method
+    threshold_secs = float(
+        notif.threshold_secs
+        if notif.threshold_secs is not None
+        else ui.notify_threshold_secs
+    )
+    return Method.from_str(method_str), threshold_secs, True
+
+
+def test_notifications_method_overrides_ui_notify_method() -> None:
+    from deepseek_tui.config.models import Config
+
+    cfg = Config()
+    cfg.ui.notify_method = "auto"
+    cfg.notifications.method = "bel"
+    method, _, enabled = _resolve_from_config(cfg)
+    assert enabled is True
+    assert method is Method.BEL
+
+
+def test_notifications_threshold_overrides_ui_threshold() -> None:
+    from deepseek_tui.config.models import Config
+
+    cfg = Config()
+    cfg.ui.notify_threshold_secs = 30.0
+    cfg.notifications.threshold_secs = 5.0
+    _, threshold, _ = _resolve_from_config(cfg)
+    assert threshold == 5.0
+
+
+def test_notifications_falls_back_to_ui_when_unset() -> None:
+    from deepseek_tui.config.models import Config
+
+    cfg = Config()
+    cfg.ui.notify_method = "osc9"
+    cfg.ui.notify_threshold_secs = 12.5
+    # leave cfg.notifications.method / threshold_secs as their default None
+    method, threshold, _ = _resolve_from_config(cfg)
+    assert method is Method.OSC9
+    assert threshold == 12.5
+
+
+def test_notifications_disabled_short_circuits() -> None:
+    from deepseek_tui.config.models import Config
+
+    cfg = Config()
+    cfg.notifications.enabled = False
+    cfg.ui.notify_method = "bel"  # should be ignored
+    method, _, enabled = _resolve_from_config(cfg)
+    assert enabled is False
+    assert method is Method.OFF

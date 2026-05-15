@@ -69,6 +69,11 @@ class FeatureConfig(BaseModel):
     apply_patch: bool = True
     mcp: bool = True
     exec_policy: bool = True
+    # 2026-05-15: opt-in. When True, AutomationManager + scheduler are
+    # constructed in ``create_tool_runtime`` and the 8 automation tools
+    # are registered. Default False because automations have side effects
+    # (durable scheduled fires) and should be a deliberate choice.
+    automations: bool = False
 
 
 class SnapshotConfig(BaseModel):
@@ -126,10 +131,12 @@ class HooksConfig(BaseModel):
 class NotificationsConfig(BaseModel):
     """Terminal notification settings — mirrors Rust ``NotificationsConfig``.
 
-    Today only ``method`` + ``threshold_secs`` are consumed by
-    ``tui.notifications.notify_done_to``; the remaining fields are accepted
-    so user TOML written for the Rust binary doesn't get silently dropped
-    by Pydantic. Wiring them into runtime behavior is a Stage 6 follow-up.
+    ``method`` / ``threshold_secs`` / ``enabled`` are consumed by
+    ``DeepSeekTUI._maybe_notify_turn_done`` (see ``tui/app.py``). When the
+    nested ``method`` / ``threshold_secs`` are unset, the loader falls
+    back to ``Config.ui.notify_*`` for backwards compatibility.
+    ``include_subagent`` / ``include_task`` are accepted but not yet
+    routed; they're tracked as a Stage 6 follow-up.
     """
 
     method: str | None = None
@@ -187,37 +194,6 @@ class ServerConfig(BaseModel):
 
     host: str = "127.0.0.1"
     port: int = 8787
-
-
-class AuthConfig(BaseModel):
-    """[auth] subsection — server authentication configuration.
-
-    Controls API-key and JWT-based authentication for the HTTP app-server.
-    When ``enabled=True``, all app-server endpoints (except those in
-    ``exempt_paths``) require either a valid ``Authorization: Bearer
-    <api_key>`` header or a valid JWT session token.
-
-    - ``mode``: authentication mode (``"none"``, ``"api_key"``, ``"jwt"``).
-    - ``api_keys``: static list of pre-shared API keys (simple bearer).
-    - ``jwt_secret``: HMAC secret for JWT signing; auto-generated if empty.
-    - ``jwt_algorithm``: signing algorithm (default HS256).
-    - ``session_ttl_minutes``: JWT session lifetime.
-    - ``rate_limit_per_minute``: max requests/minute from a single IP.
-    - ``allowed_hosts``: CORS allowlist (empty = all origins permitted).
-    - ``exempt_paths``: paths exempt from auth checks (e.g. healthz).
-    - ``header_name``: custom header name for API-key auth (default Bearer).
-    """
-
-    enabled: bool = False
-    mode: str = "none"
-    api_keys: list[str] = Field(default_factory=list)
-    jwt_secret: str | None = None
-    jwt_algorithm: str = "HS256"
-    session_ttl_minutes: int = 60
-    rate_limit_per_minute: int = 60
-    allowed_hosts: list[str] = Field(default_factory=list)
-    exempt_paths: list[str] = Field(default_factory=lambda: ["/healthz", "/v1/healthz"])
-    header_name: str = "Authorization"
 
 
 class LoggingConfig(BaseModel):

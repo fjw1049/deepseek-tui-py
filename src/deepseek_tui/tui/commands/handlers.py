@@ -711,18 +711,67 @@ def cmd_diff(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/skills")
 def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
+    """List local skills, or fetch the remote registry.
+
+    Usage:
+        /skills                       — list installed skills
+        /skills <prefix>              — filter installed by name prefix
+        /skills --remote | remote     — list curated remote registry
+        /skills sync | --sync         — fetch + cache remote registry locally
+
+    Mirrors Rust ``commands/skills.rs::list_skills`` (skills.rs:37-130).
+    """
     from deepseek_tui.skills import default_skills_dir
+    from deepseek_tui.skills.install import fetch_registry
 
     skills_dir = default_skills_dir()
+    arg = args.strip()
+
+    if arg in ("--remote", "remote"):
+        registry = fetch_registry()
+        if registry is None:
+            return CommandResult(error="Failed to fetch remote skill registry.")
+        if not registry.skills:
+            return CommandResult(output="Remote registry is empty.")
+        lines = ["Remote skills:\n"]
+        for name, entry in sorted(registry.skills.items()):
+            desc = f" — {entry.description}" if entry.description else ""
+            lines.append(f"  {name}{desc}  ({entry.source})")
+        return CommandResult(output="\n".join(lines))
+
+    if arg in ("sync", "--sync"):
+        registry = fetch_registry()
+        if registry is None:
+            return CommandResult(error="Failed to fetch remote skill registry.")
+        return CommandResult(
+            output=(
+                f"Fetched registry index ({len(registry.skills)} skills). "
+                "Use `/skill install <name>` to install one."
+            )
+        )
+
+    if arg.startswith("-"):
+        return CommandResult(
+            error="Usage: /skills [--remote|sync|<name-prefix>]"
+        )
+
+    prefix = arg.lower() if arg else None
+
     if not skills_dir.is_dir():
         return CommandResult(output="No skills installed.")
 
     skills: list[str] = []
     for d in sorted(skills_dir.iterdir()):
-        skill_file = d / "SKILL.md"
-        if skill_file.exists():
-            skills.append(f"  {d.name}")
+        if not d.is_dir():
+            continue
+        if not (d / "SKILL.md").exists():
+            continue
+        if prefix and not d.name.lower().startswith(prefix):
+            continue
+        skills.append(f"  {d.name}")
     if not skills:
+        if prefix:
+            return CommandResult(output=f"No skills match prefix `{prefix}`.")
         return CommandResult(output="No skills installed.")
     return CommandResult(output="Installed skills:\n\n" + "\n".join(skills))
 
@@ -731,15 +780,75 @@ def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/skill")
 def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
-    if not args.strip():
-        return CommandResult(error="Usage: /skill <name>")
+    """Skill subcommands: read SKILL.md, install / update / uninstall / trust.
 
+    Usage:
+        /skill <name>                — print SKILL.md
+        /skill install <spec>        — github:owner/repo or local path
+        /skill update <name>         — re-fetch from .installed-from
+        /skill uninstall <name>      — delete (community installs only)
+        /skill trust <name>          — mark trusted (allowed-tools whitelist)
+
+    Mirrors Rust ``commands/skills.rs::run_skill`` (skills.rs:142-310).
+    """
     from deepseek_tui.skills import default_skills_dir
+    from deepseek_tui.skills.install import (
+        InstallSource,
+        install,
+        trust,
+        uninstall,
+        update,
+    )
 
+    raw = args.strip()
+    if not raw:
+        return CommandResult(
+            error=(
+                "Usage: /skill <name> | install <spec> | update <name> | "
+                "uninstall <name> | trust <name>"
+            )
+        )
+
+    parts = raw.split(None, 1)
+    head = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
     skills_dir = default_skills_dir()
-    skill_path = skills_dir / args.strip() / "SKILL.md"
+
+    if head == "install":
+        if not rest:
+            return CommandResult(
+                error="Usage: /skill install <github:owner/repo|local-path>"
+            )
+        source = InstallSource.parse(rest)
+        if source.kind == "invalid":
+            return CommandResult(error=f"Invalid source: {rest}")
+        outcome, message = install(source, skills_dir=skills_dir)
+        if outcome.value == "failed":
+            return CommandResult(error=message)
+        return CommandResult(output=message)
+
+    if head == "update":
+        if not rest:
+            return CommandResult(error="Usage: /skill update <name>")
+        outcome, message = update(rest, skills_dir=skills_dir)
+        if outcome.value == "failed":
+            return CommandResult(error=message)
+        return CommandResult(output=message)
+
+    if head == "uninstall":
+        if not rest:
+            return CommandResult(error="Usage: /skill uninstall <name>")
+        return CommandResult(output=uninstall(rest, skills_dir=skills_dir))
+
+    if head == "trust":
+        if not rest:
+            return CommandResult(error="Usage: /skill trust <name>")
+        return CommandResult(output=trust(rest, skills_dir=skills_dir))
+
+    # Default: treat the whole arg as a skill name to read.
+    skill_path = skills_dir / raw / "SKILL.md"
     if not skill_path.exists():
-        return CommandResult(error=f"Skill not found: {args.strip()}")
+        return CommandResult(error=f"Skill not found: {raw}")
     content = skill_path.read_text(encoding="utf-8")
     if len(content) > 2000:
         content = content[:2000] + "\n... (truncated)"
