@@ -143,6 +143,17 @@ class DeepSeekTUI(App[None]):
             self._resume_session_id,
             self._fork_session_id,
         )
+        # Ensure bundled system skills exist before any skill discovery
+        # runs (Engine.create reads ``default_skills_dir()`` via
+        # ``discover_in_workspace``). Mirrors Rust ``main.rs:3974`` which
+        # calls ``crate::skills::install_system_skills`` at startup.
+        try:
+            from deepseek_tui.skills.system import install_system_skills
+
+            install_system_skills()
+        except Exception:  # noqa: BLE001 — bundled-skill failure must
+            # never block the TUI from launching.
+            logger.exception("install_system_skills failed at startup")
         self.query_one(Composer).focus()
         # Seed StatusBar + ComposerHint with mode/model *before* the
         # engine starts so the bottom chrome already shows them (chord

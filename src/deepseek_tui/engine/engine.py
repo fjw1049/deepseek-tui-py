@@ -53,6 +53,7 @@ from deepseek_tui.engine.tool_catalog import (
 )
 from deepseek_tui.engine.tool_execution import emit_tool_audit
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
+from deepseek_tui.engine.working_set import WorkingSet
 from deepseek_tui.execpolicy.approval_cache import (
     ApprovalCache,
     ApprovalCacheStatus,
@@ -210,6 +211,11 @@ class Engine:
         self._cycle_session_id: str = ""
         self._cycle_n: int = 0
         self._cycle_started_at: int = 0
+        # Working-set tracker — observes user messages and tool calls to
+        # surface relevant file paths for compaction pinning + system-prompt
+        # injection. Mirrors Rust ``WorkingSet`` (working_set.rs). One per
+        # Engine instance: workspace lives on tool_context.working_directory.
+        self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
 
     @classmethod
     async def create(
@@ -321,6 +327,7 @@ class Engine:
             self.handle.reset_cancel()
             user_message = Message.user(op.content)
             working_messages = [*self.session_messages, user_message]
+            self.working_set.observe_user_message(op.content or "")
             preview = (op.content or "")[:200].replace("\n", " ")
             logger.info(
                 "turn_start user_text_len=%d preview=%r model=%s session_msgs=%d",
@@ -338,6 +345,7 @@ class Engine:
                 system_prompt=build_system_prompt(
                     op.system_prompt,
                     skills_context=self._render_skills_context(),
+                    working_set_summary=self.working_set.summary() or None,
                 ),
                 max_tokens=op.max_tokens,
             )
@@ -581,6 +589,13 @@ class Engine:
                             "tool_name": tool_call.name,
                             "success": result.success,
                         }
+                    )
+                    self.working_set.observe_tool_call(
+                        tool_call.name,
+                        tool_call.arguments
+                        if isinstance(tool_call.arguments, dict)
+                        else None,
+                        result.content,
                     )
                     await self.handle.emit(
                         ToolResultEvent(
