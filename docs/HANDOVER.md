@@ -418,6 +418,7 @@ Co-Authored-By: <your-coauthor-tag>
 12. **不要写无意义测试**——参见步骤 4 的黑名单。2026-05-06 清理移除了 34 个此类测试。新增测试前先过 3 问自检。
 13. **不要隐式简化**（2026-05-06 用户要求）——任何"stub / 跳过 / 硬编码 / NotImplementedError / 降级"都要按步骤 0 先问用户，不许自作主张。简化完成后在集成债清单补一条 `⬜ <stage>.simplified: <feature>`。
 14. **不要一次性堆大量不可跑的代码**（2026-05-06 用户要求）——参见第三节"路线图编排原则"。如果本次提交的代码**没有任何 make check / 真实 API 测试路径能触发**，它就是孤岛，拆小或延后，不许提交。
+15. **不要用 `pytest ... | tail -N` 跑长测试集**（2026-05-15 用户踩坑）——shell 管道会缓冲 pytest 整个输出直到进程退出才一次性 flush。在 `run_in_background` 模式下，TaskOutput 拿不到任何 stdout 进展信号，会一直 timeout 让用户以为卡死，实际进程跑得正常。**正确做法**：①小测试集（<200 条）直接不带管道跑，pytest 末尾摘要本来就只有几行；②大测试集用 `pytest -q --no-header tests/path/` 直接输出，让 progress dots 实时流到 stdout；③需要只看尾部时用 `pytest ... > /tmp/x.log; tail -5 /tmp/x.log` 两步走，不要 pipe；④更通用：任何长跑命令都不要 `| head/tail/grep`，因为 stdio buffer 在管道中变成 block-buffered 而不是 line-buffered。
 
 ---
 

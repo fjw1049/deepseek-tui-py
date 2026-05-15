@@ -327,3 +327,74 @@ class TestWaitMode:
         a = await manager.spawn(_spawn_request())
         with pytest.raises(ValueError):
             await manager.wait([a.agent_id], mode="nonsense", timeout_ms=1000)
+
+
+class TestSpawnDepth:
+    """``DEFAULT_MAX_SPAWN_DEPTH`` must be enforced on the main spawn path,
+    not just on the (currently unused) ``SubAgentRuntime.child`` helper.
+
+    Mirrors Rust ``SubAgentManager::spawn`` (mod.rs:~750) where a child's
+    ``parent.spawn_depth + 1`` is rejected past the cap.
+    """
+
+    async def test_top_level_spawn_records_depth_one(
+        self, manager: SubAgentManager
+    ) -> None:
+        snap = await manager.spawn(_spawn_request("root"))
+        agent = manager._agents[snap.agent_id]
+        assert agent.spawn_depth == 1
+
+    async def test_nested_spawn_increments_depth(
+        self, manager: SubAgentManager
+    ) -> None:
+        from deepseek_tui.tools.subagent.manager import DEFAULT_MAX_SPAWN_DEPTH
+
+        # parent_depth=1 → child depth 2, still ≤ cap
+        req = _spawn_request("nested")
+        req = SpawnRequest(
+            prompt=req.prompt,
+            agent_type=req.agent_type,
+            assignment=req.assignment,
+            parent_depth=1,
+        )
+        snap = await manager.spawn(req)
+        agent = manager._agents[snap.agent_id]
+        assert agent.spawn_depth == 2
+        assert DEFAULT_MAX_SPAWN_DEPTH >= 2
+
+    async def test_spawn_at_cap_is_rejected(
+        self, manager: SubAgentManager
+    ) -> None:
+        from deepseek_tui.tools.subagent.manager import DEFAULT_MAX_SPAWN_DEPTH
+
+        # parent_depth = cap → child = cap+1 → reject
+        req = SpawnRequest(
+            prompt="too-deep",
+            agent_type=SubAgentType.GENERAL,
+            assignment=SubAgentAssignment(objective="too-deep"),
+            parent_depth=DEFAULT_MAX_SPAWN_DEPTH,
+        )
+        with pytest.raises(RuntimeError, match="max sub-agent spawn depth"):
+            await manager.spawn(req)
+
+    async def test_spawn_depth_persists_across_reload(self, tmp_path: Path) -> None:
+        state_path = tmp_path / "subagents.json"
+        mgr = SubAgentManager(workspace=tmp_path, state_path=state_path)
+        try:
+            req = SpawnRequest(
+                prompt="persist-me",
+                agent_type=SubAgentType.GENERAL,
+                assignment=SubAgentAssignment(objective="persist-me"),
+                parent_depth=1,
+            )
+            snap = await mgr.spawn(req)
+            agent_id = snap.agent_id
+            await asyncio.sleep(0.1)  # let executor finish so persisted record is final
+        finally:
+            await mgr.shutdown()
+
+        mgr2 = SubAgentManager(workspace=tmp_path, state_path=state_path)
+        try:
+            assert mgr2._agents[agent_id].spawn_depth == 2
+        finally:
+            await mgr2.shutdown()

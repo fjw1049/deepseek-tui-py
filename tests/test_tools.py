@@ -610,6 +610,59 @@ async def test_todo_tools_write_add_update_list(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_todo_tools_single_in_progress_invariant(tmp_path: Path) -> None:
+    """Two simultaneously in_progress items must be rejected on every write path."""
+    from deepseek_tui.tools.base import ToolError
+
+    # Path 1: TodoWrite with two in_progress entries → reject.
+    ctx = ToolContext(working_directory=tmp_path)
+    with pytest.raises(ToolError, match="only one item"):
+        await TodoWriteTool().execute(
+            {
+                "todos": [
+                    {"content": "A", "status": "in_progress"},
+                    {"content": "B", "status": "in_progress"},
+                ]
+            },
+            ctx,
+        )
+
+    # Path 2: Add a second in_progress on top of an existing one → reject;
+    # the original store must be untouched.
+    ctx2 = ToolContext(working_directory=tmp_path)
+    await TodoWriteTool().execute(
+        {"todos": [{"content": "first", "status": "in_progress"}]}, ctx2
+    )
+    with pytest.raises(ToolError, match="only one item"):
+        await TodoAddTool().execute({"content": "second", "status": "in_progress"}, ctx2)
+    listing = await TodoListTool().execute({}, ctx2)
+    assert listing.metadata["count"] == 1
+
+    # Path 3: Update an existing pending item to in_progress while another is
+    # already in_progress → reject and roll back content/status.
+    ctx3 = ToolContext(working_directory=tmp_path)
+    await TodoWriteTool().execute(
+        {
+            "todos": [
+                {"content": "running", "status": "in_progress"},
+                {"content": "todo", "status": "pending"},
+            ]
+        },
+        ctx3,
+    )
+    with pytest.raises(ToolError, match="only one item"):
+        await TodoUpdateTool().execute(
+            {"item_id": "2", "status": "in_progress", "content": "renamed"}, ctx3
+        )
+    final = await TodoListTool().execute({}, ctx3)
+    # Rollback: item 2 is still pending and content unchanged.
+    items = final.metadata["items"]
+    item2 = next(i for i in items if i["id"] == 2)
+    assert item2["status"] == "pending"
+    assert item2["content"] == "todo"
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_tool_returns_info(tmp_path: Path) -> None:
     context = ToolContext(working_directory=tmp_path)
     result = await DiagnosticsTool().execute({}, context)

@@ -131,10 +131,12 @@ class HooksConfig(BaseModel):
 class NotificationsConfig(BaseModel):
     """Terminal notification settings — mirrors Rust ``NotificationsConfig``.
 
-    Today only ``method`` + ``threshold_secs`` are consumed by
-    ``tui.notifications.notify_done_to``; the remaining fields are accepted
-    so user TOML written for the Rust binary doesn't get silently dropped
-    by Pydantic. Wiring them into runtime behavior is a Stage 6 follow-up.
+    ``method`` / ``threshold_secs`` / ``enabled`` are consumed by
+    ``DeepSeekTUI._maybe_notify_turn_done`` (see ``tui/app.py``). When the
+    nested ``method`` / ``threshold_secs`` are unset, the loader falls
+    back to ``Config.ui.notify_*`` for backwards compatibility.
+    ``include_subagent`` / ``include_task`` are accepted but not yet
+    routed; they're tracked as a Stage 6 follow-up.
     """
 
     method: str | None = None

@@ -15,6 +15,11 @@ class EngineHandle:
         self.cancel_event = asyncio.Event()
         self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
+        # True while Engine is actively processing a turn (between
+        # SendMessageOp pickup and TurnComplete/TurnCancelled emit). Read
+        # by the TUI to decide whether composer submit should send a new
+        # SendMessageOp or queue a steer onto the live turn.
+        self._turn_active = asyncio.Event()
 
     async def send_message(
         self,
@@ -55,6 +60,22 @@ class EngineHandle:
     async def steer(self, text: str) -> None:
         """Inject a user message mid-turn (mirrors Rust rx_steer)."""
         await self._steer_queue.put(text)
+
+    def is_turn_active(self) -> bool:
+        """True between SendMessageOp pickup and TurnComplete/TurnCancelled.
+
+        TUI uses this to choose between ``send_op(SendMessageOp(...))`` and
+        ``steer(...)`` when the user submits the composer. ``steer`` is the
+        right call while a turn is live: the message is queued onto the
+        running turn and Engine drains it at the top of its next round.
+        """
+        return self._turn_active.is_set()
+
+    def _mark_turn_active(self) -> None:
+        self._turn_active.set()
+
+    def _mark_turn_idle(self) -> None:
+        self._turn_active.clear()
 
     def drain_steers(self) -> list[str]:
         """Non-blocking drain of all queued steer messages."""

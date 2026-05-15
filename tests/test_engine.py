@@ -186,3 +186,168 @@ async def test_engine_blocks_tool_when_approval_denied(tmp_path: Path) -> None:
     assert any(isinstance(event, ApprovalRequiredEvent) for event in events)
     assert any(isinstance(event, SandboxDeniedEvent) for event in events)
     assert not any(isinstance(event, ToolResultEvent) for event in events)
+
+
+# ---------------------------------------------------------------------------
+# Soft steer — composer Enter while a turn is running.
+#
+# Contract:
+#   1. handle.is_turn_active() is True between SendMessageOp pickup and the
+#      TurnComplete/TurnCancelled emit, False at all other times.
+#   2. handle.steer(text) queues a user message that the *currently running*
+#      turn picks up at the top of its next round (so multi-round tool
+#      loops see it on the very next iteration; single-round flat replies
+#      see it carried forward to the *next* SendMessage).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_active_idle_at_rest() -> None:
+    """A freshly constructed handle is not active and reports it."""
+    handle = EngineHandle()
+    assert handle.is_turn_active() is False
+
+
+@pytest.mark.asyncio
+async def test_engine_marks_turn_active_during_run(tmp_path: Path) -> None:
+    """``is_turn_active`` flips True while Engine processes a turn and back
+    to False after the turn finishes (TurnComplete or TurnCancelled)."""
+
+    class _SlowClient(LLMClient):
+        """Streams two text chunks with tiny gaps so a probe in between
+        observes the active flag."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.probe_active: bool | None = None
+            self._handle: EngineHandle | None = None
+
+        def bind(self, handle: EngineHandle) -> None:
+            self._handle = handle
+
+        def stream_chat_completion(
+            self, request: MessageRequest
+        ) -> AsyncIterator[object]:
+            return self._stream()
+
+        async def _stream(self) -> AsyncIterator[object]:
+            yield StreamTextDelta(text="hi")
+            await asyncio.sleep(0.02)
+            assert self._handle is not None
+            self.probe_active = self._handle.is_turn_active()
+            yield StreamDone(usage=Usage(input_tokens=1, output_tokens=1))
+
+    handle = EngineHandle()
+    client = _SlowClient()
+    client.bind(handle)
+    engine = Engine(
+        handle=handle,
+        client=client,
+        tool_registry=ToolRegistry(),
+        tool_context=ToolContext(working_directory=tmp_path),
+        exec_policy=ExecPolicyEngine(rules=[]),
+    )
+    task = asyncio.create_task(engine.run())
+    await handle.send_message("hello")
+
+    async for event in handle.events():
+        if isinstance(event, TurnCompleteEvent):
+            break
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert client.probe_active is True, (
+        "is_turn_active() must be True while the engine is mid-turn"
+    )
+    assert handle.is_turn_active() is False, (
+        "is_turn_active() must reset to False after TurnComplete"
+    )
+
+
+@pytest.mark.asyncio
+async def test_engine_drains_steer_into_next_round(tmp_path: Path) -> None:
+    """A steer queued mid-turn is picked up at the top of the next loop
+    iteration of the same turn (Engine.drain_steers in _run_conversation).
+
+    Strategy: drive a tool-loop client that runs two rounds. Between the
+    two stream_chat_completion() invocations, queue a steer; assert the
+    second round's request.messages contains it as a user message.
+    """
+    captured_round_2_messages: list[Any] = []
+
+    class _TwoRoundClient(LLMClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+            self.handle: EngineHandle | None = None
+
+        def stream_chat_completion(
+            self, request: MessageRequest
+        ) -> AsyncIterator[object]:
+            self.calls += 1
+            if self.calls == 1:
+                return self._round_1()
+            captured_round_2_messages.extend(request.messages)
+            return self._round_2()
+
+        async def _round_1(self) -> AsyncIterator[object]:
+            yield StreamToolCallComplete(
+                tool_call=ToolCall(
+                    id="call_1", name="read_file", arguments={"path": "x.txt"}
+                )
+            )
+            yield StreamDone(usage=Usage(input_tokens=1, output_tokens=1))
+            # Steer is queued by the test after round-1 done arrives via
+            # the post-tool checkpoint in Engine.
+
+        async def _round_2(self) -> AsyncIterator[object]:
+            yield StreamTextDelta(text="ok")
+            yield StreamDone(usage=Usage(input_tokens=1, output_tokens=1))
+
+    from typing import Any
+
+    (tmp_path / "x.txt").write_text("hi", encoding="utf-8")
+
+    registry = ToolRegistry()
+    registry.register(ReadFileTool())
+
+    handle = EngineHandle()
+    client = _TwoRoundClient()
+    engine = Engine(
+        handle=handle,
+        client=client,
+        tool_registry=registry,
+        tool_context=ToolContext(working_directory=tmp_path),
+        exec_policy=ExecPolicyEngine(rules=[]),
+    )
+    task = asyncio.create_task(engine.run())
+
+    await handle.send_message("look at x.txt")
+
+    # Watch events: steer the moment we see ToolCallEvent (during round
+    # 1, before round 2's drain_steers() runs). Contract: a steer queued
+    # during round N is visible in round N+1's prompt.
+    steered = False
+    async for event in handle.events():
+        if not steered and isinstance(event, ToolCallEvent):
+            steered = True
+            await handle.steer("actually also describe it")
+        if isinstance(event, TurnCompleteEvent):
+            break
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert client.calls == 2, "Engine should have driven a second round"
+    user_texts = []
+    for msg in captured_round_2_messages:
+        if getattr(msg, "role", None) == Role.USER:
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    user_texts.append(block.text)
+    assert any(
+        "actually also describe it" in t for t in user_texts
+    ), f"steered message must reach round-2 prompt; got user blocks: {user_texts!r}"

@@ -347,17 +347,31 @@ class DeepSeekTUI(App[None]):
             )
             return
         preview = (event.text or "")[:200].replace("\n", " ")
-        logger.info(
-            "composer_submit text_len=%d preview=%r",
-            len(event.text or ""),
-            preview,
-        )
-        transcript = self.query_one(Transcript)
-        transcript.add_user_message(event.text)
         # Prepend active mode so Engine adapts behaviour (plan/yolo/ask vs agent).
         content = event.text
         if self._interaction_mode != "agent":
             content = f"[mode:{self._interaction_mode}] {content}"
+        transcript = self.query_one(Transcript)
+        if self.handle.is_turn_active():
+            # Soft steer: Engine is mid-turn, so don't queue a new
+            # SendMessageOp (which would fight for op-queue ordering).
+            # Engine drains ``handle._steer_queue`` at the top of its
+            # next round and appends each entry as a user message,
+            # which is exactly the behaviour we want here.
+            logger.info(
+                "composer_submit text_len=%d preview=%r mode=steer",
+                len(event.text or ""),
+                preview,
+            )
+            transcript.add_user_message(event.text, queued=True)
+            await self.handle.steer(content)
+            return
+        logger.info(
+            "composer_submit text_len=%d preview=%r mode=send",
+            len(event.text or ""),
+            preview,
+        )
+        transcript.add_user_message(event.text)
         await self.handle.send_op(SendMessageOp(content=content))
         self.run_worker(self._listen_events())
 
@@ -849,8 +863,10 @@ class DeepSeekTUI(App[None]):
     def _maybe_notify_turn_done(self) -> None:
         """Emit OSC 9 / BEL when a long turn finishes (mirrors Rust notifications.rs).
 
-        Threshold + method come from ``Config.ui.notify_*``. Silently no-ops
-        when stdout has no buffer or method is OFF.
+        Method + threshold are read from the top-level ``[notifications]``
+        section first (Rust parity), falling back to ``Config.ui.notify_*``
+        when the nested fields are unset. ``notifications.enabled = false``
+        suppresses the notification entirely.
         """
         import sys
 
@@ -862,9 +878,17 @@ class DeepSeekTUI(App[None]):
             return
         elapsed = time.monotonic() - started
 
+        notif = self.config.notifications
+        if not notif.enabled:
+            return
         ui = self.config.ui
-        method = Method.from_str(ui.notify_method)
-        threshold_secs = float(ui.notify_threshold_secs)
+        method_str = notif.method if notif.method is not None else ui.notify_method
+        threshold_secs = float(
+            notif.threshold_secs
+            if notif.threshold_secs is not None
+            else ui.notify_threshold_secs
+        )
+        method = Method.from_str(method_str)
         in_tmux = bool(os.environ.get("TMUX"))
         sink = getattr(sys.stdout, "buffer", None)
         if sink is None:

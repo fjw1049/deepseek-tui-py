@@ -268,6 +268,13 @@ class SpawnRequest:
     allowed_tools: list[str] | None = None
     model: str | None = None
     nickname: str | None = None
+    # Depth of the parent agent that issued this spawn. 0 = top-level
+    # (root engine spawning its first sub-agent); 1+ = nested spawn from
+    # within an already-running sub-agent. Wired through
+    # ``ToolContext.metadata["subagent_depth"]`` by
+    # :func:`deepseek_tui.engine.executors.real_subagent_executor` so
+    # ``SubAgentManager.spawn`` can enforce :data:`DEFAULT_MAX_SPAWN_DEPTH`.
+    parent_depth: int = 0
 
 
 # Executor signature — takes a SubAgent handle plus cancel token, returns
@@ -314,6 +321,7 @@ class SubAgent:
         allowed_tools: list[str] | None,
         session_boot_id: str,
         workspace: Path | None = None,
+        spawn_depth: int = 0,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -328,6 +336,7 @@ class SubAgent:
         self.allowed_tools = allowed_tools
         self.session_boot_id = session_boot_id
         self.workspace = workspace or Path.cwd()
+        self.spawn_depth = spawn_depth
         self.cancel_token: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
@@ -425,6 +434,13 @@ class SubAgentManager:
                 raise RuntimeError(
                     f"Too many sub-agents running ({self.max_agents} cap)"
                 )
+            child_depth = request.parent_depth + 1
+            if child_depth > DEFAULT_MAX_SPAWN_DEPTH:
+                raise RuntimeError(
+                    f"max sub-agent spawn depth exceeded "
+                    f"({DEFAULT_MAX_SPAWN_DEPTH}); refusing nested spawn at "
+                    f"depth {child_depth}"
+                )
             agent = SubAgent(
                 agent_type=request.agent_type,
                 prompt=request.prompt,
@@ -434,6 +450,7 @@ class SubAgentManager:
                 allowed_tools=request.allowed_tools,
                 session_boot_id=self._session_boot_id,
                 workspace=self.workspace,
+                spawn_depth=child_depth,
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()
@@ -653,6 +670,7 @@ class SubAgentManager:
                     "allowed_tools": agent.allowed_tools or [],
                     "updated_at_ms": now_ms,
                     "session_boot_id": agent.session_boot_id,
+                    "spawn_depth": agent.spawn_depth,
                 }
             )
         payload = {
@@ -683,6 +701,7 @@ class SubAgentManager:
                 allowed_tools=raw.get("allowed_tools") or None,
                 session_boot_id=raw.get("session_boot_id", ""),
                 workspace=self.workspace,
+                spawn_depth=int(raw.get("spawn_depth", 0) or 0),
             )
             # Restore id from persisted record, overwriting the freshly
             # generated one.

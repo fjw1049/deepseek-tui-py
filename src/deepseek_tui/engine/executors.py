@@ -119,6 +119,12 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
         allowed_tools=agent.allowed_tools,
     )
 
+    # Stamp this agent's depth on the child Engine's tool context so any
+    # ``agent_spawn`` tool calls from inside the agent inherit it as
+    # ``parent_depth`` and ``SubAgentManager.spawn`` can refuse spawns
+    # past ``DEFAULT_MAX_SPAWN_DEPTH``.
+    engine.tool_context.metadata["subagent_depth"] = agent.spawn_depth  # type: ignore[attr-defined]
+
     try:
         await handle.send_message(content=agent.prompt)
 

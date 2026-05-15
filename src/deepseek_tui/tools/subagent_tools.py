@@ -179,6 +179,7 @@ class AgentSpawnTool(ToolSpec):
             allowed_tools=allowed_tools,
             model=_pick_str(input_data, "model"),
             nickname=_pick_str(input_data, "nickname"),
+            parent_depth=int(context.metadata.get("subagent_depth", 0) or 0),
         )
         try:
             snapshot = await manager.spawn(request)
