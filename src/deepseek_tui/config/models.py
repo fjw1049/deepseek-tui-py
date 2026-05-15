@@ -189,37 +189,6 @@ class ServerConfig(BaseModel):
     port: int = 8787
 
 
-class AuthConfig(BaseModel):
-    """[auth] subsection — server authentication configuration.
-
-    Controls API-key and JWT-based authentication for the HTTP app-server.
-    When ``enabled=True``, all app-server endpoints (except those in
-    ``exempt_paths``) require either a valid ``Authorization: Bearer
-    <api_key>`` header or a valid JWT session token.
-
-    - ``mode``: authentication mode (``"none"``, ``"api_key"``, ``"jwt"``).
-    - ``api_keys``: static list of pre-shared API keys (simple bearer).
-    - ``jwt_secret``: HMAC secret for JWT signing; auto-generated if empty.
-    - ``jwt_algorithm``: signing algorithm (default HS256).
-    - ``session_ttl_minutes``: JWT session lifetime.
-    - ``rate_limit_per_minute``: max requests/minute from a single IP.
-    - ``allowed_hosts``: CORS allowlist (empty = all origins permitted).
-    - ``exempt_paths``: paths exempt from auth checks (e.g. healthz).
-    - ``header_name``: custom header name for API-key auth (default Bearer).
-    """
-
-    enabled: bool = False
-    mode: str = "none"
-    api_keys: list[str] = Field(default_factory=list)
-    jwt_secret: str | None = None
-    jwt_algorithm: str = "HS256"
-    session_ttl_minutes: int = 60
-    rate_limit_per_minute: int = 60
-    allowed_hosts: list[str] = Field(default_factory=list)
-    exempt_paths: list[str] = Field(default_factory=lambda: ["/healthz", "/v1/healthz"])
-    header_name: str = "Authorization"
-
-
 class LoggingConfig(BaseModel):
     """Per-hour rotating file logging — consumed by :func:`logging_setup.setup_logging`.
 
