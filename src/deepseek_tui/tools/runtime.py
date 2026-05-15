@@ -184,6 +184,17 @@ async def create_tool_runtime(
     automation_cancel: asyncio.Event | None = None
     automation_task: asyncio.Task[None] | None = None
     if cfg.features.automations:
+        # Hard dependency: automations have no executor of their own —
+        # every fire ends up calling ``TaskManager.add_task``. Fail
+        # fast at construction time rather than letting the LLM call
+        # ``automation_run`` and discover the missing dependency at
+        # runtime. Mirrors Rust ``registry.rs::with_runtime_task_tools``
+        # which registers task + automation tools together.
+        if not cfg.features.tasks:
+            raise ValueError(
+                "features.automations requires features.tasks=True "
+                "(automations fire by enqueueing tasks)"
+            )
         automation_root = (
             automation_data_dir
             if automation_data_dir is not None
@@ -193,20 +204,22 @@ async def create_tool_runtime(
         metadata[AUTOMATION_MANAGER_KEY] = automation_manager
         # AutomationRunTool reaches the TaskManager through the same
         # context.metadata bag — Rust does this through ``runtime``.
-        if task_manager is not None:
-            metadata["task_manager"] = task_manager
-            automation_cancel = asyncio.Event()
-            automation_task = asyncio.create_task(
-                run_scheduler_loop(
-                    automation_manager,
-                    task_manager,
-                    automation_cancel,
-                    AutomationSchedulerConfig(
-                        tick_interval_secs=automation_tick_interval_secs,
-                    ),
+        # The ``features.tasks`` guard above guarantees task_manager is
+        # not None here.
+        assert task_manager is not None
+        metadata["task_manager"] = task_manager
+        automation_cancel = asyncio.Event()
+        automation_task = asyncio.create_task(
+            run_scheduler_loop(
+                automation_manager,
+                task_manager,
+                automation_cancel,
+                AutomationSchedulerConfig(
+                    tick_interval_secs=automation_tick_interval_secs,
                 ),
-                name="automation-scheduler",
-            )
+            ),
+            name="automation-scheduler",
+        )
 
     context = ToolContext(
         working_directory=workspace,

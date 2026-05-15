@@ -764,6 +764,35 @@ class TestRuntimeIntegration:
             await rt.shutdown()
 
     @pytest.mark.asyncio
+    async def test_automations_requires_tasks_fail_fast(
+        self, tmp_path: Path
+    ) -> None:
+        """``features.automations=True`` without ``features.tasks=True``
+        must fail at construction.
+
+        Automations have no executor of their own — every fire ends up
+        calling ``TaskManager.add_task``. Mirrors Rust
+        ``registry.rs::with_runtime_task_tools`` which registers task +
+        automation tools in the same builder method, so the dependency
+        is structural rather than runtime-checked.
+        """
+        from deepseek_tui.config.models import Config
+        from deepseek_tui.tools.runtime import create_tool_runtime
+
+        cfg = Config()
+        cfg.features.automations = True
+        cfg.features.tasks = False  # invalid combo
+        with pytest.raises(
+            ValueError,
+            match="features.automations requires features.tasks=True",
+        ):
+            await create_tool_runtime(
+                config=cfg,
+                working_directory=tmp_path,
+                automation_data_dir=tmp_path / "auto",
+            )
+
+    @pytest.mark.asyncio
     async def test_scheduler_loop_cancels_on_event(
         self, tmp_path: Path
     ) -> None:
