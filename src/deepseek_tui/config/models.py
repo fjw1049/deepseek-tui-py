@@ -69,6 +69,11 @@ class FeatureConfig(BaseModel):
     apply_patch: bool = True
     mcp: bool = True
     exec_policy: bool = True
+    # 2026-05-15: opt-in. When True, AutomationManager + scheduler are
+    # constructed in ``create_tool_runtime`` and the 8 automation tools
+    # are registered. Default False because automations have side effects
+    # (durable scheduled fires) and should be a deliberate choice.
+    automations: bool = False
 
 
 class SnapshotConfig(BaseModel):
