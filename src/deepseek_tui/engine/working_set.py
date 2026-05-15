@@ -17,6 +17,8 @@ class WorkingSet:
     Mirrors Rust WorkingSet for pinning decisions during compaction.
     """
 
+    _MAX_RECENT_PATHS = 100
+
     def __init__(self, workspace: Path | None = None) -> None:
         """Initialize working set.
 
@@ -120,6 +122,11 @@ class WorkingSet:
                 normalized = self._normalize_path(path, workspace)
                 if normalized:
                     self.recent_paths.add(normalized)
+        if len(self.recent_paths) > self._MAX_RECENT_PATHS:
+            excess = len(self.recent_paths) - self._MAX_RECENT_PATHS
+            it = iter(self.recent_paths)
+            for _ in range(excess):
+                self.recent_paths.discard(next(it))
 
     def _extract_paths_from_dict(
         self, obj: dict[str, Any], workspace: Path | None = None

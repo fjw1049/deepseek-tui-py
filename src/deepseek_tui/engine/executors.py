@@ -97,11 +97,7 @@ async def real_task_executor(
         return TaskExecutionResult(summary=result_text, detail=None, error=None)
 
     finally:
-        engine_task.cancel()
-        try:
-            await engine_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        await _shutdown_engine(engine, engine_task)
 
 
 async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
@@ -168,14 +164,24 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
         return "".join(collected_text)
 
     finally:
-        engine_task.cancel()
-        try:
-            await engine_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        await _shutdown_engine(engine, engine_task)
 
 
 # --- internal helpers -------------------------------------------------------
+
+
+async def _shutdown_engine(engine: object, engine_task: asyncio.Task[None]) -> None:
+    """Gracefully shutdown an executor-spawned engine and its resources."""
+    try:
+        if hasattr(engine, "shutdown"):
+            await engine.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+    engine_task.cancel()
+    try:
+        await engine_task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 async def _create_engine_for_execution(

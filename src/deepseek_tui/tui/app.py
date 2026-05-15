@@ -373,7 +373,7 @@ class DeepSeekTUI(App[None]):
         )
         transcript.add_user_message(event.text)
         await self.handle.send_op(SendMessageOp(content=content))
-        self.run_worker(self._listen_events())
+        self.run_worker(self._listen_events(), exclusive=True, name="event-listener")
 
     # ── slash command handling ────────────────────────────────────────
 
@@ -433,6 +433,10 @@ class DeepSeekTUI(App[None]):
         transcript = self.query_one(Transcript)
         status = self.query_one(StatusBar)
         async for event in self.handle.events():
+            if self._engine_task is not None and self._engine_task.done():
+                transcript.finalize_message()
+                status.set_status("engine stopped")
+                break
             if isinstance(event, TurnStartedEvent):
                 self._turn_started_at = time.monotonic()
                 status.set_status("thinking...")

@@ -23,6 +23,7 @@ from typing import Any
 CURRENT_TASK_SCHEMA_VERSION = 1
 TIMELINE_SUMMARY_LIMIT = 280
 MAX_WORKERS = 4
+_MAX_TERMINAL_IN_MEMORY = 50
 
 
 class TaskStatus(str, Enum):
@@ -416,8 +417,28 @@ class TaskManager:
 
     async def get_task(self, id_or_prefix: str) -> TaskRecord:
         async with self._lock:
-            task_id = _resolve_task_id(self._tasks, id_or_prefix)
-            return self._tasks[task_id]
+            try:
+                task_id = _resolve_task_id(self._tasks, id_or_prefix)
+                return self._tasks[task_id]
+            except KeyError:
+                pass
+            task = self._reload_task_from_disk(id_or_prefix)
+            if task is not None:
+                return task
+            raise KeyError(f"Task not found: {id_or_prefix}")
+
+    def _reload_task_from_disk(self, id_or_prefix: str) -> TaskRecord | None:
+        for path in self._tasks_dir.glob("*.json"):
+            tid = path.stem
+            if tid == id_or_prefix or tid.startswith(id_or_prefix):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    task = _task_record_from_dict(data)
+                    self._tasks[task.id] = task
+                    return task
+                except (OSError, json.JSONDecodeError, KeyError):
+                    continue
+        return None
 
     async def cancel_task(self, id_or_prefix: str) -> TaskRecord:
         now = _utc_now_iso()
@@ -669,6 +690,18 @@ class TaskManager:
                     )
                 )
             self._persist_all_locked()
+            self._evict_terminal_tasks_locked()
+
+    def _evict_terminal_tasks_locked(self) -> None:
+        terminal = [
+            (tid, t) for tid, t in self._tasks.items() if t.status.is_terminal()
+        ]
+        if len(terminal) <= _MAX_TERMINAL_IN_MEMORY:
+            return
+        terminal.sort(key=lambda x: x[1].ended_at or "")
+        to_remove = len(terminal) - _MAX_TERMINAL_IN_MEMORY
+        for tid, _ in terminal[:to_remove]:
+            del self._tasks[tid]
 
     def _persist_all_locked(self) -> None:
         self._persist_queue_locked()

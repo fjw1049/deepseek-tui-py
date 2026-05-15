@@ -202,6 +202,8 @@ class Engine:
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
         self.tool_snapshots: dict[str, list[tuple[Path, bytes | None]]] = {}
+        self._max_tool_snapshots = 5
+        self._max_snapshot_file_size = 1_048_576  # 1 MB
         # Sampling / reasoning defaults — populated from Config in
         # ``Engine.create``. Without these, ``_run_conversation`` would
         # build a ``MessageRequest`` missing reasoning_effort/temperature
@@ -537,9 +539,11 @@ class Engine:
                 compact_fn=self._emergency_compact,
             )
 
-            # Auto-compact before each LLM call if thresholds exceeded.
-            # Mirrors Rust turn_loop.rs:85-168.
-            if should_compact(messages, self.compaction_config):
+            # Hard cap: force compaction when message count is excessive,
+            # as a memory safety net. The token-based threshold (500K floor)
+            # handles normal compaction; this catches pathological cases where
+            # many small messages accumulate without hitting the token floor.
+            if len(messages) > 500 or should_compact(messages, self.compaction_config):
                 logger.info(
                     "compact_triggered before_count=%d", len(messages)
                 )
@@ -548,6 +552,7 @@ class Engine:
                     messages,
                     self.compaction_config,
                     workspace=self.tool_context.working_directory,
+                    model_override=model,
                 )
                 messages[:] = compact_result.messages
                 logger.info(
@@ -783,6 +788,9 @@ class Engine:
         for p in paths:
             absolute = p if p.is_absolute() else workspace / p
             try:
+                size = absolute.stat().st_size
+                if size > self._max_snapshot_file_size:
+                    continue
                 snapshots.append((absolute, absolute.read_bytes()))
             except FileNotFoundError:
                 snapshots.append((absolute, None))
@@ -790,6 +798,9 @@ class Engine:
                 continue
         if snapshots:
             self.tool_snapshots[tool_call_id] = snapshots
+            while len(self.tool_snapshots) > self._max_tool_snapshots:
+                oldest = next(iter(self.tool_snapshots))
+                del self.tool_snapshots[oldest]
 
     def undo_last_tool(self) -> tuple[bool, str]:
         """Restore the most recent tool snapshot (mirrors Rust /undo).
@@ -998,6 +1009,7 @@ class Engine:
             messages,
             self.compaction_config,
             workspace=self.tool_context.working_directory,
+            model_override=self.default_model,
         )
         return result.messages
 

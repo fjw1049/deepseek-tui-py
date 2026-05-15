@@ -343,6 +343,9 @@ class Transcript(VerticalScroll):
     }
     """
 
+    MAX_CELLS = 500
+    MAX_MESSAGES = 1000
+
     def __init__(self) -> None:
         super().__init__()
         # ``_current_assistant`` / ``_thinking_cell`` point at the
@@ -589,6 +592,23 @@ class Transcript(VerticalScroll):
         self._thinking_buffer = ""
         self._in_assistant = False
         self._tool_cells.clear()
+        self._evict_old_cells()
+
+    def _evict_old_cells(self) -> None:
+        """Remove oldest DOM children when the transcript exceeds MAX_CELLS."""
+        try:
+            children = list(self.children)
+        except Exception:
+            return
+        overflow = len(children) - self.MAX_CELLS
+        if overflow > 0:
+            for child in children[:overflow]:
+                try:
+                    child.remove()
+                except Exception:
+                    pass
+        if len(self._messages) > self.MAX_MESSAGES:
+            self._messages = self._messages[-self.MAX_MESSAGES:]
 
     def clear_messages(self) -> None:
         self._messages.clear()

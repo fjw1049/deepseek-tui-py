@@ -33,6 +33,7 @@ from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
 DEFAULT_MAX_STEPS = 100
 DEFAULT_MAX_AGENTS = 8
 DEFAULT_MAX_SPAWN_DEPTH = 3
+_MAX_TERMINAL_AGENTS_IN_MEMORY = 30
 DEFAULT_RESULT_TIMEOUT_MS = 30_000
 MIN_WAIT_TIMEOUT_MS = 10_000
 MAX_RESULT_TIMEOUT_MS = 3_600_000
@@ -636,6 +637,22 @@ class SubAgentManager:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
             else:
                 self._mailbox.send(MailboxMessage.completed(agent.id, result))
+
+        await self._evict_terminal_agents()
+
+    async def _evict_terminal_agents(self) -> None:
+        async with self._lock:
+            terminal = [
+                (aid, a) for aid, a in self._agents.items()
+                if a.status.kind is not SubAgentStatusKind.RUNNING
+            ]
+            if len(terminal) <= _MAX_TERMINAL_AGENTS_IN_MEMORY:
+                return
+            terminal.sort(key=lambda x: x[1].started_at_ms or 0)
+            to_remove = len(terminal) - _MAX_TERMINAL_AGENTS_IN_MEMORY
+            for aid, _ in terminal[:to_remove]:
+                del self._agents[aid]
+            self._persist_best_effort()
 
     def _persist_best_effort(self) -> None:
         if self._state_path is None:

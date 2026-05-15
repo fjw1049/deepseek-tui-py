@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _PROCESS_STORE_KEY = "shell_processes"
 _PTY_STORE_KEY = "shell_pty_processes"
+_MAX_STORED_PROCESSES = 20
 
 
 # Default + max foreground timeouts mirror Rust shell.rs:1481-1482.
@@ -341,6 +342,13 @@ def _process_store(context: ToolContext) -> dict[str, Process]:
         context.metadata[_PROCESS_STORE_KEY] = store
     if not isinstance(store, dict):
         raise ToolError("shell process store is invalid")
+    if len(store) > _MAX_STORED_PROCESSES:
+        terminated = [
+            pid for pid, proc in store.items()
+            if proc.returncode is not None
+        ]
+        for pid in terminated:
+            del store[pid]
     return store
 
 
@@ -566,6 +574,13 @@ def _pty_store(context: ToolContext) -> dict[str, PtyProcess]:
         context.metadata[_PTY_STORE_KEY] = store
     if not isinstance(store, dict):
         raise ToolError("shell pty store is invalid")
+    if len(store) > _MAX_STORED_PROCESSES:
+        terminated = [
+            pid for pid, proc in store.items()
+            if proc.exit_code is not None
+        ]
+        for pid in terminated:
+            del store[pid]
     return store
 
 

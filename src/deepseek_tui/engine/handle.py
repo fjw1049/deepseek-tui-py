@@ -11,7 +11,7 @@ from deepseek_tui.engine.ops import CancelRequestOp, EngineOp, SendMessageOp
 class EngineHandle:
     def __init__(self) -> None:
         self._op_queue: asyncio.Queue[EngineOp] = asyncio.Queue()
-        self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+        self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=4096)
         self.cancel_event = asyncio.Event()
         self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()

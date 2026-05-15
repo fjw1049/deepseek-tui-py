@@ -31,15 +31,28 @@ LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS = 36_000
 LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
+# Rust v0.8.11: hard floor for automatic compaction. Below this,
+# should_compact() returns false regardless of config. V4 prefix-cache
+# economics — compaction rewrites the stable prefix, destroying KV cache.
+# Manual /compact bypasses this floor.
+MINIMUM_AUTO_COMPACTION_TOKENS = 500_000
+
 
 @dataclass
 class CompactionConfig:
-    """Configuration for conversation compaction behavior."""
+    """Configuration for conversation compaction behavior.
+
+    Mirrors Rust CompactionConfig (compaction.rs:29). Key difference from
+    prior Python: ``model`` defaults to None which means "use the same
+    model as the main conversation" (Rust behavior). The old default of
+    "deepseek-chat" silently routed compaction to v4-flash.
+    """
     enabled: bool = True
-    token_threshold: int = 50_000
-    message_threshold: int = 50
-    model: str = "deepseek-chat"
+    token_threshold: int = 800_000  # 80% of V4 1M window
+    message_threshold: int = 500  # Rust uses token-based, not message-based
+    model: str | None = None  # None = inherit main model (Rust behavior)
     cache_summary: bool = True
+    auto_floor_tokens: int = MINIMUM_AUTO_COMPACTION_TOKENS
 
 
 @dataclass
@@ -242,6 +255,17 @@ def should_compact(
     if not config.enabled or not messages:
         return False
 
+    # Rust v0.8.11: hard floor — don't auto-compact below this token count.
+    # V4 prefix-cache economics: compaction rewrites the stable prefix,
+    # destroying KV cache. At low token counts the cache is healthy and
+    # compaction's cost dwarfs its benefit.
+    total_tokens = sum(
+        _estimate_tokens_for_message(m, include_thinking=False)
+        for m in messages
+    )
+    if total_tokens < config.auto_floor_tokens:
+        return False
+
     plan = plan_compaction(messages, pinned_indices)
 
     # Count pinned messages and tokens
@@ -287,6 +311,7 @@ async def compact_messages_safe(
     workspace: Path | None = None,
     pinned_indices: set[int] | None = None,
     working_set_paths: list[str] | None = None,
+    model_override: str | None = None,
 ) -> CompactionResult:
     """Compact messages with retry and backoff for transient errors.
 
@@ -297,6 +322,7 @@ async def compact_messages_safe(
         workspace: Workspace directory (for path normalization)
         pinned_indices: Explicitly pinned message indices
         working_set_paths: Working set file paths for reference
+        model_override: Model to use for summary (overrides config.model)
 
     Returns:
         Compaction result with compacted messages and summary
@@ -316,11 +342,14 @@ async def compact_messages_safe(
     if len(messages_to_summarize) < MIN_SUMMARIZE_MESSAGES:
         return CompactionResult(messages=messages)
 
+    # Resolve model: explicit override > config.model > fallback
+    effective_model = model_override or config.model or "deepseek-chat"
+
     # Generate summary with retries
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            summary = await _create_summary(client, messages_to_summarize, config.model)
+            summary = await _create_summary(client, messages_to_summarize, effective_model)
 
             # Build result with pinned + summary
             pinned_messages = [
