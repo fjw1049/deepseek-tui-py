@@ -178,6 +178,17 @@ class Engine:
         # the same fields.
         self.session_cost_usd: float = 0.0
         self.session_cost_cny: float = 0.0
+        # 2026-05-15: cumulative cache hit/miss tokens across the whole
+        # session. Intentional deviation from Rust ``footer_cache_spans``
+        # (ui.rs:7377), which displays only ``last_prompt_cache_hit_tokens``
+        # — i.e. the most recent turn. DeepSeek's prefix cache means
+        # every turn after the first has a near-100% hit ratio, so the
+        # per-turn number is constant ~99% and carries no information.
+        # The session-cumulative ratio actually shows the user how much
+        # prompt-bytes they have saved.
+        # See HANDOVER §九 ``cache_chip.2026-05-15 cumulative``.
+        self.session_cache_hit_total: int = 0
+        self.session_cache_miss_total: int = 0
         # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
@@ -379,8 +390,16 @@ class Engine:
             cost_usd: float | None = None
             cost_cny: float | None = None
             if usage is not None:
-                cache_hit_tokens = usage.cache_read_input_tokens
-                cache_miss_tokens = usage.cache_creation_input_tokens
+                # Accumulate cache hit/miss across the session so the
+                # status-bar chip reflects "how much prompt traffic the
+                # cache has saved you so far" instead of "what fraction
+                # of this single turn was a prefix hit" (the latter is
+                # nearly always 99%+ on a multi-turn DeepSeek session
+                # and conveys no information).
+                self.session_cache_hit_total += usage.cache_read_input_tokens
+                self.session_cache_miss_total += usage.cache_creation_input_tokens
+                cache_hit_tokens = self.session_cache_hit_total
+                cache_miss_tokens = self.session_cache_miss_total
                 from deepseek_tui.client.pricing import (
                     calculate_turn_cost_estimate_from_usage,
                 )
