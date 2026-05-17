@@ -121,9 +121,9 @@ class InfoSidebar(Widget):
     def _section(self, title: str, body: RenderableType, active: bool) -> Panel:
         return Panel(
             body,
-            title=f"[bold]{title}[/]",
+            title=f"[bold bright_white]{title}[/]",
             title_align="left",
-            border_style="cyan" if active else "dim",
+            border_style="bright_cyan" if active else "dim bright_black",
             padding=(1, 1),
             expand=True,
         )
@@ -151,8 +151,8 @@ class InfoSidebar(Widget):
         if self._data.plan_goal:
             has_content = True
             goal = Text()
-            goal.append("◆ ", style="bold yellow")
-            goal.append(self._data.plan_goal[:60], style="bold yellow")
+            goal.append("◆ ", style="bold bright_yellow")
+            goal.append(self._data.plan_goal[:60], style="bold bright_yellow")
             lines.append(goal)
 
         if self._data.cycle_count > 0:
@@ -161,7 +161,7 @@ class InfoSidebar(Widget):
             cyc.append(
                 f"cycles: {self._data.cycle_count} "
                 f"(active: {self._data.cycle_count + 1})",
-                style="dim",
+                style="dim bright_white",
             )
             lines.append(cyc)
 
@@ -169,48 +169,48 @@ class InfoSidebar(Widget):
         if steps:
             has_content = True
             if lines:
-                lines.append(Text("─" * 24, style="dim"))
+                lines.append(Text("─" * 24, style="dim bright_black"))
             for step in steps[:8]:
                 status = step.get("status", "pending")
                 glyph, colour = {
-                    "completed": ("✓", "green"),
-                    "in_progress": ("→", "yellow"),
-                }.get(status, ("○", "dim"))
+                    "completed": ("✓", "bright_green"),
+                    "in_progress": ("→", "bright_yellow"),
+                }.get(status, ("○", "dim bright_white"))
                 idx = step.get("index", "")
                 title = str(step.get("title", ""))
                 row = Text()
                 row.append(f" {glyph} ", style=colour)
                 if idx:
-                    row.append(f"{idx}. ", style="dim")
+                    row.append(f"{idx}. ", style="dim bright_white")
                 row.append(escape(title[:40]), style=colour)
                 lines.append(row)
             remaining = max(0, len(steps) - 8)
             if remaining:
-                lines.append(Text(f"  +{remaining} more steps", style="dim italic"))
+                lines.append(Text(f"  +{remaining} more steps", style="dim italic bright_black"))
 
         if not has_content:
-            lines.append(Text("the model can use update_plan", style="dim italic"))
-            lines.append(Text("to show its strategy here", style="dim italic"))
+            lines.append(Text("💡 The model can use update_plan", style="dim italic bright_cyan"))
+            lines.append(Text("   to show its strategy here", style="dim italic"))
 
         return Group(*lines), has_content
 
     def _render_todos(self) -> tuple[Group, bool]:
         items = self._data.todos
         if not items:
-            return Group(Text("No todos", style="dim italic")), False
+            return Group(Text("📝 No todos yet", style="dim italic bright_yellow")), False
         lines: list[Text] = []
         total = len(items)
         completed = sum(1 for i in items if i.get("status") == "completed")
         header = Text()
-        header.append(f"{self._data.todos_completion_pct}%", style="bold green")
-        header.append(f"  complete ({completed}/{total})", style="dim")
+        header.append(f"{self._data.todos_completion_pct}%", style="bold bright_green")
+        header.append(f"  complete ({completed}/{total})", style="dim bright_white")
         lines.append(header)
         for item in items[:6]:
             status = item.get("status", "pending")
             glyph, colour = {
-                "completed": ("[x]", "green"),
-                "in_progress": ("[~]", "yellow"),
-            }.get(status, ("[ ]", "white"))
+                "completed": ("[✓]", "bright_green"),
+                "in_progress": ("[→]", "bright_yellow"),
+            }.get(status, ("[ ]", "bright_white"))
             content = str(item.get("content", ""))
             label = Text()
             label.append(glyph, style=colour)
@@ -219,34 +219,34 @@ class InfoSidebar(Widget):
             lines.append(label)
         remaining = max(0, total - 6)
         if remaining:
-            lines.append(Text(f"+{remaining} more todos", style="dim italic"))
+            lines.append(Text(f"  +{remaining} more todos", style="dim italic bright_black"))
         return Group(*lines), True
 
     def _render_tasks(self) -> tuple[Group, bool]:
         tasks = self._data.tasks
         if not tasks:
-            return Group(Text("No tasks", style="dim italic")), False
+            return Group(Text("⚙️  No tasks running", style="dim italic bright_magenta")), False
         running = sum(1 for t in tasks if t.get("status") == "running")
         queued = sum(1 for t in tasks if t.get("status") == "queued")
         header = Text()
-        header.append(f"{len(tasks)} task(s)", style="bold")
+        header.append(f"{len(tasks)} task(s)", style="bold bright_white")
         bits: list[str] = []
         if running:
             bits.append(f"{running} running")
         if queued:
             bits.append(f"{queued} queued")
         if bits:
-            header.append(f"  ({', '.join(bits)})", style="dim")
+            header.append(f"  ({', '.join(bits)})", style="dim bright_white")
         lines: list[Text] = [header]
         for task in tasks[:4]:
             status = task.get("status", "?")
             colour = {
-                "queued": "white",
-                "running": "yellow",
-                "completed": "green",
-                "failed": "red",
-                "canceled": "white",
-            }.get(status, "white")
+                "queued": "bright_white",
+                "running": "bright_yellow",
+                "completed": "bright_green",
+                "failed": "bright_red",
+                "canceled": "dim",
+            }.get(status, "bright_white")
             duration_ms = task.get("duration_ms")
             duration = (
                 f"{duration_ms / 1000:.1f}s" if isinstance(duration_ms, int) else "-"
@@ -256,7 +256,7 @@ class InfoSidebar(Widget):
             row.append(tid, style=colour)
             row.append("  ", style="dim")
             row.append(status, style=colour)
-            row.append(f"  {duration}", style="dim")
+            row.append(f"  {duration}", style="dim bright_white")
             lines.append(row)
             preview = str(task.get("prompt_summary", "")).strip()
             if preview:
@@ -266,27 +266,27 @@ class InfoSidebar(Widget):
     def _render_agents(self) -> tuple[Group, bool]:
         agents = self._data.agents
         if not agents:
-            return Group(Text("No agents", style="dim italic")), False
+            return Group(Text("🤖 No agents spawned", style="dim italic bright_blue")), False
         running = sum(1 for a in agents if a.get("status") == "running")
         header = Text()
-        header.append(f"{len(agents)} agent(s)", style="bold")
+        header.append(f"{len(agents)} agent(s)", style="bold bright_white")
         if running:
-            header.append(f"  ({running} running)", style="dim")
+            header.append(f"  ({running} running)", style="dim bright_white")
         lines: list[Text] = [header]
         for agent in agents[:4]:
             aid = str(agent.get("agent_id", "?"))[:12]
             atype = str(agent.get("agent_type", "?"))
             status = str(agent.get("status", "?"))
             colour = {
-                "running": "yellow",
-                "completed": "green",
-                "failed": "red",
-                "canceled": "white",
-            }.get(status, "white")
+                "running": "bright_yellow",
+                "completed": "bright_green",
+                "failed": "bright_red",
+                "canceled": "dim",
+            }.get(status, "bright_white")
             row = Text()
             row.append(aid, style=colour)
             row.append("  ", style="dim")
-            row.append(atype, style="cyan")
+            row.append(atype, style="bright_cyan")
             row.append(f"  {status}", style=colour)
             lines.append(row)
         return Group(*lines), True

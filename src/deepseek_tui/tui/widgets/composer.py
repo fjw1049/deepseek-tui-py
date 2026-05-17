@@ -76,8 +76,7 @@ class Composer(TextArea):
 
     def on_mount(self) -> None:
         self.placeholder = (
-            "Message DeepSeek…  "
-            "( ↵ send · Ctrl+J newline · / for commands · @ for files )"
+            "Message DeepSeek…  ( ↵ send · ⌃J newline · / commands · @ files )"
         )
 
     def _paste_window_active(self) -> bool:

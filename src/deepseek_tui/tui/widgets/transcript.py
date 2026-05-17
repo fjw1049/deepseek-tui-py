@@ -57,7 +57,7 @@ class _UserCell(Static):
     DEFAULT_CSS = "_UserCell { margin: 1 0 0 0; }"
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[bold]{_USER_GLYPH}[/] {escape(text)}")
+        super().__init__(f"[bold bright_cyan]{_USER_GLYPH}[/] {escape(text)}")
 
 
 class _AssistantCell(Static):
@@ -98,13 +98,13 @@ class _AssistantCell(Static):
         return self._buffer
 
     def _refresh(self, force: bool) -> None:
-        glyph_style = "green" if self._finalized else "bold green"
+        glyph_style = "bright_green" if self._finalized else "bold bright_green"
         glyph = Text(_ASSISTANT_GLYPH, style=glyph_style)
         if not self._buffer.strip():
             cursor_text = (
                 Text("", style="dim")
                 if self._finalized
-                else Text(_CURSOR, style="bold green blink")
+                else Text(_CURSOR, style="bold bright_green blink")
             )
             self.update(_Group(glyph, cursor_text))
             return
@@ -170,7 +170,7 @@ class _ThinkingCell(Static):
         state = "done" if self._finalized else "thinking"
         elapsed = time.monotonic() - self._started_at
         elapsed_part = f" · {elapsed:.0f}s" if elapsed >= 1.0 else ""
-        header_style = "dim italic" if self._finalized else "yellow italic"
+        header_style = "dim italic" if self._finalized else "bright_yellow italic"
         body_text = self._buffer.rstrip()
         body_lines = body_text.splitlines() if body_text else []
         caret = ""
@@ -208,9 +208,9 @@ class _NoticeCell(Static):
     """Structured info / warning / error notice with a coloured rail."""
 
     _SEVERITY_STYLES: dict[str, str] = {
-        "info": "dim",
-        "warning": "yellow",
-        "error": "bold red",
+        "info": "dim bright_cyan",
+        "warning": "bright_yellow",
+        "error": "bold bright_red",
     }
 
     DEFAULT_CSS = "_NoticeCell { margin: 0 0 1 0; }"
@@ -226,7 +226,7 @@ class _TurnDivider(Static):
     DEFAULT_CSS = "_TurnDivider { margin: 1 0 0 0; }"
 
     def __init__(self, width: int = 60) -> None:
-        super().__init__("[dim]" + ("─" * width) + "[/]")
+        super().__init__("[dim bright_black]" + ("─" * width) + "[/]")
 
 
 class _WelcomeCell(Static):
@@ -255,18 +255,13 @@ class _WelcomeCell(Static):
     _WelcomeCell:hover { background: $boost; }
     """
 
-    # Cartoon whale. ~30 cols × 8 rows. Trailing whitespace per line is
-    # deliberate — it preserves the silhouette when ``Align.center``
-    # centres the multi-line block as one unit.
     _WHALE = (
-        "                  o\n"
-        "                 o\n"
-        "               _____\n"
-        "           _.-'     '-.___\n"
-        "         ,'   ●              '-._\n"
-        "         (         ‿              )\n"
-        "          '.___________________..-'\n"
-        "              ~  ~  ~  ~  ~  ~"
+        '           .\n'
+        '          ":"\n'
+        '        ___:____     |"\\/"|  \n'
+        "      ,'        `.    \\  /\n"
+        "      |  O        \\___/  |\n"
+        "    ~^~^~^~^~^~^~^~^~^~^~^~"
     )
 
     # Hand-crafted 3-row half-block rendering of ``DEEPSEEK TUI``.
@@ -280,29 +275,29 @@ class _WelcomeCell(Static):
     )
 
     def __init__(self) -> None:
-        whale = Text(self._WHALE, style="cyan")
+        whale = Text(self._WHALE, style="bold cyan")
         title = Text(self._TITLE, style="bold green")
         hint = Text.from_markup(
-            "[bold green]☰[/]  [italic]Click anywhere to open the command "
-            "palette[/]  [dim]·[/]  [italic dim]Ready when you are[/]",
+            "[bold cyan]☰[/]  [italic bright_white]Click anywhere to open the command "
+            "palette[/]  [dim bright_black]·[/]  [italic dim bright_cyan]Ready when you are[/]",
             justify="center",
         )
         hints = Text.from_markup(
-            "  [bold]↵[/]      send                "
-            "[bold]⇧⇥[/]      cycle agent / plan / yolo / ask\n"
-            "  [bold]/[/]      slash commands      "
-            "[bold]@[/]       mention a workspace file\n"
-            "  [bold]Ctrl+K[/]  command palette     "
-            "[bold]Ctrl+R[/]  browse sessions\n"
-            "  [bold]Ctrl+P[/]  file picker         "
-            "[bold]Ctrl+O[/]  switch model\n"
-            "  [bold]Ctrl+B[/]  session sidebar     "
-            "[bold]Ctrl+I[/]  info sidebar\n"
-            "  [bold]Ctrl+T[/]  toggle thinking     "
-            "[bold]Ctrl+L[/]  clear transcript",
+            "  [bold bright_green]↵[/]      [bright_white]send[/]                "
+            "[bold bright_green]⇧⇥[/]      [bright_white]cycle agent / plan / yolo / ask[/]\n"
+            "  [bold bright_green]/[/]      [bright_white]slash commands[/]      "
+            "[bold bright_green]@[/]       [bright_white]mention a workspace file[/]\n"
+            "  [bold bright_cyan]Ctrl+K[/]  [bright_white]command palette[/]     "
+            "[bold bright_cyan]Ctrl+R[/]  [bright_white]browse sessions[/]\n"
+            "  [bold bright_cyan]Ctrl+P[/]  [bright_white]file picker[/]         "
+            "[bold bright_cyan]Ctrl+O[/]  [bright_white]switch model[/]\n"
+            "  [bold bright_cyan]Ctrl+B[/]  [bright_white]session sidebar[/]     "
+            "[bold bright_cyan]Ctrl+I[/]  [bright_white]info sidebar[/]\n"
+            "  [bold bright_cyan]Ctrl+T[/]  [bright_white]toggle thinking[/]     "
+            "[bold bright_cyan]Ctrl+L[/]  [bright_white]clear transcript[/]",
         )
         footnote = Text.from_markup(
-            "[dim]Type [bold]/help[/] anytime for the full command catalog.[/]",
+            "[dim bright_black]Type [bold bright_cyan]/help[/] anytime for the full command catalog.[/]",
             justify="center",
         )
         body = _Group(
@@ -318,7 +313,7 @@ class _WelcomeCell(Static):
             footnote,
             Text(""),
         )
-        panel = Panel(body, border_style="dim cyan", padding=(0, 3))
+        panel = Panel(body, border_style="bright_cyan", padding=(0, 3))
         super().__init__(Align.center(panel))
 
     def on_click(self, event: events.Click) -> None:  # type: ignore[override]

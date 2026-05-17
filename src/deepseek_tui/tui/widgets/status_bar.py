@@ -138,19 +138,19 @@ class StatusBar(Static):
         if self._spinning:
             frame = self._SPINNER_FRAMES[self._spin_frame]
             label = self._spin_phase or "working"
-            parts.append(f"[bold cyan]{frame}[/] [cyan]{label}[/]")
+            parts.append(f"[bold bright_cyan]{frame}[/] [bright_cyan]{label}[/]")
         if self._mode:
-            parts.append(f"[cyan]{self._mode}[/]")
+            parts.append(f"[bright_cyan]{self._mode}[/]")
         if self._model:
-            parts.append(f"[bold]{self._model}[/]")
+            parts.append(f"[bold bright_white]{self._model}[/]")
         cost_chip = self._cost_chip()
         if cost_chip:
             parts.append(cost_chip)
         if not self._spinning and self._status and self._status != "ready":
-            parts.append(f"[dim]{self._status}[/]")
+            parts.append(f"[dim bright_white]{self._status}[/]")
         if not parts:
             return Text("")
-        return Text.from_markup("  [dim]·[/]  ".join(parts))
+        return Text.from_markup("  [dim bright_black]·[/]  ".join(parts))
 
     def _cost_chip(self) -> str:
         amount = self._cost_usd if self._currency is CostCurrency.USD else self._cost_cny
@@ -159,8 +159,8 @@ class StatusBar(Static):
         return f"[dim]{format_cost_amount(amount, self._currency)}[/]"
 
     def _mid_markup(self) -> Text:
-        chips = [f"[b]{key}[/] [dim]{label}[/]" for key, label in self._MIDDLE_CHORDS]
-        return Text.from_markup("[dim]  ·  [/]".join(chips))
+        chips = [f"[b bright_cyan]{key}[/] [dim bright_white]{label}[/]" for key, label in self._MIDDLE_CHORDS]
+        return Text.from_markup("[dim bright_black]  ·  [/]".join(chips))
 
     def _right_markup(self) -> Text:
         parts: list[Text] = []
@@ -172,20 +172,20 @@ class StatusBar(Static):
             )
             secs = max(0.0, end - self._started_at)
             if secs >= 1.0:
-                parts.append(Text(f"worked {secs:.0f}s", style="dim"))
+                parts.append(Text(f"worked {secs:.0f}s", style="dim bright_white"))
         if self._tokens > 0:
             label = (
                 f"{self._tokens / 1000:.1f}k ctx"
                 if self._tokens >= 1000
                 else f"{self._tokens} ctx"
             )
-            parts.append(Text(label, style="dim"))
+            parts.append(Text(label, style="dim bright_white"))
         if not parts:
             return Text("")
         out = Text()
         for i, p in enumerate(parts):
             if i > 0:
-                out.append("  ·  ", style="dim")
+                out.append("  ·  ", style="dim bright_black")
             out.append_text(p)
         return out
 
