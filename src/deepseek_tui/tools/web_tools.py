@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from html import unescape
-from html.parser import HTMLParser
-from urllib.parse import parse_qs, unquote, urlparse
+import os
 
 import httpx
 
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
+
+_TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 
 
 class FetchUrlTool(ToolSpec):
@@ -43,11 +43,14 @@ class FetchUrlTool(ToolSpec):
 
 
 class WebSearchTool(ToolSpec):
+    def __init__(self, api_key: str | None = None) -> None:
+        self._api_key = api_key or _TAVILY_API_KEY
+
     def name(self) -> str:
         return "web_search"
 
     def description(self) -> str:
-        return "Search the web and return a small set of results."
+        return "Search the web using Tavily and return results with snippets."
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -65,62 +68,58 @@ class WebSearchTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         query = _require_string(input_data, "query")
         max_results = _optional_int(input_data, "max_results") or 5
-        response = await _fetch(
-            "https://html.duckduckgo.com/html/",
-            context,
-            params={"q": query},
-            headers={"user-agent": "deepseek-tui-py/0.1"},
-        )
-        parser = _DuckDuckGoResultParser()
-        parser.feed(response.text)
-        results = parser.results[:max_results]
-        content = "\n".join(
-            f"{index}. {item['title']} - {item['url']}"
-            for index, item in enumerate(results, start=1)
-        )
+
+        if not self._api_key:
+            raise ToolError("TAVILY_API_KEY not configured (set in config.toml or env)")
+
+        payload = {
+            "query": query,
+            "max_results": max_results,
+            "include_answer": True,
+        }
+        timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else 30
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    "https://api.tavily.com/search",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self._api_key}",
+                    },
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            raise ToolError(f"Tavily search failed: {exc}") from exc
+
+        if not resp.is_success:
+            raise ToolError(
+                f"Tavily API returned {resp.status_code}: {resp.text[:200]}"
+            )
+
+        data = resp.json()
+        results = data.get("results", [])[:max_results]
+        answer = data.get("answer", "")
+
+        lines: list[str] = []
+        if answer:
+            lines.append(f"Answer: {answer}\n")
+        for i, item in enumerate(results, 1):
+            title = item.get("title", "")
+            url = item.get("url", "")
+            snippet = item.get("content", "")
+            lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
+
+        content = "\n".join(lines)
         return ToolResult(
-            success=response.is_success,
+            success=True,
             content=content,
             metadata={
                 "query": query,
                 "result_count": len(results),
                 "results": results,
-                "source": str(response.url),
+                "source": "tavily",
             },
         )
-
-
-class _DuckDuckGoResultParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.results: list[dict[str, str]] = []
-        self._current_href: str | None = None
-        self._buffer: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
-        attr_map = dict(attrs)
-        class_name = attr_map.get("class", "") or ""
-        href = attr_map.get("href")
-        if href is None or "result__a" not in class_name:
-            return
-        self._current_href = href
-        self._buffer = []
-
-    def handle_data(self, data: str) -> None:
-        if self._current_href is not None:
-            self._buffer.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != "a" or self._current_href is None:
-            return
-        title = " ".join(part.strip() for part in self._buffer if part.strip())
-        url = _extract_result_url(self._current_href)
-        if title and url:
-            self.results.append({"title": unescape(title), "url": url})
-        self._current_href = None
-        self._buffer = []
 
 
 async def _fetch(
@@ -134,19 +133,8 @@ async def _fetch(
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             return await client.get(url, params=params, headers=headers)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc
-
-
-def _extract_result_url(href: str) -> str:
-    parsed = urlparse(href)
-    query = parse_qs(parsed.query)
-    encoded_url = query.get("uddg")
-    if encoded_url:
-        return unquote(encoded_url[0])
-    if href.startswith("//"):
-        return f"https:{href}"
-    return href
 
 
 def _require_string(input_data: dict[str, object], key: str) -> str:

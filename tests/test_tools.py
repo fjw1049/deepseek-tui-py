@@ -220,9 +220,8 @@ async def test_web_search_tool_parses_results(
     tmp_path: Path,
 ) -> None:
     class FakeAsyncClient:
-        def __init__(self, *, timeout: float | None, follow_redirects: bool) -> None:
+        def __init__(self, *, timeout: float | None) -> None:
             self.timeout = timeout
-            self.follow_redirects = follow_redirects
 
         async def __aenter__(self) -> FakeAsyncClient:
             return self
@@ -230,44 +229,63 @@ async def test_web_search_tool_parses_results(
         async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
             return None
 
-        async def get(
+        async def post(
             self,
             url: str,
             *,
-            params: dict[str, str] | None = None,
-            headers: dict[str, str] | None = None,
+            json: dict[str, object],
+            headers: dict[str, str],
         ) -> httpx.Response:
-            assert url == "https://html.duckduckgo.com/html/"
-            assert params == {"q": "deepseek tui"}
-            assert headers == {"user-agent": "deepseek-tui-py/0.1"}
-            request = httpx.Request("GET", url, params=params, headers=headers)
-            html = b"""
-            <html><body>
-              <a class="result__a" href="//example.com/one">First Result</a>
-              <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Ftwo">Second Result</a>
-            </body></html>
-            """
+            assert url == "https://api.tavily.com/search"
+            assert json == {
+                "query": "deepseek tui",
+                "max_results": 1,
+                "include_answer": True,
+            }
+            assert headers["Authorization"] == "Bearer test-key"
+            request = httpx.Request("POST", url)
+            body = {
+                "answer": "A TUI for DeepSeek.",
+                "results": [
+                    {
+                        "title": "First Result",
+                        "url": "https://example.com/one",
+                        "content": "Snippet one",
+                    },
+                ],
+            }
             return httpx.Response(
                 200,
-                headers={"content-type": "text/html; charset=utf-8"},
-                content=html,
+                headers={"content-type": "application/json"},
+                json=body,
                 request=request,
             )
 
     monkeypatch.setattr("deepseek_tui.tools.web_tools.httpx.AsyncClient", FakeAsyncClient)
 
-    result = await WebSearchTool().execute(
+    result = await WebSearchTool(api_key="test-key").execute(
         {"query": "deepseek tui", "max_results": 1},
         ToolContext(working_directory=tmp_path, timeout_ms=2000),
     )
 
     assert result.success is True
-    assert result.content == "1. First Result - https://example.com/one"
+    assert result.content == (
+        "Answer: A TUI for DeepSeek.\n\n"
+        "1. First Result\n"
+        "   https://example.com/one\n"
+        "   Snippet one"
+    )
     assert result.metadata == {
         "query": "deepseek tui",
         "result_count": 1,
-        "results": [{"title": "First Result", "url": "https://example.com/one"}],
-        "source": "https://html.duckduckgo.com/html/?q=deepseek+tui",
+        "results": [
+            {
+                "title": "First Result",
+                "url": "https://example.com/one",
+                "content": "Snippet one",
+            },
+        ],
+        "source": "tavily",
     }
 
 
