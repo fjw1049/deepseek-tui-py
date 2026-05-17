@@ -14,10 +14,13 @@ import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
+
+if TYPE_CHECKING:
+    from deepseek_tui.config.models import Config
 
 # ===========================================================================
 # remember — persist a note to user memory (Rust remember.rs, 138 LOC)
@@ -139,6 +142,9 @@ DEFAULT_MAX_CHARS = 200_000
 class ReviewTool(ToolSpec):
     """Perform structured code review via LLM."""
 
+    def __init__(self, config: Config | None = None) -> None:
+        self._config = config
+
     def name(self) -> str:
         return "review"
 
@@ -182,16 +188,23 @@ class ReviewTool(ToolSpec):
             user_prompt += f"\n\nFocus especially on: {focus}"
 
         from deepseek_tui.client.deepseek import DeepSeekClient
+        from deepseek_tui.config.loader import ConfigLoader
         from deepseek_tui.config.models import Config
+        from deepseek_tui.protocol.messages import Message
 
-        config = Config()
+        config = self._config
+        if config is None:
+            try:
+                config = ConfigLoader().load()
+            except Exception:
+                config = Config()
         client = DeepSeekClient.from_config(config)
 
         from deepseek_tui.protocol.requests import MessageRequest
 
         request = MessageRequest(
             model="deepseek-chat",
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[Message.user(user_prompt)],
             system_prompt=REVIEW_SYSTEM_PROMPT,
             max_tokens=2048,
         )
@@ -223,6 +236,9 @@ class ReviewTool(ToolSpec):
 
 class RlmQueryTool(ToolSpec):
     """Send a sub-query to the LLM and return the answer."""
+
+    def __init__(self, config: Config | None = None) -> None:
+        self._config = config
 
     def name(self) -> str:
         return "rlm_query"
@@ -267,12 +283,18 @@ class RlmQueryTool(ToolSpec):
             user_content = f"Context:\n{extra_context}\n\nQuestion:\n{query}"
 
         from deepseek_tui.client.deepseek import DeepSeekClient
+        from deepseek_tui.config.loader import ConfigLoader
         from deepseek_tui.config.models import Config
         from deepseek_tui.protocol.messages import Message
         from deepseek_tui.protocol.requests import MessageRequest
         from deepseek_tui.protocol.responses import StreamTextDelta
 
-        config = Config()
+        config = self._config
+        if config is None:
+            try:
+                config = ConfigLoader().load()
+            except Exception:
+                config = Config()
         try:
             client = DeepSeekClient.from_config(config)
         except Exception as exc:  # noqa: BLE001

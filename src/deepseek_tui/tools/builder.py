@@ -200,7 +200,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # Knowledge / memory / review tools
     registry.register(NoteTool())
     registry.register(PlanUpdateTool())
-    registry.register(RlmQueryTool())
+    registry.register(RlmQueryTool(config=cfg))
     registry.register(RlmTool(client=None, root_model=cfg.default_text_model or "deepseek-chat"))
     registry.register(SkillLoadTool())
 
@@ -209,7 +209,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(RequestUserInputTool())
 
     if cfg.features.web_search:
-        registry.register(ReviewTool())
+        registry.register(ReviewTool(config=cfg))
 
     if getattr(cfg, "memory_enabled", True):
         registry.register(RememberTool())
