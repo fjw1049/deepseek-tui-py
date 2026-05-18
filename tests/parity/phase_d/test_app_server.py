@@ -20,7 +20,18 @@ from deepseek_tui.app_server.server import _dispatch_stdio
 
 
 @pytest_asyncio.fixture
-async def runtime(tmp_path: Path) -> AsyncIterator[AppRuntime]:
+async def runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[AppRuntime]:
+    # Force task/subagent executors to stub mode so tests never hit the real
+    # DeepSeek API even when DEEPSEEK_API_KEY is present in the environment.
+    # Without this, `task_create` (and any tool that spawns sub-engines) burns
+    # real tokens on every run — see runtime.py:_safe_task_executor.
+    monkeypatch.setattr(
+        "deepseek_tui.tools.runtime._has_api_key", lambda: False
+    )
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
     rt = await AppRuntime.create(working_directory=tmp_path)
     try:
         yield rt
