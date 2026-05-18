@@ -469,28 +469,49 @@ class RecallArchiveTool(ToolSpec):
 
 
 class SkillLoadTool(ToolSpec):
-    """Load a skill file to extend the agent's capabilities."""
+    """Load a skill body + companion files into the next turn's context.
+
+    Mirrors Rust ``LoadSkillTool`` (tools/skill.rs). The tool name is
+    ``load_skill`` (verb-noun) to match the prompt-side trigger text the
+    system message advertises — see ``render_available_skills_context``
+    in ``skills/__init__.py``.
+
+    Resolution is **registry-first**: we never invent a path from
+    ``<skills_dir>/<name>/SKILL.md`` (community installs put the file
+    under a directory whose name differs from the frontmatter ``name``,
+    so a guessed path 404s). Instead we ask ``discover_in_workspace``
+    for the path it parsed and read from there.
+    """
 
     def name(self) -> str:
-        return "skill_load"
+        return "load_skill"
 
     def description(self) -> str:
         return (
-            "Load a SKILL.md file from the skills directory to provide "
-            "specialized instructions for a particular task."
+            "Load a skill (SKILL.md body + companion file list) into the "
+            "next turn's context. Use this when the user names a skill or "
+            "the task clearly matches a skill listed in the system prompt's "
+            "`## Skills` section. Faster than read_file + list_dir."
         )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
-                "skill_name": {
+                "name": {
                     "type": "string",
-                    "description": "Name of the skill to load (e.g. 'uml', 'review').",
+                    "description": (
+                        "Skill id — the `name` field from the SKILL.md "
+                        "frontmatter, also shown in the `## Skills` listing."
+                    ),
                 },
                 "path": {
                     "type": "string",
-                    "description": "Alternative: direct path to a SKILL.md file.",
+                    "description": (
+                        "Escape hatch: direct path to a SKILL.md file. "
+                        "Prefer `name` so the registry can locate companion "
+                        "files in the same directory."
+                    ),
                 },
             },
             "required": [],
@@ -500,25 +521,121 @@ class SkillLoadTool(ToolSpec):
         return [ToolCapability.READ_ONLY]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        skill_name = _optional_string(input_data, "skill_name")
+        # Accept both ``name`` (Rust parity) and ``skill_name`` (legacy
+        # Python alias) — the Python tool used to ship as ``skill_load``
+        # with the latter param, so prompts cached against the old shape
+        # still work after the rename.
+        name = _optional_string(input_data, "name") or _optional_string(
+            input_data, "skill_name"
+        )
         path_str = _optional_string(input_data, "path")
 
         if path_str:
             skill_path = Path(path_str).expanduser()  # noqa: ASYNC240
-        elif skill_name:
-            skill_path = _find_skill(skill_name, context)
-        else:
-            raise ToolError("Either 'skill_name' or 'path' must be provided")
+            if not skill_path.exists():
+                raise ToolError(f"Skill file not found: {skill_path}")
+            content = skill_path.read_text(encoding="utf-8")
+            return ToolResult(
+                success=True,
+                content=content,
+                metadata={"path": str(skill_path)},
+            )
 
-        if not skill_path.exists():
-            raise ToolError(f"Skill file not found: {skill_path}")
+        if not name:
+            raise ToolError("`name` (or `path`) must be provided")
 
-        content = skill_path.read_text(encoding="utf-8")
+        from deepseek_tui.skills import (
+            discover_in_workspace,
+            skills_directories,
+        )
+
+        registry = discover_in_workspace(workspace=context.working_directory)
+        skill = registry.get(name)
+        if skill is None:
+            available = registry.list_names()
+            if available:
+                hint = (
+                    f"skill `{name}` not found. "
+                    f"Available: {', '.join(available)}"
+                )
+            else:
+                dirs = skills_directories(workspace=context.working_directory)
+                if dirs:
+                    hint = (
+                        f"no skills installed. Searched: "
+                        f"{', '.join(str(p) for p in dirs)}"
+                    )
+                else:
+                    hint = (
+                        "no skills directories found; install skills under "
+                        "`<workspace>/.deepseek/skills/<name>/SKILL.md`, "
+                        "`~/.claude/skills/<name>/SKILL.md`, or "
+                        "`~/.deepseek/skills/<name>/SKILL.md`"
+                    )
+            raise ToolError(hint)
+
+        body = _format_skill_body(skill)
+        companions = _collect_companion_files(skill)
         return ToolResult(
             success=True,
-            content=content,
-            metadata={"skill": skill_name or skill_path.name, "path": str(skill_path)},
+            content=body,
+            metadata={
+                "skill_name": skill.name,
+                "skill_path": str(skill.path),
+                "companion_files": [str(p) for p in companions],
+            },
         )
+
+
+def _format_skill_body(skill: Any) -> str:
+    """Render the tool-result body model will see.
+
+    Mirrors Rust ``format_skill_body`` (tools/skill.rs:134). The
+    description rides up top so a single tool result is self-contained
+    (no need to cross-reference the system-prompt catalogue);
+    companion-file paths land under a clearly-named heading so the
+    model can open them with ``read_file`` when relevant.
+    """
+    out: list[str] = [f"# Skill: {skill.name}", ""]
+    if skill.description.strip():
+        out.append(f"> {skill.description.strip()}")
+        out.append("")
+    out.append(f"Source: `{skill.path}`")
+    out.append("")
+    out.append("## SKILL.md")
+    out.append("")
+    out.append(skill.body.strip())
+    out.append("")
+
+    companions = _collect_companion_files(skill)
+    if companions:
+        out.append("")
+        out.append("## Companion files")
+        out.append("")
+        out.append(
+            "Sibling files in the skill directory. Use `read_file` to "
+            "open them when the task requires."
+        )
+        out.append("")
+        for path in companions:
+            out.append(f"- `{path}`")
+    return "\n".join(out)
+
+
+def _collect_companion_files(skill: Any) -> list[Path]:
+    """List sibling files of SKILL.md.
+
+    Mirrors Rust ``collect_companion_files`` (tools/skill.rs:162).
+    Skips the ``SKILL.md`` itself and any nested directories so the
+    listing stays focused on at-hand resources. Sorted for determinism.
+    """
+    parent = skill.path.parent if isinstance(skill.path, Path) else Path(skill.path).parent
+    if not parent.is_dir():
+        return []
+    return sorted(
+        p for p in parent.iterdir()
+        if p.is_file() and p.name != "SKILL.md"
+    )
 
 
 # ===========================================================================
@@ -595,19 +712,6 @@ def _archives_dir(context: ToolContext) -> Path:
     if env:
         return Path(env).expanduser()
     return user_sessions_dir()
-
-
-def _find_skill(name: str, context: ToolContext) -> Path:
-    # ``~/.claude/skills`` stays in $HOME — that's a Claude-Code convention
-    # owned by a different tool, not part of our ``.deepseek/`` namespace.
-    candidates = [
-        context.working_directory / ".deepseek" / "skills" / name / "SKILL.md",
-        Path.home() / ".claude" / "skills" / name / "SKILL.md",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return candidates[0]
 
 
 def _gather_review_content(target: str, context: ToolContext, max_chars: int) -> str:

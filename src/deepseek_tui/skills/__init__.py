@@ -149,16 +149,41 @@ def skills_directories(
 ) -> list[Path]:
     """Return ordered list of skill directories to scan.
 
-    Mirrors Rust ``skills_directories`` (mod.rs:60-80).
+    Mirrors Rust ``skills_directories`` (mod.rs:392-407). The Rust
+    implementation walks workspace-local conventions first (so a project
+    can override a global skill by name), then ecosystem globals, then
+    the DeepSeek user-level default. First-wins on name collisions.
     """
     dirs: list[Path] = []
-    primary = skills_dir or default_skills_dir()
-    if primary.is_dir():
-        dirs.append(primary)
+    seen: set[Path] = set()
+
+    def _add(p: Path) -> None:
+        if p.is_dir() and p not in seen:
+            dirs.append(p)
+            seen.add(p)
+
+    # Explicit override wins outright — kept first so callers that pass
+    # a specific directory (tests, CLI overrides) get deterministic
+    # precedence over discovered workspace/global candidates.
+    if skills_dir is not None:
+        _add(skills_dir)
+
     if workspace:
-        local = workspace / ".deepseek" / "skills"
-        if local.is_dir() and local != primary:
-            dirs.append(local)
+        for sub in (
+            "skills",
+            ".deepseek/skills",
+            ".claude/skills",
+            ".opencode/skills",
+            ".cursor/skills",
+        ):
+            _add(workspace / sub)
+
+    home = Path.home()
+    # ``~/.agents/skills`` is intentionally excluded: the user opted out
+    # of the agentskills.io ecosystem. Keep the Claude / DeepSeek roots.
+    _add(home / ".claude" / "skills")
+    if skills_dir is None:
+        _add(default_skills_dir())
     return dirs
 
 
@@ -185,22 +210,97 @@ def discover_in_workspace(
 
 # ── Prompt context rendering ─────────────────────────────────────────────
 
+MAX_SKILL_DESCRIPTION_CHARS = 500
+MAX_AVAILABLE_SKILLS_CHARS = 12_000
+
+_HOW_TO_USE_SKILLS = (
+    "\n### How to use skills\n"
+    "- Discovery: The list above is the skills available in this session. "
+    "Skill bodies live on disk at the listed paths.\n"
+    "- Trigger rules: If the user names a skill (with `$SkillName`, "
+    "`/skill <name>`, or plain text) OR the task clearly matches a skill "
+    "description above, use that skill for that turn. Multiple mentions "
+    "mean use them all. Do not carry skills across turns unless re-mentioned.\n"
+    "- Missing/blocked: If a named skill is missing or its `SKILL.md` cannot "
+    "be read, say so briefly and continue with the best fallback.\n"
+    "- Progressive disclosure: After deciding to use a skill, call "
+    "`load_skill(name=...)` to read its full instructions. When it references "
+    "relative paths such as `scripts/foo.py`, resolve them relative to the "
+    "skill directory.\n"
+    "- Context hygiene: Load only the specific referenced files needed for "
+    "the task. Avoid bulk-loading unrelated skill resources.\n"
+    "- Safety: Do not execute scripts from a community skill unless the user "
+    "explicitly asks or the skill has been trusted for script use.\n"
+)
+
+
+def truncate_for_prompt(value: str, max_chars: int) -> str:
+    """Collapse internal whitespace, then bound by ``max_chars``.
+
+    Mirrors Rust ``truncate_for_prompt`` (mod.rs:565). The collapse is
+    deliberate: SKILL.md descriptions sometimes carry stray newlines /
+    tabs / runs of spaces, and the system-prompt section reads as a
+    single bullet list, not free-form prose.
+    """
+    single_line = " ".join(value.split())
+    if len(single_line) <= max_chars:
+        return single_line
+    if max_chars <= 1:
+        return "…"
+    return single_line[: max_chars - 1] + "…"
+
 
 def render_available_skills_context(
     registry: SkillRegistry,
 ) -> str:
     """Render the progressive-disclosure skills block for the system prompt.
 
-    Lists name + description only (body loaded on demand via load_skill).
-    Mirrors Rust ``render_available_skills_context`` (mod.rs:300-330).
+    Mirrors Rust ``render_skills_block`` (mod.rs:497-562). Each entry
+    carries the real on-disk path captured at discovery — the directory
+    name can differ from the frontmatter ``name`` for community installs,
+    in which case ``<dir>/<name>/SKILL.md`` would not exist and the model
+    would fail to open it.
     """
     if registry.is_empty:
         return ""
-    lines = ["## Available Skills\n"]
-    for skill in registry.skills:
-        desc = f" — {skill.description}" if skill.description else ""
-        lines.append(f"- **{skill.name}**{desc} (`{skill.path}`)")
-    lines.append(
-        "\nUse `load_skill(name)` to read a skill's full instructions."
+
+    parts: list[str] = ["## Skills\n"]
+    parts.append(
+        "A skill is a set of local instructions stored in a `SKILL.md` file. "
+        "Below is the list of skills available in this session. Each entry "
+        "includes a name, description, and file path so you can open the "
+        "source for full instructions when using a specific skill.\n\n"
     )
-    return "\n".join(lines)
+    parts.append("### Available skills\n")
+
+    rendered_lines: list[str] = []
+    omitted = 0
+    running = sum(len(p) for p in parts)
+    for skill in registry.skills:
+        desc = truncate_for_prompt(skill.description, MAX_SKILL_DESCRIPTION_CHARS)
+        line = (
+            f"- {skill.name}: (file: {skill.path})\n"
+            if not desc
+            else f"- {skill.name}: {desc} (file: {skill.path})\n"
+        )
+        if running + len(line) > MAX_AVAILABLE_SKILLS_CHARS:
+            omitted += 1
+        else:
+            rendered_lines.append(line)
+            running += len(line)
+    parts.extend(rendered_lines)
+
+    if omitted > 0:
+        parts.append(
+            f"- ... {omitted} additional skills omitted from this prompt budget.\n"
+        )
+
+    if registry.warnings:
+        parts.append("\n### Skill load warnings\n")
+        for warning in registry.warnings[:8]:
+            parts.append(
+                f"- {truncate_for_prompt(warning, MAX_SKILL_DESCRIPTION_CHARS)}\n"
+            )
+
+    parts.append(_HOW_TO_USE_SKILLS)
+    return "".join(parts)
