@@ -215,6 +215,13 @@ def _install_from_github(
     """Fetch a skill from GitHub (tarball download) and extract.
 
     Hardened path. See module docstring for K-1..K-7 notes.
+
+    Extraction is **atomic**: tarball lands in a sibling ``.<name>.tmp``
+    directory; a successful, validated extract is then ``rename``-d into
+    place. A mid-flight failure (Ctrl-C, network error, bomb, traversal
+    attempt) leaves no half-baked ``dest/`` behind that the user has to
+    ``rm -rf`` before retrying. Mirrors the Rust install path's
+    tempdir-then-rename pattern.
     """
     name = name_override or source.repo
     dest = target_dir / name
@@ -250,23 +257,36 @@ def _install_from_github(
     if data is None or source_url is None:
         return (InstallOutcome.FAILED, f"Download failed: {last_error or 'unknown error'}")
 
+    staging = target_dir / f".{name}.tmp"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
     try:
-        _extract_tarball(data, dest, max_size_bytes=max_size_bytes)
+        _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
     except Exception as exc:  # noqa: BLE001
-        if dest.exists():
-            shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         return (InstallOutcome.FAILED, f"Extract failed: {exc}")
 
-    # K-7: accept either ``dest/SKILL.md`` (flat) or
-    # ``dest/<single-subdir>/SKILL.md`` (nested) as a valid layout.
-    if not _has_skill_file(dest):
-        shutil.rmtree(dest, ignore_errors=True)
+    # K-7: accept either ``staging/SKILL.md`` (flat) or
+    # ``staging/<single-subdir>/SKILL.md`` (nested) as a valid layout.
+    if not _has_skill_file(staging):
+        shutil.rmtree(staging, ignore_errors=True)
         return (
             InstallOutcome.FAILED,
             f"No {SKILL_FILENAME} in repo (looked at top level and one nested dir)",
         )
 
-    _write_installed_from(dest, f"github:{source.owner}/{source.repo}")
+    _write_installed_from(staging, f"github:{source.owner}/{source.repo}")
+
+    # Atomic publish. ``os.rename`` is atomic on POSIX when source and
+    # destination live on the same filesystem (they do — both under
+    # ``target_dir``). A concurrent installer racing to the same ``dest``
+    # may lose; we leave the staging dir intact for retry in that case.
+    try:
+        staging.rename(dest)
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (InstallOutcome.FAILED, f"Atomic rename failed: {exc}")
+
     return (
         InstallOutcome.INSTALLED,
         f"Installed {name} from GitHub ({source_url})",
@@ -557,22 +577,30 @@ def install_from_bytes(
     """Test seam: install from a tarball passed inline.
 
     Bypasses the network so the K-3..K-7 extract path can be unit-tested
-    end-to-end without spinning a fake HTTP server.
+    end-to-end without spinning a fake HTTP server. Atomic-publish path
+    mirrors ``_install_from_github`` — staging dir + ``rename``.
     """
     dest = skills_dir / name
     if dest.exists():
         return (InstallOutcome.ALREADY_EXISTS, f"Skill {name} already exists at {dest}")
     skills_dir.mkdir(parents=True, exist_ok=True)
+    staging = skills_dir / f".{name}.tmp"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
     try:
-        _extract_tarball(archive_bytes, dest, max_size_bytes=max_size_bytes)
+        _extract_tarball(archive_bytes, staging, max_size_bytes=max_size_bytes)
     except Exception as exc:  # noqa: BLE001
-        if dest.exists():
-            shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         return (InstallOutcome.FAILED, f"Extract failed: {exc}")
-    if not _has_skill_file(dest):
-        shutil.rmtree(dest, ignore_errors=True)
+    if not _has_skill_file(staging):
+        shutil.rmtree(staging, ignore_errors=True)
         return (InstallOutcome.FAILED, f"No {SKILL_FILENAME} in archive")
-    _write_installed_from(dest, spec)
+    _write_installed_from(staging, spec)
+    try:
+        staging.rename(dest)
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (InstallOutcome.FAILED, f"Atomic rename failed: {exc}")
     return (InstallOutcome.INSTALLED, f"Installed {name} to {dest}")
 
 

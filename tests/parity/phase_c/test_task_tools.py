@@ -213,15 +213,132 @@ class TestPrAttempt:
                 ctx,
             )
 
-    async def test_preflight_returns_diagnostics(self, ctx: ToolContext) -> None:
-        created = await TaskCreateTool().execute({"prompt": "pre"}, ctx)
-        result = await PrAttemptPreflightTool().execute(
+    async def test_preflight_runs_git_apply_check(
+        self, ctx: ToolContext, tmp_path: Path
+    ) -> None:
+        """Mirror of Rust ``pr_attempt_preflight`` (tools/tasks.rs:707-771).
+
+        Build a real git repo, write a valid patch artifact, and verify
+        the tool returns ``would_apply=True`` with ``exit_code=0``.
+        """
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"], cwd=repo, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("hello\n")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        # Build a patch that adds a new file (clean apply against HEAD).
+        patch = (
+            "diff --git a/new.txt b/new.txt\n"
+            "new file mode 100644\n"
+            "index 0000000..d00491f\n"
+            "--- /dev/null\n"
+            "+++ b/new.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+1\n"
+        )
+
+        mgr = ctx.task_manager
+        assert mgr is not None
+        artifacts_dir = mgr.data_dir() / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        patch_file = artifacts_dir / "good.patch"
+        patch_file.write_text(patch)
+
+        created = await TaskCreateTool().execute({"prompt": "pre-ok"}, ctx)
+        task_id = created.metadata["task_id"]
+        rec = await PrAttemptRecordTool().execute(
             {
-                "id": created.metadata["task_id"],
-                "base_ref": "main",
-                "head_ref": "topic/x",
+                "id": task_id,
+                "summary": "ok",
+                "patch_path": "good.patch",
             },
             ctx,
         )
-        assert result.metadata["status"] == "ok"
-        assert result.metadata["base_ref"] == "main"
+        attempt_id = rec.metadata["attempt"]["id"]
+
+        ctx.working_directory = repo
+        result = await PrAttemptPreflightTool().execute(
+            {"id": task_id, "attempt_id": attempt_id}, ctx
+        )
+        assert result.metadata["would_apply"] is True
+        assert result.metadata["exit_code"] == 0
+        assert result.metadata["mutated_worktree"] is False
+
+    async def test_preflight_reports_conflict(
+        self, ctx: ToolContext, tmp_path: Path
+    ) -> None:
+        """A malformed patch should return ``would_apply=False`` and
+        nonzero exit (Rust parity)."""
+        import subprocess
+
+        repo = tmp_path / "repo2"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"], cwd=repo, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("hello\n")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        mgr = ctx.task_manager
+        assert mgr is not None
+        artifacts_dir = mgr.data_dir() / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        # Patch targets a file/line that doesn't match — git apply --check
+        # rejects with non-zero exit.
+        (artifacts_dir / "bad.patch").write_text(
+            "diff --git a/f.txt b/f.txt\n"
+            "--- a/f.txt\n"
+            "+++ b/f.txt\n"
+            "@@ -1 +1 @@\n"
+            "-not-hello\n"
+            "+changed\n"
+        )
+
+        created = await TaskCreateTool().execute({"prompt": "pre-bad"}, ctx)
+        rec = await PrAttemptRecordTool().execute(
+            {
+                "id": created.metadata["task_id"],
+                "summary": "bad",
+                "patch_path": "bad.patch",
+            },
+            ctx,
+        )
+        ctx.working_directory = repo
+        result = await PrAttemptPreflightTool().execute(
+            {
+                "id": created.metadata["task_id"],
+                "attempt_id": rec.metadata["attempt"]["id"],
+            },
+            ctx,
+        )
+        assert result.metadata["would_apply"] is False
+        assert result.metadata["exit_code"] != 0
+
+    async def test_preflight_missing_patch_raises(
+        self, ctx: ToolContext
+    ) -> None:
+        """Attempt without ``patch_path`` is rejected (Rust parity)."""
+        created = await TaskCreateTool().execute({"prompt": "pre-missing"}, ctx)
+        rec = await PrAttemptRecordTool().execute(
+            {"id": created.metadata["task_id"], "summary": "no patch"},
+            ctx,
+        )
+        with pytest.raises(ToolError, match="no patch artifact"):
+            await PrAttemptPreflightTool().execute(
+                {
+                    "id": created.metadata["task_id"],
+                    "attempt_id": rec.metadata["attempt"]["id"],
+                },
+                ctx,
+            )

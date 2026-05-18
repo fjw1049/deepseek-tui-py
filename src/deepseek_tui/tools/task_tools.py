@@ -7,8 +7,10 @@ implementation.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.base import (
@@ -556,24 +558,36 @@ class PrAttemptReadTool(ToolSpec):
 
 
 class PrAttemptPreflightTool(ToolSpec):
+    """Run ``git apply --check`` for a recorded attempt patch.
+
+    Mirrors Rust ``PrAttemptPreflightTool`` (crates/tui/src/tools/tasks.rs:707-771).
+    No-mutation preflight; actual apply remains explicit and approval-gated
+    elsewhere.
+    """
+
+    _MAX_SUMMARY_CHARS = 4096
+
     def name(self) -> str:
         return "pr_attempt_preflight"
 
     def description(self) -> str:
         return (
-            "Run preflight checks before recording a PR attempt "
-            "(stub: returns a diagnostics summary)."
+            "Run `git apply --check` for a recorded attempt patch. This is "
+            "a no-mutation preflight; actual apply remains explicit and "
+            "approval-gated elsewhere."
         )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string"},
-                "base_ref": {"type": "string"},
-                "head_ref": {"type": "string"},
+                "id": {
+                    "type": "string",
+                    "description": "Task id; defaults to active task.",
+                },
+                "attempt_id": {"type": "string"},
             },
-            "required": ["id"],
+            "required": ["attempt_id"],
             "additionalProperties": False,
         }
 
@@ -584,27 +598,100 @@ class PrAttemptPreflightTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        attempt_id = _require_string(input_data, "attempt_id")
+        task_id = _optional_string(input_data, "id")
+        if task_id is None:
+            task_id = getattr(context, "active_task_id", None)
+        if not task_id:
+            raise ToolError("id (task id) required when no active task is set")
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
-        base_ref = _optional_string(input_data, "base_ref")
-        head_ref = _optional_string(input_data, "head_ref")
+
+        attempt = None
+        for a in task.attempts:
+            if a.id == attempt_id or a.id.startswith(attempt_id):
+                attempt = a
+                break
+        if attempt is None:
+            raise ToolError(f"Attempt not found: {attempt_id}")
+        if not attempt.patch_path:
+            raise ToolError("Attempt has no patch artifact")
+
+        patch_path = manager.artifact_absolute_path(attempt.patch_path)
+        workspace = (
+            getattr(context, "workspace", None)
+            or getattr(context, "working_directory", None)
+            or Path.cwd()
+        )
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "apply",
+                "--check",
+                str(patch_path),
+                cwd=str(workspace),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await proc.communicate()
+        except FileNotFoundError as exc:
+            raise ToolError(f"git apply --check failed: {exc}") from exc
+        except OSError as exc:
+            raise ToolError(f"git apply --check failed: {exc}") from exc
+
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        exit_code = proc.returncode
+        would_apply = exit_code == 0
+
         return ToolResult(
             success=True,
-            content=f"Preflight OK on {task.id}",
+            content=(
+                f"Preflight {'OK' if would_apply else 'FAILED'} on {task.id} "
+                f"attempt {attempt.id}"
+            ),
             metadata={
                 "task_id": task.id,
-                "status": "ok",
-                "base_ref": base_ref,
-                "head_ref": head_ref,
-                "existing_attempts": len(task.attempts),
+                "attempt_id": attempt.id,
+                "patch_path": attempt.patch_path,
+                "would_apply": would_apply,
+                "exit_code": exit_code,
+                "stdout_summary": _summarize(stdout, self._MAX_SUMMARY_CHARS),
+                "stderr_summary": _summarize(stderr, self._MAX_SUMMARY_CHARS),
+                "mutated_worktree": False,
             },
         )
 
 
 # --- helpers -----------------------------------------------------------
+
+
+def _summarize(text: str, limit: int) -> str:
+    """Mirror of Rust ``summarize`` (tools/tasks.rs:947-965).
+
+    Drops control characters (except ``\\n`` / ``\\t``), truncates to
+    ``limit`` chars with a trailing ``...`` marker. Empty result becomes
+    ``"(no output)"``.
+    """
+    out: list[str] = []
+    cap = max(limit - 3, 0)
+    for idx, ch in enumerate(text):
+        if idx >= cap:
+            out.append("...")
+            break
+        if ch in ("\n", "\t") or (ch.isprintable() and not _is_control(ch)):
+            out.append(ch)
+    result = "".join(out)
+    if not result.strip():
+        return "(no output)"
+    return result
+
+
+def _is_control(ch: str) -> bool:
+    return ord(ch) < 0x20 or ord(ch) == 0x7F
 
 
 def _require_manager(context: ToolContext) -> TaskManager:

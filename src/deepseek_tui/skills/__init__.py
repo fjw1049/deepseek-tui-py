@@ -15,9 +15,12 @@ from pathlib import Path
 __all__ = [
     "Skill",
     "SkillRegistry",
+    "agents_global_skills_dir",
+    "claude_global_skills_dir",
     "default_skills_dir",
     "discover_in_workspace",
     "render_available_skills_context",
+    "skills_directories",
 ]
 
 _LOG = logging.getLogger(__name__)
@@ -36,6 +39,28 @@ def default_skills_dir() -> Path:
     from deepseek_tui.config.paths import user_skills_dir
 
     return user_skills_dir()
+
+
+def agents_global_skills_dir() -> Path | None:
+    """``~/.agents/skills`` — agentskills.io ecosystem global.
+
+    Mirrors Rust ``agents_global_skills_dir`` (skills/mod.rs:41-43).
+    """
+    home = Path.home()
+    if not home:
+        return None
+    return home / ".agents" / "skills"
+
+
+def claude_global_skills_dir() -> Path | None:
+    """``~/.claude/skills`` — Claude-ecosystem global (#902).
+
+    Mirrors Rust ``claude_global_skills_dir`` (skills/mod.rs:51-53).
+    """
+    home = Path.home()
+    if not home:
+        return None
+    return home / ".claude" / "skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,39 +174,51 @@ def skills_directories(
 ) -> list[Path]:
     """Return ordered list of skill directories to scan.
 
-    Mirrors Rust ``skills_directories`` (mod.rs:392-407). The Rust
-    implementation walks workspace-local conventions first (so a project
-    can override a global skill by name), then ecosystem globals, then
-    the DeepSeek user-level default. First-wins on name collisions.
+    Mirrors Rust ``skills_directories`` (skills/mod.rs:371-408). Precedence
+    (first match wins on name conflicts):
+
+    1. ``<workspace>/.agents/skills`` — deepseek-native convention.
+    2. ``<workspace>/skills`` — flat, project-local.
+    3. ``<workspace>/.opencode/skills`` — OpenCode interop.
+    4. ``<workspace>/.claude/skills`` — Claude Code interop.
+    5. ``<workspace>/.cursor/skills`` — Cursor interop.
+    6. ``agents_global_skills_dir`` — agentskills.io global.
+    7. ``claude_global_skills_dir`` — Claude-ecosystem global (#902).
+    8. ``default_skills_dir`` — DeepSeek global, user-installed.
+
+    An explicit ``skills_dir`` override (tests, CLI flag) is honored first
+    so deterministic precedence holds for callers that pin a directory.
+
+    De-duplication uses ``Path.resolve()`` so two paths that canonicalize
+    to the same dir (symlink chains, ``./foo`` vs ``foo``) are merged.
     """
     dirs: list[Path] = []
     seen: set[Path] = set()
 
-    def _add(p: Path) -> None:
-        if p.is_dir() and p not in seen:
+    def _add(p: Path | None) -> None:
+        if p is None:
+            return
+        try:
+            canonical = p.resolve()
+        except OSError:
+            return
+        if canonical.is_dir() and canonical not in seen:
             dirs.append(p)
-            seen.add(p)
+            seen.add(canonical)
 
-    # Explicit override wins outright — kept first so callers that pass
-    # a specific directory (tests, CLI overrides) get deterministic
-    # precedence over discovered workspace/global candidates.
     if skills_dir is not None:
         _add(skills_dir)
 
     if workspace:
-        for sub in (
-            "skills",
-            ".deepseek/skills",
-            ".claude/skills",
-            ".opencode/skills",
-            ".cursor/skills",
-        ):
-            _add(workspace / sub)
+        _add(workspace / ".agents" / "skills")
+        _add(workspace / "skills")
+        _add(workspace / ".deepseek" / "skills")
+        _add(workspace / ".opencode" / "skills")
+        _add(workspace / ".claude" / "skills")
+        _add(workspace / ".cursor" / "skills")
 
-    home = Path.home()
-    # ``~/.agents/skills`` is intentionally excluded: the user opted out
-    # of the agentskills.io ecosystem. Keep the Claude / DeepSeek roots.
-    _add(home / ".claude" / "skills")
+    _add(agents_global_skills_dir())
+    _add(claude_global_skills_dir())
     if skills_dir is None:
         _add(default_skills_dir())
     return dirs

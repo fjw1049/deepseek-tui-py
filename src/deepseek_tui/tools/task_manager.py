@@ -353,6 +353,19 @@ class TaskManager:
     def data_dir(self) -> Path:
         return self._cfg.data_dir
 
+    def artifact_absolute_path(self, patch_ref: str) -> Path:
+        """Resolve a recorded artifact reference to an absolute path.
+
+        Mirrors Rust ``TaskManager::artifact_absolute_path``
+        (crates/tui/src/tools/tasks.rs:750). Absolute paths pass through;
+        relative refs resolve under ``artifacts_dir`` (where attempt
+        patches are written).
+        """
+        p = Path(patch_ref)
+        if p.is_absolute():
+            return p
+        return self._artifacts_dir / p
+
     async def add_task(self, req: NewTaskRequest) -> TaskRecord:
         prompt = req.prompt.strip()
         if not prompt:
