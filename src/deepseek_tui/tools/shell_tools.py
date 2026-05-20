@@ -11,6 +11,7 @@ from typing import Any
 
 from deepseek_tui.execpolicy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.execpolicy.decision import Decision
+from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -366,11 +367,6 @@ def _pop_process(context: ToolContext, process_id: str) -> Process:
     return process
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
 
 
 def _decode_stream(stream: bytes | None) -> str:

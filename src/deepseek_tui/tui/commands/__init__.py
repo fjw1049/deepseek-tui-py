@@ -131,6 +131,7 @@ REGISTRY: list[CommandEntry] = [
         "/log", "Show log file path; '/log tail [N]' prints last N lines",
         _D,
     ),
+    CommandEntry("/undo", "Undo last file-modifying tool", _E),
 ]
 
 # Build lookup dicts for fast dispatch.

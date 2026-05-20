@@ -956,3 +956,16 @@ def cmd_log(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"(no log entries yet at {path})")
     body = "\n".join(lines)
     return CommandResult(output=f"-- last {len(lines)} lines from {path} --\n{body}")
+
+
+# ── /undo ───────────────────────────────────────────────────────────────
+
+@_register("/undo")
+def cmd_undo(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Undo the last file-modifying tool (mirrors Rust /undo)."""
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    success, msg = app._engine.undo_last_tool()
+    if success:
+        return CommandResult(output=msg)
+    return CommandResult(error=msg)

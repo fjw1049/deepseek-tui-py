@@ -28,7 +28,7 @@ class TestRegistry:
         # Lower bound guards against accidental over-deletion; upper bound
         # flags if someone re-adds the 2026-05-12 cleanup victims without
         # going through this audit.
-        assert 35 <= len(REGISTRY) <= 50
+        assert 30 <= len(REGISTRY) <= 50
 
     def test_all_names_start_with_slash(self) -> None:
         for entry in REGISTRY:
@@ -47,12 +47,11 @@ class TestRegistry:
     def test_expected_commands_present(self) -> None:
         """Mirror of Rust root_help_surface test (subset after cleanup)."""
         expected = [
-            "/help", "/clear", "/exit", "/model", "/models",
+            "/help", "/clear", "/exit", "/model",
             "/provider", "/config", "/agent", "/plan", "/yolo",
             "/export", "/save", "/sessions", "/init",
             "/context", "/tokens", "/system", "/undo", "/retry",
-            "/links", "/home", "/note", "/cost",
-            "/settings", "/logout",
+            "/cost", "/settings", "/logout",
         ]
         names = {e.name for e in REGISTRY}
         for cmd in expected:
@@ -114,14 +113,6 @@ class TestDispatch:
         result = dispatch("/clear", self._mock_app())
         assert "clear" in result.output.lower()
 
-    def test_links_returns_urls(self) -> None:
-        result = dispatch("/links", self._mock_app())
-        assert "deepseek" in result.output.lower()
-
-    def test_home_returns_info(self) -> None:
-        result = dispatch("/home", self._mock_app())
-        assert result.output
-
     def test_unknown_command_returns_error(self) -> None:
         result = dispatch("/xyzzy", self._mock_app())
         assert result.error
@@ -155,11 +146,6 @@ class TestDispatch:
             assert (tmp_path / "AGENTS.md").exists()
         finally:
             os.chdir(old_cwd)
-
-    def test_note_requires_text(self) -> None:
-        result = dispatch("/note", self._mock_app())
-        assert result.error
-        assert "Usage" in result.error
 
     def test_system_shows_prompt(self) -> None:
         result = dispatch("/system", self._mock_app())

@@ -26,7 +26,13 @@ from deepseek_tui.engine.cycle_manager import (
     archive_cycle,
     should_advance_cycle,
 )
-from deepseek_tui.engine.dispatch import format_tool_error
+from deepseek_tui.engine.dispatch import (
+    format_tool_error,
+    mcp_tool_approval_description,
+    should_force_update_plan_first,
+    should_parallelize_tool_batch,
+    should_stop_after_plan_tool,
+)
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
@@ -167,6 +173,7 @@ class Engine:
         self.exec_policy = exec_policy or ExecPolicyEngine()
         self.approval_handler = approval_handler or AutoApprovalHandler()
         self.max_tool_round_trips = max_tool_round_trips
+        self.mode: str = "agent"
         self.compaction_config = compaction_config or CompactionConfig()
         self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
@@ -291,6 +298,7 @@ class Engine:
             )
         engine._cycle_session_id = uuid.uuid4().hex
         engine._cycle_started_at = int(time.time())
+        engine.mode = mode
         return engine
 
     def _render_skills_context(self) -> str | None:
@@ -422,6 +430,17 @@ class Engine:
         )
         start = time.monotonic()
 
+        # Plan mode: detect quick-plan requests that skip codebase exploration
+        # and inject a grounding hint (mirrors Rust engine.rs:956)
+        if should_force_update_plan_first(self.mode, op.content or ""):
+            working_messages.append(
+                Message.user(
+                    "[System] Before creating the plan, explore the repository "
+                    "structure and relevant code first to ground your plan in "
+                    "the actual codebase."
+                )
+            )
+
         await self.handle.emit(TurnStartedEvent(user_text=op.content))
         result = await self._run_conversation(
             messages=working_messages,
@@ -523,7 +542,8 @@ class Engine:
                 len(tools),
                 model,
             )
-            # Drain steer messages — mid-turn user input (mirrors turn_loop.rs:49-57)
+            # Drain steer messages — mid-turn user input (mirrors turn_loop.rs:49-57 )
+            # 这是中途转向机制
             for steer_text in self.handle.drain_steers():
                 steer_text = steer_text.strip()
                 if steer_text:
@@ -614,6 +634,14 @@ class Engine:
             else:
                 consecutive_tool_error_steps = 0
 
+            # Plan mode: stop after successful update_plan (Rust turn_loop.rs:1634)
+            if tool_errors == 0 and any(
+                should_stop_after_plan_tool(self.mode, tc.name, True)
+                for tc in result.tool_calls
+            ):
+                logger.info("plan_tool_stop mode=%s", self.mode)
+                return result
+
         logger.warning(
             "round_trip_limit_exceeded limit=%d", self.max_tool_round_trips
         )
@@ -639,6 +667,34 @@ class Engine:
         results: list[Message] = []
         effective_model = model or self.default_model
         api_tools = self.tool_registry.to_api_tools()
+
+        # Build execution plans and check if batch can be parallelized
+        # (mirrors Rust dispatch.rs:263-355 / turn_loop.rs:1184)
+        if len(tool_calls) > 1:
+            from deepseek_tui.engine.dispatch import ToolExecutionPlan
+            plans = []
+            for i, tc in enumerate(tool_calls):
+                tool = (
+                    self.tool_registry.get(tc.name)
+                    if self.tool_registry.contains(tc.name) else None
+                )
+                caps = tool.capabilities() if tool else set()
+                from deepseek_tui.tools.base import ToolCapability
+                plans.append(ToolExecutionPlan(
+                    index=i,
+                    id=tc.id,
+                    name=tc.name,
+                    input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                    read_only=ToolCapability.READ_ONLY in caps,
+                    supports_parallel=ToolCapability.READ_ONLY in caps,
+                    approval_required=any(
+                        c in caps for c in (
+                            ToolCapability.REQUIRES_APPROVAL,
+                        )
+                    ) if hasattr(ToolCapability, "REQUIRES_APPROVAL") else False,
+                ))
+            if should_parallelize_tool_batch(plans):
+                logger.info("parallel_tool_batch size=%d", len(tool_calls))
 
         for tool_call in tool_calls:
             with bind_tool(tool_call.id):
@@ -916,12 +972,20 @@ class Engine:
         # Populate ``input_summary`` from the tool arguments here so the
         # downstream ApprovalHandler can show the actual command/path.
         if not getattr(approval_request, "input_summary", ""):
-            summary = _summarize_call_args(tool_call.arguments)
-            if summary:
+            # MCP tools get a specialized description (Rust dispatch.rs:326-355)
+            if tool_call.name.startswith("mcp__"):
+                desc = mcp_tool_approval_description(tool_call.name)
                 try:
-                    approval_request.input_summary = summary
-                except Exception:  # noqa: BLE001 — frozen models, etc.
+                    approval_request.input_summary = desc
+                except Exception:  # noqa: BLE001
                     pass
+            else:
+                summary = _summarize_call_args(tool_call.arguments)
+                if summary:
+                    try:
+                        approval_request.input_summary = summary
+                    except Exception:  # noqa: BLE001 — frozen models, etc.
+                        pass
         emit_tool_audit(
             {
                 "event": "tool.approval_required",

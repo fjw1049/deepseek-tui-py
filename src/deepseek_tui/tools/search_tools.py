@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -102,11 +103,6 @@ class FileSearchTool(ToolSpec):
         )
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
 
 
 def _iter_files(root: Path) -> Iterable[Path]:

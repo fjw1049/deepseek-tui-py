@@ -4,6 +4,8 @@ import json
 from typing import Any
 
 from deepseek_tui.mcp.manager import McpManager
+from deepseek_tui.tools._validators import optional_string as _optional_string
+from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -124,17 +126,3 @@ def _json_result(value: Any) -> ToolResult:
     )
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
-
-
-def _optional_string(input_data: dict[str, object], key: str) -> str | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value

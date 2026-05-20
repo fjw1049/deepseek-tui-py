@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.client.base import LLMClient
+from deepseek_tui.engine.seam_manager import truncate_chars as _truncate_chars
 from deepseek_tui.protocol.messages import Message
 
 # Configuration constants (mirrors Rust)
@@ -104,14 +105,6 @@ def _summary_input_limits_for_model(model: str) -> SummaryInputLimits:
     else:
         return SummaryInputLimits()
 
-
-def _truncate_chars(text: str, max_chars: int) -> str:
-    """Truncate text to max character count."""
-    if max_chars <= 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars]
 
 
 def _tail_chars(text: str, max_chars: int) -> str:

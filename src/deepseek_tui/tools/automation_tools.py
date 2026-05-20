@@ -25,6 +25,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, cast
 
+from deepseek_tui.tools._validators import optional_string as _optional_string
+from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.automation_manager import (
     AutomationManager,
     AutomationStatus,
@@ -76,20 +78,6 @@ def _get_manager(context: ToolContext) -> AutomationManager:
     return raw
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
-
-
-def _optional_string(input_data: dict[str, object], key: str) -> str | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
 
 
 def _optional_string_list(

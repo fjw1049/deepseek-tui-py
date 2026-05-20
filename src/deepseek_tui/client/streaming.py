@@ -22,6 +22,12 @@ def parse_json_object(raw: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
+        # Fallback: use parse_tool_input for robust fragment reassembly
+        # (mirrors Rust dispatch.rs:145 — handles code fences, balanced braces)
+        from deepseek_tui.engine.tool_parser import parse_tool_input
+        result = parse_tool_input(raw)
+        if result is not None:
+            return result
         return {"raw": raw}
     if isinstance(parsed, dict):
         return parsed

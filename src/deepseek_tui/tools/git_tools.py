@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from deepseek_tui.tools._validators import optional_string as _optional_string
+from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -176,20 +178,6 @@ async def _run_git(root: Path, *args: str) -> ToolResult:
     )
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
-
-
-def _optional_string(input_data: dict[str, object], key: str) -> str | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
 
 
 def _optional_int(input_data: dict[str, object], key: str) -> int | None:

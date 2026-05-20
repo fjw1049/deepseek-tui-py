@@ -4,6 +4,8 @@ import os
 
 import httpx
 
+from deepseek_tui.tools._validators import optional_int as _optional_int
+from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -137,17 +139,3 @@ async def _fetch(
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc
 
 
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str):
-        raise ToolError(f"{key} must be a string")
-    return value
-
-
-def _optional_int(input_data: dict[str, object], key: str) -> int | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, int):
-        raise ToolError(f"{key} must be an integer")
-    return value
