@@ -696,6 +696,9 @@ class Engine:
                 ))
             if should_parallelize_tool_batch(plans):
                 logger.info("parallel_tool_batch size=%d", len(tool_calls))
+                return await self._execute_tools_parallel(
+                    tool_calls, api_tools, effective_model
+                )
 
         for tool_call in tool_calls:
             with bind_tool(tool_call.id):
@@ -819,6 +822,162 @@ class Engine:
                             tool_call.id, f"Error: {error_msg}", is_error=True
                         )
                     )
+        return results
+
+    async def _execute_tools_parallel(
+        self,
+        tool_calls: list[ToolCall],
+        api_tools: list[dict[str, Any]],
+        model: str,
+    ) -> list[Message]:
+        """Execute multiple read-only tools in parallel.
+
+        Mirrors Rust turn_loop.rs:1205-1303 (FuturesUnordered branch).
+        Only called when should_parallelize_tool_batch returns True,
+        which guarantees all tools are read-only, non-interactive,
+        and don't require approval.
+        """
+
+        async def _exec_one_parallel(
+            tool_call: ToolCall,
+        ) -> tuple[ToolCall, ToolResult | None, str | None]:
+            """Execute a single tool, returning (call, result, error_msg)."""
+            with bind_tool(tool_call.id):
+                args_preview = repr(tool_call.arguments)[:200]
+                logger.info(
+                    "tool_call_start name=%s args=%s (parallel)",
+                    tool_call.name,
+                    args_preview,
+                )
+                tool_started = time.monotonic()
+
+                try:
+                    result = await self._execute_single_tool(
+                        tool_call, api_tools, model
+                    )
+                    duration_ms = int((time.monotonic() - tool_started) * 1000)
+
+                    if result is None:
+                        # Approval denied (shouldn't happen in parallel path)
+                        logger.warning(
+                            "tool_denied name=%s duration_ms=%d",
+                            tool_call.name,
+                            duration_ms,
+                        )
+                        return (
+                            tool_call,
+                            None,
+                            f"Tool {tool_call.name} denied by approval policy",
+                        )
+
+                    logger.info(
+                        "tool_call_end name=%s success=%s duration_ms=%d "
+                        "content_bytes=%d (parallel)",
+                        tool_call.name,
+                        result.success,
+                        duration_ms,
+                        len(result.content or ""),
+                    )
+                    return (tool_call, result, None)
+
+                except ToolError as exc:
+                    duration_ms = int((time.monotonic() - tool_started) * 1000)
+                    error_msg = format_tool_error(exc, tool_call.name)
+                    logger.warning(
+                        "tool_call_error name=%s duration_ms=%d error=%s (parallel)",
+                        tool_call.name,
+                        duration_ms,
+                        error_msg,
+                    )
+                    return (tool_call, None, error_msg)
+
+                except Exception as exc:  # noqa: BLE001
+                    duration_ms = int((time.monotonic() - tool_started) * 1000)
+                    error_msg = f"{tool_call.name}: {type(exc).__name__}: {exc}"
+                    logger.warning(
+                        "tool_call_unexpected_error name=%s duration_ms=%d error=%s (parallel)",
+                        tool_call.name,
+                        duration_ms,
+                        error_msg,
+                    )
+                    return (tool_call, None, error_msg)
+
+        # Execute all tools in parallel
+        outcomes = await asyncio.gather(
+            *[_exec_one_parallel(tc) for tc in tool_calls]
+        )
+
+        # Process outcomes and emit events (sequential, to preserve order)
+        results: list[Message] = []
+        for tool_call, result, error_msg in outcomes:
+            if error_msg is not None:
+                # Error case
+                emit_tool_audit(
+                    {
+                        "event": "tool.result",
+                        "tool_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                        "success": False,
+                        "error": error_msg,
+                    }
+                )
+                await self.handle.emit(
+                    ErrorEvent(message=error_msg, retryable=False)
+                )
+                results.append(
+                    Message.tool_result(
+                        tool_call.id, f"Error: {error_msg}", is_error=True
+                    )
+                )
+            elif result is None:
+                # Denial case (shouldn't happen)
+                results.append(
+                    Message.tool_result(
+                        tool_call.id,
+                        f"Tool {tool_call.name} denied",
+                        is_error=True,
+                    )
+                )
+            else:
+                # Success case
+                emit_tool_audit(
+                    {
+                        "event": "tool.result",
+                        "tool_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                        "success": result.success,
+                    }
+                )
+                self.working_set.observe_tool_call(
+                    tool_call.name,
+                    tool_call.arguments
+                    if isinstance(tool_call.arguments, dict)
+                    else None,
+                    result.content,
+                )
+                await self.handle.emit(
+                    ToolResultEvent(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        content=result.content,
+                        success=result.success,
+                    )
+                )
+                if result.success:
+                    await self._run_post_edit_lsp_hook(
+                        tool_call.name, tool_call.arguments
+                    )
+                output_for_context = compact_tool_result_for_context(
+                    model, tool_call.name, result
+                )
+                results.append(
+                    Message.tool_result(
+                        tool_call.id,
+                        output_for_context,
+                        is_error=not result.success,
+                    )
+                )
+
         return results
 
     _SNAPSHOT_TOOLS: frozenset[str] = frozenset(
