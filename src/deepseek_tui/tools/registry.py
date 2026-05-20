@@ -27,7 +27,6 @@ from typing import Any
 
 from deepseek_tui.tools.base import (
     ApprovalRequirement,
-    ToolCapability,
     ToolError,
     ToolResult,
     ToolSpec,
@@ -129,10 +128,6 @@ class ToolRegistry:
     # capability / approval filtering
     # ------------------------------------------------------------------
 
-    def filter_by_capability(self, capability: ToolCapability) -> list[ToolSpec]:
-        """Mirrors Rust L203-208."""
-        return [t for t in self._tools.values() if capability in t.capabilities()]
-
     def read_only_tools(self) -> list[ToolSpec]:
         """Mirrors Rust L214-219."""
         return [t for t in self._tools.values() if t.is_read_only()]
@@ -147,14 +142,6 @@ class ToolRegistry:
             for t in self._tools.values()
             if t.approval_requirement() == ApprovalRequirement.REQUIRED
         ]
-
-    def approval_suggested_tools(self) -> list[ToolSpec]:
-        """Tools whose approval is at least *suggested*.
-
-        Includes both ``Suggest`` and ``Required``, matching Rust L236-247.
-        """
-        wanted = (ApprovalRequirement.SUGGEST, ApprovalRequirement.REQUIRED)
-        return [t for t in self._tools.values() if t.approval_requirement() in wanted]
 
     # ------------------------------------------------------------------
     # context

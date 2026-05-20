@@ -28,15 +28,3 @@ class DenyApprovalHandler(ApprovalHandler):
         request: ApprovalRequest,
     ) -> ApprovalDecision:
         return ApprovalDecision.DENIED
-
-
-class EventApprovalHandler(ApprovalHandler):
-    def __init__(self, *, default_decision: ApprovalDecision = ApprovalDecision.DENIED) -> None:
-        self.default_decision = default_decision
-
-    async def request_approval(
-        self,
-        tool_call_id: str,
-        request: ApprovalRequest,
-    ) -> ApprovalDecision:
-        return self.default_decision

@@ -229,7 +229,7 @@ def test_register_all_registers_each() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_filter_by_capability() -> None:
+def test_read_only_tools_filter() -> None:
     registry = ToolRegistry()
     registry.register(
         _SpyTool("reader", capabilities=(ToolCapability.READ_ONLY,))
@@ -237,17 +237,6 @@ def test_filter_by_capability() -> None:
     registry.register(
         _SpyTool("writer", capabilities=(ToolCapability.WRITES_FILES,))
     )
-    registry.register(
-        _SpyTool(
-            "shell",
-            capabilities=(ToolCapability.EXECUTES_CODE, ToolCapability.SANDBOXABLE),
-        )
-    )
-
-    sandboxable = {
-        t.name() for t in registry.filter_by_capability(ToolCapability.SANDBOXABLE)
-    }
-    assert sandboxable == {"shell"}
 
     read_only = {t.name() for t in registry.read_only_tools()}
     assert read_only == {"reader"}
@@ -262,16 +251,6 @@ def test_approval_required_only_includes_required() -> None:
     names = {t.name() for t in registry.approval_required_tools()}
     assert names == {"hard"}
 
-
-def test_approval_suggested_includes_required() -> None:
-    """Rust L240-243: Suggest set includes Required."""
-    registry = ToolRegistry()
-    registry.register(_SpyTool("auto"))
-    registry.register(_SpyTool("hint", approval=ApprovalRequirement.SUGGEST))
-    registry.register(_SpyTool("hard", approval=ApprovalRequirement.REQUIRED))
-
-    names = {t.name() for t in registry.approval_suggested_tools()}
-    assert names == {"hint", "hard"}
 
 
 # ---------------------------------------------------------------------------

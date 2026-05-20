@@ -10,22 +10,11 @@ The package splits into two layers:
   ``crates/protocol/src/lib.rs`` for stdio JSON-RPC and SSE traffic
   between app-server, TUI, hooks, MCP, etc. Includes
   :class:`Envelope`, :class:`Thread`, :class:`ThreadRequest`,
-  :class:`AppRequest`, :class:`PromptRequest`, :class:`EventFrame` (21
+  :class:`PromptRequest`, :class:`EventFrame` (21
   variants), :class:`ToolPayload`, :class:`ToolOutput`,
   :class:`ReviewDecision`, :class:`AskForApproval`, MCP lifecycle.
 """
 
-from .app import (
-    AppCapabilitiesRequest,
-    AppConfigGetRequest,
-    AppConfigListRequest,
-    AppConfigSetRequest,
-    AppConfigUnsetRequest,
-    AppModelsRequest,
-    AppRequest,
-    AppResponse,
-    AppThreadLoadedListRequest,
-)
 from .approval import (
     AskForApproval,
     ExecApprovalRequestEvent,
@@ -227,16 +216,6 @@ __all__ = [
     "ThreadStartRequest",
     "ThreadStatus",
     "ThreadUnarchiveRequest",
-    # App
-    "AppCapabilitiesRequest",
-    "AppConfigGetRequest",
-    "AppConfigListRequest",
-    "AppConfigSetRequest",
-    "AppConfigUnsetRequest",
-    "AppModelsRequest",
-    "AppRequest",
-    "AppResponse",
-    "AppThreadLoadedListRequest",
     # Prompt
     "PromptRequest",
     "PromptResponse",

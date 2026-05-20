@@ -25,8 +25,6 @@ import pytest
 from pydantic import TypeAdapter
 
 from deepseek_tui.protocol import (
-    AppRequest,
-    AppResponse,
     AskForApproval,
     Envelope,
     EventFrame,
@@ -39,7 +37,6 @@ from deepseek_tui.protocol import (
     NetworkApprovalContext,
     NetworkPolicyAmendment,
     NetworkPolicyRuleAction,
-    ResponseDeltaEvent,
     ReviewDecision,
     ReviewDecisionApproved,
     ReviewDecisionNetworkPolicyAmendment,
@@ -59,12 +56,10 @@ from deepseek_tui.protocol import (
     ToolPayloadMcp,
     TurnCompleteEvent,
 )
-from deepseek_tui.protocol.app import AppConfigGetRequest
 from deepseek_tui.protocol.threads import ThreadCreateRequest
 
 _EVENT_ADAPTER: TypeAdapter[Any] = TypeAdapter(EventFrame)
 _THREAD_REQ_ADAPTER: TypeAdapter[Any] = TypeAdapter(ThreadRequest)
-_APP_REQ_ADAPTER: TypeAdapter[Any] = TypeAdapter(AppRequest)
 _TOOL_PAYLOAD_ADAPTER: TypeAdapter[Any] = TypeAdapter(ToolPayload)
 _TOOL_OUTPUT_ADAPTER: TypeAdapter[Any] = TypeAdapter(ToolOutput)
 _REVIEW_ADAPTER: TypeAdapter[Any] = TypeAdapter(ReviewDecision)
@@ -365,37 +360,6 @@ def test_thread_create_metadata_defaults_to_object() -> None:
     assert encoded == {"kind": "create", "metadata": {}}
 
 
-# ---------------------------------------------------------------------------
-# 5. AppRequest — tag = "kind", 7 variants
-# ---------------------------------------------------------------------------
-
-
-_APP_VARIANT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
-    ("capabilities", {"kind": "capabilities"}),
-    ("config_get", {"kind": "config_get", "key": "a.b"}),
-    ("config_set", {"kind": "config_set", "key": "a.b", "value": "c"}),
-    ("config_unset", {"kind": "config_unset", "key": "a.b"}),
-    ("config_list", {"kind": "config_list"}),
-    ("models", {"kind": "models"}),
-    ("thread_loaded_list", {"kind": "thread_loaded_list"}),
-]
-
-
-@pytest.mark.parametrize("tag,expected", _APP_VARIANT_SAMPLES)
-def test_app_request_variant_round_trip(
-    tag: str, expected: dict[str, Any]
-) -> None:
-    decoded = _APP_REQ_ADAPTER.validate_python(expected)
-    encoded = json.loads(
-        _APP_REQ_ADAPTER.dump_json(decoded, exclude_none=True).decode("utf-8")
-    )
-    assert encoded == expected
-    assert encoded["kind"] == tag
-
-
-def test_app_request_exhaustiveness() -> None:
-    assert len(_APP_VARIANT_SAMPLES) == 7
-
 
 # ---------------------------------------------------------------------------
 # 6. ToolPayload / ToolOutput — tag = "type"
@@ -667,43 +631,4 @@ def test_thread_response_defaults() -> None:
     assert encoded["data"] == {}
 
 
-# ---------------------------------------------------------------------------
-# 12. AppResponse smoke + events parse
-# ---------------------------------------------------------------------------
 
-
-def test_app_response_roundtrip() -> None:
-    resp = AppResponse(
-        ok=True,
-        data={"models": ["deepseek-v4-pro"]},
-        events=[
-            ResponseDeltaEvent(response_id="r1", delta="hello"),
-        ],
-    )
-    encoded = json.loads(resp.model_dump_json(exclude_none=True))
-    assert encoded == {
-        "ok": True,
-        "data": {"models": ["deepseek-v4-pro"]},
-        "events": [
-            {"event": "response_delta", "response_id": "r1", "delta": "hello"}
-        ],
-    }
-
-
-# ---------------------------------------------------------------------------
-# 13. AppConfigGet defensive: `kind` is required and wrong-value rejected
-# ---------------------------------------------------------------------------
-
-
-def test_app_request_rejects_unknown_kind() -> None:
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError):
-        _APP_REQ_ADAPTER.validate_python({"kind": "nope"})
-
-
-def test_app_config_get_requires_key() -> None:
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError):
-        AppConfigGetRequest.model_validate({})

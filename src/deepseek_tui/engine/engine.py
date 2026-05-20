@@ -29,6 +29,7 @@ from deepseek_tui.engine.cycle_manager import (
 from deepseek_tui.engine.dispatch import (
     format_tool_error,
     mcp_tool_approval_description,
+    parse_parallel_tool_calls,
     should_force_update_plan_first,
     should_parallelize_tool_batch,
     should_stop_after_plan_tool,
@@ -1141,19 +1142,9 @@ class Engine:
         Only read-only tools that don't require approval are eligible.
         Recursive self-calls are rejected (tool_execution.rs:63).
         """
-        tool_uses = input_data.get("tool_uses")
-        if not isinstance(tool_uses, list) or not tool_uses:
-            raise ToolError("tool_uses must be a non-empty array")
+        calls = parse_parallel_tool_calls(input_data)
 
-        async def _run_one(item: dict[str, Any]) -> dict[str, str]:
-            name = item.get("recipient_name", "")
-            params = item.get("parameters", {})
-            if not isinstance(params, dict):
-                params = {}
-            for prefix in ("functions.", "tools.", "tool."):
-                if name.startswith(prefix):
-                    name = name[len(prefix):]
-                    break
+        async def _run_one(name: str, params: dict[str, Any]) -> dict[str, str]:
             if name == MULTI_TOOL_PARALLEL_NAME:
                 return {
                     "tool": name,
@@ -1183,7 +1174,7 @@ class Engine:
 
         import json as _json
 
-        results = await asyncio.gather(*[_run_one(item) for item in tool_uses])
+        results = await asyncio.gather(*[_run_one(n, p) for n, p in calls])
         return ToolResult(content=_json.dumps(results, ensure_ascii=False), success=True)
 
     async def _await_user_input(
