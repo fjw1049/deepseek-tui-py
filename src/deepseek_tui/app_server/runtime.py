@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.hooks.build import build_hook_dispatcher
 from deepseek_tui.hooks.dispatcher import HookDispatcher
 from deepseek_tui.hooks.events import (
     JobLifecycleEvent,
@@ -36,7 +37,6 @@ from deepseek_tui.hooks.events import (
     ResponseStartEvent,
     ToolLifecycleEvent,
 )
-from deepseek_tui.hooks.sinks import JsonlHookSink, StdoutHookSink, WebhookHookSink
 from deepseek_tui.protocol.events import (
     ResponseDeltaEvent as ResponseDeltaFrame,
 )
@@ -327,12 +327,16 @@ class AppRuntime:
 
         assert self._llm_client is not None  # checked by caller
 
-        handle = EngineHandle()
+        from deepseek_tui.hooks.build import build_lifecycle_hook_executor
+
+        handle = EngineHandle(hooks=self.hooks)
+        hook_executor = build_lifecycle_hook_executor(self.config, self.working_directory)
         engine = Engine(
             handle=handle,
             client=self._llm_client,
             default_model=model,
             tool_runtime=self._tool_runtime,
+            hook_executor=hook_executor,
         )
 
         # Run the engine loop in the background; it exits when the
@@ -378,6 +382,13 @@ class AppRuntime:
         tool_name = call.get("name")
         if not isinstance(tool_name, str) or not tool_name:
             return {"ok": False, "error": "call.name required"}
+        from deepseek_tui.mcp.execute import (
+            execute_external_mcp_tool,
+            is_external_mcp_tool,
+            normalize_mcp_bridge_tool_name,
+        )
+
+        tool_name = normalize_mcp_bridge_tool_name(tool_name)
         arguments = call.get("arguments") or call.get("input") or {}
         if not isinstance(arguments, dict):
             return {"ok": False, "error": "call.arguments must be an object"}
@@ -393,8 +404,42 @@ class AppRuntime:
                 payload={"arguments": arguments},
             )
         )
+        registry = self._tool_runtime.registry
+        mcp_manager = self._tool_runtime.mcp_manager
+
+        if mcp_manager is not None and is_external_mcp_tool(
+            tool_name, registry.contains(tool_name)
+        ):
+            try:
+                result = await execute_external_mcp_tool(
+                    mcp_manager, tool_name, arguments
+                )
+            except Exception as exc:  # noqa: BLE001
+                await self.hooks.emit(
+                    ToolLifecycleEvent(
+                        response_id=response_id,
+                        tool_name=tool_name,
+                        phase="error",
+                        payload={"error": str(exc)},
+                    )
+                )
+                return {"ok": False, "error": str(exc)}
+            await self.hooks.emit(
+                ToolLifecycleEvent(
+                    response_id=response_id,
+                    tool_name=tool_name,
+                    phase="complete",
+                    payload={"success": result.success},
+                )
+            )
+            return {
+                "ok": result.success,
+                "content": result.content,
+                "metadata": result.metadata,
+            }
+
         try:
-            tool = self._tool_runtime.registry.get(tool_name)
+            tool = registry.get(tool_name)
         except Exception as exc:  # noqa: BLE001 — registry raises ToolError
             await self.hooks.emit(
                 ToolLifecycleEvent(
@@ -630,25 +675,50 @@ class AppRuntime:
     async def mcp_startup(self) -> dict[str, Any]:
         """Start every enabled MCP server and summarize results.
 
-        Mirrors Rust ``Runtime::mcp_startup`` (core/src/lib.rs). Returns
-        per-server status so the client can render a dashboard.
+        Mirrors Rust ``Runtime::mcp_startup`` (core/src/lib.rs:1192-1237).
+        Emits ``GenericEventFrame`` hook events for each startup update and
+        the final complete summary.
         """
+        from deepseek_tui.hooks.frames import generic_event_frame
+        from deepseek_tui.mcp.client import McpError
+        from deepseek_tui.protocol.events import (
+            McpStartupCompleteEventFrame,
+            McpStartupUpdateEventFrame,
+        )
+
         if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
             return {
                 "ok": True,
                 "summary": {"servers": [], "note": "mcp-disabled"},
             }
         manager = self._tool_runtime.mcp_manager
+
+        async def _on_update(update: object) -> None:
+            from deepseek_tui.protocol.mcp_lifecycle import McpStartupUpdateEvent
+
+            if not isinstance(update, McpStartupUpdateEvent):
+                return
+            frame = McpStartupUpdateEventFrame(update=update)
+            await self.hooks.emit(generic_event_frame(frame))
+
+        try:
+            summary = await manager.start_all(_on_update, fail_on_required=True)
+        except McpError as exc:
+            return {"ok": False, "error": str(exc), "summary": {"servers": []}}
+
+        complete = McpStartupCompleteEventFrame(summary=summary)
+        await self.hooks.emit(generic_event_frame(complete))
+
         summaries: list[dict[str, Any]] = []
+        ready = set(summary.ready)
+        failed_map = {f.server_name: f.error for f in summary.failed}
         for name in manager.server_names:
             cfg = manager._configs.get(name)  # noqa: SLF001
             if cfg is None or not cfg.enabled:
                 summaries.append(
                     {"name": name, "status": "disabled", "transport": _transport_label(cfg)}
                 )
-                continue
-            try:
-                await manager._ensure_client(name)  # noqa: SLF001
+            elif name in ready:
                 summaries.append(
                     {
                         "name": name,
@@ -656,18 +726,23 @@ class AppRuntime:
                         "transport": _transport_label(cfg),
                     }
                 )
-            except Exception as exc:  # noqa: BLE001
+            else:
                 summaries.append(
                     {
                         "name": name,
                         "status": "failed",
                         "transport": _transport_label(cfg),
-                        "error": str(exc),
+                        "error": failed_map.get(name, "startup failed"),
                     }
                 )
         return {
-            "ok": all(s.get("status") != "failed" for s in summaries),
-            "summary": {"servers": summaries},
+            "ok": not summary.failed,
+            "summary": {
+                "servers": summaries,
+                "ready": summary.ready,
+                "failed": [f.model_dump() for f in summary.failed],
+                "cancelled": summary.cancelled,
+            },
         }
 
 
@@ -804,18 +879,5 @@ def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
 
 
 def _build_hook_dispatcher(config: Config) -> HookDispatcher:
-    """Construct a HookDispatcher from ``config.hooks``.
-
-    Mirrors Rust ``build_state`` (app-server/src/lib.rs:264-287) — stdout
-    + jsonl by default, webhooks per URL. Stage 4.2 scope.
-    """
-    dispatcher = HookDispatcher()
-    hooks_cfg = config.hooks
-    if hooks_cfg.stdout:
-        dispatcher.add_sink(StdoutHookSink())
-    if hooks_cfg.jsonl_path is not None:
-        dispatcher.add_sink(JsonlHookSink(hooks_cfg.jsonl_path.expanduser()))
-    for url in hooks_cfg.webhook_urls:
-        if url.strip():
-            dispatcher.add_sink(WebhookHookSink(url))
-    return dispatcher
+    """Construct a HookDispatcher from ``config.hooks``."""
+    return build_hook_dispatcher(config)

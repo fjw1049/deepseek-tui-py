@@ -64,6 +64,15 @@ class GenericEventFrameEvent:
     frame: dict[str, Any]  # Generic event payload
 
 
+@dataclass
+class SessionLifecycleEvent:
+    """Session lifecycle event."""
+
+    session_id: str
+    phase: str  # "start" | "end"
+    turns: int | None = None
+
+
 HookEvent = (
     ResponseStartEvent
     | ResponseDeltaEvent
@@ -72,6 +81,7 @@ HookEvent = (
     | JobLifecycleEvent
     | ApprovalLifecycleEvent
     | GenericEventFrameEvent
+    | SessionLifecycleEvent
 )
 
 
@@ -112,5 +122,14 @@ def event_to_dict(event: HookEvent) -> dict[str, Any]:
         }
     elif isinstance(event, GenericEventFrameEvent):
         return {"type": "generic_event_frame", "frame": event.frame}
+    elif isinstance(event, SessionLifecycleEvent):
+        d: dict[str, Any] = {
+            "type": "session_lifecycle",
+            "session_id": event.session_id,
+            "phase": event.phase,
+        }
+        if event.turns is not None:
+            d["turns"] = event.turns
+        return d
     # Unreachable due to exhaustive union check
     return {"type": "serialization_error"}  # type: ignore[unreachable]

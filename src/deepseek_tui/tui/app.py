@@ -112,7 +112,9 @@ class DeepSeekTUI(App[None]):
     ) -> None:
         super().__init__()
         self.config = config or Config()
-        self.handle = handle or EngineHandle()
+        from deepseek_tui.hooks.build import build_hook_dispatcher
+
+        self.handle = handle or EngineHandle(hooks=build_hook_dispatcher(self.config))
         self._engine: Engine | None = None
         self._engine_task: asyncio.Task[None] | None = None
         self._interaction_mode: str = "agent"  # persisted across cycle_mode toggles
@@ -234,7 +236,7 @@ class DeepSeekTUI(App[None]):
         logger.info("tui_engine_started")
         status = self.query_one(StatusBar)
         status.set_model(model)
-        status.set_mode("agent")
+        status.set_mode(self._interaction_mode)
         self.query_one(ComposerHint).set_model(model)
         # Apply --resume / --fork before announcing ready so the user sees
         # the restored transcript rather than a blank screen. Errors here
@@ -245,6 +247,8 @@ class DeepSeekTUI(App[None]):
             status.set_status("ready")
         else:
             status.set_status(applied)
+        self._engine.mode = self._interaction_mode
+        await self._engine.run_lifecycle_hook("session_start")
 
     def _apply_resume_or_fork(self) -> str | None:
         """Restore session messages from disk if a resume/fork id was given.
@@ -347,6 +351,9 @@ class DeepSeekTUI(App[None]):
             )
             return
         preview = (event.text or "")[:200].replace("\n", " ")
+        await self._engine.run_lifecycle_hook(
+            "message_submit", message=event.text or ""
+        )
         # Prepend active mode so Engine adapts behaviour (plan/yolo/ask vs agent).
         content = event.text
         if self._interaction_mode != "agent":
@@ -487,6 +494,10 @@ class DeepSeekTUI(App[None]):
                 status.set_status("awaiting user input...")
                 self._handle_user_input_event(event, transcript)
             elif isinstance(event, ErrorEvent):
+                if self._engine is not None:
+                    await self._engine.run_lifecycle_hook(
+                        "on_error", error_message=event.message
+                    )
                 transcript.add_notice(event.message, severity="error")
                 status.set_status("error")
             elif isinstance(event, TurnCancelledEvent):
@@ -579,6 +590,7 @@ class DeepSeekTUI(App[None]):
     async def action_quit(self) -> None:
         logger.info("tui_quit")
         if self._engine is not None:
+            await self._engine.run_lifecycle_hook("session_end")
             await self._engine.shutdown()
         if self._engine_task is not None:
             self._engine_task.cancel()
@@ -666,9 +678,19 @@ class DeepSeekTUI(App[None]):
         except ValueError:
             idx = 0
         next_mode = modes[(idx + 1) % len(modes)]
+        previous_mode = current
         self._interaction_mode = next_mode
+        if self._engine is not None:
+            self._engine.mode = next_mode
         self.query_one(StatusBar).set_mode(next_mode)
         self.query_one(ComposerHint).set_mode(next_mode)
+        if self._engine is not None:
+            self.run_worker(
+                self._engine.run_lifecycle_hook(
+                    "mode_change", previous_mode=previous_mode
+                ),
+                name="mode-change-hook",
+            )
 
     def action_clear_transcript(self) -> None:
         """Clear visible transcript without resetting engine session.

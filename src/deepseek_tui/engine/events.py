@@ -94,6 +94,17 @@ class UserInputRequiredEvent:
     questions: list[dict[str, object]]
 
 
+@dataclass(frozen=True, slots=True)
+class SessionStartedEvent:
+    session_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class SessionEndedEvent:
+    session_id: str
+    turns: int
+
+
 EngineEvent = (
     StatusEvent
     | TurnStartedEvent
@@ -108,4 +119,6 @@ EngineEvent = (
     | TurnCancelledEvent
     | TurnCompleteEvent
     | UserInputRequiredEvent
+    | SessionStartedEvent
+    | SessionEndedEvent
 )

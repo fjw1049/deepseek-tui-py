@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.engine.events import EngineEvent
 from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest
+
+if TYPE_CHECKING:
+    from deepseek_tui.hooks.dispatcher import HookDispatcher
 
 
 # --- Ops (formerly engine/ops.py) -------------------------------------------
@@ -62,17 +65,34 @@ class DenyApprovalHandler(ApprovalHandler):
 
 
 class EngineHandle:
-    def __init__(self) -> None:
+    def __init__(self, hooks: HookDispatcher | None = None) -> None:
         self._op_queue: asyncio.Queue[EngineOp] = asyncio.Queue()
         self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=4096)
         self.cancel_event = asyncio.Event()
         self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._hooks = hooks
+        self._response_id: str | None = None
         # True while Engine is actively processing a turn (between
         # SendMessageOp pickup and TurnComplete/TurnCancelled emit). Read
         # by the TUI to decide whether composer submit should send a new
         # SendMessageOp or queue a steer onto the live turn.
         self._turn_active = asyncio.Event()
+
+    @property
+    def hooks(self) -> HookDispatcher | None:
+        return self._hooks
+
+    def attach_hooks(self, hooks: HookDispatcher) -> None:
+        """Attach a hook dispatcher (no-op if one is already set)."""
+        if self._hooks is None:
+            self._hooks = hooks
+
+    def set_response_id(self, response_id: str) -> None:
+        self._response_id = response_id
+
+    def clear_response_id(self) -> None:
+        self._response_id = None
 
     async def send_message(
         self,
@@ -98,6 +118,84 @@ class EngineHandle:
 
     async def emit(self, event: EngineEvent) -> None:
         await self._event_queue.put(event)
+        if self._hooks is not None:
+            await self._bridge_to_hooks(event)
+
+    async def _bridge_to_hooks(self, event: EngineEvent) -> None:
+        """Translate EngineEvent → HookEvent and broadcast (best-effort)."""
+        from deepseek_tui.engine.events import (
+            ApprovalRequiredEvent,
+            ApprovalResolvedEvent,
+            SessionEndedEvent,
+            SessionStartedEvent,
+            TextDeltaEvent,
+            ThinkingDeltaEvent,
+            ToolCallEvent,
+            ToolResultEvent,
+            TurnCancelledEvent,
+            TurnCompleteEvent,
+            TurnStartedEvent,
+        )
+        from deepseek_tui.hooks.events import (
+            ApprovalLifecycleEvent,
+            ResponseDeltaEvent,
+            ResponseEndEvent,
+            ResponseStartEvent,
+            SessionLifecycleEvent,
+            ToolLifecycleEvent,
+        )
+
+        hook_event = None
+        rid = self._response_id
+        if isinstance(event, TurnStartedEvent) and rid is not None:
+            hook_event = ResponseStartEvent(response_id=rid)
+        elif isinstance(event, TextDeltaEvent) and rid is not None:
+            hook_event = ResponseDeltaEvent(response_id=rid, delta=event.text)
+        elif isinstance(event, ThinkingDeltaEvent) and rid is not None:
+            hook_event = ResponseDeltaEvent(
+                response_id=rid, delta=f"[thinking]{event.thinking}"
+            )
+        elif isinstance(event, (TurnCompleteEvent, TurnCancelledEvent)) and rid is not None:
+            hook_event = ResponseEndEvent(response_id=rid)
+        elif isinstance(event, ToolCallEvent):
+            hook_event = ToolLifecycleEvent(
+                response_id=event.tool_call.id,
+                tool_name=event.tool_call.name,
+                phase="start",
+                payload={"arguments": event.tool_call.arguments},
+            )
+        elif isinstance(event, ToolResultEvent):
+            hook_event = ToolLifecycleEvent(
+                response_id=event.tool_call_id,
+                tool_name=event.tool_name,
+                phase="complete" if event.success else "error",
+                payload={"success": event.success},
+            )
+        elif isinstance(event, SessionStartedEvent):
+            hook_event = SessionLifecycleEvent(
+                session_id=event.session_id, phase="start"
+            )
+        elif isinstance(event, SessionEndedEvent):
+            hook_event = SessionLifecycleEvent(
+                session_id=event.session_id, phase="end", turns=event.turns
+            )
+        elif isinstance(event, ApprovalRequiredEvent):
+            hook_event = ApprovalLifecycleEvent(
+                approval_id=event.tool_call_id,
+                phase="requested",
+                reason=getattr(event.request, "reason", None),
+            )
+        elif isinstance(event, ApprovalResolvedEvent):
+            hook_event = ApprovalLifecycleEvent(
+                approval_id=event.tool_call_id,
+                phase="resolved",
+                reason=event.reason,
+            )
+        if hook_event is not None:
+            try:
+                await self._hooks.emit(hook_event)  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001
+                pass
 
     async def events(self) -> AsyncIterator[EngineEvent]:
         while True:

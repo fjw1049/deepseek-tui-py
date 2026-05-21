@@ -103,9 +103,11 @@ class ExecShellTool(ToolSpec):
                 context=context,
             )
 
+        shell_env = await _shell_env_from_hooks(context, command)
         process = await asyncio.create_subprocess_shell(
             command,
             cwd=str(context.working_directory),
+            env=shell_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -561,6 +563,27 @@ async def _run_pty(
             "pty": True,
         },
     )
+
+
+async def _shell_env_from_hooks(context: ToolContext, command: str) -> dict[str, str] | None:
+    """Merge ``shell_env`` lifecycle hook output into the subprocess environment."""
+    import os
+
+    from deepseek_tui.hooks.executor import HookContext, HookExecutor
+
+    executor = context.metadata.get("hook_executor")
+    if not isinstance(executor, HookExecutor) or not executor.has_hooks_for_event("shell_env"):
+        return None
+    hook_ctx = HookContext(
+        tool_name="exec_shell",
+        tool_args=command,
+        workspace=context.working_directory,
+        session_id=executor.session_id,
+    )
+    extra = await executor.collect_shell_env_async(hook_ctx)
+    if not extra:
+        return None
+    return {**os.environ, **extra}
 
 
 def _pty_store(context: ToolContext) -> dict[str, PtyProcess]:

@@ -157,7 +157,7 @@ async def create_tool_runtime(
     elif cfg.features.mcp:
         mcp = await _build_mcp_manager(cfg)
     if mcp is not None and start_mcp:
-        await mcp.start_all()
+        await mcp.start_all(fail_on_required=True)
 
     lsp: LspManager | None = None
     if cfg.lsp.enabled:
@@ -306,11 +306,11 @@ async def _build_mcp_manager(cfg: Config) -> McpManager:
     Missing / malformed config → empty manager (best-effort, matching
     Rust ``McpManager::default`` behavior when config is absent).
     """
-    from deepseek_tui.mcp.loader import load_mcp_config
+    from deepseek_tui.mcp.config import load_mcp_config
 
     try:
         path = cfg.mcp_config_path.expanduser()
         servers = load_mcp_config(path)
     except (OSError, ValueError):
         servers = []
-    return McpManager(servers)
+    return McpManager(servers, config_path=path)

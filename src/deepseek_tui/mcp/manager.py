@@ -1,32 +1,108 @@
 from __future__ import annotations
 
-from typing import Any
+import hashlib
+import json
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any, Union
 
-from deepseek_tui.mcp.client import McpClient, McpError
-from deepseek_tui.mcp.config import McpServerConfig
-from deepseek_tui.mcp.encoding import parse_qualified_tool_name, qualify_tool_name
+from deepseek_tui.mcp.client import (
+    McpClient,
+    McpError,
+    parse_qualified_tool_name,
+    qualify_tool_name,
+)
+from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
+from deepseek_tui.mcp.startup import raise_if_required_mcp_failed
+from deepseek_tui.mcp.store import hash_mcp_document, load_raw_document
+from deepseek_tui.protocol.mcp_lifecycle import (
+    McpStartupCompleteEvent,
+    McpStartupFailure,
+    McpStartupStatus,
+    McpStartupUpdateEvent,
+)
+
+StartupUpdateCallback = Callable[
+    [McpStartupUpdateEvent], Union[None, Awaitable[None]]
+]
 
 
 class McpManager:
     """Manages multiple MCP server connections and tool routing."""
 
-    def __init__(self, configs: list[McpServerConfig] | None = None) -> None:
+    def __init__(
+        self,
+        configs: list[McpServerConfig] | None = None,
+        *,
+        config_path: Path | None = None,
+    ) -> None:
         self._configs: dict[str, McpServerConfig] = {}
         self._clients: dict[str, McpClient] = {}
         self._tool_map: dict[str, tuple[str, str]] = {}
+        self._config_path = config_path.expanduser() if config_path else None
+        self._last_mtime: float | None = None
+        self._config_hash: str | None = None
+        if self._config_path is not None:
+            from deepseek_tui.mcp.store import validate_mcp_config_path
+
+            validate_mcp_config_path(self._config_path)
         if configs:
             for cfg in configs:
                 self._configs[cfg.name] = cfg
+        if self._config_path is not None and self._config_path.exists():
+            self._record_config_fingerprint(self._config_path)
 
     @property
     def server_names(self) -> list[str]:
         return list(self._configs.keys())
 
-    async def start_all(self) -> None:
+    async def start_all(
+        self,
+        on_update: StartupUpdateCallback | None = None,
+        *,
+        fail_on_required: bool = False,
+    ) -> McpStartupCompleteEvent:
+        """Connect every configured server and return a startup summary.
+
+        Mirrors Rust ``McpManager::start_all`` (``crates/mcp/src/lib.rs``) +
+        ``McpPool::connect_all`` required checks (``mcp.rs:1594-1607``).
+        """
+        ready: list[str] = []
+        failed: list[McpStartupFailure] = []
+        cancelled: list[str] = []
+
+        async def _emit_async(name: str, status: McpStartupStatus) -> None:
+            if on_update is None:
+                return
+            event = McpStartupUpdateEvent(server_name=name, status=status)
+            result = on_update(event)
+            if result is not None:
+                await result
+
         for name, cfg in self._configs.items():
             if not cfg.enabled:
+                await _emit_async(name, McpStartupStatus.cancelled())
+                cancelled.append(name)
                 continue
-            await self._ensure_client(name)
+            await _emit_async(name, McpStartupStatus.starting())
+            try:
+                await self._ensure_client(name)
+            except Exception as exc:  # noqa: BLE001 — surface per-server failure
+                err = str(exc)
+                await _emit_async(name, McpStartupStatus.failed(err))
+                failed.append(McpStartupFailure(server_name=name, error=err))
+                continue
+            await _emit_async(name, McpStartupStatus.ready())
+            ready.append(name)
+
+        summary = McpStartupCompleteEvent(
+            ready=ready,
+            failed=failed,
+            cancelled=cancelled,
+        )
+        if fail_on_required:
+            raise_if_required_mcp_failed(self._configs, summary)
+        return summary
 
     async def stop_all(self) -> None:
         for client in self._clients.values():
@@ -34,13 +110,56 @@ class McpManager:
         self._clients.clear()
         self._tool_map.clear()
 
+    async def reload_if_config_changed(self) -> bool:
+        """Lazy reload when config file mtime/content changed (Rust #1267)."""
+        if self._config_path is None or not self._config_path.exists():
+            return False
+        try:
+            mtime = self._config_path.stat().st_mtime
+        except OSError:
+            return False
+        if self._last_mtime is not None and mtime == self._last_mtime:
+            return False
+        try:
+            doc = load_raw_document(self._config_path)
+            configs = load_mcp_config(self._config_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        new_hash = hash_mcp_document(doc)
+        self._last_mtime = mtime
+        if new_hash == self._config_hash:
+            return False
+        await self.stop_all()
+        self._configs = {cfg.name: cfg for cfg in configs}
+        self._config_hash = new_hash
+        return True
+
+    async def reconnect_all(self) -> McpStartupCompleteEvent:
+        """Drop connections and reconnect every enabled server."""
+        await self.stop_all()
+        if self._config_path is not None and self._config_path.exists():
+            try:
+                configs = load_mcp_config(self._config_path)
+                self._configs = {cfg.name: cfg for cfg in configs}
+                self._record_config_fingerprint(self._config_path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+        return await self.start_all()
+
     async def discover_tools(self) -> list[dict[str, Any]]:
-        """Discover tools from all running servers, returns API-format list."""
+        """Discover tools from all enabled servers, returns API-format list.
+
+        Connects lazily via :meth:`_ensure_client` so callers do not need a
+        prior :meth:`start_all` — ``Engine._get_tools_with_mcp`` relies on
+        this.
+        """
         api_tools: list[dict[str, Any]] = []
         self._tool_map.clear()
-        for server_name, client in self._clients.items():
-            cfg = self._configs[server_name]
+        for server_name, cfg in self._configs.items():
+            if not cfg.enabled:
+                continue
             try:
+                client = await self._ensure_client(server_name)
                 descriptors = await client.list_tools()
             except McpError:
                 continue
@@ -98,6 +217,7 @@ class McpManager:
         return name in self._tool_map or parse_qualified_tool_name(name) is not None
 
     async def _ensure_client(self, server_name: str) -> McpClient:
+        await self.reload_if_config_changed()
         if server_name in self._clients:
             client = self._clients[server_name]
             if client.is_running:
@@ -122,3 +242,12 @@ class McpManager:
             method = getattr(client, method_name)
             output[name] = await method()
         return output
+
+    def _record_config_fingerprint(self, path: Path) -> None:
+        try:
+            doc = load_raw_document(path)
+            self._config_hash = hash_mcp_document(doc)
+            self._last_mtime = path.stat().st_mtime
+        except OSError:
+            self._config_hash = None
+            self._last_mtime = None

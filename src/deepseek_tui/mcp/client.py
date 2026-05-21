@@ -8,7 +8,9 @@ picked in :meth:`McpClient.start` via :func:`build_transport`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +21,38 @@ from deepseek_tui.mcp.transport import (
     SseTransport,
     StdioTransport,
 )
+
+
+# --- tool name encoding -----------------------------------------------------
+
+
+def qualify_tool_name(server_name: str, tool_name: str) -> str:
+    """Encode an MCP tool name as ``mcp_<server>_<tool>`` (Rust TUI parity)."""
+    sanitized_server = re.sub(r"[^a-z0-9_]", "_", server_name.lower())
+    sanitized_tool = re.sub(r"[^a-z0-9_]", "_", tool_name.lower())
+    qualified = f"mcp_{sanitized_server}_{sanitized_tool}"
+    if len(qualified) > 64:
+        hash_suffix = hashlib.sha256(qualified.encode()).hexdigest()[:12]
+        qualified = qualified[:51] + "_" + hash_suffix
+    return qualified
+
+
+def parse_qualified_tool_name(qualified: str) -> tuple[str, str] | None:
+    """Parse a qualified MCP tool name back into ``(server, tool)``."""
+    if qualified.startswith("mcp__"):
+        rest = qualified[5:]
+        parts = rest.split("__", 1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+    if not qualified.startswith("mcp_"):
+        return None
+    rest = qualified[4:]
+    if "_" not in rest:
+        return None
+    server, tool = rest.split("_", 1)
+    if not server or not tool:
+        return None
+    return server, tool
 
 
 class McpError(Exception):
@@ -243,14 +277,3 @@ class McpClient:
         except McpTransportError as exc:
             raise McpError(str(exc)) from exc
 
-    # --- legacy compat (kept so existing call sites work) --------------
-
-    async def _read_response(self) -> dict[str, Any]:
-        """DEPRECATED legacy helper — re-implemented as loop-aware read."""
-        if self._transport is None:
-            raise McpError("MCP client not started")
-        return await self._transport.recv()
-
-
-def _dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)

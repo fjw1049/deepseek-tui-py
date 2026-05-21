@@ -59,6 +59,11 @@ default = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "e2e: end-to-end tests using real subprocesses or filesystem sinks",
+    "live: live API/MCP tests using project .deepseek/config.toml (network required)",
+    "live_mcp: generic MCP connectivity scan over full .deepseek/mcp.json (may be slow)",
+]
 
 [tool.ruff]
 line-length = 100

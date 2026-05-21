@@ -129,18 +129,42 @@ class SubagentConfig(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
 
 
-class HooksConfig(BaseModel):
-    """Hook dispatcher wiring — Stage 4.2.
+class ShellHookConfig(BaseModel):
+    """Deprecated observability shell bridge — prefer ``LifecycleHookEntry``."""
 
-    - ``stdout``: print every event as JSON to stdout
-    - ``jsonl_path``: append events to this file (one JSON per line);
-      empty string / None disables
-    - ``webhook_urls``: POST every event to each URL with retry
+    event: str
+    command: str
+    name: str | None = None
+    timeout_secs: float = 30.0
+
+
+class LifecycleHookEntry(BaseModel):
+    """Single lifecycle hook — mirrors Rust ``hooks::Hook`` (hooks.rs:102-130)."""
+
+    event: str
+    command: str
+    condition: dict[str, Any] | None = None
+    timeout_secs: float = 30.0
+    background: bool = False
+    continue_on_error: bool = True
+    name: str | None = None
+
+
+class HooksConfig(BaseModel):
+    """Hooks configuration.
+
+    Observability sinks (``crates/hooks``): stdout / JSONL / webhook.
+    Lifecycle hooks (``crates/tui/src/hooks.rs``): ``[[hooks.hooks]]`` entries.
     """
 
     stdout: bool = False
     jsonl_path: Path | None = None
     webhook_urls: list[str] = Field(default_factory=list)
+    shell_hooks: list[ShellHookConfig] = Field(default_factory=list)
+    enabled: bool = True
+    hooks: list[LifecycleHookEntry] = Field(default_factory=list)
+    default_timeout_secs: float | None = None
+    working_dir: Path | None = None
 
 
 class NotificationsConfig(BaseModel):

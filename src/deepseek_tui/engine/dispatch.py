@@ -220,6 +220,15 @@ _MCP_PARALLEL_SAFE = frozenset(
 )
 
 
+def is_mcp_tool(name: str) -> bool:
+    """Check if a tool name refers to an MCP tool (mirrors Rust McpPool::is_mcp_tool)."""
+    if name in _MCP_PARALLEL_SAFE:
+        return True
+    if name.startswith("mcp__"):
+        return True
+    return name.startswith("mcp_")
+
+
 def mcp_tool_is_parallel_safe(name: str) -> bool:
     return name in _MCP_PARALLEL_SAFE
 

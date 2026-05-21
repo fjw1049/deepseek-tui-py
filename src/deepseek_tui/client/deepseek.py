@@ -60,7 +60,7 @@ def _map_tool_choice_for_chat(
     choice_type = choice.get("type")
     if not isinstance(choice_type, str):
         return choice
-    if choice_type in ("auto", "none"):
+    if choice_type in ("auto", "none", "required"):
         return choice_type
     if choice_type == "any":
         return "auto"

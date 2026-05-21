@@ -72,7 +72,7 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/provider", "Switch LLM backend", _E, p0=False),
     CommandEntry(
         "/hooks", "List lifecycle hooks",
-        _D, ("/hook",), p0=False,
+        _D, ("/hook",),
     ),
     CommandEntry(
         "/subagents", "List sub-agent status",
@@ -86,7 +86,7 @@ REGISTRY: list[CommandEntry] = [
         "/jobs", "Inspect shell jobs",
         _T, ("/job",), p0=False,
     ),
-    CommandEntry("/mcp", "Manage MCP servers", _T, p0=False),
+    CommandEntry("/mcp", "Manage MCP servers", _T),
     CommandEntry("/save", "Save session to file", _S),
     CommandEntry(
         "/sessions", "Open session picker",

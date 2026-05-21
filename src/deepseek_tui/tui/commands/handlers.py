@@ -619,11 +619,65 @@ def cmd_cost(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/hooks")
 def cmd_hooks(args: str, app: DeepSeekTUI) -> CommandResult:
-    cfg = getattr(app, "config", None)
-    if cfg and hasattr(cfg, "hooks") and cfg.hooks:
-        hooks_data = cfg.hooks.model_dump() if hasattr(cfg.hooks, "model_dump") else {}
-        return CommandResult(output=f"Hooks config:\n{json.dumps(hooks_data, indent=2)}")
-    return CommandResult(output="No hooks configured.")
+    sub = (args.strip() or "list").lower()
+    if sub in ("events", "event", "list-events"):
+        lines = [
+            "Available hook events (use one of these as `event = \"...\"` in your `[[hooks.hooks]]` entry):",
+            "",
+            "  session_start — fires once when the TUI launches",
+            "  session_end — fires once on graceful shutdown",
+            "  message_submit — fires when the user submits a turn (before model dispatch)",
+            "  tool_call_before — fires before each tool call",
+            "  tool_call_after — fires after each tool call",
+            "  mode_change — fires on Plan/Agent/Yolo transitions",
+            "  on_error — fires on transport / capacity / tool errors",
+            "  shell_env — fires before exec_shell for env injection",
+        ]
+        return CommandResult(output="\n".join(lines))
+
+    if sub not in ("", "list", "ls", "show"):
+        return CommandResult(
+            error=f"unknown subcommand `{sub}`. Try `/hooks list` or `/hooks events`."
+        )
+
+    executor = None
+    if app._engine is not None:
+        executor = getattr(app._engine, "hook_executor", None)
+    if executor is None or not executor.config.hooks:
+        return CommandResult(
+            output=(
+                "No hooks configured. Add a `[[hooks.hooks]]` entry to "
+                "`~/.deepseek/config.toml` to define one."
+            )
+        )
+    cfg = executor.config_snapshot()
+    lines = [
+        f"{len(cfg.hooks)} configured hook(s) (global enabled: "
+        f"{'yes' if cfg.enabled else 'no — all hooks suppressed'}):",
+        "",
+    ]
+    by_event: dict[str, list] = {}
+    for hook in cfg.hooks:
+        by_event.setdefault(hook.event, []).append(hook)
+    for event in sorted(by_event):
+        lines.append(f"### {event}")
+        for hook in by_event[event]:
+            label = hook.name.strip() if hook.name and hook.name.strip() else "(unnamed)"
+            bg = " [bg]" if hook.background else ""
+            condition = ""
+            if hook.condition:
+                condition = f" if {hook.condition}"
+            cmd_preview = hook.command if len(hook.command) <= 60 else hook.command[:57] + "..."
+            lines.append(
+                f"  - {label}{bg} (timeout {hook.timeout_secs}s){condition}\n"
+                f"      $ {cmd_preview}"
+            )
+        lines.append("")
+    if not cfg.enabled:
+        lines.append(
+            "Hooks are globally disabled — set `[hooks].enabled = true` in config.toml to fire them."
+        )
+    return CommandResult(output="\n".join(lines).rstrip())
 
 
 # ── /subagents ───────────────────────────────────────────────────────────
@@ -697,23 +751,147 @@ def cmd_jobs(args: str, app: DeepSeekTUI) -> CommandResult:
 
 # ── /mcp ─────────────────────────────────────────────────────────────────
 
+def _mcp_restart_required(app: DeepSeekTUI) -> bool:
+    return bool(getattr(app, "_mcp_restart_required", False))
+
+
+def _set_mcp_restart_required(app: DeepSeekTUI, value: bool) -> None:
+    app._mcp_restart_required = value
+
+
+async def _mcp_discover_worker(app: DeepSeekTUI, path, *, reload_engine: bool) -> None:  # type: ignore[no-untyped-def]
+    from deepseek_tui.mcp.store import discover_manager_snapshot, format_manager_snapshot
+
+    transcript = app.query_one(Transcript)
+    try:
+        if reload_engine and app._engine is not None:
+            mgr = app._engine.mcp_manager
+            if mgr is not None:
+                await mgr.reconnect_all()
+            app._engine.invalidate_mcp_tools_cache()
+            try:
+                await app._engine._get_tools_with_mcp()
+            except Exception:  # noqa: BLE001
+                pass
+        snapshot = await discover_manager_snapshot(
+            path, restart_required=_mcp_restart_required(app)
+        )
+        extra = (
+            "\n\nMCP discovery refreshed. Model-visible MCP tools updated for this session."
+        )
+        transcript.add_notice(format_manager_snapshot(snapshot) + extra, severity="info")
+    except Exception as exc:  # noqa: BLE001
+        transcript.add_notice(f"MCP snapshot failed: {exc}", severity="error")
+
+
 @_register("/mcp")
 def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.config.paths import user_mcp_config_path
+    from deepseek_tui.mcp.store import (
+        McpWriteStatus,
+        add_server_config,
+        format_manager_snapshot,
+        init_config,
+        manager_snapshot_from_config,
+        remove_server_config,
+        resolve_mcp_config_path,
+        set_server_enabled,
+    )
 
-    mcp_path = user_mcp_config_path()
-    if not mcp_path.exists():
-        return CommandResult(output="No MCP servers configured.")
+    path = resolve_mcp_config_path(app.config)
+    raw = (args or "").strip()
+    if not raw or raw.lower() in {"status", "list", "show"}:
+        snapshot = manager_snapshot_from_config(
+            path, restart_required=_mcp_restart_required(app)
+        )
+        return CommandResult(output=format_manager_snapshot(snapshot))
+
+    parts = raw.split()
+    action = parts[0].lower()
+    rest = parts[1:]
+
     try:
-        data = json.loads(mcp_path.read_text(encoding="utf-8"))
-        if not data:
-            return CommandResult(output="No MCP servers configured.")
-        lines = ["MCP servers:\n"]
-        for name, _cfg in data.items():
-            lines.append(f"  {name}: configured")
-        return CommandResult(output="\n".join(lines))
-    except (json.JSONDecodeError, OSError) as exc:
-        return CommandResult(error=f"Failed to read mcp.json: {exc}")
+        if action == "init":
+            force = any(part in {"--force", "-f"} for part in rest)
+            status = init_config(path, force=force)
+            if status == McpWriteStatus.CREATED:
+                msg = f"Created MCP config at {path}"
+            elif status == McpWriteStatus.OVERWRITTEN:
+                msg = f"Overwrote MCP config at {path}"
+            else:
+                msg = f"MCP config already exists at {path} (use /mcp init --force to overwrite)"
+            snapshot = manager_snapshot_from_config(path, restart_required=False)
+            return CommandResult(output=f"{msg}\n\n{format_manager_snapshot(snapshot)}")
+
+        if action == "add":
+            if len(rest) < 3:
+                return CommandResult(
+                    error=(
+                        "Usage: /mcp add stdio <name> <command> [args...] "
+                        "OR /mcp add http <name> <url>"
+                    )
+                )
+            transport = rest[0].lower()
+            if transport == "stdio":
+                name, command, *cmd_args = rest[1], rest[2], rest[3:]
+                add_server_config(path, name, command=command, args=cmd_args)
+                _set_mcp_restart_required(app, True)
+                msg = f"Added MCP stdio server '{name}'"
+            elif transport in {"http", "sse"}:
+                name, url = rest[1], rest[2]
+                add_server_config(path, name, url=url)
+                _set_mcp_restart_required(app, True)
+                msg = f"Added MCP HTTP/SSE server '{name}'"
+            else:
+                return CommandResult(
+                    error=(
+                        "Usage: /mcp add stdio <name> <command> [args...] "
+                        "OR /mcp add http <name> <url>"
+                    )
+                )
+            snapshot = manager_snapshot_from_config(
+                path, restart_required=_mcp_restart_required(app)
+            )
+            return CommandResult(output=f"{msg}\n\n{format_manager_snapshot(snapshot)}")
+
+        if action == "enable":
+            if not rest:
+                return CommandResult(error="Usage: /mcp enable <name>")
+            set_server_enabled(path, rest[0], True)
+            _set_mcp_restart_required(app, True)
+            msg = f"Enabled MCP server '{rest[0]}'"
+        elif action == "disable":
+            if not rest:
+                return CommandResult(error="Usage: /mcp disable <name>")
+            set_server_enabled(path, rest[0], False)
+            _set_mcp_restart_required(app, True)
+            msg = f"Disabled MCP server '{rest[0]}'"
+        elif action in {"remove", "rm"}:
+            if not rest:
+                return CommandResult(error="Usage: /mcp remove <name>")
+            remove_server_config(path, rest[0])
+            _set_mcp_restart_required(app, True)
+            msg = f"Removed MCP server '{rest[0]}'"
+        elif action in {"validate", "reload", "reconnect"}:
+            app.run_worker(
+                _mcp_discover_worker(app, path, reload_engine=action in {"reload", "reconnect"}),
+                name="mcp-discover",
+            )
+            return CommandResult(output="Refreshing MCP discovery...")
+        else:
+            return CommandResult(
+                error=(
+                    "Usage: /mcp [init|add stdio <name> <command> [args...]|"
+                    "add http <name> <url>|enable <name>|disable <name>|"
+                    "remove <name>|validate|reload]"
+                )
+            )
+    except (KeyError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return CommandResult(error=f"MCP action failed: {exc}")
+
+    snapshot = manager_snapshot_from_config(
+        path, restart_required=_mcp_restart_required(app)
+    )
+    return CommandResult(output=f"{msg}\n\n{format_manager_snapshot(snapshot)}")
 
 
 # ── /compact ─────────────────────────────────────────────────────────────

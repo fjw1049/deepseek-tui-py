@@ -52,6 +52,9 @@ class JsonlHookSink(HookSink):
             "event": event_to_dict(event),
         }
         line = json.dumps(payload) + "\n"
+        await asyncio.to_thread(self._write_line, line)
+
+    def _write_line(self, line: str) -> None:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(line)
 
@@ -99,3 +102,38 @@ class WebhookHookSink(HookSink):
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+
+class ShellHookSink(HookSink):
+    """Execute a shell command when a matching event fires.
+
+    Mirrors Rust HookExecutor — runs command with event JSON on stdin,
+    respects timeout. Only fires for events matching ``event_filter``.
+    """
+
+    def __init__(
+        self, event_filter: str, command: str, timeout: float = 30.0
+    ) -> None:
+        self.event_filter = event_filter
+        self.command = command
+        self.timeout = timeout
+
+    async def emit(self, event: HookEvent) -> None:
+        event_dict = event_to_dict(event)
+        if event_dict.get("type") != self.event_filter:
+            return
+        stdin_data = json.dumps(event_dict).encode()
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                self.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(
+                proc.communicate(input=stdin_data), timeout=self.timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()  # type: ignore[union-attr]
+        except OSError:
+            pass

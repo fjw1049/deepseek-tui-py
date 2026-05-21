@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -39,6 +40,8 @@ from deepseek_tui.engine.events import (
     ApprovalResolvedEvent,
     ErrorEvent,
     SandboxDeniedEvent,
+    SessionEndedEvent,
+    SessionStartedEvent,
     ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
@@ -52,12 +55,13 @@ from deepseek_tui.engine.tool_catalog import (
     CODE_EXECUTION_TOOL_NAME,
     MULTI_TOOL_PARALLEL_NAME,
     REQUEST_USER_INPUT_NAME,
+    build_model_tool_catalog,
     execute_code_execution_tool,
     execute_tool_search,
     is_tool_search_tool,
     missing_tool_error_message,
 )
-from deepseek_tui.engine.dispatch import emit_tool_audit
+from deepseek_tui.engine.dispatch import emit_tool_audit, is_mcp_tool
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
 from deepseek_tui.engine.working_set import WorkingSet
 from deepseek_tui.execpolicy.approval_cache import (
@@ -154,6 +158,7 @@ class Engine:
         default_temperature: float | None = None,
         default_top_p: float | None = None,
         default_extra_body: dict[str, Any] | None = None,
+        hook_executor: object | None = None,
     ) -> None:
         self.handle = handle
         self.client = client
@@ -220,6 +225,12 @@ class Engine:
         self.default_temperature = default_temperature
         self.default_top_p = default_top_p
         self.default_extra_body: dict[str, Any] = dict(default_extra_body or {})
+        from deepseek_tui.hooks.executor import HookExecutor
+
+        self.hook_executor: HookExecutor = (
+            hook_executor if isinstance(hook_executor, HookExecutor) else HookExecutor.disabled()
+        )
+        self.tool_context.metadata["hook_executor"] = self.hook_executor
         # Cycle / seam managers — instantiated but disabled by default. The
         # full Rust archive-and-replan logic lives in cycle_manager.py /
         # seam_manager.py; ``Engine`` keeps surface integration minimal:
@@ -236,6 +247,36 @@ class Engine:
         # injection. Mirrors Rust ``WorkingSet`` (working_set.rs). One per
         # Engine instance: workspace lives on tool_context.working_directory.
         self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
+        self._mcp_tools_cache: list[dict[str, Any]] | None = None
+
+    def invalidate_mcp_tools_cache(self) -> None:
+        """Drop cached MCP tool descriptors so the next turn re-discovers."""
+        self._mcp_tools_cache = None
+
+    @property
+    def mcp_manager(self):
+        """Access the McpManager from the tool runtime (if configured)."""
+        if self.tool_runtime is not None:
+            return self.tool_runtime.mcp_manager
+        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
+        return self.tool_context.metadata.get(MCP_MANAGER_KEY)
+
+    async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
+        """Build the full tool list: native registry + discovered MCP tools."""
+        native_tools = self.tool_registry.to_api_tools()
+        mcp = self.mcp_manager
+        if mcp is None:
+            return native_tools
+        if self._mcp_tools_cache is None:
+            try:
+                self._mcp_tools_cache = await mcp.discover_tools()
+            except Exception:  # noqa: BLE001
+                self._mcp_tools_cache = []
+        if not self._mcp_tools_cache:
+            return native_tools
+        return build_model_tool_catalog(
+            list(native_tools), list(self._mcp_tools_cache), self.mode
+        )
 
     @classmethod
     async def create(
@@ -262,10 +303,17 @@ class Engine:
         from deepseek_tui.tools.runtime import create_tool_runtime
 
         cfg = config if isinstance(config, Config) else Config()
+        from deepseek_tui.hooks.build import build_hook_dispatcher, build_lifecycle_hook_executor
+
+        if handle.hooks is None:
+            handle.attach_hooks(build_hook_dispatcher(cfg))
+        ws = working_directory or Path.cwd()
+        hook_executor = build_lifecycle_hook_executor(cfg, ws)
         runtime = await create_tool_runtime(
             config=cfg,
             working_directory=working_directory,
             mode=mode,
+            start_mcp=cfg.features.mcp,
         )
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
@@ -285,6 +333,7 @@ class Engine:
             default_temperature=provider_cfg.temperature,
             default_top_p=None,
             default_extra_body=dict(provider_cfg.extra_body or {}),
+            hook_executor=hook_executor,
         )
         # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
         # and ``Config.seam_enabled`` once those fields exist; today they
@@ -373,6 +422,11 @@ class Engine:
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""
+        await self.handle.emit(
+            SessionEndedEvent(
+                session_id=self._cycle_session_id, turns=self.turn_counter
+            )
+        )
         if self.tool_runtime is not None:
             await self.tool_runtime.shutdown()
         if hasattr(self.client, "close"):
@@ -383,6 +437,9 @@ class Engine:
             "engine_run_start model=%s session_id=%s",
             self.default_model,
             self._cycle_session_id,
+        )
+        await self.handle.emit(
+            SessionStartedEvent(session_id=self._cycle_session_id)
         )
         try:
             while True:
@@ -428,6 +485,8 @@ class Engine:
             op.model or self.default_model,
             len(self.session_messages),
         )
+        response_id = f"resp-{uuid.uuid4().hex[:12]}"
+        self.handle.set_response_id(response_id)
         start = time.monotonic()
 
         # Plan mode: detect quick-plan requests that skip codebase exploration
@@ -441,81 +500,84 @@ class Engine:
                 )
             )
 
-        await self.handle.emit(TurnStartedEvent(user_text=op.content))
-        result = await self._run_conversation(
-            messages=working_messages,
-            model=op.model or self.default_model,
-            system_prompt=build_system_prompt(
-                op.system_prompt,
-                skills_context=self._render_skills_context(),
-                working_set_summary=self.working_set.summary() or None,
-            ),
-            max_tokens=op.max_tokens,
-        )
+        try:
+            await self.handle.emit(TurnStartedEvent(user_text=op.content))
+            result = await self._run_conversation(
+                messages=working_messages,
+                model=op.model or self.default_model,
+                system_prompt=build_system_prompt(
+                    op.system_prompt,
+                    skills_context=self._render_skills_context(),
+                    working_set_summary=self.working_set.summary() or None,
+                ),
+                max_tokens=op.max_tokens,
+            )
 
-        duration_ms = int((time.monotonic() - start) * 1000)
-        if result.cancelled:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            if result.cancelled:
+                logger.info(
+                    "turn_cancelled turn=%s duration_ms=%d", turn_id, duration_ms
+                )
+                await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
+                return
+
+            self.session_messages = working_messages
+            usage = result.usage
             logger.info(
-                "turn_cancelled turn=%s duration_ms=%d", turn_id, duration_ms
+                "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
+                "cache_hit=%s reasoning_tokens=%s tool_calls=%d",
+                duration_ms,
+                getattr(usage, "input_tokens", 0) if usage else 0,
+                getattr(usage, "output_tokens", 0) if usage else 0,
+                getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
+                getattr(usage, "reasoning_tokens", 0) if usage else 0,
+                len(result.tool_calls or []),
             )
-            await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
-            return
+            # Accumulate session cost from the DeepSeek usage payload.
+            # Hidden when pricing is unknown (off-platform providers,
+            # unrecognised model) — the UI also hides the chip in that
+            # case so we don't show $0.00 misleadingly.
+            cache_hit_tokens = 0
+            cache_miss_tokens = 0
+            cost_usd: float | None = None
+            cost_cny: float | None = None
+            if usage is not None:
+                # Accumulate cache hit/miss across the session so the
+                # status-bar chip reflects "how much prompt traffic the
+                # cache has saved you so far" instead of "what fraction
+                # of this single turn was a prefix hit" (the latter is
+                # nearly always 99%+ on a multi-turn DeepSeek session
+                # and conveys no information).
+                self.session_cache_hit_total += usage.cache_read_input_tokens
+                self.session_cache_miss_total += usage.cache_creation_input_tokens
+                cache_hit_tokens = self.session_cache_hit_total
+                cache_miss_tokens = self.session_cache_miss_total
+                from deepseek_tui.client.pricing import (
+                    calculate_turn_cost_estimate_from_usage,
+                )
 
-        self.session_messages = working_messages
-        usage = result.usage
-        logger.info(
-            "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
-            "cache_hit=%s reasoning_tokens=%s tool_calls=%d",
-            duration_ms,
-            getattr(usage, "input_tokens", 0) if usage else 0,
-            getattr(usage, "output_tokens", 0) if usage else 0,
-            getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
-            getattr(usage, "reasoning_tokens", 0) if usage else 0,
-            len(result.tool_calls or []),
-        )
-        # Accumulate session cost from the DeepSeek usage payload.
-        # Hidden when pricing is unknown (off-platform providers,
-        # unrecognised model) — the UI also hides the chip in that
-        # case so we don't show $0.00 misleadingly.
-        cache_hit_tokens = 0
-        cache_miss_tokens = 0
-        cost_usd: float | None = None
-        cost_cny: float | None = None
-        if usage is not None:
-            # Accumulate cache hit/miss across the session so the
-            # status-bar chip reflects "how much prompt traffic the
-            # cache has saved you so far" instead of "what fraction
-            # of this single turn was a prefix hit" (the latter is
-            # nearly always 99%+ on a multi-turn DeepSeek session
-            # and conveys no information).
-            self.session_cache_hit_total += usage.cache_read_input_tokens
-            self.session_cache_miss_total += usage.cache_creation_input_tokens
-            cache_hit_tokens = self.session_cache_hit_total
-            cache_miss_tokens = self.session_cache_miss_total
-            from deepseek_tui.client.pricing import (
-                calculate_turn_cost_estimate_from_usage,
+                model_for_pricing = op.model or self.default_model
+                estimate = calculate_turn_cost_estimate_from_usage(
+                    model_for_pricing, usage
+                )
+                if estimate is not None:
+                    self.session_cost_usd += estimate.usd
+                    self.session_cost_cny += estimate.cny
+                    cost_usd = self.session_cost_usd
+                    cost_cny = self.session_cost_cny
+            await self.handle.emit(
+                TurnCompleteEvent(
+                    assistant_message=result.assistant_message,
+                    usage=result.usage,
+                    session_cost_usd=cost_usd,
+                    session_cost_cny=cost_cny,
+                    cache_hit_tokens=cache_hit_tokens,
+                    cache_miss_tokens=cache_miss_tokens,
+                )
             )
-
-            model_for_pricing = op.model or self.default_model
-            estimate = calculate_turn_cost_estimate_from_usage(
-                model_for_pricing, usage
-            )
-            if estimate is not None:
-                self.session_cost_usd += estimate.usd
-                self.session_cost_cny += estimate.cny
-                cost_usd = self.session_cost_usd
-                cost_cny = self.session_cost_cny
-        await self.handle.emit(
-            TurnCompleteEvent(
-                assistant_message=result.assistant_message,
-                usage=result.usage,
-                session_cost_usd=cost_usd,
-                session_cost_cny=cost_cny,
-                cache_hit_tokens=cache_hit_tokens,
-                cache_miss_tokens=cache_miss_tokens,
-            )
-        )
-        await self._auto_persist_session()
+            await self._auto_persist_session()
+        finally:
+            self.handle.clear_response_id()
 
     async def _run_conversation(
         self,
@@ -524,7 +586,7 @@ class Engine:
         system_prompt: str,
         max_tokens: int | None,
     ) -> TurnResult:
-        tools = self.tool_registry.to_api_tools()
+        tools = await self._get_tools_with_mcp()
         self.turn_counter += 1
         step_error_count = 0
         consecutive_tool_error_steps = 0
@@ -587,19 +649,13 @@ class Engine:
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
             self._flush_pending_lsp_diagnostics(messages)
-            # Strict tool mode: in agent mode with tools, force the model
-            # to always call a tool (no empty text responses). Mirrors Rust
-            # Engine.strict_tool_mode (core/engine.rs).
-            tool_choice: str | dict[str, Any] | None = None
-            if self.mode == "agent" and tools:
-                tool_choice = {"type": "required"}
-
+            # tool_choice is resolved in turn_loop (auto by default; bare
+            # string "required" only when config.strict_tool_mode is set).
             request = MessageRequest(
                 model=model,
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=tools,
-                tool_choice=tool_choice,
                 max_tokens=max_tokens,
                 temperature=self.default_temperature,
                 top_p=self.default_top_p,
@@ -676,33 +732,58 @@ class Engine:
     ) -> list[Message]:
         results: list[Message] = []
         effective_model = model or self.default_model
-        api_tools = self.tool_registry.to_api_tools()
+        api_tools = await self._get_tools_with_mcp()
 
         # Build execution plans and check if batch can be parallelized
         # (mirrors Rust dispatch.rs:263-355 / turn_loop.rs:1184)
         if len(tool_calls) > 1:
-            from deepseek_tui.engine.dispatch import ToolExecutionPlan
+            from deepseek_tui.engine.dispatch import (
+                ToolExecutionPlan,
+                mcp_tool_is_parallel_safe,
+                mcp_tool_is_read_only,
+            )
             plans = []
             for i, tc in enumerate(tool_calls):
                 tool = (
                     self.tool_registry.get(tc.name)
                     if self.tool_registry.contains(tc.name) else None
                 )
-                caps = tool.capabilities() if tool else set()
                 from deepseek_tui.tools.base import ToolCapability
-                plans.append(ToolExecutionPlan(
-                    index=i,
-                    id=tc.id,
-                    name=tc.name,
-                    input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                    read_only=ToolCapability.READ_ONLY in caps,
-                    supports_parallel=ToolCapability.READ_ONLY in caps,
-                    approval_required=any(
-                        c in caps for c in (
-                            ToolCapability.REQUIRES_APPROVAL,
-                        )
-                    ) if hasattr(ToolCapability, "REQUIRES_APPROVAL") else False,
-                ))
+                if tool is not None:
+                    caps = tool.capabilities()
+                    plans.append(ToolExecutionPlan(
+                        index=i,
+                        id=tc.id,
+                        name=tc.name,
+                        input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                        read_only=ToolCapability.READ_ONLY in caps,
+                        supports_parallel=ToolCapability.READ_ONLY in caps,
+                        approval_required=any(
+                            c in caps for c in (
+                                ToolCapability.REQUIRES_APPROVAL,
+                            )
+                        ) if hasattr(ToolCapability, "REQUIRES_APPROVAL") else False,
+                    ))
+                elif is_mcp_tool(tc.name):
+                    plans.append(ToolExecutionPlan(
+                        index=i,
+                        id=tc.id,
+                        name=tc.name,
+                        input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                        read_only=mcp_tool_is_read_only(tc.name),
+                        supports_parallel=mcp_tool_is_parallel_safe(tc.name),
+                        approval_required=not mcp_tool_is_read_only(tc.name),
+                    ))
+                else:
+                    plans.append(ToolExecutionPlan(
+                        index=i,
+                        id=tc.id,
+                        name=tc.name,
+                        input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                        read_only=False,
+                        supports_parallel=False,
+                        approval_required=False,
+                    ))
             if should_parallelize_tool_batch(plans):
                 logger.info("parallel_tool_batch size=%d", len(tool_calls))
                 return await self._execute_tools_parallel(
@@ -1053,17 +1134,95 @@ class Engine:
             return False, f"Restored {restored}; errors: {'; '.join(errors)}"
         return True, f"Reverted {restored} file(s) from tool {last_id[:8]}"
 
+    def _lifecycle_hook_context(
+        self,
+        *,
+        tool_name: str | None = None,
+        tool_args: dict[str, Any] | None = None,
+        model: str | None = None,
+        tool_result: str | None = None,
+        tool_success: bool | None = None,
+        message: str | None = None,
+        error_message: str | None = None,
+        previous_mode: str | None = None,
+    ) -> "HookContext":
+        from deepseek_tui.hooks.executor import HookContext
+        import json
+
+        return HookContext(
+            tool_name=tool_name,
+            tool_args=json.dumps(tool_args) if tool_args is not None else None,
+            tool_result=tool_result,
+            tool_success=tool_success,
+            mode=self.mode,
+            previous_mode=previous_mode,
+            session_id=self.hook_executor.session_id,
+            message=message,
+            error_message=error_message,
+            workspace=self.tool_context.working_directory,
+            model=model or self.default_model,
+        )
+
+    async def _run_lifecycle_hook(self, event: str, context: object) -> None:
+        if self.hook_executor.has_hooks_for_event(event):
+            await self.hook_executor.execute(event, context)  # type: ignore[arg-type]
+
+    async def run_lifecycle_hook(
+        self,
+        event: str,
+        *,
+        tool_name: str | None = None,
+        tool_args: dict[str, Any] | None = None,
+        model: str | None = None,
+        tool_result: str | None = None,
+        tool_success: bool | None = None,
+        message: str | None = None,
+        error_message: str | None = None,
+        previous_mode: str | None = None,
+    ) -> None:
+        """Run a lifecycle hook (TUI / app-server entry point)."""
+        context = self._lifecycle_hook_context(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            model=model,
+            tool_result=tool_result,
+            tool_success=tool_success,
+            message=message,
+            error_message=error_message,
+            previous_mode=previous_mode,
+        )
+        await self._run_lifecycle_hook(event, context)
+
     async def _execute_single_tool(
         self,
         tool_call: ToolCall,
         api_tools: list[dict[str, Any]],
         model: str,
     ) -> ToolResult | None:
-        """Execute a single tool call, handling special tools and approval.
+        """Execute a single tool call, handling special tools and approval."""
+        hook_ctx = self._lifecycle_hook_context(
+            tool_name=tool_call.name,
+            tool_args=tool_call.arguments,
+            model=model,
+        )
+        await self._run_lifecycle_hook("tool_call_before", hook_ctx)
+        result = await self._execute_single_tool_impl(tool_call, api_tools, model)
+        if result is not None:
+            hook_ctx.tool_result = result.content
+            hook_ctx.tool_success = result.success
+        await self._run_lifecycle_hook("tool_call_after", hook_ctx)
+        return result
 
-        Returns None if the tool was denied by approval.
-        """
-        tool_name = tool_call.name
+    async def _execute_single_tool_impl(
+        self,
+        tool_call: ToolCall,
+        api_tools: list[dict[str, Any]],
+        model: str,
+    ) -> ToolResult | None:
+        """Inner tool dispatch (lifecycle hooks handled by wrapper)."""
+        from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
+
+        tool_name = normalize_mcp_bridge_tool_name(tool_call.name)
         # Snapshot before file-modifying tools
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
@@ -1091,6 +1250,30 @@ class Engine:
         if tool_name == REQUEST_USER_INPUT_NAME:
             return await self._await_user_input(tool_call.id, tool_call.arguments)
 
+        # --- External MCP tools (mcp_<server>_<tool>) ---
+        if is_mcp_tool(tool_name) and not self.tool_registry.contains(tool_name):
+            from deepseek_tui.engine.dispatch import mcp_tool_is_read_only
+            from deepseek_tui.mcp.execute import execute_external_mcp_tool
+            from deepseek_tui.tools.base import ToolCapability
+
+            mcp_caps = (
+                [ToolCapability.READ_ONLY]
+                if mcp_tool_is_read_only(tool_name)
+                else [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
+            )
+            approval_request = self.exec_policy.evaluate(tool_name, mcp_caps)
+            if approval_request is not None:
+                denied = await self._handle_approval_flow(
+                    tool_call, approval_request
+                )
+                if denied:
+                    return None
+            return await execute_external_mcp_tool(
+                self.mcp_manager,  # type: ignore[arg-type]
+                tool_name,
+                tool_call.arguments,
+            )
+
         # --- Normal registry tools ---
         if not self.tool_registry.contains(tool_name):
             raise ToolError(missing_tool_error_message(tool_name, api_tools))
@@ -1109,6 +1292,17 @@ class Engine:
         return await self.tool_registry.execute(
             tool_name, tool_call.arguments, self.tool_context
         )
+
+    async def _execute_mcp_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> ToolResult:
+        """Dispatch a tool call to an external MCP server."""
+        from deepseek_tui.mcp.execute import execute_external_mcp_tool
+
+        mcp = self.mcp_manager
+        if mcp is None:
+            raise ToolError(f"MCP tool '{name}' called but no MCP manager configured")
+        return await execute_external_mcp_tool(mcp, name, arguments)
 
     async def _handle_approval_flow(
         self,
@@ -1143,8 +1337,12 @@ class Engine:
         # downstream ApprovalHandler can show the actual command/path.
         if not getattr(approval_request, "input_summary", ""):
             # MCP tools get a specialized description (Rust dispatch.rs:326-355)
-            if tool_call.name.startswith("mcp__"):
-                desc = mcp_tool_approval_description(tool_call.name)
+            if is_mcp_tool(tool_call.name):
+                from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
+
+                desc = mcp_tool_approval_description(
+                    normalize_mcp_bridge_tool_name(tool_call.name)
+                )
                 try:
                     approval_request.input_summary = desc
                 except Exception:  # noqa: BLE001
