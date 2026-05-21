@@ -13,8 +13,7 @@ from .events import (
     TurnCompleteEvent,
     TurnStartedEvent,
 )
-from .handle import EngineHandle
-from .ops import CancelRequestOp, EngineOp, SendMessageOp
+from .handle import CancelRequestOp, EngineHandle, EngineOp, SendMessageOp
 
 __all__ = [
     "ApprovalRequiredEvent",

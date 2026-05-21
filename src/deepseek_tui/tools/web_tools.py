@@ -71,6 +71,8 @@ class WebSearchTool(ToolSpec):
         query = _require_string(input_data, "query")
         max_results = _optional_int(input_data, "max_results") or 5
 
+        _check_network_policy("https://api.tavily.com", "web_search", context)
+
         if not self._api_key:
             raise ToolError("TAVILY_API_KEY not configured (set in config.toml or env)")
 
@@ -124,6 +126,22 @@ class WebSearchTool(ToolSpec):
         )
 
 
+def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> None:
+    """Enforce network policy if configured. Raises ToolError on DENY."""
+    if context.network_policy is None:
+        return
+    from deepseek_tui.network.policy import Decision
+
+    decision = context.network_policy.evaluate(url, tool_name)
+    if decision == Decision.DENY:
+        raise ToolError(
+            f"Network access denied for {url} by policy. "
+            "Configure allow-list in config.toml [network_policy]."
+        )
+    # PROMPT → for now treat as allow (full interactive prompt requires TUI hook)
+    # TODO: wire interactive approval when TUI approval handler is available
+
+
 async def _fetch(
     url: str,
     context: ToolContext,
@@ -131,6 +149,7 @@ async def _fetch(
     params: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> httpx.Response:
+    _check_network_policy(url, "fetch_url", context)
     timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else None
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:

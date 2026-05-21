@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from deepseek_tui.config.env_mapping import read_env_overrides
-from deepseek_tui.config.errors import InvalidConfigError, UnknownProfileError
+from deepseek_tui.config.models import InvalidConfigError, UnknownProfileError
 from deepseek_tui.config.models import Config
 from deepseek_tui.config.paths import (
     DEFAULT_MANAGED_CONFIG_PATH,

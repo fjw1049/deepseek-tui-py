@@ -232,3 +232,35 @@ def mcp_tool_approval_description(name: str) -> str:
     if mcp_tool_is_read_only(name):
         return f"Read-only MCP tool '{name}'"
     return f"MCP tool '{name}' may have side effects"
+
+
+# --- Audit logging (formerly engine/tool_execution.py) -----------------------
+
+import json as _json
+import logging as _logging
+import os as _os
+
+_audit_logger = _logging.getLogger(__name__)
+
+
+def emit_tool_audit(event: dict[str, Any]) -> None:
+    """Append a JSONL audit line to ``$DEEPSEEK_TOOL_AUDIT_LOG`` if set.
+
+    Silent no-op when the env var is unset or the write fails.
+    """
+    path_str = _os.environ.get("DEEPSEEK_TOOL_AUDIT_LOG")
+    if not path_str:
+        return
+    try:
+        line = _json.dumps(event, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return
+    from pathlib import Path
+
+    path = Path(path_str)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass

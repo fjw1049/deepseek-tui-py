@@ -185,46 +185,106 @@ class TaskCancelTool(ToolSpec):
 
 
 class TaskGateRunTool(ToolSpec):
+    """Execute a verification gate command and record the result.
+
+    Mirrors Rust ``TaskGateRunTool`` (tasks.rs:287-420). Runs the command,
+    captures exit_code/stdout/stderr, computes duration, classifies failure,
+    and persists a TaskGateRecord on the task.
+    """
+
+    _DEFAULT_TIMEOUT_MS = 120_000
+    _MAX_TIMEOUT_MS = 600_000
+
     def name(self) -> str:
         return "task_gate_run"
 
     def description(self) -> str:
         return (
-            "Record a verification gate (tests/lint/type-check) against a durable task."
+            "Execute a verification gate (fmt/check/clippy/test/custom) "
+            "against a durable task and record the result."
         )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string"},
-                "gate": {"type": "string"},
-                "command": {"type": "string"},
-                "exit_code": {"type": "integer"},
-                "status": {"type": "string"},
-                "summary": {"type": "string"},
-                "duration_ms": {"type": "integer"},
+                "id": {"type": "string", "description": "Task id"},
+                "gate": {
+                    "type": "string",
+                    "description": "Gate type: fmt, check, clippy, test, custom",
+                },
+                "command": {"type": "string", "description": "Shell command to run"},
+                "cwd": {"type": "string", "description": "Working directory override"},
+                "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 600000,
+                    "description": "Timeout in ms (default 120000)",
+                },
             },
-            "required": ["id", "gate", "command", "status"],
+            "required": ["id", "gate", "command"],
             "additionalProperties": False,
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
+        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
 
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        import time as _time
+
         manager = _require_manager(context)
         task_id = _require_string(input_data, "id")
         gate = _require_string(input_data, "gate")
         command = _require_string(input_data, "command")
-        status = _require_string(input_data, "status")
+        cwd = _optional_string(input_data, "cwd") or str(context.working_directory)
+        timeout_ms = _optional_int(input_data, "timeout_ms") or self._DEFAULT_TIMEOUT_MS
+        timeout_ms = min(timeout_ms, self._MAX_TIMEOUT_MS)
 
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
+
+        # Execute the command
+        start = _time.monotonic()
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout_ms / 1000
+            )
+            exit_code = proc.returncode or 0
+        except asyncio.TimeoutError:
+            exit_code = -1
+            stdout_bytes = b""
+            stderr_bytes = b"Gate timed out"
+            try:
+                proc.kill()  # type: ignore[possibly-undefined]
+            except (OSError, ProcessLookupError):
+                pass
+        except OSError as exc:
+            raise ToolError(f"Failed to run gate command: {exc}") from exc
+
+        duration_ms = int((_time.monotonic() - start) * 1000)
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+        # Classify result
+        status = "pass" if exit_code == 0 else "fail"
+        classification = _classify_gate_failure(gate, exit_code, stdout, stderr)
+
+        # Build summary from output tail
+        combined = (stdout + "\n" + stderr).strip()
+        summary = combined[-_MAX_SUMMARY_CHARS:] if combined else "(no output)"
 
         from deepseek_tui.tools.task_manager import TaskGateRecord
 
@@ -232,20 +292,27 @@ class TaskGateRunTool(ToolSpec):
             id=f"gate_{uuid.uuid4().hex[:8]}",
             gate=gate,
             command=command,
-            cwd=str(context.working_directory),
-            exit_code=_optional_int(input_data, "exit_code"),
+            cwd=cwd,
+            exit_code=exit_code,
             status=status,
-            classification=status,
-            duration_ms=_optional_int(input_data, "duration_ms") or 0,
-            summary=_optional_string(input_data, "summary") or "",
+            classification=classification,
+            duration_ms=duration_ms,
+            summary=summary,
             recorded_at=_utc_now_iso(),
         )
         task.gates.append(record)
-        async with manager._lock:  # noqa: SLF001 -- test harness hook
+        task.timeline.append(
+            _TimelineEntryFactory(
+                timestamp=_utc_now_iso(),
+                kind="gate",
+                summary=f"{gate}: {status} (rc={exit_code}, {duration_ms}ms)",
+            )
+        )
+        async with manager._lock:  # noqa: SLF001
             manager._persist_task_locked(task)  # noqa: SLF001
         return ToolResult(
-            success=True,
-            content=f"Recorded gate {gate} on {task.id}",
+            success=exit_code == 0,
+            content=f"Gate {gate} {'PASSED' if exit_code == 0 else 'FAILED'} on {task.id} (rc={exit_code}, {duration_ms}ms)",
             metadata={"task_id": task.id, "gate": asdict(record)},
         )
 
@@ -405,28 +472,33 @@ class TaskShellWaitTool(ToolSpec):
 
 
 class PrAttemptRecordTool(ToolSpec):
+    """Capture a PR attempt with git diff --binary and record it.
+
+    Mirrors Rust ``PrAttemptRecordTool`` (tasks.rs:505-706). Automatically
+    runs ``git diff --binary`` to capture the current working tree diff,
+    extracts changed_files, computes base/head refs, and writes the patch
+    as a durable artifact on the task.
+    """
+
     def name(self) -> str:
         return "pr_attempt_record"
 
     def description(self) -> str:
-        return "Record a PR attempt on a durable task."
+        return (
+            "Record a PR attempt on a durable task. Automatically captures "
+            "git diff --binary as a durable patch artifact."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string"},
+                "id": {"type": "string", "description": "Task id"},
+                "summary": {"type": "string", "description": "One-line description of the attempt"},
                 "attempt_group_id": {"type": "string"},
                 "attempt_index": {"type": "integer", "minimum": 1},
                 "attempt_count": {"type": "integer", "minimum": 1},
-                "summary": {"type": "string"},
-                "changed_files": {"type": "array", "items": {"type": "string"}},
                 "verification": {"type": "array", "items": {"type": "string"}},
-                "base_ref": {"type": "string"},
-                "base_sha": {"type": "string"},
-                "head_ref": {"type": "string"},
-                "head_sha": {"type": "string"},
-                "patch_path": {"type": "string"},
                 "selected": {"type": "boolean"},
             },
             "required": ["id", "summary"],
@@ -446,37 +518,76 @@ class PrAttemptRecordTool(ToolSpec):
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
 
+        workspace = context.working_directory
+
+        # Capture git state
+        base_sha = await _git_output(["git", "rev-parse", "HEAD"], workspace)
+        base_ref = await _git_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], workspace
+        )
+
+        # Capture binary diff (staged + unstaged)
+        diff_bytes = await _git_output_bytes(
+            ["git", "diff", "--binary", "HEAD"], workspace
+        )
+        if not diff_bytes.strip():
+            # Try staged only
+            diff_bytes = await _git_output_bytes(
+                ["git", "diff", "--binary", "--cached"], workspace
+            )
+        if not diff_bytes.strip():
+            raise ToolError("No changes to record (git diff is empty)")
+
+        # Extract changed files from diff
+        changed_files = await _git_changed_files(workspace)
+
+        # Write patch artifact
+        attempt_id = f"attempt_{uuid.uuid4().hex[:8]}"
+        patch_rel_path = f"patches/{task.id}/{attempt_id}.patch"
+        patch_abs = manager.data_dir() / patch_rel_path
+        patch_abs.parent.mkdir(parents=True, exist_ok=True)
+        patch_abs.write_bytes(diff_bytes)
+
         attempt_index = _optional_int(input_data, "attempt_index") or (
             len(task.attempts) + 1
         )
         attempt_count = _optional_int(input_data, "attempt_count") or attempt_index
+
         attempt = TaskAttemptRecord(
-            id=f"attempt_{uuid.uuid4().hex[:8]}",
+            id=attempt_id,
             attempt_group_id=_optional_string(input_data, "attempt_group_id")
             or f"group_{uuid.uuid4().hex[:8]}",
             attempt_index=attempt_index,
             attempt_count=attempt_count,
             summary=_require_string(input_data, "summary"),
-            changed_files=[
-                str(p) for p in input_data.get("changed_files", []) if isinstance(p, str)
-            ],
+            changed_files=changed_files,
             verification=[
                 str(v) for v in input_data.get("verification", []) if isinstance(v, str)
             ],
             selected=bool(input_data.get("selected", False)),
             recorded_at=_utc_now_iso(),
-            base_ref=_optional_string(input_data, "base_ref"),
-            base_sha=_optional_string(input_data, "base_sha"),
-            head_ref=_optional_string(input_data, "head_ref"),
-            head_sha=_optional_string(input_data, "head_sha"),
-            patch_path=_optional_string(input_data, "patch_path"),
+            base_ref=base_ref,
+            base_sha=base_sha,
+            head_ref=base_ref,
+            head_sha=base_sha,
+            patch_path=patch_rel_path,
         )
         task.attempts.append(attempt)
+        task.timeline.append(
+            _TimelineEntryFactory(
+                timestamp=_utc_now_iso(),
+                kind="pr_attempt",
+                summary=f"attempt #{attempt_index}: {changed_files[:3]}",
+            )
+        )
         async with manager._lock:  # noqa: SLF001
             manager._persist_task_locked(task)  # noqa: SLF001
         return ToolResult(
             success=True,
-            content=f"Recorded PR attempt {attempt.id} on {task.id}",
+            content=(
+                f"Recorded PR attempt {attempt.id} on {task.id} "
+                f"({len(changed_files)} file(s), patch: {patch_rel_path})"
+            ),
             metadata={"task_id": task.id, "attempt": asdict(attempt)},
         )
 
@@ -692,6 +803,63 @@ def _summarize(text: str, limit: int) -> str:
 
 def _is_control(ch: str) -> bool:
     return ord(ch) < 0x20 or ord(ch) == 0x7F
+
+
+async def _git_output(cmd: list[str], cwd: Path) -> str:
+    """Run a git command and return stripped stdout."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=str(cwd),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return stdout.decode("utf-8", errors="replace").strip()
+
+
+async def _git_output_bytes(cmd: list[str], cwd: Path) -> bytes:
+    """Run a git command and return raw stdout bytes."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=str(cwd),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return stdout
+
+
+async def _git_changed_files(cwd: Path) -> list[str]:
+    """Get list of changed files (staged + unstaged) relative to HEAD."""
+    raw = await _git_output(["git", "diff", "--name-only", "HEAD"], cwd)
+    if not raw:
+        raw = await _git_output(["git", "diff", "--name-only", "--cached"], cwd)
+    return [f for f in raw.splitlines() if f.strip()]
+
+
+def _classify_gate_failure(
+    gate: str, exit_code: int, stdout: str, stderr: str
+) -> str:
+    """Heuristic failure classification mirroring Rust classify_gate_failure().
+
+    Scans output for common error patterns to categorize why a gate failed.
+    """
+    if exit_code == 0:
+        return "pass"
+    combined = (stdout + "\n" + stderr).lower()
+    if "address already in use" in combined or "port" in combined and "bind" in combined:
+        return "port_conflict"
+    if gate in ("check", "clippy") or "error[e" in combined:
+        return "compile_error"
+    if gate == "test" or "test result:" in combined or "failures:" in combined:
+        return "test_failure"
+    if gate == "fmt" or "diff" in combined and "formatting" in combined:
+        return "format_error"
+    if "permission denied" in combined:
+        return "permission_error"
+    if exit_code == -1:
+        return "timeout"
+    return "unknown"
 
 
 def _require_manager(context: ToolContext) -> TaskManager:

@@ -6,6 +6,21 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# --- Config errors (formerly config/errors.py) --------------------------------
+
+
+class ConfigError(Exception):
+    pass
+
+
+class InvalidConfigError(ConfigError):
+    pass
+
+
+class UnknownProfileError(ConfigError):
+    pass
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in override.items():

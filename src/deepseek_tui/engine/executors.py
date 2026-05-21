@@ -220,7 +220,7 @@ async def _create_engine_for_execution(
     from deepseek_tui.client.deepseek import DeepSeekClient
     from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import Config
-    from deepseek_tui.engine.approval import AutoApprovalHandler
+    from deepseek_tui.engine.handle import AutoApprovalHandler
     from deepseek_tui.engine.engine import Engine
 
     if config is None:

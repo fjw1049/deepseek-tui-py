@@ -139,11 +139,49 @@ def build_system_prompt(
         if handoff_block:
             full_prompt += "\n\n" + handoff_block
 
+    # User memory (persistent preferences / facts from ~/.deepseek/memory/)
+    # Mirrors Rust Engine memory_path injection — re-read each turn so
+    # runtime edits take effect immediately.
+    memory_block = _load_user_memory()
+    if memory_block:
+        full_prompt += "\n\n" + memory_block
+
     # Working-set summary
     if working_set_summary and working_set_summary.strip():
         full_prompt += "\n\n" + working_set_summary
 
     return full_prompt
+
+
+def _load_user_memory() -> str | None:
+    """Load user memory files from ~/.deepseek/memory/.
+
+    Mirrors Rust ``inject_memory_into_system_prompt``. Reads all .md files
+    sorted by name, concatenates content within [memory] markers.
+    """
+    memory_dir = Path.home() / ".deepseek" / "memory"
+    if not memory_dir.is_dir():
+        return None
+
+    parts: list[str] = []
+    try:
+        files = sorted(f for f in memory_dir.iterdir() if f.suffix == ".md")
+    except OSError:
+        return None
+
+    for f in files:
+        try:
+            content = f.read_text(encoding="utf-8").strip()
+            if content:
+                parts.append(content)
+        except OSError:
+            continue
+
+    if not parts:
+        return None
+
+    joined = "\n\n".join(parts)
+    return f"[memory]\n{joined}\n[/memory]"
 
 
 def _load_handoff_block(workspace: Path) -> str | None:

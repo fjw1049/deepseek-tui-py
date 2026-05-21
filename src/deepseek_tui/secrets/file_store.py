@@ -35,7 +35,7 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
-from .errors import InsecurePermissionsError, SecretsError
+from . import InsecurePermissionsError, SecretsError
 from .store import KeyringStore
 
 if TYPE_CHECKING:

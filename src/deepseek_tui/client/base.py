@@ -3,10 +3,26 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import httpx
 
-from deepseek_tui.client.retry import RetryConfig
+
+# --- Retry config (formerly client/retry.py) ---------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RetryConfig:
+    max_transparent_retries: int = 2
+    max_error_retries: int = 5
+    base_delay: float = 0.2
+    max_delay: float = 10.0
+
+    def transparent_delay(self, attempt: int) -> float:
+        return float(min(self.base_delay * (2**attempt), self.max_delay))
+
+    def error_delay(self, attempt: int) -> float:
+        return float(min(self.base_delay * (2**attempt), self.max_delay))
 from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import (
     StreamError,

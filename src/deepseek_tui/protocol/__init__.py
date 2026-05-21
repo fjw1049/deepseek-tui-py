@@ -29,7 +29,27 @@ from .approval import (
     ReviewDecisionDenied,
     ReviewDecisionNetworkPolicyAmendment,
 )
-from .errors import ErrorEnvelope, ErrorKind
+from enum import Enum as _Enum
+from typing import Any as _Any
+
+from pydantic import BaseModel as _BaseModel
+from pydantic import Field as _Field
+
+
+class ErrorKind(str, _Enum):
+    CONFIG = "config"
+    AUTH = "auth"
+    NETWORK = "network"
+    TOOL = "tool"
+    RATE_LIMIT = "rate_limit"
+    INTERNAL = "internal"
+
+
+class ErrorEnvelope(_BaseModel):
+    kind: ErrorKind
+    message: str
+    retryable: bool = False
+    metadata: dict[str, _Any] = _Field(default_factory=dict)
 from .events import (
     ApplyPatchApprovalRequestEvent,
     ElicitationRequestEvent,

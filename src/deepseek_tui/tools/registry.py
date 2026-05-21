@@ -282,12 +282,18 @@ class ToolRegistry:
         # echoes it back. See client.streaming for the decode side.
         from deepseek_tui.tools.encoding import to_api_tool_name
 
+        from deepseek_tui.tools.schema_sanitize import sanitize
+
+        params = tool.input_schema()
+        if isinstance(params, dict):
+            params = sanitize(params)
+
         return {
             "type": "function",
             "function": {
                 "name": to_api_tool_name(tool.name()),
                 "description": tool.description(),
-                "parameters": tool.input_schema(),
+                "parameters": params,
                 "allowed_callers": ["direct"],
                 "defer_loading": tool.defer_loading(),
             },

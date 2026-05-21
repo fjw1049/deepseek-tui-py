@@ -43,7 +43,9 @@ ROOT_MAX_TOKENS: int = 4096
 ROOT_TEMPERATURE: float = 0.3
 STDOUT_METADATA_PREVIEW_LEN: int = 800
 PROMPT_PREVIEW_LEN: int = 500
-TURN_TIMEOUT_SECS: float = 180.0
+# Rust intentionally removed the fixed wall-clock cap (turn_timeout() → None)
+# to allow long-running RLM turns to complete. We follow suit.
+TURN_TIMEOUT_SECS: float | None = None
 MAX_HISTORY_MESSAGES: int = 20
 
 
@@ -161,7 +163,7 @@ async def run_rlm_turn(
     consecutive_no_code = 0
 
     for iteration in range(MAX_RLM_ITERATIONS):
-        if time.monotonic() - start > TURN_TIMEOUT_SECS:
+        if TURN_TIMEOUT_SECS is not None and time.monotonic() - start > TURN_TIMEOUT_SECS:
             return RlmTurnResult(
                 answer="",
                 iterations=iteration,

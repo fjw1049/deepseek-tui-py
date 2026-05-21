@@ -289,3 +289,22 @@ class DeepSeekClient(LLMClient):
             payload["thinking"] = {"type": "enabled"}
         payload.update(request.extra_body)
         return payload
+
+
+# --- OpenAI-compatible client (formerly client/openai_compat.py) -------------
+
+
+class OpenAICompatClient(DeepSeekClient):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        timeout_seconds: float = 90.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+        )

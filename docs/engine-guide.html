@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engine 完整逻辑指南 — deepseek-tui</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --card: #ffffff;
+      --text: #1a1a2e;
+      --muted: #5c5c7a;
+      --accent: #2563eb;
+      --accent-light: #dbeafe;
+      --border: #e5e7eb;
+      --code-bg: #f3f4f6;
+      --success: #059669;
+      --warn: #d97706;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 100vh;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 1rem;
+    }
+    nav h2 { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem; }
+    nav a {
+      display: block;
+      padding: 0.35rem 0.6rem;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.88rem;
+      border-radius: 6px;
+    }
+    nav a:hover { background: var(--accent-light); color: var(--accent); }
+    main { padding: 2rem 2.5rem 4rem; max-width: 960px; }
+    h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+    .subtitle { color: var(--muted); margin-bottom: 2rem; font-size: 0.95rem; }
+    h2 { font-size: 1.45rem; margin: 2.5rem 0 1rem; padding-bottom: 0.4rem; border-bottom: 2px solid var(--accent-light); }
+    h3 { font-size: 1.15rem; margin: 1.5rem 0 0.75rem; color: #374151; }
+    h4 { font-size: 1rem; margin: 1rem 0 0.5rem; color: var(--muted); }
+    p { margin-bottom: 0.85rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin: 1rem 0;
+    }
+    .card.highlight { border-left: 4px solid var(--accent); background: #f8faff; }
+    .card.warn { border-left: 4px solid var(--warn); background: #fffbeb; }
+    .card.success { border-left: 4px solid var(--success); background: #ecfdf5; }
+    code, .mono { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 0.88em; background: var(--code-bg); padding: 0.15em 0.4em; border-radius: 4px; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; font-size: 0.85rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; color: inherit; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 0.55rem 0.75rem; text-align: left; vertical-align: top; }
+    th { background: #f9fafb; font-weight: 600; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .step { display: flex; gap: 0.75rem; margin: 0.6rem 0; align-items: flex-start; }
+    .step-num {
+      flex-shrink: 0;
+      width: 1.75rem; height: 1.75rem;
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem; font-weight: 700;
+    }
+    .step-body { flex: 1; }
+    .step-body strong { display: block; margin-bottom: 0.15rem; }
+    .tag { display: inline-block; padding: 0.15em 0.5em; border-radius: 4px; font-size: 0.78rem; font-weight: 600; margin-right: 0.3rem; }
+    .tag-blue { background: #dbeafe; color: #1d4ed8; }
+    .tag-green { background: #d1fae5; color: #047857; }
+    .tag-orange { background: #ffedd5; color: #c2410c; }
+    .tag-red { background: #fee2e2; color: #b91c1c; }
+    .tag-gray { background: #f3f4f6; color: #4b5563; }
+    .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; margin: 1rem 0; overflow-x: auto; }
+    ul, ol { margin: 0.5rem 0 0.85rem 1.5rem; }
+    li { margin-bottom: 0.3rem; }
+    .fn-list { list-style: none; margin-left: 0; }
+    .fn-list li { padding: 0.4rem 0; border-bottom: 1px dashed var(--border); }
+    .fn-list li:last-child { border-bottom: none; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+      main { padding: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <h2>目录</h2>
+    <a href="#intro">1. Engine 是什么</a>
+    <a href="#architecture">2. 整体架构</a>
+    <a href="#init">3. 初始化</a>
+    <a href="#run">4. 主循环 run()</a>
+    <a href="#turn">5. 处理一条用户消息</a>
+    <a href="#conversation">6. 多轮对话循环</a>
+    <a href="#turnloop">7. TurnLoop 流式请求</a>
+    <a href="#tools">8. 工具执行</a>
+    <a href="#approval">9. 审批流程</a>
+    <a href="#special">10. 特殊内置工具</a>
+    <a href="#lsp">11. LSP 诊断</a>
+    <a href="#snapshot">12. 快照与 Undo</a>
+    <a href="#compact">13. 压缩与容量</a>
+    <a href="#cycle">14. Cycle 归档</a>
+    <a href="#events">15. 事件清单</a>
+    <a href="#state">16. 状态字段</a>
+    <a href="#master">17. 总逻辑图</a>
+    <a href="#fn-index">18. 函数索引</a>
+  </nav>
+
+  <main>
+    <h1>Engine 完整逻辑指南</h1>
+    <p class="subtitle">
+      文件路径：<code>src/deepseek_tui/engine/engine.py</code><br>
+      Engine 是整个 DeepSeek TUI 的「大脑」—— 接收用户消息，调用 LLM，执行工具，把结果推回界面。
+    </p>
+
+    <!-- ========== 1. INTRO ========== -->
+    <h2 id="intro">1. Engine 是什么？</h2>
+    <div class="card highlight">
+      <p><strong>一句话：</strong>Engine 是一个<strong>异步编排器</strong>，它不停地从 <code>EngineHandle</code> 读取「操作指令」，驱动 LLM 多轮对话 + 工具调用，并通过事件队列把进度实时推给 TUI 界面。</p>
+    </div>
+    <p>你可以把它想象成餐厅里的<strong>主厨</strong>：</p>
+    <ul>
+      <li><strong>EngineHandle</strong> = 点单窗口（收用户消息、取消请求、中途加菜）</li>
+      <li><strong>LLMClient</strong> = 外聘顾问（DeepSeek 模型，给出回答或「需要用什么工具」）</li>
+      <li><strong>ToolRegistry</strong> = 工具箱（读文件、跑 shell、搜代码……）</li>
+      <li><strong>事件队列</strong> = 出菜口（文字流、工具结果、审批弹窗，推给前端渲染）</li>
+    </ul>
+    <p>Engine 本身<strong>不渲染界面</strong>，只负责逻辑编排。界面（TUI）通过 <code>handle.events()</code> 订阅事件，通过 <code>handle.send_message()</code> 发消息。</p>
+
+    <!-- ========== 2. ARCHITECTURE ========== -->
+    <h2 id="architecture">2. 整体架构</h2>
+    <div class="mermaid">
+flowchart TB
+    subgraph UI["界面层 TUI"]
+        Composer["用户输入框"]
+        ApprovalDlg["审批对话框"]
+    end
+
+    subgraph Handle["EngineHandle 通信桥梁"]
+        OpQ["op_queue 操作队列"]
+        EvQ["event_queue 事件队列"]
+        SteerQ["steer_queue 中途转向"]
+        Cancel["cancel_event 取消标志"]
+        Pending["pending_user_inputs 等用户回答"]
+    end
+
+    subgraph Engine["Engine 核心"]
+        Run["run() 主循环"]
+        SendMsg["_handle_send_message"]
+        Conv["_run_conversation 多轮循环"]
+        ToolExec["_execute_tool_calls"]
+        Session["session_messages 会话历史"]
+    end
+
+    subgraph External["外部依赖"]
+        LLM["LLMClient"]
+        TL["TurnLoop 单次流式请求"]
+        Tools["ToolRegistry + 各工具"]
+    end
+
+    Composer -->|"SendMessageOp"| OpQ
+    Run --> OpQ
+    SendMsg --> Conv
+    Conv --> TL
+    TL --> LLM
+    Conv --> ToolExec
+    ToolExec --> Tools
+    Engine --> EvQ
+    EvQ --> UI
+    ApprovalDlg -->|"resolve_user_input"| Pending
+    </div>
+
+    <h3>双层循环结构（最重要！）</h3>
+    <table>
+      <tr><th>层级</th><th>函数</th><th>做什么</th><th>何时结束</th></tr>
+      <tr>
+        <td><span class="tag tag-blue">外层</span></td>
+        <td><code>_run_conversation</code></td>
+        <td>LLM → 有工具？→ 执行工具 → 再调 LLM，循环往复</td>
+        <td>模型不再调用工具，或达到 100 轮上限，或 Plan 模式 update_plan 成功</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-green">内层</span></td>
+        <td><code>TurnLoop.run</code></td>
+        <td>发一次流式 API 请求，逐 chunk 接收文字/思考/工具调用</td>
+        <td>流结束（StreamDone）或取消/出错</td>
+      </tr>
+    </table>
+
+    <!-- ========== 3. INIT ========== -->
+    <h2 id="init">3. 初始化：怎么创建 Engine？</h2>
+
+    <h3>3.1 <code>Engine.create()</code> — 推荐入口（工厂方法）</h3>
+    <div class="step"><div class="step-num">1</div><div class="step-body"><strong>加载 Config</strong>没传就用默认配置</div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-body"><strong>create_tool_runtime()</strong>一次性创建 ToolRegistry、ToolContext、各类 Manager（task/subagent 等）</div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-body"><strong>discover_in_workspace()</strong>扫描工作区里的 Skills，后面注入 system prompt</div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-body"><strong>读取采样参数</strong>reasoning_effort、temperature、extra_body（R1/V4 思考模式靠这些激活）</div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-body"><strong>构造 Engine 实例</strong>调用 <code>__init__</code></div></div>
+    <div class="step"><div class="step-num">6</div><div class="step-body"><strong>可选功能</strong>cycle_enabled → 启用 Cycle 归档；seam_enabled → 创建 SeamManager</div></div>
+    <div class="step"><div class="step-num">7</div><div class="step-body"><strong>生成 session id</strong>记录 cycle 开始时间，设置 mode（agent/plan/yolo）</div></div>
+
+    <h3>3.2 <code>__init__()</code> — 实例化了哪些东西？</h3>
+    <table>
+      <tr><th>字段</th><th>作用</th></tr>
+      <tr><td><code>handle</code></td><td>与 TUI 双向通信</td></tr>
+      <tr><td><code>client</code></td><td>LLM 客户端</td></tr>
+      <tr><td><code>tool_registry</code> / <code>tool_context</code></td><td>工具注册表 + 执行上下文（工作目录等）；传了 tool_runtime 就从 runtime 解包</td></tr>
+      <tr><td><code>exec_policy</code></td><td>执行策略：哪些工具需要用户审批</td></tr>
+      <tr><td><code>approval_handler</code></td><td>默认 AutoApprovalHandler（自动批准，测试用）</td></tr>
+      <tr><td><code>max_tool_round_trips</code></td><td>单轮最多工具往返次数，默认 100</td></tr>
+      <tr><td><code>mode</code></td><td>运行模式：agent / plan / yolo</td></tr>
+      <tr><td><code>session_messages</code></td><td>累积的会话消息列表</td></tr>
+      <tr><td><code>turn_loop</code></td><td>流式单轮执行器，绑定 <code>_emergency_compact</code> 回调</td></tr>
+      <tr><td><code>session_cost_usd/cny</code></td><td>累计费用（状态栏 /cost 命令用）</td></tr>
+      <tr><td><code>session_cache_hit/miss_total</code></td><td>累计 cache 命中/未命中 token（比单 turn 99% 更有意义）</td></tr>
+      <tr><td><code>approval_cache</code></td><td>同参数工具调用的会话级审批缓存</td></tr>
+      <tr><td><code>tool_snapshots</code></td><td>写文件前的快照，供 /undo 用（最多 5 个，单文件 ≤1MB）</td></tr>
+      <tr><td><code>working_set</code></td><td>追踪用户相关文件路径，注入 system prompt + 压缩时 pin</td></tr>
+      <tr><td><code>pending_lsp_blocks</code></td><td>待注入的 LSP 诊断信息</td></tr>
+      <tr><td><code>capacity_controller</code></td><td>容量护栏（token/错误密度监控）</td></tr>
+      <tr><td><code>compaction_config</code></td><td>对话压缩配置</td></tr>
+      <tr><td><code>cycle_config</code> / <code>seam_manager</code></td><td>长会话 cycle 归档（默认关闭）</td></tr>
+    </table>
+
+    <h3>3.3 其他初始化相关方法</h3>
+    <ul>
+      <li><code>_render_skills_context()</code> — 把发现的 Skills 渲染成文本，塞进 system prompt</li>
+      <li><code>context_breakdown(model)</code> — 估算下次请求的 token 占用：system_prompt / tools / conversation / free</li>
+      <li><code>shutdown()</code> — 关闭 tool_runtime 和 client 连接</li>
+    </ul>
+
+    <!-- ========== 4. RUN ========== -->
+    <h2 id="run">4. 主循环 <code>run()</code></h2>
+    <p>Engine 启动后进入<strong>无限循环</strong>，这是整个程序的入口：</p>
+    <div class="mermaid">
+flowchart TD
+    Start["run() 启动"] --> Loop{"while True"}
+    Loop --> Wait["await handle.next_op() 阻塞等待"]
+    Wait --> Check{操作类型?}
+    Check -->|"SendMessageOp"| Handle["_handle_send_message(op)"]
+    Check -->|"CancelRequestOp"| Cancel["handle.cancel_event.set()"]
+    Cancel --> Loop
+    Handle --> Loop
+    Loop -->|"asyncio.CancelledError"| Raise["向上抛出，Engine 停止"]
+    </div>
+
+    <div class="card warn">
+      <p><strong>取消机制细节：</strong>收到 <code>CancelRequestOp</code> 时，除了记录日志，还会<strong>强制设置</strong> <code>cancel_event</code>。这是防御性设计——即使调用方忘了调 <code>handle.cancel()</code>，正在进行的流式请求也会在下一个 chunk 检测到取消并停止。TurnLoop 每个 stream chunk 都会检查这个标志。</p>
+    </div>
+
+    <!-- ========== 5. TURN ========== -->
+    <h2 id="turn">5. 处理一条用户消息</h2>
+
+    <h3>5.1 外层包装 <code>_handle_send_message</code></h3>
+    <table>
+      <tr><th>步骤</th><th>做什么</th><th>为什么</th></tr>
+      <tr><td><code>bind_turn()</code></td><td>绑定 trace turn_id</td><td>日志追踪</td></tr>
+      <tr><td><code>reset_cancel()</code></td><td>重置取消标志</td><td>新 turn 从干净状态开始</td></tr>
+      <tr><td><code>_mark_turn_active()</code></td><td>标记 turn 进行中</td><td>TUI 据此判断：用户再输入是发新消息还是 steer 中途转向</td></tr>
+      <tr><td>调用 inner</td><td>实际业务逻辑</td><td>—</td></tr>
+      <tr><td><code>finally: _mark_turn_idle()</code></td><td>标记 turn 结束</td><td>无论成功/取消/异常都执行</td></tr>
+    </table>
+
+    <h3>5.2 核心业务 <code>_handle_send_message_inner</code></h3>
+    <div class="mermaid">
+flowchart TD
+    A["构造 user_message"] --> B["working_messages = session_messages + 新消息"]
+    B --> C["working_set.observe_user_message 记录文件路径"]
+    C --> D{Plan 模式 + 快速 plan?}
+    D -->|是| E["追加 System 提示：先探索代码库再写 plan"]
+    D -->|否| F
+    E --> F["emit TurnStartedEvent"]
+    F --> G["build_system_prompt(skills + working_set)"]
+    G --> H["_run_conversation()"]
+    H --> I{取消了?}
+    I -->|是| J["emit TurnCancelledEvent → 不更新 session"]
+    I -->|否| K["session_messages = working_messages"]
+    K --> L["累计 cache / 费用"]
+    L --> M["emit TurnCompleteEvent"]
+    M --> N["_auto_persist_session 写磁盘"]
+    </div>
+
+    <h4>Plan 模式特殊逻辑</h4>
+    <p>函数 <code>should_force_update_plan_first(mode, content)</code> 检测：</p>
+    <ul>
+      <li>用户在 plan 模式下说「quick plan」「give me a plan」等</li>
+      <li>但<strong>没有</strong>说「explore the repo」「read the code」等探索意图</li>
+      <li>→ 自动追加一条 System 消息，要求 AI 先探索代码库再写计划</li>
+    </ul>
+
+    <h4>完成后的收尾</h4>
+    <ul>
+      <li><strong>取消时</strong>：不更新 <code>session_messages</code>（本轮未完成，历史不变）</li>
+      <li><strong>成功时</strong>：把 working_messages 写入 session_messages</li>
+      <li>累计 session 级 cache hit/miss（不是单 turn 的 99%，而是整个会话累计）</li>
+      <li>用 pricing 模块算费用，累加到 session_cost_usd/cny</li>
+      <li>发 TurnCompleteEvent（含 assistant 消息、usage、费用、cache 统计）</li>
+      <li>调用 _auto_persist_session 持久化到 current.json</li>
+    </ul>
+
+    <!-- ========== 6. CONVERSATION ========== -->
+    <h2 id="conversation">6. 多轮对话循环 <code>_run_conversation</code></h2>
+    <p>这是 Engine 的<strong>心脏</strong>—— Agent 循环：问 LLM → 调工具 → 再问 LLM，直到模型说「好了，不用工具了」。</p>
+
+    <div class="mermaid">
+flowchart TD
+    Start["开始 _run_conversation"] --> Inc["turn_counter += 1"]
+    Inc --> Cycle{cycle 启用?}
+    Cycle -->|是| MC["_maybe_advance_cycle"]
+    Cycle -->|否| Round
+    MC --> Round
+
+    subgraph Round["for round_idx in 0..max_tool_round_trips+1"]
+        R1["① drain_steers 注入中途消息"]
+        R2["② run_pre_request_checkpoint 容量预检"]
+        R3{"③ 消息>500 或 should_compact?"}
+        R3 -->|是| C["compact_messages_safe 压缩"]
+        R3 -->|否| R4
+        C --> R4["④ _flush_pending_lsp_diagnostics"]
+        R4 --> R5["⑤ 构建 MessageRequest"]
+        R5 --> R6["⑥ turn_loop.run 流式请求"]
+        R6 --> R7{取消?}
+        R7 -->|是| RetC["return"]
+        R7 -->|否| R8["⑦ append assistant_message"]
+        R8 --> R9{有 tool_calls?}
+        R9 -->|否| RetD["return 对话结束 ✓"]
+        R9 -->|是| R10["⑧ _build_tool_use_message"]
+        R10 --> R11["⑨ _execute_tool_calls"]
+        R11 --> R12["⑩ extend tool_results"]
+        R12 --> R13["⑪ run_post_tool_checkpoint"]
+        R13 --> R14{工具出错?}
+        R14 -->|是| R15["⑫ run_error_escalation_checkpoint"]
+        R14 -->|否| R16["重置 consecutive_errors=0"]
+        R15 --> R17
+        R16 --> R17{Plan + update_plan 成功?}
+        R17 -->|是| RetP["return 停止"]
+        R17 -->|否| Round
+    end
+
+    Round --> Limit["超过 100 轮 → ErrorEvent"]
+    </div>
+
+    <h3>每一轮 round 的 12 步详解</h3>
+    <table>
+      <tr><th>#</th><th>步骤</th><th>通俗解释</th><th>细节</th></tr>
+      <tr>
+        <td>①</td><td>Steer 注入</td>
+        <td>用户在中途又输入了？追加到消息列表</td>
+        <td><code>handle.drain_steers()</code> 非阻塞取出 steer 队列，每条变成 Message.user</td>
+      </tr>
+      <tr>
+        <td>②</td><td>容量预检</td>
+        <td>上下文快满了？提前压缩</td>
+        <td><code>run_pre_request_checkpoint</code>：若决策为 TARGETED_CONTEXT_REFRESH → 调 _emergency_compact</td>
+      </tr>
+      <tr>
+        <td>③</td><td>压缩触发</td>
+        <td>消息太多或 token 超阈值？总结旧消息</td>
+        <td>硬上限 500 条消息；token 阈值默认 500K floor；压缩后 summary 可能追加到 system_prompt</td>
+      </tr>
+      <tr>
+        <td>④</td><td>LSP 刷新</td>
+        <td>把上一轮代码编辑的诊断信息塞给模型</td>
+        <td><code>_flush_pending_lsp_diagnostics</code> → 合成一条 user 消息</td>
+      </tr>
+      <tr>
+        <td>⑤</td><td>构建请求</td>
+        <td>打包 model、messages、tools、温度等参数</td>
+        <td>MessageRequest 含 reasoning_effort / temperature / extra_body</td>
+      </tr>
+      <tr>
+        <td>⑥</td><td>流式单轮</td>
+        <td>调 LLM，实时收文字和工具调用</td>
+        <td>委托给 TurnLoop.run（见下一节）</td>
+      </tr>
+      <tr>
+        <td>⑦</td><td>追加 assistant</td>
+        <td>把模型的回复加入历史</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>⑧⑨</td><td>执行工具</td>
+        <td>模型要调工具？逐个或并行执行</td>
+        <td>见第 8 节</td>
+      </tr>
+      <tr>
+        <td>⑩</td><td>追加 tool_results</td>
+        <td>工具结果加入历史，下一轮 LLM 能看到</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>⑪⑫</td><td>容量后检 + 错误升级</td>
+        <td>工具执行后检查容量；连续出错则升级告警</td>
+        <td>step_error_count 累加；consecutive_tool_error_steps 追踪连续出错轮数</td>
+      </tr>
+      <tr>
+        <td>—</td><td>Plan 停止</td>
+        <td>plan 模式下 update_plan 成功就停</td>
+        <td><code>should_stop_after_plan_tool</code></td>
+      </tr>
+    </table>
+
+    <div class="card">
+      <p><strong>循环结束条件（任一满足即退出）：</strong></p>
+      <ol>
+        <li>模型返回纯文本，<strong>没有 tool_calls</strong> → 正常结束</li>
+        <li>用户取消 → cancelled=True</li>
+        <li>Plan 模式下 update_plan 工具成功执行</li>
+        <li>达到 max_tool_round_trips（100）→ 发 ErrorEvent</li>
+      </ol>
+    </div>
+
+    <!-- ========== 7. TURNLOOP ========== -->
+    <h2 id="turnloop">7. TurnLoop — 单次流式 LLM 请求</h2>
+    <p>文件：<code>engine/turn_loop.py</code>。Engine 每轮 round 调用一次 <code>turn_loop.run()</code>。</p>
+
+    <div class="mermaid">
+flowchart TD
+    Start["TurnLoop.run"] --> Init["初始化 active_tool_names"]
+    Init --> Retry{"stream_retry < 3?"}
+    Retry -->|否| Done
+    Retry -->|是| Cancel{cancel_event?}
+    Cancel -->|是| RetCancel["return cancelled"]
+    Cancel -->|否| Budget{输入 token > 预算?}
+    Budget -->|是, 未超3次| Compact["_emergency_compact"]
+    Compact --> Retry
+    Budget -->|超3次| Overflow["CONTEXT_OVERFLOW 错误"]
+    Budget -->|否| Build["active_tools_for_step 延迟加载工具"]
+    Build --> Stream["client.stream_with_retry 流式请求"]
+
+    Stream --> Events{收到事件}
+    Events -->|TextDelta| T1["buffer 存原文 + emit TextDeltaEvent<br/>FakeWrapperFilter 过滤假工具标记"]
+    Events -->|ThinkingDelta| T2["buffer + emit ThinkingDeltaEvent"]
+    Events -->|ToolCallComplete| T3["tool_calls 列表 + ToolCallEvent"]
+    Events -->|StreamError| T4["透明重试 或 emit ErrorEvent"]
+    Events -->|StreamDone| T5["记录 usage"]
+
+    Stream --> Guards["守卫: 90s 空闲超时 / 30min 总时长 / 10MB 内容"]
+    Guards --> Fallback["无 tool_calls? 尝试从文本 parse 工具调用"]
+    Fallback --> Done["return TurnResult"]
+    </div>
+
+    <h3>关键常量</h3>
+    <table>
+      <tr><th>常量</th><th>值</th><th>含义</th></tr>
+      <tr><td>MAX_STREAM_RETRIES</td><td>3</td><td>流中断最多重试 3 次</td></tr>
+      <tr><td>MAX_CONTEXT_RECOVERY_ATTEMPTS</td><td>3</td><td>上下文溢出最多 compact 3 次</td></tr>
+      <tr><td>TURN_MAX_OUTPUT_TOKENS</td><td>262,144</td><td>单轮最大输出 token</td></tr>
+      <tr><td>STREAM_CHUNK_TIMEOUT_SECS</td><td>90</td><td>90 秒没收到 chunk 算超时</td></tr>
+      <tr><td>STREAM_MAX_DURATION_SECS</td><td>1800</td><td>单次流最长 30 分钟</td></tr>
+      <tr><td>STREAM_MAX_CONTENT_BYTES</td><td>10 MB</td><td>内容超过 10MB 截断</td></tr>
+    </table>
+
+    <h3>透明重试</h3>
+    <p>如果流式请求<strong>还没收到任何内容</strong>就失败了，会静默重试（最多 2 次），用户无感知。一旦已经收到部分内容，就不再透明重试，避免重复输出。</p>
+
+    <!-- ========== 8. TOOLS ========== -->
+    <h2 id="tools">8. 工具执行</h2>
+
+    <h3>8.1 批调度 <code>_execute_tool_calls</code></h3>
+    <div class="mermaid">
+flowchart TD
+    Start["_execute_tool_calls"] --> Multi{工具数量 > 1?}
+    Multi -->|是| Plans["为每个工具建 ToolExecutionPlan<br/>标记 read_only / approval_required"]
+    Plans --> Para{全部只读且无审批?}
+    Para -->|是| Parallel["_execute_tools_parallel<br/>asyncio.gather 并发"]
+    Para -->|否| Serial
+    Multi -->|否| Serial
+
+    subgraph Serial["顺序执行每个工具"]
+        S1["_execute_single_tool"]
+        S2{返回 None?}
+        S2 -->|是| Denied["审批拒绝 → error tool_result"]
+        S2 -->|否| S3["audit + working_set + ToolResultEvent"]
+        S3 --> S4{成功?}
+        S4 -->|是| LSP["LSP post-edit hook"]
+        S4 --> S5["compact_tool_result → tool_result 消息"]
+        S1 -->|异常| Err["format_tool_error + ErrorEvent"]
+    end
+    </div>
+
+    <h3>8.2 并行条件 <code>should_parallelize_tool_batch</code></h3>
+    <p>批次内<strong>每一个</strong>工具都必须满足：</p>
+    <ul>
+      <li><code>read_only = True</code>（只读，不改文件）</li>
+      <li><code>supports_parallel = True</code></li>
+      <li><code>approval_required = False</code>（不需要审批）</li>
+      <li><code>interactive = False</code>（不需要用户交互）</li>
+    </ul>
+    <p>并行路径用 <code>asyncio.gather</code> 同时跑，但事件发射和结果组装仍是顺序的（保持顺序一致）。</p>
+
+    <h3>8.3 单工具路由 <code>_execute_single_tool</code></h3>
+    <div class="mermaid">
+flowchart TD
+    Start["_execute_single_tool"] --> Snap["_take_pre_tool_snapshot 写文件前快照"]
+    Snap --> Route{工具名?}
+
+    Route -->|tool_search_*| TS["execute_tool_search 在工具目录里搜索"]
+    Route -->|code_execution| CE["execute_code_execution_tool 执行代码"]
+    Route -->|multi_tool_use.parallel| MP["_execute_parallel_tools 内置并行"]
+    Route -->|request_user_input| UI["_await_user_input 等用户回答"]
+    Route -->|Registry 工具| Reg
+
+    subgraph Reg["普通工具路径"]
+        R1{registry 里有?}
+        R1 -->|否| Missing["ToolError: 工具不存在"]
+        R1 -->|是| R2["exec_policy.evaluate 需要审批?"]
+        R2 -->|是| Approve["_handle_approval_flow"]
+        Approve --> R3{拒绝?}
+        R3 -->|是| None["return None"]
+        R3 -->|否| R4
+        R2 -->|否| R4["tool_registry.execute"]
+    end
+    </div>
+
+    <h3>8.4 辅助函数 <code>_build_tool_use_message</code></h3>
+    <p>把 LLM 返回的 <code>ToolCall[]</code> 转成一条 assistant 消息，内容是 <code>ToolUseBlock[]</code>（id + name + input）。这条消息和后续的 tool_result 消息配对，LLM 才知道「我调了什么、结果是什么」。</p>
+
+    <!-- ========== 9. APPROVAL ========== -->
+    <h2 id="approval">9. 审批流程 <code>_handle_approval_flow</code></h2>
+    <p>危险操作（如 exec_shell）执行前需要用户点头。返回值 <code>True = 拒绝</code>，<code>False = 允许</code>。</p>
+
+    <div class="mermaid">
+flowchart TD
+    Start --> Cache["build_approval_key → approval_cache.check"]
+    Cache --> Hit{缓存命中 APPROVED?}
+    Hit -->|是| OK1["ApprovalResolvedEvent cached → return False"]
+    Hit -->|否| Summary["填充 input_summary<br/>MCP 用专用描述，其他用 _summarize_call_args"]
+    Summary --> Emit["ApprovalRequiredEvent → TUI 弹窗"]
+    Emit --> Wait["approval_handler.request_approval 阻塞等用户"]
+    Wait --> Decision{用户决定?}
+    Decision -->|DENIED| Deny["SandboxDeniedEvent → return True"]
+    Decision -->|APPROVED| Allow1["缓存 + record → return False"]
+    Decision -->|APPROVED_SESSION| Allow2["会话级缓存 + record → return False"]
+    </div>
+
+    <h3><code>_summarize_call_args</code> — 审批摘要</h3>
+    <p>帮审批对话框显示「具体在批什么」，而不是只显示工具名。优先级：</p>
+    <ol>
+      <li>prompt / message / objective（任务描述）</li>
+      <li>command / cmd（shell 命令）</li>
+      <li>path / file_path / source_path / dest_path（文件路径）</li>
+      <li>content / text / input（内容）</li>
+      <li>兜底：任意非空参数的第一行</li>
+    </ol>
+    <p>取首行，最长 200 字符。</p>
+
+    <h3>审批缓存</h3>
+    <p>用户选「本次会话都批准」(APPROVED_SESSION) 时，相同 fingerprint 的工具调用不再弹窗。APPROVED 只批准这一次。</p>
+
+    <!-- ========== 10. SPECIAL TOOLS ========== -->
+    <h2 id="special">10. 特殊内置工具（不经过 ToolRegistry）</h2>
+    <table>
+      <tr><th>工具名</th><th>处理函数</th><th>做什么</th></tr>
+      <tr>
+        <td><code>tool_search_tool_regex</code><br><code>tool_search_tool_bm25</code></td>
+        <td><code>execute_tool_search</code></td>
+        <td>在当前 active 工具目录里搜索匹配的工具（延迟加载机制的一部分）</td>
+      </tr>
+      <tr>
+        <td><code>code_execution</code></td>
+        <td><code>execute_code_execution_tool</code></td>
+        <td>在工作目录执行代码片段</td>
+      </tr>
+      <tr>
+        <td><code>multi_tool_use.parallel</code></td>
+        <td><code>_execute_parallel_tools</code></td>
+        <td>解析 tool_uses 数组，并发执行多个只读 registry 工具；禁止递归调用自身</td>
+      </tr>
+      <tr>
+        <td><code>request_user_input</code></td>
+        <td><code>_await_user_input</code></td>
+        <td>发 UserInputRequiredEvent，创建 Future 阻塞等待；TUI 调 resolve_user_input 解除</td>
+      </tr>
+    </table>
+
+    <h3><code>_execute_parallel_tools</code> 细节</h3>
+    <ol>
+      <li><code>parse_parallel_tool_calls(input_data)</code> 解析 tool_uses 数组</li>
+      <li>每个子调用：必须在 registry 里、必须 <code>is_read_only()</code></li>
+      <li>禁止 multi_tool_use.parallel 调用自身</li>
+      <li><code>asyncio.gather</code> 并发执行</li>
+      <li>结果 JSON 序列化返回 ToolResult</li>
+    </ol>
+
+    <h3><code>_await_user_input</code> 细节</h3>
+    <ol>
+      <li><code>validate_user_input_request</code> 校验问题结构</li>
+      <li>创建 asyncio.Future，存入 <code>handle.pending_user_inputs[tool_call_id]</code></li>
+      <li>emit UserInputRequiredEvent（含 questions 列表）</li>
+      <li><code>await future</code> 阻塞，直到 TUI 调用 <code>handle.resolve_user_input(id, response)</code></li>
+      <li>finally 清理 pending map</li>
+      <li>返回 JSON 化的 ToolResult</li>
+    </ol>
+
+    <!-- ========== 11. LSP ========== -->
+    <h2 id="lsp">11. LSP 诊断（代码编辑后自动检查）</h2>
+    <p>三个函数配合，让 AI 知道「你刚改的文件有语法错误」：</p>
+
+    <table>
+      <tr><th>函数</th><th>何时调用</th><th>做什么</th></tr>
+      <tr>
+        <td><code>_get_lsp_manager</code></td>
+        <td>内部用</td>
+        <td>从 tool_context.metadata[LSP_MANAGER_KEY] 取 LspManager</td>
+      </tr>
+      <tr>
+        <td><code>_run_post_edit_lsp_hook</code></td>
+        <td>工具<strong>成功</strong>执行后</td>
+        <td>找出被编辑的文件 → 读内容 → 调 LSP diagnostics_for → 结果存入 pending_lsp_blocks</td>
+      </tr>
+      <tr>
+        <td><code>_flush_pending_lsp_diagnostics</code></td>
+        <td>每轮 round 发 LLM 请求<strong>之前</strong></td>
+        <td>render_blocks → 合成一条 Message.user 追加到 messages</td>
+      </tr>
+    </table>
+
+    <div class="card success">
+      <p><strong>设计原则：</strong>LSP 失败<strong>完全静默</strong>，绝不阻塞 agent。LSP 挂了？没关系，只是少了一条诊断信息。</p>
+    </div>
+
+    <!-- ========== 12. SNAPSHOT ========== -->
+    <h2 id="snapshot">12. 快照与 Undo</h2>
+
+    <h3><code>_take_pre_tool_snapshot</code></h3>
+    <p>对 <code>write_file</code>、<code>edit_file</code>、<code>apply_patch</code> 三个写文件工具，执行前：</p>
+    <ol>
+      <li>用 <code>edited_paths_for_tool</code> 找出要改的文件</li>
+      <li>读文件字节（≤1MB 才快照，超大跳过）</li>
+      <li>文件不存在则记 None（表示新建文件）</li>
+      <li>存入 <code>tool_snapshots[tool_call_id]</code></li>
+      <li>最多保留 5 个快照，超出删最老的</li>
+    </ol>
+    <p>失败不影响工具执行（best-effort）。</p>
+
+    <h3><code>undo_last_tool</code></h3>
+    <p>弹出最近一个快照，逐个文件恢复：</p>
+    <ul>
+      <li>original=None → 删除文件（恢复「不存在」状态）</li>
+      <li>original=bytes → 写回原内容</li>
+    </ul>
+    <p>返回 <code>(success: bool, message: str)</code>，供 /undo 命令使用。</p>
+
+    <!-- ========== 13. COMPACT ========== -->
+    <h2 id="compact">13. 压缩与容量管理</h2>
+    <p>Engine 有<strong>三层</strong>压缩/容量保护，防止上下文爆炸：</p>
+
+    <table>
+      <tr><th>层级</th><th>触发点</th><th>函数</th><th>说明</th></tr>
+      <tr>
+        <td><span class="tag tag-blue">1. 常规压缩</span></td>
+        <td>每轮 round 开始前</td>
+        <td><code>should_compact</code> + <code>compact_messages_safe</code></td>
+        <td>消息 >500 条 或 token 超阈值（默认 500K floor）；用 LLM 总结旧消息，保留最近几条</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-green">2. 容量预检</span></td>
+        <td>每轮 round 开始前</td>
+        <td><code>run_pre_request_checkpoint</code></td>
+        <td>CapacityController 观测 token/工具密度；决策 TARGETED_CONTEXT_REFRESH → _emergency_compact</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-orange">3. 紧急压缩</span></td>
+        <td>TurnLoop 发现输入超预算</td>
+        <td><code>_emergency_compact</code></td>
+        <td>TurnLoop 内部回调，最多尝试 3 次；仍超则报 CONTEXT_OVERFLOW</td>
+      </tr>
+    </table>
+
+    <h3>压缩后 system_prompt 变化</h3>
+    <p>如果 compact 产生了 <code>summary_prompt</code>，会追加到 system_prompt 末尾：<code>system_prompt + "\n\n" + summary_prompt</code>，让模型知道之前聊了什么。</p>
+
+    <h3>工具结果压缩</h3>
+    <p><code>compact_tool_result_for_context</code>：工具返回的内容可能很大（比如读了整个文件），塞进上下文前会按模型窗口做截断/压缩。</p>
+
+    <h3>容量错误升级</h3>
+    <p><code>run_error_escalation_checkpoint</code>：工具连续出错时，CapacityController 会评估是否需要干预（当前 Python 版主要是日志，完整 VERIFY_AND_REPLAN 待实现）。</p>
+
+    <!-- ========== 14. CYCLE ========== -->
+    <h2 id="cycle">14. Cycle 归档（可选，默认关闭）</h2>
+    <p><code>_maybe_advance_cycle</code> — 超长会话的分段归档机制：</p>
+    <ol>
+      <li>估算当前 messages 的 token 数</li>
+      <li><code>should_advance_cycle</code> 判断是否超过模型阈值（默认 ~768K）</li>
+      <li>超过 → <code>archive_cycle</code> 把整个对话写到磁盘 JSONL</li>
+      <li>messages 替换为最近 8 条（seed），继续对话</li>
+      <li><code>_cycle_n += 1</code>，更新开始时间</li>
+    </ol>
+    <p>失败不阻塞对话（best-effort）。需要 <code>Config.cycle_enabled = True</code> 才启用。</p>
+
+    <h3>持久化 <code>_auto_persist_session</code></h3>
+    <p>每 turn 完成后，best-effort 写入 <code>user_sessions_dir/current.json</code>：</p>
+    <pre><code>{
+  "model": "...",
+  "turn_counter": 42,
+  "messages": [...]
+}</code></pre>
+    <p>先写 .tmp 再 atomic replace，失败静默忽略。</p>
+
+    <!-- ========== 15. EVENTS ========== -->
+    <h2 id="events">15. Engine 发出的所有事件</h2>
+    <table>
+      <tr><th>事件</th><th>何时发出</th><th>携带信息</th></tr>
+      <tr><td><code>TurnStartedEvent</code></td><td>开始处理用户消息</td><td>user_text</td></tr>
+      <tr><td><code>TurnCompleteEvent</code></td><td>一轮完成</td><td>assistant_message, usage, 费用, cache 统计</td></tr>
+      <tr><td><code>TurnCancelledEvent</code></td><td>用户取消</td><td>reason</td></tr>
+      <tr><td><code>TextDeltaEvent</code></td><td>流式文字（TurnLoop 发）</td><td>text 片段</td></tr>
+      <tr><td><code>ThinkingDeltaEvent</code></td><td>流式思考过程</td><td>thinking 片段</td></tr>
+      <tr><td><code>ToolCallEvent</code></td><td>模型决定调工具</td><td>tool_call 对象</td></tr>
+      <tr><td><code>ToolResultEvent</code></td><td>工具执行完毕</td><td>tool_call_id, name, content, success</td></tr>
+      <tr><td><code>ApprovalRequiredEvent</code></td><td>需要用户审批</td><td>tool_call_id, request（含 input_summary）</td></tr>
+      <tr><td><code>ApprovalResolvedEvent</code></td><td>审批结果</td><td>approved, reason</td></tr>
+      <tr><td><code>SandboxDeniedEvent</code></td><td>用户拒绝执行</td><td>tool_call_id, tool_name, reason</td></tr>
+      <tr><td><code>UserInputRequiredEvent</code></td><td>模型要问用户</td><td>tool_call_id, questions</td></tr>
+      <tr><td><code>ErrorEvent</code></td><td>各类错误</td><td>message, retryable</td></tr>
+    </table>
+
+    <!-- ========== 16. STATE ========== -->
+    <h2 id="state">16. Engine 维护的关键状态</h2>
+    <div class="mermaid">
+flowchart LR
+    subgraph Input["输入"]
+        UserMsg["用户消息 SendMessageOp"]
+        Steer["Steer 中途消息"]
+        Cancel["CancelRequestOp"]
+    end
+
+    subgraph State["Engine 内存状态"]
+        SM["session_messages"]
+        WS["working_set"]
+        SP["system_prompt"]
+        PC["pending_lsp_blocks"]
+        TS["tool_snapshots"]
+        Cost["session_cost / cache"]
+        AC["approval_cache"]
+    end
+
+    subgraph Output["输出"]
+        Events["EngineEvent 流"]
+        Disk["current.json"]
+        Archive["cycle 归档文件"]
+    end
+
+    UserMsg --> SM
+    Steer --> SM
+    SM --> LLM["→ LLM 请求"]
+    WS --> SP
+    ToolExec["工具执行"] --> SM
+    ToolExec --> WS
+    ToolExec --> PC
+    ToolExec --> TS
+    LLM --> Cost
+    SM --> Disk
+    SM --> Archive
+    LLM --> Events
+    ToolExec --> Events
+    Cancel --> LLM
+    </div>
+
+    <!-- ========== 17. MASTER DIAGRAM ========== -->
+    <h2 id="master">17. 总逻辑图 — 从用户输入到回复完成</h2>
+    <div class="mermaid">
+sequenceDiagram
+    participant U as 用户/TUI
+    participant H as EngineHandle
+    participant E as Engine
+    participant TL as TurnLoop
+    participant LLM as DeepSeek API
+    participant T as 工具
+
+    U->>H: send_message("帮我改 bug")
+    H->>E: next_op → SendMessageOp
+
+    Note over E: _handle_send_message
+    E->>E: reset_cancel, mark_active
+    E->>H: TurnStartedEvent
+    E->>E: working_messages = history + 新消息
+
+    loop _run_conversation 多轮
+        E->>E: steer注入 / 压缩 / LSP刷新
+        E->>TL: run(MessageRequest)
+        TL->>LLM: stream 流式请求
+
+        loop 每个 stream chunk
+            LLM-->>TL: TextDelta / ThinkingDelta
+            TL->>H: TextDeltaEvent / ThinkingDeltaEvent
+            H-->>U: 实时显示文字
+        end
+
+        LLM-->>TL: ToolCallComplete
+        TL->>H: ToolCallEvent
+        H-->>U: 显示工具调用
+
+        alt 有 tool_calls
+            E->>E: _execute_tool_calls
+            opt 需要审批
+                E->>H: ApprovalRequiredEvent
+                U->>H: 用户点批准
+                E->>H: ApprovalResolvedEvent
+            end
+            E->>T: registry.execute
+            T-->>E: ToolResult
+            E->>H: ToolResultEvent
+            H-->>U: 显示工具结果
+            Note over E: 结果追加到 messages，进入下一轮
+        else 无 tool_calls
+            Note over E: 对话结束
+        end
+    end
+
+    E->>E: session_messages = working_messages
+    E->>H: TurnCompleteEvent
+    H-->>U: 显示完整回复 + 费用
+    E->>E: _auto_persist_session
+    E->>E: mark_idle
+    </div>
+
+    <!-- ========== 18. FN INDEX ========== -->
+    <h2 id="fn-index">18. 函数索引速查</h2>
+    <ul class="fn-list">
+      <li><code>_summarize_call_args</code> <span class="tag tag-gray">模块级</span> — 从工具参数提取审批摘要（200 字符内）</li>
+      <li><code>__init__</code> <span class="tag tag-blue">构造</span> — 初始化所有子系统和状态字段</li>
+      <li><code>create</code> <span class="tag tag-blue">工厂</span> — 完整装配 Engine（ToolRuntime + Skills + Config）</li>
+      <li><code>run</code> <span class="tag tag-red">入口</span> — 无限循环读取 op_queue</li>
+      <li><code>_handle_send_message</code> <span class="tag tag-orange">Turn</span> — 重置 cancel、标记 active/idle</li>
+      <li><code>_handle_send_message_inner</code> <span class="tag tag-orange">Turn</span> — 单条消息的完整生命周期</li>
+      <li><code>_run_conversation</code> <span class="tag tag-red">核心</span> — 多轮 Agent 循环（LLM ↔ 工具）</li>
+      <li><code>_build_tool_use_message</code> <span class="tag tag-gray">辅助</span> — ToolCall[] → assistant tool_use 消息</li>
+      <li><code>_execute_tool_calls</code> <span class="tag tag-green">工具</span> — 批调度（判断并行/串行）</li>
+      <li><code>_execute_tools_parallel</code> <span class="tag tag-green">工具</span> — asyncio.gather 并行只读工具</li>
+      <li><code>_execute_single_tool</code> <span class="tag tag-green">工具</span> — 单工具路由（特殊/审批/registry）</li>
+      <li><code>_handle_approval_flow</code> <span class="tag tag-orange">安全</span> — 审批门（缓存 → 弹窗 → 决定）</li>
+      <li><code>_take_pre_tool_snapshot</code> <span class="tag tag-gray">Undo</span> — 写文件前快照</li>
+      <li><code>undo_last_tool</code> <span class="tag tag-gray">Undo</span> — 恢复最近快照（/undo 命令）</li>
+      <li><code>_execute_parallel_tools</code> <span class="tag tag-green">内置</span> — multi_tool_use.parallel 内部并发</li>
+      <li><code>_await_user_input</code> <span class="tag tag-green">内置</span> — request_user_input 阻塞等 TUI</li>
+      <li><code>_run_post_edit_lsp_hook</code> <span class="tag tag-gray">LSP</span> — 编辑后收集诊断</li>
+      <li><code>_flush_pending_lsp_diagnostics</code> <span class="tag tag-gray">LSP</span> — 下次请求前注入诊断</li>
+      <li><code>_get_lsp_manager</code> <span class="tag tag-gray">LSP</span> — 从 context.metadata 取 LSP</li>
+      <li><code>_maybe_advance_cycle</code> <span class="tag tag-gray">Cycle</span> — 超长会话归档 + trim</li>
+      <li><code>_emergency_compact</code> <span class="tag tag-gray">压缩</span> — TurnLoop 溢出回调</li>
+      <li><code>_auto_persist_session</code> <span class="tag tag-gray">持久化</span> — 写 current.json</li>
+      <li><code>_render_skills_context</code> <span class="tag tag-gray">辅助</span> — Skills → system prompt 文本</li>
+      <li><code>context_breakdown</code> <span class="tag tag-gray">诊断</span> — token 占用分析</li>
+      <li><code>shutdown</code> <span class="tag tag-gray">生命周期</span> — 清理资源</li>
+    </ul>
+
+    <div class="card highlight" style="margin-top: 2rem;">
+      <p><strong>记住这三句话就够了：</strong></p>
+      <ol>
+        <li><code>run()</code> 不停地从 Handle 读指令，收到消息就处理。</li>
+        <li><code>_run_conversation()</code> 是 Agent 循环：问 LLM → 执行工具 → 再问 LLM，直到模型不再调工具。</li>
+        <li><code>TurnLoop.run()</code> 是单次 LLM 流式请求：逐字推送、收集 tool_calls、处理超时/重试/取消。</li>
+      </ol>
+    </div>
+
+    <p style="margin-top: 2rem; color: var(--muted); font-size: 0.85rem;">
+      生成自 <code>src/deepseek_tui/engine/engine.py</code> · deepseek-tui-py
+    </p>
+  </main>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'neutral',
+    flowchart: { curve: 'basis', padding: 16 },
+    sequence: { actorMargin: 40, messageMargin: 30 }
+  });
+</script>
+</body>
+</html>

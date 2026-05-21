@@ -2,10 +2,63 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from deepseek_tui.engine.events import EngineEvent
-from deepseek_tui.engine.ops import CancelRequestOp, EngineOp, SendMessageOp
+from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest
+
+
+# --- Ops (formerly engine/ops.py) -------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SendMessageOp:
+    content: str
+    model: str | None = None
+    max_tokens: int | None = None
+    system_prompt: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CancelRequestOp:
+    reason: str = "user_cancelled"
+
+
+EngineOp = SendMessageOp | CancelRequestOp
+
+
+# --- Approval handlers (formerly engine/approval.py) -------------------------
+
+
+class ApprovalHandler:
+    async def request_approval(
+        self,
+        tool_call_id: str,
+        request: ApprovalRequest,
+    ) -> ApprovalDecision:
+        raise NotImplementedError
+
+
+class AutoApprovalHandler(ApprovalHandler):
+    async def request_approval(
+        self,
+        tool_call_id: str,
+        request: ApprovalRequest,
+    ) -> ApprovalDecision:
+        return ApprovalDecision.APPROVED
+
+
+class DenyApprovalHandler(ApprovalHandler):
+    async def request_approval(
+        self,
+        tool_call_id: str,
+        request: ApprovalRequest,
+    ) -> ApprovalDecision:
+        return ApprovalDecision.DENIED
+
+
+# --- EngineHandle ------------------------------------------------------------
 
 
 class EngineHandle:

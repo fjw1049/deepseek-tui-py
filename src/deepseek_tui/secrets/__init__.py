@@ -18,8 +18,28 @@ Public surface:
   types.
 """
 
+from pathlib import Path as _Path
+
 from .env_map import env_for
-from .errors import InsecurePermissionsError, SecretsError
+
+
+# --- Errors (formerly secrets/errors.py) --------------------------------------
+
+
+class SecretsError(Exception):
+    """Base class for any error a secret-store backend may surface."""
+
+
+class InsecurePermissionsError(SecretsError):
+    """Raised when an on-disk secrets file has unsafe Unix permissions."""
+
+    def __init__(self, path: _Path, mode: int) -> None:
+        super().__init__(
+            f"file-backed secret store at {path} has insecure "
+            f"permissions {mode:o} (expected 0600)"
+        )
+        self.path = path
+        self.mode = mode
 from .facade import Secrets
 from .file_store import FileKeyringStore
 from .manager import SecretsManager

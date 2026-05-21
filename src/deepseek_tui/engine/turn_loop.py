@@ -122,7 +122,7 @@ class TurnLoop:
         """
         state = _TurnState()
         tool_catalog = tools or []
-
+        # 延迟加载，模型至少能直接调用代码执行和工具发现能力，其余工具按延迟加载策略按需激活
         if tool_catalog:
             ensure_advanced_tooling(tool_catalog)
 
@@ -206,6 +206,7 @@ class TurnLoop:
                         continue
 
             # Build request with active tools
+            # 重建 stream 请求 — 只发「当前激活」的工具
             active_tools = None
             if tool_catalog:
                 active_tools = active_tools_for_step(
@@ -219,7 +220,11 @@ class TurnLoop:
                 messages=request.messages,
                 system_prompt=request.system_prompt,
                 tools=active_tools or [],
-                tool_choice={"type": "auto"} if active_tools else None,
+                tool_choice=(
+                    request.tool_choice
+                    if request.tool_choice is not None
+                    else ({"type": "auto"} if active_tools else None)
+                ),
                 max_tokens=request.max_tokens or TURN_MAX_OUTPUT_TOKENS,
                 # Forward reasoning / sampling controls from the upstream
                 # request so non-streaming Engine config (Config.reasoning_effort

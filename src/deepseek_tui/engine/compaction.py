@@ -323,7 +323,7 @@ async def compact_messages_safe(
     if not messages or not config.enabled:
         return CompactionResult(messages=messages)
 
-    # Generate compaction plan
+    # # 最近4条消息 plan 不动，其余送去摘要
     plan = plan_compaction(messages, pinned_indices)
 
     if not plan.summarize_indices:

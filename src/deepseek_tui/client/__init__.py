@@ -1,8 +1,8 @@
 from .base import LLMClient
 from .deepseek import DeepSeekClient
-from .openai_compat import OpenAICompatClient
+from .deepseek import OpenAICompatClient
 from .pricing import ModelPricing, PricingTable
-from .retry import RetryConfig
+from .base import RetryConfig
 from .streaming import OpenAIStreamParser, parse_json_object
 
 __all__ = [

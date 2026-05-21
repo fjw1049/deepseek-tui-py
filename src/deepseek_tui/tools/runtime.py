@@ -221,6 +221,19 @@ async def create_tool_runtime(
             name="automation-scheduler",
         )
 
+    # Network policy — domain-level allow/deny for outbound HTTP
+    network_decider = None
+    net_cfg = getattr(cfg, "network_policy", None)
+    if net_cfg is not None:
+        from deepseek_tui.network.policy import NetworkPolicy, NetworkPolicyDecider
+
+        network_decider = NetworkPolicyDecider(
+            policy=NetworkPolicy(
+                allow=getattr(net_cfg, "allow", []),
+                deny=getattr(net_cfg, "deny", []),
+            ),
+        )
+
     context = ToolContext(
         working_directory=workspace,
         trust_mode=getattr(cfg, "trust_mode", False),
@@ -228,6 +241,7 @@ async def create_tool_runtime(
         policy=policy,
         task_manager=task_manager,
         subagent_manager=subagent_manager,
+        network_policy=network_decider,
     )
 
     return ToolRuntime(

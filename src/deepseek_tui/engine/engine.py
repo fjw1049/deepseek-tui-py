@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.engine.approval import ApprovalHandler, AutoApprovalHandler
+from deepseek_tui.engine.handle import ApprovalHandler, AutoApprovalHandler
 from deepseek_tui.engine.capacity import CapacityController, CapacityControllerConfig
 from deepseek_tui.engine.capacity_flow import (
     run_error_escalation_checkpoint,
@@ -45,8 +45,7 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
-from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.engine.ops import CancelRequestOp, SendMessageOp
+from deepseek_tui.engine.handle import CancelRequestOp, EngineHandle, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
 from deepseek_tui.engine.seam_manager import SeamConfig, SeamManager
 from deepseek_tui.engine.tool_catalog import (
@@ -58,7 +57,7 @@ from deepseek_tui.engine.tool_catalog import (
     is_tool_search_tool,
     missing_tool_error_message,
 )
-from deepseek_tui.engine.tool_execution import emit_tool_audit
+from deepseek_tui.engine.dispatch import emit_tool_audit
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
 from deepseek_tui.engine.working_set import WorkingSet
 from deepseek_tui.execpolicy.approval_cache import (
@@ -552,6 +551,7 @@ class Engine:
                     messages.append(Message.user(steer_text))
 
             # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
+            # 观测 token/工具调用密度,容量预检查
             await run_pre_request_checkpoint(
                 self.capacity_controller,
                 self.turn_counter,
@@ -587,11 +587,19 @@ class Engine:
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
             self._flush_pending_lsp_diagnostics(messages)
+            # Strict tool mode: in agent mode with tools, force the model
+            # to always call a tool (no empty text responses). Mirrors Rust
+            # Engine.strict_tool_mode (core/engine.rs).
+            tool_choice: str | dict[str, Any] | None = None
+            if self.mode == "agent" and tools:
+                tool_choice = {"type": "required"}
+
             request = MessageRequest(
                 model=model,
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=tools,
+                tool_choice=tool_choice,
                 max_tokens=max_tokens,
                 temperature=self.default_temperature,
                 top_p=self.default_top_p,
@@ -616,6 +624,7 @@ class Engine:
             messages.extend(tool_results)
 
             # Capacity post-tool checkpoint (mirrors capacity_flow.rs:37-76)
+            # 观测 token/工具调用密度,容量后检查
             await run_post_tool_checkpoint(
                 self.capacity_controller, self.turn_counter, model, messages,
             )
@@ -764,6 +773,7 @@ class Engine:
                         await self._run_post_edit_lsp_hook(
                             tool_call.name, tool_call.arguments
                         )
+                    # 单次工具调用的输出太长，在送入下一轮 LLM 请求前裁剪
                     output_for_context = compact_tool_result_for_context(
                         effective_model, tool_call.name, result
                     )

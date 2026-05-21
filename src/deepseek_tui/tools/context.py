@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from deepseek_tui.execpolicy.policy import Policy
+    from deepseek_tui.network.policy import NetworkPolicyDecider
     from deepseek_tui.tools.subagent import SubAgentManager
     from deepseek_tui.tools.task_manager import TaskManager
 
@@ -19,6 +20,7 @@ class ToolContext:
     policy: Policy | None = None
     task_manager: TaskManager | None = None
     subagent_manager: SubAgentManager | None = None
+    network_policy: NetworkPolicyDecider | None = None
 
     def resolve_path(self, path: str) -> Path:
         """Resolve ``path`` against the workspace, refusing escapes.

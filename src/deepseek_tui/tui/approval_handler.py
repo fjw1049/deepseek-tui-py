@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from deepseek_tui.engine.approval import ApprovalHandler
+from deepseek_tui.engine.handle import ApprovalHandler
 from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest
 
 if TYPE_CHECKING:

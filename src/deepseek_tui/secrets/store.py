@@ -12,7 +12,7 @@ from threading import Lock
 import keyring as _keyring_pkg
 from keyring.errors import KeyringError, NoKeyringError, PasswordDeleteError
 
-from .errors import SecretsError
+from . import SecretsError
 
 __all__ = [
     "DEFAULT_SERVICE",

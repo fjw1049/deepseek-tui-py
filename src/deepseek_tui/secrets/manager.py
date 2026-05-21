@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from deepseek_tui.config.models import Config
 
-from .errors import SecretsError
+from . import SecretsError
 from .facade import Secrets
 from .store import DEFAULT_SERVICE, KeyringStore
 

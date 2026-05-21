@@ -484,7 +484,7 @@ def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
 def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
     if app._engine is None:
         return CommandResult(error="Engine not started")
-    from deepseek_tui.engine.approval import AutoApprovalHandler
+    from deepseek_tui.engine.handle import AutoApprovalHandler
     app._engine.approval_handler = AutoApprovalHandler()
     return CommandResult(output="YOLO mode enabled — all tool approvals auto-accepted.")
 

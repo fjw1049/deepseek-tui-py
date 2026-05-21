@@ -17,21 +17,25 @@ from deepseek_tui.protocol.responses import (
 
 
 def parse_json_object(raw: str) -> dict[str, Any]:
+    """Parse raw JSON arguments with repair ladder fallback.
+
+    Mirrors Rust ``arg_repair.rs`` — guarantees a dict is always returned.
+    """
     if not raw:
         return {}
     try:
         parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+        return {"value": parsed}
     except json.JSONDecodeError:
-        # Fallback: use parse_tool_input for robust fragment reassembly
-        # (mirrors Rust dispatch.rs:145 — handles code fences, balanced braces)
-        from deepseek_tui.engine.tool_parser import parse_tool_input
-        result = parse_tool_input(raw)
-        if result is not None:
-            return result
-        return {"raw": raw}
-    if isinstance(parsed, dict):
-        return parsed
-    return {"value": parsed}
+        pass
+
+    # Stage 2+: deterministic repair ladder (trailing commas, control chars,
+    # unbalanced braces) — mirrors crates/tui/src/tools/arg_repair.rs
+    from deepseek_tui.engine.arg_repair import repair
+
+    return repair(raw)
 
 
 @dataclass(slots=True)

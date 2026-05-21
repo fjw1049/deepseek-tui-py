@@ -33,8 +33,7 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
-from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.engine.ops import SendMessageOp
+from deepseek_tui.engine.handle import EngineHandle, SendMessageOp
 from deepseek_tui.tui.backtrack import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
 from deepseek_tui.tui.widgets.command_palette import CommandPalette
