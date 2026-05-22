@@ -19,6 +19,8 @@ The REPL exposes:
 - `rlm_query_batched(prompts, model=None)` — concurrent recursive sub-RLMs.
 - `SHOW_VARS()` — list user variables and their types.
 - `repl_set(name, value)` / `repl_get(name)` — explicit cross-round storage.
+- `chunk_context(max_chars=8000, overlap=0)` — split `context` into overlapping chunks; returns `list[str]`.
+- `chunk_coverage(chunks)` — report how much of `context` the chunks cover (chars + chunk count).
 - `print(...)` — diagnostic output. The driver feeds you a truncated preview next round.
 - `FINAL(value)` — end the loop with this string answer.
 - `FINAL_VAR(name)` — end the loop with the value of a named variable.

@@ -137,6 +137,13 @@ class AgentSpawnTool(ToolSpec):
                     "type": "string",
                     "description": "Optional display name for the agent (does not affect agent type)"
                 },
+                "fork_context": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, inherit the parent's conversation prefix before "
+                        "appending this task. Defaults to false for independent exploration."
+                    ),
+                },
             },
         }
 
@@ -172,6 +179,12 @@ class AgentSpawnTool(ToolSpec):
             allowed_tools = [s for s in allowed_raw if isinstance(s, str)]
         if agent_type is SubAgentType.CUSTOM and not allowed_tools:
             raise ToolError("Custom sub-agents require a non-empty allowed_tools list")
+        fork_context = _pick_bool(input_data, "fork_context")
+        fork_messages = None
+        if fork_context:
+            raw = context.metadata.get("parent_session_messages")
+            if isinstance(raw, list):
+                fork_messages = [m for m in raw if isinstance(m, dict)]
         request = SpawnRequest(
             prompt=prompt,
             agent_type=agent_type,
@@ -180,6 +193,8 @@ class AgentSpawnTool(ToolSpec):
             model=_pick_str(input_data, "model"),
             nickname=_pick_str(input_data, "nickname"),
             parent_depth=int(context.metadata.get("subagent_depth", 0) or 0),
+            fork_context=fork_context,
+            fork_messages=fork_messages,
         )
         try:
             snapshot = await manager.spawn(request)
@@ -284,7 +299,7 @@ class AgentCloseTool(ToolSpec):
         return "close_agent"
 
     def description(self) -> str:
-        return "Close a sub-agent: cancel and remove it from the active map."
+        return "Close a running sub-agent. Alias for agent_cancel."
 
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -309,13 +324,19 @@ class AgentCloseTool(ToolSpec):
         if agent_id is None:
             raise ToolError("id is required")
         try:
-            snapshot = await manager.close(agent_id)
+            snapshot = await manager.cancel(agent_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
+        payload = _result_to_json(snapshot)
+        payload["_deprecation"] = {
+            "this_tool": "close_agent",
+            "use_instead": "agent_cancel",
+            "message": "Tool 'close_agent' is deprecated; switch to 'agent_cancel'.",
+        }
         return ToolResult(
             success=True,
-            content=f"closed {snapshot.agent_id}",
-            metadata=_result_to_json(snapshot),
+            content=f"cancelled {snapshot.agent_id}",
+            metadata=payload,
         )
 
 

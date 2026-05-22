@@ -29,8 +29,10 @@ from deepseek_tui.client.base import LLMClient
 from deepseek_tui.protocol.messages import Message, Role, TextBlock
 from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import (
+    StreamDone,
     StreamError,
     StreamTextDelta,
+    Usage,
 )
 from deepseek_tui.tools.rlm.prompt import rlm_system_prompt
 from deepseek_tui.tools.rlm.repl import ReplRuntime, build_sub_llm_helpers
@@ -71,6 +73,24 @@ class RlmRoundTrace:
 
 
 @dataclass(slots=True)
+class RlmUsage:
+    """Accumulated token usage across root + child LLM calls."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+    def add(self, usage: Usage | None) -> None:
+        if usage is None:
+            return
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.cache_read_input_tokens += usage.cache_read_input_tokens
+        self.cache_creation_input_tokens += usage.cache_creation_input_tokens
+
+
+@dataclass(slots=True)
 class RlmTurnResult:
     """Mirror Rust ``RlmTurnResult`` (turn.rs:76)."""
 
@@ -81,6 +101,7 @@ class RlmTurnResult:
     termination: RlmTermination
     trace: list[RlmRoundTrace] = field(default_factory=list)
     total_rpcs: int = 0
+    usage: RlmUsage = field(default_factory=RlmUsage)
 
 
 # ---------------------------------------------------------------------------
@@ -106,28 +127,31 @@ async def run_rlm_turn(
     """
     start = time.monotonic()
     helpers_runtime_ref: list[ReplRuntime] = [None]  # type: ignore[list-item]
+    usage_acc = RlmUsage()
 
     sync_run = _make_sync_run(asyncio.get_running_loop())
 
     async def _llm_one(
         p: str, m: str | None, mt: int | None, s: str | None
     ) -> str:
-        return await _unary_completion(
+        text, usage = await _unary_completion(
             client,
             model=m or child_model,
             prompt=p,
             system=s,
             max_tokens=mt,
         )
+        usage_acc.add(usage)
+        return text
 
     async def _llm_batch(prompts: list[str], m: str | None) -> list[str]:
         return await _gather_strings(
-            [_unary_completion(client, model=m or child_model, prompt=p) for p in prompts]
+            [_llm_one(p, m, None, None) for p in prompts]
         )
 
     async def _rlm_one(p: str, m: str | None) -> str:
         if max_depth <= 0:
-            return await _unary_completion(client, model=m or child_model, prompt=p)
+            return await _llm_one(p, m, None, None)
         sub = await run_rlm_turn(
             client=client,
             model=model,
@@ -135,6 +159,14 @@ async def run_rlm_turn(
             root_prompt=None,
             child_model=child_model,
             max_depth=max_depth - 1,
+        )
+        usage_acc.add(
+            Usage(
+                input_tokens=sub.usage.input_tokens,
+                output_tokens=sub.usage.output_tokens,
+                cache_read_input_tokens=sub.usage.cache_read_input_tokens,
+                cache_creation_input_tokens=sub.usage.cache_creation_input_tokens,
+            )
         )
         return sub.answer or (sub.error or "")
 
@@ -172,12 +204,14 @@ async def run_rlm_turn(
                 termination=RlmTermination.ERROR,
                 trace=trace,
                 total_rpcs=total_rpcs,
+                usage=usage_acc,
             )
 
         try:
-            response_text = await _request_root_completion(
+            response_text, root_usage = await _request_root_completion(
                 client, model=model, system=system, messages=messages
             )
+            usage_acc.add(root_usage)
         except Exception as exc:  # noqa: BLE001
             _LOG.exception("RLM root LLM call failed")
             return RlmTurnResult(
@@ -188,6 +222,7 @@ async def run_rlm_turn(
                 termination=RlmTermination.ERROR,
                 trace=trace,
                 total_rpcs=total_rpcs,
+                usage=usage_acc,
             )
 
         # Top-level FINAL detection.
@@ -204,6 +239,7 @@ async def run_rlm_turn(
                         termination=RlmTermination.NO_CODE,
                         trace=trace,
                         total_rpcs=total_rpcs,
+                        usage=usage_acc,
                     )
                 messages.append(_assistant(response_text))
                 messages.append(_user(_NO_RPC_REMINDER))
@@ -216,6 +252,7 @@ async def run_rlm_turn(
                 termination=RlmTermination.FINAL,
                 trace=trace,
                 total_rpcs=total_rpcs,
+                usage=usage_acc,
             )
 
         code = extract_repl_code(response_text)
@@ -233,6 +270,7 @@ async def run_rlm_turn(
                     termination=RlmTermination.NO_CODE,
                     trace=trace,
                     total_rpcs=total_rpcs,
+                    usage=usage_acc,
                 )
             messages.append(_assistant(response_text))
             messages.append(_user(_NO_FENCE_REMINDER))
@@ -263,6 +301,7 @@ async def run_rlm_turn(
                 termination=RlmTermination.FINAL,
                 trace=trace,
                 total_rpcs=total_rpcs,
+                usage=usage_acc,
             )
 
         messages.append(_assistant(f"```repl\n{code}\n```"))
@@ -283,6 +322,7 @@ async def run_rlm_turn(
         termination=RlmTermination.EXHAUSTED,
         trace=trace,
         total_rpcs=total_rpcs,
+        usage=usage_acc,
     )
 
 
@@ -394,6 +434,8 @@ def _build_metadata_message(
             "- `llm_query_batched([p1, p2, ...])`     — concurrent fan-out",
             "- `rlm_query(prompt, model=None)`        — recursive sub-RLM",
             "- `rlm_query_batched([p1, p2, ...])`     — concurrent recursive sub-RLMs",
+            "- `chunk_context(max_chars=20000, overlap=0)` — full-coverage chunks",
+            "- `chunk_coverage(chunks)`              — coverage report for chunk_context output",
             "- `SHOW_VARS()`                          — list user variables",
             "- `repl_set(name, value)` / `repl_get(name)` — explicit store",
             "- `FINAL(value)`                         — end the loop with this answer",
@@ -427,7 +469,7 @@ async def _request_root_completion(
     model: str,
     system: str,
     messages: list[Message],
-) -> str:
+) -> tuple[str, Usage | None]:
     request = MessageRequest(
         model=model,
         messages=list(messages),
@@ -438,12 +480,15 @@ async def _request_root_completion(
         stream=True,
     )
     parts: list[str] = []
+    usage: Usage | None = None
     async for event in client.stream_with_retry(request):
         if isinstance(event, StreamTextDelta):
             parts.append(event.text)
         elif isinstance(event, StreamError) and not event.retryable:
             raise RuntimeError(event.message)
-    return "".join(parts).strip()
+        elif isinstance(event, StreamDone):
+            usage = event.usage
+    return "".join(parts).strip(), usage
 
 
 async def _unary_completion(
@@ -453,13 +498,8 @@ async def _unary_completion(
     prompt: str,
     system: str | None = None,
     max_tokens: int | None = None,
-) -> str:
-    """One-shot completion driven by streaming + concat.
-
-    The Rust client exposes a ``create_message`` unary call; the Python
-    port only has ``stream_chat_completion``, so we do the same thing
-    by collecting deltas. Mirror is behavioural, not endpoint-level.
-    """
+) -> tuple[str, Usage | None]:
+    """One-shot completion driven by streaming + concat."""
     request = MessageRequest(
         model=model,
         messages=[_user(prompt)],
@@ -468,12 +508,15 @@ async def _unary_completion(
         stream=True,
     )
     parts: list[str] = []
+    usage: Usage | None = None
     async for event in client.stream_with_retry(request):
         if isinstance(event, StreamTextDelta):
             parts.append(event.text)
         elif isinstance(event, StreamError) and not event.retryable:
             raise RuntimeError(event.message)
-    return "".join(parts).strip()
+        elif isinstance(event, StreamDone):
+            usage = event.usage
+    return "".join(parts).strip(), usage
 
 
 async def _gather_strings(awaitables: list[Awaitable[str]]) -> list[str]:

@@ -20,8 +20,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-CURRENT_TASK_SCHEMA_VERSION = 1
-TIMELINE_SUMMARY_LIMIT = 280
+CURRENT_TASK_SCHEMA_VERSION = 2
+TIMELINE_SUMMARY_LIMIT = 240
+ARTIFACT_THRESHOLD = 1200
 MAX_WORKERS = 4
 _MAX_TERMINAL_IN_MEMORY = 50
 
@@ -356,15 +357,30 @@ class TaskManager:
     def artifact_absolute_path(self, patch_ref: str) -> Path:
         """Resolve a recorded artifact reference to an absolute path.
 
-        Mirrors Rust ``TaskManager::artifact_absolute_path``
-        (crates/tui/src/tools/tasks.rs:750). Absolute paths pass through;
-        relative refs resolve under ``artifacts_dir`` (where attempt
-        patches are written).
+        Mirrors Rust ``TaskManager::artifact_absolute_path``.
         """
         p = Path(patch_ref)
         if p.is_absolute():
             return p
-        return self._artifacts_dir / p
+        return self._cfg.data_dir / p
+
+    def write_task_artifact(
+        self, task_id: str, label: str, content: str
+    ) -> Path:
+        """Write a durable task artifact and return the persisted relative path."""
+        artifact_dir = self._artifacts_dir / task_id
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        stamp = _utc_now_iso().replace(":", "").replace("-", "")
+        safe_label = "".join(c if c.isalnum() or c in "_-" else "_" for c in label)
+        if not safe_label:
+            safe_label = "artifact"
+        filename = f"{stamp}_{safe_label}.txt"
+        absolute = artifact_dir / filename
+        absolute.write_text(content, encoding="utf-8")
+        try:
+            return absolute.relative_to(self._cfg.data_dir)
+        except ValueError:
+            return absolute
 
     async def add_task(self, req: NewTaskRequest) -> TaskRecord:
         prompt = req.prompt.strip()
@@ -387,7 +403,7 @@ class TaskManager:
             trust_mode=(
                 req.trust_mode if req.trust_mode is not None else self._cfg.trust_mode
             ),
-            auto_approve=req.auto_approve if req.auto_approve is not None else True,
+            auto_approve=req.auto_approve if req.auto_approve is not None else False,
             status=TaskStatus.QUEUED,
             created_at=now,
             timeline=[
@@ -526,69 +542,165 @@ class TaskManager:
     def _apply_task_update_metadata(
         self, task: TaskRecord, metadata: dict[str, Any]
     ) -> None:
-        """Translate a single ``task_updates`` payload into ``TaskRecord`` mutations.
-
-        Mirrors Rust ``apply_task_update_metadata`` (``task_manager.rs:1360-1452``).
-        Only handles ``checklist`` for now — gate / attempt / artifact /
-        github_event branches from the Rust version are integration debt
-        and live as TODOs until the corresponding tools land in Python.
-        """
+        """Translate ``task_updates`` payload into ``TaskRecord`` mutations."""
         updates = metadata.get("task_updates")
         if not isinstance(updates, dict):
             return
+        now = _utc_now_iso()
+
         checklist_payload = updates.get("checklist")
-        if not isinstance(checklist_payload, dict):
-            return
-        items_raw = checklist_payload.get("items", [])
-        items: list[TaskChecklistItem] = []
-        if isinstance(items_raw, list):
-            for entry in items_raw:
-                if not isinstance(entry, dict):
+        if isinstance(checklist_payload, dict):
+            items_raw = checklist_payload.get("items", [])
+            items: list[TaskChecklistItem] = []
+            if isinstance(items_raw, list):
+                for entry in items_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    raw_id = entry.get("id")
+                    try:
+                        item_id = int(raw_id) if raw_id is not None else 0
+                    except (TypeError, ValueError):
+                        continue
+                    items.append(
+                        TaskChecklistItem(
+                            id=item_id,
+                            content=str(entry.get("content", "")),
+                            status=str(entry.get("status", "pending")),
+                        )
+                    )
+            try:
+                completion_pct = int(checklist_payload.get("completion_pct", 0))
+            except (TypeError, ValueError):
+                completion_pct = 0
+            in_progress_raw = checklist_payload.get("in_progress_id")
+            in_progress_id = (
+                int(in_progress_raw)
+                if isinstance(in_progress_raw, int)
+                else None
+            )
+            task.checklist = TaskChecklistState(
+                items=items,
+                completion_pct=completion_pct,
+                in_progress_id=in_progress_id,
+                updated_at=now,
+            )
+            task.timeline.append(
+                TaskTimelineEntry(
+                    timestamp=now,
+                    kind="checklist",
+                    summary=(
+                        f"Checklist updated: {len(items)} item(s), "
+                        f"{completion_pct}% complete"
+                    ),
+                )
+            )
+
+        gate_payload = updates.get("gate")
+        if isinstance(gate_payload, dict):
+            gate = TaskGateRecord(
+                id=str(gate_payload.get("id", f"gate_{uuid.uuid4().hex[:8]}")),
+                gate=str(gate_payload.get("gate", "custom")),
+                command=str(gate_payload.get("command", "")),
+                cwd=str(gate_payload.get("cwd", task.workspace)),
+                exit_code=gate_payload.get("exit_code"),
+                status=str(gate_payload.get("status", "unknown")),
+                classification=str(gate_payload.get("classification", "unknown")),
+                duration_ms=int(gate_payload.get("duration_ms") or 0),
+                summary=str(gate_payload.get("summary", "")),
+                recorded_at=str(gate_payload.get("recorded_at") or now),
+                log_path=gate_payload.get("log_path"),
+            )
+            task.gates = [g for g in task.gates if g.id != gate.id] + [gate]
+            task.timeline.append(
+                TaskTimelineEntry(
+                    timestamp=now,
+                    kind="gate",
+                    summary=_summarize_text(
+                        f"Gate {gate.gate} {gate.status}: {gate.summary}",
+                        TIMELINE_SUMMARY_LIMIT,
+                    ),
+                    detail_path=str(gate.log_path) if gate.log_path else None,
+                )
+            )
+
+        attempt_payload = updates.get("attempt")
+        if isinstance(attempt_payload, dict):
+            attempt = TaskAttemptRecord(
+                id=str(attempt_payload.get("id", f"attempt_{uuid.uuid4().hex[:8]}")),
+                attempt_group_id=str(
+                    attempt_payload.get("attempt_group_id", "group_unknown")
+                ),
+                attempt_index=int(attempt_payload.get("attempt_index") or 1),
+                attempt_count=int(attempt_payload.get("attempt_count") or 1),
+                summary=str(attempt_payload.get("summary", "")),
+                changed_files=list(attempt_payload.get("changed_files") or []),
+                verification=list(attempt_payload.get("verification") or []),
+                selected=bool(attempt_payload.get("selected", False)),
+                recorded_at=str(attempt_payload.get("recorded_at") or now),
+                base_ref=attempt_payload.get("base_ref"),
+                base_sha=attempt_payload.get("base_sha"),
+                head_ref=attempt_payload.get("head_ref"),
+                head_sha=attempt_payload.get("head_sha"),
+                patch_path=attempt_payload.get("patch_path"),
+            )
+            task.attempts = [
+                a for a in task.attempts if a.id != attempt.id
+            ] + [attempt]
+            task.timeline.append(
+                TaskTimelineEntry(
+                    timestamp=now,
+                    kind="pr_attempt",
+                    summary=(
+                        f"Attempt {attempt.attempt_index}/{attempt.attempt_count} "
+                        f"recorded"
+                    ),
+                    detail_path=str(attempt.patch_path) if attempt.patch_path else None,
+                )
+            )
+
+        artifacts_payload = updates.get("artifacts")
+        if isinstance(artifacts_payload, list):
+            for item in artifacts_payload:
+                if not isinstance(item, dict):
                     continue
-                raw_id = entry.get("id")
-                try:
-                    item_id = int(raw_id) if raw_id is not None else 0
-                except (TypeError, ValueError):
-                    continue
-                content = entry.get("content", "")
-                status = entry.get("status", "pending")
-                items.append(
-                    TaskChecklistItem(
-                        id=item_id,
-                        content=str(content),
-                        status=str(status),
+                artifact = TaskArtifactRef(
+                    label=str(item.get("label", "artifact")),
+                    path=str(item.get("path", "")),
+                    summary=str(item.get("summary", "")),
+                    created_at=str(item.get("created_at") or now),
+                )
+                task.artifacts.append(artifact)
+                task.timeline.append(
+                    TaskTimelineEntry(
+                        timestamp=now,
+                        kind="artifact",
+                        summary=f"{artifact.label}: {artifact.summary}",
+                        detail_path=artifact.path,
                     )
                 )
-        completion_pct_raw = checklist_payload.get("completion_pct", 0)
-        try:
-            completion_pct = int(completion_pct_raw)
-        except (TypeError, ValueError):
-            completion_pct = 0
-        in_progress_raw = checklist_payload.get("in_progress_id")
-        in_progress_id: int | None
-        if isinstance(in_progress_raw, int):
-            in_progress_id = in_progress_raw
-        elif isinstance(in_progress_raw, str) and in_progress_raw.lstrip("-").isdigit():
-            in_progress_id = int(in_progress_raw)
-        else:
-            in_progress_id = None
-        now = _utc_now_iso()
-        task.checklist = TaskChecklistState(
-            items=items,
-            completion_pct=completion_pct,
-            in_progress_id=in_progress_id,
-            updated_at=now,
-        )
-        task.timeline.append(
-            TaskTimelineEntry(
-                timestamp=now,
-                kind="checklist",
-                summary=(
-                    f"Checklist updated: {len(items)} item(s), "
-                    f"{completion_pct}% complete"
-                ),
+
+        github_payload = updates.get("github_event")
+        if isinstance(github_payload, dict):
+            event = TaskGithubEvent(
+                id=str(github_payload.get("id", f"github_{uuid.uuid4().hex[:8]}")),
+                action=str(github_payload.get("action", "")),
+                target=str(github_payload.get("target", "")),
+                number=int(github_payload.get("number") or 0),
+                summary=str(github_payload.get("summary", "")),
+                recorded_at=str(github_payload.get("recorded_at") or now),
+                url=github_payload.get("url"),
             )
-        )
+            task.github_events.append(event)
+            task.timeline.append(
+                TaskTimelineEntry(
+                    timestamp=now,
+                    kind="github",
+                    summary=(
+                        f"{event.action} {event.target}#{event.number}: "
+                        f"{event.summary}"
+                    ),
+                )
+            )
 
     async def counts(self) -> TaskCounts:
         async with self._lock:
@@ -817,7 +929,7 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
         mode=data["mode"],
         allow_shell=data["allow_shell"],
         trust_mode=data["trust_mode"],
-        auto_approve=data.get("auto_approve", True),
+        auto_approve=data.get("auto_approve", False),
         status=status,
         created_at=data["created_at"],
         started_at=data.get("started_at"),

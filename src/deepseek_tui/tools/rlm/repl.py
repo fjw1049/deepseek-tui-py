@@ -131,6 +131,8 @@ class ReplRuntime:
         ns["SHOW_VARS"] = _make_show_vars(ns)
         ns["repl_set"] = _make_repl_set(ns)
         ns["repl_get"] = _make_repl_get(ns)
+        ns["chunk_context"] = _make_chunk_context(ns)
+        ns["chunk_coverage"] = chunk_coverage
         return cls(namespace=ns, stdout_limit=stdout_limit)
 
     def run(self, code: str) -> ReplRound:
@@ -247,6 +249,48 @@ def _make_repl_get(ns: dict[str, Any]) -> Callable[[str], Any]:
         return ns[name]
 
     return _get
+
+
+def _make_chunk_context(ns: dict[str, Any]) -> Callable[..., list[dict[str, Any]]]:
+    def _chunk_context(max_chars: int = 20_000, overlap: int = 0) -> list[dict[str, Any]]:
+        text = str(ns.get("context") or ns.get("ctx") or "")
+        if max_chars <= 0:
+            raise ValueError("max_chars must be positive")
+        overlap = max(0, min(overlap, max_chars - 1))
+        chunks: list[dict[str, Any]] = []
+        start = 0
+        index = 0
+        while start < len(text):
+            end = min(len(text), start + max_chars)
+            chunk_text = text[start:end]
+            chunks.append(
+                {
+                    "index": index,
+                    "start": start,
+                    "end": end,
+                    "text": chunk_text,
+                }
+            )
+            if end >= len(text):
+                break
+            start = end - overlap if overlap else end
+            index += 1
+        return chunks
+
+    return _chunk_context
+
+
+def chunk_coverage(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize coverage for chunks produced by ``chunk_context()``."""
+    if not chunks:
+        return {"chunks": 0, "chars_covered": 0, "ranges": []}
+    ranges = [(c.get("start", 0), c.get("end", 0)) for c in chunks]
+    chars = sum(int(c.get("end", 0)) - int(c.get("start", 0)) for c in chunks)
+    return {
+        "chunks": len(chunks),
+        "chars_covered": chars,
+        "ranges": ranges,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ from typing import Any
 from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
 
 DEFAULT_MAX_STEPS = 100
-DEFAULT_MAX_AGENTS = 8
+DEFAULT_MAX_AGENTS = 10
 DEFAULT_MAX_SPAWN_DEPTH = 3
 _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
 DEFAULT_RESULT_TIMEOUT_MS = 30_000
@@ -192,6 +192,36 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
 }
 
 
+_WHALE_NICKNAMES: tuple[str, ...] = (
+    "Blue",
+    "Humpback",
+    "Sperm",
+    "Orca",
+    "Beluga",
+    "Narwhal",
+    "Pilot",
+    "Minke",
+)
+
+
+def whale_nickname_for_index(index: int) -> str:
+    base = _WHALE_NICKNAMES[index % len(_WHALE_NICKNAMES)]
+    if index < len(_WHALE_NICKNAMES):
+        return base
+    return f"{base} {index // len(_WHALE_NICKNAMES) + 1}"
+
+
+def build_subagent_system_prompt(
+    agent_type: SubAgentType, assignment: SubAgentAssignment
+) -> str:
+    """Mirror Rust ``build_subagent_system_prompt`` (mod.rs:2629)."""
+    base = agent_type.system_prompt()
+    role = (assignment.role or "").strip()
+    if role:
+        return f"{base}\n\nYou are operating in the role of `{role}`."
+    return base
+
+
 class SubAgentStatusKind(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
@@ -269,13 +299,9 @@ class SpawnRequest:
     allowed_tools: list[str] | None = None
     model: str | None = None
     nickname: str | None = None
-    # Depth of the parent agent that issued this spawn. 0 = top-level
-    # (root engine spawning its first sub-agent); 1+ = nested spawn from
-    # within an already-running sub-agent. Wired through
-    # ``ToolContext.metadata["subagent_depth"]`` by
-    # :func:`deepseek_tui.engine.executors.real_subagent_executor` so
-    # ``SubAgentManager.spawn`` can enforce :data:`DEFAULT_MAX_SPAWN_DEPTH`.
     parent_depth: int = 0
+    fork_context: bool = False
+    fork_messages: list[dict[str, Any]] | None = None
 
 
 # Executor signature — takes a SubAgent handle plus cancel token, returns
@@ -323,6 +349,9 @@ class SubAgent:
         session_boot_id: str,
         workspace: Path | None = None,
         spawn_depth: int = 0,
+        fork_messages: list[dict[str, Any]] | None = None,
+        parent_cancel: asyncio.Event | None = None,
+        mailbox: Mailbox | None = None,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -338,6 +367,9 @@ class SubAgent:
         self.session_boot_id = session_boot_id
         self.workspace = workspace or Path.cwd()
         self.spawn_depth = spawn_depth
+        self.fork_messages = fork_messages
+        self.parent_cancel = parent_cancel
+        self.mailbox = mailbox
         self.cancel_token: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
@@ -385,6 +417,7 @@ class SubAgentManager:
         self._agents: dict[str, SubAgent] = {}
         self._lock = asyncio.Lock()
         self._session_boot_id: str = f"boot_{uuid.uuid4().hex[:12]}"
+        self._parent_cancel: asyncio.Event | None = None
         if state_path is not None:
             self._load_state()
 
@@ -395,6 +428,10 @@ class SubAgentManager:
     @property
     def mailbox(self) -> Mailbox | None:
         return self._mailbox
+
+    def attach_parent_cancel(self, token: asyncio.Event) -> None:
+        """Link parent engine cancellation to all descendant agents."""
+        self._parent_cancel = token
 
     def running_count(self) -> int:
         return sum(
@@ -447,11 +484,15 @@ class SubAgentManager:
                 prompt=request.prompt,
                 assignment=request.assignment,
                 model=request.model or self.default_model,
-                nickname=request.nickname,
+                nickname=request.nickname
+                or whale_nickname_for_index(len(self._agents)),
                 allowed_tools=request.allowed_tools,
                 session_boot_id=self._session_boot_id,
                 workspace=self.workspace,
                 spawn_depth=child_depth,
+                fork_messages=request.fork_messages if request.fork_context else None,
+                parent_cancel=self._parent_cancel,
+                mailbox=self._mailbox,
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()
@@ -605,6 +646,8 @@ class SubAgentManager:
         )
 
     async def _drive_agent(self, agent: SubAgent) -> None:
+        if self._parent_cancel is not None and self._parent_cancel.is_set():
+            agent.cancel_token.set()
         try:
             result = await self._executor(agent, agent.cancel_token)
         except asyncio.CancelledError:

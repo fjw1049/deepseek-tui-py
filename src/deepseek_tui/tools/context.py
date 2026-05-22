@@ -16,6 +16,7 @@ class ToolContext:
     working_directory: Path
     timeout_ms: int | None = None
     trust_mode: bool = False
+    active_task_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Policy | None = None
     task_manager: TaskManager | None = None

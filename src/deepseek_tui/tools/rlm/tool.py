@@ -19,7 +19,7 @@ from deepseek_tui.tools.base import (
     ToolSpec,
 )
 from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.rlm.turn import RlmTermination, run_rlm_turn
+from deepseek_tui.tools.rlm.turn import RlmTermination, RlmUsage, run_rlm_turn
 
 DEFAULT_CHILD_MODEL: str = "deepseek-v4-flash"
 DEFAULT_MAX_DEPTH: int = 1
@@ -46,21 +46,23 @@ class RlmTool(ToolSpec):
             "as `PROMPT`; a sub-agent writes Python that chunks the input and "
             "calls in-REPL helpers (`llm_query`, `llm_query_batched`, "
             "`rlm_query`, `rlm_query_batched`) to process it, then returns a "
-            "synthesized answer.\n\n"
-            "DO NOT use this tool when: the input fits in your context (just "
-            "use `read_file` and reason directly); a `grep_files` / "
-            "`exec_shell` pipeline would answer the question; the task is a "
-            "short classification or extraction; you need interactive "
-            "iterative exploration (rlm is one-shot batch).\n\n"
-            "Use this tool only when the input is genuinely too large to load "
-            "(a whole file > 50K tokens, a long transcript, a multi-document "
-            "corpus). It is slower and more expensive than direct reasoning.\n\n"
+            "synthesized answer. \n\n"
+            "Use this tool when the input is genuinely large or when a Python "
+            "map-reduce pass plus child LLM calls is the right shape: whole "
+            "files, long transcripts, multi-document corpora, bulk semantic "
+            "classification, or decomposition/critique work. For exact counts "
+            "or structured aggregates, compute them directly in Python inside "
+            "the REPL and report the deterministic result instead of asking a "
+            "child LLM to guess. For whole-input map-reduce, use the REPL "
+            "helpers `chunk_context()` and `chunk_coverage()` so the result "
+            "states what was covered. \n\n"
             "Provide `task` (what to do) plus exactly one of `file_path` "
             "(workspace-relative, preferred — keeps the long input out of "
             "your context entirely) or `content` (inline, capped at 200k "
             "chars). The Python helpers (`llm_query`, `rlm_query`, etc.) live "
-            "INSIDE the REPL — they are not separately-callable tools.\n\n"
-            "Returns the final synthesized answer as a string."
+            "INSIDE the REPL — they are not separately-callable tools. \n\n"
+            "Returns the final synthesized answer plus an RLM report showing "
+            "input size, iterations, duration, sub-LLM calls, and trace summary."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -91,13 +93,6 @@ class RlmTool(ToolSpec):
                         "Inline content to load as PROMPT. Use only when the "
                         "input isn't a file you can point at. Capped at 200k "
                         "chars."
-                    ),
-                },
-                "child_model": {
-                    "type": "string",
-                    "description": (
-                        "Model for sub-LLM (`llm_query`) calls inside the REPL. "
-                        f"Default: {DEFAULT_CHILD_MODEL}."
                     ),
                 },
                 "max_depth": {
@@ -144,9 +139,10 @@ class RlmTool(ToolSpec):
                 raise ToolError(f"rlm: read {resolved}: {exc}") from exc
         else:
             body_str = str(content)
-            if len(body_str) > MAX_INLINE_CONTENT_CHARS:
+            char_count = sum(1 for _ in body_str)
+            if char_count > MAX_INLINE_CONTENT_CHARS:
                 raise ToolError(
-                    f"rlm: inline `content` is {len(body_str)} chars "
+                    f"rlm: inline `content` is {char_count} chars "
                     f"(cap {MAX_INLINE_CONTENT_CHARS}). Pass `file_path` "
                     "for larger inputs."
                 )
@@ -155,9 +151,11 @@ class RlmTool(ToolSpec):
         if not body.strip():
             raise ToolError("rlm: input is empty after loading")
 
-        child_model = (
-            str(input_data.get("child_model") or "").strip() or DEFAULT_CHILD_MODEL
-        )
+        input_chars = sum(1 for _ in body)
+        input_lines = len(body.splitlines()) if body else 0
+
+        # Pin child calls to Flash — model-generated args must not escalate cost.
+        child_model = DEFAULT_CHILD_MODEL
         max_depth = int(input_data.get("max_depth", DEFAULT_MAX_DEPTH))
 
         result = await run_rlm_turn(
@@ -182,14 +180,32 @@ class RlmTool(ToolSpec):
 
         footer = _termination_footer(result.termination, result.iterations)
         trace_summary = _trace_summary(result.trace)
-        text = f"{result.answer}{footer}{trace_summary}"
+        report = (
+            "RLM report:\n"
+            f"- input: {input_lines} line(s), {input_chars} char(s)\n"
+            f"- iterations: {result.iterations}\n"
+            f"- duration: {int(result.duration_secs * 1000)}ms\n"
+            f"- sub-LLM RPCs: {result.total_rpcs}\n"
+            f"- termination: {result.termination.value}\n\n"
+            "Answer:\n"
+        )
+        text = f"{report}{result.answer}{footer}{trace_summary}"
 
+        usage = result.usage
         metadata = {
             "iterations": result.iterations,
             "duration_ms": int(result.duration_secs * 1000),
-            "termination": result.termination.value,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "child_input_tokens": usage.input_tokens,
+            "child_output_tokens": usage.output_tokens,
+            "child_prompt_cache_hit_tokens": usage.cache_read_input_tokens,
+            "child_prompt_cache_miss_tokens": usage.cache_creation_input_tokens,
             "child_model": child_model,
+            "termination": result.termination.value,
             "max_depth": max_depth,
+            "context_chars": input_chars,
+            "context_lines": input_lines,
             "total_rpcs": result.total_rpcs,
             "trace": [
                 {

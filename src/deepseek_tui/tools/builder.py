@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from deepseek_tui.config.models import Config
+
+if TYPE_CHECKING:
+    from deepseek_tui.client.base import LLMClient
+    from deepseek_tui.tools.registry import ToolRegistry
 from deepseek_tui.tools.automation_tools import (
     AutomationCreateTool,
     AutomationDeleteTool,
@@ -201,7 +207,9 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(NoteTool())
     registry.register(PlanUpdateTool())
     registry.register(RlmQueryTool(config=cfg))
-    registry.register(RlmTool(client=None, root_model=cfg.default_text_model or "deepseek-chat"))
+    registry.register(
+        RlmTool(client=None, root_model=cfg.default_text_model or "deepseek-chat")
+    )
     registry.register(SkillLoadTool())
 
     # Engine-intercepted special tools (always active)
@@ -221,3 +229,21 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         registry.register(RevertTurnTool())
 
     return registry
+
+
+def wire_registry_client(
+    registry: ToolRegistry,
+    client: LLMClient | None,
+    *,
+    root_model: str | None = None,
+) -> None:
+    """Re-register ``rlm`` with a live client after :class:`Engine` construction.
+
+    ``build_default_registry`` registers ``RlmTool(client=None)`` because the
+    registry is built before the HTTP client exists. Call this from
+    :meth:`Engine.create` once the client is available.
+    """
+    if not registry.contains("rlm"):
+        return
+    model = root_model or "deepseek-chat"
+    registry.register(RlmTool(client=client, root_model=model))

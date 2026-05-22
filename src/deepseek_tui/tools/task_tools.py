@@ -131,8 +131,10 @@ class TaskReadTool(ToolSpec):
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"id": {"type": "string"}},
-            "required": ["id"],
+            "properties": {
+                "task_id": {"type": "string", "description": "Task id (alias: id)"},
+                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+            },
             "additionalProperties": False,
         }
 
@@ -143,7 +145,7 @@ class TaskReadTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _task_id_from_input(input_data, context)
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
@@ -161,8 +163,10 @@ class TaskCancelTool(ToolSpec):
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"id": {"type": "string"}},
-            "required": ["id"],
+            "properties": {
+                "task_id": {"type": "string", "description": "Task id (alias: id)"},
+                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+            },
             "additionalProperties": False,
         }
 
@@ -170,13 +174,13 @@ class TaskCancelTool(ToolSpec):
         return [ToolCapability.REQUIRES_APPROVAL]
 
     def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.SUGGEST
+        return ApprovalRequirement.REQUIRED
 
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _task_id_from_input(input_data, context)
         try:
             task = await manager.cancel_task(task_id)
         except KeyError as exc:
@@ -208,7 +212,11 @@ class TaskGateRunTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Task id"},
+                "task_id": {
+                    "type": "string",
+                    "description": "Task id; defaults to active task when inside one.",
+                },
+                "id": {"type": "string", "description": "Alias for task_id"},
                 "gate": {
                     "type": "string",
                     "description": "Gate type: fmt, check, clippy, test, custom",
@@ -222,7 +230,7 @@ class TaskGateRunTool(ToolSpec):
                     "description": "Timeout in ms (default 120000)",
                 },
             },
-            "required": ["id", "gate", "command"],
+            "required": ["gate", "command"],
             "additionalProperties": False,
         }
 
@@ -238,20 +246,17 @@ class TaskGateRunTool(ToolSpec):
         import time as _time
 
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _optional_task_id_from_input(input_data, context)
         gate = _require_string(input_data, "gate")
         command = _require_string(input_data, "command")
         cwd = _optional_string(input_data, "cwd") or str(context.working_directory)
         timeout_ms = _optional_int(input_data, "timeout_ms") or self._DEFAULT_TIMEOUT_MS
         timeout_ms = min(timeout_ms, self._MAX_TIMEOUT_MS)
 
-        try:
-            task = await manager.get_task(task_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-
         # Execute the command
         start = _time.monotonic()
+        timed_out = False
+        spawn_error: str | None = None
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
@@ -262,9 +267,10 @@ class TaskGateRunTool(ToolSpec):
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout_ms / 1000
             )
-            exit_code = proc.returncode or 0
+            exit_code = proc.returncode
         except asyncio.TimeoutError:
-            exit_code = -1
+            timed_out = True
+            exit_code = None
             stdout_bytes = b""
             stderr_bytes = b"Gate timed out"
             try:
@@ -272,24 +278,51 @@ class TaskGateRunTool(ToolSpec):
             except (OSError, ProcessLookupError):
                 pass
         except OSError as exc:
+            spawn_error = str(exc)
+            exit_code = None
+            stdout_bytes = b""
+            stderr_bytes = b""
+        except Exception as exc:  # noqa: BLE001
             raise ToolError(f"Failed to run gate command: {exc}") from exc
 
         duration_ms = int((_time.monotonic() - start) * 1000)
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
 
-        # Classify result
-        status = "pass" if exit_code == 0 else "fail"
-        classification = _classify_gate_failure(gate, exit_code, stdout, stderr)
+        if timed_out:
+            status = "timeout"
+        elif spawn_error is not None:
+            status = "failed"
+        elif exit_code == 0:
+            status = "passed"
+        else:
+            status = "failed"
 
-        # Build summary from output tail
-        combined = (stdout + "\n" + stderr).strip()
-        summary = combined[-_MAX_SUMMARY_CHARS:] if combined else "(no output)"
+        classification = _classify_gate_failure(
+            gate,
+            exit_code if exit_code is not None else -1,
+            stdout,
+            stderr,
+        )
+
+        summary_source = stderr.strip() or stdout.strip() or spawn_error or "(no output)"
+        summary = summary_source[-_MAX_SUMMARY_CHARS:]
+
+        full_log = (
+            f"$ {command}\n\n[stdout]\n{stdout}\n\n[stderr]\n{stderr}\n"
+            + (f"\n[spawn_error]\n{spawn_error}\n" if spawn_error else "")
+        )
 
         from deepseek_tui.tools.task_manager import TaskGateRecord
 
-        record = TaskGateRecord(
-            id=f"gate_{uuid.uuid4().hex[:8]}",
+        gate_id = f"gate_{uuid.uuid4().hex[:8]}"
+        log_path: str | None = None
+        if task_id is not None:
+            rel = manager.write_task_artifact(task_id, f"gate_{gate}", full_log)
+            log_path = str(rel)
+
+        gate_record = TaskGateRecord(
+            id=gate_id,
             gate=gate,
             command=command,
             cwd=cwd,
@@ -299,22 +332,44 @@ class TaskGateRunTool(ToolSpec):
             duration_ms=duration_ms,
             summary=summary,
             recorded_at=_utc_now_iso(),
+            log_path=log_path,
         )
-        task.gates.append(record)
-        task.timeline.append(
-            _TimelineEntryFactory(
-                timestamp=_utc_now_iso(),
-                kind="gate",
-                summary=f"{gate}: {status} (rc={exit_code}, {duration_ms}ms)",
-            )
+
+        metadata: dict[str, Any] = {
+            "command": command,
+            "cwd": cwd,
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+            "timed_out": timed_out,
+            "gate": asdict(gate_record),
+        }
+        if log_path is not None:
+            metadata["artifact_path"] = log_path
+        if task_id is not None:
+            artifacts = [
+                {
+                    "label": "gate_log",
+                    "path": log_path or "",
+                    "summary": summary[:400],
+                }
+            ]
+            metadata["task_updates"] = {
+                "gate": asdict(gate_record),
+                "artifacts": artifacts,
+            }
+
+        result = ToolResult(
+            success=status == "passed",
+            content=(
+                f"Gate {gate} {'PASSED' if status == 'passed' else status.upper()} "
+                f"(rc={exit_code}, {duration_ms}ms)"
+            ),
+            metadata=metadata,
         )
-        async with manager._lock:  # noqa: SLF001
-            manager._persist_task_locked(task)  # noqa: SLF001
-        return ToolResult(
-            success=exit_code == 0,
-            content=f"Gate {gate} {'PASSED' if exit_code == 0 else 'FAILED'} on {task.id} (rc={exit_code}, {duration_ms}ms)",
-            metadata={"task_id": task.id, "gate": asdict(record)},
-        )
+        if task_id is not None:
+            context.active_task_id = task_id
+            _forward_to_task_manager(context, metadata)
+        return result
 
 
 class TaskShellStartTool(ToolSpec):
@@ -332,11 +387,12 @@ class TaskShellStartTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string"},
+                "task_id": {"type": "string", "description": "Task id (alias: id)"},
+                "id": {"type": "string", "description": "Alias for task_id"},
                 "command": {"type": "string"},
                 "pty": {"type": "boolean"},
             },
-            "required": ["id", "command"],
+            "required": ["command"],
             "additionalProperties": False,
         }
 
@@ -352,7 +408,7 @@ class TaskShellStartTool(ToolSpec):
         from deepseek_tui.tools.shell_tools import ExecShellTool
 
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _task_id_from_input(input_data, context)
         command = _require_string(input_data, "command")
         use_pty = bool(input_data.get("pty", True))
 
@@ -425,7 +481,7 @@ class TaskShellWaitTool(ToolSpec):
         from deepseek_tui.tools.shell_tools import ExecShellWaitTool
 
         process_id = _require_string(input_data, "process_id")
-        task_id_opt = _optional_string(input_data, "task_id")
+        task_id_opt = _optional_task_id_from_input(input_data, context)
 
         # Delegate to ExecShellWaitTool — it handles pty and pipe cases.
         wait_result = await ExecShellWaitTool().execute(
@@ -493,7 +549,11 @@ class PrAttemptRecordTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Task id"},
+                "task_id": {
+                    "type": "string",
+                    "description": "Task id; defaults to active task.",
+                },
+                "id": {"type": "string", "description": "Alias for task_id"},
                 "summary": {"type": "string", "description": "One-line description of the attempt"},
                 "attempt_group_id": {"type": "string"},
                 "attempt_index": {"type": "integer", "minimum": 1},
@@ -501,7 +561,7 @@ class PrAttemptRecordTool(ToolSpec):
                 "verification": {"type": "array", "items": {"type": "string"}},
                 "selected": {"type": "boolean"},
             },
-            "required": ["id", "summary"],
+            "required": ["summary"],
             "additionalProperties": False,
         }
 
@@ -512,7 +572,7 @@ class PrAttemptRecordTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _task_id_from_input(input_data, context)
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
@@ -602,8 +662,10 @@ class PrAttemptListTool(ToolSpec):
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"id": {"type": "string"}},
-            "required": ["id"],
+            "properties": {
+                "task_id": {"type": "string", "description": "Task id (alias: id)"},
+                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+            },
             "additionalProperties": False,
         }
 
@@ -614,7 +676,7 @@ class PrAttemptListTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _task_id_from_input(input_data, context)
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
@@ -638,10 +700,14 @@ class PrAttemptReadTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string"},
+                "task_id": {
+                    "type": "string",
+                    "description": "Task id; defaults to active task.",
+                },
+                "id": {"type": "string", "description": "Alias for task_id"},
                 "attempt_id": {"type": "string"},
             },
-            "required": ["id", "attempt_id"],
+            "required": ["attempt_id"],
             "additionalProperties": False,
         }
 
@@ -652,7 +718,7 @@ class PrAttemptReadTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        task_id = _require_string(input_data, "id")
+        task_id = _task_id_from_input(input_data, context)
         attempt_id = _require_string(input_data, "attempt_id")
         try:
             task = await manager.get_task(task_id)
@@ -710,11 +776,7 @@ class PrAttemptPreflightTool(ToolSpec):
     ) -> ToolResult:
         manager = _require_manager(context)
         attempt_id = _require_string(input_data, "attempt_id")
-        task_id = _optional_string(input_data, "id")
-        if task_id is None:
-            task_id = getattr(context, "active_task_id", None)
-        if not task_id:
-            raise ToolError("id (task id) required when no active task is set")
+        task_id = _task_id_from_input(input_data, context)
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
@@ -860,6 +922,45 @@ def _classify_gate_failure(
     if exit_code == -1:
         return "timeout"
     return "unknown"
+
+
+def _optional_task_id_from_input(
+    data: dict[str, Any], context: ToolContext
+) -> str | None:
+    value = _optional_string(data, "task_id") or _optional_string(data, "id")
+    if value is None:
+        value = context.active_task_id
+    return value
+
+
+def _forward_to_task_manager(context: ToolContext, metadata: dict[str, Any]) -> None:
+    """Persist ``task_updates`` from tool metadata onto the active task."""
+    task_id = context.active_task_id or context.metadata.get("task_id")
+    manager = context.task_manager or context.metadata.get("task_manager")
+    if not isinstance(task_id, str) or manager is None:
+        return
+    if not hasattr(manager, "record_tool_metadata"):
+        return
+    if "task_updates" not in metadata:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(manager.record_tool_metadata(task_id, metadata))
+
+
+def _task_id_from_input(
+    data: dict[str, Any], context: ToolContext, *, required: bool = True
+) -> str:
+    value = _optional_string(data, "task_id") or _optional_string(data, "id")
+    if value is None and context.active_task_id:
+        value = context.active_task_id
+    if value is None and required:
+        raise ToolError("task_id (or id) is required when no active task is set")
+    if value is None:
+        raise ToolError("task_id is required")
+    return value
 
 
 def _require_manager(context: ToolContext) -> TaskManager:

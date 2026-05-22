@@ -301,7 +301,7 @@ class Engine:
         from deepseek_tui.config.models import Config
         from deepseek_tui.skills import discover_in_workspace
         from deepseek_tui.tools.runtime import create_tool_runtime
-
+        # 装配 HookDispatcher + HookExecutor
         cfg = config if isinstance(config, Config) else Config()
         from deepseek_tui.hooks.build import build_hook_dispatcher, build_lifecycle_hook_executor
 
@@ -348,6 +348,15 @@ class Engine:
         engine._cycle_session_id = uuid.uuid4().hex
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
+        from deepseek_tui.tools.builder import wire_registry_client
+
+        wire_registry_client(
+            engine.tool_registry,
+            client,
+            root_model=engine.default_model,
+        )
+        if runtime.subagent_manager is not None:
+            runtime.subagent_manager.attach_parent_cancel(handle.cancel_event)
         return engine
 
     def _render_skills_context(self) -> str | None:
@@ -357,6 +366,37 @@ class Engine:
         from deepseek_tui.skills import render_available_skills_context
 
         return render_available_skills_context(self.skill_registry) or None
+
+    def _accrue_child_token_cost_from_metadata(
+        self, metadata: dict[str, Any] | None
+    ) -> None:
+        """Roll child-tool token usage into session cost (Rust #524 / tool_routing)."""
+        if not metadata:
+            return
+        child_model = metadata.get("child_model")
+        if not isinstance(child_model, str) or not child_model.strip():
+            return
+        input_tokens = int(metadata.get("child_input_tokens") or 0)
+        output_tokens = int(metadata.get("child_output_tokens") or 0)
+        if input_tokens == 0 and output_tokens == 0:
+            return
+        from deepseek_tui.client.pricing import calculate_turn_cost_estimate_from_usage
+        from deepseek_tui.protocol.responses import Usage
+
+        usage = Usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=int(
+                metadata.get("child_prompt_cache_hit_tokens") or 0
+            ),
+            cache_creation_input_tokens=int(
+                metadata.get("child_prompt_cache_miss_tokens") or 0
+            ),
+        )
+        estimate = calculate_turn_cost_estimate_from_usage(child_model, usage)
+        if estimate is not None:
+            self.session_cost_usd += estimate.usd
+            self.session_cost_cny += estimate.cny
 
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
@@ -1206,8 +1246,13 @@ class Engine:
             model=model,
         )
         await self._run_lifecycle_hook("tool_call_before", hook_ctx)
+        # Expose parent transcript for fork_context spawns (Rust SubAgentForkContext).
+        self.tool_context.metadata["parent_session_messages"] = [
+            m.model_dump(mode="json") for m in self.session_messages
+        ]
         result = await self._execute_single_tool_impl(tool_call, api_tools, model)
         if result is not None:
+            self._accrue_child_token_cost_from_metadata(result.metadata)
             hook_ctx.tool_result = result.content
             hook_ctx.tool_success = result.success
         await self._run_lifecycle_hook("tool_call_after", hook_ctx)

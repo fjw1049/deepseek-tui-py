@@ -144,11 +144,17 @@ async def create_tool_runtime(
         mailbox = Mailbox()
         state_path = subagent_state_path or (workspace / ".deepseek" / "subagents.v1.json")
         subagent_exec = _safe_subagent_executor()
+        max_agents = min(
+            20,
+            cfg.max_subagents or cfg.subagents.max_concurrent or 10,
+        )
         subagent_manager = SubAgentManager(
             workspace=workspace,
+            max_agents=max_agents,
             state_path=state_path,
             mailbox=mailbox,
             executor=subagent_exec,
+            default_model=cfg.subagents.default_model or cfg.default_text_model or "deepseek-chat",
         )
 
     mcp: McpManager | None = None

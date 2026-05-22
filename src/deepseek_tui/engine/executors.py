@@ -12,16 +12,19 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.engine.events import (
     ErrorEvent,
     TextDeltaEvent,
+    ToolCallEvent,
+    ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     UserInputRequiredEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.protocol.messages import Message
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.subagent.manager import SubAgent
@@ -31,18 +34,7 @@ if TYPE_CHECKING:
 async def real_task_executor(
     task: ExecutionTask, cancel: asyncio.Event
 ) -> TaskExecutionResult:
-    """Drive a full Engine turn loop for a queued task.
-
-    Mirrors Rust ``TaskExecutor::run`` (task_manager.rs:1380).
-    Creates a fresh Engine, sends the task prompt, collects streamed text
-    until TurnComplete or cancellation.
-
-    Threads ``task.id`` + ``task.task_manager`` into the spawned
-    Engine's ``ToolContext.metadata`` so checklist tools can route their
-    snapshots back to :meth:`TaskManager.record_tool_metadata` — the
-    Python analog of Rust's ``TaskExecutionEvent::ToolCompleted`` event
-    channel (``task_manager.rs:1183-1238``).
-    """
+    """Drive a full Engine turn loop for a queued task."""
     from deepseek_tui.tools.task_manager import TaskExecutionResult
 
     engine, handle, engine_task = await _create_engine_for_execution(
@@ -50,6 +42,7 @@ async def real_task_executor(
         workspace=Path(task.workspace),
         allow_shell=task.allow_shell,
         auto_approve=task.auto_approve,
+        trust_mode=task.trust_mode,
         task_id=task.id,
         task_manager=task.task_manager,
     )
@@ -101,12 +94,11 @@ async def real_task_executor(
 
 
 async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
-    """Drive a full Engine turn loop for a sub-agent.
+    """Drive a full Engine turn loop for a sub-agent."""
+    from deepseek_tui.tools.subagent.manager import build_subagent_system_prompt
+    from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 
-    Mirrors Rust ``SubAgentExecutor::run`` (mod.rs:773).
-    Creates a fresh Engine scoped to the agent's prompt and allowed tools,
-    collects text output, and respects the cancel token.
-    """
+    parent_cancel = agent.parent_cancel
     engine, handle, engine_task = await _create_engine_for_execution(
         model=agent.model,
         workspace=agent.workspace,
@@ -115,19 +107,20 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
         allowed_tools=agent.allowed_tools,
     )
 
-    # Stamp this agent's depth on the child Engine's tool context so any
-    # ``agent_spawn`` tool calls from inside the agent inherit it as
-    # ``parent_depth`` and ``SubAgentManager.spawn`` can refuse spawns
-    # past ``DEFAULT_MAX_SPAWN_DEPTH``.
     engine.tool_context.metadata["subagent_depth"] = agent.spawn_depth  # type: ignore[attr-defined]
+    system_prompt = build_subagent_system_prompt(agent.agent_type, agent.assignment)
+    mailbox = agent.mailbox
+
+    if agent.fork_messages:
+        engine.session_messages = _messages_from_fork(agent.fork_messages)  # type: ignore[attr-defined]
 
     try:
-        await handle.send_message(content=agent.prompt)
+        await handle.send_message(content=agent.prompt, system_prompt=system_prompt)
 
         collected_text: list[str] = []
 
         async for event in handle.events():
-            if cancel.is_set():
+            if _should_cancel(cancel, parent_cancel):
                 await handle.cancel("subagent_cancelled")
                 raise asyncio.CancelledError
 
@@ -140,6 +133,23 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
             if isinstance(event, TextDeltaEvent):
                 collected_text.append(event.text)
                 agent.steps_taken += 1
+            elif isinstance(event, ToolCallEvent):
+                if mailbox is not None:
+                    mailbox.send(
+                        MailboxMessage.tool_call_started(
+                            agent.id, event.tool_call.name, agent.steps_taken
+                        )
+                    )
+            elif isinstance(event, ToolResultEvent):
+                if mailbox is not None:
+                    mailbox.send(
+                        MailboxMessage.tool_call_completed(
+                            agent.id,
+                            event.tool_name,
+                            agent.steps_taken,
+                            event.success,
+                        )
+                    )
             elif isinstance(event, ErrorEvent):
                 collected_text.append(f"\n[tool error] {event.message}\n")
             elif isinstance(event, UserInputRequiredEvent):
@@ -147,17 +157,33 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
                 if future and not future.done():
                     future.set_result({"error": "Sub-agents cannot request user input"})
             elif isinstance(event, TurnCompleteEvent):
+                if mailbox is not None and event.usage is not None:
+                    mailbox.send(
+                        MailboxMessage.token_usage(
+                            agent.id,
+                            agent.model,
+                            {
+                                "input_tokens": event.usage.input_tokens,
+                                "output_tokens": event.usage.output_tokens,
+                                "cache_read_input_tokens": (
+                                    event.usage.cache_read_input_tokens
+                                ),
+                                "cache_creation_input_tokens": (
+                                    event.usage.cache_creation_input_tokens
+                                ),
+                            },
+                        )
+                    )
                 break
             elif isinstance(event, TurnCancelledEvent):
                 break
 
-            # Handle follow-up input from parent (assign / send_input)
             try:
                 text, interrupt = agent.input_queue.get_nowait()
                 if interrupt:
                     await handle.cancel("steer")
                     handle.reset_cancel()
-                await handle.send_message(content=text)
+                await handle.send_message(content=text, system_prompt=system_prompt)
             except asyncio.QueueEmpty:
                 pass
 
@@ -167,7 +193,20 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
         await _shutdown_engine(engine, engine_task)
 
 
-# --- internal helpers -------------------------------------------------------
+def _should_cancel(cancel: asyncio.Event, parent_cancel: asyncio.Event | None) -> bool:
+    if cancel.is_set():
+        return True
+    return parent_cancel is not None and parent_cancel.is_set()
+
+
+def _messages_from_fork(raw_messages: list[dict[str, Any]]) -> list[Message]:
+    out: list[Message] = []
+    for item in raw_messages:
+        try:
+            out.append(Message.model_validate(item))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
 
 
 async def _shutdown_engine(engine: object, engine_task: asyncio.Task[None]) -> None:
@@ -193,30 +232,8 @@ async def _create_engine_for_execution(
     config: object | None = None,
     task_id: str | None = None,
     task_manager: object | None = None,
-    trust_mode: bool = False,  # Subagents use sandboxed paths by default
+    trust_mode: bool = False,
 ) -> tuple[object, EngineHandle, asyncio.Task[None]]:
-    """Create a lightweight Engine + handle for executor use.
-
-    Returns (engine, handle, background_task). Caller must cancel the task
-    when done.
-
-    When *allowed_tools* is provided (SubAgent use-case), only tools whose
-    names appear in the list are kept in the registry — mirrors Rust
-    ``SubAgent::allowed_tools`` filtering (mod.rs:810-825).
-
-    *config* may be passed from the parent Engine so provider/model/api_key
-    settings are inherited. When omitted, the user's config file is loaded
-    from the default path instead of using an empty default.
-
-    *task_id* / *task_manager* are stashed on the new Engine's
-    ``ToolContext.metadata`` so tools running inside a durable task can
-    forward their ``task_updates`` payloads to the owning
-    :class:`~deepseek_tui.tools.task_manager.TaskManager`.
-
-    *trust_mode* controls whether paths outside workspace are allowed.
-    Subagents default to False (sandboxed to workspace), while tasks
-    default to their configured value.
-    """
     from deepseek_tui.client.deepseek import DeepSeekClient
     from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import Config
@@ -232,7 +249,6 @@ async def _create_engine_for_execution(
 
     client = DeepSeekClient.from_config(config)
 
-    # Use AutoApprovalHandler for subagents/tasks when auto_approve=True
     approval_handler = AutoApprovalHandler() if auto_approve else None
 
     engine = await Engine.create(
@@ -245,18 +261,15 @@ async def _create_engine_for_execution(
         approval_handler=approval_handler,
     )
 
-    # Override trust_mode for subagents (mirrors Rust context inheritance)
     engine.tool_context.trust_mode = trust_mode
 
-    # Filter registry down to allowed_tools (Rust: SubAgent scope restriction)
     if allowed_tools is not None:
         allowed_set = set(allowed_tools)
         engine.tool_registry.filter_by_names(allowed_set)
 
-    # Side-channel for Task ↔ checklist persistence. See
-    # ``tools/todo_tools.py::_forward_to_task_manager``.
     if task_id is not None:
         engine.tool_context.metadata["task_id"] = task_id
+        engine.tool_context.active_task_id = task_id
     if task_manager is not None:
         engine.tool_context.metadata["task_manager"] = task_manager
 
