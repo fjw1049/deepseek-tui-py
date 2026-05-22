@@ -45,8 +45,7 @@ def cmd_help(args: str, app: DeepSeekTUI) -> CommandResult:
     for entry in REGISTRY:
         aliases = ", ".join(entry.aliases) if entry.aliases else ""
         alias_str = f" ({aliases})" if aliases else ""
-        p1_mark = " [P1]" if not entry.p0 else ""
-        lines.append(f"  {entry.name:<14}{entry.description}{alias_str}{p1_mark}")
+        lines.append(f"  {entry.name:<14}{entry.description}{alias_str}")
     return CommandResult(output="\n".join(lines))
 
 
@@ -193,13 +192,6 @@ def cmd_save(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"Session saved to {save_path} (ID: {session_id})")
     except OSError as exc:
         return CommandResult(error=f"Failed to save session: {exc}")
-
-
-# ── /sessions ────────────────────────────────────────────────────────────
-
-@_register("/sessions")
-def cmd_sessions(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Session picker — requires StateStore integration (Stage 6)")
 
 
 # ── /load ────────────────────────────────────────────────────────────────
@@ -540,13 +532,6 @@ def cmd_system(args: str, app: DeepSeekTUI) -> CommandResult:
     if len(prompt) > 2000:
         prompt = prompt[:2000] + "\n... (truncated)"
     return CommandResult(output=f"System prompt:\n{prompt}")
-
-
-# ── /retry ───────────────────────────────────────────────────────────────
-
-@_register("/retry")
-def cmd_retry(args: str, app: DeepSeekTUI) -> CommandResult:
-    return CommandResult(output="Retry last request — requires Engine integration (Stage 6)")
 
 
 # ── /init ────────────────────────────────────────────────────────────────

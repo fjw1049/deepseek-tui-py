@@ -50,7 +50,6 @@ class CommandEntry:
     description: str
     category: CommandCategory
     aliases: tuple[str, ...] = ()
-    p0: bool = True
 
 
 # Helper to shorten definitions.
@@ -61,41 +60,35 @@ _E = CommandCategory.ENGINE
 _T = CommandCategory.TOOL
 
 # ── Registry ─────────────────────────────────────────────────────────────
-# Ordered like Rust COMMANDS slice. P0 commands have handlers;
-# P1 commands dispatch to a "not yet implemented" stub.
 
 REGISTRY: list[CommandEntry] = [
     CommandEntry("/help", "Show help information", _D, ("/?",)),
     CommandEntry("/clear", "Clear conversation history", _S),
     CommandEntry("/exit", "Exit the application", _S, ("/quit", "/q")),
     CommandEntry("/model", "Switch or view current model", _E),
-    CommandEntry("/provider", "Switch LLM backend", _E, p0=False),
+    CommandEntry("/provider", "Switch LLM backend", _E),
     CommandEntry(
         "/hooks", "List lifecycle hooks",
         _D, ("/hook",),
     ),
     CommandEntry(
         "/subagents", "List sub-agent status",
-        _T, ("/agents",), p0=False,
+        _T, ("/agents",),
     ),
     CommandEntry(
         "/task", "Manage background tasks",
-        _T, ("/tasks",), p0=False,
+        _T, ("/tasks",),
     ),
     CommandEntry(
         "/jobs", "Inspect shell jobs",
-        _T, ("/job",), p0=False,
+        _T, ("/job",),
     ),
     CommandEntry("/mcp", "Manage MCP servers", _T),
     CommandEntry("/save", "Save session to file", _S),
-    CommandEntry(
-        "/sessions", "Open session picker",
-        _S, ("/resume",),
-    ),
     CommandEntry("/load", "Load session from file", _S),
     CommandEntry(
         "/compact", "Trigger context compaction",
-        _S, p0=False,
+        _S,
     ),
     CommandEntry("/context", "Context inspector", _D, ("/ctx",)),
     CommandEntry("/export", "Export to markdown", _S),
@@ -105,7 +98,7 @@ REGISTRY: list[CommandEntry] = [
         "Switch or cycle mode (agent / plan / yolo / ask)",
         _C,
     ),
-    CommandEntry("/yolo", "Enable YOLO mode", _C, p0=False),
+    CommandEntry("/yolo", "Enable YOLO mode", _C),
     CommandEntry("/agent", "Switch to agent mode", _C),
     CommandEntry("/plan", "Switch to plan mode", _C),
     CommandEntry("/logout", "Clear API key", _C),
@@ -113,18 +106,17 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/system", "Show system prompt", _D),
     CommandEntry(
         "/diff", "Show file changes",
-        _D, p0=False,
+        _D,
     ),
-    CommandEntry("/retry", "Retry last request", _E),
     CommandEntry("/init", "Generate AGENTS.md", _T),
     CommandEntry("/settings", "Show persistent settings", _D),
     CommandEntry(
         "/skills", "List local skills",
-        _T, p0=False,
+        _T,
     ),
     CommandEntry(
         "/skill", "Activate/install a skill",
-        _T, p0=False,
+        _T,
     ),
     CommandEntry("/cost", "Session cost breakdown", _D),
     CommandEntry(
@@ -183,9 +175,7 @@ def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
     from . import handlers
     handler_fn = handlers.get_handler(entry.name)
     if handler_fn is None:
-        return CommandResult(
-            error=f"{entry.name} not yet implemented (P1)",
-        )
+        return CommandResult(error=f"{entry.name} has no handler")
 
     try:
         return handler_fn(args, app)

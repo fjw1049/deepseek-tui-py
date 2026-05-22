@@ -13,9 +13,6 @@ from importlib.resources import files as pkg_files
 
 _PACKAGE = "deepseek_tui.prompts"
 
-HANDOFF_RELATIVE_PATH = ".deepseek/handoff.md"
-INSTRUCTIONS_FILE_MAX_BYTES = 100 * 1024
-
 
 def _load(relative: str) -> str:
     """Load a prompt file from the package data directory."""
@@ -78,12 +75,6 @@ def CYCLE_HANDOFF() -> str:  # noqa: N802
 
 def SUBAGENT_OUTPUT_FORMAT() -> str:  # noqa: N802
     return _get("subagent_output_format.md")
-
-
-# Legacy .txt prompt (kept for backwards compatibility with docs/SUBAGENTS.md
-# and TOOL_SURFACE.md references; mirrors Rust upstream which still ships agent.txt).
-def AGENT_PROMPT() -> str:  # noqa: N802
-    return _get("agent.txt")
 
 
 # ── Enums ────────────────────────────────────────────────────────────────

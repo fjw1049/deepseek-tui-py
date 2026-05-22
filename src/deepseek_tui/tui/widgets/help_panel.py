@@ -144,12 +144,11 @@ class _SlashCommandHelp(Static):
 
     def on_mount(self) -> None:
         try:
-            from deepseek_tui.commands.registry import REGISTRY
+            from deepseek_tui.tui.commands import REGISTRY
 
             lines = ["[bold]Slash Commands[/]\n"]
-            for name, entry in sorted(REGISTRY.items()):
-                tag = "" if entry.p0 else " [dim](P1)[/]"
-                lines.append(f"  [green]/{name:<16}[/] {entry.description}{tag}")
+            for entry in REGISTRY:
+                lines.append(f"  [green]{entry.name:<16}[/] {entry.description}")
             self.update("\n".join(lines))
         except Exception:
             self.update("[dim]Slash commands unavailable[/]")

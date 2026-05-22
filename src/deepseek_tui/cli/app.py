@@ -991,13 +991,6 @@ def apply(
     typer.echo("Patch applied successfully.")
 
 
-@app.command(name="eval")
-def eval_cmd() -> None:
-    """Run the offline evaluation harness."""
-    typer.echo("eval — requires eval harness module (Stage 7)")
-    raise typer.Exit(1)
-
-
 @app.command()
 def sessions(
     config: Path | None = CONFIG_OPTION,

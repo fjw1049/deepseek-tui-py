@@ -338,12 +338,6 @@ def is_context_length_error_message(message: str) -> bool:
 
 # --- Legacy aliases (keep backward compatibility with turn_loop) ----------
 
-MODEL_CONTEXT_WINDOWS = {
-    "deepseek-chat": 128_000,
-    "deepseek-reasoner": 128_000,
-}
-
-
 def estimated_input_tokens(messages: list[Message]) -> int:
     """Rough estimate of input tokens from message list (legacy)."""
     total_chars = 0
