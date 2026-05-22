@@ -10,6 +10,7 @@
 |------|------|
 | **对话引擎** | 流式输出、多轮推理、工具调用、容量守卫、自动压缩（Cycle/Seam） |
 | **工具系统** | 70+ 内置工具 —— 文件、Shell、Git、GitHub、Web、任务、子代理、RLM、MCP |
+| **Task / Subagent / RLM** | Rust 对齐：RLM client 注入、Flash 子模型、task 安全默认值、subagent mailbox、gate 持久化 |
 | **TUI 界面** | 基于 Textual：Markdown 渲染、Diff 查看、命令面板、@file mention、子代理卡片 |
 | **会话管理** | SQLite 持久化、多会话、fork/resume/checkpoint、自动恢复 |
 | **安全管道** | ExecPolicy（4 级）+ CommandSafety + macOS sandbox-exec + 网络域名策略 |
@@ -119,6 +120,40 @@ deepseek-tui auth status            # 查看登录态
 
 ---
 
+## 测试
+
+默认 CI / 本地快速验证（不含网络、不含 live marker）：
+
+```bash
+.venv/bin/python -m pytest tests -q
+```
+
+### RLM / Subagent / Task（build_0522）
+
+| 套件 | 文件 | 说明 |
+|------|------|------|
+| Parity | `tests/test_rlm_subagent_task_parity.py` | 单元级 Rust 对齐（client 注入、auto_approve、mailbox 等） |
+| Integration | `tests/test_rlm_subagent_task_integration.py` | Manager / Engine 接线（mock client） |
+| Live 分模块 | `tests/test_live_rlm_subagent_task.py` | 真实 API：RLM、subagent executor、task executor、gate |
+| Live 全链路 | `tests/test_live_full_workflow.py` | **一条自然语言 query**，模型主动调用 `task_create` → `agent_spawn` + `agent_result` → `rlm` |
+
+Live 测试依赖项目 `.deepseek/config.toml` 中的 API Key，需显式启用 `-m live`：
+
+```bash
+# 分模块 live（约 1–2 分钟）
+.venv/bin/python -m pytest tests/test_live_rlm_subagent_task.py -m live -v
+
+# 全链路：自然 query 驱动 task + subagent + rlm（约 1.5 分钟）
+.venv/bin/python -m pytest tests/test_live_full_workflow.py -m live -v
+
+# 一次跑齐
+.venv/bin/python -m pytest tests/test_live_full_workflow.py tests/test_live_rlm_subagent_task.py -m live -v
+```
+
+其他 live 套件（Hooks / MCP）见 `tests/test_live_today_integration.py`、`tests/test_live_api.py`。
+
+---
+
 ## 项目结构
 
 ```
@@ -175,7 +210,7 @@ src/deepseek_tui/
 │   ├── capacity_flow.py     # 三个检查点入口，路由容量观测到守卫动作（port of Rust）
 │   ├── compaction.py        # 消息压缩 + LLM 摘要（长上下文降级）
 │   ├── dispatch.py          # 工具调度 + audit 日志 + 路由 tool_call → 执行器
-│   ├── executors.py         # 工具执行器实现（shell / function / mcp）
+│   ├── executors.py         # Task / SubAgent 真实执行器（Engine turn loop）
 │   ├── tool_catalog.py      # 延迟加载工具目录 + 搜索 + 缺失工具建议
 │   ├── tool_parser.py       # 解析文本格式 tool_call + 流式 JSON 片段重组
 │   ├── arg_repair.py        # LLM 输出的工具参数自动修复（JSON 容错）
@@ -215,13 +250,13 @@ src/deepseek_tui/
 │   ├── parallel_tool.py     # multi_tool_use.parallel 并行工具分发
 │   ├── user_input_tool.py   # RequestUserInput 哨兵（暂停执行等待用户输入）
 │   ├── rlm/                 # RLM 递归语言模型子代理
-│   │   ├── repl.py              # 进程内 Python REPL（持久命名空间 + exec()）
-│   │   ├── prompt.py            # RLM 系统提示词（严格契约定义）
-│   │   ├── tool.py              # rlm 工具适配器（验证 → 分发 → 返回）
-│   │   └── turn.py              # RLM turn 执行循环
+│   │   ├── repl.py              # 进程内 Python REPL（chunk_context / chunk_coverage）
+│   │   ├── prompt.py            # RLM 系统提示词（严格契约 + chunk 辅助函数说明）
+│   │   ├── tool.py              # rlm 工具（Engine.create 注入 client，子模型固定 Flash）
+│   │   └── turn.py              # RLM turn 执行循环 + 子 LLM token 累计
 │   └── subagent/            # 子代理基础设施
-│       ├── mailbox.py           # 结构化事件流（生命周期消息 + 单调序列号）
-│       └── manager.py           # 子代理管理器（启动/监控/回收）
+│       ├── mailbox.py           # 结构化事件流（tool_call / token_usage / lifecycle）
+│       └── manager.py           # 子代理管理器（spawn / cancel 级联 / fork_context）
 │
 ├── execpolicy/          # 执行策略（命令安全 + 工具审批）
 │   ├── policy.py            # Policy 引擎：首 token 路由 → 规则匹配 → Decision
@@ -380,15 +415,18 @@ src/deepseek_tui/
 | `github_comment` / `github_close` | Issue/PR 交互 |
 | `pr_attempt_*` | PR 预检/提交/回顾 |
 
-### 任务 & 子代理
+### 任务 & 子代理 & RLM
 
 | 工具 | 说明 |
 |------|------|
-| `task_create` / `task_list` / `task_read` / `task_cancel` | 异步后台任务管理 |
-| `task_shell_start` / `task_shell_wait` / `task_gate_run` | 任务内 Shell 执行 |
-| `agent_spawn` / `agent_send` / `agent_wait` / `agent_cancel` | 子代理生命周期 |
-| `agent_list` / `agent_result` / `agent_resume` / `agent_close` | 子代理状态管理 |
+| `task_create` / `task_list` / `task_read` / `task_cancel` |  durable 后台任务（`auto_approve` 默认 **false**） |
+| `task_shell_start` / `task_shell_wait` / `task_gate_run` | 任务内 Shell / 验证 gate（gate 经 `record_tool_metadata` 持久化） |
+| `agent_spawn` / `agent_send` / `agent_wait` / `agent_cancel` | 子代理生命周期（`fork_context`、parent cancel 级联、mailbox 事件） |
+| `agent_list` / `agent_result` / `agent_resume` / `close_agent` | 子代理状态管理（`close_agent` 为 deprecated alias → `agent_cancel`） |
 | `delegate_to_agent` | 一键委派子代理 |
+| `rlm` | 长上下文 map-reduce（`file_path` 优先；子 LLM 固定 `deepseek-v4-flash`；REPL 内 `chunk_context()` / `chunk_coverage()`） |
+
+任务工具统一支持 `task_id` / `id` 参数，且在 task executor 内可通过 `active_task_id` 省略。
 
 ### 知识 & 记忆
 
@@ -399,7 +437,7 @@ src/deepseek_tui/
 | `update_plan` | 更新执行计划 |
 | `review` | 代码/方案审查 |
 | `skill_load` | 动态加载技能 |
-| `rlm_query` / `rlm` | RLM 递归推理 |
+| `rlm` | RLM 递归推理（见上表；`rlm_query` 为历史别名） |
 
 ### 自动化
 
