@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from deepseek_tui.execpolicy.models import ApprovalRequest
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.responses import ToolCall, Usage
+
+if TYPE_CHECKING:
+    from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +76,32 @@ class TurnCancelledEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class SubAgentMailboxEvent:
+    """Structured sub-agent progress (mirrors Rust ``Event::SubAgentMailbox``)."""
+
+    seq: int
+    message: MailboxMessage
+
+
+@dataclass(frozen=True, slots=True)
+class RlmProgressEvent:
+    """RLM iteration progress while the ``rlm`` tool is executing."""
+
+    iteration: int
+    summary: str
+    rpc_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SessionActivityEvent:
+    """Background work snapshot (sub-agents + durable tasks)."""
+
+    running_subagents: int
+    running_tasks: int
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCompleteEvent:
     assistant_message: Message | None
     usage: Usage | None = None
@@ -86,6 +116,9 @@ class TurnCompleteEvent:
     # the provider didn't return cache details.
     cache_hit_tokens: int = 0
     cache_miss_tokens: int = 0
+    # Non-blocking background work still running after this turn ends.
+    running_subagents: int = 0
+    running_tasks: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +151,9 @@ EngineEvent = (
     | ErrorEvent
     | TurnCancelledEvent
     | TurnCompleteEvent
+    | SubAgentMailboxEvent
+    | RlmProgressEvent
+    | SessionActivityEvent
     | UserInputRequiredEvent
     | SessionStartedEvent
     | SessionEndedEvent

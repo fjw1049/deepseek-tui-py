@@ -310,6 +310,7 @@ class TestLiveRlmSubagentTask:
         self, project_config: Config, live_model: str, tmp_path: Path
     ) -> None:
         mailbox = Mailbox()
+        client = DeepSeekClient.from_config(project_config)
 
         async def _run() -> None:
             manager = SubAgentManager(
@@ -317,6 +318,19 @@ class TestLiveRlmSubagentTask:
                 mailbox=mailbox,
                 executor=get_real_subagent_executor(),
                 default_model=live_model,
+            )
+            from deepseek_tui.tools.subagent.manager import SubAgentRuntime
+
+            manager.attach_loop_runtime(
+                SubAgentRuntime(
+                    manager=manager,
+                    client=client,
+                    model=live_model,
+                    config=project_config,
+                    workspace=tmp_path,
+                    mailbox=mailbox,
+                    auto_approve=True,
+                )
             )
             spawned = await manager.spawn(
                 SpawnRequest(
@@ -340,7 +354,10 @@ class TestLiveRlmSubagentTask:
             assert MailboxMessageKind.COMPLETED in kinds
             assert MailboxMessageKind.TOKEN_USAGE in kinds
 
-        await asyncio.wait_for(_run(), timeout=_TIMEOUT_SUBAGENT)
+        try:
+            await asyncio.wait_for(_run(), timeout=_TIMEOUT_SUBAGENT)
+        finally:
+            await client.close()
 
     async def test_08_task_real_executor_completes(
         self, project_config: Config, live_model: str, tmp_path: Path

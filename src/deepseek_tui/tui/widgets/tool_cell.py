@@ -16,6 +16,8 @@ result) always passes through ``rich.markup.escape`` to keep the
 """
 from __future__ import annotations
 
+import json
+import re
 import time
 
 from rich.console import Group as _Group
@@ -71,6 +73,34 @@ def _classify(tool_name: str) -> tuple[str, str]:
     if tool_name.startswith("github_"):
         return ("◇", "github")
     return ("◇", tool_name)
+
+
+_COMPACT_DELEGATE_TOOLS = frozenset(
+    {"agent_spawn", "delegate_to_agent", "spawn_agent", "agent_result", "agent_wait"}
+)
+_SPAWNED_ID_RE = re.compile(r"spawned\s+(\S+)")
+
+
+def _extract_agent_id(result: str) -> str | None:
+    text = (result or "").strip()
+    if not text:
+        return None
+    spawned = _SPAWNED_ID_RE.search(text)
+    if spawned:
+        return spawned.group(1)
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(parsed, dict):
+        agent_id = parsed.get("agent_id")
+        if isinstance(agent_id, str) and agent_id.strip():
+            return agent_id.strip()
+    return None
+
+
+def _is_compact_delegate_tool(tool_name: str) -> bool:
+    return tool_name in _COMPACT_DELEGATE_TOOLS
 
 
 def _looks_like_diff(text: str) -> bool:
@@ -244,15 +274,18 @@ class ToolCell(Static):
             "awaiting": "awaiting approval",
         }.get(self._status, self._status)
 
-    def _header_markup(self) -> str:
+    def _header_markup(self, *, compact_detail: str | None = None) -> str:
         glyph, verb = _classify(self.tool_name)
+        if _is_compact_delegate_tool(self.tool_name):
+            glyph, verb = "◐", "delegate"
         bullet = self._status_bullet()
         color = self._state_color()
         elapsed = self._elapsed_str()
         label = self._state_label()
+        detail = compact_detail or escape(self.tool_name)
         # Tiny ▸/▾ caret hints folding state — only shown when there's
         # actually a body to hide / reveal, otherwise it's noise.
-        if self._has_body():
+        if self._has_body() and not _is_compact_delegate_tool(self.tool_name):
             caret = "▸" if self._collapsed else "▾"
             caret_part = f"[dim]{caret}[/] "
         else:
@@ -262,13 +295,35 @@ class ToolCell(Static):
             f"[{color}]{bullet}[/] "
             f"[bold]{escape(glyph)}[/] "
             f"[bold]{escape(verb)}[/] "
+            f"[white]{detail}[/] "
             f"[{color}]· {label}{elapsed}[/]"
         )
+
+    def _compact_delegate_header(self) -> str | None:
+        """Single-line spawn/result header; DelegateCard owns the live tree (#409)."""
+        if not _is_compact_delegate_tool(self.tool_name):
+            return None
+        agent_id = _extract_agent_id(self._result)
+        if agent_id is None and self._arguments:
+            for key in ("agent_id", "id"):
+                value = self._arguments.get(key)
+                if isinstance(value, str) and value.strip():
+                    agent_id = value.strip()
+                    break
+        detail = agent_id or "…"
+        if len(detail) > 12:
+            detail = detail[:12]
+        return self._header_markup(compact_detail=detail)
 
     def _has_body(self) -> bool:
         return bool(self._arguments) or bool(self._result)
 
     def _refresh(self) -> None:
+        compact = self._compact_delegate_header()
+        if compact is not None:
+            self.update(compact)
+            return
+
         header = self._header_markup()
         # Collapsed state: header line only, optionally a hint about
         # how much is hidden so the user doesn't lose the fact that

@@ -158,6 +158,7 @@ class RlmTool(ToolSpec):
         child_model = DEFAULT_CHILD_MODEL
         max_depth = int(input_data.get("max_depth", DEFAULT_MAX_DEPTH))
 
+        progress_cb = context.metadata.get("rlm_progress_cb")
         result = await run_rlm_turn(
             client=self._client,
             model=self._root_model,
@@ -165,6 +166,7 @@ class RlmTool(ToolSpec):
             root_prompt=task,
             child_model=child_model,
             max_depth=max_depth,
+            on_progress=progress_cb if callable(progress_cb) else None,
         )
 
         if result.error:

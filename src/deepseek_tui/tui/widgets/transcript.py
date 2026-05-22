@@ -42,6 +42,8 @@ from textual.widgets import Static
 
 from deepseek_tui.tui.frame_rate_limiter import FrameRateLimiter
 from deepseek_tui.tui.widgets.tool_cell import ToolCell
+from deepseek_tui.tools.subagent.mailbox import MailboxMessage, MailboxMessageKind
+from deepseek_tui.tui.sanitize import strip_subagent_sentinels
 
 _USER_GLYPH = "▎"
 _ASSISTANT_GLYPH = "●"
@@ -120,14 +122,17 @@ class _AssistantCell(Static):
 
 
 class _ThinkingCell(Static):
-    """Reasoning trace. Header line + ``╎ `` rail per body line.
+    """Reasoning trace — Cursor-style single-line status indicator.
 
-    During streaming the full body is shown so the user can follow the
-    model's reasoning live. After :meth:`finalize` the cell becomes
-    click-foldable: a single click toggles between the full body and a
-    header-only "(N lines hidden)" view, matching the
-    :class:`ToolCell` fold semantics so the user has one consistent
-    gesture for hiding noisy segments from history.
+    During streaming, the cell renders as ONE refreshing status line
+    (``… thinking · 12s · 248 chars ▌``) — the full reasoning text is
+    buffered but not displayed, so a long chain of thought no longer
+    floods the transcript with a wall of italic text the user has to
+    scroll past.
+
+    On :meth:`finalize` the cell collapses to ``▸ Thought for 12s
+    (24 lines)``. Clicking the header expands the buffered reasoning
+    in full for users who do want to read it.
     """
 
     DEFAULT_CSS = "_ThinkingCell { margin: 0 0 1 0; }"
@@ -136,72 +141,78 @@ class _ThinkingCell(Static):
         super().__init__("")
         self._buffer: str = ""
         self._finalized: bool = False
-        self._collapsed: bool = False
+        self._collapsed: bool = True
         self._started_at = time.monotonic()
-        self._refresh()
+        self._finalized_at: float | None = None
+        self._limiter = FrameRateLimiter()
+        self._refresh(force=True)
 
     def append(self, text: str) -> None:
         if self._finalized:
             return
         self._buffer += text
-        self._refresh()
+        now = time.monotonic()
+        if self._limiter.time_until_next_draw(now) is None:
+            self._limiter.mark_emitted(now)
+            self._refresh(force=False)
 
     def finalize(self) -> None:
+        if self._finalized:
+            return
         self._finalized = True
-        # Auto-collapse finished thinking so the eye lands on the
-        # assistant's actual answer. Body is preserved and one click
-        # on the header expands it again.
-        if self._buffer.strip():
-            self._collapsed = True
-        self._refresh()
+        self._finalized_at = time.monotonic()
+        self._collapsed = True
+        self._refresh(force=True)
 
     def on_click(self, event: events.Click) -> None:  # type: ignore[override]
-        # Only allow folding after the stream is done — collapsing
-        # mid-stream would hide content the user is actively reading.
         if self._finalized and self._buffer.strip():
             self._collapsed = not self._collapsed
-            self._refresh()
+            self._refresh(force=True)
 
     @property
     def content_text(self) -> str:
         return self._buffer
 
-    def _refresh(self) -> None:
-        state = "done" if self._finalized else "thinking"
-        elapsed = time.monotonic() - self._started_at
-        elapsed_part = f" · {elapsed:.0f}s" if elapsed >= 1.0 else ""
-        header_style = "dim italic" if self._finalized else "bright_yellow italic"
+    def _elapsed(self) -> float:
+        end = self._finalized_at if self._finalized_at is not None else time.monotonic()
+        return max(0.0, end - self._started_at)
+
+    def _refresh(self, force: bool) -> None:  # noqa: ARG002 — force kept for API symmetry
+        elapsed = self._elapsed()
+        elapsed_part = f"{elapsed:.1f}s"
         body_text = self._buffer.rstrip()
         body_lines = body_text.splitlines() if body_text else []
-        caret = ""
-        if self._finalized and body_lines:
-            caret = "[dim]▸[/] " if self._collapsed else "[dim]▾[/] "
-        header = (
-            f"{caret}[{header_style}]{_REASONING_OPENER} {state}{elapsed_part}[/]"
-        )
 
-        if not body_text:
-            tail = "" if self._finalized else f" [blink]{_CURSOR}[/]"
-            placeholder = (
-                f"[dim italic]{_REASONING_RAIL} reasoning in progress…{tail}[/]"
+        if not self._finalized:
+            chars = len(self._buffer)
+            stats = f" · {chars} chars" if chars else ""
+            line = (
+                f"[bright_yellow italic]{_REASONING_OPENER} thinking · "
+                f"{elapsed_part}{stats}[/] [blink]{_CURSOR}[/]"
             )
-            self.update(f"{header}\n{placeholder}")
+            self.update(line)
             return
 
-        if self._collapsed and self._finalized:
-            n = len(body_lines)
-            self.update(
-                f"{header}  [dim italic](hidden: {n} line(s))[/]"
-            )
+        # finalized
+        n = len(body_lines)
+        caret = "[dim]▸[/]" if self._collapsed else "[dim]▾[/]"
+        summary = (
+            f"{caret} [dim italic]{_REASONING_OPENER} Thought for "
+            f"{elapsed_part}"
+        )
+        if n:
+            summary += f" · {n} line(s)"
+        summary += "[/]"
+
+        if self._collapsed or not body_lines:
+            self.update(summary)
             return
 
         rail = "\n".join(
             f"[dim italic]{_REASONING_RAIL} {escape(line)}[/]"
             for line in body_lines
         )
-        if not self._finalized:
-            rail = f"{rail} [blink]{_CURSOR}[/]"
-        self.update(f"{header}\n{rail}")
+        self.update(f"{summary}\n{rail}")
 
 
 class _NoticeCell(Static):
@@ -353,6 +364,8 @@ class Transcript(VerticalScroll):
         self._current_assistant: _AssistantCell | None = None
         self._thinking_cell: _ThinkingCell | None = None
         self._tool_cells: dict[str, ToolCell] = {}
+        self._subagent_cards: dict[str, object] = {}
+        self._subagent_card_state: dict[str, object] = {}
         # Track every thinking cell created during the current turn so
         # ``finalize_message`` can drop them all when ``show_thinking``
         # is off without losing the per-segment chronological layout.
@@ -361,6 +374,7 @@ class Transcript(VerticalScroll):
         # "System:" / "Assistant:" substrings in this list.
         self._messages: list[str] = []
         self._current_buffer: str = ""
+        self._display_buffer: str = ""
         self._thinking_buffer: str = ""
         self._in_assistant: bool = False
         # Owner can flip this before ``finalize_message`` to control
@@ -440,6 +454,7 @@ class Transcript(VerticalScroll):
         """
         self._in_assistant = True
         self._current_buffer = ""
+        self._display_buffer = ""
         self._thinking_buffer = ""
         self._current_assistant = None
         self._thinking_cell = None
@@ -460,6 +475,17 @@ class Transcript(VerticalScroll):
     def append_delta(self, content: str) -> None:
         self._hide_welcome()
         self._current_buffer += content
+        new_display = strip_subagent_sentinels(self._current_buffer)
+        if (
+            len(new_display) >= len(self._display_buffer)
+            and new_display.startswith(self._display_buffer)
+        ):
+            visible = new_display[len(self._display_buffer) :]
+        else:
+            visible = new_display
+        self._display_buffer = new_display
+        if not visible:
+            return
         if self._current_assistant is None:
             self._close_open_segments_other_than("assistant")
             self._current_assistant = _AssistantCell()
@@ -467,7 +493,7 @@ class Transcript(VerticalScroll):
                 self.mount(self._current_assistant)
             except Exception:
                 pass
-        self._current_assistant.append(content)
+        self._current_assistant.append(visible)
         try:
             self.scroll_end(animate=False)
         except Exception:
@@ -551,14 +577,48 @@ class Transcript(VerticalScroll):
             if idx is not None and idx < len(self._messages):
                 self._messages[idx] = f"⊘ {cell.tool_name}\n{reason}"
 
+    def apply_subagent_mailbox(self, message: MailboxMessage) -> None:
+        """Mount or update a delegate card for sub-agent progress (#756 UI)."""
+        from deepseek_tui.tui.widgets.agent_card import (
+            AgentCardWidget,
+            DelegateCard,
+            apply_to_delegate,
+        )
+
+        self._hide_welcome()
+        agent_id = message.agent_id
+        card = self._subagent_card_state.get(agent_id)
+        if card is None and message.kind is MailboxMessageKind.STARTED:
+            card = DelegateCard(
+                agent_id=agent_id,
+                agent_type=message.agent_type or "general",
+            )
+            self._subagent_card_state[agent_id] = card
+            try:
+                widget = AgentCardWidget(card)
+                self._subagent_cards[agent_id] = widget
+                self.mount(widget)
+                self.scroll_end(animate=False)
+            except Exception:
+                return
+        elif card is None:
+            return
+        if not apply_to_delegate(card, message):
+            return
+        widget = self._subagent_cards.get(agent_id)
+        if widget is not None:
+            widget.update_card(card)
+            self.scroll_end(animate=False)
+
     def finalize_message(self) -> None:
         if self._thinking_buffer:
             self._messages.append(
                 f"[dim italic]Thinking: {self._thinking_buffer}[/]"
             )
-        if self._current_buffer:
+        display_text = strip_subagent_sentinels(self._current_buffer)
+        if display_text.strip():
             self._messages.append(
-                f"[bold green]Assistant:[/] {self._current_buffer}"
+                f"[bold green]Assistant:[/] {display_text}"
             )
 
         # Finalize the in-flight segments first.
@@ -584,9 +644,12 @@ class Transcript(VerticalScroll):
         self._thinking_cell = None
         self._turn_thinking_cells = []
         self._current_buffer = ""
+        self._display_buffer = ""
         self._thinking_buffer = ""
         self._in_assistant = False
         self._tool_cells.clear()
+        self._subagent_cards.clear()
+        self._subagent_card_state.clear()
         self._evict_old_cells()
 
     def _evict_old_cells(self) -> None:
@@ -608,12 +671,15 @@ class Transcript(VerticalScroll):
     def clear_messages(self) -> None:
         self._messages.clear()
         self._current_buffer = ""
+        self._display_buffer = ""
         self._thinking_buffer = ""
         self._in_assistant = False
         self._current_assistant = None
         self._thinking_cell = None
         self._turn_thinking_cells = []
         self._tool_cells.clear()
+        self._subagent_cards.clear()
+        self._subagent_card_state.clear()
         # ``remove_children`` also unmounts the welcome cell, so drop our
         # stale reference and let ``_show_welcome_if_empty`` re-create it.
         self._welcome_cell = None

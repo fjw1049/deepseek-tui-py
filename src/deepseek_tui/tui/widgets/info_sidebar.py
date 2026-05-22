@@ -32,6 +32,7 @@ Layout (auto mode — empty panels collapse to zero height):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,6 +62,138 @@ class InfoSidebarData:
     todos_in_progress_id: int | None = None
     tasks: list[dict[str, Any]] = field(default_factory=list)
     agents: list[dict[str, Any]] = field(default_factory=list)
+
+
+_ACTIVE_TASK_STATUSES = frozenset({"running", "queued"})
+_ACTIVE_TODO_STATUSES = frozenset({"pending", "in_progress"})
+_PLAN_STORE_KEY = "plan"
+
+
+def reset_turn_sidebar_sources(metadata: dict[str, Any]) -> None:
+    """Clear plan/todos when a new user turn starts."""
+    store = metadata.get("todos")
+    if isinstance(store, dict):
+        store["items"] = []
+        store["next_id"] = 1
+    metadata[_PLAN_STORE_KEY] = {
+        "goal": None,
+        "explanation": None,
+        "steps": [],
+    }
+
+
+def plan_snapshot_from_metadata(metadata: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
+    raw = metadata.get(_PLAN_STORE_KEY)
+    if not isinstance(raw, dict):
+        return None, []
+    goal = raw.get("goal") or raw.get("explanation")
+    steps = raw.get("steps")
+    if not isinstance(steps, list):
+        return (str(goal) if goal else None), []
+    normalised: list[dict[str, Any]] = []
+    for idx, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        title = step.get("title") or step.get("step") or ""
+        if not str(title).strip():
+            continue
+        normalised.append(
+            {
+                "index": step.get("index", idx),
+                "title": str(title),
+                "status": step.get("status", "pending"),
+            }
+        )
+    return (str(goal) if goal else None), normalised
+
+
+def filter_sidebar_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hide completed/canceled tasks — sidebar tracks live work only."""
+    return [t for t in tasks if t.get("status") in _ACTIVE_TASK_STATUSES]
+
+
+def filter_sidebar_todos(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hide completed checklist items — sidebar tracks active work only."""
+    return [t for t in todos if t.get("status") in _ACTIVE_TODO_STATUSES]
+
+
+def filter_sidebar_agents(
+    agents: list[dict[str, Any]], *, turn_agent_ids: set[str]
+) -> list[dict[str, Any]]:
+    """Show running agents plus agents spawned in the current user turn."""
+    visible: list[dict[str, Any]] = []
+    for agent in agents:
+        aid = str(agent.get("agent_id", ""))
+        status = str(agent.get("status", ""))
+        if status == "running" or aid in turn_agent_ids:
+            visible.append(agent)
+    return visible[:5]
+
+
+def _first_markdown_heading(text: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip() or None
+    return None
+
+
+def parse_plan_markdown(text: str) -> list[dict[str, Any]]:
+    """Best-effort checklist parser for ``update_plan`` markdown bodies."""
+    steps: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        match = re.match(r"^- \[( |x|X|~)\] (.+)$", stripped)
+        if not match:
+            continue
+        mark, title = match.group(1), match.group(2).strip()
+        if mark.lower() == "x":
+            status = "completed"
+        elif mark == "~":
+            status = "in_progress"
+        else:
+            status = "pending"
+        steps.append(
+            {"index": len(steps) + 1, "title": title, "status": status}
+        )
+    return steps
+
+
+def parse_structured_plan_steps(raw_steps: list[Any]) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw_steps, start=1):
+        if not isinstance(item, dict):
+            continue
+        title = item.get("step") or item.get("title") or ""
+        if not str(title).strip():
+            continue
+        status = item.get("status", "pending")
+        steps.append(
+            {
+                "index": idx,
+                "title": str(title),
+                "status": str(status),
+            }
+        )
+    return steps
+
+
+def sync_plan_store(
+    metadata: dict[str, Any],
+    *,
+    explanation: str | None,
+    plan_text: str | None = None,
+    structured_steps: list[dict[str, Any]] | None = None,
+) -> None:
+    steps = structured_steps or (
+        parse_plan_markdown(plan_text or "") if plan_text else []
+    )
+    goal = explanation or (_first_markdown_heading(plan_text or "") if plan_text else None)
+    metadata[_PLAN_STORE_KEY] = {
+        "goal": goal,
+        "explanation": explanation,
+        "steps": steps,
+    }
 
 
 class InfoSidebar(Widget):

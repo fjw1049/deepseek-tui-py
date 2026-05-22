@@ -351,13 +351,25 @@ class PlanUpdateTool(ToolSpec):
             "type": "object",
             "properties": {
                 "plan": {
-                    "type": "string",
-                    "description": "The full updated plan (markdown format).",
+                    "description": "The full updated plan (markdown string or structured step array).",
+                    "oneOf": [
+                        {"type": "string"},
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "step": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "status": {"type": "string"},
+                                },
+                            },
+                        },
+                    ],
                 },
-                "completed_steps": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Steps to mark as completed.",
+                "explanation": {
+                    "type": "string",
+                    "description": "Short goal or summary for the plan.",
                 },
             },
             "required": ["plan"],
@@ -367,15 +379,48 @@ class PlanUpdateTool(ToolSpec):
         return [ToolCapability.WRITES_FILES]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        plan = _require_string(input_data, "plan")
+        from deepseek_tui.tui.widgets.info_sidebar import (
+            parse_plan_markdown,
+            parse_structured_plan_steps,
+            sync_plan_store,
+        )
+
+        explanation_raw = input_data.get("explanation")
+        explanation = (
+            explanation_raw.strip()
+            if isinstance(explanation_raw, str) and explanation_raw.strip()
+            else None
+        )
+        plan_field = input_data.get("plan")
+        structured_steps: list[dict[str, object]] | None = None
+        plan_text: str
+        if isinstance(plan_field, list):
+            structured_steps = parse_structured_plan_steps(plan_field)
+            lines = [
+                f"- [{'x' if s['status'] == 'completed' else '~' if s['status'] == 'in_progress' else ' '}] {s['title']}"
+                for s in structured_steps
+            ]
+            plan_text = "\n".join(lines)
+        elif isinstance(plan_field, str):
+            plan_text = plan_field
+            structured_steps = parse_plan_markdown(plan_text)
+        else:
+            raise ToolError("Missing or invalid 'plan' (string markdown or step array)")
+
         plan_path = context.working_directory / ".deepseek" / "plan.md"
         plan_path.parent.mkdir(parents=True, exist_ok=True)
-        plan_path.write_text(plan, encoding="utf-8")
+        plan_path.write_text(plan_text, encoding="utf-8")
+        sync_plan_store(
+            context.metadata,
+            explanation=explanation,
+            plan_text=plan_text,
+            structured_steps=structured_steps,
+        )
 
         return ToolResult(
             success=True,
-            content=f"Plan updated ({len(plan)} chars)",
-            metadata={"path": str(plan_path)},
+            content=f"Plan updated ({len(plan_text)} chars)",
+            metadata={"path": str(plan_path), "steps": len(structured_steps or [])},
         )
 
 

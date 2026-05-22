@@ -231,6 +231,27 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     return registry
 
 
+def build_subagent_registry(
+    config: Config | None = None,
+    *,
+    mode: str = "agent",
+    allowed_tools: list[str] | None = None,
+    client: LLMClient | None = None,
+    root_model: str | None = None,
+) -> ToolRegistry:
+    """Tool surface for a sub-agent loop (mirrors Rust ``SubAgentToolRegistry``).
+
+    Default ``allowed_tools=None`` inherits the full agent registry. Custom
+    agents pass an explicit allowlist.
+    """
+    cfg = config or Config()
+    registry = build_default_registry(cfg, mode=mode)
+    wire_registry_client(registry, client, root_model=root_model or "deepseek-chat")
+    if allowed_tools is not None:
+        registry.filter_by_names(set(allowed_tools))
+    return registry
+
+
 def wire_registry_client(
     registry: ToolRegistry,
     client: LLMClient | None,

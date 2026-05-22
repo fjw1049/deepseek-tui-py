@@ -121,6 +121,30 @@ class EngineHandle:
         if self._hooks is not None:
             await self._bridge_to_hooks(event)
 
+    def try_emit(self, event: EngineEvent) -> bool:
+        """Enqueue without blocking. Returns False if the queue is full.
+
+        Used by background drainer tasks so a slow/absent consumer cannot
+        wedge producers or grow unbounded mailbox backlogs.
+        """
+        try:
+            self._event_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            return False
+        # Never spawn hook tasks from background drainer paths — hooks can
+        # shell out and leak processes/tasks when the consumer is slow.
+        return True
+
+    def drain_events(self) -> list[EngineEvent]:
+        """Non-blocking drain (tests and shutdown cleanup)."""
+        out: list[EngineEvent] = []
+        while True:
+            try:
+                out.append(self._event_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return out
+
     async def _bridge_to_hooks(self, event: EngineEvent) -> None:
         """Translate EngineEvent → HookEvent and broadcast (best-effort)."""
         from deepseek_tui.engine.events import (

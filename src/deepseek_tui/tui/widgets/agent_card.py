@@ -102,16 +102,22 @@ class DelegateCard:
         string per visual line; the caller joins with ``\\n``.
         """
         lines: list[str] = [
-            _card_header("delegate", self.status, self.agent_type, self.agent_id)
+            _card_header(
+                "delegate",
+                self.status,
+                self.agent_type,
+                _display_agent_id(self.agent_id),
+            )
         ]
         if self.truncated:
             lines.append("  [dim]…[/]")
         for action in self.actions:
             lines.append(f"  [dim]│[/] {_truncate(action, 200)}")
         if self.status.is_terminal() and self.summary:
+            display = _summary_for_display(self.summary) or self.summary
             lines.append(
                 f"  [dim]╰[/] [{self.status.color()}]"
-                f"{_truncate(self.summary, 200)}[/]"
+                f"{_truncate(display, 200)}[/]"
             )
         return lines
 
@@ -322,6 +328,33 @@ def _truncate(text: str, max_len: int) -> str:
     if len(trimmed) <= max_len:
         return trimmed
     return trimmed[: max_len - 1] + "…"
+
+
+def _summary_for_display(raw: str | None) -> str | None:
+    """Show the sub-agent conclusion, not the full structured report."""
+    if not raw or not raw.strip():
+        return None
+    text = raw.strip()
+    if "### SUMMARY" in text:
+        section = text.split("### SUMMARY", 1)[1]
+        lines: list[str] = []
+        for line in section.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("### "):
+                break
+            if stripped:
+                lines.append(stripped)
+        if lines:
+            return _truncate(" ".join(lines), 200)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return _truncate(stripped, 200)
+    return _truncate(text, 200)
+
+
+def _display_agent_id(agent_id: str) -> str:
+    return agent_id if len(agent_id) <= 12 else agent_id[:12]
 
 
 class AgentCardWidget(Static):

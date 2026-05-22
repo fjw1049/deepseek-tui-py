@@ -339,6 +339,8 @@ class TaskManager:
     async def shutdown(self) -> None:
         self._shutdown.set()
         self._notify.set()
+        for token in self._running_cancel.values():
+            token.set()
         for task in self._worker_tasks:
             task.cancel()
         for task in self._worker_tasks:
@@ -350,6 +352,14 @@ class TaskManager:
 
     def is_shutdown(self) -> bool:
         return self._shutdown.is_set()
+
+    def running_count(self) -> int:
+        """Count queued + running durable tasks (for session activity UI)."""
+        return sum(
+            1
+            for t in self._tasks.values()
+            if t.status in (TaskStatus.QUEUED, TaskStatus.RUNNING)
+        )
 
     def data_dir(self) -> Path:
         return self._cfg.data_dir

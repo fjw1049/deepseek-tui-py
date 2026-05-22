@@ -39,15 +39,19 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ErrorEvent,
+    RlmProgressEvent,
     SandboxDeniedEvent,
     SessionEndedEvent,
     SessionStartedEvent,
+    StatusEvent,
     ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
+from deepseek_tui.engine.session_activity import SessionActivityCoordinator
+from deepseek_tui.tools.subagent.completion import SubAgentCompletion
 from deepseek_tui.engine.handle import CancelRequestOp, EngineHandle, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
 from deepseek_tui.engine.seam_manager import SeamConfig, SeamManager
@@ -248,6 +252,13 @@ class Engine:
         # Engine instance: workspace lives on tool_context.working_directory.
         self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
+        # Issue #756: parent turn resumes when direct children complete.
+        self._subagent_completions: asyncio.Queue[SubAgentCompletion] = (
+            asyncio.Queue(maxsize=64)
+        )
+        self._activity_coordinator = SessionActivityCoordinator(
+            self, self.handle.try_emit
+        )
 
     def invalidate_mcp_tools_cache(self) -> None:
         """Drop cached MCP tool descriptors so the next turn re-discovers."""
@@ -291,6 +302,8 @@ class Engine:
         exec_policy: ExecPolicyEngine | None = None,
         approval_handler: ApprovalHandler | None = None,
         max_tool_round_trips: int = 100,
+        task_data_dir: Path | None = None,
+        tool_runtime: object | None = None,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
 
@@ -300,7 +313,7 @@ class Engine:
         """
         from deepseek_tui.config.models import Config
         from deepseek_tui.skills import discover_in_workspace
-        from deepseek_tui.tools.runtime import create_tool_runtime
+        from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
         # 装配 HookDispatcher + HookExecutor
         cfg = config if isinstance(config, Config) else Config()
         from deepseek_tui.hooks.build import build_hook_dispatcher, build_lifecycle_hook_executor
@@ -309,12 +322,16 @@ class Engine:
             handle.attach_hooks(build_hook_dispatcher(cfg))
         ws = working_directory or Path.cwd()
         hook_executor = build_lifecycle_hook_executor(cfg, ws)
-        runtime = await create_tool_runtime(
-            config=cfg,
-            working_directory=working_directory,
-            mode=mode,
-            start_mcp=cfg.features.mcp,
-        )
+        if isinstance(tool_runtime, ToolRuntime):
+            runtime = tool_runtime
+        else:
+            runtime = await create_tool_runtime(
+                config=cfg,
+                working_directory=working_directory,
+                mode=mode,
+                task_data_dir=task_data_dir,
+                start_mcp=cfg.features.mcp,
+            )
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
         # Pull sampling / reasoning defaults out of Config so the per-turn
@@ -357,7 +374,33 @@ class Engine:
         )
         if runtime.subagent_manager is not None:
             runtime.subagent_manager.attach_parent_cancel(handle.cancel_event)
+            runtime.subagent_manager.attach_parent_completion_sink(
+                engine._enqueue_subagent_completion
+            )
+            from deepseek_tui.engine.handle import AutoApprovalHandler
+            from deepseek_tui.tools.subagent.manager import SubAgentRuntime
+
+            auto_approve = isinstance(approval_handler, AutoApprovalHandler)
+            loop_runtime = SubAgentRuntime(
+                manager=runtime.subagent_manager,
+                client=client,
+                model=default_model,
+                config=cfg,
+                workspace=ws.resolve(),  # noqa: ASYNC240
+                allow_shell=getattr(cfg, "allow_shell", True),
+                auto_approve=auto_approve,
+                task_manager=runtime.task_manager,
+                cancel_token=handle.cancel_event,
+                mailbox=runtime.mailbox,
+            )
+            runtime.subagent_manager.attach_loop_runtime(loop_runtime)
         return engine
+
+    async def shutdown_session(self) -> None:
+        """Stop background coordinators and tool runtime (tests / teardown)."""
+        await self._activity_coordinator.stop()
+        if self.tool_runtime is not None:
+            await self.tool_runtime.shutdown()
 
     def _render_skills_context(self) -> str | None:
         """Render skills context for system prompt injection."""
@@ -462,15 +505,43 @@ class Engine:
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""
-        await self.handle.emit(
-            SessionEndedEvent(
-                session_id=self._cycle_session_id, turns=self.turn_counter
+        await self.shutdown_session()
+        try:
+            await self.handle.emit(
+                SessionEndedEvent(
+                    session_id=self._cycle_session_id, turns=self.turn_counter
+                )
             )
-        )
-        if self.tool_runtime is not None:
-            await self.tool_runtime.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
         if hasattr(self.client, "close"):
             await self.client.close()
+
+    async def run_single_turn(
+        self,
+        content: str,
+        *,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Run one turn without ``run()``'s op loop or activity coordinator.
+
+        Used by the task executor: shared TaskManager, no extra worker pool.
+        """
+        op = SendMessageOp(
+            content=content,
+            model=model,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+        )
+        with bind_turn() as turn_id:
+            self.handle.reset_cancel()
+            self.handle._mark_turn_active()
+            try:
+                await self._handle_send_message_inner(op, turn_id)
+            finally:
+                self.handle._mark_turn_idle()
 
     async def run(self) -> None:
         logger.info(
@@ -478,6 +549,7 @@ class Engine:
             self.default_model,
             self._cycle_session_id,
         )
+        self._activity_coordinator.start()
         await self.handle.emit(
             SessionStartedEvent(session_id=self._cycle_session_id)
         )
@@ -501,6 +573,8 @@ class Engine:
         except asyncio.CancelledError:
             logger.info("engine_run_cancelled")
             raise
+        finally:
+            await self._activity_coordinator.stop()
 
     async def _handle_send_message(self, op: SendMessageOp) -> None:
         with bind_turn() as turn_id:
@@ -605,6 +679,12 @@ class Engine:
                     self.session_cost_cny += estimate.cny
                     cost_usd = self.session_cost_usd
                     cost_cny = self.session_cost_cny
+            running_subagents = 0
+            running_tasks = 0
+            if self.tool_context.subagent_manager is not None:
+                running_subagents = self.tool_context.subagent_manager.running_count()
+            if self.tool_context.task_manager is not None:
+                running_tasks = self.tool_context.task_manager.running_count()
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
@@ -613,11 +693,81 @@ class Engine:
                     session_cost_cny=cost_cny,
                     cache_hit_tokens=cache_hit_tokens,
                     cache_miss_tokens=cache_miss_tokens,
+                    running_subagents=running_subagents,
+                    running_tasks=running_tasks,
                 )
             )
             await self._auto_persist_session()
         finally:
             self.handle.clear_response_id()
+
+    def _enqueue_subagent_completion(self, completion: SubAgentCompletion) -> None:
+        """Thread-safe enqueue from sub-agent driver tasks (#756)."""
+        try:
+            self._subagent_completions.put_nowait(completion)
+        except asyncio.QueueFull:
+            pass
+
+    def _drain_subagent_completions(self) -> list[SubAgentCompletion]:
+        out: list[SubAgentCompletion] = []
+        while True:
+            try:
+                out.append(self._subagent_completions.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return out
+
+    async def _handle_subagent_turn_handoff(self, messages: list[Message]) -> bool:
+        """Wait for direct children and inject ``<deepseek:subagent.done>`` (#756).
+
+        Returns True when completions were injected and the turn should continue.
+        """
+        mgr = self.tool_context.subagent_manager
+        if mgr is None:
+            return False
+
+        completions = self._drain_subagent_completions()
+        running = mgr.running_count()
+        if running > 0:
+            await self.handle.emit(
+                StatusEvent(
+                    message=f"Waiting on {running} sub-agent(s) to complete..."
+                )
+            )
+            deadline = time.monotonic() + 600.0
+            while running > 0:
+                if self.handle.cancel_event.is_set():
+                    return False
+                if time.monotonic() > deadline:
+                    logger.warning(
+                        "subagent_handoff_timeout running=%d", running
+                    )
+                    return False
+                try:
+                    completion = await asyncio.wait_for(
+                        self._subagent_completions.get(), timeout=0.25
+                    )
+                    completions.append(completion)
+                except asyncio.TimeoutError:
+                    pass
+                completions.extend(self._drain_subagent_completions())
+                running = mgr.running_count()
+        else:
+            completions.extend(self._drain_subagent_completions())
+
+        if not completions:
+            return False
+
+        count = len(completions)
+        for item in completions:
+            messages.append(Message.user(item.payload))
+        await self.handle.emit(
+            StatusEvent(
+                message=f"Resuming turn with {count} sub-agent completion(s)"
+            )
+        )
+        logger.info("subagent_handoff count=%d", count)
+        return True
 
     async def _run_conversation(
         self,
@@ -710,6 +860,8 @@ class Engine:
             if result.assistant_message is not None:
                 messages.append(result.assistant_message)
             if not result.tool_calls:
+                if await self._handle_subagent_turn_handoff(messages):
+                    continue
                 return result
 
             messages.append(self._build_tool_use_message(result.tool_calls))
@@ -1334,9 +1486,24 @@ class Engine:
             if denied:
                 return None
 
-        return await self.tool_registry.execute(
-            tool_name, tool_call.arguments, self.tool_context
-        )
+        if tool_name == "rlm":
+
+            def _rlm_progress(iteration: int, summary: str, rpc_count: int = 0) -> None:
+                self.handle.try_emit(
+                    RlmProgressEvent(
+                        iteration=iteration,
+                        summary=summary,
+                        rpc_count=rpc_count,
+                    )
+                )
+
+            self.tool_context.metadata["rlm_progress_cb"] = _rlm_progress
+        try:
+            return await self.tool_registry.execute(
+                tool_name, tool_call.arguments, self.tool_context
+            )
+        finally:
+            self.tool_context.metadata.pop("rlm_progress_cb", None)
 
     async def _execute_mcp_tool(
         self, name: str, arguments: dict[str, Any]

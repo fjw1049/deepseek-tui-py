@@ -22,8 +22,11 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ErrorEvent,
+    RlmProgressEvent,
     SandboxDeniedEvent,
+    SessionActivityEvent,
     StatusEvent,
+    SubAgentMailboxEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
@@ -33,14 +36,22 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
-from deepseek_tui.engine.handle import EngineHandle, SendMessageOp
+from deepseek_tui.tools.subagent.mailbox import MailboxMessageKind
 from deepseek_tui.tui.backtrack import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
 from deepseek_tui.tui.widgets.command_palette import CommandPalette
 from deepseek_tui.tui.widgets.composer import Composer, ComposerHint
 from deepseek_tui.tui.widgets.file_mention import FileMention
 from deepseek_tui.tui.widgets.help_panel import HelpPanel
-from deepseek_tui.tui.widgets.info_sidebar import InfoSidebar, InfoSidebarData
+from deepseek_tui.tui.widgets.info_sidebar import (
+    InfoSidebar,
+    InfoSidebarData,
+    filter_sidebar_agents,
+    filter_sidebar_tasks,
+    filter_sidebar_todos,
+    plan_snapshot_from_metadata,
+    reset_turn_sidebar_sources,
+)
 from deepseek_tui.tui.widgets.sidebar import Sidebar
 from deepseek_tui.tui.widgets.slash_menu import SlashMenu
 from deepseek_tui.tui.widgets.status_bar import StatusBar
@@ -57,6 +68,12 @@ def _json_decode_error() -> type[Exception]:
     import json as _json
 
     return _json.JSONDecodeError
+
+
+def _agent_id_from_spawn_result(content: str) -> str | None:
+    from deepseek_tui.tui.widgets.tool_cell import _extract_agent_id
+
+    return _extract_agent_id(content)
 
 
 class DeepSeekTUI(App[None]):
@@ -127,6 +144,12 @@ class DeepSeekTUI(App[None]):
         # the panel only surfaces tasks born this session — stale
         # ``failed`` records from prior runs no longer clutter the view.
         self._session_started_at_iso: str | None = None
+        self._engine_starting = False
+        self._pending_messages: list[str] = []
+        # Agent ids spawned during the current user turn — sidebar only
+        # shows running agents plus this set so completed agents from
+        # earlier questions do not linger.
+        self._turn_agent_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -197,58 +220,76 @@ class DeepSeekTUI(App[None]):
             mark_onboarded,
         )
 
-        # Stamp the session start before any engine work — the info
-        # sidebar filters tasks against this so historical failures
-        # don't bleed into a fresh interaction.
-        if self._session_started_at_iso is None:
-            self._session_started_at_iso = datetime.now(timezone.utc).isoformat()
+        self._engine_starting = True
+        try:
+            # Stamp the session start before any engine work — the info
+            # sidebar filters tasks against this so historical failures
+            # don't bleed into a fresh interaction.
+            if self._session_started_at_iso is None:
+                self._session_started_at_iso = datetime.now(timezone.utc).isoformat()
 
-        client = self._build_client()
-        if client is None:
-            logger.warning("tui_no_api_key onboarding=%s", not is_onboarded())
-            self.query_one(StatusBar).set_status(
-                "no API key — run `deepseek-tui setup` or `deepseek-tui login`"
+            client = self._build_client()
+            if client is None:
+                logger.warning("tui_no_api_key onboarding=%s", not is_onboarded())
+                self.query_one(StatusBar).set_status(
+                    "no API key — run `deepseek-tui setup` or `deepseek-tui login`"
+                )
+                if not is_onboarded():
+                    def _on_onboarding(api_key: str | None) -> None:
+                        if api_key:
+                            self.config.api_key = api_key
+                            try:
+                                mark_onboarded()
+                            except OSError:
+                                pass
+                            self.run_worker(self._start_engine(), exclusive=True)
+
+                    self.push_screen(OnboardingScreen(), _on_onboarding)
+                return
+
+            model = self.config.model or self.config.default_text_model
+            approval_handler = TUIApprovalHandler(self)
+            logger.info("tui_engine_create model=%s", model)
+            self._engine = await Engine.create(
+                self.handle,
+                client,
+                config=self.config,
+                default_model=model,
+                approval_handler=approval_handler,
             )
-            if not is_onboarded():
-                def _on_onboarding(api_key: str | None) -> None:
-                    if api_key:
-                        self.config.api_key = api_key
-                        try:
-                            mark_onboarded()
-                        except OSError:
-                            pass
-                        self.run_worker(self._start_engine(), exclusive=True)
-
-                self.push_screen(OnboardingScreen(), _on_onboarding)
-            return
-
-        model = self.config.model or self.config.default_text_model
-        approval_handler = TUIApprovalHandler(self)
-        logger.info("tui_engine_create model=%s", model)
-        self._engine = await Engine.create(
-            self.handle,
-            client,
-            config=self.config,
-            default_model=model,
-            approval_handler=approval_handler,
-        )
-        self._engine_task = asyncio.create_task(self._engine.run())
-        logger.info("tui_engine_started")
-        status = self.query_one(StatusBar)
-        status.set_model(model)
-        status.set_mode(self._interaction_mode)
-        self.query_one(ComposerHint).set_model(model)
-        # Apply --resume / --fork before announcing ready so the user sees
-        # the restored transcript rather than a blank screen. Errors here
-        # are non-fatal: status bar surfaces them and the user can keep
-        # going with an empty session.
-        applied = self._apply_resume_or_fork()
-        if applied is None:
-            status.set_status("ready")
-        else:
-            status.set_status(applied)
-        self._engine.mode = self._interaction_mode
-        await self._engine.run_lifecycle_hook("session_start")
+            self._engine_task = asyncio.create_task(self._engine.run())
+            logger.info("tui_engine_started")
+            status = self.query_one(StatusBar)
+            status.set_model(model)
+            status.set_mode(self._interaction_mode)
+            self.query_one(ComposerHint).set_model(model)
+            # Apply --resume / --fork before announcing ready so the user sees
+            # the restored transcript rather than a blank screen. Errors here
+            # are non-fatal: status bar surfaces them and the user can keep
+            # going with an empty session.
+            applied = self._apply_resume_or_fork()
+            if applied is None:
+                status.set_status("ready")
+            else:
+                status.set_status(applied)
+            self._engine.mode = self._interaction_mode
+            await self._engine.run_lifecycle_hook("session_start")
+            await self._flush_pending_messages()
+        except Exception:  # noqa: BLE001 — surface startup failure in UI
+            logger.exception("tui_engine_start_failed")
+            status = self.query_one(StatusBar)
+            status.set_status("engine failed to start — see log")
+            if self._pending_messages:
+                dropped = len(self._pending_messages)
+                self.query_one(Transcript).add_notice(
+                    f"Dropped {dropped} queued message(s) due to startup failure.",
+                    severity="error",
+                )
+                self._pending_messages.clear()
+            self._engine = None
+            self._engine_task = None
+        finally:
+            self._engine_starting = False
 
     def _apply_resume_or_fork(self) -> str | None:
         """Restore session messages from disk if a resume/fork id was given.
@@ -343,19 +384,25 @@ class DeepSeekTUI(App[None]):
 
     # ── message submission ────────────────────────────────────────────
 
-    async def on_composer_submitted(self, event: Composer.Submitted) -> None:
-        if self._engine is None:
-            logger.warning("composer_submit_no_engine")
-            self.query_one(StatusBar).set_status(
-                "no engine — configure API key first"
-            )
+    async def _flush_pending_messages(self) -> None:
+        """Send messages queued while ``Engine.create`` was still running."""
+        if self._engine is None or not self._pending_messages:
+            self._pending_messages.clear()
             return
-        preview = (event.text or "")[:200].replace("\n", " ")
-        await self._engine.run_lifecycle_hook(
-            "message_submit", message=event.text or ""
-        )
+        pending = list(self._pending_messages)
+        self._pending_messages.clear()
+        for text in pending:
+            await self._submit_user_message(text, show_in_transcript=False)
+
+    async def _submit_user_message(
+        self, text: str, *, show_in_transcript: bool = True
+    ) -> None:
+        if self._engine is None:
+            return
+        preview = text[:200].replace("\n", " ")
+        await self._engine.run_lifecycle_hook("message_submit", message=text)
         # Prepend active mode so Engine adapts behaviour (plan/yolo/ask vs agent).
-        content = event.text
+        content = text
         if self._interaction_mode != "agent":
             content = f"[mode:{self._interaction_mode}] {content}"
         transcript = self.query_one(Transcript)
@@ -367,20 +414,47 @@ class DeepSeekTUI(App[None]):
             # which is exactly the behaviour we want here.
             logger.info(
                 "composer_submit text_len=%d preview=%r mode=steer",
-                len(event.text or ""),
+                len(text),
                 preview,
             )
-            transcript.add_user_message(event.text, queued=True)
+            if show_in_transcript:
+                transcript.add_user_message(text, queued=True)
             await self.handle.steer(content)
             return
         logger.info(
             "composer_submit text_len=%d preview=%r mode=send",
-            len(event.text or ""),
+            len(text),
             preview,
         )
-        transcript.add_user_message(event.text)
+        if show_in_transcript:
+            transcript.add_user_message(text)
         await self.handle.send_op(SendMessageOp(content=content))
         self.run_worker(self._listen_events(), exclusive=True, name="event-listener")
+
+    async def on_composer_submitted(self, event: Composer.Submitted) -> None:
+        text = event.text or ""
+        if self._engine is None:
+            if self._engine_starting:
+                self._pending_messages.append(text)
+                transcript = self.query_one(Transcript)
+                transcript.add_user_message(text, queued=True)
+                n = len(self._pending_messages)
+                label = "message" if n == 1 else "messages"
+                self.query_one(StatusBar).set_status(
+                    f"starting engine — {n} {label} queued"
+                )
+                logger.info(
+                    "composer_submit_queued_startup text_len=%d queue_depth=%d",
+                    len(text),
+                    n,
+                )
+                return
+            logger.warning("composer_submit_no_engine")
+            self.query_one(StatusBar).set_status(
+                "no engine — configure API key first"
+            )
+            return
+        await self._submit_user_message(text)
 
     # ── slash command handling ────────────────────────────────────────
 
@@ -446,12 +520,16 @@ class DeepSeekTUI(App[None]):
                 break
             if isinstance(event, TurnStartedEvent):
                 self._turn_started_at = time.monotonic()
+                self._turn_agent_ids.clear()
+                if self._engine is not None:
+                    reset_turn_sidebar_sources(self._engine.tool_context.metadata)
                 status.set_status("thinking...")
                 status.set_started(self._turn_started_at)
                 # Refresh the thinking-visibility flag every turn so the
                 # Ctrl+T toggle takes effect at the next finalize.
                 transcript.show_thinking = bool(self.config.ui.show_thinking)
                 transcript.start_assistant_message()
+                await self._refresh_info_sidebar()
             elif isinstance(event, TextDeltaEvent):
                 transcript.append_delta(event.text)
             elif isinstance(event, ThinkingDeltaEvent):
@@ -459,11 +537,23 @@ class DeepSeekTUI(App[None]):
             elif isinstance(event, ToolCallEvent):
                 tc = event.tool_call
                 transcript.add_tool_call(tc.id, tc.name, tc.arguments)
-                status.set_status(f"running {tc.name}...")
+                if tc.name in ("agent_spawn", "delegate_to_agent", "spawn_agent"):
+                    status.set_phase(f"spawning sub-agent...")
+                else:
+                    status.set_phase(f"running {tc.name}")
             elif isinstance(event, ToolResultEvent):
                 transcript.update_tool_result(
                     event.tool_call_id, event.content, event.success
                 )
+                if event.success and event.tool_name in (
+                    "agent_spawn",
+                    "delegate_to_agent",
+                    "spawn_agent",
+                ):
+                    agent_id = _agent_id_from_spawn_result(event.content)
+                    if agent_id:
+                        self._turn_agent_ids.add(agent_id)
+                        await self._refresh_info_sidebar()
             elif isinstance(event, ApprovalRequiredEvent):
                 # The modal dialog IS the notification — surfacing an
                 # extra "Approval required for X" notice on top of every
@@ -506,7 +596,23 @@ class DeepSeekTUI(App[None]):
                 transcript.finalize_message()
                 break
             elif isinstance(event, TurnCompleteEvent):
-                status.set_status("ready")
+                bg = event.running_subagents + event.running_tasks
+                if bg:
+                    parts: list[str] = []
+                    if event.running_subagents:
+                        parts.append(f"{event.running_subagents} agent(s)")
+                    if event.running_tasks:
+                        parts.append(f"{event.running_tasks} task(s)")
+                    status.set_status(
+                        f"ready · {' + '.join(parts)} still running"
+                    )
+                    transcript.add_notice(
+                        f"Background work still running ({', '.join(parts)}). "
+                        "Results may arrive after this reply.",
+                        severity="warning",
+                    )
+                else:
+                    status.set_status("ready")
                 status.set_finished()
                 if event.usage is not None:
                     status.set_tokens(
@@ -524,8 +630,38 @@ class DeepSeekTUI(App[None]):
                 await self._refresh_info_sidebar()
                 self._maybe_notify_turn_done()
                 break
+            elif isinstance(event, SubAgentMailboxEvent):
+                await self._refresh_info_sidebar()
+                if event.message.kind is MailboxMessageKind.STARTED:
+                    self._turn_agent_ids.add(event.message.agent_id)
+                transcript.apply_subagent_mailbox(event.message)
+                msg = event.message
+                if msg.tool_name:
+                    status.set_phase(f"sub-agent {msg.agent_id[:8]}: {msg.tool_name}")
+                elif msg.summary:
+                    status.set_phase(
+                        f"sub-agent {msg.agent_id[:8]}: {msg.summary[:40]}"
+                    )
+                elif msg.status:
+                    status.set_phase(f"sub-agent {msg.agent_id[:8]}: {msg.status[:40]}")
+            elif isinstance(event, SessionActivityEvent):
+                await self._refresh_info_sidebar()
+                if event.message:
+                    status.set_phase(f"background: {event.message[:50]}")
+            elif isinstance(event, RlmProgressEvent):
+                status.set_phase(
+                    f"rlm round {event.iteration}: {event.summary[:80]}"
+                )
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
+                if "Waiting on" in event.message and "sub-agent" in event.message:
+                    if self._turn_started_at is not None:
+                        status.set_started(self._turn_started_at)
+                    status.set_phase("waiting sub-agents")
+                elif event.message.startswith("Resuming turn with"):
+                    if self._turn_started_at is not None:
+                        status.set_started(self._turn_started_at)
+                    status.set_phase("synthesizing")
             # Refresh the right info-sidebar opportunistically on the
             # high-traffic events that mutate its data (tool results
             # alter todos/tasks/agents). Refresh is cheap (three list
@@ -812,6 +948,11 @@ class DeepSeekTUI(App[None]):
                 in_progress_id = int(item_id)
         total = len(todo_items)
         pct = round(completed * 100 / total) if total else 0
+        todo_items = filter_sidebar_todos(todo_items)
+
+        plan_goal, plan_steps = plan_snapshot_from_metadata(
+            self._engine.tool_context.metadata
+        )
 
         # --- Tasks: durable TaskManager snapshot, filtered to this
         # session so stale ``failed`` records from earlier runs don't
@@ -872,11 +1013,15 @@ class DeepSeekTUI(App[None]):
 
         sidebar.update_data(
             InfoSidebarData(
+                plan_goal=plan_goal,
+                plan_steps=plan_steps,
                 todos=todo_items,
                 todos_completion_pct=pct,
                 todos_in_progress_id=in_progress_id,
-                tasks=tasks_data,
-                agents=agents_data,
+                tasks=filter_sidebar_tasks(tasks_data),
+                agents=filter_sidebar_agents(
+                    agents_data, turn_agent_ids=self._turn_agent_ids
+                ),
             )
         )
 

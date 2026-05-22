@@ -126,6 +126,9 @@ class MailboxEnvelope:
     message: MailboxMessage
 
 
+MAILBOX_MAX_ENVELOPES = 512
+
+
 class Mailbox:
     """Sender side of the mailbox. Cheaply sharable via ``share()``.
 
@@ -136,7 +139,9 @@ class Mailbox:
     """
 
     def __init__(self, cancel_token: asyncio.Event | None = None) -> None:
-        self._queue: asyncio.Queue[MailboxEnvelope] = asyncio.Queue()
+        self._queue: asyncio.Queue[MailboxEnvelope] = asyncio.Queue(
+            maxsize=MAILBOX_MAX_ENVELOPES
+        )
         self._seq = 0
         self._closed = False
         self._cancel_token = cancel_token or asyncio.Event()
@@ -161,7 +166,15 @@ class Mailbox:
             return False
         self._seq += 1
         envelope = MailboxEnvelope(seq=self._seq, message=message)
-        self._queue.put_nowait(envelope)
+        try:
+            self._queue.put_nowait(envelope)
+        except asyncio.QueueFull:
+            # Drop oldest progress so lifecycle events can still land.
+            try:
+                self._queue.get_nowait()
+                self._queue.put_nowait(envelope)
+            except asyncio.QueueEmpty:
+                return False
         return True
 
     def close(self) -> None:

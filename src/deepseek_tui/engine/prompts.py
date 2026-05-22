@@ -68,6 +68,7 @@ def build_system_prompt(
     skills_context: str | None = None,
     locale_tag: str = "en",
     project_context_enabled: bool = True,
+    subagent_mandate: bool = False,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -149,6 +150,11 @@ def build_system_prompt(
     # Working-set summary
     if working_set_summary and working_set_summary.strip():
         full_prompt += "\n\n" + working_set_summary
+
+    if subagent_mandate:
+        from deepseek_tui.engine.subagent_intent import SUBAGENT_MANDATE_BLOCK
+
+        full_prompt += "\n\n" + SUBAGENT_MANDATE_BLOCK
 
     return full_prompt
 

@@ -22,6 +22,8 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
+
+ProgressCallback = Callable[[int, str, int], None]
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -117,6 +119,7 @@ async def run_rlm_turn(
     root_prompt: str | None,
     child_model: str,
     max_depth: int,
+    on_progress: ProgressCallback | None = None,
 ) -> RlmTurnResult:
     """Run a full RLM turn.
 
@@ -291,6 +294,15 @@ async def run_rlm_turn(
                 elapsed_ms=int(round_result.elapsed * 1000),
             )
         )
+        if on_progress is not None:
+            try:
+                on_progress(
+                    iteration + 1,
+                    _summarize_code(code),
+                    round_result.rpc_count,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         if round_result.final_value is not None:
             return RlmTurnResult(

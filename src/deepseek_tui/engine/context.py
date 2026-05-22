@@ -109,30 +109,40 @@ def _summarize_subagent_snapshot(snapshot: Any, index: int) -> str:
     if not isinstance(snapshot, dict):
         return f"- item {index}: {summarize_text(str(snapshot), 240)}"
 
-    agent_id = snapshot.get("agent_id", "unknown")
-    agent_type = snapshot.get("agent_type", "agent")
-    status = _summarize_subagent_status(snapshot.get("status", "unknown"))
+    lines: list[str] = []
 
-    lines = [f"- {agent_id} ({agent_type}) status={status}"]
+    result = snapshot.get("result")
+    if isinstance(result, str) and result.strip():
+        lines.append(f"- result: {summarize_text(result.strip(), 1600)}")
+    else:
+        lines.append("- result: (not available yet)")
+
+    meta: list[str] = []
+    agent_id = snapshot.get("agent_id")
+    if isinstance(agent_id, str) and agent_id.strip():
+        meta.append(f"id={agent_id}")
+    agent_type = snapshot.get("agent_type")
+    if isinstance(agent_type, str) and agent_type.strip():
+        meta.append(f"type={agent_type}")
+    status = _summarize_subagent_status(snapshot.get("status", "unknown"))
+    if status and status != "unknown":
+        meta.append(f"status={status}")
 
     assignment = snapshot.get("assignment")
     if isinstance(assignment, dict):
         objective = assignment.get("objective")
         if isinstance(objective, str) and objective.strip():
-            lines.append(f"  objective: {summarize_text(objective.strip(), 220)}")
-
-    result = snapshot.get("result")
-    if isinstance(result, str) and result.strip():
-        lines.append(f"  result: {summarize_text(result.strip(), 1600)}")
-    else:
-        lines.append("  result: not available yet")
+            meta.append(f"objective={summarize_text(objective.strip(), 120)}")
 
     steps = snapshot.get("steps_taken")
     duration_ms = snapshot.get("duration_ms")
     if steps is not None or duration_ms is not None:
         s = str(steps) if steps is not None else "?"
         d = str(duration_ms) if duration_ms is not None else "?"
-        lines.append(f"  stats: steps={s}, duration_ms={d}")
+        meta.append(f"steps={s}, duration_ms={d}")
+
+    if meta:
+        lines.append(f"  ({'; '.join(meta)})")
 
     return "\n".join(lines)
 
@@ -157,7 +167,8 @@ def _compact_subagent_tool_result_for_context(
 
     out = [
         "[sub-agent result summarized for parent context]",
-        "Use `agent_result` again only if you need the full raw payload.",
+        "Lead with the result body; metadata is for routing only.",
+        "Child results are self-reports — verify side effects with tools before claiming success.",
     ]
     for idx, snap in enumerate(snapshots):
         if idx >= 8:

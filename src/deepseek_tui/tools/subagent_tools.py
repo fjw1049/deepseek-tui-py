@@ -196,6 +196,14 @@ class AgentSpawnTool(ToolSpec):
             fork_context=fork_context,
             fork_messages=fork_messages,
         )
+        runtime_raw = context.metadata.get("subagent_runtime")
+        if runtime_raw is not None and hasattr(runtime_raw, "would_exceed_depth"):
+            if runtime_raw.would_exceed_depth():
+                raise ToolError(
+                    f"Sub-agent depth limit reached (current depth "
+                    f"{runtime_raw.spawn_depth}, max "
+                    f"{runtime_raw.max_spawn_depth})"
+                )
         try:
             snapshot = await manager.spawn(request)
         except RuntimeError as exc:

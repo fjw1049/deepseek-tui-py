@@ -56,6 +56,16 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "task_gate_run",
         "task_shell_start",
         "task_shell_wait",
+        # Sub-agent orchestration — keep visible alongside task_* so the
+        # model does not reach for task_create when the user asks for
+        # agent_spawn (both families were deferred in Rust; task_* was
+        # promoted to always-active in Python and created a selection bias).
+        "agent_spawn",
+        "agent_result",
+        "agent_wait",
+        "agent_list",
+        "agent_cancel",
+        "delegate_to_agent",
         "github_issue_context",
         "github_pr_context",
         REQUEST_USER_INPUT_NAME,

@@ -26,8 +26,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from deepseek_tui.config.models import Config
+
+if TYPE_CHECKING:
+    from deepseek_tui.client.base import LLMClient
+    from deepseek_tui.tools.task_manager import TaskManager
+
+from deepseek_tui.tools.subagent.completion import (
+    SubAgentCompletion,
+    build_completion_payload,
+)
 from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
 
 DEFAULT_MAX_STEPS = 100
@@ -352,6 +362,7 @@ class SubAgent:
         fork_messages: list[dict[str, Any]] | None = None,
         parent_cancel: asyncio.Event | None = None,
         mailbox: Mailbox | None = None,
+        loop_runtime: SubAgentRuntime | None = None,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -370,6 +381,7 @@ class SubAgent:
         self.fork_messages = fork_messages
         self.parent_cancel = parent_cancel
         self.mailbox = mailbox
+        self.loop_runtime = loop_runtime
         self.cancel_token: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
@@ -418,8 +430,26 @@ class SubAgentManager:
         self._lock = asyncio.Lock()
         self._session_boot_id: str = f"boot_{uuid.uuid4().hex[:12]}"
         self._parent_cancel: asyncio.Event | None = None
+        self._parent_completion_sink: Callable[[SubAgentCompletion], None] | None = (
+            None
+        )
+        self._loop_runtime: SubAgentRuntime | None = None
         if state_path is not None:
             self._load_state()
+
+    def attach_parent_completion_sink(
+        self, sink: Callable[[SubAgentCompletion], None]
+    ) -> None:
+        """Wake the parent engine turn loop when a direct child finishes (#756)."""
+        self._parent_completion_sink = sink
+
+    def attach_loop_runtime(self, runtime: SubAgentRuntime) -> None:
+        """Wire shared client/config for ``run_subagent_loop`` (Rust SubAgentRuntime)."""
+        self._loop_runtime = runtime
+
+    @property
+    def loop_runtime(self) -> SubAgentRuntime | None:
+        return self._loop_runtime
 
     @property
     def session_boot_id(self) -> str:
@@ -493,6 +523,11 @@ class SubAgentManager:
                 fork_messages=request.fork_messages if request.fork_context else None,
                 parent_cancel=self._parent_cancel,
                 mailbox=self._mailbox,
+                loop_runtime=(
+                    self._loop_runtime.with_spawn_depth(child_depth)
+                    if self._loop_runtime is not None
+                    else None
+                ),
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()
@@ -645,6 +680,19 @@ class SubAgentManager:
             or agent.session_boot_id != self._session_boot_id
         )
 
+    def _notify_parent_completion(self, agent: SubAgent) -> None:
+        """Wake the parent turn loop (#756) for direct children in any terminal state."""
+        if agent.spawn_depth != 1 or self._parent_completion_sink is None:
+            return
+        snap = agent.snapshot()
+        payload = build_completion_payload(snap)
+        try:
+            self._parent_completion_sink(
+                SubAgentCompletion(agent_id=agent.id, payload=payload)
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _drive_agent(self, agent: SubAgent) -> None:
         if self._parent_cancel is not None and self._parent_cancel.is_set():
             agent.cancel_token.set()
@@ -657,6 +705,7 @@ class SubAgentManager:
                 self._persist_best_effort()
             if self._mailbox is not None:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
+            self._notify_parent_completion(agent)
             return
         except Exception as exc:  # noqa: BLE001 — translate to Failed status
             async with self._lock:
@@ -664,6 +713,7 @@ class SubAgentManager:
                 self._persist_best_effort()
             if self._mailbox is not None:
                 self._mailbox.send(MailboxMessage.failed(agent.id, str(exc)))
+            self._notify_parent_completion(agent)
             return
 
         async with self._lock:
@@ -679,8 +729,10 @@ class SubAgentManager:
             if agent.status.kind is SubAgentStatusKind.CANCELLED:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
             else:
-                self._mailbox.send(MailboxMessage.completed(agent.id, result))
+                summary = (result or "")[:500] if result else ""
+                self._mailbox.send(MailboxMessage.completed(agent.id, summary))
 
+        self._notify_parent_completion(agent)
         await self._evict_terminal_agents()
 
     async def _evict_terminal_agents(self) -> None:
@@ -782,25 +834,268 @@ class SubAgentManager:
 class SubAgentRuntime:
     """Runtime context forwarded to children on spawn.
 
-    Rust analogue: ``SubAgentRuntime`` (mod.rs:507). Fields track parent
-    mailbox / cancel token / spawn depth so deeper children cooperate
-    on cancellation and respect :attr:`max_spawn_depth`.
+    Rust analogue: ``SubAgentRuntime`` (mod.rs:587). All depths share
+    :attr:`manager`; children increment :attr:`spawn_depth` only.
     """
 
     manager: SubAgentManager
+    client: Any
+    model: str
+    config: Config
+    workspace: Path
+    allow_shell: bool = True
+    auto_approve: bool = True
+    task_manager: Any = None
     cancel_token: asyncio.Event = field(default_factory=asyncio.Event)
     mailbox: Mailbox | None = None
     spawn_depth: int = 0
     max_spawn_depth: int = DEFAULT_MAX_SPAWN_DEPTH
 
+    def would_exceed_depth(self) -> bool:
+        return self.spawn_depth + 1 > self.max_spawn_depth
+
+    def with_spawn_depth(self, depth: int) -> SubAgentRuntime:
+        return SubAgentRuntime(
+            manager=self.manager,
+            client=self.client,
+            model=self.model,
+            config=self.config,
+            workspace=self.workspace,
+            allow_shell=self.allow_shell,
+            auto_approve=self.auto_approve,
+            task_manager=self.task_manager,
+            cancel_token=self.cancel_token,
+            mailbox=self.mailbox,
+            spawn_depth=depth,
+            max_spawn_depth=self.max_spawn_depth,
+        )
+
     def child(self) -> SubAgentRuntime:
         return SubAgentRuntime(
             manager=self.manager,
+            client=self.client,
+            model=self.model,
+            config=self.config,
+            workspace=self.workspace,
+            allow_shell=self.allow_shell,
+            auto_approve=self.auto_approve,
+            task_manager=self.task_manager,
             cancel_token=self.cancel_token,
             mailbox=self.mailbox,
             spawn_depth=self.spawn_depth + 1,
             max_spawn_depth=self.max_spawn_depth,
         )
+
+
+        raise
+
+
+# --- sub-agent LLM loop (mirrors Rust ``run_subagent``) --------------------
+
+
+def _subagent_cancelled(
+    cancel: asyncio.Event,
+    agent: SubAgent,
+) -> bool:
+    if cancel.is_set() or agent.cancel_token.is_set():
+        return True
+    return agent.parent_cancel is not None and agent.parent_cancel.is_set()
+
+
+def _reject_subagent_interactive_shell(tool_name: str, input_data: dict[str, Any]) -> None:
+    if tool_name != "exec_shell":
+        return
+    if input_data.get("interactive") is True:
+        raise RuntimeError(
+            "Sub-agents cannot use exec_shell with interactive=true "
+            "(would take over the parent TUI terminal)"
+        )
+
+
+async def _execute_subagent_tool(
+    registry: object,
+    context: object,
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    auto_approve: bool,
+) -> str:
+    from deepseek_tui.tools.base import ApprovalRequirement, ToolError
+    from deepseek_tui.tools.registry import ToolRegistry
+
+    assert isinstance(registry, ToolRegistry)
+    _reject_subagent_interactive_shell(tool_name, tool_input)
+    tool = registry.get(tool_name)
+    if not auto_approve and tool.approval_requirement() != ApprovalRequirement.AUTO:
+        return (
+            f"Error: Tool {tool_name} requires approval and cannot run "
+            "inside this sub-agent unless the parent session is auto-approved"
+        )
+    try:
+        result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+        if not result.success:
+            return f"Error: {result.content}"
+        return result.content
+    except ToolError as exc:
+        return f"Error: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"Error: {exc}"
+
+
+async def run_subagent_loop(
+    agent: SubAgent,
+    runtime: SubAgentRuntime,
+    cancel: asyncio.Event,
+) -> str:
+    """Drive one sub-agent to completion without nesting a full Engine."""
+    from deepseek_tui.engine.turn_loop import TurnLoop
+    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.protocol.requests import MessageRequest
+    from deepseek_tui.tools.builder import build_subagent_registry
+    from deepseek_tui.tools.context import ToolContext
+    from deepseek_tui.tools.subagent.mailbox import MailboxMessage
+
+    system_prompt = build_subagent_system_prompt(agent.agent_type, agent.assignment)
+    registry = build_subagent_registry(
+        runtime.config,
+        allowed_tools=agent.allowed_tools,
+        client=runtime.client,
+        root_model=agent.model,
+    )
+    context = ToolContext(
+        working_directory=agent.workspace,
+        trust_mode=False,
+        task_manager=runtime.task_manager,
+        subagent_manager=runtime.manager,
+        metadata={
+            "subagent_depth": agent.spawn_depth,
+            "subagent_runtime": runtime,
+            "auto_approve": runtime.auto_approve,
+        },
+    )
+    registry.set_context(context)
+    api_tools = registry.to_api_tools()
+
+    messages: list[Message] = []
+    if agent.fork_messages:
+        messages.extend(_messages_from_fork_dicts(agent.fork_messages))
+    messages.append(Message.user(agent.prompt))
+
+    turn_loop = TurnLoop(runtime.client)
+    final_text = ""
+    steps = 0
+    last_usage: object | None = None
+
+    if runtime.mailbox is not None:
+        runtime.mailbox.send(
+            MailboxMessage.started(agent.id, agent.agent_type.value)
+        )
+
+    async def _noop_emit(_event: object) -> None:
+        return None
+
+    for _ in range(DEFAULT_MAX_STEPS):
+        if _subagent_cancelled(cancel, agent):
+            raise asyncio.CancelledError
+
+        steps += 1
+        agent.steps_taken = steps
+
+        request = MessageRequest(
+            model=agent.model,
+            messages=messages,
+            system_prompt=system_prompt,
+            tools=api_tools,
+            tool_choice={"type": "auto"} if api_tools else None,
+            max_tokens=4096,
+            stream=True,
+        )
+        result = await turn_loop.run(
+            request,
+            _noop_emit,
+            cancel,
+            tools=api_tools,
+        )
+
+        if result.usage is not None:
+            last_usage = result.usage
+
+        if result.cancelled:
+            raise asyncio.CancelledError
+
+        if result.assistant_message is not None:
+            messages.append(result.assistant_message)
+
+        text_parts: list[str] = []
+        if result.assistant_message is not None:
+            for block in result.assistant_message.content:
+                if block.type == "text":
+                    text_parts.append(block.text)
+        if text_parts:
+            final_text = "".join(text_parts).strip()
+
+        if not result.tool_calls:
+            break
+
+        from deepseek_tui.protocol.messages import ToolUseBlock
+
+        messages.append(
+            Message.assistant_with_tools(
+                [
+                    ToolUseBlock(id=tc.id, name=tc.name, input=tc.arguments)
+                    for tc in result.tool_calls
+                ]
+            )
+        )
+
+        for tc in result.tool_calls:
+            if runtime.mailbox is not None:
+                runtime.mailbox.send(
+                    MailboxMessage.tool_call_started(agent.id, tc.name, steps)
+                )
+            output = await _execute_subagent_tool(
+                registry,
+                context,
+                tool_name=tc.name,
+                tool_input=tc.arguments,
+                auto_approve=runtime.auto_approve,
+            )
+            ok = not output.startswith("Error:")
+            if runtime.mailbox is not None:
+                runtime.mailbox.send(
+                    MailboxMessage.tool_call_completed(
+                        agent.id, tc.name, steps, ok
+                    )
+                )
+            messages.append(Message.tool_result(tc.id, output, is_error=not ok))
+
+    if runtime.mailbox is not None and last_usage is not None:
+        runtime.mailbox.send(
+            MailboxMessage.token_usage(
+                agent.id,
+                agent.model,
+                {
+                    "input_tokens": getattr(last_usage, "input_tokens", 0),
+                    "output_tokens": getattr(last_usage, "output_tokens", 0),
+                    "reasoning_tokens": getattr(last_usage, "reasoning_tokens", 0),
+                },
+            )
+        )
+
+    agent.steps_taken = steps
+    return final_text
+
+
+def _messages_from_fork_dicts(raw_messages: list[dict[str, Any]]) -> list[Message]:
+    from deepseek_tui.protocol.messages import Message
+
+    out: list[Message] = []
+    for item in raw_messages:
+        try:
+            out.append(Message.model_validate(item))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
 
 
 # --- helpers ----------------------------------------------------------------

@@ -65,6 +65,8 @@ class ToolRuntime:
     automation_manager: AutomationManager | None = None
     _automation_scheduler_task: asyncio.Task[None] | None = None
     _automation_cancel: asyncio.Event | None = field(default=None)
+    _owns_task_manager: bool = True
+    _owns_subagent_manager: bool = True
 
     async def __aenter__(self) -> ToolRuntime:
         return self
@@ -86,9 +88,9 @@ class ToolRuntime:
                 pass
         if self.mailbox is not None:
             self.mailbox.close()
-        if self.subagent_manager is not None:
+        if self._owns_subagent_manager and self.subagent_manager is not None:
             await self.subagent_manager.shutdown()
-        if self.task_manager is not None:
+        if self._owns_task_manager and self.task_manager is not None:
             await self.task_manager.shutdown()
         if self.mcp_manager is not None:
             await self.mcp_manager.stop_all()
@@ -108,6 +110,7 @@ async def create_tool_runtime(
     start_mcp: bool = False,
     automation_data_dir: Path | None = None,
     automation_tick_interval_secs: float = 15.0,
+    shared_task_manager: TaskManager | None = None,
 ) -> ToolRuntime:
     """Build a fully-wired :class:`ToolRuntime`.
 
@@ -127,8 +130,12 @@ async def create_tool_runtime(
     task_manager: TaskManager | None = None
     subagent_manager: SubAgentManager | None = None
     mailbox: Mailbox | None = None
+    owns_task_manager = True
 
-    if cfg.features.tasks:
+    if shared_task_manager is not None:
+        task_manager = shared_task_manager
+        owns_task_manager = False
+    elif cfg.features.tasks:
         data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
         task_cfg = TaskManagerConfig(
             data_dir=data_dir,
@@ -227,6 +234,9 @@ async def create_tool_runtime(
             name="automation-scheduler",
         )
 
+    if task_manager is not None:
+        metadata["task_manager"] = task_manager
+
     # Network policy — domain-level allow/deny for outbound HTTP
     network_decider = None
     net_cfg = getattr(cfg, "network_policy", None)
@@ -261,6 +271,8 @@ async def create_tool_runtime(
         automation_manager=automation_manager,
         _automation_scheduler_task=automation_task,
         _automation_cancel=automation_cancel,
+        _owns_task_manager=owns_task_manager,
+        _owns_subagent_manager=True,
     )
 
 
