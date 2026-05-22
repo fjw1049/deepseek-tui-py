@@ -18,6 +18,7 @@ from textual.widgets import Header
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.config.models import Config
+from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
