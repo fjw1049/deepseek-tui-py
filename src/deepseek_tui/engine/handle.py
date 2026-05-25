@@ -119,7 +119,13 @@ class EngineHandle:
     async def emit(self, event: EngineEvent) -> None:
         await self._event_queue.put(event)
         if self._hooks is not None:
+            asyncio.create_task(self._bridge_to_hooks_safe(event))
+
+    async def _bridge_to_hooks_safe(self, event: EngineEvent) -> None:
+        try:
             await self._bridge_to_hooks(event)
+        except Exception:  # noqa: BLE001
+            pass
 
     def try_emit(self, event: EngineEvent) -> bool:
         """Enqueue without blocking. Returns False if the queue is full.

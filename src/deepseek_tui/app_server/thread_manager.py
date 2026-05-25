@@ -36,17 +36,20 @@ from deepseek_tui.app_server.runtime_threads import (
     UpdateThreadRequest,
     duration_ms,
     tool_kind_for_name,
+    tool_item_metadata,
 )
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ErrorEvent,
     TextDeltaEvent,
+    ThinkingDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
+    UserInputRequiredEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.utils import summarize_text
@@ -107,12 +110,14 @@ class RuntimeThreadManager:
         workspace: Path,
         manager_cfg: RuntimeThreadManagerConfig,
         llm_client: LLMClient | None = None,
+        approval_bridge: Any | None = None,
     ) -> None:
         self.config = config
         self.workspace = workspace.resolve()
         self.manager_cfg = manager_cfg
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
         self._llm_client = llm_client
+        self._approval_bridge = approval_bridge
 
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
@@ -129,6 +134,8 @@ class RuntimeThreadManager:
 
     def shutdown(self) -> None:
         self._cancel_event.set()
+        if self._approval_bridge is not None:
+            self._approval_bridge.cancel_all()
 
     @property
     def is_shutdown(self) -> bool:
@@ -185,13 +192,22 @@ class RuntimeThreadManager:
         return self.store.load_thread(thread_id)
 
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
-        if req.archived is None:
+        if req.archived is None and req.title is None:
             raise ValueError("At least one thread field is required")
         thread = self.store.load_thread(thread_id)
         changed = False
+        changes: dict[str, Any] = {}
         if req.archived is not None and thread.archived != req.archived:
             thread.archived = req.archived
             changed = True
+            changes["archived"] = thread.archived
+        if req.title is not None:
+            normalized = req.title.strip()
+            title = normalized or None
+            if thread.title != title:
+                thread.title = title
+                changed = True
+                changes["title"] = thread.title
         if changed:
             thread.updated_at = datetime.now(timezone.utc)
             self.store.save_thread(thread)
@@ -202,10 +218,30 @@ class RuntimeThreadManager:
                 "thread.updated",
                 {
                     "thread": thread.model_dump(mode="json"),
-                    "changes": {"archived": thread.archived},
+                    "changes": changes,
                 },
             )
         return thread
+
+    async def resolve_user_input(
+        self,
+        request_id: str,
+        *,
+        answers: list[dict[str, Any]] | None = None,
+        cancelled: bool = False,
+    ) -> bool:
+        async with self._active_lock:
+            for state in self._active.values():
+                if request_id not in state.handle.pending_user_inputs:
+                    continue
+                if cancelled:
+                    return state.handle.resolve_user_input(
+                        request_id, {"cancelled": True}
+                    )
+                return state.handle.resolve_user_input(
+                    request_id, {"answers": answers or []}
+                )
+        return False
 
     async def get_thread_detail(self, thread_id: str) -> ThreadDetail:
         thread = self.store.load_thread(thread_id)
@@ -385,12 +421,13 @@ class RuntimeThreadManager:
             self._touch_lru(thread_id)
 
         model = req.model or thread.model
-        await handle.send_message(content=prompt, model=model)
-
-        asyncio.create_task(
+        monitor_task = asyncio.create_task(
             self._monitor_turn_safe(thread_id, turn_id, handle),
             name=f"monitor-{turn_id}",
         )
+        await handle.send_message(content=prompt, model=model)
+        # Monitor runs concurrently; ensure task is referenced until turn ends.
+        del monitor_task
 
         return turn
 
@@ -499,10 +536,11 @@ class RuntimeThreadManager:
         # (In a full impl this would send Op::CompactContext)
         await handle.send_message(content="/compact", model=thread.model)
 
-        asyncio.create_task(
+        monitor_task = asyncio.create_task(
             self._monitor_turn_safe(thread_id, turn_id, handle),
             name=f"monitor-compact-{turn_id}",
         )
+        del monitor_task
         return turn
 
     # --- events query --------------------------------------------------------
@@ -526,11 +564,14 @@ class RuntimeThreadManager:
         from deepseek_tui.engine.engine import Engine
 
         handle = EngineHandle()
+        workspace = Path(thread.workspace).expanduser().resolve()
         engine = await Engine.create(
             handle=handle,
             client=self._get_llm_client(),
             config=self.config,
+            working_directory=workspace,
             default_model=thread.model,
+            start_mcp=False,
         )
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
 
@@ -552,12 +593,7 @@ class RuntimeThreadManager:
             return self._llm_client
         from deepseek_tui.client.deepseek import DeepSeekClient
 
-        provider_cfg = self.config.effective_provider_config()
-        return DeepSeekClient(
-            api_key=provider_cfg.api_key or "",
-            base_url=provider_cfg.base_url,
-            model=provider_cfg.model or self.config.default_text_model,
-        )
+        return DeepSeekClient.from_config(self.config)
 
     def _touch_lru(self, thread_id: str) -> None:
         self._lru.pop(thread_id, None)
@@ -602,6 +638,8 @@ class RuntimeThreadManager:
         """
         current_message_text = ""
         current_message_item_id: str | None = None
+        current_reasoning_item_id: str | None = None
+        current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
@@ -618,6 +656,20 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, TextDeltaEvent):
+                if current_reasoning_item_id is not None:
+                    item = self.store.load_item(current_reasoning_item_id)
+                    item.status = TurnItemLifecycleStatus.COMPLETED
+                    item.summary = summarize_text(current_reasoning_text, SUMMARY_LIMIT)
+                    item.detail = current_reasoning_text
+                    item.ended_at = datetime.now(timezone.utc)
+                    self.store.save_item(item)
+                    await self._emit_event(
+                        thread_id, turn_id, current_reasoning_item_id, "item.completed",
+                        {"item": item.model_dump(mode="json")},
+                    )
+                    current_reasoning_item_id = None
+                    current_reasoning_text = ""
+
                 if current_message_item_id is None:
                     item_id = f"item_{uuid.uuid4().hex[:8]}"
                     now = datetime.now(timezone.utc)
@@ -645,12 +697,41 @@ class RuntimeThreadManager:
                     {"delta": event.text, "kind": "agent_message"},
                 )
 
+            elif isinstance(event, ThinkingDeltaEvent):
+                if current_reasoning_item_id is None:
+                    item_id = f"item_{uuid.uuid4().hex[:8]}"
+                    now = datetime.now(timezone.utc)
+                    item = TurnItemRecord(
+                        id=item_id,
+                        turn_id=turn_id,
+                        kind=TurnItemKind.AGENT_REASONING,
+                        status=TurnItemLifecycleStatus.IN_PROGRESS,
+                        summary="",
+                        detail="",
+                        started_at=now,
+                    )
+                    self.store.save_item(item)
+                    self._attach_item_to_turn(turn_id, item_id)
+                    await self._emit_event(
+                        thread_id, turn_id, item_id, "item.started",
+                        {"item": item.model_dump(mode="json")},
+                    )
+                    current_reasoning_item_id = item_id
+                    current_reasoning_text = ""
+
+                current_reasoning_text += event.thinking
+                await self._emit_event(
+                    thread_id, turn_id, current_reasoning_item_id, "item.delta",
+                    {"delta": event.thinking, "kind": "agent_reasoning"},
+                )
+
             elif isinstance(event, ToolCallEvent):
                 tc = event.tool_call
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
                 tool_items[tc.id] = item_id
                 kind = tool_kind_for_name(tc.name)
                 now = datetime.now(timezone.utc)
+                metadata = tool_item_metadata(tc.name, tc.arguments)
                 item = TurnItemRecord(
                     id=item_id,
                     turn_id=turn_id,
@@ -658,6 +739,7 @@ class RuntimeThreadManager:
                     status=TurnItemLifecycleStatus.IN_PROGRESS,
                     summary=summarize_text(f"{tc.name} started", SUMMARY_LIMIT),
                     detail=str(tc.arguments) if tc.arguments else None,
+                    metadata=metadata,
                     started_at=now,
                 )
                 self.store.save_item(item)
@@ -695,15 +777,16 @@ class RuntimeThreadManager:
                     )
 
             elif isinstance(event, ApprovalRequiredEvent):
+                approval_id = event.tool_call_id
                 await self._emit_event(
                     thread_id, turn_id, None, "approval.required",
                     {
-                        "id": event.tool_call_id,
+                        "id": approval_id,
+                        "approval_id": approval_id,
                         "tool_name": event.request.tool_name,
                         "description": event.request.description,
                     },
                 )
-                # Auto-decision based on thread flags
                 async with self._active_lock:
                     state = self._active.get(thread_id)
                     if state and state.active_turn and state.active_turn.turn_id == turn_id:
@@ -711,22 +794,45 @@ class RuntimeThreadManager:
                     else:
                         auto_approve = False
 
-                if auto_approve:
-                    from deepseek_tui.engine.events import ApprovalResolvedEvent
+                from deepseek_tui.engine.events import ApprovalResolvedEvent
 
+                if auto_approve:
                     await handle.emit(
                         ApprovalResolvedEvent(
-                            tool_call_id=event.tool_call_id, approved=True
+                            tool_call_id=approval_id, approved=True
+                        )
+                    )
+                elif self._approval_bridge is not None:
+                    fut = self._approval_bridge.register(approval_id)
+                    try:
+                        approved = await fut
+                    except asyncio.CancelledError:
+                        approved = False
+                    await handle.emit(
+                        ApprovalResolvedEvent(
+                            tool_call_id=approval_id,
+                            approved=approved,
+                            reason=None if approved else "denied",
                         )
                     )
                 else:
-                    from deepseek_tui.engine.events import ApprovalResolvedEvent
-
                     await handle.emit(
                         ApprovalResolvedEvent(
-                            tool_call_id=event.tool_call_id, approved=False, reason="denied"
+                            tool_call_id=approval_id,
+                            approved=False,
+                            reason="denied",
                         )
                     )
+
+            elif isinstance(event, UserInputRequiredEvent):
+                await self._emit_event(
+                    thread_id, turn_id, None, "user_input.required",
+                    {
+                        "id": event.tool_call_id,
+                        "request_id": event.tool_call_id,
+                        "questions": event.questions,
+                    },
+                )
 
             elif isinstance(event, ErrorEvent):
                 turn_status = RuntimeTurnStatus.FAILED
@@ -755,10 +861,11 @@ class RuntimeThreadManager:
 
             elif isinstance(event, TurnCompleteEvent):
                 if event.usage is not None:
+                    u = event.usage
                     turn_usage = {
-                        "prompt_tokens": event.usage.prompt_tokens,
-                        "completion_tokens": event.usage.completion_tokens,
-                        "total_tokens": event.usage.total_tokens,
+                        "prompt_tokens": u.input_tokens,
+                        "completion_tokens": u.output_tokens,
+                        "total_tokens": u.input_tokens + u.output_tokens,
                     }
                 turn_status = RuntimeTurnStatus.COMPLETED
                 break
@@ -773,6 +880,28 @@ class RuntimeThreadManager:
                 and state.active_turn.interrupt_requested
             ):
                 turn_status = RuntimeTurnStatus.INTERRUPTED
+
+        # Finalize any open reasoning item
+        if current_reasoning_item_id is not None:
+            item = self.store.load_item(current_reasoning_item_id)
+            item.status = (
+                TurnItemLifecycleStatus.INTERRUPTED
+                if turn_status == RuntimeTurnStatus.INTERRUPTED
+                else TurnItemLifecycleStatus.COMPLETED
+            )
+            item.summary = summarize_text(current_reasoning_text, SUMMARY_LIMIT)
+            item.detail = current_reasoning_text
+            item.ended_at = datetime.now(timezone.utc)
+            self.store.save_item(item)
+            event_name = (
+                "item.interrupted"
+                if item.status == TurnItemLifecycleStatus.INTERRUPTED
+                else "item.completed"
+            )
+            await self._emit_event(
+                thread_id, turn_id, current_reasoning_item_id, event_name,
+                {"item": item.model_dump(mode="json")},
+            )
 
         # Finalize any open message item
         if current_message_item_id is not None:

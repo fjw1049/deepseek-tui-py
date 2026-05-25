@@ -260,9 +260,31 @@ def models(
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host for HTTP."),
-    port: int = typer.Option(8787, "--port", help="Bind port for HTTP."),
+    port: int | None = typer.Option(
+        None,
+        "--port",
+        help="Bind port (default 7878 with --http, else 8787).",
+    ),
     stdio: bool = typer.Option(
         False, "--stdio", help="Speak newline-delimited JSON-RPC on stdin/stdout."
+    ),
+    http: bool = typer.Option(
+        False,
+        "--http",
+        help="Workbench runtime API mode (bare JSON + SSE for DeepSeek GUI).",
+    ),
+    auth_token: str | None = typer.Option(
+        None, "--auth-token", help="Bearer token for /v1/* routes."
+    ),
+    insecure: bool = typer.Option(
+        False,
+        "--insecure",
+        help="Disable /v1 auth (local dev only; GUI passes this when no token set).",
+    ),
+    cors_origin: list[str] = typer.Option(
+        [],
+        "--cors-origin",
+        help="Allowed CORS origin for direct renderer access (repeatable).",
     ),
     config: Path | None = CONFIG_OPTION,
     profile: str | None = PROFILE_OPTION,
@@ -277,8 +299,21 @@ def serve(
         typer.echo("app-server: stdio JSON-RPC mode", err=True)
         asyncio.run(run_stdio(config=loaded))
         return
-    typer.echo(f"app-server listening on http://{host}:{port}", err=True)
-    options = AppServerOptions(host=host, port=port, config_path=config)
+    effective_port = port if port is not None else (7878 if http else 8787)
+    typer.echo(
+        f"app-server listening on http://{host}:{effective_port}"
+        + (" (runtime API)" if http else ""),
+        err=True,
+    )
+    options = AppServerOptions(
+        host=host,
+        port=effective_port,
+        config_path=config,
+        http_mode=http,
+        auth_token=auth_token,
+        insecure_no_auth=insecure,
+        cors_origins=cors_origin or None,
+    )
     asyncio.run(run_http(options, config=loaded))
 
 

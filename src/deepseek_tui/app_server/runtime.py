@@ -24,6 +24,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+import platform
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -662,6 +663,11 @@ class AppRuntime:
         """
         return {
             "ok": True,
+            "runtime_api": {
+                "mode": "http",
+                "service": "deepseek-runtime-api",
+                "python_version": platform.python_version(),
+            },
             "workspace": {
                 "cwd": str(self.working_directory),
                 "model": self.config.model or self.config.default_text_model,

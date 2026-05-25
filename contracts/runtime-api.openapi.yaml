@@ -1,0 +1,287 @@
+openapi: 3.1.0
+info:
+  title: DeepSeek Workbench Runtime API
+  version: 0.1.0
+  description: Rust-parity HTTP/SSE surface consumed by packages/workbench.
+servers:
+  - url: http://127.0.0.1:7878
+paths:
+  /health:
+    get:
+      summary: Liveness probe for GUI startup
+      responses:
+        "200":
+          description: OK
+  /healthz:
+    get:
+      summary: Legacy health alias
+      responses:
+        "200":
+          description: OK
+  /v1/threads:
+    get:
+      summary: List threads (bare array)
+      parameters:
+        - name: include_archived
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Thread list
+    post:
+      summary: Create thread (bare object, 201)
+      responses:
+        "201":
+          description: Created thread
+  /v1/threads/summary:
+    get:
+      summary: Thread counts summary
+      responses:
+        "200":
+          description: Summary object
+  /v1/threads/{thread_id}:
+    get:
+      summary: Thread detail with turns, items, latest_seq
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Detail
+        "404":
+          description: Thread not found
+    patch:
+      summary: Update thread (title, archived)
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Updated thread
+        "404":
+          description: Thread not found
+    delete:
+      summary: Archive thread (soft delete)
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Archived thread
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/fork:
+    post:
+      summary: Fork thread
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "201":
+          description: Forked thread
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/resume:
+    post:
+      summary: Resume / warm thread engine
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Thread detail
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/turns:
+    post:
+      summary: Start turn
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                model:
+                  type: string
+                mode:
+                  type: string
+                auto_approve:
+                  type: boolean
+      responses:
+        "201":
+          description: Thread + turn
+        "404":
+          description: Thread not found
+        "409":
+          description: Turn conflict
+  /v1/threads/{thread_id}/turns/{turn_id}/interrupt:
+    post:
+      summary: Interrupt active turn
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+        - $ref: "#/components/parameters/turnId"
+      responses:
+        "200":
+          description: Turn record
+        "409":
+          description: Turn not active
+  /v1/threads/{thread_id}/turns/{turn_id}/steer:
+    post:
+      summary: Steer active turn
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+        - $ref: "#/components/parameters/turnId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+      responses:
+        "200":
+          description: Turn record
+        "409":
+          description: Turn not active
+  /v1/threads/{thread_id}/compact:
+    post:
+      summary: Compact thread context
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Turn record
+        "404":
+          description: Thread not found
+        "409":
+          description: Turn conflict
+  /v1/threads/{thread_id}/events:
+    get:
+      summary: SSE event stream
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+        - name: since_seq
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: text/event-stream
+        "404":
+          description: Thread not found
+  /v1/approvals/{approval_id}:
+    post:
+      summary: Resolve pending tool approval
+      parameters:
+        - name: approval_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [allow, deny, approve, reject]
+                remember:
+                  type: boolean
+      responses:
+        "200":
+          description: Decision recorded
+        "400":
+          description: Invalid decision
+        "404":
+          description: Approval not pending
+  /v1/user-inputs/{request_id}:
+    post:
+      summary: Answer interactive user-input prompt
+      parameters:
+        - $ref: "#/components/parameters/requestId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                answers:
+                  type: array
+                  items:
+                    type: object
+                cancelled:
+                  type: boolean
+      responses:
+        "200":
+          description: Accepted
+        "404":
+          description: Request not found
+  /v1/user-input/{request_id}:
+    post:
+      summary: Alias for user-inputs route
+      parameters:
+        - $ref: "#/components/parameters/requestId"
+      responses:
+        "200":
+          description: Accepted
+        "404":
+          description: Request not found
+  /v1/workspace/status:
+    get:
+      summary: Workspace diagnostics for settings UI
+      responses:
+        "200":
+          description: Status object with runtime_api and workspace blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  runtime_api:
+                    type: object
+                    properties:
+                      mode:
+                        type: string
+                      service:
+                        type: string
+                      python_version:
+                        type: string
+                  workspace:
+                    type: object
+        "503":
+          description: Runtime not configured
+components:
+  parameters:
+    threadId:
+      name: thread_id
+      in: path
+      required: true
+      schema:
+        type: string
+    turnId:
+      name: turn_id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestId:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string

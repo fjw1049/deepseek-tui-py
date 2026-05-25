@@ -230,6 +230,23 @@ make check  # = ruff + mypy + pytest
 2. 性能基准
 3. CI/CD、PyPI、Docker
 
+### Stage 8（6–8 周）：DeepSeek Workbench（桌面 GUI）
+
+> **完整规划（文件清单 / 架构 / Sprint / 契约）见 [`docs/WORKBENCH_HANDOVER.md`](./WORKBENCH_HANDOVER.md)。** 本节只列摘要。
+
+**目标**：在 **不重写 Engine** 的前提下，新增 Electron 桌面工作台 + Rust-parity `runtime_api` HTTP/SSE 层，参考 `docs/DeepSeek-GUI-master/` 的产品形态，运行时 spawn 本仓库 `deepseek-tui serve --http`。
+
+**P0 顺序**（不可打乱）：
+
+1. `contracts/runtime-api.openapi.yaml` + `tests/contract/`（契约先行）
+2. `src/deepseek_tui/app_server/runtime_api/`（裸 JSON、长连接 SSE、挂起式审批、`GET /health`）
+3. `packages/workbench/`（Main 托管 + Preload + Renderer v1 聊天/Diff/设置）
+4. `scripts/dev-workbench.sh` + 手动 smoke → 再考虑 electron-builder
+
+**v1 不做**：Claw/飞书、GUI 自更新、npm 下载 Rust 二进制、完整 RUNTIME_API 长尾（automations/responses proxy 等）。
+
+**与当前 app_server 差别**：约 40%–60% 新建/重写 HTTP 面；Engine/TUI/1323 parity 测试基本不动。
+
 ---
 
 ## 四、**工作方法论**：任何 AI 接手都按这个流程走
@@ -428,9 +445,10 @@ Co-Authored-By: <your-coauthor-tag>
 
 1. `AGENTS.md` + `CLAUDE.md` — 项目级 AI 指令
 2. **`docs/AUDIT/SUMMARY.md`** — 最重要，列出所有缺口和 Stage 路线图
-3. `docs/AUDIT/CODEX_VS_CLAUDE_DIFF.md` — 之前的方法论对比
-4. `docs/AUDIT/phase_{A-E}_*.md` — 对应想做的 Stage 看对应 phase
-5. 本文档
+3. **`docs/WORKBENCH_HANDOVER.md`** — Stage 8 桌面 Workbench 全量文件规划（若做 GUI）
+4. `docs/AUDIT/CODEX_VS_CLAUDE_DIFF.md` — 之前的方法论对比
+5. `docs/AUDIT/phase_{A-E}_*.md` — 对应想做的 Stage 看对应 phase
+6. 本文档
 
 ### 环境搭建
 

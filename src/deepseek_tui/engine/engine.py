@@ -304,6 +304,7 @@ class Engine:
         max_tool_round_trips: int = 100,
         task_data_dir: Path | None = None,
         tool_runtime: object | None = None,
+        start_mcp: bool | None = None,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
 
@@ -325,12 +326,13 @@ class Engine:
         if isinstance(tool_runtime, ToolRuntime):
             runtime = tool_runtime
         else:
+            mcp_flag = cfg.features.mcp if start_mcp is None else start_mcp
             runtime = await create_tool_runtime(
                 config=cfg,
                 working_directory=working_directory,
                 mode=mode,
                 task_data_dir=task_data_dir,
-                start_mcp=cfg.features.mcp,
+                start_mcp=mcp_flag,
             )
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)

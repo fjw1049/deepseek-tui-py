@@ -38,21 +38,33 @@ class AppServerOptions:
     port: int = 8787
     config_path: Path | None = None
     working_directory: Path | None = None
+    http_mode: bool = False
+    auth_token: str | None = None
+    insecure_no_auth: bool = False
+    cors_origins: list[str] | None = None
 
 
-def build_fastapi_app(runtime: AppRuntime) -> Any:
-    """Construct a FastAPI app with the 7 routes attached.
+def build_fastapi_app(
+    runtime: AppRuntime,
+    *,
+    http_mode: bool = False,
+    auth_token: str | None = None,
+    insecure_no_auth: bool = False,
+    cors_origins: list[str] | None = None,
+) -> Any:
+    """Construct a FastAPI app with routes attached.
 
-    Separate from :func:`run_http` so tests can exercise it in-process
-    via ``httpx.ASGITransport`` without opening a socket.
+    When ``http_mode`` is True, mount Rust-parity Workbench routes (bare JSON +
+    long-lived SSE) and keep legacy envelope routes under ``/legacy`` only.
     """
     from fastapi import FastAPI
 
-    app = FastAPI(title="deepseek-app-server", version="0.1.0")
+    app = FastAPI(
+        title="deepseek-runtime-api" if http_mode else "deepseek-app-server",
+        version="0.1.0",
+    )
     app.state.runtime = runtime
 
-    # Wire durable thread manager so /threads/* routes are reachable.
-    # RuntimeThreadManagerConfig.data_dir defaults next to the config file.
     from deepseek_tui.app_server.runtime_threads import RuntimeThreadManagerConfig
     from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
     from deepseek_tui.config.paths import user_tasks_dir, user_threads_dir
@@ -61,10 +73,32 @@ def build_fastapi_app(runtime: AppRuntime) -> Any:
         data_dir=user_threads_dir(),
         task_data_dir=user_tasks_dir(),
     )
+
+    approval_bridge = None
+    if http_mode:
+        from deepseek_tui.app_server.runtime_api import attach_runtime_api
+        from deepseek_tui.app_server.runtime_api.auth import (
+            env_runtime_token,
+            resolve_runtime_auth,
+        )
+
+        resolved = resolve_runtime_auth(
+            auth_token,
+            env_runtime_token(),
+            insecure_no_auth=insecure_no_auth,
+        )
+        approval_bridge = attach_runtime_api(
+            app,
+            auth_token=resolved.token,
+            cors_origins=cors_origins,
+        )
+        app.state.runtime_auth = resolved
+
     app.state.thread_manager = RuntimeThreadManager(
         config=runtime.config,
         workspace=Path.cwd(),
         manager_cfg=_mgr_cfg,
+        approval_bridge=approval_bridge,
     )
 
     # Per-request access log: method/path/status/duration. ``uvicorn.access``
@@ -84,13 +118,16 @@ def build_fastapi_app(runtime: AppRuntime) -> Any:
         )
         return response
 
-    # Mount the same router twice: at root for legacy callers and at ``/v1``
-    # for Rust-parity callers. Rust's ``runtime_api`` exposes everything
-    # under ``/v1/...`` (see runtime_api.rs:295-344). Keeping both prefixes
-    # working avoids breaking existing Python integration tests while
-    # giving cross-language clients the URL shape they expect.
-    app.include_router(build_router())
-    app.include_router(build_router(), prefix="/v1")
+    if http_mode:
+        app.include_router(build_router(), prefix="/legacy")
+    else:
+        # Mount the same router twice: at root for legacy callers and at ``/v1``
+        # for Rust-parity callers. Rust's ``runtime_api`` exposes everything
+        # under ``/v1/...`` (see runtime_api.rs:295-344). Keeping both prefixes
+        # working avoids breaking existing Python integration tests while
+        # giving cross-language clients the URL shape they expect.
+        app.include_router(build_router())
+        app.include_router(build_router(), prefix="/v1")
     return app
 
 
@@ -109,12 +146,35 @@ async def run_http(
     setup_logging(config)
 
     logger.info(
-        "app_server_start host=%s port=%d", options.host, options.port
+        "app_server_start host=%s port=%d http_mode=%s",
+        options.host,
+        options.port,
+        options.http_mode,
     )
     runtime = await AppRuntime.create(
         config=config, working_directory=options.working_directory
     )
-    app = build_fastapi_app(runtime)
+    app = build_fastapi_app(
+        runtime,
+        http_mode=options.http_mode,
+        auth_token=options.auth_token,
+        insecure_no_auth=options.insecure_no_auth,
+        cors_origins=options.cors_origins,
+    )
+    if options.http_mode:
+        auth = getattr(app.state, "runtime_auth", None)
+        if auth is not None and auth.generated and auth.token:
+            logger.info("runtime_api_auth generated bearer token for this process")
+            print("Runtime API auth: generated bearer token for this process.")
+            print(f"  Authorization: Bearer {auth.token}")
+            print("  Set DEEPSEEK_RUNTIME_TOKEN or pass --auth-token for a stable token.")
+        elif auth is not None and auth.token:
+            logger.info("runtime_api_auth bearer token required for /v1/* routes")
+            print("Runtime API auth: bearer token required for /v1/* routes.")
+        else:
+            logger.warning("runtime_api_auth disabled (--insecure)")
+            print("Runtime API auth: disabled by explicit insecure mode.")
+        print(f"Runtime API listening on http://{options.host}:{options.port}")
     server_cfg = uvicorn.Config(
         app, host=options.host, port=options.port, log_level="info"
     )

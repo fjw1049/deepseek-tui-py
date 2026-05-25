@@ -73,6 +73,7 @@ class TurnItemKind(str, Enum):
 
     USER_MESSAGE = "user_message"
     AGENT_MESSAGE = "agent_message"
+    AGENT_REASONING = "agent_reasoning"
     TOOL_CALL = "tool_call"
     FILE_CHANGE = "file_change"
     COMMAND_EXECUTION = "command_execution"
@@ -116,6 +117,7 @@ class ThreadRecord(BaseModel):
     system_prompt: str | None = None
     task_id: str | None = None
     coherence_state: str = "intro"
+    title: str | None = None
 
 
 class TurnRecord(BaseModel):
@@ -193,6 +195,7 @@ class CreateThreadRequest(BaseModel):
 
 class UpdateThreadRequest(BaseModel):
     archived: bool | None = None
+    title: str | None = None
 
 
 class StartTurnRequest(BaseModel):
@@ -453,6 +456,27 @@ def tool_kind_for_name(name: str) -> TurnItemKind:
     if "patch" in lower or "write" in lower or "edit" in lower:
         return TurnItemKind.FILE_CHANGE
     return TurnItemKind.TOOL_CALL
+
+
+def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
+    """Extract file path metadata for Workbench Diff / ChangeInspector."""
+    if tool_kind_for_name(tool_name) != TurnItemKind.FILE_CHANGE:
+        return None
+    args = arguments
+    if isinstance(args, str):
+        try:
+            import json
+
+            args = json.loads(args)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(args, dict):
+        return None
+    for key in ("path", "file_path", "filename", "target"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return {"path": value.strip()}
+    return None
 
 
 def duration_ms(start: datetime, end: datetime) -> int:
