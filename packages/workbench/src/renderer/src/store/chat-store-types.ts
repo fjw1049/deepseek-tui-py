@@ -54,6 +54,7 @@ export type ChatState = {
   queuedMessages: QueuedUserMessage[]
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
+  scrollToBlockId: string | null
   setError: (message: string | null) => void
   setComposerModel: (modelId: string) => void
   loadComposerModels: () => Promise<void>
@@ -82,6 +83,9 @@ export type ChatState = {
   forkThread: (threadId: string) => Promise<void>
   resumeThread: (threadId: string) => Promise<void>
   compactActiveThread: () => Promise<void>
+  importTuiSession: (input: { sessionId?: string; path?: string; title?: string }) => Promise<void>
+  scrollToBlock: (blockId: string) => void
+  clearScrollTarget: () => void
   resolveApproval: (blockId: string, decision: 'allow' | 'deny') => Promise<void>
   resolveUserInput: (
     blockId: string,

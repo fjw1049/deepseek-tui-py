@@ -38,6 +38,37 @@ paths:
       responses:
         "201":
           description: Created thread
+  /v1/threads/import-session:
+    post:
+      summary: Import TUI session JSON into a new thread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                session_id:
+                  type: string
+                  description: Session id under ~/.deepseek/sessions/
+                path:
+                  type: string
+                  description: Absolute path to session JSON file
+                workspace:
+                  type: string
+                title:
+                  type: string
+                model:
+                  type: string
+                mode:
+                  type: string
+      responses:
+        "201":
+          description: Imported thread
+        "400":
+          description: Invalid session payload
+        "404":
+          description: Session file not found
   /v1/threads/summary:
     get:
       summary: Thread counts summary
@@ -172,6 +203,17 @@ paths:
           description: text/event-stream
         "404":
           description: Thread not found
+  /v1/approvals/pending:
+    get:
+      summary: List pending tool approvals (optional thread filter)
+      parameters:
+        - name: thread_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pending approval list
   /v1/approvals/{approval_id}:
     post:
       summary: Resolve pending tool approval

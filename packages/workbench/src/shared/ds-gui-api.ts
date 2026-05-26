@@ -18,6 +18,20 @@ import type {
 
 export type RuntimeRequestResult = { ok: boolean; status: number; body: string }
 export type WorkspacePickResult = { canceled: boolean; path: string | null }
+export type TuiSessionPickResult = { canceled: boolean; path: string | null }
+export type TuiSessionSummary = {
+  sessionId: string
+  path: string
+  title: string
+  model?: string
+  workspace?: string
+  messageCount: number
+  modifiedAt: string
+}
+export type ListTuiSessionsResult = {
+  dir: string
+  sessions: TuiSessionSummary[]
+}
 export type PathOpenResult = { ok: boolean; message?: string }
 export type SkillSaveResult = { ok: true; path: string } | { ok: false; message: string }
 export type DeepseekConfigFileResult = { path: string; content: string; exists: boolean }
@@ -103,6 +117,8 @@ export type DsGuiApi = {
   deepseekSpawnIfNeeded: () => Promise<DeepseekSpawnResult>
   prepareDeepseekBinary: () => Promise<{ ok: true; path: string } | { ok: false; message: string }>
   pickWorkspaceDirectory: (defaultPath?: string) => Promise<WorkspacePickResult>
+  listTuiSessions: () => Promise<ListTuiSessionsResult>
+  pickTuiSessionFile: (defaultPath?: string) => Promise<TuiSessionPickResult>
   saveSkillFile: (rootPath: string, skillName: string, content: string) => Promise<SkillSaveResult>
   openSkillRoot: (rootPath: string) => Promise<PathOpenResult>
   getDeepseekConfigFile: () => Promise<DeepseekConfigFileResult>

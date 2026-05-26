@@ -38,3 +38,33 @@ async def test_approval_invalid_decision(client: AsyncClient) -> None:
         json={"decision": "maybe"},
     )
     assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_approval_list_pending(client: AsyncClient, runtime_app: object) -> None:
+    from deepseek_tui.app_server.runtime_api.approval_bridge import PendingApprovalRecord
+
+    bridge = runtime_app.state.approval_bridge  # type: ignore[attr-defined]
+    bridge.register(
+        "appr_pending_list",
+        meta=PendingApprovalRecord(
+            thread_id="thr_test01",
+            tool_name="write_file",
+            description="write smoke.txt",
+        ),
+    )
+    bridge.register(
+        "appr_other_thread",
+        meta=PendingApprovalRecord(
+            thread_id="thr_other",
+            tool_name="bash",
+            description="run ls",
+        ),
+    )
+
+    r = await client.get("/v1/approvals/pending", params={"thread_id": "thr_test01"})
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    assert rows[0]["approval_id"] == "appr_pending_list"
+    assert rows[0]["tool_name"] == "write_file"

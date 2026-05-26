@@ -36,9 +36,11 @@ from deepseek_tui.app_server.runtime_threads import (
     UpdateThreadRequest,
     duration_ms,
     file_change_completion_detail,
+    reconstruct_messages_from_turns,
     tool_kind_for_name,
     tool_item_metadata,
 )
+from deepseek_tui.app_server.session_import import ImportTuiSessionRequest
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
@@ -61,6 +63,7 @@ from deepseek_tui.utils import summarize_text
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
     from deepseek_tui.engine.engine import Engine
+    from deepseek_tui.engine.handle import ApprovalHandler
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +219,63 @@ class RuntimeThreadManager:
         self.store.save_thread(thread)
         await self._emit_event(
             thread.id, None, None, "thread.started", {"thread": thread.model_dump(mode="json")}
+        )
+        return thread
+
+    async def import_tui_session(self, req: ImportTuiSessionRequest) -> ThreadRecord:
+        """Create a Workbench thread from a TUI session JSON snapshot."""
+        from deepseek_tui.app_server.session_import import (
+            import_messages_into_store,
+            load_tui_session_messages,
+            resolve_tui_session_path,
+        )
+
+        path = resolve_tui_session_path(session_id=req.session_id, path=req.path)
+        metadata, messages = load_tui_session_messages(path)
+        if not messages:
+            raise ValueError("Session has no importable user/assistant messages")
+
+        meta_model = metadata.get("model") if isinstance(metadata.get("model"), str) else None
+        meta_workspace = (
+            metadata.get("workspace") if isinstance(metadata.get("workspace"), str) else None
+        )
+        meta_title = metadata.get("title") if isinstance(metadata.get("title"), str) else None
+        session_id = metadata.get("id") if isinstance(metadata.get("id"), str) else path.stem
+
+        thread = await self.create_thread(
+            CreateThreadRequest(
+                model=req.model or meta_model,
+                workspace=req.workspace or meta_workspace or str(self.workspace),
+                mode=req.mode,
+            )
+        )
+        title = (req.title or meta_title or f"TUI {session_id[:8]}").strip()
+        if title:
+            thread.title = title
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+        import_messages_into_store(
+            self.store,
+            thread_id=thread.id,
+            messages=messages,
+        )
+        turns = self.store.list_turns_for_thread(thread.id)
+        if turns:
+            thread.latest_turn_id = turns[-1].id
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+
+        await self._emit_event(
+            thread.id,
+            None,
+            None,
+            "thread.imported",
+            {
+                "thread": thread.model_dump(mode="json"),
+                "source": "tui_session",
+                "session_path": str(path),
+                "message_count": len(messages),
+            },
         )
         return thread
 
@@ -407,10 +467,14 @@ class RuntimeThreadManager:
         thread = self.store.load_thread(thread_id)
         handle, engine_task = await self._ensure_engine_loaded(thread)
 
+        effective_mode = (req.mode or thread.mode or "agent").strip() or "agent"
+
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
                 raise ValueError("Thread already has an active turn")
+            if state is not None:
+                state.engine.mode = effective_mode
 
         now = datetime.now(timezone.utc)
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
@@ -535,12 +599,15 @@ class RuntimeThreadManager:
 
     async def compact_thread(self, thread_id: str, req: CompactThreadRequest) -> TurnRecord:
         thread = self.store.load_thread(thread_id)
-        handle, _ = await self._ensure_engine_loaded(thread)
+        await self._ensure_engine_loaded(thread)
 
         async with self._active_lock:
             state = self._active.get(thread_id)
-            if state is not None and state.active_turn is not None:
+            if state is None:
+                raise RuntimeError("Thread engine not loaded")
+            if state.active_turn is not None:
                 raise ValueError("Thread already has an active turn")
+            engine = state.engine
 
         now = datetime.now(timezone.utc)
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
@@ -561,29 +628,55 @@ class RuntimeThreadManager:
         thread.updated_at = now
         self.store.save_thread(thread)
 
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is None:
-                raise RuntimeError("Thread engine not loaded")
-            state.active_turn = _ActiveTurnState(
-                turn_id=turn_id, auto_approve=thread.auto_approve, trust_mode=thread.trust_mode
-            )
-            self._sync_trust_mode(state.engine, thread.trust_mode)
-            self._touch_lru(thread_id)
-
         await self._emit_event(
             thread_id, turn_id, None, "turn.started",
             {"turn": turn.model_dump(mode="json"), "manual_compaction": True},
         )
-        # Send a cancel to trigger compaction via engine loop
-        # (In a full impl this would send Op::CompactContext)
-        await handle.send_message(content="/compact", model=thread.model)
 
-        monitor_task = asyncio.create_task(
-            self._monitor_turn_safe(thread_id, turn_id, handle),
-            name=f"monitor-compact-{turn_id}",
+        before_count = len(engine.session_messages)
+        if before_count == 0:
+            summary_text = "Nothing to compact — session is empty."
+            engine.session_messages.clear()
+        else:
+            compacted = await engine._emergency_compact(list(engine.session_messages))
+            engine.session_messages[:] = compacted
+            summary_text = (
+                f"Context compacted: {before_count} → {len(compacted)} messages."
+            )
+
+        item_id = f"item_{uuid.uuid4().hex[:8]}"
+        item = TurnItemRecord(
+            id=item_id,
+            turn_id=turn_id,
+            kind=TurnItemKind.CONTEXT_COMPACTION,
+            status=TurnItemLifecycleStatus.COMPLETED,
+            summary=summarize_text(summary_text, SUMMARY_LIMIT),
+            detail=summary_text,
+            started_at=now,
+            ended_at=now,
         )
-        del monitor_task
+        turn.item_ids.append(item_id)
+        self.store.save_item(item)
+        self.store.save_turn(turn)
+
+        ended_at = datetime.now(timezone.utc)
+        turn.status = RuntimeTurnStatus.COMPLETED
+        turn.ended_at = ended_at
+        if turn.started_at:
+            turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        self.store.save_turn(turn)
+
+        thread.updated_at = ended_at
+        self.store.save_thread(thread)
+
+        await self._emit_event(
+            thread_id, turn_id, item_id, "item.completed",
+            {"item": item.model_dump(mode="json")},
+        )
+        await self._emit_event(
+            thread_id, turn_id, None, "turn.completed",
+            {"turn": turn.model_dump(mode="json")},
+        )
         return turn
 
     # --- events query --------------------------------------------------------
@@ -604,6 +697,7 @@ class RuntimeThreadManager:
                 self._sync_trust_mode(
                     state.engine, self._trust_mode_for_thread(thread, state)
                 )
+                state.engine.mode = (thread.mode or "agent").strip() or "agent"
                 self._touch_lru(thread.id)
                 return state.handle, state.engine_task
 
@@ -611,15 +705,20 @@ class RuntimeThreadManager:
 
         handle = EngineHandle()
         workspace = Path(thread.workspace).expanduser().resolve()
+        approval_handler = self._build_approval_handler(thread.id)
         engine = await Engine.create(
             handle=handle,
             client=self._get_llm_client(),
             config=self.config,
             working_directory=workspace,
             default_model=thread.model,
-            start_mcp=False,
+            mode=(thread.mode or "agent").strip() or "agent",
+            task_data_dir=self.manager_cfg.task_data_dir,
+            start_mcp=bool(getattr(self.config.features, "mcp", False)),
+            approval_handler=approval_handler,
         )
         self._sync_trust_mode(engine, thread.trust_mode)
+        self._sync_engine_session(engine, thread)
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
 
         async with self._active_lock:
@@ -634,6 +733,37 @@ class RuntimeThreadManager:
             evicted_state.engine_task.cancel()
 
         return handle, engine_task
+
+    def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:
+        """Hydrate Engine.session_messages from durable turn items."""
+        messages = reconstruct_messages_from_turns(self.store, thread.id)
+        if messages:
+            engine.sync_session(messages, model=thread.model)
+
+    def _build_approval_handler(self, thread_id: str) -> ApprovalHandler:
+        from deepseek_tui.app_server.runtime_api.approval_bridge import (
+            HttpApprovalHandler,
+        )
+        from deepseek_tui.engine.handle import AutoApprovalHandler
+
+        if self._approval_bridge is None:
+            return AutoApprovalHandler()
+
+        manager = self
+
+        async def auto_approve() -> bool:
+            async with manager._active_lock:
+                state = manager._active.get(thread_id)
+                if state is not None and state.active_turn is not None:
+                    return state.active_turn.auto_approve
+            thread = manager.store.load_thread(thread_id)
+            return thread.auto_approve
+
+        return HttpApprovalHandler(
+            self._approval_bridge,
+            thread_id=thread_id,
+            auto_approve=auto_approve,
+        )
 
     def _get_llm_client(self) -> LLMClient:
         if self._llm_client is not None:
@@ -856,42 +986,6 @@ class RuntimeThreadManager:
                         "description": event.request.reason,
                     },
                 )
-                async with self._active_lock:
-                    state = self._active.get(thread_id)
-                    if state and state.active_turn and state.active_turn.turn_id == turn_id:
-                        auto_approve = state.active_turn.auto_approve
-                    else:
-                        auto_approve = False
-
-                from deepseek_tui.engine.events import ApprovalResolvedEvent
-
-                if auto_approve:
-                    await handle.emit(
-                        ApprovalResolvedEvent(
-                            tool_call_id=approval_id, approved=True
-                        )
-                    )
-                elif self._approval_bridge is not None:
-                    fut = self._approval_bridge.register(approval_id)
-                    try:
-                        approved = await fut
-                    except asyncio.CancelledError:
-                        approved = False
-                    await handle.emit(
-                        ApprovalResolvedEvent(
-                            tool_call_id=approval_id,
-                            approved=approved,
-                            reason=None if approved else "denied",
-                        )
-                    )
-                else:
-                    await handle.emit(
-                        ApprovalResolvedEvent(
-                            tool_call_id=approval_id,
-                            approved=False,
-                            reason="denied",
-                        )
-                    )
 
             elif isinstance(event, StatusEvent):
                 now = datetime.now(timezone.utc)

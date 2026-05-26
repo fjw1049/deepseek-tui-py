@@ -1,5 +1,6 @@
 import type i18next from 'i18next'
 import type { AppSettingsV1 } from '@shared/app-settings'
+import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
 type CreateAppActionsOptions = {
@@ -82,11 +83,13 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     openSettings: (section: SettingsRouteSection = 'general') =>
       set({ route: 'settings', settingsSection: section }),
 
-    openPlugins: (host?: PluginHostRoute) =>
+    openPlugins: (host?: PluginHostRoute) => {
+      if (!WORKBENCH_FEATURES.pluginMarketplace) return
       set({
         route: 'plugins',
         pluginHostRoute: host ?? 'chat'
-      }),
+      })
+    },
 
     openInitialSetup: (mode: InitialSetupMode = 'required') =>
       set({ initialSetupOpen: true, initialSetupMode: mode }),

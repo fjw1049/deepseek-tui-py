@@ -5,8 +5,10 @@ import type {
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import type { ChatState } from './chat-store-types'
 
-type ThreadDetailProviderLike = {
-  getThreadDetail: (threadId: string) => Promise<{ blocks: ChatBlock[] }>
+export type PendingApprovalPayload = {
+  approvalId: string
+  summary: string
+  toolName?: string
 }
 
 export function threadBelongsToWorkspace(
@@ -16,6 +18,45 @@ export function threadBelongsToWorkspace(
   const normalizedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
   if (!normalizedWorkspace) return false
   return normalizeWorkspaceRoot(thread.workspace) === normalizedWorkspace
+}
+
+export function mergePendingApprovalBlocks(
+  blocks: ChatBlock[],
+  pending: PendingApprovalPayload[]
+): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
+  if (!pending.length) return { blocks, firstAddedBlockId: null }
+  const existing = new Set(
+    blocks
+      .filter((block) => block.kind === 'approval')
+      .map((block) => block.approvalId)
+  )
+  const additions: ChatBlock[] = []
+  for (const item of pending) {
+    if (!item.approvalId || existing.has(item.approvalId)) continue
+    existing.add(item.approvalId)
+    additions.push({
+      kind: 'approval',
+      id: `approval-${item.approvalId}`,
+      createdAt: new Date().toISOString(),
+      approvalId: item.approvalId,
+      summary: item.summary,
+      toolName: item.toolName,
+      status: 'pending'
+    })
+  }
+  if (!additions.length) return { blocks, firstAddedBlockId: null }
+  return {
+    blocks: [...blocks, ...additions],
+    firstAddedBlockId: additions[0]?.id ?? null
+  }
+}
+
+export function countPendingApprovals(blocks: ChatBlock[]): number {
+  return blocks.filter((block) => block.kind === 'approval' && block.status === 'pending').length
+}
+
+type ThreadDetailProviderLike = {
+  getThreadDetail: (threadId: string) => Promise<{ blocks: ChatBlock[] }>
 }
 
 export function hasPendingRuntimeWork(block: ChatBlock): boolean {
@@ -115,6 +156,7 @@ export function clearedThreadSelection(): Pick<
   | 'turnReasoningLastAtByUserId'
   | 'inspectorSelectedId'
   | 'queuedMessages'
+  | 'scrollToBlockId'
 > {
   return {
     activeThreadId: null,
@@ -130,7 +172,8 @@ export function clearedThreadSelection(): Pick<
     turnReasoningFirstAtByUserId: {},
     turnReasoningLastAtByUserId: {},
     inspectorSelectedId: null,
-    queuedMessages: []
+    queuedMessages: [],
+    scrollToBlockId: null
   }
 }
 

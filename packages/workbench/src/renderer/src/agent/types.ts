@@ -215,6 +215,15 @@ export interface AgentProvider {
     decision: 'allow' | 'deny',
     remember?: boolean
   ): Promise<void>
+  /** Runtime HTTP: GET /v1/approvals/pending */
+  fetchPendingApprovals?(threadId: string): Promise<ApprovalRequestPayload[]>
+  /** Runtime HTTP: POST /v1/threads/import-session */
+  importTuiSession?(input: {
+    sessionId?: string
+    path?: string
+    title?: string
+    workspace?: string
+  }): Promise<NormalizedThread>
   /** Runtime HTTP compatibility path for request_user_input responses. */
   submitUserInputResponse?(requestId: string, answers: UserInputAnswer[]): Promise<void>
   cancelUserInput?(requestId: string): Promise<void>

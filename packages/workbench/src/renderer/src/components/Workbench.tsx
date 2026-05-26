@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Globe2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { WorkspaceFileTarget } from '@shared/workspace-file'
+import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
 import {
@@ -21,6 +22,7 @@ import { FloatingComposer } from './chat/FloatingComposer'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
+import { ImportSessionDialog } from './ImportSessionDialog'
 
 const ChangeInspector = lazy(() =>
   import('./ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
@@ -291,6 +293,7 @@ export function Workbench(): ReactElement {
     readStoredWidth(BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_DEFAULT)
   )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
+  const [importSessionOpen, setImportSessionOpen] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
 
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -654,6 +657,7 @@ export function Workbench(): ReactElement {
               }}
               onNewChat={startNewChat}
               onNewChatInWorkspace={startNewChatInWorkspace}
+              onImportSession={() => setImportSessionOpen(true)}
               onOpenSettings={(section) => openSettings(section)}
               onOpenPlugins={() => openPlugins()}
               onCodeOpen={() => void openCode()}
@@ -672,10 +676,10 @@ export function Workbench(): ReactElement {
 
       <main
         className={`ds-drag ds-stage-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
-          route === 'plugins' ? 'px-0' : ''
+          WORKBENCH_FEATURES.pluginMarketplace && route === 'plugins' ? 'px-0' : ''
         }`}
       >
-        {route === 'plugins' ? (
+        {WORKBENCH_FEATURES.pluginMarketplace && route === 'plugins' ? (
           <>
             <div className="ds-no-drag shrink-0 px-4 pt-4">
               <button
@@ -887,6 +891,10 @@ export function Workbench(): ReactElement {
           setRuntimeDiagnosticsOpen(false)
           openSettings('agents')
         }}
+      />
+      <ImportSessionDialog
+        open={importSessionOpen}
+        onClose={() => setImportSessionOpen(false)}
       />
     </div>
   )

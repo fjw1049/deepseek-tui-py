@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${DEEPSEEK_RUNTIME_PORT:-7878}"
 BASE="http://127.0.0.1:${PORT}"
-PYTHON="${DEEPSEEK_PYTHON:-python}"
+PYTHON="${DEEPSEEK_PYTHON:-${ROOT}/.venv/bin/python}"
 
 if ! curl -sf "${BASE}/health" >/dev/null; then
   echo "[smoke] runtime not reachable at ${BASE}; start with:"

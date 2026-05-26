@@ -13,6 +13,7 @@ from deepseek_tui.app_server.runtime_threads import (
     CreateThreadRequest,
     UpdateThreadRequest,
 )
+from deepseek_tui.app_server.session_import import ImportTuiSessionRequest
 
 router = APIRouter(prefix="/v1")
 
@@ -33,6 +34,20 @@ async def create_thread(request: Request) -> JSONResponse:
     payload = await body(request)
     req = CreateThreadRequest.model_validate(payload)
     thread = await mgr.create_thread(req)
+    return JSONResponse(status_code=201, content=thread.model_dump(mode="json"))
+
+
+@router.post("/threads/import-session", status_code=201)
+async def import_tui_session(request: Request) -> JSONResponse:
+    mgr = manager(request)
+    payload = await body(request)
+    req = ImportTuiSessionRequest.model_validate(payload)
+    try:
+        thread = await mgr.import_tui_session(req)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="session_not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_session") from exc
     return JSONResponse(status_code=201, content=thread.model_dump(mode="json"))
 
 

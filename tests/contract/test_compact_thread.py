@@ -1,0 +1,67 @@
+"""POST /v1/threads/{id}/compact — manual context compaction."""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+from httpx import AsyncClient
+
+from deepseek_tui.app_server.runtime_threads import (
+    CreateThreadRequest,
+    TurnItemKind,
+)
+from deepseek_tui.protocol.messages import Message
+
+
+@pytest.mark.asyncio
+async def test_compact_thread_emits_context_compaction_item(
+    client: AsyncClient,
+    runtime_app: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        from deepseek_tui.tools.context import ToolContext
+
+        engine = SimpleNamespace(
+            tool_context=ToolContext(working_directory=kwargs["working_directory"]),
+            session_messages=[
+                Message.user("a"),
+                Message.assistant("b"),
+                Message.user("c"),
+            ],
+            mode=kwargs.get("mode", "agent"),
+            _emergency_compact=AsyncMock(
+                return_value=[Message.user("summary"), Message.assistant("ok")]
+            ),
+            run=lambda: asyncio.sleep(3600),
+        )
+        return engine
+
+    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(manager.workspace))
+    )
+    await manager._ensure_engine_loaded(thread)
+
+    r = await client.post(f"/v1/threads/{thread.id}/compact", json={})
+    assert r.status_code == 200, r.text
+
+    detail = await manager.get_thread_detail(thread.id)
+    compaction_items = [i for i in detail.items if i.kind == TurnItemKind.CONTEXT_COMPACTION]
+    assert len(compaction_items) == 1
+    assert "compacted" in (compaction_items[0].detail or "").lower()
+
+    async with manager._active_lock:
+        state = manager._active.get(thread.id)
+        assert state is not None
+        assert len(state.engine.session_messages) == 2
+        state.engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await state.engine_task
+        manager._active.pop(thread.id, None)

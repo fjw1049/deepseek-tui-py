@@ -448,6 +448,61 @@ class RuntimeThreadStore:
 # --- helper functions --------------------------------------------------------
 
 
+def _ordered_turn_items(
+    store: RuntimeThreadStore,
+    turn: TurnRecord,
+) -> list[TurnItemRecord]:
+    """Return turn items in persisted order (``item_ids``), with stable fallback."""
+    items = store.list_items_for_turn(turn.id)
+    if not items:
+        return []
+
+    kind_rank = {
+        TurnItemKind.USER_MESSAGE: 0,
+        TurnItemKind.AGENT_MESSAGE: 1,
+    }
+
+    def sort_key(item: TurnItemRecord) -> tuple:
+        started = item.started_at or datetime.min.replace(tzinfo=timezone.utc)
+        return (started, kind_rank.get(item.kind, 99), item.id)
+
+    if not turn.item_ids:
+        return sorted(items, key=sort_key)
+
+    by_id = {item.id: item for item in items}
+    ordered = [by_id[item_id] for item_id in turn.item_ids if item_id in by_id]
+    seen = set(turn.item_ids)
+    orphans = sorted((item for item in items if item.id not in seen), key=sort_key)
+    return ordered + orphans
+
+
+def reconstruct_messages_from_turns(
+    store: RuntimeThreadStore,
+    thread_id: str,
+) -> list:
+    """Rebuild Engine chat history from persisted turn items.
+
+    Mirrors Rust ``RuntimeThreadManager::reconstruct_messages_from_turns``.
+    """
+    from deepseek_tui.protocol.messages import Message, Role, TextBlock
+
+    messages: list[Message] = []
+    for turn in store.list_turns_for_thread(thread_id):
+        for item in _ordered_turn_items(store, turn):
+            text = (item.detail or item.summary or "").strip()
+            if not text:
+                continue
+            if item.kind == TurnItemKind.USER_MESSAGE:
+                messages.append(
+                    Message(role=Role.USER, content=[TextBlock(text=text)])
+                )
+            elif item.kind == TurnItemKind.AGENT_MESSAGE:
+                messages.append(
+                    Message(role=Role.ASSISTANT, content=[TextBlock(text=text)])
+                )
+    return messages
+
+
 def tool_kind_for_name(name: str) -> TurnItemKind:
     """Mirrors Rust ``tool_kind_for_name`` (line 2542)."""
     lower = name.lower()

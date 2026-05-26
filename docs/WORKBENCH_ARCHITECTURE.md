@@ -35,7 +35,9 @@ sequenceDiagram
 - **Spawn**: Main process runs `python -m deepseek_tui serve --http --port 7878 --auth-token …`
 - **Auth**: Bearer in `Authorization` header only (no query token)
 - **Token file**: `~/.deepseek/runtime.token` — Python seeds if empty; GUI reads, never overwrites non-empty file
-- **Approvals**: `ApprovalRequiredEvent` → `approval.required` SSE → GUI POST `/v1/approvals/{id}` → `ApprovalBridge`
+- **Approvals**: `ApprovalRequiredEvent` → `approval.required` SSE → GUI POST `/v1/approvals/{id}` → `ApprovalBridge` → `HttpApprovalHandler` blocks Engine until resolved
+- **Session hydration**: `_ensure_engine_loaded` → `reconstruct_messages_from_turns` → `Engine.sync_session`
+- **TUI import**: POST `/v1/threads/import-session` reads `~/.deepseek/sessions/*.json` into durable threads
 - **Steer**: GUI POST `…/steer` → `EngineHandle.steer()` (mid-turn queue)
 - **User input**: `UserInputRequiredEvent` → SSE → POST `/v1/user-inputs/{id}`
 

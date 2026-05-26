@@ -109,6 +109,8 @@ export function MessageTimeline({
   const turnDurationByUserId = useChatStore((s) => s.turnDurationByUserId)
   const turnReasoningFirstAtByUserId = useChatStore((s) => s.turnReasoningFirstAtByUserId)
   const turnReasoningLastAtByUserId = useChatStore((s) => s.turnReasoningLastAtByUserId)
+  const scrollToBlockId = useChatStore((s) => s.scrollToBlockId)
+  const clearScrollTarget = useChatStore((s) => s.clearScrollTarget)
   const hasContent = blocks.length > 0 || live || liveReasoning
   const endRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -187,6 +189,16 @@ export function MessageTimeline({
     }
     endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
   }, [activeThreadId])
+
+  useEffect(() => {
+    if (!scrollToBlockId) return
+    const target = document.getElementById(`block-${scrollToBlockId}`)
+    if (target) {
+      stickToBottomRef.current = false
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+    clearScrollTarget()
+  }, [clearScrollTarget, scrollToBlockId])
 
   useEffect(
     () => () => {
@@ -2058,6 +2070,7 @@ function formatMessageDateTime(input: string, locale: string): string {
 function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: boolean }): ReactElement {
   const { t, i18n } = useTranslation('common')
   const resolveApproval = useChatStore((s) => s.resolveApproval)
+  const openSettings = useChatStore((s) => s.openSettings)
   if (block.kind === 'user') {
     return <UserMessageBubble block={block} />
   }
@@ -2110,6 +2123,7 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
             : t('approvalPending')
     return (
       <div
+        id={`block-${block.id}`}
         className={`rounded-[22px] border px-4 py-4 text-[13px] leading-6 shadow-[0_12px_30px_rgba(86,103,136,0.04)] ${
           block.status === 'error'
             ? 'border-red-300/80 bg-red-500/10 dark:border-red-800/60 dark:bg-red-950/35'
@@ -2123,6 +2137,9 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
           </div>
         ) : null}
         <p className="mt-2 whitespace-pre-wrap text-[14px] text-ds-ink">{block.summary}</p>
+        {block.status === 'pending' ? (
+          <p className="mt-2 text-[12px] text-ds-muted">{t('approvalPolicyHint')}</p>
+        ) : null}
         {block.errorMessage ? (
           <p className="mt-2 text-[12px] text-red-700 dark:text-red-300">{block.errorMessage}</p>
         ) : null}
@@ -2141,6 +2158,13 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
               onClick={() => void resolveApproval(block.id, 'deny')}
             >
               {t('approvalDeny')}
+            </button>
+            <button
+              type="button"
+              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+              onClick={() => openSettings('agents')}
+            >
+              {t('approvalOpenSettings')}
             </button>
           </div>
         ) : (

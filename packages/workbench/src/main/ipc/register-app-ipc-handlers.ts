@@ -38,6 +38,7 @@ import {
   runtimeTokenFilePath
 } from '../deepseek-process'
 import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
+import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
 import {
   expandHomePath,
   listEditorsResult,
@@ -309,6 +310,33 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       title: 'Select working directory',
       defaultPath: normalizedDefaultPath,
       properties: ['openDirectory', 'createDirectory', 'dontAddToRecent']
+    }
+    const mainWindow = getMainWindow()
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    return {
+      canceled: result.canceled,
+      path: result.canceled ? null : (result.filePaths[0] ?? null)
+    }
+  })
+
+  ipcMain.handle('tui-sessions:list', async () => ({
+    dir: defaultTuiSessionsDir(),
+    sessions: await listTuiSessions()
+  }))
+
+  ipcMain.handle('tui-sessions:pick-file', async (_, defaultPath: unknown) => {
+    const normalizedDefaultPath = parseIpcPayload(
+      'tui-sessions:pick-file',
+      z.object({ defaultPath: defaultPathSchema }).strict(),
+      { defaultPath }
+    ).defaultPath
+    const options: Electron.OpenDialogOptions = {
+      title: 'Select TUI session JSON',
+      defaultPath: normalizedDefaultPath || defaultTuiSessionsDir(),
+      properties: ['openFile', 'dontAddToRecent'],
+      filters: [{ name: 'Session JSON', extensions: ['json'] }]
     }
     const mainWindow = getMainWindow()
     const result = mainWindow

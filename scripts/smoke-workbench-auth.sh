@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${DEEPSEEK_RUNTIME_PORT:-7878}"
 BASE="http://127.0.0.1:${PORT}"
-PYTHON="${DEEPSEEK_PYTHON:-python}"
+PYTHON="${DEEPSEEK_PYTHON:-${ROOT}/.venv/bin/python}"
 TOKEN_FILE="${DEEPSEEK_HOME:-$HOME/.deepseek}/runtime.token"
 
 TOKEN="${DEEPSEEK_RUNTIME_TOKEN:-}"

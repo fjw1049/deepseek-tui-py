@@ -260,6 +260,18 @@ class Engine:
             self, self.handle.try_emit
         )
 
+    def sync_session(
+        self,
+        messages: list[Message],
+        *,
+        model: str | None = None,
+    ) -> None:
+        """Replace in-memory chat history (Rust ``Op::SyncSession`` parity)."""
+        self.session_messages.clear()
+        self.session_messages.extend(messages)
+        if model:
+            self.default_model = model
+
     def invalidate_mcp_tools_cache(self) -> None:
         """Drop cached MCP tool descriptors so the next turn re-discovers."""
         self._mcp_tools_cache = None

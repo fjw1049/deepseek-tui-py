@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Bot, ChevronDown, Clock3, ListTodo, Send, Square, X } from 'lucide-react'
+import { Bot, ChevronDown, Clock3, ListTodo, Send, ShieldAlert, Square, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
+import { countPendingApprovals } from '../../store/chat-store-runtime-helpers'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { GitBranchPicker } from './GitBranchPicker'
 
@@ -64,6 +65,8 @@ export function FloatingComposer({
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
+  const blocks = useChatStore((s) => s.blocks)
+  const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const composingRef = useRef(false)
   const [focused, setFocused] = useState(false)
@@ -71,6 +74,11 @@ export function FloatingComposer({
     ? threads.find((thread) => thread.id === activeThreadId)?.workspace
     : ''
   const effectiveWorkspaceRoot = normalizeWorkspaceRoot(activeThreadWorkspace || workspaceRoot)
+
+  const pendingApprovalCount = countPendingApprovals(blocks)
+  const firstPendingApprovalId = blocks.find(
+    (block) => block.kind === 'approval' && block.status === 'pending'
+  )?.id
 
   const canCompose = runtimeReady && (hasActiveThread || !!effectiveWorkspaceRoot)
   const canChangeModel = canCompose && !busy
@@ -213,6 +221,29 @@ export function FloatingComposer({
 
   return (
     <div className="pointer-events-auto w-full max-w-4xl px-4 pb-5 pt-1 sm:px-6 md:px-8">
+      {pendingApprovalCount > 0 ? (
+        <div className="mb-2 rounded-[22px] border border-accent/30 bg-[linear-gradient(180deg,rgba(79,124,255,0.08),rgba(79,124,255,0.14))] px-4 py-3 shadow-sm backdrop-blur-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex min-w-0 items-center gap-2 text-[13px] font-medium text-ds-ink">
+              <ShieldAlert className="h-4 w-4 shrink-0 text-accent" strokeWidth={1.9} />
+              <span>
+                {pendingApprovalCount === 1
+                  ? t('approvalBannerSingle')
+                  : t('approvalBannerMultiple', { count: pendingApprovalCount })}
+              </span>
+            </div>
+            {firstPendingApprovalId ? (
+              <button
+                type="button"
+                onClick={() => scrollToBlock(firstPendingApprovalId)}
+                className="rounded-full border border-accent/25 bg-white/70 px-3 py-1 text-[12px] font-semibold text-accent transition hover:bg-white dark:bg-ds-elevated/80"
+              >
+                {t('approvalBannerJump')}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {queuedMessages.length > 0 ? (
         <div className="mb-2 rounded-[22px] border border-ds-border bg-ds-card/88 px-4 py-3 shadow-sm backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -37,13 +37,23 @@
 | C2 | 将 policy 改为 **Auto**，重试写文件 | 无审批卡片（或瞬间 auto-allow） |
 | C3 | 改回 **On request** | 恢复 A1 行为 |
 
+## 用例 D — GUI 联调增强（2026-05）
+
+| 步骤 | 操作 | 期望 |
+|------|------|------|
+| D1 | 触发审批后观察 Composer 上方 | 出现蓝色 **Review** 横幅，点击可滚动到审批卡片 |
+| D2 | 审批等待期间切换线程再切回 | 若 turn 仍在运行，审批卡片通过 `GET /v1/approvals/pending` 恢复 |
+| D3 | 审批卡片点击 **Approval settings** | 打开 Settings → Agents |
+| D4 | Sidebar → **Import TUI session** | 弹出导入对话框，列出 `~/.deepseek/sessions/*.json` |
+| D5 | 选择一条 TUI 会话导入 | 创建新线程并加载历史 user/assistant 消息 |
+
 ## 自动化对照
 
-- `pytest tests/contract/test_approvals.py` — Bridge + HTTP
+- `pytest tests/contract/test_approvals.py` — Bridge + HTTP + pending list
 - `pytest tests/contract/test_turn_approval_integration.py` — `_monitor_turn` + SSE + resolve
 
 ## 记录
 
-| 日期 | 环境 | A | B | C | 备注 |
-|------|------|---|---|---|------|
-|      |      | ☐ | ☐ | ☐ |      |
+| 日期 | 环境 | A | B | C | D | 备注 |
+|------|------|---|---|---|---|------|
+|      |      | ☐ | ☐ | ☐ | ☐ |      |

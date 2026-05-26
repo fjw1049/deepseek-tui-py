@@ -4,7 +4,9 @@ import type {
   SubagentMailboxPayload,
   ThreadDeltaEvent,
   ThreadEventSink,
-  ToolBlock
+  ToolBlock,
+  AgentProvider,
+  ChatBlock
 } from '../agent/types'
 import {
   applyMailboxMessage,
@@ -47,6 +49,7 @@ import {
   findLatestUserBlockId,
   findReusableEmptyThreadId,
   hasPendingRuntimeWork,
+  mergePendingApprovalBlocks,
   reconcileOptimisticUserBlock,
   threadBelongsToWorkspace,
   threadSnapshotLooksRunning,
@@ -174,6 +177,24 @@ function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Parti
 function shouldOpenSettingsForError(error: unknown): boolean {
   const code = getRuntimeErrorCode(error)
   return code === 'missing_api_key' || code === 'runtime_auth_required'
+}
+
+async function syncRuntimePendingApprovals(
+  provider: AgentProvider,
+  threadId: string,
+  blocks: ChatBlock[],
+  busy: boolean
+): Promise<{ blocks: ChatBlock[]; scrollToBlockId: string | null }> {
+  if (!busy || typeof provider.fetchPendingApprovals !== 'function') {
+    return { blocks, scrollToBlockId: null }
+  }
+  try {
+    const pending = await provider.fetchPendingApprovals(threadId)
+    const { blocks: merged, firstAddedBlockId } = mergePendingApprovalBlocks(blocks, pending)
+    return { blocks: merged, scrollToBlockId: firstAddedBlockId }
+  } catch {
+    return { blocks, scrollToBlockId: null }
+  }
 }
 
 function looksLikeActiveTurnError(error: unknown): boolean {
@@ -417,6 +438,7 @@ function buildThreadEventSink(
               status: 'pending' as const
             }
           ],
+          scrollToBlockId: `approval-${req.approvalId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       }),
@@ -587,6 +609,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   queuedMessages: [],
   watchTurnCompletion: {},
   unreadThreadIds: {},
+  scrollToBlockId: null,
 
   ...createAppActions({
     set,
@@ -995,14 +1018,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } = await p.getThreadDetail(activeThreadId)
       const blocks = hydrateBlockModelLabels(activeThreadId, rawBlocks)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
+      const synced = await syncRuntimePendingApprovals(p, activeThreadId, blocks, busy)
       const currentTurnUserId = busy
-        ? state.currentTurnUserId ?? latestUserMessageId ?? findLatestUserBlockId(blocks)
+        ? state.currentTurnUserId ?? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
         : null
       const currentTurnId = busy ? state.currentTurnId ?? latestTurnId ?? null : null
 
       set((s) => ({
         activeThreadId,
-        blocks,
+        blocks: synced.blocks,
         lastSeq: latestSeq,
         liveReasoning: '',
         liveAssistant: '',
@@ -1010,7 +1034,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         busy,
         currentTurnId,
         currentTurnUserId,
-        queuedMessages: s.queuedMessages
+        queuedMessages: s.queuedMessages,
+        scrollToBlockId: synced.scrollToBlockId ?? s.scrollToBlockId
       }))
 
       const ac = (sseAbort = new AbortController())
@@ -1070,14 +1095,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } = await p.getThreadDetail(id)
       const blocks = hydrateBlockModelLabels(id, rawBlocks)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
+      const synced = await syncRuntimePendingApprovals(p, id, blocks, busy)
       const currentTurnUserId = busy
-        ? latestUserMessageId ?? findLatestUserBlockId(blocks)
+        ? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
         : null
       set({
         watchTurnCompletion: nextWatch,
         unreadThreadIds: nextUnread,
         activeThreadId: id,
-        blocks,
+        blocks: synced.blocks,
         lastSeq: latestSeq,
         liveReasoning: '',
         liveAssistant: '',
@@ -1090,7 +1116,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         turnReasoningFirstAtByUserId: {},
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,
-        queuedMessages: []
+        queuedMessages: [],
+        scrollToBlockId: synced.scrollToBlockId
       })
       syncTurnCompletionPoll(set, get)
       const ac = sseAbort = new AbortController()
@@ -1510,6 +1537,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  importTuiSession: async (input) => {
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    const p = getProvider(get().providerId)
+    if (typeof p.importTuiSession !== 'function') {
+      set({ error: i18n.t('common:runtimeImportUnsupported') })
+      return
+    }
+    try {
+      const thread = await p.importTuiSession(input)
+      await get().refreshThreads()
+      await get().selectThread(thread.id)
+      set({ error: null, route: 'chat' })
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        ...(shouldOpenSettingsForError(e)
+          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          : {})
+      })
+    }
+  },
+
+  scrollToBlock: (blockId) => {
+    const trimmed = blockId.trim()
+    if (!trimmed) return
+    set({ scrollToBlockId: trimmed })
+  },
+
+  clearScrollTarget: () => set({ scrollToBlockId: null }),
+
   compactActiveThread: async () => {
     const threadId = get().activeThreadId
     if (!threadId) return
@@ -1529,10 +1589,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       set({ busy: true, error: null })
       await p.compactThread(threadId)
-      const errorBeforeSelect = get().error
       await get().selectThread(threadId)
-      // selectThread swallows getThreadDetail failures; compact left busy=true above.
-      if (get().error !== errorBeforeSelect) {
+      if (get().busy) {
         set({ busy: false })
       }
     } catch (e) {

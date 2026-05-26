@@ -14,6 +14,9 @@ const api = {
   prepareDeepseekBinary: () => ipcRenderer.invoke('deepseek:prepare-binary'),
   pickWorkspaceDirectory: (defaultPath) =>
     ipcRenderer.invoke('workspace:pick-directory', defaultPath),
+  listTuiSessions: () => ipcRenderer.invoke('tui-sessions:list'),
+  pickTuiSessionFile: (defaultPath) =>
+    ipcRenderer.invoke('tui-sessions:pick-file', defaultPath),
   saveSkillFile: (rootPath, skillName, content) =>
     ipcRenderer.invoke('skill:save-file', { rootPath, skillName, content }),
   openSkillRoot: (rootPath) =>

@@ -1,6 +1,7 @@
 import type {
   AgentProvider,
   AgentProviderId,
+  ApprovalRequestPayload,
   ChatBlock,
   NormalizedThread,
   ThreadDeltaEvent,
@@ -288,8 +289,7 @@ function toRuntimeError(info: RuntimeErrorJson & { message: string }): Error {
 function runtimeExecutionFlags(settings: AppSettingsV1): RuntimeExecutionFlags {
   return {
     auto_approve: settings.deepseek.approvalPolicy === 'auto',
-    // Sandbox is enforced via ``--sandbox-mode`` on runtime spawn, not thread trust_mode.
-    trust_mode: false
+    trust_mode: settings.deepseek.sandboxMode === 'danger-full-access'
   }
 }
 
@@ -383,6 +383,46 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       JSON.stringify({ decision, remember })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, `approval decision failed: ${r.status}`))
+  }
+
+  async fetchPendingApprovals(threadId: string): Promise<ApprovalRequestPayload[]> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/approvals/pending?thread_id=${encodeURIComponent(threadId)}`,
+      'GET'
+    )
+    if (!r.ok) return []
+    const rows = JSON.parse(r.body) as Array<Record<string, unknown>>
+    return rows
+      .map((row) => ({
+        approvalId: String(row.approval_id ?? row.id ?? ''),
+        summary: String(row.description ?? row.summary ?? 'Approval required'),
+        toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined
+      }))
+      .filter((row) => row.approvalId.length > 0)
+  }
+
+  async importTuiSession(input: {
+    sessionId?: string
+    path?: string
+    title?: string
+    workspace?: string
+  }): Promise<NormalizedThread> {
+    const r = await window.dsGui.runtimeRequest(
+      '/v1/threads/import-session',
+      'POST',
+      JSON.stringify(input)
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'import session failed'))
+    const t = JSON.parse(r.body) as ThreadRecordJson
+    return {
+      id: t.id,
+      title: titleFromThread(t),
+      updatedAt: t.updated_at,
+      model: t.model,
+      mode: t.mode,
+      workspace: t.workspace,
+      status: t.status
+    }
   }
 
   async listThreads(): Promise<NormalizedThread[]> {

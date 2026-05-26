@@ -6,9 +6,11 @@ import {
   Command,
   LayoutGrid,
   Plus,
-  Settings
+  Settings,
+  Upload
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
+import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { SidebarProjectsSection } from './SidebarProjectsSection'
 
@@ -24,6 +26,7 @@ type Props = {
   onCompactThread: (id: string) => Promise<void>
   onNewChat: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
+  onImportSession: () => void
   onOpenSettings: (section?: SettingsRouteSection) => void
   onOpenPlugins: () => void
   onCodeOpen: () => void
@@ -41,6 +44,7 @@ export function Sidebar({
   onCompactThread,
   onNewChat,
   onNewChatInWorkspace,
+  onImportSession,
   onOpenSettings,
   onOpenPlugins,
   onCodeOpen
@@ -101,11 +105,21 @@ export function Sidebar({
           variant="flat-accent"
         />
         <SidebarLink
-          icon={<LayoutGrid className="h-4 w-4" strokeWidth={1.75} />}
-          label={t('plugins')}
-          onClick={onOpenPlugins}
-          active={pluginsActive}
+          icon={<Upload className="h-4 w-4" strokeWidth={1.85} />}
+          label={t('importSession')}
+          onClick={runtimeReady ? onImportSession : undefined}
+          disabled={!runtimeReady}
+          disabledHint={t('runtimeActionNeedsConnection')}
+          variant="flat"
         />
+        {WORKBENCH_FEATURES.pluginMarketplace ? (
+          <SidebarLink
+            icon={<LayoutGrid className="h-4 w-4" strokeWidth={1.75} />}
+            label={t('plugins')}
+            onClick={onOpenPlugins}
+            active={pluginsActive}
+          />
+        ) : null}
       </div>
 
       <div className="ds-no-drag mx-1 my-3" />

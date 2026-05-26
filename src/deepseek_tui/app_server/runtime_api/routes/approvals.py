@@ -16,6 +16,13 @@ class DecideApprovalBody(BaseModel):
     remember: bool = False
 
 
+@router.get("/approvals/pending")
+async def list_pending_approvals(request: Request) -> list[dict[str, str]]:
+    bridge = approval_bridge(request)
+    thread_id = request.query_params.get("thread_id")
+    return bridge.list_pending(thread_id=thread_id or None)
+
+
 @router.post("/approvals/{approval_id}")
 async def decide_approval(request: Request, approval_id: str) -> dict[str, object]:
     bridge = approval_bridge(request)
