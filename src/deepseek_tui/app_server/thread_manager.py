@@ -746,7 +746,19 @@ class RuntimeThreadManager:
                 self._attach_item_to_turn(turn_id, item_id)
                 await self._emit_event(
                     thread_id, turn_id, item_id, "item.started",
-                    {"item": item.model_dump(mode="json"), "tool": {"id": tc.id, "name": tc.name}},
+                    {
+                        "item": item.model_dump(mode="json"),
+                        # ``input`` is what the GUI provider needs to render
+                        # interactive ``request_user_input`` blocks live;
+                        # without it the questions only appear after the turn
+                        # completes (via ThreadDetail reload). Mirrors Rust
+                        # runtime_threads.rs ``item.started`` payload.
+                        "tool": {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "input": tc.arguments,
+                        },
+                    },
                 )
 
             elif isinstance(event, ToolResultEvent):

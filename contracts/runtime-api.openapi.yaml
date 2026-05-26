@@ -63,15 +63,9 @@ paths:
           description: Updated thread
         "404":
           description: Thread not found
-    delete:
-      summary: Archive thread (soft delete)
-      parameters:
-        - $ref: "#/components/parameters/threadId"
-      responses:
-        "200":
-          description: Archived thread
-        "404":
-          description: Thread not found
+  # DELETE intentionally omitted: archive flows through PATCH archived=true.
+  # The runtime never exposed DELETE as a real delete (would have been a
+  # destructive action without backups); the GUI uses PATCH instead.
   /v1/threads/{thread_id}/fork:
     post:
       summary: Fork thread

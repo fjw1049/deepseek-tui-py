@@ -16,6 +16,7 @@ import {
   FolderOpen,
   Globe,
   Loader2,
+  RefreshCw,
   Settings
 } from 'lucide-react'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
@@ -109,6 +110,9 @@ export function SettingsView(): ReactElement {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showRuntimeToken, setShowRuntimeToken] = useState(false)
+  const [tokenFingerprint, setTokenFingerprint] = useState('')
+  const [tokenRegenBusy, setTokenRegenBusy] = useState(false)
+  const [tokenRegenError, setTokenRegenError] = useState<string | null>(null)
   const [logPath, setLogPath] = useState('')
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
   const [skillRootId, setSkillRootId] = useState<SkillRootId>(() => loadPreferredSkillRootId())
@@ -256,6 +260,27 @@ export function SettingsView(): ReactElement {
       setSkillRootId(fallback.id)
     }
   }, [skillRootId, skillRootOptions])
+
+  const handleRegenerateRuntimeToken = async (): Promise<void> => {
+    if (typeof window.dsGui?.regenerateRuntimeToken !== 'function') return
+    setTokenRegenBusy(true)
+    setTokenRegenError(null)
+    try {
+      const result = await window.dsGui.regenerateRuntimeToken()
+      if (result.ok) {
+        setTokenFingerprint(result.fingerprint)
+        // Drop any explicit override so the runtime continues reading the
+        // (now-rotated) token file rather than a stale settings value.
+        update({ deepseek: { runtimeToken: '' } })
+      } else {
+        setTokenRegenError(result.message)
+      }
+    } catch (e) {
+      setTokenRegenError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setTokenRegenBusy(false)
+    }
+  }
 
   const loadMcpConfig = async (): Promise<void> => {
     if (typeof window.dsGui?.getDeepseekConfigFile !== 'function') return
@@ -850,19 +875,27 @@ export function SettingsView(): ReactElement {
                           readOnly
                           className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 font-mono text-[12px] text-ds-ink/70 shadow-sm focus:outline-none"
                           value={
-                            form.deepseek.runtimeToken
+                            tokenFingerprint ||
+                            (form.deepseek.runtimeToken
                               ? `${form.deepseek.runtimeToken.slice(0, 8)}…${form.deepseek.runtimeToken.slice(-4)}`
-                              : t('runtimeTokenAutoManaged')
+                              : t('runtimeTokenAutoManaged'))
                           }
                           aria-label={t('runtimeToken')}
                         />
                         <button
                           type="button"
-                          className="self-start rounded-md border border-ds-border px-2 py-1 text-[12px] hover:border-accent/40"
-                          onClick={() => update({ deepseek: { runtimeToken: '' } })}
+                          disabled={tokenRegenBusy}
+                          className="inline-flex items-center gap-1.5 self-start rounded-md border border-ds-border px-2 py-1 text-[12px] hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-55"
+                          onClick={() => void handleRegenerateRuntimeToken()}
                         >
+                          {tokenRegenBusy ? (
+                            <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+                          ) : null}
                           {t('runtimeTokenRegenerate')}
                         </button>
+                        {tokenRegenError ? (
+                          <p className="text-[12px] text-red-700 dark:text-red-300">{tokenRegenError}</p>
+                        ) : null}
                       </div>
                     }
                   />

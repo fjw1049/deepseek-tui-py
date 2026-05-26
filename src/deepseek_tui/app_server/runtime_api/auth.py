@@ -24,13 +24,39 @@ def resolve_runtime_auth(
     *,
     insecure_no_auth: bool = False,
 ) -> ResolvedRuntimeAuth:
-    """Mirror Rust ``resolve_runtime_auth`` (runtime_api.rs)."""
+    """Resolve the bearer token used for /v1/* routes.
+
+    Priority (mirrors Rust ``resolve_runtime_auth`` plus a Python-side file
+    fallback so CLI/Electron callers share the same secret without explicit
+    plumbing):
+
+    1. ``cli_token``                  — explicit ``--auth-token``
+    2. ``env_token``                  — ``DEEPSEEK_RUNTIME_TOKEN``
+    3. ``~/.deepseek/runtime.token``  — auto-managed file (Electron writes here)
+    4. generate fresh + flag          — fall through to write_runtime_token_file
+    """
     token = _first_nonblank(cli_token) or _first_nonblank(env_token)
     if token:
         return ResolvedRuntimeAuth(token=token, generated=False)
+    cached = _read_runtime_token_file()
+    if cached:
+        return ResolvedRuntimeAuth(token=cached, generated=False)
     if insecure_no_auth:
         return ResolvedRuntimeAuth(token=None, generated=False)
     return ResolvedRuntimeAuth(token=_generate_runtime_token(), generated=True)
+
+
+def _read_runtime_token_file() -> str | None:
+    try:
+        path = runtime_token_file()
+    except Exception:  # noqa: BLE001
+        return None
+    if not path.exists():
+        return None
+    try:
+        return _first_nonblank(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
 
 
 def _first_nonblank(value: str | None) -> str | None:

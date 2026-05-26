@@ -85,6 +85,10 @@ export type SseEventPayload = { streamId: string; data: unknown }
 export type SseEndPayload = { streamId: string }
 export type SseErrorPayload = { streamId: string; status?: number; message?: string }
 
+export type RuntimeTokenRegenerateResult =
+  | { ok: true; fingerprint: string; restarted: boolean; tokenPath?: string }
+  | { ok: false; message: string }
+
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
@@ -115,6 +119,7 @@ export type DsGuiApi = {
   readWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileReadResult>
   startSse: (threadId: string, sinceSeq: number, streamId?: string) => Promise<{ streamId: string }>
   stopSse: (streamId: string) => Promise<boolean>
+  regenerateRuntimeToken: () => Promise<RuntimeTokenRegenerateResult>
   onSseEvent: (handler: (payload: SseEventPayload) => void) => () => void
   onSseEnd: (handler: (payload: SseEndPayload) => void) => () => void
   onSseError: (handler: (payload: SseErrorPayload) => void) => () => void

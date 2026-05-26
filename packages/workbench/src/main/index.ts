@@ -11,7 +11,11 @@ import {
   waitForRuntimeHealth,
   isDeepseekChildRunning,
   reclaimDeepseekPort,
-  inspectDeepseekLaunchConfig
+  inspectDeepseekLaunchConfig,
+  resolveEffectiveRuntimeToken,
+  readRuntimeTokenFile,
+  clearRuntimeTokenFile,
+  runtimeTokenFilePath
 } from './deepseek-process'
 import {
   resolveRuntimeLauncher,
@@ -233,7 +237,7 @@ async function probeThreadApi(settings: AppSettingsV1): Promise<
 > {
   const base = getRuntimeBaseUrl(settings.deepseek.port)
   const headers = new Headers({ Accept: 'application/json' })
-  const runtimeToken = settings.deepseek.runtimeToken?.trim() ?? ''
+  const runtimeToken = resolveEffectiveRuntimeToken(settings)
   if (runtimeToken) {
     headers.set('Authorization', `Bearer ${runtimeToken}`)
   }
@@ -612,8 +616,9 @@ async function runtimeRequest(
     if (init.body && !hdrs.has('Content-Type')) {
       hdrs.set('Content-Type', 'application/json')
     }
-    if (settings.deepseek.runtimeToken) {
-      hdrs.set('Authorization', `Bearer ${settings.deepseek.runtimeToken}`)
+    const effectiveToken = resolveEffectiveRuntimeToken(settings)
+    if (effectiveToken) {
+      hdrs.set('Authorization', `Bearer ${effectiveToken}`)
     }
     const res = await fetch(url, {
       method: init.method ?? 'GET',
@@ -774,7 +779,7 @@ app.whenReady().then(async () => {
     const state: SseControllerState = { controller: ac, stoppedByClient: false }
     sseControllers.set(id, state)
     const base = getRuntimeBaseUrl(s.deepseek.port)
-    const token = s.deepseek.runtimeToken
+    const token = resolveEffectiveRuntimeToken(s)
     const u = `${base}/v1/threads/${encodeURIComponent(request.threadId)}/events?since_seq=${request.sinceSeq}`
     const url = new URL(u)
     if (token) url.searchParams.set('token', token)
@@ -841,6 +846,33 @@ app.whenReady().then(async () => {
       state.controller.abort()
     }
     return true
+  })
+
+  // Settings UI "Regenerate" button: drop the cached token file, recycle the
+  // managed runtime so it picks up a fresh value, and return the fingerprint
+  // (8-char prefix) for display. Returns ok:false if the runtime cannot be
+  // restarted (e.g., user has no API key) — callers should leave the prior
+  // token displayed and surface the error.
+  ipcMain.handle('runtime:regenerate-token', async () => {
+    try {
+      clearRuntimeTokenFile()
+      await stopDeepseekChildAndWait()
+      const settings = await store.load()
+      if (!resolveConfiguredApiKey(settings)) {
+        // No API key → cannot start runtime; the next spawn attempt will
+        // generate a token. Tell the UI so the fingerprint shows "—".
+        return { ok: true as const, fingerprint: '', restarted: false }
+      }
+      await startDeepseekChild(settings)
+      const ok = await waitForRuntimeHealth(settings.deepseek.port, 5_000)
+      const token = readRuntimeTokenFile()
+      const fingerprint = token ? `${token.slice(0, 8)}…${token.slice(-4)}` : ''
+      return { ok: true as const, fingerprint, restarted: ok, tokenPath: runtimeTokenFilePath() }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logError('runtime-regenerate', 'Failed to regenerate runtime token', { message })
+      return { ok: false as const, message }
+    }
   })
   traceStartup('ipc registration:done')
 

@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -16,12 +16,51 @@ import { getRuntimeBaseUrl } from './settings-store'
 let child: ChildProcess | null = null
 let lastResolvedBinary: string | null = null
 
-function runtimeTokenFilePath(): string {
+export function runtimeTokenFilePath(): string {
   const base = process.env.DEEPSEEK_HOME?.trim() || join(homedir(), '.deepseek')
   return join(base, 'runtime.token')
 }
 
-function resolveOrCreateRuntimeToken(): string {
+/** Delete the cached token file so the next runtime spawn regenerates it. */
+export function clearRuntimeTokenFile(): void {
+  const path = runtimeTokenFilePath()
+  if (existsSync(path)) {
+    try {
+      unlinkSync(path)
+    } catch (err) {
+      process.stderr.write(`[deepseek] runtime token cache clear failed: ${String(err)}\n`)
+    }
+  }
+}
+
+/** Read the cached runtime token without creating one. Returns '' if absent. */
+export function readRuntimeTokenFile(): string {
+  const path = runtimeTokenFilePath()
+  if (!existsSync(path)) return ''
+  try {
+    return readFileSync(path, 'utf8').trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Resolve the bearer token Workbench must send on /v1/* requests.
+ *
+ * Priority (mirrors Python ``resolve_runtime_auth`` so spawn / HTTP / SSE
+ * agree even when settings.deepseek.runtimeToken is blank — the common
+ * fresh-install case):
+ *   1. settings.deepseek.runtimeToken (explicit user-set)
+ *   2. ~/.deepseek/runtime.token cache
+ *   3. '' (caller may decide to skip Authorization header)
+ */
+export function resolveEffectiveRuntimeToken(settings: AppSettingsV1): string {
+  const explicit = settings.deepseek.runtimeToken?.trim() ?? ''
+  if (explicit) return explicit
+  return readRuntimeTokenFile()
+}
+
+export function resolveOrCreateRuntimeToken(): string {
   const path = runtimeTokenFilePath()
   if (existsSync(path)) {
     try {
