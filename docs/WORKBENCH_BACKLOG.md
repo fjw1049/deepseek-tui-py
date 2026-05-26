@@ -75,4 +75,4 @@
 
 ## 测试计数
 
-`pytest tests/contract -q` → **63+**（随新增用例更新）
+`pytest tests/contract -q` → **69**；TUI smoke：`tests/test_tui_smoke.py`

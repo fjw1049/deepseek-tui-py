@@ -53,6 +53,13 @@ def cmd_help(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/clear")
 def cmd_clear(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Clear transcript and engine session (same as Ctrl+N new session)."""
+    from deepseek_tui.tui.widgets.transcript import Transcript
+
+    transcript = app.query_one(Transcript)
+    transcript.clear_messages()
+    if app._engine is not None:
+        app._engine.session_messages.clear()
     return CommandResult(output="Conversation cleared.")
 
 
@@ -116,9 +123,15 @@ def cmd_mode(args: str, app: DeepSeekTUI) -> CommandResult:
                 f"Unknown mode: {arg!r}. Valid: " + ", ".join(_VALID_MODES)
             )
         )
-    # Direct switch — drive the same code path action_cycle_mode uses
-    # so the StatusBar / ComposerHint refresh consistently.
+    # Direct switch — align with action_cycle_mode (UI + engine.mode).
+    previous_mode = getattr(app, "_interaction_mode", "agent")
     app._interaction_mode = arg  # type: ignore[attr-defined]
+    if app._engine is not None:
+        app._engine.mode = arg
+        app.run_worker(
+            app._engine.run_lifecycle_hook("mode_change", previous_mode=previous_mode),
+            name="mode-change-hook",
+        )
     try:
         from deepseek_tui.tui.widgets.composer import ComposerHint
         from deepseek_tui.tui.widgets.status_bar import StatusBar

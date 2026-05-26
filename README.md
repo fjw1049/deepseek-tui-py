@@ -44,7 +44,7 @@ pip install -e ".[dev]"
 
 #### 精确版本复现（CI / 协作）
 
-`requirements.lock` 是用本仓库 `.venv` 的 `uv pip freeze` 输出的精确快照，与 1323 个 parity 测试一一对应：
+`requirements.lock` 是用本仓库 `.venv` 的 `uv pip freeze` 输出的精确快照，与当前测试套件一一对应：
 
 ```bash
 uv venv .venv --python 3.12
@@ -52,8 +52,10 @@ UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
   uv pip install -r requirements.lock
 uv pip install -e .
 
-# 验证
-pytest tests -q   # 应该 1323 passed
+# 验证（不含 live 网络测试）
+.venv/bin/python -m pytest tests -q -m "not live and not live_mcp"
+# Workbench Runtime API 门禁
+.venv/bin/python -m pytest tests/contract -q
 ```
 
 依赖文件分工：
@@ -123,10 +125,16 @@ deepseek-tui auth status            # 查看登录态
 
 ## 测试
 
-默认 CI / 本地快速验证（不含网络、不含 live marker）：
+| 套件 | 命令 | 说明 |
+|------|------|------|
+| **Workbench 门禁** | `pytest tests/contract -q` | Runtime API `/v1` 契约（约 69） |
+| **日常本地** | `pytest tests -q -m "not live and not live_mcp"` | 全仓约 190，不含真实 API |
+| **Live** | `pytest tests -q -m live` | 需 `.deepseek/config.toml` + 网络 |
 
 ```bash
-.venv/bin/python -m pytest tests -q
+.venv/bin/python -m pytest tests/contract -q
+.venv/bin/python -m pytest tests -q -m "not live and not live_mcp"
+.venv/bin/python -m pytest tests/test_tui_smoke.py -q
 ```
 
 ### RLM / Subagent / Task（build_0522）

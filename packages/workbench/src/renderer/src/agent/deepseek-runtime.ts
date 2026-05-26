@@ -262,21 +262,33 @@ function toolSummaryFromStartedPayload(payload: Record<string, unknown>, fallbac
 function readRuntimeError(body: string, fallback: string): RuntimeErrorJson & { message: string } {
   if (!body) return { message: fallback }
   try {
-    const parsed = JSON.parse(body) as RuntimeErrorJson
+    const parsed = JSON.parse(body) as RuntimeErrorJson & {
+      detail?: { message?: string; error?: string }
+    }
+    const detail =
+      parsed.detail && typeof parsed.detail === 'object' ? parsed.detail : undefined
+    const detailMessage =
+      typeof detail?.message === 'string' && detail.message.trim() ? detail.message.trim() : ''
+    const detailError =
+      typeof detail?.error === 'string' && detail.error.trim() ? detail.error.trim() : ''
     const nestedError =
       parsed.error && typeof parsed.error === 'object' ? parsed.error.message?.trim() ?? '' : ''
     const topLevelError =
       typeof parsed.error === 'string' && parsed.error.trim() ? parsed.error.trim() : ''
     const message =
-      typeof parsed.message === 'string' && parsed.message.trim()
+      detailMessage ||
+      (typeof parsed.message === 'string' && parsed.message.trim()
         ? parsed.message.trim()
-        : topLevelError
-          ? topLevelError
-          : nestedError
-            ? nestedError
-            : fallback
+        : detailError
+          ? detailError
+          : topLevelError
+            ? topLevelError
+            : nestedError
+              ? nestedError
+              : fallback)
+    const errorCode = detailError || topLevelError || undefined
     return {
-      ...(topLevelError ? { error: topLevelError } : {}),
+      ...(errorCode ? { error: errorCode } : {}),
       message
     }
   } catch {

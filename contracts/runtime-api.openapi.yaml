@@ -35,6 +35,24 @@ paths:
           description: Thread list
     post:
       summary: Create thread (bare object, 201)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                workspace:
+                  type: string
+                mode:
+                  type: string
+                allow_shell:
+                  type: boolean
+                trust_mode:
+                  type: boolean
+                auto_approve:
+                  type: boolean
       responses:
         "201":
           description: Created thread
@@ -136,6 +154,10 @@ paths:
                   type: string
                 mode:
                   type: string
+                allow_shell:
+                  type: boolean
+                trust_mode:
+                  type: boolean
                 auto_approve:
                   type: boolean
       responses:
@@ -182,6 +204,15 @@ paths:
       summary: Compact thread context
       parameters:
         - $ref: "#/components/parameters/threadId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Optional reason recorded on the compact turn
       responses:
         "200":
           description: Turn record
