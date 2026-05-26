@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepseek-tui.dev/contracts/errors.schema.json",
+  "title": "RuntimeApiError",
+  "description": "HTTP error bodies returned by the Workbench runtime API. FastAPI route handlers wrap api_error() payloads under detail; auth middleware returns a flat body.",
+  "oneOf": [
+    {
+      "title": "FastApiWrappedError",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["detail"],
+      "properties": {
+        "detail": {
+          "$ref": "#/$defs/errorBody"
+        }
+      }
+    },
+    {
+      "title": "AuthMiddlewareError",
+      "$ref": "#/$defs/errorBody"
+    }
+  ],
+  "$defs": {
+    "errorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string",
+          "description": "Machine-readable code when present.",
+          "examples": [
+            "runtime_auth_required",
+            "invalid_request",
+            "invalid_json",
+            "thread_not_found",
+            "turn_conflict"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -34,7 +34,6 @@ import type { JsonSettingsStore } from '../settings-store'
 import { getRuntimeBaseUrl } from '../settings-store'
 import {
   findListeningProcessOnPort,
-  readRuntimeTokenFile,
   resolveEffectiveRuntimeToken,
   runtimeTokenFilePath
 } from '../deepseek-process'
@@ -119,14 +118,21 @@ function detectTomlConfigIssues(path: string, content: string): DeepseekRuntimeD
   return issues
 }
 
-async function probeRuntimeEndpoint(url: string): Promise<{
+async function probeRuntimeEndpoint(
+  url: string,
+  authToken?: string
+): Promise<{
   ok: boolean
   status: number
   body: string
   message?: string
 }> {
+  const headers: Record<string, string> = {}
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`
+  }
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(2_000) })
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(2_000) })
     return {
       ok: res.ok,
       status: res.status,
@@ -163,12 +169,13 @@ async function diagnoseDeepseekRuntime(
   const binary = await options.prepareDeepseekBinary()
   const baseUrl = getRuntimeBaseUrl(settings.deepseek.port)
   const portOwner = await findListeningProcessOnPort(settings.deepseek.port)
+  const runtimeToken = resolveEffectiveRuntimeToken(settings) ?? undefined
   const health = await probeRuntimeEndpoint(`${baseUrl}/health`)
   const threadApi = health.ok
-    ? await probeRuntimeEndpoint(`${baseUrl}/v1/threads?limit=1`)
+    ? await probeRuntimeEndpoint(`${baseUrl}/v1/threads?limit=1`, runtimeToken)
     : null
   const workspaceStatus = health.ok
-    ? await probeRuntimeEndpoint(`${baseUrl}/v1/workspace/status`)
+    ? await probeRuntimeEndpoint(`${baseUrl}/v1/workspace/status`, runtimeToken)
     : null
   const issues: DeepseekRuntimeDiagnosticIssue[] = [...configIssues]
 
@@ -397,7 +404,8 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   // fingerprint immediately, instead of "auto-managed" until the user clicks
   // Regenerate. Fingerprint is the same shape the regenerate IPC returns.
   ipcMain.handle('runtime:get-token-fingerprint', async () => {
-    const token = readRuntimeTokenFile()
+    const settings = await store.load()
+    const token = resolveEffectiveRuntimeToken(settings)
     return {
       fingerprint: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : '',
       tokenPath: runtimeTokenFilePath()

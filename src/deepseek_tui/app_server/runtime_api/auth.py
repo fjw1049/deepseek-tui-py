@@ -34,15 +34,18 @@ def resolve_runtime_auth(
     2. ``env_token``                  — ``DEEPSEEK_RUNTIME_TOKEN``
     3. ``~/.deepseek/runtime.token``  — auto-managed file (Electron writes here)
     4. generate fresh + flag          — fall through to write_runtime_token_file
+
+    ``--insecure`` skips steps 3–4 (no auth middleware) unless step 1–2
+    already supplied an explicit token.
     """
     token = _first_nonblank(cli_token) or _first_nonblank(env_token)
     if token:
         return ResolvedRuntimeAuth(token=token, generated=False)
+    if insecure_no_auth:
+        return ResolvedRuntimeAuth(token=None, generated=False)
     cached = _read_runtime_token_file()
     if cached:
         return ResolvedRuntimeAuth(token=cached, generated=False)
-    if insecure_no_auth:
-        return ResolvedRuntimeAuth(token=None, generated=False)
     return ResolvedRuntimeAuth(token=_generate_runtime_token(), generated=True)
 
 

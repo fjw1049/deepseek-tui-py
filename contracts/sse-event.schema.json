@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepseek-tui.dev/contracts/sse-event.schema.json",
+  "title": "RuntimeThreadEvent",
+  "description": "JSON body inside each SSE data: frame on GET /v1/threads/{id}/events. The Workbench provider reads the redundant top-level event field from this object (not only the SSE event: line).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "timestamp", "thread_id", "event", "payload"],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per-runtime event sequence."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp."
+    },
+    "thread_id": {
+      "type": "string",
+      "pattern": "^thr_"
+    },
+    "turn_id": {
+      "type": ["string", "null"],
+      "pattern": "^turn_"
+    },
+    "item_id": {
+      "type": ["string", "null"],
+      "pattern": "^item_"
+    },
+    "event": {
+      "type": "string",
+      "description": "Event name duplicated from the SSE event: field.",
+      "examples": [
+        "thread.started",
+        "turn.lifecycle",
+        "item.started",
+        "item.delta",
+        "item.completed",
+        "item.failed",
+        "approval.required",
+        "turn.completed"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific payload; shape varies by event name.",
+      "additionalProperties": true
+    }
+  }
+}

@@ -458,25 +458,103 @@ def tool_kind_for_name(name: str) -> TurnItemKind:
     return TurnItemKind.TOOL_CALL
 
 
-def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
-    """Extract file path metadata for Workbench Diff / ChangeInspector."""
-    if tool_kind_for_name(tool_name) != TurnItemKind.FILE_CHANGE:
-        return None
+def _parse_tool_arguments(arguments: Any) -> dict[str, Any] | None:
     args = arguments
     if isinstance(args, str):
         try:
-            import json
-
             args = json.loads(args)
         except (json.JSONDecodeError, TypeError):
             return None
     if not isinstance(args, dict):
+        return None
+    return args
+
+
+def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
+    """Extract file path metadata for Workbench Diff / ChangeInspector."""
+    if tool_kind_for_name(tool_name) != TurnItemKind.FILE_CHANGE:
+        return None
+    args = _parse_tool_arguments(arguments)
+    if not args:
         return None
     for key in ("path", "file_path", "filename", "target"):
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             return {"path": value.strip()}
     return None
+
+
+def _looks_like_unified_diff(text: str) -> bool:
+    return any(
+        line.startswith(("@@", "diff --git ", "--- ", "+++ ", "index "))
+        for line in text.splitlines()
+    )
+
+
+def _file_path_from_arguments(args: dict[str, Any]) -> str:
+    for key in ("path", "file_path", "filename", "target"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "file"
+
+
+def _synthesize_edit_diff(path: str, search: str, replace: str) -> str:
+    old_lines = search.splitlines() or [""]
+    new_lines = replace.splitlines() or [""]
+    body = [f"-{line}" for line in old_lines] + [f"+{line}" for line in new_lines]
+    return f"--- a/{path}\n+++ b/{path}\n@@\n" + "\n".join(body)
+
+
+def _synthesize_new_file_diff(path: str, content: str) -> str:
+    lines = content.splitlines()
+    count = max(len(lines), 1)
+    body = "\n".join(f"+{line}" for line in lines) if lines else "+"
+    return f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{count} @@\n{body}"
+
+
+def file_change_completion_detail(
+    tool_name: str,
+    arguments: Any,
+    result_content: str,
+) -> str:
+    """Return unified diff text for Workbench ChangeInspector when possible."""
+    content = (result_content or "").strip()
+    if content and _looks_like_unified_diff(content):
+        return content
+
+    args = _parse_tool_arguments(arguments)
+    if not args:
+        return content
+
+    lower = tool_name.lower()
+    path = _file_path_from_arguments(args)
+
+    if lower == "apply_patch":
+        patch = args.get("patch")
+        if isinstance(patch, str) and _looks_like_unified_diff(patch):
+            return patch
+        changes = args.get("changes")
+        if isinstance(changes, list) and len(changes) == 1:
+            only = changes[0]
+            if isinstance(only, dict):
+                change_path = only.get("path")
+                change_content = only.get("content")
+                if isinstance(change_path, str) and isinstance(change_content, str):
+                    return _synthesize_new_file_diff(change_path.strip(), change_content)
+
+    if lower == "edit_file":
+        search = args.get("search", args.get("old_string"))
+        replace = args.get("replace", args.get("new_string"))
+        if isinstance(search, str) and isinstance(replace, str):
+            return _synthesize_edit_diff(path, search, replace)
+
+    if lower == "write_file":
+        file_content = args.get("content")
+        if isinstance(file_content, str):
+            return _synthesize_new_file_diff(path, file_content)
+
+    return content
 
 
 def duration_ms(start: datetime, end: datetime) -> int:

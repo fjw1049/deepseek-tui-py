@@ -201,7 +201,14 @@ async def run_http(
             print("Runtime API auth: disabled by explicit insecure mode.")
         print(f"Runtime API listening on http://{options.host}:{options.port}")
     server_cfg = uvicorn.Config(
-        app, host=options.host, port=options.port, log_level="info"
+        app,
+        host=options.host,
+        port=options.port,
+        log_level="info",
+        # Our ``_access_log`` middleware is the single source of truth and
+        # strips query strings (SSE ?token=). Disable uvicorn's default access
+        # log so bearer tokens never land in stderr.
+        access_log=not options.http_mode,
     )
     server = uvicorn.Server(server_cfg)
     try:

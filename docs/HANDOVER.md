@@ -230,9 +230,11 @@ make check  # = ruff + mypy + pytest
 2. 性能基准
 3. CI/CD、PyPI、Docker
 
-### Stage 8（6–8 周）：DeepSeek Workbench（桌面 GUI）
+### Stage 8（6–8 周）：DeepSeek Workbench（桌面 GUI） — **Stage 8.3 已完成（2026-05-26）**
 
 > **完整规划（文件清单 / 架构 / Sprint / 契约）见 [`docs/WORKBENCH_HANDOVER.md`](./WORKBENCH_HANDOVER.md)。** 本节只列摘要。
+
+**当前状态**：`runtime_api` + Electron 托管 + auth 链 + 用户手验聊天已通过；`pytest tests/contract` 32 passed；待办见 [`docs/WORKBENCH_BACKLOG.md`](./WORKBENCH_BACKLOG.md)（Stage 8.4 Diff/Diagnostics、8.5 打包）。
 
 **目标**：在 **不重写 Engine** 的前提下，新增 Electron 桌面工作台 + Rust-parity `runtime_api` HTTP/SSE 层，参考 `docs/DeepSeek-GUI-master/` 的产品形态，运行时 spawn 本仓库 `deepseek-tui serve --http`。
 

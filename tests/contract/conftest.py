@@ -17,8 +17,12 @@ from deepseek_tui.config.models import Config, FeatureConfig
 def runtime_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     threads = tmp_path / "threads"
     tasks = tmp_path / "tasks"
+    home = tmp_path / "home"
     threads.mkdir()
     tasks.mkdir()
+    home.mkdir()
+    monkeypatch.setenv("DEEPSEEK_HOME", str(home))
+    monkeypatch.delenv("DEEPSEEK_RUNTIME_TOKEN", raising=False)
     monkeypatch.setattr(
         "deepseek_tui.config.paths.user_threads_dir",
         lambda: threads,

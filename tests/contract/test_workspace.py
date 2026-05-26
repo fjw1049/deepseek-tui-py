@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_threads import tool_item_metadata
+from deepseek_tui.app_server.runtime_threads import (
+    file_change_completion_detail,
+    tool_item_metadata,
+)
 
 
 def test_tool_item_metadata_edit_file() -> None:
@@ -13,6 +16,38 @@ def test_tool_item_metadata_edit_file() -> None:
 
 def test_tool_item_metadata_non_file_tool() -> None:
     assert tool_item_metadata("grep", {"pattern": "foo"}) is None
+
+
+def test_file_change_completion_detail_edit_file() -> None:
+    detail = file_change_completion_detail(
+        "edit_file",
+        {"path": "src/main.py", "search": "foo", "replace": "bar"},
+        "ok",
+    )
+    assert "--- a/src/main.py" in detail
+    assert "-foo" in detail
+    assert "+bar" in detail
+
+
+def test_file_change_completion_detail_apply_patch() -> None:
+    patch = "--- a/x.txt\n+++ b/x.txt\n@@\n-old\n+new\n"
+    detail = file_change_completion_detail(
+        "apply_patch",
+        {"patch": patch},
+        "Applied 1/1 file(s)",
+    )
+    assert detail == patch
+
+
+def test_file_change_completion_detail_write_file() -> None:
+    detail = file_change_completion_detail(
+        "write_file",
+        {"path": "notes.txt", "content": "hello\nworld"},
+        "ok",
+    )
+    assert "+++ b/notes.txt" in detail
+    assert "+hello" in detail
+    assert "+world" in detail
 
 
 @pytest.mark.asyncio

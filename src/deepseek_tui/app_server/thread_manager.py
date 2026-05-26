@@ -35,6 +35,7 @@ from deepseek_tui.app_server.runtime_threads import (
     TurnRecord,
     UpdateThreadRequest,
     duration_ms,
+    file_change_completion_detail,
     tool_kind_for_name,
     tool_item_metadata,
 )
@@ -641,6 +642,7 @@ class RuntimeThreadManager:
         current_reasoning_item_id: str | None = None
         current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
+        tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
@@ -729,6 +731,7 @@ class RuntimeThreadManager:
                 tc = event.tool_call
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
                 tool_items[tc.id] = item_id
+                tool_call_args[tc.id] = tc.arguments
                 kind = tool_kind_for_name(tc.name)
                 now = datetime.now(timezone.utc)
                 metadata = tool_item_metadata(tc.name, tc.arguments)
@@ -763,6 +766,7 @@ class RuntimeThreadManager:
 
             elif isinstance(event, ToolResultEvent):
                 item_id = tool_items.pop(event.tool_call_id, None)
+                tool_args = tool_call_args.pop(event.tool_call_id, None)
                 if item_id is not None:
                     item = self.store.load_item(item_id)
                     now = datetime.now(timezone.utc)
@@ -777,7 +781,14 @@ class RuntimeThreadManager:
                         item.summary = summarize_text(
                             f"{event.tool_name} failed: {event.content}", SUMMARY_LIMIT
                         )
-                    item.detail = event.content
+                    if item.kind == TurnItemKind.FILE_CHANGE:
+                        item.detail = file_change_completion_detail(
+                            event.tool_name,
+                            tool_args,
+                            event.content or "",
+                        )
+                    else:
+                        item.detail = event.content
                     self.store.save_item(item)
                     event_name = (
                         "item.completed" if item.status == TurnItemLifecycleStatus.COMPLETED

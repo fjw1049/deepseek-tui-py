@@ -165,7 +165,8 @@ function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Parti
 }
 
 function shouldOpenSettingsForError(error: unknown): boolean {
-  return getRuntimeErrorCode(error) === 'missing_api_key'
+  const code = getRuntimeErrorCode(error)
+  return code === 'missing_api_key' || code === 'runtime_auth_required'
 }
 
 function looksLikeActiveTurnError(error: unknown): boolean {

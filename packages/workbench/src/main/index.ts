@@ -803,9 +803,7 @@ app.whenReady().then(async () => {
     sseControllers.set(id, state)
     const base = getRuntimeBaseUrl(s.deepseek.port)
     const token = resolveEffectiveRuntimeToken(s)
-    const u = `${base}/v1/threads/${encodeURIComponent(request.threadId)}/events?since_seq=${request.sinceSeq}`
-    const url = new URL(u)
-    if (token) url.searchParams.set('token', token)
+    const url = `${base}/v1/threads/${encodeURIComponent(request.threadId)}/events?since_seq=${request.sinceSeq}`
 
     ;(async () => {
       const wc = event.sender

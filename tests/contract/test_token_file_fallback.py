@@ -57,3 +57,10 @@ def test_resolve_insecure_returns_none_when_no_source(isolated_home: Path) -> No
     auth = resolve_runtime_auth(None, None, insecure_no_auth=True)
     assert auth.token is None
     assert not auth.generated
+
+
+def test_resolve_insecure_ignores_token_file(isolated_home: Path) -> None:
+    write_runtime_token_file("from-file")
+    auth = resolve_runtime_auth(None, None, insecure_no_auth=True)
+    assert auth.token is None
+    assert not auth.generated

@@ -326,21 +326,22 @@ README.md                               [M] Workbench 快速开始一节
 | 端到端 smoke | `scripts/smoke-workbench-chat.sh` | SSE turn.completed + 回复 | ✅ 自动化 |
 | Electron UI smoke | `./scripts/dev-workbench.sh` | 手动发一条看 Timeline 流式 | ⬜ 待本机手验 |
 
-### Stage 8.3 — 聊天闭环（5–7 天） 🔄 代码在 fork，待 UI 手验
+### Stage 8.3 — 聊天闭环（5–7 天） ✅ 2026-05-26
 
 | 任务 | 文件 | 验收 | 状态 |
 |------|------|------|------|
 | Provider | `deepseek-runtime.ts` | connect/list/send/SSE | ✅ |
-| Store | `chat-store.ts` | 多会话 + 流式 blocks | ✅ 沿用参考实现 |
-| UI | Timeline + Composer + Sidebar | 手动：发一条收到流式回复 | ⬜ dev-workbench 手验 |
-| 审批 UI | Timeline approval 块 | on-request 策略下可点允许 | ⬜ 手验 |
+| Store | `chat-store.ts` | 多会话 + 流式 blocks | ✅ |
+| UI | Timeline + Composer + Sidebar | 手动：发一条收到流式回复 | ✅ 用户手验 |
+| 审批 UI | Timeline approval 块 | on-request 策略下可点允许 | ⬜ 待手验 |
 
-### Stage 8.4 — 工作台（5 天）
+### Stage 8.4 — 工作台（5 天） 🔄 进行中
 
-| 任务 | 文件 | 验收 |
-|------|------|------|
-| Diff | `DiffView.tsx` + file tools 事件 | 看到 agent 改 file |
-| 设置/诊断 | `SettingsView`, `RuntimeDiagnosticsDialog` | 改 port/key 生效 |
+| 任务 | 文件 | 验收 | 状态 |
+|------|------|------|------|
+| Diff | `runtime_threads.py` + `ChangeInspector` | `edit_file`/`write_file`/`apply_patch` 完成时有 unified diff | ✅ contract |
+| 设置/诊断 | `RuntimeDiagnosticsDialog` + probe auth | `/v1/workspace/status` 在 Bearer 下返回 python_version | ✅ |
+| 契约 schema | `contracts/sse-event.schema.json` | contract 测试锁定 payload 形状 | ✅ |
 
 ### Stage 8.5 — 打包（5 天，P2）
 
@@ -399,6 +400,9 @@ Co-Authored-By: ...
 |-------|------|----------|------|
 | 8.0–8.1 | 2026-05-25 | `runtime_api/`、`serve --http`、contract tests、`packages/workbench` fork | `pytest tests/contract` 10 passed |
 | 8.2 | 2026-05-25 | Python spawn + fork 瘦身 + smoke-workbench-chat | contract 18 passed + SSE smoke |
+| 8.3 | 2026-05-26 | auth 链闭环 + GUI 手验聊天 + authed smoke | contract 32 passed + `smoke-workbench-auth.sh` |
+| 8.3 polish | 2026-05-26 | ensureRuntime TTL、token fingerprint、SSE 401 UX、probe 缓存 | workbench vitest 13+ passed |
+| 8.4 | 2026-05-26 | file_change diff 合成、diagnostics Bearer probe、SSE/error schema | contract 39 passed |
 
 **待办批量清单**：见 [`WORKBENCH_BACKLOG.md`](./WORKBENCH_BACKLOG.md)
 

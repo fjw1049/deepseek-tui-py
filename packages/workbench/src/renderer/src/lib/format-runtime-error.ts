@@ -26,6 +26,10 @@ export function getRuntimeErrorCode(error: unknown): string | null {
   if (typeof payload?.error === 'string' && payload.error.trim()) {
     return payload.error.trim().toLowerCase()
   }
+  // SSE 401 surfaces as a plain Error("runtime_auth_required: …"), not JSON.
+  if (raw.toLowerCase().startsWith('runtime_auth_required:')) {
+    return 'runtime_auth_required'
+  }
   return null
 }
 
@@ -49,7 +53,7 @@ export function formatRuntimeError(error: unknown): string {
     return i18n.t('common:runtimeAutoStartDisabled')
   }
 
-  if (errorCode === 'runtime_auth_required') {
+  if (errorCode === 'runtime_auth_required' || lowered.startsWith('runtime_auth_required:')) {
     return i18n.t('common:runtimeAuthRequired')
   }
 
