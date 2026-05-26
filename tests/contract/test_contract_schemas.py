@@ -24,6 +24,20 @@ def _matches_error_body(body: dict[str, object]) -> bool:
     return isinstance(body.get("message"), str)
 
 
+def test_sse_event_schema_locks_approval_and_user_input_payload() -> None:
+    # Avoid pulling jsonschema (transitive ``attrs`` not always installed in
+    # CI) — assert the locked fields directly from the JSON document.
+    schema = _load_schema("sse-event.schema.json")
+    rules = {
+        block["if"]["properties"]["event"]["const"]: set(  # type: ignore[index]
+            block["then"]["properties"]["payload"]["required"]  # type: ignore[index]
+        )
+        for block in schema["allOf"]  # type: ignore[index]
+    }
+    assert rules["approval.required"] == {"id", "approval_id", "tool_name"}
+    assert rules["user_input.required"] == {"id", "request_id", "questions"}
+
+
 def test_sse_event_schema_matches_runtime_event_payload() -> None:
     schema = _load_schema("sse-event.schema.json")
     required = set(schema["required"])  # type: ignore[arg-type]

@@ -16,6 +16,7 @@ async def test_user_inputs_not_found(client: AsyncClient) -> None:
         json={"answers": [{"question_id": "q1", "value": "yes"}]},
     )
     assert r.status_code == 404
+    assert r.json()["detail"]["error"] == "user_input_not_found"
 
 
 @pytest.mark.asyncio
@@ -25,6 +26,7 @@ async def test_user_input_alias_route_not_found(client: AsyncClient) -> None:
         json={"cancelled": True},
     )
     assert r.status_code == 404
+    assert r.json()["detail"]["error"] == "user_input_not_found"
 
 
 @pytest.mark.asyncio

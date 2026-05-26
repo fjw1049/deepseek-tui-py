@@ -24,3 +24,9 @@ async def test_v1_requires_token_when_configured(
 
         health = await client.get("/health")
         assert health.status_code == 200
+
+        # Query-string tokens must NOT be honoured — they leak via proxy logs
+        # and OS process listings. Only Authorization / x-deepseek-runtime-token
+        # are accepted.
+        query_only = await client.get(f"/v1/threads?token={token}")
+        assert query_only.status_code == 401

@@ -130,11 +130,9 @@ class RuntimeAuthMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _extract_token(request: Request) -> str | None:
+        # Header-only: query/URL tokens leak into proxy logs and process lists.
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
-            return auth[7:].strip()
+            return auth[7:].strip() or None
         header = request.headers.get("x-deepseek-runtime-token", "").strip()
-        if header:
-            return header
-        query = request.query_params.get("token", "").strip()
-        return query or None
+        return header or None

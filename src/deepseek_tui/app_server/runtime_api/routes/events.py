@@ -20,7 +20,22 @@ async def stream_events(request: Request, thread_id: str) -> StreamingResponse:
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     since_str = request.query_params.get("since_seq")
-    since_seq = int(since_str) if since_str else None
+    since_seq: int | None = None
+    if since_str:
+        try:
+            since_seq = int(since_str)
+        except ValueError as exc:
+            raise api_error(
+                400,
+                f"since_seq must be a non-negative integer, got {since_str!r}",
+                error="invalid_since_seq",
+            ) from exc
+        if since_seq < 0:
+            raise api_error(
+                400,
+                "since_seq must be >= 0",
+                error="invalid_since_seq",
+            )
     generator = stream_thread_events(
         mgr,
         thread_id,

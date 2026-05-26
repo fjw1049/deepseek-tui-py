@@ -28,6 +28,7 @@ async def test_approval_not_found(client: AsyncClient) -> None:
         json={"decision": "allow"},
     )
     assert r.status_code == 404
+    assert r.json()["detail"]["error"] == "approval_not_found"
 
 
 @pytest.mark.asyncio

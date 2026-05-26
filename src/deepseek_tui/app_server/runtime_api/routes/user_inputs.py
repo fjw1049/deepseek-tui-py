@@ -31,5 +31,7 @@ async def user_input_response(
         cancelled=payload.cancelled,
     )
     if not ok:
-        raise api_error(404, "user input request not found", error="not_found")
+        raise api_error(
+            404, "user input request not found", error="user_input_not_found"
+        )
     return {"ok": True}

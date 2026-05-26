@@ -5,11 +5,27 @@ from datetime import datetime, timezone
 
 import pytest
 
+from httpx import AsyncClient
+
 from deepseek_tui.app_server.runtime_api.sse import runtime_event_payload, stream_thread_events
 from deepseek_tui.app_server.runtime_threads import (
     CreateThreadRequest,
     RuntimeEventRecord,
 )
+
+
+@pytest.mark.asyncio
+async def test_invalid_since_seq_returns_400(
+    client: AsyncClient, runtime_app: object
+) -> None:
+    mgr = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    thread = await mgr.create_thread(CreateThreadRequest(title="t"))
+    bad = await client.get(f"/v1/threads/{thread.id}/events?since_seq=abc")
+    assert bad.status_code == 400
+    assert bad.json()["detail"]["error"] == "invalid_since_seq"
+    neg = await client.get(f"/v1/threads/{thread.id}/events?since_seq=-1")
+    assert neg.status_code == 400
+    assert neg.json()["detail"]["error"] == "invalid_since_seq"
 
 
 def test_runtime_event_payload_shape() -> None:

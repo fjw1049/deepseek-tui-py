@@ -55,8 +55,14 @@
 ## 集成债 / 文档
 
 - [x] `contracts/sse-event.schema.json` + `errors.schema.json` + `tests/contract/test_contract_schemas.py`
-- [ ] Legacy `/legacy` 路由 CHANGELOG 废弃说明
-- [ ] **8.token.dual-write**：同一端口只应有一个托管方（GUI spawn 或 CLI，不要并行写 `runtime.token`）；稳态靠 reclaim + 共享 token 文件，见 HANDOVER 原则 B
+- [ ] Legacy `/legacy` 路由 CHANGELOG 废弃说明 — 现状：`runtime_api/` 与 `app_server/legacy/` 并存；下一个 minor 起 GUI 仅依赖 `/v1`，CLI 用户继续使用 legacy 路由直到正式 deprecation。
+- [x] **8.token.dual-write**：Python 端 `server.py` 仅在 cache 文件不存在/为空时写入；GUI 端 `resolveOrCreateRuntimeToken` 命中文件即复用。两侧不会并行覆盖。
+- [x] **bearer header-only**：`RuntimeAuthMiddleware` 不再接受 `?token=` query 参数（避免 URL/proxy 日志/进程列表泄露）。
+- [x] **since_seq 400**：非法 `since_seq` 返回 `error="invalid_since_seq"`，contract 已覆盖。
+- [x] **404 error key 统一**：approvals/user-inputs/threads 全部使用 `<resource>_not_found`。
+- [x] **SSE schema 锁定**：`approval.required` / `user_input.required` payload 必填字段已在 `sse-event.schema.json` 用 `if/then` 锁住。
+- [x] **settings change reclaim**：`runtimeToken`/policy/sandbox/baseUrl 改动会强制 invalidate ready-cache 并 reclaim 端口，无论 child 是否在管理下。
+- [x] **--insecure 提示**：启动时若存在 cached token 文件，stdout 提示其被忽略。
 
 ## 已完成（2026-05-25 — 2026-05-26）
 

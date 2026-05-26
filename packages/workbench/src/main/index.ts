@@ -592,10 +592,15 @@ async function restartManagedRuntimeForSettingsChange(
   prev: AppSettingsV1,
   next: AppSettingsV1
 ): Promise<void> {
-  if (!runtimeStartupConfigChanged(prev, next) || !isDeepseekChildRunning()) return
+  if (!runtimeStartupConfigChanged(prev, next)) return
 
+  // Even when the child isn't ours (e.g., reclaimed external runtime), a
+  // settings-driven config change must reclaim the port so the new spawn
+  // picks up the latest token / approval policy / sandbox / base url.
   const samePort = prev.deepseek.port === next.deepseek.port
-  await stopDeepseekChildAndWait()
+  if (isDeepseekChildRunning()) {
+    await stopDeepseekChildAndWait()
+  }
 
   if (samePort) {
     const reclaimed = await reclaimDeepseekPort(prev.deepseek.port)

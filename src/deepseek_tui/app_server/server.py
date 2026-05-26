@@ -184,14 +184,20 @@ async def run_http(
             )
             print("  Read the file or set DEEPSEEK_RUNTIME_TOKEN for a stable token.")
         elif auth is not None and auth.token:
+            # Only seed the cache when missing — never overwrite an existing
+            # non-empty file. Two concurrent spawn attempts (e.g., CLI + GUI)
+            # would otherwise race and clobber each other's tokens.
+            token_path = runtime_token_file()
             try:
-                token_path = write_runtime_token_file(auth.token)
-                logger.info(
-                    "runtime_api_auth bearer token written to %s", token_path
-                )
+                if not token_path.exists() or not token_path.read_text(
+                    encoding="utf-8"
+                ).strip():
+                    token_path = write_runtime_token_file(auth.token)
+                    logger.info(
+                        "runtime_api_auth bearer token written to %s", token_path
+                    )
             except OSError as exc:  # noqa: BLE001
                 logger.warning("runtime_api_auth token file write failed: %s", exc)
-                token_path = runtime_token_file()
             print(
                 "Runtime API auth: bearer token required for /v1/* routes "
                 f"(cached at {token_path})."
@@ -199,6 +205,14 @@ async def run_http(
         else:
             logger.warning("runtime_api_auth disabled (--insecure)")
             print("Runtime API auth: disabled by explicit insecure mode.")
+            # Surface that any cached token file is being ignored so users
+            # don't assume the file's presence implies the runtime is secured.
+            cached_path = runtime_token_file()
+            if cached_path.exists():
+                print(
+                    f"  Note: ignoring cached token at {cached_path} while "
+                    "--insecure is in effect."
+                )
         print(f"Runtime API listening on http://{options.host}:{options.port}")
     server_cfg = uvicorn.Config(
         app,

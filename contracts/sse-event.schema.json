@@ -48,5 +48,40 @@
       "description": "Event-specific payload; shape varies by event name.",
       "additionalProperties": true
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "approval.required" } }, "required": ["event"] },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["id", "approval_id", "tool_name"],
+            "properties": {
+              "id": { "type": "string" },
+              "approval_id": { "type": "string" },
+              "tool_name": { "type": "string" },
+              "description": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "user_input.required" } }, "required": ["event"] },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["id", "request_id", "questions"],
+            "properties": {
+              "id": { "type": "string" },
+              "request_id": { "type": "string" },
+              "questions": { "type": "array" }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

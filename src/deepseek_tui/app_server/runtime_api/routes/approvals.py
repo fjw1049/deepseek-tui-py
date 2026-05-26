@@ -25,7 +25,9 @@ async def decide_approval(request: Request, approval_id: str) -> dict[str, objec
         raise api_error(400, "decision must be allow or deny", error="invalid_decision")
     approved = decision in {"allow", "approve"}
     if not bridge.resolve(approval_id, approved):
-        raise api_error(404, f"approval not pending: {approval_id}", error="not_found")
+        raise api_error(
+            404, f"approval not pending: {approval_id}", error="approval_not_found"
+        )
     return {
         "ok": True,
         "approval_id": approval_id,
