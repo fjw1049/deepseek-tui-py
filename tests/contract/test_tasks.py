@@ -49,4 +49,4 @@ async def tasks_client(runtime_data_dir) -> AsyncIterator[AsyncClient]:
 async def test_list_tasks_empty_when_enabled(tasks_client: AsyncClient) -> None:
     r = await tasks_client.get("/v1/tasks")
     assert r.status_code == 200, r.text
-    assert r.json() == []
+    assert r.json() == {"tasks": []}

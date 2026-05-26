@@ -360,13 +360,17 @@ paths:
             type: integer
       responses:
         "200":
-          description: Task list (bare array)
+          description: Task list wrapper
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
+                type: object
+                required: [tasks]
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      type: object
         "503":
           description: Task manager not configured
   /v1/tasks/{task_id}:

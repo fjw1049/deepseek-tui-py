@@ -54,8 +54,8 @@ export function parseTasksProbe(result: RuntimeProbeResult): DeepseekRuntimeCata
     }
   }
   try {
-    const parsed = JSON.parse(result.body) as unknown
-    const tasks = Array.isArray(parsed) ? parsed : []
+    const parsed = JSON.parse(result.body) as { tasks?: unknown[] }
+    const tasks = Array.isArray(parsed?.tasks) ? parsed.tasks : []
     return {
       ok: true,
       status: result.status,

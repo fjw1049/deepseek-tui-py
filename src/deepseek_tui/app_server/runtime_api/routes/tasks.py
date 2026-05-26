@@ -16,41 +16,29 @@ router = APIRouter(prefix="/v1")
 
 
 @router.get("/tasks")
-async def list_tasks(request: Request) -> list[dict[str, Any]]:
+async def list_tasks(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)
     limit_str = request.query_params.get("limit")
     limit = int(limit_str) if limit_str else None
-    result = unwrap_runtime_result(await runtime.list_tasks(limit=limit))
-    if isinstance(result, dict):
-        tasks = result.get("tasks")
-        if isinstance(tasks, list):
-            return tasks
-    if isinstance(result, list):
-        return result
-    return []
+    payload = unwrap_runtime_result(await runtime.list_tasks(limit=limit))
+    return {"tasks": payload.get("tasks", [])}
 
 
 @router.get("/tasks/{task_id}")
 async def get_task(request: Request, task_id: str) -> dict[str, Any]:
     runtime = runtime_from_request(request)
-    result = unwrap_runtime_result(await runtime.get_task(task_id))
-    if isinstance(result, dict) and "task" in result:
-        task = result["task"]
-        if isinstance(task, dict):
-            return task
-    if isinstance(result, dict):
-        return result
-    raise api_error(404, f"task not found: {task_id}", error="task_not_found")
+    payload = unwrap_runtime_result(await runtime.get_task(task_id))
+    task = payload.get("task")
+    if not isinstance(task, dict):
+        raise api_error(404, f"task not found: {task_id}", error="task_not_found")
+    return task
 
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
     runtime = runtime_from_request(request)
-    result = unwrap_runtime_result(await runtime.cancel_task(task_id))
-    if isinstance(result, dict) and "task" in result:
-        task = result["task"]
-        if isinstance(task, dict):
-            return task
-    if isinstance(result, dict):
-        return result
-    raise api_error(404, f"task not found: {task_id}", error="task_not_found")
+    payload = unwrap_runtime_result(await runtime.cancel_task(task_id))
+    task = payload.get("task")
+    if not isinstance(task, dict):
+        raise api_error(404, f"task not found: {task_id}", error="task_not_found")
+    return task
