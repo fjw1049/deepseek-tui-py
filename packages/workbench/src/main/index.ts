@@ -305,6 +305,29 @@ function takeSseBlock(buffer: string): { block: string; rest: string } | null {
   }
 }
 
+/** Avoid UnhandledPromiseRejection when renderer reloads or window closes mid-SSE. */
+function safeWebContentsSend(
+  wc: Electron.WebContents,
+  channel: string,
+  payload: unknown
+): boolean {
+  if (wc.isDestroyed()) return false
+  try {
+    wc.send(channel, payload)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function abortAllSseStreams(): void {
+  for (const state of sseControllers.values()) {
+    state.stoppedByClient = true
+    state.controller.abort()
+  }
+  sseControllers.clear()
+}
+
 let runtimeEnsurePromise: Promise<void> | null = null
 let runtimeSettingsApplyPromise: Promise<void> | null = null
 
@@ -380,6 +403,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
           console.warn(
             `[deepseek-gui] restarting runtime on port ${settings.deepseek.port}; launch config mismatch: ${launch.reason}`
           )
+          abortAllSseStreams()
           const reclaimed = await reclaimDeepseekPort(settings.deepseek.port)
           if (!reclaimed.ok) {
             throw runtimeJsonError('runtime_port_conflict', reclaimed.message)
@@ -405,6 +429,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
         throw runtimeJsonError(threadApi.error, threadApi.message)
       }
 
+      abortAllSseStreams()
       const reclaimed = await reclaimDeepseekPort(settings.deepseek.port)
       if (!reclaimed.ok) {
         throw runtimeJsonError('runtime_port_conflict', reclaimed.message)
@@ -506,11 +531,13 @@ function createWindow(): void {
     mainWindow.show()
   }
   mainWindow.on('closed', () => {
+    abortAllSseStreams()
     terminalService.disposeTerminalSessionsForWindow(mainWindow?.id ?? -1)
     mainWindow = null
   })
   mainWindow.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
     if (isMainFrame && mainWindow) {
+      abortAllSseStreams()
       terminalService.disposeTerminalSessionsForWindow(mainWindow.id)
     }
   })
@@ -593,6 +620,8 @@ async function restartManagedRuntimeForSettingsChange(
   next: AppSettingsV1
 ): Promise<void> {
   if (!runtimeStartupConfigChanged(prev, next)) return
+
+  abortAllSseStreams()
 
   // Even when the child isn't ours (e.g., reclaimed external runtime), a
   // settings-driven config change must reclaim the port so the new spawn
@@ -815,10 +844,14 @@ app.whenReady().then(async () => {
       const wc = event.sender
       const headers: Record<string, string> = { Accept: 'text/event-stream' }
       if (token) headers.Authorization = `Bearer ${token}`
+      const stopStream = (): void => {
+        state.stoppedByClient = true
+        ac.abort()
+      }
       try {
         const res = await fetch(url, { signal: ac.signal, headers })
         if (!res.ok || !res.body) {
-          wc.send('runtime:sse-error', { streamId: id, status: res.status })
+          safeWebContentsSend(wc, 'runtime:sse-error', { streamId: id, status: res.status })
           logError('sse', `SSE connection failed for thread ${request.threadId}`, { status: res.status, streamId: id })
           return
         }
@@ -826,6 +859,10 @@ app.whenReady().then(async () => {
         const dec = new TextDecoder()
         let buffer = ''
         while (true) {
+          if (wc.isDestroyed() || state.stoppedByClient || ac.signal.aborted) {
+            stopStream()
+            return
+          }
           const { done, value } = await reader.read()
           if (done) break
           buffer += dec.decode(value, { stream: true })
@@ -835,7 +872,12 @@ app.whenReady().then(async () => {
             buffer = next.rest
             const parsed = parseSseData(block)
             if (parsed !== null) {
-              wc.send('runtime:sse-event', { streamId: id, data: parsed })
+              if (
+                !safeWebContentsSend(wc, 'runtime:sse-event', { streamId: id, data: parsed })
+              ) {
+                stopStream()
+                return
+              }
             }
           }
         }
@@ -844,23 +886,34 @@ app.whenReady().then(async () => {
         if (trailing) {
           const parsed = parseSseData(trailing)
           if (parsed !== null) {
-            wc.send('runtime:sse-event', { streamId: id, data: parsed })
+            if (
+              !safeWebContentsSend(wc, 'runtime:sse-event', { streamId: id, data: parsed })
+            ) {
+              stopStream()
+              return
+            }
           }
         }
         if (!state.stoppedByClient && !ac.signal.aborted) {
-          wc.send('runtime:sse-end', { streamId: id })
+          safeWebContentsSend(wc, 'runtime:sse-end', { streamId: id })
         }
       } catch (e) {
         if (state.stoppedByClient || ac.signal.aborted) {
           return
         }
         const msg = e instanceof Error ? e.message : String(e)
-        wc.send('runtime:sse-error', { streamId: id, message: msg })
+        safeWebContentsSend(wc, 'runtime:sse-error', { streamId: id, message: msg })
         logError('sse', `SSE stream error for thread ${request.threadId}`, { message: msg, streamId: id })
       } finally {
         sseControllers.delete(id)
       }
-    })()
+    })().catch((e) => {
+      if (state.stoppedByClient || ac.signal.aborted) return
+      logError('sse', `SSE stream task failed for thread ${request.threadId}`, {
+        message: e instanceof Error ? e.message : String(e),
+        streamId: id
+      })
+    })
 
     return { streamId: id }
   })
@@ -936,6 +989,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  abortAllSseStreams()
   stopDeepseekChild()
   if (process.platform !== 'darwin') {
     app.quit()
@@ -943,5 +997,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  abortAllSseStreams()
   stopDeepseekChild()
 })

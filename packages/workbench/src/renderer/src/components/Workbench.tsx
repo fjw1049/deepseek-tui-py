@@ -223,7 +223,6 @@ export function Workbench(): ReactElement {
     workspaceRoot,
     runtimeConnection,
     setRoute,
-    openCode,
     openSettings,
     openPlugins,
     setError,
@@ -257,7 +256,6 @@ export function Workbench(): ReactElement {
       workspaceRoot: s.workspaceRoot,
       runtimeConnection: s.runtimeConnection,
       setRoute: s.setRoute,
-      openCode: s.openCode,
       openSettings: s.openSettings,
       openPlugins: s.openPlugins,
       setError: s.setError,
@@ -277,7 +275,7 @@ export function Workbench(): ReactElement {
     }))
   )
   const [input, setInput] = useState('')
-  const [mode, setMode] = useState<'plan' | 'agent'>('agent')
+  const [mode, setMode] = useState<'plan' | 'agent' | 'ask'>('agent')
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(readStoredRightPanelMode)
   const [filePreviewTarget, setFilePreviewTarget] = useState<WorkspaceFileTarget | null>(null)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
@@ -326,11 +324,11 @@ export function Workbench(): ReactElement {
     route === 'chat' &&
     latestDevPreviewUrl !== null
 
-  const handleSend = (): void => {
-    const v = input.trim()
+  const handleSend = (text: string): void => {
+    const v = text.trim()
     if (!v) return
     setInput('')
-    void sendMessage(v, mode === 'plan' ? 'plan' : 'agent')
+    void sendMessage(v, mode)
   }
 
   useEffect(() => {
@@ -663,7 +661,6 @@ export function Workbench(): ReactElement {
               onImportSession={() => setImportSessionOpen(true)}
               onOpenSettings={(section) => openSettings(section)}
               onOpenPlugins={() => openPlugins()}
-              onCodeOpen={() => void openCode()}
             />
           </div>
           <div
@@ -731,7 +728,7 @@ export function Workbench(): ReactElement {
                     <button
                       type="button"
                       className="rounded-lg px-3 py-1 text-[12px] font-medium text-amber-900/80 transition hover:bg-amber-50/70 dark:text-amber-100 dark:hover:bg-amber-900/30"
-                      onClick={() => openSettings('agents')}
+                      onClick={() => openSettings('runtime')}
                     >
                       {t('openSettings')}
                     </button>
@@ -787,7 +784,7 @@ export function Workbench(): ReactElement {
               activeThreadId={activeThreadId}
               runtimeConnection={runtimeConnection}
               onRetryConnection={() => void probeRuntime('user')}
-              onOpenSettings={() => openSettings('agents')}
+              onOpenSettings={() => openSettings('runtime')}
               onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
               onSelectSuggestion={(text) => setInput(text)}
               devPreviewCard={
@@ -892,7 +889,7 @@ export function Workbench(): ReactElement {
         onRetry={() => probeRuntime('user')}
         onOpenSettings={() => {
           setRuntimeDiagnosticsOpen(false)
-          openSettings('agents')
+          openSettings('runtime')
         }}
       />
       <ImportSessionDialog
@@ -912,7 +909,7 @@ function DevPreviewLaunchCard({
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
-    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[18px] border border-ds-border-muted bg-white/[0.78] px-4 py-3 shadow-[0_12px_34px_rgba(15,23,42,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
+    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[18px] border border-ds-border-muted bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(62,52,36,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-400/20 bg-sky-500/10 text-sky-500 dark:border-sky-300/20 dark:bg-sky-300/10 dark:text-sky-300">
         <Globe2 className="h-5 w-5" strokeWidth={1.9} />
       </div>

@@ -491,7 +491,7 @@ export function RuntimeDiagnosticsDialog({
                       className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ds-border bg-ds-elevated px-3 py-2 text-[12px] font-medium text-ds-ink transition hover:bg-ds-hover"
                     >
                       <FolderOpen className="h-3.5 w-3.5" />
-                      {tSettings('mcpOpenDir')}
+                      {tSettings('mcpOpenConfigFile')}
                     </button>
                   </div>
                   <textarea

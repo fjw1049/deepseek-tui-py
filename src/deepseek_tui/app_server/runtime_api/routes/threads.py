@@ -57,6 +57,16 @@ async def threads_summary(request: Request) -> dict[str, Any]:
     return await mgr.threads_summary()
 
 
+@router.get("/threads/{thread_id}/active")
+async def thread_turn_active(request: Request, thread_id: str) -> dict[str, bool]:
+    mgr = manager(request)
+    try:
+        active = await mgr.is_thread_turn_active(thread_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    return {"active": active}
+
+
 @router.get("/threads/{thread_id}")
 async def get_thread_detail(request: Request, thread_id: str) -> dict[str, Any]:
     mgr = manager(request)

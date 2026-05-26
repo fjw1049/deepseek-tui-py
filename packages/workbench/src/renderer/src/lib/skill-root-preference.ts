@@ -4,7 +4,7 @@ export type SkillRootId =
   | 'global-agents'
   | 'global-deepseek'
 
-const DEFAULT_SKILL_ROOT_ID: SkillRootId = 'workspace-agents'
+const DEFAULT_SKILL_ROOT_ID: SkillRootId = 'global-deepseek'
 const SKILL_ROOT_PREFERENCE_KEY = 'deepseekgui.skillRootPreference'
 
 function isSkillRootId(value: string): value is SkillRootId {

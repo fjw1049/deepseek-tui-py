@@ -1,5 +1,8 @@
 import type { ChatBlock } from '../agent/types'
-import { DEFAULT_COMPOSER_MODEL_IDS } from '@shared/default-composer-models'
+import {
+  DEFAULT_COMPOSER_MODEL,
+  DEFAULT_COMPOSER_MODEL_IDS
+} from '@shared/default-composer-models'
 import type { ChatState } from './chat-store-types'
 
 const COMPOSER_MODEL_STORAGE_KEY = 'deepseekgui.composerModel'
@@ -8,13 +11,13 @@ const TURN_MODEL_STORAGE_KEY = 'deepseekgui.turnModelLabel'
 export function readStoredComposerModel(allowedIds: readonly string[]): string {
   try {
     const raw = localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)
-    if (raw === null) return ''
-    if (raw === '') return ''
+    if (raw === null) return DEFAULT_COMPOSER_MODEL
+    if (raw === '') return DEFAULT_COMPOSER_MODEL
     if (allowedIds.includes(raw)) return raw
   } catch {
     /* ignore */
   }
-  return ''
+  return DEFAULT_COMPOSER_MODEL
 }
 
 export function persistComposerModel(model: string): void {
@@ -26,18 +29,16 @@ export function persistComposerModel(model: string): void {
 }
 
 export function mergeComposerPickList(upstreamOk: boolean, upstreamIds: string[]): string[] {
-  const ordered = new Set<string>()
-  ordered.add('auto')
-  for (const id of DEFAULT_COMPOSER_MODEL_IDS) {
-    if (id !== 'auto') ordered.add(id)
-  }
+  const ordered = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
   if (upstreamOk) {
     for (const id of upstreamIds) {
-      if (id.trim()) ordered.add(id.trim())
+      const trimmed = id.trim()
+      if (trimmed && trimmed !== 'auto') ordered.add(trimmed)
     }
   }
-  const tail = [...ordered].filter((id) => id !== 'auto').sort((a, b) => a.localeCompare(b))
-  return ['auto', ...tail]
+  const preferred = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
+  const tail = [...ordered].filter((id) => !preferred.has(id)).sort((a, b) => a.localeCompare(b))
+  return [...DEFAULT_COMPOSER_MODEL_IDS, ...tail]
 }
 
 export function optimisticUserModelLabel(

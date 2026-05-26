@@ -1,6 +1,6 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
-import { dirname, join } from 'node:path'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
+import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
 import type {
@@ -28,6 +28,7 @@ import {
   terminalLifecyclePayloadSchema,
   terminalResizePayloadSchema,
   workspaceFileTargetPayloadSchema,
+  workspacePickFilesPayloadSchema,
   workspaceRootSchema
 } from './app-ipc-schemas'
 import type { JsonSettingsStore } from '../settings-store'
@@ -44,6 +45,12 @@ import {
   parseSkillsProbe,
   parseTasksProbe
 } from '../services/runtime-catalog-probes'
+import {
+  resolveDeepseekConfigPath,
+  resolveDeepseekPaths,
+  resolveMcpConfigPath,
+  resolveUserDeepseekDir
+} from '../deepseek-paths'
 import {
   expandHomePath,
   listEditorsResult,
@@ -318,6 +325,53 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
 
   ipcMain.handle('deepseek:prepare-binary', async () => prepareDeepseekBinary())
 
+  ipcMain.handle('workspace:pick-files', async (_, payload: unknown) => {
+    const request = parseIpcPayload('workspace:pick-files', workspacePickFilesPayloadSchema, payload)
+    const workspaceRoot = expandHomePath(request.workspaceRoot)
+    if (!workspaceRoot) {
+      return { ok: false as const, message: 'Workspace root is required.', paths: [] as const }
+    }
+    const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic']
+    const options: Electron.OpenDialogOptions = {
+      title: request.imagesOnly ? 'Select images' : 'Select files',
+      defaultPath: workspaceRoot,
+      properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
+      filters: request.imagesOnly
+        ? [{ name: 'Images', extensions: imageExtensions }]
+        : [
+            { name: 'All files', extensions: ['*'] },
+            { name: 'Images', extensions: imageExtensions }
+          ]
+    }
+    const mainWindow = getMainWindow()
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled) {
+      return { ok: true as const, paths: [] as const }
+    }
+    const resolvedRoot = resolve(workspaceRoot)
+    const paths: string[] = []
+    const skipped: string[] = []
+    for (const picked of result.filePaths) {
+      const abs = resolve(picked)
+      const rel = relative(resolvedRoot, abs)
+      if (!rel || rel.startsWith('..') || rel.startsWith('/')) {
+        skipped.push(picked)
+        continue
+      }
+      paths.push(rel.split('\\').join('/'))
+    }
+    if (paths.length === 0 && skipped.length > 0) {
+      return {
+        ok: false as const,
+        message: 'Selected files must be inside the current workspace.',
+        paths: [] as const
+      }
+    }
+    return { ok: true as const, paths }
+  })
+
   ipcMain.handle('workspace:pick-directory', async (_, defaultPath: unknown): Promise<WorkspacePickResult> => {
     const normalizedDefaultPath = parseIpcPayload(
       'workspace:pick-directory',
@@ -390,6 +444,37 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     }
   )
 
+  ipcMain.handle('skill:list-in-root', async (_, rootPath: unknown) => {
+    const normalizedRootPath = parseIpcPayload('skill:list-in-root', rootPathSchema, rootPath)
+    try {
+      const target = expandHomePath(normalizedRootPath)
+      if (!target) {
+        return { ok: false as const, message: 'Skill directory is required.', skills: [] as const }
+      }
+      await mkdir(target, { recursive: true })
+      const entries = await readdir(target, { withFileTypes: true })
+      const skills: Array<{ id: string; name: string; path: string }> = []
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const skillMd = join(target, entry.name, 'SKILL.md')
+        try {
+          await access(skillMd)
+          skills.push({ id: entry.name, name: entry.name, path: skillMd })
+        } catch {
+          /* not a skill folder */
+        }
+      }
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      return { ok: true as const, skills }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+        skills: [] as const
+      }
+    }
+  })
+
   ipcMain.handle('skill:open-root', async (_, rootPath: unknown) => {
     const normalizedRootPath = parseIpcPayload('skill:open-root', rootPathSchema, rootPath)
     try {
@@ -435,9 +520,91 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('deepseek:config:open-dir', async () => {
     try {
       const path = resolveDeepseekConfigPath()
-      const dirPath = dirname(path)
-      await mkdir(dirPath, { recursive: true })
-      return openPathWithShell(dirPath)
+      await mkdir(dirname(path), { recursive: true })
+      try {
+        await readFile(path, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          await writeFile(path, '', 'utf8')
+        } else {
+          throw error
+        }
+      }
+      shell.showItemInFolder(path)
+      return { ok: true as const, path }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('deepseek:paths:get', async () => resolveDeepseekPaths())
+
+  ipcMain.handle('deepseek:hooks:open-dir', async () => {
+    try {
+      const hooksDir = resolveDeepseekPaths().hooksDir
+      await mkdir(hooksDir, { recursive: true })
+      return openPathWithShell(hooksDir)
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('deepseek:mcp:read', async () => {
+    const path = resolveMcpConfigPath()
+    try {
+      const content = await readFile(path, 'utf8')
+      return { path, content, exists: true as const }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return {
+          path,
+          content: '{\n  "mcpServers": {}\n}\n',
+          exists: false as const
+        }
+      }
+      throw error
+    }
+  })
+
+  ipcMain.handle('deepseek:mcp:write', async (_, content: unknown) => {
+    const validatedContent = parseIpcPayload(
+      'deepseek:mcp:write',
+      deepseekConfigContentSchema,
+      content
+    )
+    try {
+      JSON.parse(validatedContent)
+    } catch {
+      throw new Error('MCP config must be valid JSON (see .deepseek/mcp.json format).')
+    }
+    const path = resolveMcpConfigPath()
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, validatedContent, 'utf8')
+    return { ok: true as const, path }
+  })
+
+  ipcMain.handle('deepseek:mcp:open-dir', async () => {
+    try {
+      const home = resolveUserDeepseekDir()
+      const mcpPath = resolveMcpConfigPath()
+      await mkdir(home, { recursive: true })
+      try {
+        await readFile(mcpPath, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          await writeFile(mcpPath, '{\n  "mcpServers": {}\n}\n', 'utf8')
+        } else {
+          throw error
+        }
+      }
+      shell.showItemInFolder(mcpPath)
+      return { ok: true as const, path: mcpPath }
     } catch (error) {
       return {
         ok: false as const,

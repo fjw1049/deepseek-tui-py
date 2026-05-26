@@ -246,11 +246,14 @@ function syncTurnCompletionPoll(
   get: () => ChatState
 ): void {
   syncTurnCompletionPollImpl(set, get, {
-    loadThreadState: async (state, threadId) => {
+    isThreadTurnActive: async (state, threadId) => {
       const provider = getProvider(state.providerId)
-      return provider.getThreadDetail(threadId)
+      if (typeof provider.isThreadTurnActive === 'function') {
+        return provider.isThreadTurnActive(threadId)
+      }
+      const { blocks, threadStatus } = await provider.getThreadDetail(threadId)
+      return threadSnapshotLooksRunning(blocks, threadStatus)
     },
-    threadLooksRunning: threadSnapshotLooksRunning,
     onCompletedThreads: async (doneIds, state, setState, getState) => {
       for (const id of doneIds) {
         notifyTurnComplete(
@@ -644,7 +647,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   turnReasoningFirstAtByUserId: {},
   turnReasoningLastAtByUserId: {},
   inspectorSelectedId: null,
-  composerModel: '',
+  composerModel: 'deepseek-v4-pro',
   composerPickList: mergeComposerPickList(false, []),
   queuedMessages: [],
   watchTurnCompletion: {},
@@ -717,7 +720,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const settings = await window.dsGui.getSettings()
       const p = getProvider(settings.agentProvider)
-      await p.connect()
+      await p.connect({ light: mode === 'background' && prev === 'ready' })
       set({ runtimeConnection: 'ready', error: null, runtimeErrorDetail: null })
       void get().loadComposerModels()
       if (prev !== 'ready' || mode === 'user') {
@@ -738,7 +741,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           error: msg,
           runtimeErrorDetail: detail,
           ...(needsSettings
-            ? { route: 'settings' as const, settingsSection: 'agents' as const }
+            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
             : {})
         })
       } else if (prev === 'ready') {
@@ -748,7 +751,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           error: msg,
           runtimeErrorDetail: detail,
           ...(needsSettings
-            ? { route: 'settings' as const, settingsSection: 'agents' as const }
+            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
             : {})
         })
       }
@@ -791,9 +794,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (needsInitialSetup) return
         const initialPick = get().composerPickList
         const fromStorage = readStoredComposerModel(initialPick)
-        if (fromStorage) {
-          set({ composerModel: fromStorage })
-        }
+        set({ composerModel: fromStorage })
         scheduleStartupRuntimeProbe(get)
       } catch (e) {
         set({
@@ -803,7 +804,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           initialSetupOpen: false,
           initialSetupMode: 'required',
           ...(shouldOpenSettingsForError(e)
-            ? { route: 'settings' as const, settingsSection: 'agents' as const }
+            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
             : {})
         })
       }
@@ -933,7 +934,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
       await get().refreshThreads()
@@ -985,7 +986,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         runtimeConnection: 'offline',
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1033,7 +1034,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1094,7 +1095,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
       if (state.busy) armBusyWatchdog(set, get)
@@ -1168,7 +1169,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1385,7 +1386,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           queuedMessages: previousQueuedMessages,
           error: formatRuntimeError(e),
           ...(shouldOpenSettingsForError(e)
-            ? { route: 'settings' as const, settingsSection: 'agents' as const }
+            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
             : {})
         })
         return false
@@ -1497,7 +1498,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         currentTurnId: null,
         queuedMessages: previousQueuedMessages,
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
       await get().refreshThreads()
@@ -1520,7 +1521,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1546,7 +1547,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1571,7 +1572,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1596,7 +1597,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1620,7 +1621,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
       return null
@@ -1663,7 +1664,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         error: formatRuntimeError(e),
         busy: false,
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1705,7 +1706,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }
@@ -1795,7 +1796,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((s) => ({
         error: msg,
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'approval'
@@ -1848,7 +1849,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((s) => ({
         error: msg,
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'user_input'
@@ -1879,7 +1880,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: msg,
         ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
           : {})
       })
     }

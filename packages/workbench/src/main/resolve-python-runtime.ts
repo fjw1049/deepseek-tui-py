@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { resolveDeepseekConfigPath, resolveMcpConfigPath } from './deepseek-paths'
 
 export type RuntimeLauncher = {
   bin: string
@@ -49,6 +50,8 @@ export function runtimeSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.P
     const srcPath = join(repoRoot, 'src')
     env.PYTHONPATH = env.PYTHONPATH ? `${srcPath}:${env.PYTHONPATH}` : srcPath
   }
+  env.DEEPSEEK_CONFIG_PATH = resolveDeepseekConfigPath()
+  env.DEEPSEEK_MCP_CONFIG = resolveMcpConfigPath()
   return env
 }
 

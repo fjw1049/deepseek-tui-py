@@ -19,7 +19,16 @@ export type SendMessageOverrides = {
 }
 
 export type InitialSetupMode = 'required' | 'preview'
-export type SettingsRouteSection = 'general' | 'agents' | 'skill' | 'mcp'
+export type SettingsRouteSection =
+  | 'general'
+  | 'runtime'
+  | 'permissions'
+  | 'mcp'
+  | 'skill'
+  | 'hooks'
+
+/** @deprecated Use `runtime`; kept for deep-link normalization. */
+export type LegacySettingsRouteSection = SettingsRouteSection | 'agents'
 export type AppRoute = 'chat' | 'settings' | 'plugins'
 export type PluginHostRoute = 'chat'
 

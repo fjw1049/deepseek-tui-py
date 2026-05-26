@@ -425,10 +425,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     return { interrupt: true, stream: true, approvals: true, attachFiles: false }
   }
 
-  async connect(): Promise<void> {
+  async connect(options?: { light?: boolean }): Promise<void> {
     const r = await window.dsGui.runtimeRequest('/health', 'GET')
     if (!r.ok) {
       throw toRuntimeError(readRuntimeError(r.body, `runtime unhealthy (${r.status || 'offline'})`))
+    }
+
+    if (options?.light) {
+      return
     }
 
     const authProbe = await window.dsGui.runtimeRequest('/v1/threads?limit=1', 'GET')
@@ -442,6 +446,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       }
       throw toRuntimeError(info)
     }
+  }
+
+  async isThreadTurnActive(threadId: string): Promise<boolean> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/active`,
+      'GET'
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `failed to read thread activity (${r.status || 0})`))
+    }
+    const body = JSON.parse(r.body) as { active?: boolean }
+    return body.active === true
   }
 
   async submitApprovalDecision(
@@ -1037,6 +1053,17 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   sink.onSystemStatus(text, it.id)
                   return
                 }
+                if (it?.kind === 'error') {
+                  const text = (it.detail ?? it.summary ?? 'error').trim()
+                  if (text) {
+                    if (sink.onSystemStatus) {
+                      sink.onSystemStatus(text, it.id)
+                    } else {
+                      sink.onError(new Error(text))
+                    }
+                  }
+                  return
+                }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {
                   if (it.kind === 'tool_call' && looksLikeUserInputToolItem(it)) {
                     sink.onUserInputStatus({
@@ -1072,6 +1099,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
               }
 
               if (ev === 'turn.completed') {
+                const turn = payload.turn as Record<string, unknown> | undefined
+                const turnError =
+                  typeof turn?.error === 'string' && turn.error.trim() ? turn.error.trim() : ''
+                if (turnError) {
+                  const turnId =
+                    typeof turn?.id === 'string' && turn.id.trim() ? turn.id.trim() : 'unknown'
+                  if (sink.onSystemStatus) {
+                    sink.onSystemStatus(turnError, `turn-error-${turnId}`)
+                  } else {
+                    sink.onError(new Error(turnError))
+                  }
+                }
                 sink.onTurnComplete()
                 return
               }

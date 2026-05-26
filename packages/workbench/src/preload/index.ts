@@ -14,6 +14,7 @@ const api = {
   prepareDeepseekBinary: () => ipcRenderer.invoke('deepseek:prepare-binary'),
   pickWorkspaceDirectory: (defaultPath) =>
     ipcRenderer.invoke('workspace:pick-directory', defaultPath),
+  pickWorkspaceFiles: (options) => ipcRenderer.invoke('workspace:pick-files', options),
   listTuiSessions: () => ipcRenderer.invoke('tui-sessions:list'),
   pickTuiSessionFile: (defaultPath) =>
     ipcRenderer.invoke('tui-sessions:pick-file', defaultPath),
@@ -21,12 +22,18 @@ const api = {
     ipcRenderer.invoke('skill:save-file', { rootPath, skillName, content }),
   openSkillRoot: (rootPath) =>
     ipcRenderer.invoke('skill:open-root', rootPath),
+  listSkillsInRoot: (rootPath) => ipcRenderer.invoke('skill:list-in-root', rootPath),
   getDeepseekConfigFile: () =>
     ipcRenderer.invoke('deepseek:config:read'),
   setDeepseekConfigFile: (content) =>
     ipcRenderer.invoke('deepseek:config:write', content),
   openDeepseekConfigDir: () =>
     ipcRenderer.invoke('deepseek:config:open-dir'),
+  getMcpConfigFile: () => ipcRenderer.invoke('deepseek:mcp:read'),
+  setMcpConfigFile: (content) => ipcRenderer.invoke('deepseek:mcp:write', content),
+  openMcpConfigDir: () => ipcRenderer.invoke('deepseek:mcp:open-dir'),
+  getDeepseekPaths: () => ipcRenderer.invoke('deepseek:paths:get'),
+  openHooksDir: () => ipcRenderer.invoke('deepseek:hooks:open-dir'),
   diagnoseDeepseekRuntime: () =>
     ipcRenderer.invoke('deepseek:diagnostics'),
   getGitBranches: (workspaceRoot) =>

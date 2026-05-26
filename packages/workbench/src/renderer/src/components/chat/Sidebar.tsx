@@ -30,7 +30,6 @@ type Props = {
   onImportSession: () => void
   onOpenSettings: (section?: SettingsRouteSection) => void
   onOpenPlugins: () => void
-  onCodeOpen: () => void
 }
 
 export function Sidebar({
@@ -48,8 +47,7 @@ export function Sidebar({
   onNewChatInWorkspace,
   onImportSession,
   onOpenSettings,
-  onOpenPlugins,
-  onCodeOpen
+  onOpenPlugins
 }: Props): ReactElement {
   const { t, i18n } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -87,16 +85,6 @@ export function Sidebar({
       </div>
 
       <div className="ds-no-drag flex flex-col px-1">
-        <div className="mb-4 rounded-[22px] border border-ds-border-muted/40 bg-ds-elevated/72 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.48)] backdrop-blur">
-          <button
-            type="button"
-            onClick={onCodeOpen}
-            className="w-full rounded-[18px] px-3 py-2.5 text-center text-[14px] font-semibold transition bg-white text-accent shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-[rgba(0,136,255,0.10)]"
-          >
-            {t('code')}
-          </button>
-        </div>
-
         <SidebarLink
           icon={<Plus className="h-4 w-4" strokeWidth={2} />}
           label={t('newAgent')}

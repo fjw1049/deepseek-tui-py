@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import {
   Check,
   ChevronDown,
-  FolderOpen,
   Loader2,
   Plus,
   RefreshCw,
@@ -12,13 +11,17 @@ import {
   Settings
 } from 'lucide-react'
 import {
-  joinFsPath,
-  loadPreferredSkillRootId,
-  savePreferredSkillRootId,
-  type SkillRootId
-} from '../lib/skill-root-preference'
+  buildMcpServerEntry,
+  mergeMcpServerIntoConfig,
+  mcpConfigHasServer,
+  parseMcpConfigDocument,
+  type McpServerEntry
+} from '../lib/mcp-json-merge'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
+import { reloadMcpWithRuntime } from '../lib/settings-reload'
+import { McpServersPanel } from './settings/McpServersPanel'
+import { PluginsPanel } from './settings/PluginsPanel'
 
 type PluginKind = 'mcp' | 'skill'
 type PluginFilter = 'all' | 'recommended' | 'installed'
@@ -35,22 +38,11 @@ type MarketplaceItem = {
   titleKey: string
   descriptionKey: string
   group: 'recommended'
-  mcpSnippet?: (workspaceRoot: string) => string
+  mcpInstall?: (workspaceRoot: string) => { id: string; entry: McpServerEntry }
   skillInstructions?: string
 }
 
-type SkillRootOption = {
-  id: SkillRootId
-  label: string
-  path: string
-  available: boolean
-}
-
 const INSTALLED_STORAGE_KEY = 'deepseekgui.installedPlugins'
-
-function markerFor(kind: PluginKind, id: string): string {
-  return `DeepSeek GUI plugin:${kind}:${id}`
-}
 
 function loadInstalledPlugins(): string[] {
   try {
@@ -83,30 +75,6 @@ function normalizePluginId(raw: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-function tomlString(value: string): string {
-  return JSON.stringify(value)
-}
-
-function tomlArray(values: string[]): string {
-  return `[${values.map(tomlString).join(', ')}]`
-}
-
-function buildMcpSnippet(
-  id: string,
-  title: string,
-  description: string,
-  command: string,
-  args: string[]
-): string {
-  return [
-    `# ${markerFor('mcp', id)}`,
-    `# ${title} - ${description}`,
-    `[mcp_servers.${tomlString(id)}]`,
-    `command = ${tomlString(command)}`,
-    `args = ${tomlArray(args)}`
-  ].join('\n')
-}
-
 function buildSkillContent(id: string, title: string, description: string, instructions: string): string {
   return [
     '---',
@@ -132,14 +100,14 @@ const RECOMMENDED_ITEMS: MarketplaceItem[] = [
     titleKey: 'pluginMcpFilesystemTitle',
     descriptionKey: 'pluginMcpFilesystemDesc',
     group: 'recommended',
-    mcpSnippet: (workspaceRoot) =>
-      buildMcpSnippet(
-        'filesystem',
-        'Filesystem',
-        'Read and write files in the selected workspace.',
-        'npx',
-        ['-y', '@modelcontextprotocol/server-filesystem', workspaceRoot || '/path/to/project']
-      )
+    mcpInstall: (workspaceRoot) => ({
+      id: 'filesystem',
+      entry: buildMcpServerEntry('npx', [
+        '-y',
+        '@modelcontextprotocol/server-filesystem',
+        workspaceRoot || '/path/to/project'
+      ])
+    })
   },
   {
     id: 'playwright',
@@ -147,14 +115,10 @@ const RECOMMENDED_ITEMS: MarketplaceItem[] = [
     titleKey: 'pluginMcpPlaywrightTitle',
     descriptionKey: 'pluginMcpPlaywrightDesc',
     group: 'recommended',
-    mcpSnippet: () =>
-      buildMcpSnippet(
-        'playwright',
-        'Playwright',
-        'Automate and inspect real browsers.',
-        'npx',
-        ['-y', '@playwright/mcp@latest']
-      )
+    mcpInstall: () => ({
+      id: 'playwright',
+      entry: buildMcpServerEntry('npx', ['-y', '@playwright/mcp@latest'])
+    })
   },
   {
     id: 'github',
@@ -162,17 +126,12 @@ const RECOMMENDED_ITEMS: MarketplaceItem[] = [
     titleKey: 'pluginMcpGithubTitle',
     descriptionKey: 'pluginMcpGithubDesc',
     group: 'recommended',
-    mcpSnippet: () =>
-      [
-        buildMcpSnippet(
-          'github',
-          'GitHub',
-          'Read repositories, issues, pull requests, and CI context.',
-          'npx',
-          ['-y', '@modelcontextprotocol/server-github']
-        ),
-        '# env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_..." }'
-      ].join('\n')
+    mcpInstall: () => ({
+      id: 'github',
+      entry: buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-github'], {
+        GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_...'
+      })
+    })
   },
   {
     id: 'context7',
@@ -180,14 +139,10 @@ const RECOMMENDED_ITEMS: MarketplaceItem[] = [
     titleKey: 'pluginMcpContext7Title',
     descriptionKey: 'pluginMcpContext7Desc',
     group: 'recommended',
-    mcpSnippet: () =>
-      buildMcpSnippet(
-        'context7',
-        'Context7',
-        'Fetch current library documentation for coding tasks.',
-        'npx',
-        ['-y', '@upstash/context7-mcp@latest']
-      )
+    mcpInstall: () => ({
+      id: 'context7',
+      entry: buildMcpServerEntry('npx', ['-y', '@upstash/context7-mcp@latest'])
+    })
   },
   {
     id: 'code-review',
@@ -229,6 +184,7 @@ const RECOMMENDED_ITEMS: MarketplaceItem[] = [
 
 export function PluginMarketplaceView(): ReactElement {
   const { t } = useTranslation('common')
+  const { t: tSettings } = useTranslation('settings')
   const workspaceRoot = normalizeWorkspaceRoot(useChatStore((s) => s.workspaceRoot))
   const [activeKind, setActiveKind] = useState<PluginKind>('mcp')
   const [query, setQuery] = useState('')
@@ -243,63 +199,65 @@ export function PluginMarketplaceView(): ReactElement {
   const [customArgs, setCustomArgs] = useState('')
   const [customConfig, setCustomConfig] = useState('')
   const [customSkillBody, setCustomSkillBody] = useState('')
-  const [skillRootId, setSkillRootId] = useState<SkillRootId>(() => loadPreferredSkillRootId())
+  const [deepseekPaths, setDeepseekPaths] = useState({
+    skillsDir: '~/.deepseek/skills'
+  })
+  const [mcpConfigPath, setMcpConfigPath] = useState('~/.deepseek/mcp.json')
   const [mcpConfigText, setMcpConfigText] = useState('')
+  const [mcpConfigExists, setMcpConfigExists] = useState(false)
   const [mcpLoaded, setMcpLoaded] = useState(false)
-
-  const skillRootOptions = useMemo<SkillRootOption[]>(() => {
-    const hasWorkspace = !!workspaceRoot
-    return [
-      {
-        id: 'workspace-agents',
-        label: t('pluginSkillRootWorkspaceAgents'),
-        path: workspaceRoot ? joinFsPath(workspaceRoot, '.agents/skills') : '',
-        available: hasWorkspace
-      },
-      {
-        id: 'workspace-skills',
-        label: t('pluginSkillRootWorkspaceSkills'),
-        path: workspaceRoot ? joinFsPath(workspaceRoot, 'skills') : '',
-        available: hasWorkspace
-      },
-      {
-        id: 'global-agents',
-        label: t('pluginSkillRootGlobalAgents'),
-        path: '~/.agents/skills',
-        available: true
-      },
-      {
-        id: 'global-deepseek',
-        label: t('pluginSkillRootGlobalDeepseek'),
-        path: '~/.deepseek/skills',
-        available: true
-      }
-    ]
-  }, [t, workspaceRoot])
-
-  const selectedSkillRoot =
-    skillRootOptions.find((option) => option.id === skillRootId && option.available) ??
-    skillRootOptions.find((option) => option.available)
+  const [mcpBusy, setMcpBusy] = useState(false)
+  const [mcpNotice, setMcpNotice] = useState<Notice | null>(null)
+  const [installedSkills, setInstalledSkills] = useState<Array<{ id: string; name: string; path: string }>>([])
+  const [skillsListLoading, setSkillsListLoading] = useState(false)
 
   useEffect(() => {
-    const selectedOption = skillRootOptions.find((option) => option.id === skillRootId && option.available)
-    if (selectedOption) {
-      savePreferredSkillRootId(skillRootId)
-      return
-    }
-    const fallback = skillRootOptions.find((option) => option.available)
-    if (fallback && fallback.id !== skillRootId) {
-      setSkillRootId(fallback.id)
-    }
-  }, [skillRootId, skillRootOptions])
+    if (typeof window.dsGui?.getDeepseekPaths !== 'function') return
+    void window.dsGui.getDeepseekPaths().then((paths) => {
+      setDeepseekPaths({ skillsDir: paths.skillsDir })
+    })
+  }, [])
 
   const readMcpConfig = useCallback(async (): Promise<string> => {
-    if (typeof window.dsGui?.getDeepseekConfigFile !== 'function') return mcpConfigText
-    const file = await window.dsGui.getDeepseekConfigFile()
+    if (typeof window.dsGui?.getMcpConfigFile !== 'function') return mcpConfigText
+    const file = await window.dsGui.getMcpConfigFile()
+    setMcpConfigPath(file.path)
     setMcpConfigText(file.content)
+    setMcpConfigExists(file.exists)
     setMcpLoaded(true)
     return file.content
   }, [mcpConfigText])
+
+  const reloadMcpFromMarketplace = async (): Promise<void> => {
+    try {
+      const result = await reloadMcpWithRuntime(readMcpConfig)
+      setMcpNotice({
+        tone: result.runtime ? 'success' : 'info',
+        message: result.runtime ? tSettings('mcpReloadRuntimeOk') : tSettings('mcpReloadDiskOnly')
+      })
+    } catch (e) {
+      setMcpNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  const saveMcpConfig = async (content?: string, quiet = false): Promise<void> => {
+    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    const payload = content ?? mcpConfigText
+    setMcpBusy(true)
+    if (!quiet) setMcpNotice(null)
+    try {
+      const result = await window.dsGui.setMcpConfigFile(payload)
+      setMcpConfigText(payload)
+      setMcpConfigExists(true)
+      if (!quiet) {
+        setMcpNotice({ tone: 'success', message: tSettings('mcpSaved', { path: result.path }) })
+      }
+    } catch (e) {
+      setMcpNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setMcpBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (activeKind !== 'mcp' || mcpLoaded) return
@@ -311,7 +269,25 @@ export function PluginMarketplaceView(): ReactElement {
   useEffect(() => {
     setNotice(null)
     setCustomOpen(false)
+    setMcpNotice(null)
   }, [activeKind])
+
+  const refreshSkillsList = useCallback(async (): Promise<void> => {
+    const root = deepseekPaths.skillsDir
+    if (!root || typeof window.dsGui?.listSkillsInRoot !== 'function') return
+    setSkillsListLoading(true)
+    try {
+      const result = await window.dsGui.listSkillsInRoot(root)
+      setInstalledSkills(result.ok ? result.skills : [])
+    } finally {
+      setSkillsListLoading(false)
+    }
+  }, [deepseekPaths.skillsDir])
+
+  useEffect(() => {
+    if (activeKind !== 'skill') return
+    void refreshSkillsList()
+  }, [activeKind, refreshSkillsList])
 
   const markInstalled = (key: string): void => {
     setInstalled((prev) => {
@@ -324,7 +300,7 @@ export function PluginMarketplaceView(): ReactElement {
   const isInstalled = useCallback((item: Pick<MarketplaceItem, 'kind' | 'id'>): boolean => {
     const key = storageKey(item.kind, item.id)
     if (installed.includes(key)) return true
-    return item.kind === 'mcp' && mcpConfigText.includes(markerFor('mcp', item.id))
+    return item.kind === 'mcp' && mcpConfigHasServer(mcpConfigText, item.id)
   }, [installed, mcpConfigText])
 
   const visibleItems = useMemo(() => {
@@ -345,15 +321,16 @@ export function PluginMarketplaceView(): ReactElement {
   const recommendedItems = visibleItems.filter((item) => !isInstalled(item))
   const personalItems = visibleItems.filter(isInstalled)
 
-  const appendMcpSnippet = async (id: string, snippet: string): Promise<void> => {
+  const appendMcpServer = async (id: string, entry: McpServerEntry): Promise<void> => {
+    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
     const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
-    if (content.includes(markerFor('mcp', id))) {
+    if (mcpConfigHasServer(content, id)) {
       markInstalled(storageKey('mcp', id))
       setNotice({ tone: 'info', message: t('pluginAlreadyAdded') })
       return
     }
-    const next = `${content.trimEnd()}${content.trim() ? '\n\n' : ''}${snippet.trim()}\n`
-    const result = await window.dsGui.setDeepseekConfigFile(next)
+    const next = mergeMcpServerIntoConfig(content, id, entry)
+    const result = await window.dsGui.setMcpConfigFile(next)
     setMcpConfigText(next)
     setMcpLoaded(true)
     markInstalled(storageKey('mcp', id))
@@ -365,12 +342,14 @@ export function PluginMarketplaceView(): ReactElement {
     setNotice(null)
     try {
       if (item.kind === 'mcp') {
-        if (!item.mcpSnippet) return
-        await appendMcpSnippet(item.id, item.mcpSnippet(workspaceRoot))
+        if (!item.mcpInstall) return
+        const install = item.mcpInstall(workspaceRoot)
+        await appendMcpServer(install.id, install.entry)
         return
       }
 
-      if (!selectedSkillRoot?.path) {
+      const skillsDir = deepseekPaths.skillsDir
+      if (!skillsDir) {
         setNotice({ tone: 'error', message: t('pluginSkillRootMissing') })
         return
       }
@@ -382,12 +361,13 @@ export function PluginMarketplaceView(): ReactElement {
         description,
         item.skillInstructions ?? description
       )
-      const result = await window.dsGui.saveSkillFile(selectedSkillRoot.path, item.id, content)
+      const result = await window.dsGui.saveSkillFile(skillsDir, item.id, content)
       if (!result.ok) {
         setNotice({ tone: 'error', message: result.message })
         return
       }
       markInstalled(storageKey('skill', item.id))
+      await refreshSkillsList()
       setNotice({ tone: 'success', message: t('pluginSkillAdded', { path: result.path }) })
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -407,30 +387,46 @@ export function PluginMarketplaceView(): ReactElement {
     setNotice(null)
     try {
       if (activeKind === 'mcp') {
-        const snippet = customConfig.trim() || buildMcpSnippet(
-          id,
-          customName.trim() || id,
-          description,
-          customCommand.trim() || 'npx',
-          customArgs
-            .split('\n')
-            .map((arg) => arg.trim())
-            .filter(Boolean)
-        )
-        await appendMcpSnippet(id, snippet.includes(markerFor('mcp', id)) ? snippet : `${`# ${markerFor('mcp', id)}`}\n${snippet}`)
+        const rawCustom = customConfig.trim()
+        let entry: McpServerEntry
+        if (rawCustom.startsWith('{')) {
+          const parsed = parseMcpConfigDocument(rawCustom)
+          const servers = (parsed.mcpServers ?? parsed.servers) as Record<string, McpServerEntry> | undefined
+          entry =
+            servers?.[id] ??
+            (Object.values(servers ?? {})[0] as McpServerEntry | undefined) ??
+            buildMcpServerEntry(
+              customCommand.trim() || 'npx',
+              customArgs
+                .split('\n')
+                .map((arg) => arg.trim())
+                .filter(Boolean)
+            )
+        } else {
+          entry = buildMcpServerEntry(
+            customCommand.trim() || 'npx',
+            customArgs
+              .split('\n')
+              .map((arg) => arg.trim())
+              .filter(Boolean)
+          )
+        }
+        await appendMcpServer(id, entry)
       } else {
-        if (!selectedSkillRoot?.path) {
+        const skillsDir = deepseekPaths.skillsDir
+        if (!skillsDir) {
           setNotice({ tone: 'error', message: t('pluginSkillRootMissing') })
           return
         }
         const body = customSkillBody.trim() || t('pluginCustomSkillFallbackBody')
         const content = buildSkillContent(id, customName.trim() || id, description, body)
-        const result = await window.dsGui.saveSkillFile(selectedSkillRoot.path, id, content)
+        const result = await window.dsGui.saveSkillFile(skillsDir, id, content)
         if (!result.ok) {
           setNotice({ tone: 'error', message: result.message })
           return
         }
         markInstalled(storageKey('skill', id))
+        await refreshSkillsList()
         setNotice({ tone: 'success', message: t('pluginSkillAdded', { path: result.path }) })
       }
       setCustomName('')
@@ -450,15 +446,16 @@ export function PluginMarketplaceView(): ReactElement {
   const openManageTarget = async (): Promise<void> => {
     try {
       if (activeKind === 'mcp') {
-        const result = await window.dsGui.openDeepseekConfigDir()
+        const result = await window.dsGui.openMcpConfigDir()
         if (!result.ok) setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
         return
       }
-      if (!selectedSkillRoot?.path) {
+      const skillsDir = deepseekPaths.skillsDir
+      if (!skillsDir) {
         setNotice({ tone: 'error', message: t('pluginSkillRootMissing') })
         return
       }
-      const result = await window.dsGui.openSkillRoot(selectedSkillRoot.path)
+      const result = await window.dsGui.openSkillRoot(skillsDir)
       if (!result.ok) setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -497,6 +494,35 @@ export function PluginMarketplaceView(): ReactElement {
           </div>
         </div>
 
+        {activeKind === 'mcp' ? (
+          <div className="mt-8 rounded-2xl border border-ds-border bg-ds-card/80 p-5 shadow-sm">
+            <h2 className="mb-4 text-[18px] font-semibold text-ds-ink">{tSettings('mcpInstalled')}</h2>
+            <McpServersPanel
+              configPath={mcpConfigPath}
+              configText={mcpConfigText}
+              configExists={mcpConfigExists}
+              loading={!mcpLoaded && activeKind === 'mcp'}
+              busy={mcpBusy}
+              notice={mcpNotice}
+              onConfigTextChange={setMcpConfigText}
+              onReload={() => void reloadMcpFromMarketplace()}
+              onSave={(content, quiet) => void saveMcpConfig(content, quiet)}
+              onOpenConfigFolder={() => void openManageTarget()}
+            />
+          </div>
+        ) : (
+          <div className="mt-8 rounded-2xl border border-ds-border bg-ds-card/80 p-5 shadow-sm">
+            <h2 className="mb-4 text-[18px] font-semibold text-ds-ink">{tSettings('pluginsInstalled')}</h2>
+            <PluginsPanel
+              skillsDir={deepseekPaths.skillsDir}
+              plugins={installedSkills}
+              loading={skillsListLoading}
+              onReload={() => void refreshSkillsList()}
+              onOpenSkillsDir={() => void openManageTarget()}
+            />
+          </div>
+        )}
+
         <div className="mt-9 flex flex-col items-center text-center">
           <h1 className="text-[32px] font-semibold text-ds-ink md:text-[40px]">
             {activeKind === 'mcp' ? t('pluginMcpTitle') : t('pluginSkillTitle')}
@@ -526,30 +552,6 @@ export function PluginMarketplaceView(): ReactElement {
             <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
           </label>
         </div>
-
-        {activeKind === 'skill' ? (
-          <div className="mt-4 flex flex-col gap-2 md:flex-row md:items-center">
-            <select
-              value={selectedSkillRoot?.id ?? ''}
-              onChange={(event) => setSkillRootId(event.target.value as SkillRootId)}
-              className="h-10 rounded-xl border border-ds-border bg-ds-card px-3 text-[13px] text-ds-ink shadow-sm outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-            >
-              {skillRootOptions.map((option) => (
-                <option key={option.id} value={option.id} disabled={!option.available}>
-                  {option.available ? option.label : `${option.label} · ${t('pluginSkillRootNeedsWorkspace')}`}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => void openManageTarget()}
-              className="inline-flex h-10 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-3 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
-            >
-              <FolderOpen className="h-4 w-4" />
-              {t('pluginOpenLocation')}
-            </button>
-          </div>
-        ) : null}
 
         {customOpen ? (
           <CustomPluginPanel

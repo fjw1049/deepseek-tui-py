@@ -61,6 +61,17 @@ async def test_create_thread_persists_trust_mode(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_thread_active_endpoint(client: AsyncClient) -> None:
+    create = await client.post("/v1/threads", json={"model": "deepseek-chat"})
+    assert create.status_code == 201
+    thread_id = create.json()["id"]
+
+    active = await client.get(f"/v1/threads/{thread_id}/active")
+    assert active.status_code == 200
+    assert active.json() == {"active": False}
+
+
+@pytest.mark.asyncio
 async def test_threads_summary(client: AsyncClient) -> None:
     await client.post("/v1/threads", json={})
     r = await client.get("/v1/threads/summary")

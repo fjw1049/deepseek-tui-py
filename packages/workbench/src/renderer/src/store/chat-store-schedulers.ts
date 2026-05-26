@@ -1,10 +1,12 @@
-import type { ChatBlock } from '../agent/types'
 import type { ChatState, ChatStoreGet, ChatStoreSet } from './chat-store-types'
 
 let startupRuntimeProbeTimer: ReturnType<typeof setTimeout> | null = null
 let busyWatchdogTimer: ReturnType<typeof setTimeout> | null = null
 let busyRecoveryAttempts = 0
 let turnCompletionPollTimer: ReturnType<typeof setInterval> | null = null
+
+/** Avoid hammering GET /v1/threads/{id} (full detail) every few seconds. */
+const TURN_COMPLETION_POLL_MS = 8_000
 
 type BusyWatchdogOptions = {
   timeoutMs: number
@@ -15,11 +17,7 @@ type BusyWatchdogOptions = {
 }
 
 type TurnCompletionPollOptions = {
-  loadThreadState: (
-    state: ChatState,
-    threadId: string
-  ) => Promise<{ blocks: ChatBlock[]; threadStatus?: string }>
-  threadLooksRunning: (blocks: ChatBlock[], threadStatus?: string) => boolean
+  isThreadTurnActive: (state: ChatState, threadId: string) => Promise<boolean>
   onCompletedThreads: (
     doneIds: string[],
     state: ChatState,
@@ -98,7 +96,7 @@ export function syncTurnCompletionPoll(
     void pollTurnCompletionWatch(set, get, options)
   }
 
-  turnCompletionPollTimer = setInterval(tick, 2500)
+  turnCompletionPollTimer = setInterval(tick, TURN_COMPLETION_POLL_MS)
   void tick()
 }
 
@@ -122,8 +120,8 @@ async function pollTurnCompletionWatch(
   const doneIds: string[] = []
   for (const threadId of ids) {
     try {
-      const { blocks, threadStatus } = await options.loadThreadState(state, threadId)
-      if (!options.threadLooksRunning(blocks, threadStatus)) {
+      const active = await options.isThreadTurnActive(state, threadId)
+      if (!active) {
         doneIds.push(threadId)
       }
     } catch {

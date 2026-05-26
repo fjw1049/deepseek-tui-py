@@ -80,8 +80,11 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     setRoute: (route) => set({ route }),
 
-    openSettings: (section: SettingsRouteSection = 'general') =>
-      set({ route: 'settings', settingsSection: section }),
+    openSettings: (section: SettingsRouteSection | 'agents' = 'general') =>
+      set({
+        route: 'settings',
+        settingsSection: section === 'agents' ? 'runtime' : section
+      }),
 
     openPlugins: (host?: PluginHostRoute) => {
       if (!WORKBENCH_FEATURES.pluginMarketplace) return

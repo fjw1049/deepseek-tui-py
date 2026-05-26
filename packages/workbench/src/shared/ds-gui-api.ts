@@ -18,6 +18,10 @@ import type {
 
 export type RuntimeRequestResult = { ok: boolean; status: number; body: string }
 export type WorkspacePickResult = { canceled: boolean; path: string | null }
+
+export type WorkspacePickFilesResult =
+  | { ok: true; paths: string[] }
+  | { ok: false; message?: string; paths: [] }
 export type TuiSessionPickResult = { canceled: boolean; path: string | null }
 export type TuiSessionSummary = {
   sessionId: string
@@ -32,7 +36,7 @@ export type ListTuiSessionsResult = {
   dir: string
   sessions: TuiSessionSummary[]
 }
-export type PathOpenResult = { ok: boolean; message?: string }
+export type PathOpenResult = { ok: boolean; message?: string; path?: string }
 export type SkillSaveResult = { ok: true; path: string } | { ok: false; message: string }
 export type DeepseekConfigFileResult = { path: string; content: string; exists: boolean }
 export type DeepseekConfigSaveResult = { ok: true; path: string }
@@ -127,13 +131,32 @@ export type DsGuiApi = {
   deepseekSpawnIfNeeded: () => Promise<DeepseekSpawnResult>
   prepareDeepseekBinary: () => Promise<{ ok: true; path: string } | { ok: false; message: string }>
   pickWorkspaceDirectory: (defaultPath?: string) => Promise<WorkspacePickResult>
+  pickWorkspaceFiles: (options: {
+    workspaceRoot: string
+    imagesOnly?: boolean
+  }) => Promise<WorkspacePickFilesResult>
   listTuiSessions: () => Promise<ListTuiSessionsResult>
   pickTuiSessionFile: (defaultPath?: string) => Promise<TuiSessionPickResult>
   saveSkillFile: (rootPath: string, skillName: string, content: string) => Promise<SkillSaveResult>
   openSkillRoot: (rootPath: string) => Promise<PathOpenResult>
+  listSkillsInRoot: (rootPath: string) => Promise<
+    | { ok: true; skills: Array<{ id: string; name: string; path: string }> }
+    | { ok: false; message?: string; skills: [] }
+  >
   getDeepseekConfigFile: () => Promise<DeepseekConfigFileResult>
   setDeepseekConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>
   openDeepseekConfigDir: () => Promise<PathOpenResult>
+  getMcpConfigFile: () => Promise<DeepseekConfigFileResult>
+  setMcpConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>
+  openMcpConfigDir: () => Promise<PathOpenResult>
+  getDeepseekPaths: () => Promise<{
+    home: string
+    configPath: string
+    mcpPath: string
+    hooksDir: string
+    skillsDir: string
+  }>
+  openHooksDir: () => Promise<PathOpenResult>
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>

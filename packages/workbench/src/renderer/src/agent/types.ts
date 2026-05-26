@@ -182,7 +182,8 @@ export interface AgentProvider {
     approvals: boolean
     attachFiles: boolean
   }
-  connect(): Promise<void>
+  connect(options?: { light?: boolean }): Promise<void>
+  isThreadTurnActive?(threadId: string): Promise<boolean>
   listThreads(): Promise<NormalizedThread[]>
   createThread(input: { workspace?: string; title?: string; mode?: string }): Promise<NormalizedThread>
   getThreadDetail(threadId: string): Promise<{

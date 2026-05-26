@@ -151,6 +151,7 @@ class DeepSeekTUI(App[None]):
         # the panel only surfaces tasks born this session — stale
         # ``failed`` records from prior runs no longer clutter the view.
         self._session_started_at_iso: str | None = None
+        self._info_sidebar_refresh_task: asyncio.Task[None] | None = None
         self._engine_starting = False
         self._pending_messages: list[str] = []
         # Agent ids spawned during the current user turn — sidebar only
@@ -577,7 +578,7 @@ class DeepSeekTUI(App[None]):
                 # Ctrl+T toggle takes effect at the next finalize.
                 transcript.show_thinking = bool(self.config.ui.show_thinking)
                 transcript.start_assistant_message()
-                await self._refresh_info_sidebar()
+                self._schedule_info_sidebar_refresh()
             elif isinstance(event, TextDeltaEvent):
                 transcript.append_delta(event.text)
             elif isinstance(event, ThinkingDeltaEvent):
@@ -601,7 +602,7 @@ class DeepSeekTUI(App[None]):
                     agent_id = _agent_id_from_spawn_result(event.content)
                     if agent_id:
                         self._turn_agent_ids.add(agent_id)
-                        await self._refresh_info_sidebar()
+                        self._schedule_info_sidebar_refresh()
             elif isinstance(event, ApprovalRequiredEvent):
                 # The modal dialog IS the notification — surfacing an
                 # extra "Approval required for X" notice on top of every
@@ -675,11 +676,11 @@ class DeepSeekTUI(App[None]):
                         event.session_cost_cny or 0.0,
                     )
                 transcript.finalize_message()
-                await self._refresh_info_sidebar()
+                self._schedule_info_sidebar_refresh()
                 self._maybe_notify_turn_done()
                 break
             elif isinstance(event, SubAgentMailboxEvent):
-                await self._refresh_info_sidebar()
+                self._schedule_info_sidebar_refresh()
                 if event.message.kind is MailboxMessageKind.STARTED:
                     self._turn_agent_ids.add(event.message.agent_id)
                 transcript.apply_subagent_mailbox(event.message)
@@ -693,7 +694,7 @@ class DeepSeekTUI(App[None]):
                 elif msg.status:
                     status.set_phase(f"sub-agent {msg.agent_id[:8]}: {msg.status[:40]}")
             elif isinstance(event, SessionActivityEvent):
-                await self._refresh_info_sidebar()
+                self._schedule_info_sidebar_refresh()
                 if event.message:
                     status.set_phase(f"background: {event.message[:50]}")
             elif isinstance(event, RlmProgressEvent):
@@ -710,13 +711,6 @@ class DeepSeekTUI(App[None]):
                     if self._turn_started_at is not None:
                         status.set_started(self._turn_started_at)
                     status.set_phase("synthesizing")
-            # Refresh the right info-sidebar opportunistically on the
-            # high-traffic events that mutate its data (tool results
-            # alter todos/tasks/agents). Refresh is cheap (three list
-            # reads + format) so debouncing is not needed yet.
-            if isinstance(event, ToolResultEvent):
-                await self._refresh_info_sidebar()
-
     # ── user input handling ─────────────────────────────────────────
 
     def _handle_user_input_event(
@@ -1006,6 +1000,23 @@ class DeepSeekTUI(App[None]):
             status.set_status(f"archive failed: {exc}")
 
     # ── info sidebar refresh ──────────────────────────────────────────
+
+    def _schedule_info_sidebar_refresh(self) -> None:
+        """Coalesce bursty mailbox/tool events into one sidebar redraw."""
+        task = self._info_sidebar_refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._info_sidebar_refresh_task = asyncio.create_task(
+            self._debounced_refresh_info_sidebar(),
+            name="info-sidebar-refresh",
+        )
+
+    async def _debounced_refresh_info_sidebar(self) -> None:
+        try:
+            await asyncio.sleep(0.25)
+            await self._refresh_info_sidebar()
+        except asyncio.CancelledError:
+            raise
 
     async def _refresh_info_sidebar(self) -> None:
         """Fetch live engine state and push it into the right info sidebar.

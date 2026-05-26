@@ -1,7 +1,12 @@
 import { spawn } from 'node:child_process'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import type { AppSettingsV1 } from '../shared/app-settings'
+import {
+  resolveDeepseekConfigPath,
+  resolveDeepseekPaths,
+  resolveMcpConfigPath,
+  resolveUserDeepseekDir,
+  type DeepseekPaths
+} from './deepseek-paths'
 import {
   resolveRepoRoot,
   resolveRuntimeLauncher,
@@ -10,21 +15,20 @@ import {
   type RuntimeLauncher
 } from './resolve-python-runtime'
 
+export {
+  resolveDeepseekConfigPath,
+  resolveDeepseekPaths,
+  resolveMcpConfigPath,
+  resolveUserDeepseekDir,
+  type DeepseekPaths
+}
+
 type DeepseekCommand = {
   args: string[]
   stdin?: string
 }
 
 const DEEPSEEK_CONFIG_COMMAND_TIMEOUT_MS = 15_000
-
-/** Project-local config in monorepo dev; otherwise user config under ~/.deepseek. */
-export function resolveDeepseekConfigPath(): string {
-  const repoRoot = resolveRepoRoot()
-  if (repoRoot) {
-    return join(repoRoot, '.deepseek', 'config.toml')
-  }
-  return join(homedir(), '.deepseek', 'config.toml')
-}
 
 function globalConfigArgs(): string[] {
   return ['--config', resolveDeepseekConfigPath()]

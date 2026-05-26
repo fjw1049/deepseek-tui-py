@@ -142,15 +142,6 @@ export function MessageTimeline({
     setVisibleTurnCount((count) => Math.min(turns.length, count + TURN_PAGE_SIZE))
   }, [hiddenTurnCount, turns.length])
 
-  // Tick a clock while a turn is running so the live "Worked for Xs" updates.
-  const [tickNow, setTickNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!busy || !currentTurnUserId) return
-    setTickNow(Date.now())
-    const id = window.setInterval(() => setTickNow(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [busy, currentTurnUserId])
-
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -284,11 +275,9 @@ export function MessageTimeline({
           const isLive = !!(userId && currentTurnUserId === userId)
           const startedAt = userId ? turnStartedAtByUserId[userId] : undefined
           const recordedDuration = userId ? turnDurationByUserId[userId] : undefined
-          const durationMs =
-            recordedDuration ??
-            (isLive && typeof startedAt === 'number'
-              ? Math.max(0, tickNow - startedAt)
-              : undefined)
+          const liveStartedAt =
+            isLive && typeof startedAt === 'number' ? startedAt : undefined
+          const durationMs = isLive ? undefined : recordedDuration
           const reasoningFirst = userId ? turnReasoningFirstAtByUserId[userId] : undefined
           const reasoningLast = userId ? turnReasoningLastAtByUserId[userId] : undefined
           const reasoningDurationMs =
@@ -305,6 +294,7 @@ export function MessageTimeline({
               isProcessing={(busy && isLatestTurn) || turnPending || hasLiveStream}
               liveReasoning={isLatestTurn ? liveReasoning : ''}
               live={isLatestTurn ? live : ''}
+              liveStartedAt={liveStartedAt}
               durationMs={durationMs}
               reasoningDurationMs={reasoningDurationMs}
               devPreviewCard={isLatestTurn ? devPreviewCard : null}
@@ -333,9 +323,10 @@ export function MessageTimeline({
             live={live}
             devPreviewCard={devPreviewCard}
             viewportRef={containerRef}
-            durationMs={
-              currentTurnUserId && typeof turnStartedAtByUserId[currentTurnUserId] === 'number'
-                ? Math.max(0, tickNow - turnStartedAtByUserId[currentTurnUserId])
+            liveStartedAt={
+              currentTurnUserId &&
+              typeof turnStartedAtByUserId[currentTurnUserId] === 'number'
+                ? turnStartedAtByUserId[currentTurnUserId]
                 : undefined
             }
             reasoningDurationMs={(() => {
@@ -659,6 +650,7 @@ function MessageTurn({
   isProcessing,
   liveReasoning,
   live,
+  liveStartedAt,
   durationMs,
   reasoningDurationMs,
   devPreviewCard,
@@ -668,6 +660,7 @@ function MessageTurn({
   isProcessing: boolean
   liveReasoning: string
   live: string
+  liveStartedAt?: number
   durationMs?: number
   reasoningDurationMs?: number
   devPreviewCard?: ReactElement | null
@@ -772,6 +765,7 @@ function MessageTurn({
           <WorkMetaRow
             processing={isProcessing}
             stepCount={processBlocks.length}
+            liveStartedAt={liveStartedAt}
             durationMs={durationMs}
             reasoningDurationMs={reasoningDurationMs}
             expanded={workExpanded}
@@ -817,6 +811,7 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.isProcessing === next.isProcessing &&
   prev.liveReasoning === next.liveReasoning &&
   prev.live === next.live &&
+  prev.liveStartedAt === next.liveStartedAt &&
   prev.durationMs === next.durationMs &&
   prev.reasoningDurationMs === next.reasoningDurationMs &&
   prev.devPreviewCard === next.devPreviewCard &&
@@ -954,6 +949,7 @@ function TurnChangeSummary({
 function WorkMetaRow({
   processing,
   stepCount,
+  liveStartedAt,
   durationMs,
   reasoningDurationMs,
   expanded,
@@ -961,19 +957,33 @@ function WorkMetaRow({
 }: {
   processing: boolean
   stepCount: number
+  liveStartedAt?: number
   durationMs?: number
   reasoningDurationMs?: number
   expanded: boolean
   onToggle: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
+  const [tickNow, setTickNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!processing || typeof liveStartedAt !== 'number') return
+    setTickNow(Date.now())
+    const id = window.setInterval(() => setTickNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [processing, liveStartedAt])
+
+  const displayDurationMs =
+    processing && typeof liveStartedAt === 'number'
+      ? Math.max(0, tickNow - liveStartedAt)
+      : durationMs
 
   const mainLabel = processing
-    ? typeof durationMs === 'number'
-      ? `${t('processing')} ${formatDuration(durationMs)}`
+    ? typeof displayDurationMs === 'number'
+      ? `${t('processing')} ${formatDuration(displayDurationMs)}`
       : t('processing')
-    : typeof durationMs === 'number'
-      ? `${t('processed')} ${formatDuration(durationMs)}`
+    : typeof displayDurationMs === 'number'
+      ? `${t('processed')} ${formatDuration(displayDurationMs)}`
       : t('processSteps', { count: stepCount })
 
   const showThoughtSuffix =
@@ -2169,7 +2179,7 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
             <button
               type="button"
               className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-              onClick={() => openSettings('agents')}
+              onClick={() => openSettings('runtime')}
             >
               {t('approvalOpenSettings')}
             </button>

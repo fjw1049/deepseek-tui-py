@@ -9,28 +9,29 @@ import {
   type SandboxMode
 } from '@shared/app-settings'
 import {
-  Bot,
+  Anchor,
   ChevronLeft,
   Eye,
   EyeOff,
   FolderOpen,
   Globe,
   Loader2,
+  Plug,
   RefreshCw,
-  Settings
+  Settings,
+  Shield,
+  SlidersHorizontal,
+  Sparkles
 } from 'lucide-react'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
-import {
-  joinFsPath,
-  loadPreferredSkillRootId,
-  savePreferredSkillRootId,
-  type SkillRootId
-} from '../lib/skill-root-preference'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
+import { reloadMcpWithRuntime } from '../lib/settings-reload'
+import { McpServersPanel } from './settings/McpServersPanel'
+import { PluginsPanel } from './settings/PluginsPanel'
 
-type SettingsCategory = 'general' | 'agents'
+type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = Partial<
   Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate'>
@@ -41,12 +42,6 @@ type SettingsPatch = Partial<
   skills?: Partial<AppSettingsV1['skills']>
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
-}
-type SkillRootOption = {
-  id: SkillRootId
-  label: string
-  path: string
-  available: boolean
 }
 type InlineNotice = {
   tone: 'success' | 'error' | 'info'
@@ -104,12 +99,12 @@ export function SettingsView(): ReactElement {
   const { t: tCommon } = useTranslation('common')
   const setRoute = useChatStore((s) => s.setRoute)
   const settingsSection = useChatStore((s) => s.settingsSection)
+  const openSettings = useChatStore((s) => s.openSettings)
   const openInitialSetup = useChatStore((s) => s.openInitialSetup)
-  const openPlugins = useChatStore((s) => s.openPlugins)
+  const category: SettingsCategory = settingsSection
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
-  const [category, setCategory] = useState<SettingsCategory>('general')
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
@@ -122,23 +117,27 @@ export function SettingsView(): ReactElement {
   const [tokenRegenError, setTokenRegenError] = useState<string | null>(null)
   const [logPath, setLogPath] = useState('')
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
-  const [skillRootId, setSkillRootId] = useState<SkillRootId>(() => loadPreferredSkillRootId())
   const [skillNotice, setSkillNotice] = useState<InlineNotice | null>(null)
-  const [mcpConfigPath, setMcpConfigPath] = useState('~/.deepseek/config.toml')
+  const [installedSkills, setInstalledSkills] = useState<Array<{ id: string; name: string; path: string }>>([])
+  const [skillsListLoading, setSkillsListLoading] = useState(false)
+  const [deepseekPaths, setDeepseekPaths] = useState({
+    configPath: '~/.deepseek/config.toml',
+    mcpPath: '~/.deepseek/mcp.json',
+    hooksDir: '~/.deepseek/hooks',
+    skillsDir: '~/.deepseek/skills'
+  })
+  const [mcpConfigPath, setMcpConfigPath] = useState('~/.deepseek/mcp.json')
   const [mcpConfigText, setMcpConfigText] = useState('')
   const [mcpConfigExists, setMcpConfigExists] = useState(false)
   const [mcpLoading, setMcpLoading] = useState(false)
   const [mcpLoaded, setMcpLoaded] = useState(false)
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpNotice, setMcpNotice] = useState<InlineNotice | null>(null)
+  const [hooksNotice, setHooksNotice] = useState<InlineNotice | null>(null)
   const initializedCategory = useRef(false)
   const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const statusTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const draftVersion = useRef(0)
-  const agentsSectionRef = useRef<HTMLDivElement | null>(null)
-  const skillSectionRef = useRef<HTMLDivElement | null>(null)
-  const mcpSectionRef = useRef<HTMLDivElement | null>(null)
-  const permissionsSectionRef = useRef<HTMLDivElement | null>(null)
   const formTheme = form?.theme
   const formUiFontScale = form?.uiFontScale
   const formWorkspaceRoot = form?.workspaceRoot
@@ -159,6 +158,14 @@ export function SettingsView(): ReactElement {
       .catch((e: unknown) => {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
       })
+    if (typeof window.dsGui?.getDeepseekPaths === 'function') {
+      void window.dsGui.getDeepseekPaths().then((paths) => {
+        if (!cancelled) {
+          setDeepseekPaths(paths)
+          setMcpConfigPath(paths.mcpPath)
+        }
+      })
+    }
     return () => {
       cancelled = true
     }
@@ -199,34 +206,9 @@ export function SettingsView(): ReactElement {
     if (!form || initializedCategory.current) return
     initializedCategory.current = true
     if (!form.deepseek.apiKey?.trim()) {
-      setCategory('agents')
+      openSettings('runtime')
     }
-  }, [form])
-
-  useEffect(() => {
-    if (settingsSection === 'general') {
-      setCategory('general')
-      return
-    }
-    setCategory('agents')
-  }, [settingsSection])
-
-  useEffect(() => {
-    if (!form) return
-    if (settingsSection === 'general' || category !== 'agents') {
-      return
-    }
-    const refs: Record<Exclude<SettingsRouteSection, 'general'>, HTMLDivElement | null> = {
-      agents: agentsSectionRef.current,
-      skill: skillSectionRef.current,
-      mcp: mcpSectionRef.current
-    }
-    const target = refs[settingsSection]
-    if (!target) return
-    window.requestAnimationFrame(() => {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  }, [category, form, settingsSection])
+  }, [form, openSettings])
 
   useEffect(() => {
     return () => {
@@ -240,53 +222,6 @@ export function SettingsView(): ReactElement {
     if (!hasValidPort({ deepseek: { port: formPort } } as AppSettingsV1)) return t('portInvalid')
     return null
   }, [formPort, t])
-
-  const skillRootOptions = useMemo<SkillRootOption[]>(() => {
-    const workspaceRoot = normalizeWorkspaceRoot(formWorkspaceRoot)
-    const hasWorkspace = !!workspaceRoot
-    return [
-      {
-        id: 'workspace-agents',
-        label: tCommon('pluginSkillRootWorkspaceAgents'),
-        path: workspaceRoot ? joinFsPath(workspaceRoot, '.agents/skills') : '',
-        available: hasWorkspace
-      },
-      {
-        id: 'workspace-skills',
-        label: tCommon('pluginSkillRootWorkspaceSkills'),
-        path: workspaceRoot ? joinFsPath(workspaceRoot, 'skills') : '',
-        available: hasWorkspace
-      },
-      {
-        id: 'global-agents',
-        label: tCommon('pluginSkillRootGlobalAgents'),
-        path: '~/.agents/skills',
-        available: true
-      },
-      {
-        id: 'global-deepseek',
-        label: tCommon('pluginSkillRootGlobalDeepseek'),
-        path: '~/.deepseek/skills',
-        available: true
-      }
-    ]
-  }, [formWorkspaceRoot, tCommon])
-
-  const selectedSkillRoot =
-    skillRootOptions.find((option) => option.id === skillRootId && option.available) ??
-    skillRootOptions.find((option) => option.available)
-
-  useEffect(() => {
-    const selectedOption = skillRootOptions.find((option) => option.id === skillRootId && option.available)
-    if (selectedOption) {
-      savePreferredSkillRootId(skillRootId)
-      return
-    }
-    const fallback = skillRootOptions.find((option) => option.available)
-    if (fallback && fallback.id !== skillRootId) {
-      setSkillRootId(fallback.id)
-    }
-  }, [skillRootId, skillRootOptions])
 
   const handleRegenerateRuntimeToken = async (): Promise<void> => {
     if (typeof window.dsGui?.regenerateRuntimeToken !== 'function') return
@@ -310,11 +245,11 @@ export function SettingsView(): ReactElement {
   }
 
   const loadMcpConfig = async (): Promise<void> => {
-    if (typeof window.dsGui?.getDeepseekConfigFile !== 'function') return
+    if (typeof window.dsGui?.getMcpConfigFile !== 'function') return
     setMcpLoading(true)
     setMcpNotice(null)
     try {
-      const config = await window.dsGui.getDeepseekConfigFile()
+      const config = await window.dsGui.getMcpConfigFile()
       setMcpConfigPath(config.path)
       setMcpConfigText(config.content)
       setMcpConfigExists(config.exists)
@@ -330,35 +265,72 @@ export function SettingsView(): ReactElement {
   }
 
   useEffect(() => {
-    if (category !== 'agents' || mcpLoaded || mcpLoading) return
+    if (category !== 'mcp' || mcpLoaded || mcpLoading) return
     void loadMcpConfig()
   }, [category, mcpLoaded, mcpLoading])
 
-  const openSkillRoot = async (): Promise<void> => {
-    if (!selectedSkillRoot?.path || !selectedSkillRoot.available) {
-      setSkillNotice({ tone: 'error', message: t('skillsRootUnavailable') })
-      return
+  const loadInstalledPlugins = async (): Promise<void> => {
+    const root = deepseekPaths.skillsDir
+    if (!root || typeof window.dsGui?.listSkillsInRoot !== 'function') return
+    setSkillsListLoading(true)
+    try {
+      const result = await window.dsGui.listSkillsInRoot(root)
+      setInstalledSkills(result.ok ? result.skills : [])
+    } finally {
+      setSkillsListLoading(false)
     }
-    if (typeof window.dsGui?.openSkillRoot !== 'function') return
+  }
+
+  useEffect(() => {
+    if (category !== 'skill') return
+    void loadInstalledPlugins()
+  }, [category, deepseekPaths.skillsDir])
+
+  const openPluginsDir = async (): Promise<void> => {
+    const root = deepseekPaths.skillsDir
+    if (!root || typeof window.dsGui?.openSkillRoot !== 'function') return
     setSkillNotice(null)
-    const result = await window.dsGui.openSkillRoot(selectedSkillRoot.path)
+    const result = await window.dsGui.openSkillRoot(root)
     if (!result.ok) {
       setSkillNotice({ tone: 'error', message: result.message ?? t('applyFailed') })
     }
   }
 
-  const saveMcpConfig = async (): Promise<void> => {
-    if (typeof window.dsGui?.setDeepseekConfigFile !== 'function') return
-    setMcpBusy(true)
-    setMcpNotice(null)
+  const reloadMcpSettings = async (): Promise<void> => {
+    setMcpLoading(true)
     try {
-      const result = await window.dsGui.setDeepseekConfigFile(mcpConfigText)
+      const result = await reloadMcpWithRuntime(loadMcpConfig)
+      if (result.runtime) {
+        setMcpNotice({ tone: 'success', message: t('mcpReloadRuntimeOk') })
+      } else {
+        setMcpNotice({ tone: 'info', message: t('mcpReloadDiskOnly') })
+      }
+    } catch (e) {
+      setMcpNotice({
+        tone: 'error',
+        message: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setMcpLoading(false)
+    }
+  }
+
+  const saveMcpConfig = async (content?: string, quiet = false): Promise<void> => {
+    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    const payload = content ?? mcpConfigText
+    setMcpBusy(true)
+    if (!quiet) setMcpNotice(null)
+    try {
+      const result = await window.dsGui.setMcpConfigFile(payload)
+      setMcpConfigText(payload)
       setMcpConfigPath(result.path)
       setMcpConfigExists(true)
-      setMcpNotice({
-        tone: 'success',
-        message: t('mcpSaved', { path: result.path })
-      })
+      if (!quiet) {
+        setMcpNotice({
+          tone: 'success',
+          message: t('mcpSaved', { path: result.path })
+        })
+      }
     } catch (e) {
       setMcpNotice({
         tone: 'error',
@@ -370,21 +342,20 @@ export function SettingsView(): ReactElement {
   }
 
   const openMcpConfigDir = async (): Promise<void> => {
-    if (typeof window.dsGui?.openDeepseekConfigDir !== 'function') return
-    const result = await window.dsGui.openDeepseekConfigDir()
+    if (typeof window.dsGui?.openMcpConfigDir !== 'function') return
+    const result = await window.dsGui.openMcpConfigDir()
     if (!result.ok) {
       setMcpNotice({ tone: 'error', message: result.message ?? t('applyFailed') })
     }
   }
 
-  const scrollToAgentSection = (target: 'agents' | 'skill' | 'mcp' | 'permissions'): void => {
-    const refs = {
-      agents: agentsSectionRef.current,
-      skill: skillSectionRef.current,
-      mcp: mcpSectionRef.current,
-      permissions: permissionsSectionRef.current
+  const openHooksConfigDir = async (): Promise<void> => {
+    if (typeof window.dsGui?.openHooksDir !== 'function') return
+    setHooksNotice(null)
+    const result = await window.dsGui.openHooksDir()
+    if (!result.ok) {
+      setHooksNotice({ tone: 'error', message: result.message ?? t('applyFailed') })
     }
-    refs[target]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   const persistSettings = async (snapshot: AppSettingsV1, version: number): Promise<void> => {
@@ -533,7 +504,7 @@ export function SettingsView(): ReactElement {
 
   return (
     <div className="ds-drag flex h-full min-h-0 w-full min-w-0 bg-ds-main">
-      <aside className="ds-drag flex w-[248px] shrink-0 flex-col border-r border-ds-border bg-ds-sidebar backdrop-blur-md">
+      <aside className="ds-drag flex w-[260px] shrink-0 flex-col border-r border-ds-border bg-ds-sidebar backdrop-blur-md">
         <div className="px-3 pb-3 pt-3">
           <div aria-hidden className="ds-titlebar-safe-block" />
           <button
@@ -546,13 +517,29 @@ export function SettingsView(): ReactElement {
           </button>
         </div>
         <nav className="ds-no-drag flex flex-col gap-0.5 px-2">
-          <button type="button" className={catCls('general')} onClick={() => setCategory('general')}>
+          <button type="button" className={catCls('general')} onClick={() => openSettings('general')}>
             <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('general')}
           </button>
-          <button type="button" className={catCls('agents')} onClick={() => setCategory('agents')}>
-            <Bot className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('agents')}
+          <button type="button" className={catCls('runtime')} onClick={() => openSettings('runtime')}>
+            <SlidersHorizontal className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('runtime')}
+          </button>
+          <button type="button" className={catCls('mcp')} onClick={() => openSettings('mcp')}>
+            <Plug className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('mcp')}
+          </button>
+          <button type="button" className={catCls('skill')} onClick={() => openSettings('skill')}>
+            <Sparkles className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('skill')}
+          </button>
+          <button type="button" className={catCls('hooks')} onClick={() => openSettings('hooks')}>
+            <Anchor className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('hooks')}
+          </button>
+          <button type="button" className={catCls('permissions')} onClick={() => openSettings('permissions')}>
+            <Shield className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('permissions')}
           </button>
         </nav>
         <div className="ds-no-drag mt-auto border-t border-ds-border p-3">
@@ -792,27 +779,16 @@ export function SettingsView(): ReactElement {
             </>
           )}
 
-          {category === 'agents' && (
+          {category === 'runtime' && (
             <>
-              <div className="mb-6 flex flex-wrap gap-2">
-                <SectionJumpButton label={t('agentsQuickBase')} onClick={() => scrollToAgentSection('agents')} />
-                <SectionJumpButton label={t('agentsQuickSkill')} onClick={() => scrollToAgentSection('skill')} />
-                <SectionJumpButton label={t('agentsQuickMcp')} onClick={() => scrollToAgentSection('mcp')} />
-                <SectionJumpButton
-                  label={t('agentsQuickPermissions')}
-                  onClick={() => scrollToAgentSection('permissions')}
-                />
-              </div>
-
-              <div ref={agentsSectionRef}>
-                <SettingsCard title={t('agents')}>
+              <SettingsCard title={t('runtime')}>
                   <SettingRow
                     title={t('configFilePath')}
                     description={t('configFilePathDesc')}
                     control={
                       <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm md:max-w-md">
                         <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
-                          ~/.deepseek/config.toml
+                          {deepseekPaths.configPath}
                         </code>
                       </div>
                     }
@@ -947,214 +923,143 @@ export function SettingsView(): ReactElement {
                     }
                   />
                 </SettingsCard>
-              </div>
+            </>
+          )}
 
-              <div ref={skillSectionRef} className="mt-6">
+          {category === 'permissions' && (
+            <SettingsCard title={t('permissions')}>
+              <SettingRow
+                title={t('approvalPolicy')}
+                description={t('approvalPolicyDesc')}
+                control={
+                  <select
+                    className={selectControlClass}
+                    value={form.deepseek.approvalPolicy}
+                    onChange={(e) =>
+                      update({
+                        deepseek: {
+                          approvalPolicy: e.target.value as ApprovalPolicy
+                        }
+                      })
+                    }
+                  >
+                    <option value="auto">{t('approvalAuto')}</option>
+                    <option value="on-request">{t('approvalOnRequest')}</option>
+                    <option value="untrusted">{t('approvalUntrusted')}</option>
+                    <option value="suggest">{t('approvalSuggest')}</option>
+                    <option value="never">{t('approvalNever')}</option>
+                  </select>
+                }
+              />
+              <SettingRow
+                title={t('sandboxMode')}
+                description={t('sandboxModeDesc')}
+                control={
+                  <select
+                    className={selectControlClass}
+                    value={form.deepseek.sandboxMode}
+                    onChange={(e) =>
+                      update({
+                        deepseek: {
+                          sandboxMode: e.target.value as SandboxMode
+                        }
+                      })
+                    }
+                  >
+                    <option value="workspace-write">{t('sandboxWorkspaceWrite')}</option>
+                    <option value="read-only">{t('sandboxReadOnly')}</option>
+                    <option value="danger-full-access">{t('sandboxFullAccess')}</option>
+                    <option value="external-sandbox">{t('sandboxExternal')}</option>
+                  </select>
+                }
+              />
+            </SettingsCard>
+          )}
+
+          {category === 'skill' && (
                 <SettingsCard title={t('skill')}>
                   <SettingRow
-                    title={t('skillsLocation')}
-                    description={t('skillsLocationDesc')}
-                    control={
-                      <select
-                        className={selectControlClass}
-                        value={selectedSkillRoot?.id ?? skillRootId}
-                        onChange={(event) => setSkillRootId(event.target.value as SkillRootId)}
-                      >
-                        {skillRootOptions.map((option) => (
-                          <option key={option.id} value={option.id} disabled={!option.available}>
-                            {option.available ? option.label : `${option.label} · ${tCommon('pluginSkillRootNeedsWorkspace')}`}
-                          </option>
-                        ))}
-                      </select>
-                    }
-                  />
-                  <SettingRow
-                    title={t('skillsPath')}
-                    description={t('skillsPathDesc')}
-                    control={
-                      <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
-                        <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
-                          {selectedSkillRoot?.path || t('skillsRootUnavailable')}
-                        </code>
-                      </div>
-                    }
-                  />
-                  <SettingRow
-                    title={t('skillsScanDirs')}
-                    description={t('skillsScanDirsDesc')}
-                    wideControl
-                    control={
-                      <textarea
-                        value={listSettingsText(form.skills.extraDirs)}
-                        onChange={(event) =>
-                          update({
-                            skills: {
-                              extraDirs: splitSettingsList(event.target.value)
-                            }
-                          })
-                        }
-                        spellCheck={false}
-                        placeholder={selectedSkillRoot?.path || '~/.agents/skills'}
-                        className="min-h-24 w-full rounded-2xl border border-ds-border bg-ds-card px-4 py-3 font-mono text-[13px] leading-6 text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                      />
-                    }
-                  />
-                  <SettingRow
-                    title={t('skillsActions')}
-                    description={t('skillsActionsDesc')}
+                    title={t('pluginsInstalled')}
+                    description={t('pluginsInstalledDesc')}
                     wideControl
                     control={
                       <div className="flex w-full flex-col gap-3">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void openSkillRoot()}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
-                          >
-                            <FolderOpen className="h-4 w-4" />
-                            {t('skillsOpenRoot')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openPlugins()}
-                            className="inline-flex items-center gap-1.5 rounded-xl bg-ds-userbubble px-3 py-2 text-[13px] font-medium text-ds-userbubbleFg shadow-sm transition hover:opacity-90"
-                          >
-                            <Settings className="h-4 w-4" />
-                            {t('skillsOpenPlugins')}
-                          </button>
-                        </div>
+                        <PluginsPanel
+                          skillsDir={deepseekPaths.skillsDir}
+                          plugins={installedSkills}
+                          loading={skillsListLoading}
+                          onReload={() => void loadInstalledPlugins()}
+                          onOpenSkillsDir={() => void openPluginsDir()}
+                        />
                         {skillNotice ? <InlineNoticeView notice={skillNotice} /> : null}
                       </div>
                     }
                   />
                 </SettingsCard>
-              </div>
+          )}
 
-              <div ref={mcpSectionRef} className="mt-6">
+          {category === 'mcp' && (
                 <SettingsCard title={t('mcp')}>
                   <SettingRow
-                    title={t('configFilePath')}
+                    title={t('mcpInstalled')}
                     description={t('mcpPathDesc')}
-                    control={
-                      <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
-                        <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
-                          {mcpConfigPath}
-                        </code>
-                      </div>
-                    }
-                  />
-                  <SettingRow
-                    title={t('mcpEditor')}
-                    description={t('mcpEditorDesc')}
                     wideControl
                     control={
-                      <div className="flex w-full flex-col gap-3">
-                        <div className="rounded-xl border border-ds-border bg-ds-main/50 px-3 py-2 text-[12px] leading-5 text-ds-muted">
-                          {mcpConfigExists ? t('mcpFileStatusReady') : t('mcpFileStatusMissing')}
-                        </div>
-                        <textarea
-                          value={mcpConfigText}
-                          onChange={(e) => setMcpConfigText(e.target.value)}
-                          spellCheck={false}
-                          placeholder={mcpLoading ? t('loading') : ''}
-                          className="min-h-[320px] w-full rounded-2xl border border-ds-border bg-ds-card px-4 py-3 font-mono text-[13px] leading-6 text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                        />
-                      </div>
-                    }
-                  />
-                  <SettingRow
-                    title={t('mcpActions')}
-                    description={t('mcpRuntimeHint')}
-                    wideControl
-                    control={
-                      <div className="flex w-full flex-col gap-3">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void saveMcpConfig()}
-                            disabled={mcpBusy || mcpLoading}
-                            className="inline-flex items-center gap-1.5 rounded-xl bg-ds-userbubble px-3 py-2 text-[13px] font-medium text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
-                          >
-                            {mcpBusy ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                            ) : null}
-                            {t('mcpSave')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void loadMcpConfig()}
-                            disabled={mcpBusy || mcpLoading}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-55"
-                          >
-                            <RefreshCw className={`h-3.5 w-3.5 ${mcpLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-                            {t('mcpReload')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void openMcpConfigDir()}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
-                          >
-                            <FolderOpen className="h-4 w-4" />
-                            {t('mcpOpenDir')}
-                          </button>
-                        </div>
-                        {mcpNotice ? <InlineNoticeView notice={mcpNotice} /> : null}
-                      </div>
+                      <McpServersPanel
+                        configPath={mcpConfigPath}
+                        configText={mcpConfigText}
+                        configExists={mcpConfigExists}
+                        loading={mcpLoading}
+                        busy={mcpBusy}
+                        notice={mcpNotice}
+                        onConfigTextChange={setMcpConfigText}
+                        onReload={() => void reloadMcpSettings()}
+                        onSave={(content, quiet) => void saveMcpConfig(content, quiet)}
+                        onOpenConfigFolder={() => void openMcpConfigDir()}
+                      />
                     }
                   />
                 </SettingsCard>
-              </div>
+          )}
 
-              <div ref={permissionsSectionRef} className="mt-6">
-                <SettingsCard title={t('permissions')}>
-                  <SettingRow
-                    title={t('approvalPolicy')}
-                    description={t('approvalPolicyDesc')}
-                    control={
-                      <select
-                        className={selectControlClass}
-                        value={form.deepseek.approvalPolicy}
-                        onChange={(e) =>
-                          update({
-                            deepseek: {
-                              approvalPolicy: e.target.value as ApprovalPolicy
-                            }
-                          })
-                        }
-                      >
-                        <option value="auto">{t('approvalAuto')}</option>
-                        <option value="on-request">{t('approvalOnRequest')}</option>
-                        <option value="untrusted">{t('approvalUntrusted')}</option>
-                        <option value="suggest">{t('approvalSuggest')}</option>
-                        <option value="never">{t('approvalNever')}</option>
-                      </select>
-                    }
-                  />
-                  <SettingRow
-                    title={t('sandboxMode')}
-                    description={t('sandboxModeDesc')}
-                    control={
-                      <select
-                        className={selectControlClass}
-                        value={form.deepseek.sandboxMode}
-                        onChange={(e) =>
-                          update({
-                            deepseek: {
-                              sandboxMode: e.target.value as SandboxMode
-                            }
-                          })
-                        }
-                      >
-                        <option value="workspace-write">{t('sandboxWorkspaceWrite')}</option>
-                        <option value="read-only">{t('sandboxReadOnly')}</option>
-                        <option value="danger-full-access">{t('sandboxFullAccess')}</option>
-                        <option value="external-sandbox">{t('sandboxExternal')}</option>
-                      </select>
-                    }
-                  />
-                </SettingsCard>
-              </div>
-            </>
+          {category === 'hooks' && (
+            <SettingsCard title={t('hooks')}>
+              <SettingRow
+                title={t('hooksConfigPath')}
+                description={t('hooksConfigPathDesc')}
+                wideControl
+                control={
+                  <div className="flex w-full flex-col gap-3">
+                    <p className="text-[13px] leading-6 text-ds-muted">{t('hooksDesc')}</p>
+                    <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
+                      <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
+                        {deepseekPaths.configPath} · [hooks]
+                        <span className="mt-2 block text-ds-faint">{deepseekPaths.hooksDir}</span>
+                      </code>
+                    </div>
+                  </div>
+                }
+              />
+              <SettingRow
+                title={t('hooksActions')}
+                description={t('hooksActionsDesc')}
+                wideControl
+                control={
+                  <div className="flex w-full flex-col gap-3">
+                    <p className="text-[12px] leading-5 text-ds-faint">{t('hooksOpenConfigHint')}</p>
+                    <button
+                      type="button"
+                      onClick={() => void openHooksConfigDir()}
+                      className="inline-flex items-center gap-1.5 self-start rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                      {t('hooksOpenConfigDir')}
+                    </button>
+                    {hooksNotice ? <InlineNoticeView notice={hooksNotice} /> : null}
+                  </div>
+                }
+              />
+            </SettingsCard>
           )}
 
         </div>
@@ -1212,24 +1117,6 @@ function SecretInput({
         {visible ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
       </button>
     </div>
-  )
-}
-
-function SectionJumpButton({
-  label,
-  onClick
-}: {
-  label: string
-  onClick: () => void
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-full border border-ds-border bg-ds-card px-3 py-1.5 text-[12px] font-medium text-ds-muted shadow-sm transition hover:bg-ds-hover hover:text-ds-ink"
-    >
-      {label}
-    </button>
   )
 }
 

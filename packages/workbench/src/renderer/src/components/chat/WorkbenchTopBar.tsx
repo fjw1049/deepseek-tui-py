@@ -118,7 +118,7 @@ export function WorkbenchTopBar({
         <button
           type="button"
           onClick={() => setEditorMenuOpen((value) => !value)}
-          className="inline-flex items-center gap-1 rounded-full border border-transparent bg-white/38 px-2.5 py-1.5 text-ds-faint opacity-90 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition hover:border-ds-border-muted hover:bg-white/55 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] dark:hover:bg-white/8"
+          className="inline-flex items-center gap-1 rounded-full border border-transparent bg-ds-elevated/45 px-2.5 py-1.5 text-ds-faint opacity-90 shadow-[inset_0_1px_0_rgba(255,252,245,0.5)] transition hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] dark:hover:bg-white/8"
           aria-label={t('editorPickerTitle')}
           aria-expanded={editorMenuOpen}
           title={
@@ -170,8 +170,8 @@ export function WorkbenchTopBar({
         disabled={!terminalPanelEnabled}
         className={`rounded-full border px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition disabled:cursor-not-allowed disabled:opacity-45 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
           terminalPanelOpen
-            ? 'border-ds-border-strong bg-white/70 text-ds-ink dark:bg-white/10'
-            : 'border-transparent bg-white/38 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-white/55 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
+            ? 'border-ds-border-strong bg-ds-elevated/80 text-ds-ink dark:bg-white/10'
+            : 'border-transparent bg-ds-elevated/45 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
         }`}
         aria-label={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
         aria-pressed={terminalPanelOpen}
@@ -190,8 +190,8 @@ export function WorkbenchTopBar({
             onClick={() => onToggleRightPanelMode(item.mode)}
             className={`rounded-full border px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
               active
-                ? 'border-ds-border-strong bg-white/70 text-ds-ink dark:bg-white/10'
-                : 'border-transparent bg-white/38 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-white/55 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
+                ? 'border-ds-border-strong bg-ds-elevated/80 text-ds-ink dark:bg-white/10'
+                : 'border-transparent bg-ds-elevated/45 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
             }`}
             aria-label={item.label}
             aria-pressed={active}

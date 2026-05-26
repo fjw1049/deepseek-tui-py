@@ -303,6 +303,22 @@ class RuntimeThreadManager:
     async def get_thread(self, thread_id: str) -> ThreadRecord:
         return self.store.load_thread(thread_id)
 
+    async def is_thread_turn_active(self, thread_id: str) -> bool:
+        """Lightweight running check for background turn-completion polling."""
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is not None and state.active_turn is not None:
+                return True
+        thread = self.store.load_thread(thread_id)
+        turn_id = thread.latest_turn_id
+        if not turn_id:
+            return False
+        turn = self.store.load_turn(turn_id)
+        return turn.status in (
+            RuntimeTurnStatus.QUEUED,
+            RuntimeTurnStatus.IN_PROGRESS,
+        )
+
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
         if req.archived is None and req.title is None:
             raise ValueError("At least one thread field is required")
