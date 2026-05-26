@@ -67,6 +67,7 @@ const api = {
     ipcRenderer.invoke('runtime:sse:start', { threadId, sinceSeq, streamId }),
   stopSse: (streamId) => ipcRenderer.invoke('runtime:sse:stop', streamId),
   regenerateRuntimeToken: () => ipcRenderer.invoke('runtime:regenerate-token'),
+  getRuntimeTokenFingerprint: () => ipcRenderer.invoke('runtime:get-token-fingerprint'),
   onSseEvent: (handler) => {
     const wrapped = (
       _: Electron.IpcRendererEvent,

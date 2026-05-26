@@ -168,6 +168,26 @@ export function SettingsView(): ReactElement {
     void window.dsGui.getLogPath().then((p) => setLogPath(p))
   }, [category])
 
+  // Display the cached runtime-token fingerprint on mount so the user sees
+  // "auto-managed (abc12345…ef01)" instead of just "auto-managed" when there
+  // is already a token on disk. Re-run when the user enters the connection
+  // settings panel.
+  useEffect(() => {
+    if (typeof window.dsGui?.getRuntimeTokenFingerprint !== 'function') return
+    let cancelled = false
+    void window.dsGui
+      .getRuntimeTokenFingerprint()
+      .then((res) => {
+        if (!cancelled) setTokenFingerprint(res.fingerprint)
+      })
+      .catch(() => {
+        /* best-effort; field falls back to "auto-managed" copy */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [category])
+
   useEffect(() => {
     if (!form || initializedCategory.current) return
     initializedCategory.current = true

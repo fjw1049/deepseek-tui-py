@@ -32,7 +32,12 @@ import {
 } from './app-ipc-schemas'
 import type { JsonSettingsStore } from '../settings-store'
 import { getRuntimeBaseUrl } from '../settings-store'
-import { findListeningProcessOnPort } from '../deepseek-process'
+import {
+  findListeningProcessOnPort,
+  readRuntimeTokenFile,
+  resolveEffectiveRuntimeToken,
+  runtimeTokenFilePath
+} from '../deepseek-process'
 import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
 import {
   expandHomePath,
@@ -232,7 +237,10 @@ async function diagnoseDeepseekRuntime(
       approvalPolicy: settings.deepseek.approvalPolicy,
       sandboxMode: settings.deepseek.sandboxMode,
       hasApiKey: Boolean(settings.deepseek.apiKey.trim() || process.env.DEEPSEEK_API_KEY?.trim()),
-      hasRuntimeToken: Boolean(settings.deepseek.runtimeToken.trim())
+      // Reflect the *effective* token (settings override → token file cache),
+      // not just the explicit setting — Workbench auto-manages the file so a
+      // blank setting is the common case yet auth is wired.
+      hasRuntimeToken: Boolean(resolveEffectiveRuntimeToken(settings))
     },
     binary,
     config: {
@@ -382,6 +390,17 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
         ok: false as const,
         message: error instanceof Error ? error.message : String(error)
       }
+    }
+  })
+
+  // Settings UI calls this on mount so the token field shows the cached
+  // fingerprint immediately, instead of "auto-managed" until the user clicks
+  // Regenerate. Fingerprint is the same shape the regenerate IPC returns.
+  ipcMain.handle('runtime:get-token-fingerprint', async () => {
+    const token = readRuntimeTokenFile()
+    return {
+      fingerprint: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : '',
+      tokenPath: runtimeTokenFilePath()
     }
   })
 

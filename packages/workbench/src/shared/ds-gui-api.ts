@@ -89,6 +89,11 @@ export type RuntimeTokenRegenerateResult =
   | { ok: true; fingerprint: string; restarted: boolean; tokenPath?: string }
   | { ok: false; message: string }
 
+export type RuntimeTokenFingerprintResult = {
+  fingerprint: string
+  tokenPath?: string
+}
+
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
@@ -120,6 +125,7 @@ export type DsGuiApi = {
   startSse: (threadId: string, sinceSeq: number, streamId?: string) => Promise<{ streamId: string }>
   stopSse: (streamId: string) => Promise<boolean>
   regenerateRuntimeToken: () => Promise<RuntimeTokenRegenerateResult>
+  getRuntimeTokenFingerprint: () => Promise<RuntimeTokenFingerprintResult>
   onSseEvent: (handler: (payload: SseEventPayload) => void) => () => void
   onSseEnd: (handler: (payload: SseEndPayload) => void) => () => void
   onSseError: (handler: (payload: SseErrorPayload) => void) => () => void

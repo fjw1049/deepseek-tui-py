@@ -869,9 +869,19 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
             const offErr = window.dsGui.onSseError(({ streamId: sid, message, status }) => {
               if (sid !== streamId) return
+              // 401 means the cached / settings token no longer matches what
+              // the runtime expects (e.g. user clicked Regenerate on another
+              // window, or CLI rotated the file). Surface a typed error so
+              // the UI can show a "Regenerate token" affordance instead of a
+              // generic transport message — and never retry, the bearer
+              // won't fix itself by waiting.
+              const isAuthRejected = status === 401
+              const errMessage = isAuthRejected
+                ? `runtime_auth_required: ${message ?? 'bearer token rejected by /v1/* — open Settings → Regenerate'}`
+                : message ?? `sse error ${status ?? ''}`
               finish({
                 type: 'error',
-                error: new Error(message ?? `sse error ${status ?? ''}`),
+                error: new Error(errMessage),
                 status
               })
             })
