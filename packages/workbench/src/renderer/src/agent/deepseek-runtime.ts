@@ -608,27 +608,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
   }
 
   async deleteThread(threadId: string): Promise<void> {
-    const encoded = encodeURIComponent(threadId)
-    const attempts: Array<{ path: string; method: string; body?: string; stopOnFailure?: boolean }> = [
-      // Newer runtimes expose archive semantics via PATCH instead of DELETE.
-      { path: `/v1/threads/${encoded}`, method: 'PATCH', body: JSON.stringify({ archived: true }) },
-      { path: `/v1/threads/${encoded}`, method: 'DELETE' },
-      { path: `/v1/threads/${encoded}/delete`, method: 'POST' },
-      { path: `/v1/threads/${encoded}`, method: 'POST', body: JSON.stringify({ deleted: true }) },
-      // Last fallback for some compatibility layers.
-      { path: `/v1/threads/${encoded}`, method: 'PATCH', body: JSON.stringify({ deleted: true }) }
-    ]
-    let last: RuntimeErrorJson & { message: string } | null = null
-
-    for (const attempt of attempts) {
-      const r = await window.dsGui.runtimeRequest(attempt.path, attempt.method, attempt.body)
-      if (r.ok) return
-      last = readRuntimeError(r.body, `delete thread failed: ${r.status}`)
-      // Retry alternate compatibility paths only for "not found"/"method not allowed".
-      if (r.status !== 404 && r.status !== 405) break
+    // GUI v1 archives threads via PATCH; the runtime never exposed DELETE.
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}`,
+      'PATCH',
+      JSON.stringify({ archived: true })
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `archive thread failed: ${r.status}`))
     }
-
-    throw toRuntimeError(last ?? { message: 'delete thread failed' })
   }
 
   async subscribeThreadEvents(
@@ -660,6 +648,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
     let nextSinceSeq = sinceSeq
     let reconnectDelayMs = 750
+    let consecutiveFailures = 0
+    // After ~6 consecutive transient failures (~30 s of backoff) surface the
+    // error to the UI instead of silently retrying forever — covers "Python
+    // runtime crashed" / "port reclaimed" cases that would otherwise look like
+    // a hung GUI.
+    const RECONNECT_FAILURE_LIMIT = 6
 
     while (!signal.aborted) {
       const streamId = createSseStreamId()
@@ -712,6 +706,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             const offData = window.dsGui.onSseEvent(({ streamId: sid, data }) => {
               if (sid !== streamId) return
               reconnectDelayMs = 750
+              consecutiveFailures = 0
               const row = data as {
                 seq?: number
                 event?: string
@@ -820,6 +815,24 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 return
               }
 
+              if (ev === 'thread.updated' && sink.onThreadUpdated) {
+                const thread = payload.thread as Record<string, unknown> | undefined
+                const changes = (payload.changes as Record<string, unknown> | undefined) ?? {}
+                const threadId = typeof thread?.id === 'string' ? thread.id : undefined
+                if (threadId) {
+                  const titleRaw = thread?.title
+                  const title =
+                    typeof titleRaw === 'string'
+                      ? titleRaw
+                      : titleRaw === null
+                        ? null
+                        : undefined
+                  const archived = typeof thread?.archived === 'boolean' ? thread.archived : undefined
+                  sink.onThreadUpdated({ threadId, title, archived, changes })
+                }
+                return
+              }
+
               if (ev === 'approval.required') {
                 const approvalId = String(payload.approval_id ?? payload.id ?? '')
                 if (!approvalId) return
@@ -891,9 +904,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         )
 
         if (signal.aborted) return
-        if (outcome.type === 'error' && isFatalSseStatus(outcome.status)) {
-          sink.onError(outcome.error)
-          return
+        if (outcome.type === 'error') {
+          if (isFatalSseStatus(outcome.status)) {
+            sink.onError(outcome.error)
+            return
+          }
+          consecutiveFailures += 1
+          if (consecutiveFailures >= RECONNECT_FAILURE_LIMIT) {
+            sink.onError(outcome.error)
+            return
+          }
+        } else {
+          consecutiveFailures = 0
         }
       } catch (e) {
         if (signal.aborted) return

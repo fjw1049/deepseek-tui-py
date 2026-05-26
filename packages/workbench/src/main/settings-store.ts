@@ -123,10 +123,11 @@ const defaultSettings = (): AppSettingsV1 => ({
     baseUrl: DEFAULT_DEEPSEEK_BASE_URL,
     runtimeToken: '',
     extraCorsOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    // `serve --http` defaults to prompting for write tools, but the GUI has no
-    // native terminal prompt. Default to auto so GUI turns can send the runtime
-    // `auto_approve: true`; users can tighten this from Settings if needed.
-    approvalPolicy: 'auto',
+    // Default to on-request so the GUI surfaces an approval dialog before any
+    // write tool / shell command runs. Auto used to be the default but it
+    // silently bypassed the entire ApprovalBridge — equivalent to running
+    // sandbox-disabled. Users can opt back into 'auto' from Settings.
+    approvalPolicy: 'on-request',
     sandboxMode: 'workspace-write'
   },
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,

@@ -844,15 +844,26 @@ export function SettingsView(): ReactElement {
                     title={t('runtimeToken')}
                     description={t('runtimeTokenDesc')}
                     control={
-                      <SecretInput
-                        value={form.deepseek.runtimeToken}
-                        onChange={(value) => update({ deepseek: { runtimeToken: value } })}
-                        visible={showRuntimeToken}
-                        onToggleVisibility={() => setShowRuntimeToken((value) => !value)}
-                        showLabel={t('showSecret')}
-                        hideLabel={t('hideSecret')}
-                        className="md:max-w-md"
-                      />
+                      <div className="flex flex-col gap-2 md:max-w-md">
+                        <input
+                          type="text"
+                          readOnly
+                          className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 font-mono text-[12px] text-ds-ink/70 shadow-sm focus:outline-none"
+                          value={
+                            form.deepseek.runtimeToken
+                              ? `${form.deepseek.runtimeToken.slice(0, 8)}…${form.deepseek.runtimeToken.slice(-4)}`
+                              : t('runtimeTokenAutoManaged')
+                          }
+                          aria-label={t('runtimeToken')}
+                        />
+                        <button
+                          type="button"
+                          className="self-start rounded-md border border-ds-border px-2 py-1 text-[12px] hover:border-accent/40"
+                          onClick={() => update({ deepseek: { runtimeToken: '' } })}
+                        >
+                          {t('runtimeTokenRegenerate')}
+                        </button>
+                      </div>
                     }
                   />
                   <SettingRow

@@ -117,6 +117,14 @@ export type ThreadDeltaEvent = {
   seq?: number
 }
 
+export type ThreadUpdatedPayload = {
+  threadId: string
+  title?: string | null
+  archived?: boolean
+  /** Subset of fields that actually changed in this update. */
+  changes: Record<string, unknown>
+}
+
 export type ThreadEventSink = {
   onSeq(seq: number): void
   onDeltas(deltas: ThreadDeltaEvent[]): void
@@ -127,6 +135,8 @@ export type ThreadEventSink = {
   onUserInputStatus(ev: UserInputStatusPayload): void
   onTurnComplete(): void
   onError(err: Error): void
+  /** Optional: thread metadata changed (title / archived). */
+  onThreadUpdated?(ev: ThreadUpdatedPayload): void
 }
 
 export interface AgentProvider {

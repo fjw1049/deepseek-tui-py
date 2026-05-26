@@ -24,7 +24,10 @@ def test_runtime_event_payload_shape() -> None:
     )
     payload = runtime_event_payload(record)
     assert payload["seq"] == 1
+    # The Workbench provider reads ``row.event`` straight from the JSON body
+    # rather than parsing the ``event:`` SSE field — keep the redundant copy.
     assert payload["event"] == "item.delta"
+    assert "thread_id" in payload and "seq" in payload and "payload" in payload
     assert payload["payload"]["kind"] == "agent_message"
 
 

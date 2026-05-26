@@ -109,10 +109,15 @@ def build_fastapi_app(
         started = time.monotonic()
         response = await call_next(request)
         elapsed_ms = int((time.monotonic() - started) * 1000)
+        # Defense-in-depth: starlette ``request.url.path`` is already path-only,
+        # but explicitly strip any '?' that might leak through if the upstream
+        # contract changes. SSE clients pass ?token=... so this matters.
+        raw_path = request.url.path
+        safe_path = raw_path.split("?", 1)[0]
         logger.info(
             "http_access method=%s path=%s status=%d duration_ms=%d",
             request.method,
-            request.url.path,
+            safe_path,
             response.status_code,
             elapsed_ms,
         )

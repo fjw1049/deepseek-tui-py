@@ -625,16 +625,25 @@ async function runtimeRequest(
     return { ok: res.ok, status: res.status, body: text }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    logError('runtime-request', `HTTP request to ${pathAndQuery} failed`, { message })
+    const isAbort = e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
+    // Synthesize HTTP-like status codes so callers can branch on connectivity
+    // class without parsing free-form messages: 408 = local timeout (abort),
+    // 503 = connection refused / unreachable, 0 = unknown.
+    const status = isAbort ? 408 : 503
+    logError('runtime-request', `HTTP request to ${pathAndQuery} failed`, { message, status })
     try {
       const parsed = JSON.parse(message) as { error?: string; message?: string }
       if (parsed.error || parsed.message) {
-        return runtimeFailure(parsed.error ?? 'runtime_request_failed', parsed.message ?? message)
+        return runtimeFailure(
+          parsed.error ?? 'runtime_request_failed',
+          parsed.message ?? message,
+          status
+        )
       }
     } catch {
       /* use generic fallback below */
     }
-    return runtimeFailure('fetch_failed', message)
+    return runtimeFailure(isAbort ? 'request_timeout' : 'fetch_failed', message, status)
   }
 }
 

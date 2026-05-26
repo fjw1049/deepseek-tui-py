@@ -53,10 +53,14 @@ def attach_runtime_api(
 def attach_cors(app: Any, origins: list[str]) -> None:
     from starlette.middleware.cors import CORSMiddleware
 
+    # Bearer tokens travel in the Authorization header, not cookies, so
+    # ``allow_credentials`` stays False. Combining credentials=True with a
+    # user-configurable origin list would widen the cross-site attack surface
+    # for no benefit on a localhost-only runtime.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

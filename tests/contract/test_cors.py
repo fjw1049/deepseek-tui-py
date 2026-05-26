@@ -55,3 +55,17 @@ async def test_cors_preflight_v1_threads(cors_client: AsyncClient) -> None:
     assert r.status_code == 200
     assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
     assert "POST" in (r.headers.get("access-control-allow-methods") or "")
+
+
+@pytest.mark.asyncio
+async def test_cors_does_not_allow_credentials(cors_client: AsyncClient) -> None:
+    """Bearer tokens travel in Authorization headers, not cookies — combining
+    user-configurable origins with allow_credentials=True would widen the
+    cross-site attack surface for no benefit on a localhost runtime."""
+    r = await cors_client.get(
+        "/health",
+        headers={"Origin": "http://localhost:5173"},
+    )
+    # Starlette only sets the header when credentials=True, so its absence is
+    # the contract.
+    assert r.headers.get("access-control-allow-credentials") is None
