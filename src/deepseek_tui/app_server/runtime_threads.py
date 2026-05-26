@@ -118,6 +118,8 @@ class ThreadRecord(BaseModel):
     task_id: str | None = None
     coherence_state: str = "intro"
     title: str | None = None
+    source_session_id: str | None = None
+    source_session_path: str | None = None
 
 
 class TurnRecord(BaseModel):
@@ -484,22 +486,63 @@ def reconstruct_messages_from_turns(
 
     Mirrors Rust ``RuntimeThreadManager::reconstruct_messages_from_turns``.
     """
-    from deepseek_tui.protocol.messages import Message, Role, TextBlock
+    from deepseek_tui.protocol.messages import (
+        Message,
+        Role,
+        TextBlock,
+        ToolResultBlock,
+        ToolUseBlock,
+    )
 
     messages: list[Message] = []
     for turn in store.list_turns_for_thread(thread_id):
         for item in _ordered_turn_items(store, turn):
             text = (item.detail or item.summary or "").strip()
-            if not text:
-                continue
             if item.kind == TurnItemKind.USER_MESSAGE:
+                if not text:
+                    continue
                 messages.append(
                     Message(role=Role.USER, content=[TextBlock(text=text)])
                 )
             elif item.kind == TurnItemKind.AGENT_MESSAGE:
+                if not text:
+                    continue
                 messages.append(
                     Message(role=Role.ASSISTANT, content=[TextBlock(text=text)])
                 )
+            elif item.kind in {
+                TurnItemKind.TOOL_CALL,
+                TurnItemKind.COMMAND_EXECUTION,
+                TurnItemKind.FILE_CHANGE,
+            }:
+                meta = item.metadata if isinstance(item.metadata, dict) else {}
+                tool_use_id = str(meta.get("tool_use_id") or item.id)
+                tool_name = str(meta.get("tool_name") or item.summary or "tool")
+                arguments = meta.get("arguments")
+                if not isinstance(arguments, dict):
+                    arguments = {}
+                messages.append(
+                    Message.assistant_with_tools(
+                        [
+                            ToolUseBlock(
+                                id=tool_use_id,
+                                name=tool_name,
+                                input=arguments,
+                            )
+                        ]
+                    )
+                )
+                if item.status in {
+                    TurnItemLifecycleStatus.COMPLETED,
+                    TurnItemLifecycleStatus.FAILED,
+                } and text:
+                    messages.append(
+                        Message.tool_result(
+                            tool_use_id,
+                            text,
+                            is_error=item.status == TurnItemLifecycleStatus.FAILED,
+                        )
+                    )
     return messages
 
 

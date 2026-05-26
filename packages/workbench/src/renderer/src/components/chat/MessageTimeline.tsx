@@ -2154,6 +2154,13 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
             </button>
             <button
               type="button"
+              className="rounded-lg bg-emerald-700/90 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-emerald-800"
+              onClick={() => void resolveApproval(block.id, 'allow', true)}
+            >
+              {t('approvalAllowRemember')}
+            </button>
+            <button
+              type="button"
               className="rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover"
               onClick={() => void resolveApproval(block.id, 'deny')}
             >

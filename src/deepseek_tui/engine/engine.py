@@ -1557,6 +1557,31 @@ class Engine:
             tool_call.name,
             getattr(approval_request, "risk_level", None),
         )
+        blocked_reason = getattr(approval_request, "reason", "") or ""
+        if blocked_reason.startswith("blocked by approval_policy=never"):
+            emit_tool_audit(
+                {
+                    "event": "tool.approval_decision",
+                    "tool_id": tool_call.id,
+                    "tool_name": tool_call.name,
+                    "decision": ApprovalDecision.DENIED.value,
+                }
+            )
+            await self.handle.emit(
+                ApprovalResolvedEvent(
+                    tool_call_id=tool_call.id,
+                    approved=False,
+                    reason=blocked_reason,
+                )
+            )
+            await self.handle.emit(
+                SandboxDeniedEvent(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    reason=blocked_reason,
+                )
+            )
+            return True
         # The TUI approval dialog needs to surface *what* is being
         # approved — "exec_shell + medium risk" is useless on its own.
         # Populate ``input_summary`` from the tool arguments here so the

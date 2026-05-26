@@ -1,5 +1,6 @@
 import type {
   ChatBlock,
+  UserInputQuestion,
   UserMessageEventPayload
 } from '../agent/types'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
@@ -18,6 +19,41 @@ export function threadBelongsToWorkspace(
   const normalizedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
   if (!normalizedWorkspace) return false
   return normalizeWorkspaceRoot(thread.workspace) === normalizedWorkspace
+}
+
+export type PendingUserInputPayload = {
+  requestId: string
+  questions: UserInputQuestion[]
+}
+
+export function mergePendingUserInputBlocks(
+  blocks: ChatBlock[],
+  pending: PendingUserInputPayload[]
+): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
+  if (!pending.length) return { blocks, firstAddedBlockId: null }
+  const existing = new Set(
+    blocks
+      .filter((block) => block.kind === 'user_input')
+      .map((block) => block.requestId)
+  )
+  const additions: ChatBlock[] = []
+  for (const item of pending) {
+    if (!item.requestId || existing.has(item.requestId)) continue
+    existing.add(item.requestId)
+    additions.push({
+      kind: 'user_input',
+      id: item.requestId,
+      createdAt: new Date().toISOString(),
+      requestId: item.requestId,
+      questions: item.questions,
+      status: 'pending'
+    })
+  }
+  if (!additions.length) return { blocks, firstAddedBlockId: null }
+  return {
+    blocks: [...blocks, ...additions],
+    firstAddedBlockId: additions[0]?.id ?? null
+  }
 }
 
 export function mergePendingApprovalBlocks(

@@ -10,6 +10,7 @@ import asyncio
 import logging
 import uuid
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -127,6 +128,13 @@ class _ApprovalDecision:
     RETRY_FULL_ACCESS = "retry_full_access"
 
 
+@dataclass(slots=True)
+class _PendingUserInputRecord:
+    thread_id: str
+    turn_id: str | None
+    questions: list[dict[str, Any]]
+
+
 # --- RuntimeThreadManager ----------------------------------------------------
 
 
@@ -154,6 +162,7 @@ class RuntimeThreadManager:
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
         self._active_lock = asyncio.Lock()
+        self._pending_user_inputs: dict[str, _PendingUserInputRecord] = {}
 
         self.event_bus: AsyncBroadcast[RuntimeEventRecord] = AsyncBroadcast(
             capacity=EVENT_CHANNEL_CAPACITY
@@ -250,6 +259,8 @@ class RuntimeThreadManager:
             )
         )
         title = (req.title or meta_title or f"TUI {session_id[:8]}").strip()
+        thread.source_session_id = session_id
+        thread.source_session_path = str(path.resolve())
         if title:
             thread.title = title
             thread.updated_at = datetime.now(timezone.utc)
@@ -336,13 +347,41 @@ class RuntimeThreadManager:
                 if request_id not in state.handle.pending_user_inputs:
                     continue
                 if cancelled:
-                    return state.handle.resolve_user_input(
+                    resolved = state.handle.resolve_user_input(
                         request_id, {"cancelled": True}
                     )
-                return state.handle.resolve_user_input(
-                    request_id, {"answers": answers or []}
-                )
+                else:
+                    resolved = state.handle.resolve_user_input(
+                        request_id, {"answers": answers or []}
+                    )
+                if resolved:
+                    self._pending_user_inputs.pop(request_id, None)
+                return resolved
         return False
+
+    async def list_pending_user_inputs(
+        self, thread_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        async with self._active_lock:
+            for tid, state in self._active.items():
+                if thread_id and tid != thread_id:
+                    continue
+                for request_id, fut in state.handle.pending_user_inputs.items():
+                    if fut.done():
+                        continue
+                    meta = self._pending_user_inputs.get(request_id)
+                    questions = meta.questions if meta is not None else []
+                    out.append(
+                        {
+                            "request_id": request_id,
+                            "id": request_id,
+                            "thread_id": tid,
+                            "turn_id": meta.turn_id if meta else None,
+                            "questions": questions,
+                        }
+                    )
+        return out
 
     async def get_thread_detail(self, thread_id: str) -> ThreadDetail:
         thread = self.store.load_thread(thread_id)
@@ -702,6 +741,7 @@ class RuntimeThreadManager:
                 return state.handle, state.engine_task
 
         from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.execpolicy.engine import exec_policy_for_config
 
         handle = EngineHandle()
         workspace = Path(thread.workspace).expanduser().resolve()
@@ -716,6 +756,7 @@ class RuntimeThreadManager:
             task_data_dir=self.manager_cfg.task_data_dir,
             start_mcp=bool(getattr(self.config.features, "mcp", False)),
             approval_handler=approval_handler,
+            exec_policy=exec_policy_for_config(self.config),
         )
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
@@ -1012,6 +1053,36 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, UserInputRequiredEvent):
+                self._pending_user_inputs[event.tool_call_id] = _PendingUserInputRecord(
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    questions=list(event.questions),
+                )
+                now = datetime.now(timezone.utc)
+                item_id = event.tool_call_id
+                try:
+                    self.store.load_item(item_id)
+                except FileNotFoundError:
+                    import json as _json
+
+                    item = TurnItemRecord(
+                        id=item_id,
+                        turn_id=turn_id,
+                        kind=TurnItemKind.TOOL_CALL,
+                        status=TurnItemLifecycleStatus.IN_PROGRESS,
+                        summary="request_user_input",
+                        detail=_json.dumps({"questions": event.questions}),
+                        started_at=now,
+                    )
+                    self.store.save_item(item)
+                    self._attach_item_to_turn(turn_id, item_id)
+                    await self._emit_event(
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        "item.started",
+                        {"item": item.model_dump(mode="json")},
+                    )
                 await self._emit_event(
                     thread_id, turn_id, None, "user_input.required",
                     {
@@ -1022,15 +1093,33 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, SubAgentMailboxEvent):
+                import json as _json
+
+                mailbox_payload = {
+                    "seq": event.seq,
+                    "message": _mailbox_message_payload(event.message),
+                }
+                now = datetime.now(timezone.utc)
+                item_id = f"item_{uuid.uuid4().hex[:8]}"
+                item = TurnItemRecord(
+                    id=item_id,
+                    turn_id=turn_id,
+                    kind=TurnItemKind.STATUS,
+                    status=TurnItemLifecycleStatus.COMPLETED,
+                    summary=f"subagent:{event.message.agent_id}",
+                    detail=_json.dumps(mailbox_payload, default=str),
+                    metadata={"subagent_mailbox": True},
+                    started_at=now,
+                    ended_at=now,
+                )
+                self.store.save_item(item)
+                self._attach_item_to_turn(turn_id, item_id)
                 await self._emit_event(
                     thread_id,
                     turn_id,
                     None,
                     "subagent.mailbox",
-                    {
-                        "seq": event.seq,
-                        "message": _mailbox_message_payload(event.message),
-                    },
+                    mailbox_payload,
                 )
 
             elif isinstance(event, ErrorEvent):

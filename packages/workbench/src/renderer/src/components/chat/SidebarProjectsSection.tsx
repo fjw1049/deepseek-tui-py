@@ -13,7 +13,8 @@ import {
   Trash2,
   GitFork,
   RotateCcw,
-  Archive
+  Archive,
+  Download
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { formatRelativeTime } from '../../lib/format-relative-time'
@@ -37,6 +38,7 @@ type SidebarProjectsSectionProps = {
   onForkThread: (threadId: string) => Promise<void>
   onResumeThread: (threadId: string) => Promise<void>
   onCompactThread: (threadId: string) => Promise<void>
+  onExportThread: (threadId: string) => Promise<{ path: string } | null>
   t: (k: string, opts?: Record<string, unknown>) => string
 }
 
@@ -57,11 +59,14 @@ export function SidebarProjectsSection({
   onForkThread,
   onResumeThread,
   onCompactThread,
+  onExportThread,
   t
 }: SidebarProjectsSectionProps): ReactElement {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
+  const [exportingThreadIds, setExportingThreadIds] = useState<Record<string, boolean>>({})
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
 
   const groups = useMemo(() => {
     const map = new Map<string, NormalizedThread[]>()
@@ -111,8 +116,32 @@ export function SidebarProjectsSection({
     await onRemoveWorkspace(workspacePath)
   }
 
+  const handleExportThread = async (threadId: string): Promise<void> => {
+    const trimmed = threadId.trim()
+    if (!trimmed || exportingThreadIds[trimmed] || deletingThreadIds[trimmed]) return
+    setExportingThreadIds((prev) => ({ ...prev, [trimmed]: true }))
+    setExportNotice(null)
+    try {
+      const result = await onExportThread(trimmed)
+      if (result?.path) {
+        setExportNotice(t('exportSessionSuccess', { path: result.path }))
+      }
+    } finally {
+      setExportingThreadIds((prev) => {
+        const next = { ...prev }
+        delete next[trimmed]
+        return next
+      })
+    }
+  }
+
   return (
     <div className="ds-no-drag flex min-h-0 flex-1 flex-col">
+      {exportNotice ? (
+        <p className="mx-2 mb-2 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2 text-[12px] leading-5 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/35 dark:text-emerald-100">
+          {exportNotice}
+        </p>
+      ) : null}
       <div className="flex items-center justify-between px-2 pb-1 pt-0.5">
         <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ds-faint">
           {t('sidebarProjects')}
@@ -223,6 +252,7 @@ export function SidebarProjectsSection({
                         thread={thread}
                         active={activeThreadId === thread.id}
                         deleting={deletingThreadIds[thread.id] === true}
+                        exporting={exportingThreadIds[thread.id] === true}
                         locale={locale}
                         showRunning={
                           thread.status?.trim().toLowerCase() === 'running' ||
@@ -237,6 +267,7 @@ export function SidebarProjectsSection({
                         onFork={() => void onForkThread(thread.id)}
                         onResume={() => void onResumeThread(thread.id)}
                         onCompact={() => void onCompactThread(thread.id)}
+                        onExport={() => void handleExportThread(thread.id)}
                         canCompact={activeThreadId === thread.id && !busy}
                       />
                     ))
@@ -273,6 +304,7 @@ type ThreadRowProps = {
   thread: NormalizedThread
   active: boolean
   deleting: boolean
+  exporting: boolean
   locale: string
   showRunning: boolean
   showUnread: boolean
@@ -282,12 +314,14 @@ type ThreadRowProps = {
   onFork: () => void
   onResume: () => void
   onCompact: () => void
+  onExport: () => void
 }
 
 function ThreadRow({
   thread,
   active,
   deleting,
+  exporting,
   locale,
   showRunning,
   showUnread,
@@ -296,7 +330,8 @@ function ThreadRow({
   onDelete,
   onFork,
   onResume,
-  onCompact
+  onCompact,
+  onExport
 }: ThreadRowProps): ReactElement {
   const { t } = useTranslation('common')
   const showUnreadDot = showUnread && !showRunning
@@ -319,7 +354,7 @@ function ThreadRow({
         type="button"
         onClick={onSelect}
         className="flex w-full items-center gap-1.5 px-3 py-2 pr-[5.5rem] text-left"
-        disabled={deleting}
+        disabled={deleting || exporting}
         aria-label={
           showRunning
             ? `${thread.title} — ${t('sidebarThreadRunning')}`
@@ -365,7 +400,7 @@ function ThreadRow({
               event.stopPropagation()
               onCompact()
             }}
-            disabled={deleting}
+            disabled={deleting || exporting}
             className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
             title={t('sidebarThreadCompact')}
             aria-label={t('sidebarThreadCompact')}
@@ -379,7 +414,7 @@ function ThreadRow({
             event.stopPropagation()
             onResume()
           }}
-          disabled={deleting}
+          disabled={deleting || exporting}
           className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
           title={t('sidebarThreadResume')}
           aria-label={t('sidebarThreadResume')}
@@ -392,7 +427,7 @@ function ThreadRow({
             event.stopPropagation()
             onFork()
           }}
-          disabled={deleting}
+          disabled={deleting || exporting}
           className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
           title={t('sidebarThreadFork')}
           aria-label={t('sidebarThreadFork')}
@@ -403,9 +438,26 @@ function ThreadRow({
           type="button"
           onClick={(event) => {
             event.stopPropagation()
+            onExport()
+          }}
+          disabled={deleting || exporting}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          title={t('sidebarThreadExport')}
+          aria-label={t('sidebarThreadExport')}
+        >
+          {exporting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+          ) : (
+            <Download className="h-3.5 w-3.5" strokeWidth={1.9} />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
             onDelete()
           }}
-          disabled={deleting}
+          disabled={deleting || exporting}
           className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-100"
           title={t('sidebarThreadDelete')}
           aria-label={t('sidebarThreadDelete')}

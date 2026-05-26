@@ -44,6 +44,13 @@ export type DeepseekRuntimeDiagnosticIssue = {
   path?: string
   line?: number
 }
+export type DeepseekRuntimeCatalogProbe = {
+  ok: boolean
+  status: number
+  count: number | null
+  warningCount?: number | null
+  message?: string
+}
 export type DeepseekRuntimeDiagnosticsResult = {
   checkedAt: string
   settings: {
@@ -74,6 +81,9 @@ export type DeepseekRuntimeDiagnosticsResult = {
     health: { ok: boolean; status: number; body: string; message?: string }
     threadApi: { ok: boolean; status: number; body: string; message?: string } | null
     workspaceStatus: { ok: boolean; status: number; body: string; message?: string } | null
+    skills: DeepseekRuntimeCatalogProbe | null
+    tasks: DeepseekRuntimeCatalogProbe | null
+    sessions: DeepseekRuntimeCatalogProbe | null
   }
   issues: DeepseekRuntimeDiagnosticIssue[]
 }

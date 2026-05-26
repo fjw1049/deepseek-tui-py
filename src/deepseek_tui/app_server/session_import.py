@@ -17,9 +17,16 @@ from deepseek_tui.app_server.runtime_threads import (
     TurnItemLifecycleStatus,
     TurnItemRecord,
     TurnRecord,
+    tool_kind_for_name,
 )
 from deepseek_tui.config.paths import user_sessions_dir
-from deepseek_tui.protocol.messages import Message, Role, TextBlock
+from deepseek_tui.protocol.messages import (
+    Message,
+    Role,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 from deepseek_tui.utils import summarize_text
 
 SUMMARY_LIMIT = 280
@@ -79,9 +86,10 @@ def import_messages_into_store(
     thread_id: str,
     messages: list[Message],
 ) -> None:
-    """Persist imported chat as completed turns + items (user/assistant only)."""
+    """Persist imported chat as completed turns + items."""
     now = datetime.now(timezone.utc)
     current_turn: TurnRecord | None = None
+    open_tool_items: dict[str, str] = {}
 
     def finalize_turn() -> None:
         nonlocal current_turn
@@ -94,6 +102,13 @@ def import_messages_into_store(
             current_turn.duration_ms = int(delta.total_seconds() * 1000)
         store.save_turn(current_turn)
         current_turn = None
+        open_tool_items.clear()
+
+    def append_item(item: TurnItemRecord) -> None:
+        assert current_turn is not None
+        current_turn.item_ids.append(item.id)
+        store.save_item(item)
+        store.save_turn(current_turn)
 
     for message in messages:
         if message.role == Role.USER:
@@ -121,26 +136,77 @@ def import_messages_into_store(
                 started_at=now,
                 ended_at=now,
             )
-            current_turn.item_ids.append(user_item.id)
-            store.save_item(user_item)
-            store.save_turn(current_turn)
+            append_item(user_item)
         elif message.role == Role.ASSISTANT and current_turn is not None:
             text = _message_text(message)
-            if not text:
-                continue
-            item = TurnItemRecord(
-                id=f"item_{uuid.uuid4().hex[:8]}",
-                turn_id=current_turn.id,
-                kind=TurnItemKind.AGENT_MESSAGE,
-                status=TurnItemLifecycleStatus.COMPLETED,
-                summary=summarize_text(text, SUMMARY_LIMIT),
-                detail=text,
-                started_at=now,
-                ended_at=now,
-            )
-            current_turn.item_ids.append(item.id)
-            store.save_item(item)
-            store.save_turn(current_turn)
+            if text:
+                append_item(
+                    TurnItemRecord(
+                        id=f"item_{uuid.uuid4().hex[:8]}",
+                        turn_id=current_turn.id,
+                        kind=TurnItemKind.AGENT_MESSAGE,
+                        status=TurnItemLifecycleStatus.COMPLETED,
+                        summary=summarize_text(text, SUMMARY_LIMIT),
+                        detail=text,
+                        started_at=now,
+                        ended_at=now,
+                    )
+                )
+            for block in message.content:
+                if not isinstance(block, ToolUseBlock):
+                    continue
+                item_id = f"item_{uuid.uuid4().hex[:8]}"
+                open_tool_items[block.id] = item_id
+                append_item(
+                    TurnItemRecord(
+                        id=item_id,
+                        turn_id=current_turn.id,
+                        kind=tool_kind_for_name(block.name),
+                        status=TurnItemLifecycleStatus.IN_PROGRESS,
+                        summary=summarize_text(block.name, SUMMARY_LIMIT),
+                        detail=json.dumps(block.input, default=str),
+                        metadata={
+                            "tool_use_id": block.id,
+                            "tool_name": block.name,
+                            "arguments": block.input,
+                        },
+                        started_at=now,
+                    )
+                )
+        elif message.role == Role.TOOL and current_turn is not None:
+            for block in message.content:
+                if not isinstance(block, ToolResultBlock):
+                    continue
+                item_id = open_tool_items.get(block.tool_use_id)
+                status = (
+                    TurnItemLifecycleStatus.FAILED
+                    if block.is_error
+                    else TurnItemLifecycleStatus.COMPLETED
+                )
+                if item_id:
+                    try:
+                        item = store.load_item(item_id)
+                    except FileNotFoundError:
+                        item = None
+                    if item is not None:
+                        item.status = status
+                        item.detail = block.content
+                        item.ended_at = now
+                        store.save_item(item)
+                        continue
+                append_item(
+                    TurnItemRecord(
+                        id=f"item_{uuid.uuid4().hex[:8]}",
+                        turn_id=current_turn.id,
+                        kind=TurnItemKind.TOOL_CALL,
+                        status=status,
+                        summary="tool_result",
+                        detail=block.content,
+                        metadata={"tool_use_id": block.tool_use_id},
+                        started_at=now,
+                        ended_at=now,
+                    )
+                )
 
     finalize_turn()
 

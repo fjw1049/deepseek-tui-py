@@ -24,6 +24,7 @@ type Props = {
   onForkThread: (id: string) => Promise<void>
   onResumeThread: (id: string) => Promise<void>
   onCompactThread: (id: string) => Promise<void>
+  onExportThread: (id: string) => Promise<{ path: string } | null>
   onNewChat: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onImportSession: () => void
@@ -42,6 +43,7 @@ export function Sidebar({
   onForkThread,
   onResumeThread,
   onCompactThread,
+  onExportThread,
   onNewChat,
   onNewChatInWorkspace,
   onImportSession,
@@ -141,6 +143,7 @@ export function Sidebar({
         onForkThread={onForkThread}
         onResumeThread={onResumeThread}
         onCompactThread={onCompactThread}
+        onExportThread={onExportThread}
         t={t}
       />
 

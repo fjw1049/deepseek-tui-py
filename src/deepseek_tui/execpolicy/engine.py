@@ -7,7 +7,20 @@ from deepseek_tui.execpolicy.models import (
     RiskLevel,
     ToolCategory,
 )
+from typing import TYPE_CHECKING
+
 from deepseek_tui.tools.base import ToolCapability
+
+if TYPE_CHECKING:
+    from deepseek_tui.config.models import Config
+
+
+def exec_policy_for_config(config: Config | None) -> ExecPolicyEngine:
+    """Build an :class:`ExecPolicyEngine` from runtime ``Config``."""
+    if config is None:
+        return ExecPolicyEngine()
+    policy = (getattr(config, "approval_policy", None) or "on-request").strip()
+    return ExecPolicyEngine(approval_policy=policy or "on-request")
 
 
 class ExecPolicyEngine:

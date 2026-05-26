@@ -8,16 +8,20 @@
 - [x] trust_mode → Engine.tool_context
 - [x] steer 插队（`handle.steer` + chat-store）
 - [x] on-request 审批 UI 手验清单 → [`WORKBENCH_APPROVAL_MANUAL_TEST.md`](./WORKBENCH_APPROVAL_MANUAL_TEST.md)
-- [x] user-input 真 turn 集成测 → `test_turn_user_input_integration.py`
+- [x] user-input 真 turn 集成测 + `GET /v1/user-inputs/pending` 恢复
+- [x] `config.approval_policy` → `ExecPolicyEngine`（HTTP + TUI Engine.create）
+- [x] 审批 `remember` → `APPROVED_SESSION`
+- [x] 子代理 mailbox 持久化 + Timeline 重载
 
 ## P1 — GUI 瘦身 ✅（运行时）
 
-- [x] Claw/updater/npm 二进制已删
+- [x] Claw/updater/npm 二进制已删（**Claw 集成仍 defer**）
 - [x] 技能扫描目录迁至 `settings.skills.extraDirs`（兼容旧 `claw.skills.extraDirs` JSON）
 
 ## P1 — Runtime API ✅
 
 - [x] OpenAPI + contract + CORS + approvals + user-inputs
+- [x] `/v1/skills` + `/v1/tasks*` + `/v1/sessions` + export-session（TUI/Workbench 会话统一）
 
 ## P2 — 工作台功能 ✅（除 defer）
 
@@ -71,4 +75,4 @@
 
 ## 测试计数
 
-`pytest tests/contract -q` → **49+**（随新增用例更新）
+`pytest tests/contract -q` → **63+**（随新增用例更新）

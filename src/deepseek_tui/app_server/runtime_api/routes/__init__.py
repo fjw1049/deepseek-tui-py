@@ -14,6 +14,9 @@ from deepseek_tui.app_server.runtime_api.routes import (
     approvals,
     events,
     health,
+    sessions,
+    skills,
+    tasks,
     threads,
     turns,
     user_inputs,
@@ -31,5 +34,8 @@ def build_runtime_api_router() -> APIRouter:
     router.include_router(events.router)
     router.include_router(approvals.router)
     router.include_router(user_inputs.router)
+    router.include_router(sessions.router)
+    router.include_router(skills.router)
+    router.include_router(tasks.router)
     router.include_router(workspace.router)
     return router

@@ -50,6 +50,7 @@ import {
   findReusableEmptyThreadId,
   hasPendingRuntimeWork,
   mergePendingApprovalBlocks,
+  mergePendingUserInputBlocks,
   reconcileOptimisticUserBlock,
   threadBelongsToWorkspace,
   threadSnapshotLooksRunning,
@@ -185,16 +186,32 @@ async function syncRuntimePendingApprovals(
   blocks: ChatBlock[],
   busy: boolean
 ): Promise<{ blocks: ChatBlock[]; scrollToBlockId: string | null }> {
-  if (!busy || typeof provider.fetchPendingApprovals !== 'function') {
+  if (!busy) {
     return { blocks, scrollToBlockId: null }
   }
-  try {
-    const pending = await provider.fetchPendingApprovals(threadId)
-    const { blocks: merged, firstAddedBlockId } = mergePendingApprovalBlocks(blocks, pending)
-    return { blocks: merged, scrollToBlockId: firstAddedBlockId }
-  } catch {
-    return { blocks, scrollToBlockId: null }
+  let nextBlocks = blocks
+  let scrollToBlockId: string | null = null
+  if (typeof provider.fetchPendingApprovals === 'function') {
+    try {
+      const pending = await provider.fetchPendingApprovals(threadId)
+      const merged = mergePendingApprovalBlocks(nextBlocks, pending)
+      nextBlocks = merged.blocks
+      scrollToBlockId = merged.firstAddedBlockId
+    } catch {
+      /* ignore */
+    }
   }
+  if (typeof provider.fetchPendingUserInputs === 'function') {
+    try {
+      const pendingInputs = await provider.fetchPendingUserInputs(threadId)
+      const merged = mergePendingUserInputBlocks(nextBlocks, pendingInputs)
+      nextBlocks = merged.blocks
+      scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
+    } catch {
+      /* ignore */
+    }
+  }
+  return { blocks: nextBlocks, scrollToBlockId }
 }
 
 function looksLikeActiveTurnError(error: unknown): boolean {
@@ -1562,6 +1579,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  exportThreadToSession: async (threadId) => {
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return null
+    }
+    const p = getProvider(get().providerId)
+    if (typeof p.exportThreadToSession !== 'function') {
+      set({ error: i18n.t('common:runtimeExportUnsupported') })
+      return null
+    }
+    try {
+      const result = await p.exportThreadToSession(threadId)
+      set({ error: null })
+      return { path: result.path }
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        ...(shouldOpenSettingsForError(e)
+          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          : {})
+      })
+      return null
+    }
+  },
+
   scrollToBlock: (blockId) => {
     const trimmed = blockId.trim()
     if (!trimmed) return
@@ -1699,7 +1741,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().sendMessage(trimmed)
   },
 
-  resolveApproval: async (blockId, decision) => {
+  resolveApproval: async (blockId, decision, remember = false) => {
     const { blocks, providerId } = get()
     const block = blocks.find((b) => b.id === blockId)
     if (!block || block.kind !== 'approval' || block.status !== 'pending') return
@@ -1712,7 +1754,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await p.submitApprovalDecision(
         block.approvalId,
         decision === 'allow' ? 'allow' : 'deny',
-        false
+        remember
       )
       set((s) => ({
         blocks: s.blocks.map((b) =>

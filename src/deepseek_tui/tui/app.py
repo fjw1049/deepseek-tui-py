@@ -251,11 +251,14 @@ class DeepSeekTUI(App[None]):
             model = self.config.model or self.config.default_text_model
             approval_handler = TUIApprovalHandler(self)
             logger.info("tui_engine_create model=%s", model)
+            from deepseek_tui.execpolicy.engine import exec_policy_for_config
+
             self._engine = await Engine.create(
                 self.handle,
                 client,
                 config=self.config,
                 default_model=model,
+                exec_policy=exec_policy_for_config(self.config),
                 approval_handler=approval_handler,
             )
             self._engine_task = asyncio.create_task(self._engine.run())

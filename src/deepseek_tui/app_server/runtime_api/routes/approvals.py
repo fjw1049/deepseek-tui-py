@@ -31,7 +31,7 @@ async def decide_approval(request: Request, approval_id: str) -> dict[str, objec
     if decision not in {"allow", "deny", "approve", "reject"}:
         raise api_error(400, "decision must be allow or deny", error="invalid_decision")
     approved = decision in {"allow", "approve"}
-    if not bridge.resolve(approval_id, approved):
+    if not bridge.resolve(approval_id, approved, remember=payload.remember):
         raise api_error(
             404, f"approval not pending: {approval_id}", error="approval_not_found"
         )

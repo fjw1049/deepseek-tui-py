@@ -13,6 +13,13 @@ from deepseek_tui.app_server.runtime_api.routes._deps import body, manager
 router = APIRouter(prefix="/v1")
 
 
+@router.get("/user-inputs/pending")
+async def list_pending_user_inputs(request: Request) -> list[dict[str, object]]:
+    mgr = manager(request)
+    thread_id = request.query_params.get("thread_id")
+    return await mgr.list_pending_user_inputs(thread_id=thread_id or None)
+
+
 class UserInputAnswersBody(BaseModel):
     answers: list[dict[str, Any]] = Field(default_factory=list)
     cancelled: bool = False

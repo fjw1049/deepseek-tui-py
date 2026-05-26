@@ -38,8 +38,13 @@ sequenceDiagram
 - **Approvals**: `ApprovalRequiredEvent` → `approval.required` SSE → GUI POST `/v1/approvals/{id}` → `ApprovalBridge` → `HttpApprovalHandler` blocks Engine until resolved
 - **Session hydration**: `_ensure_engine_loaded` → `reconstruct_messages_from_turns` → `Engine.sync_session`
 - **TUI import**: POST `/v1/threads/import-session` reads `~/.deepseek/sessions/*.json` into durable threads
+- **Session catalog**: GET `/v1/sessions` merges TUI files + Workbench threads (`import_state`: `available` | `linked` | `native`)
+- **TUI export**: POST `/v1/threads/{id}/export-session` writes TUI-compatible JSON; threads track `source_session_id` / `source_session_path`
+- **Skills / tasks**: GET `/v1/skills`, GET/POST `/v1/tasks*` (bare JSON; tasks require `features.tasks=True`)
 - **Steer**: GUI POST `…/steer` → `EngineHandle.steer()` (mid-turn queue)
-- **User input**: `UserInputRequiredEvent` → SSE → POST `/v1/user-inputs/{id}`
+- **User input**: `UserInputRequiredEvent` → SSE → POST `/v1/user-inputs/{id}`; pending via `GET /v1/user-inputs/pending`
+- **Approvals**: `remember=true` → `ApprovalDecision.APPROVED_SESSION` (session cache)
+- **Exec policy**: `config.approval_policy` → `ExecPolicyEngine` on Engine.create (TUI + HTTP)
 
 ## Verification
 

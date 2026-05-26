@@ -11,6 +11,7 @@ import {
   X
 } from 'lucide-react'
 import type {
+  DeepseekRuntimeCatalogProbe,
   DeepseekRuntimeDiagnosticIssue,
   DeepseekRuntimeDiagnosticsResult
 } from '@shared/ds-gui-api'
@@ -56,6 +57,33 @@ function responseSummary(
   if (!result) return ''
   if (result.ok) return `${result.status} OK`
   return result.message || result.body || `${result.status || 0}`
+}
+
+function catalogSummary(
+  probe: DeepseekRuntimeCatalogProbe | null | undefined,
+  kind: 'skills' | 'tasks' | 'sessions',
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  if (!probe) return '-'
+  if (probe.ok && probe.count != null) {
+    if (kind === 'skills') {
+      const warnings = probe.warningCount ?? 0
+      return warnings > 0
+        ? t('runtimeDiagnosticsSkillsCountWithWarnings', { count: probe.count, warnings })
+        : t('runtimeDiagnosticsSkillsCount', { count: probe.count })
+    }
+    if (kind === 'sessions') {
+      const linked = probe.warningCount ?? 0
+      return linked > 0
+        ? t('runtimeDiagnosticsSessionsCountWithLinked', { count: probe.count, linked })
+        : t('runtimeDiagnosticsSessionsCount', { count: probe.count })
+    }
+    return t('runtimeDiagnosticsTasksCount', { count: probe.count })
+  }
+  if (kind === 'tasks' && probe.status === 503) {
+    return t('runtimeDiagnosticsTasksDisabled')
+  }
+  return probe.message?.trim() || t('runtimeDiagnosticsCatalogUnavailable')
 }
 
 function normalizeErrorText(value: string | null): string {
@@ -333,6 +361,18 @@ export function RuntimeDiagnosticsDialog({
                     <dd className="min-w-0 break-words text-ds-ink">{responseSummary(diagnostics?.runtime.health ?? null) || '-'}</dd>
                     <dt className="text-ds-muted">{t('runtimeDiagnosticsThreadApi')}</dt>
                     <dd className="min-w-0 break-words text-ds-ink">{responseSummary(diagnostics?.runtime.threadApi ?? null) || '-'}</dd>
+                    <dt className="text-ds-muted">{t('runtimeDiagnosticsSkills')}</dt>
+                    <dd className="min-w-0 break-words text-ds-ink">
+                      {catalogSummary(diagnostics?.runtime.skills, 'skills', t)}
+                    </dd>
+                    <dt className="text-ds-muted">{t('runtimeDiagnosticsTasks')}</dt>
+                    <dd className="min-w-0 break-words text-ds-ink">
+                      {catalogSummary(diagnostics?.runtime.tasks, 'tasks', t)}
+                    </dd>
+                    <dt className="text-ds-muted">{t('runtimeDiagnosticsSessions')}</dt>
+                    <dd className="min-w-0 break-words text-ds-ink">
+                      {catalogSummary(diagnostics?.runtime.sessions, 'sessions', t)}
+                    </dd>
                     <dt className="text-ds-muted">Runtime API</dt>
                     <dd className="min-w-0 break-words text-ds-ink">
                       {workspaceRuntime

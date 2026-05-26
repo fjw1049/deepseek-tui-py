@@ -1,7 +1,43 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_approval_remember_returns_session_decision(
+    client: AsyncClient, runtime_app: object
+) -> None:
+    from deepseek_tui.app_server.runtime_api.approval_bridge import HttpApprovalHandler
+    from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
+
+    bridge = runtime_app.state.approval_bridge  # type: ignore[attr-defined]
+    approval_id = "appr_contract_remember"
+    handler = HttpApprovalHandler(bridge, thread_id="thr_test")
+
+    async def resolve_later() -> ApprovalDecision:
+        return await handler.request_approval(
+            approval_id,
+            ApprovalRequest(
+                tool_name="write_file",
+                risk_level=RiskLevel.MEDIUM,
+                category=ToolCategory.FILE_WRITE,
+                reason="write test.txt",
+            ),
+        )
+
+    decision_task = asyncio.create_task(resolve_later())
+    await asyncio.sleep(0.01)
+
+    r = await client.post(
+        f"/v1/approvals/{approval_id}",
+        json={"decision": "allow", "remember": True},
+    )
+    assert r.status_code == 200
+    decision = await asyncio.wait_for(decision_task, timeout=1.0)
+    assert decision is ApprovalDecision.APPROVED_SESSION
 
 
 @pytest.mark.asyncio

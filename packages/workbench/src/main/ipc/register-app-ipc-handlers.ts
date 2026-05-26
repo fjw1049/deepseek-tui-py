@@ -40,6 +40,11 @@ import {
 import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
 import {
+  parseSessionsProbe,
+  parseSkillsProbe,
+  parseTasksProbe
+} from '../services/runtime-catalog-probes'
+import {
   expandHomePath,
   listEditorsResult,
   normalizeSkillFolderName,
@@ -178,6 +183,16 @@ async function diagnoseDeepseekRuntime(
   const workspaceStatus = health.ok
     ? await probeRuntimeEndpoint(`${baseUrl}/v1/workspace/status`, runtimeToken)
     : null
+  const runtimeReady = health.ok && threadApi?.ok === true
+  const skillsApi = runtimeReady
+    ? await probeRuntimeEndpoint(`${baseUrl}/v1/skills`, runtimeToken)
+    : null
+  const tasksApi = runtimeReady
+    ? await probeRuntimeEndpoint(`${baseUrl}/v1/tasks?limit=50`, runtimeToken)
+    : null
+  const sessionsApi = runtimeReady
+    ? await probeRuntimeEndpoint(`${baseUrl}/v1/sessions?limit=50`, runtimeToken)
+    : null
   const issues: DeepseekRuntimeDiagnosticIssue[] = [...configIssues]
 
   if (!settings.deepseek.apiKey.trim() && !process.env.DEEPSEEK_API_KEY?.trim()) {
@@ -262,7 +277,10 @@ async function diagnoseDeepseekRuntime(
       portOwner,
       health,
       threadApi,
-      workspaceStatus
+      workspaceStatus,
+      skills: skillsApi ? parseSkillsProbe(skillsApi) : null,
+      tasks: tasksApi ? parseTasksProbe(tasksApi) : null,
+      sessions: sessionsApi ? parseSessionsProbe(sessionsApi) : null
     },
     issues
   }

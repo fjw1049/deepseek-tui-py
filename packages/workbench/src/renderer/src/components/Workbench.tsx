@@ -238,7 +238,8 @@ export function Workbench(): ReactElement {
     deleteThread,
     forkThread,
     resumeThread,
-    compactActiveThread
+    compactActiveThread,
+    exportThreadToSession
   } = useChatStore(
     useShallow((s) => ({
       threads: s.threads,
@@ -271,7 +272,8 @@ export function Workbench(): ReactElement {
       deleteThread: s.deleteThread,
       forkThread: s.forkThread,
       resumeThread: s.resumeThread,
-      compactActiveThread: s.compactActiveThread
+      compactActiveThread: s.compactActiveThread,
+      exportThreadToSession: s.exportThreadToSession
     }))
   )
   const [input, setInput] = useState('')
@@ -655,6 +657,7 @@ export function Workbench(): ReactElement {
                 }
                 await compactActiveThread()
               }}
+              onExportThread={exportThreadToSession}
               onNewChat={startNewChat}
               onNewChatInWorkspace={startNewChatInWorkspace}
               onImportSession={() => setImportSessionOpen(true)}

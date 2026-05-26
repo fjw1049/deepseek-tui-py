@@ -243,6 +243,17 @@ paths:
           description: Invalid decision
         "404":
           description: Approval not pending
+  /v1/user-inputs/pending:
+    get:
+      summary: List pending interactive user-input prompts
+      parameters:
+        - name: thread_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pending user-input list
   /v1/user-inputs/{request_id}:
     post:
       summary: Answer interactive user-input prompt
@@ -275,6 +286,121 @@ paths:
           description: Accepted
         "404":
           description: Request not found
+  /v1/sessions:
+    get:
+      summary: Unified TUI session files + Workbench thread catalog
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session catalog with import/link metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dir:
+                    type: string
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+  /v1/threads/{thread_id}/export-session:
+    post:
+      summary: Export Workbench thread to TUI session JSON
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+        - name: session_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Exported session file path and ids
+        "400":
+          description: Thread has no exportable messages
+        "404":
+          description: Thread not found
+  /v1/skills:
+    get:
+      summary: Discovered skills for settings/diagnostics
+      parameters:
+        - name: workspace
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Skill registry snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  skills:
+                    type: array
+                    items:
+                      type: object
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+        "503":
+          description: Skill discovery failed
+  /v1/tasks:
+    get:
+      summary: List durable background tasks
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Task list (bare array)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "503":
+          description: Task manager not configured
+  /v1/tasks/{task_id}:
+    get:
+      summary: Get task by id
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task record
+        "404":
+          description: Task not found
+        "503":
+          description: Task manager not configured
+  /v1/tasks/{task_id}/cancel:
+    post:
+      summary: Cancel a running or queued task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated task record
+        "404":
+          description: Task not found
+        "503":
+          description: Task manager not configured
   /v1/workspace/status:
     get:
       summary: Workspace diagnostics for settings UI

@@ -11,11 +11,18 @@ import type {
   ToolItemKind,
   UserMessageEventPayload,
   UserInputAnswer,
-  UserInputQuestion
+  UserInputQuestion,
+  UserInputRequestPayload
 } from './types'
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { unwrapClawRuntimePromptForDisplay, unwrapClawUserPromptForDisplay } from '@shared/app-settings'
 import { extractDiffFilePath } from '../lib/diff-stats'
+import {
+  applyMailboxMessage,
+  subagentBlockFromCard,
+  type MailboxMessageJson,
+  type SubagentCardState
+} from '../lib/subagent-mailbox'
 
 type ThreadRecordJson = {
   id: string
@@ -318,6 +325,55 @@ function itemCreatedAt(item: TurnItemJson): string | undefined {
   return item.started_at ?? item.ended_at ?? undefined
 }
 
+function isSubagentMailboxItem(it: TurnItemJson): boolean {
+  const meta = it.metadata && typeof it.metadata === 'object' ? it.metadata : undefined
+  return it.kind === 'status' && meta?.subagent_mailbox === true
+}
+
+function readSubagentMailboxFromItem(it: TurnItemJson): MailboxMessageJson | null {
+  const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
+  if (!detail) return null
+  try {
+    const parsed = JSON.parse(detail) as Record<string, unknown>
+    const message = parsed.message
+    if (!message || typeof message !== 'object') return null
+    const msg = message as Record<string, unknown>
+    if (typeof msg.agent_id !== 'string' || !msg.agent_id.trim()) return null
+    return {
+      kind: typeof msg.kind === 'string' ? msg.kind : '',
+      agent_id: msg.agent_id,
+      agent_type: typeof msg.agent_type === 'string' ? msg.agent_type : null,
+      status: typeof msg.status === 'string' ? msg.status : null,
+      tool_name: typeof msg.tool_name === 'string' ? msg.tool_name : null,
+      step: typeof msg.step === 'number' ? msg.step : null,
+      ok: typeof msg.ok === 'boolean' ? msg.ok : null,
+      parent_id: typeof msg.parent_id === 'string' ? msg.parent_id : null,
+      summary: typeof msg.summary === 'string' ? msg.summary : null,
+      error: typeof msg.error === 'string' ? msg.error : null
+    }
+  } catch {
+    return null
+  }
+}
+
+function upsertSubagentBlock(
+  blocks: ChatBlock[],
+  cards: Record<string, SubagentCardState>,
+  agentId: string,
+  createdAt?: string
+): ChatBlock[] {
+  const card = cards[agentId]
+  if (!card) return blocks
+  const nextBlock = subagentBlockFromCard(card, createdAt)
+  const idx = blocks.findIndex((b) => b.kind === 'subagent' && b.agentId === agentId)
+  if (idx >= 0) {
+    const next = [...blocks]
+    next[idx] = { ...nextBlock, createdAt: blocks[idx]?.createdAt ?? nextBlock.createdAt }
+    return next
+  }
+  return [...blocks, nextBlock]
+}
+
 function userMessageEventFromItem(item: TurnItemJson): UserMessageEventPayload | null {
   if (item.kind !== 'user_message') return null
   const meta =
@@ -401,6 +457,28 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       .filter((row) => row.approvalId.length > 0)
   }
 
+  async fetchPendingUserInputs(threadId: string): Promise<UserInputRequestPayload[]> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/user-inputs/pending?thread_id=${encodeURIComponent(threadId)}`,
+      'GET'
+    )
+    if (!r.ok) return []
+    const rows = JSON.parse(r.body) as Array<Record<string, unknown>>
+    return rows
+      .map((row) => {
+        const requestId = String(row.request_id ?? row.id ?? '')
+        const rawQuestions = row.questions
+        const questions = readUserInputQuestions(rawQuestions)
+        if (!requestId || !questions) return null
+        return {
+          itemId: requestId,
+          requestId,
+          questions
+        }
+      })
+      .filter((row): row is UserInputRequestPayload => row != null)
+  }
+
   async importTuiSession(input: {
     sessionId?: string
     path?: string
@@ -422,6 +500,75 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       mode: t.mode,
       workspace: t.workspace,
       status: t.status
+    }
+  }
+
+  async listSessions(limit = 50): Promise<{
+    dir: string
+    sessions: Array<{
+      kind: 'tui' | 'thread'
+      sessionId?: string
+      path?: string
+      threadId?: string
+      title: string
+      model?: string
+      workspace?: string
+      messageCount?: number
+      modifiedAt: string
+      importState: 'available' | 'linked' | 'native'
+      linkedThreadId?: string | null
+    }>
+  }> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/sessions?limit=${encodeURIComponent(String(limit))}`,
+      'GET'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to list sessions'))
+    const body = JSON.parse(r.body) as {
+      dir?: string
+      sessions?: Array<Record<string, unknown>>
+    }
+    const rows = Array.isArray(body.sessions) ? body.sessions : []
+    return {
+      dir: typeof body.dir === 'string' ? body.dir : '',
+      sessions: rows.map((row) => ({
+        kind: row.kind === 'thread' ? 'thread' : 'tui',
+        sessionId: typeof row.session_id === 'string' ? row.session_id : undefined,
+        path: typeof row.path === 'string' ? row.path : undefined,
+        threadId: typeof row.thread_id === 'string' ? row.thread_id : undefined,
+        title: typeof row.title === 'string' ? row.title : 'Session',
+        model: typeof row.model === 'string' ? row.model : undefined,
+        workspace: typeof row.workspace === 'string' ? row.workspace : undefined,
+        messageCount:
+          typeof row.message_count === 'number' ? row.message_count : undefined,
+        modifiedAt: typeof row.modified_at === 'string' ? row.modified_at : '',
+        importState:
+          row.import_state === 'linked' || row.import_state === 'native'
+            ? row.import_state
+            : 'available',
+        linkedThreadId:
+          typeof row.linked_thread_id === 'string' ? row.linked_thread_id : null
+      }))
+    }
+  }
+
+  async exportThreadToSession(
+    threadId: string,
+    sessionId?: string
+  ): Promise<{ sessionId: string; path: string; threadId: string }> {
+    const query = sessionId
+      ? `?session_id=${encodeURIComponent(sessionId)}`
+      : ''
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/export-session${query}`,
+      'POST'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'export session failed'))
+    const body = JSON.parse(r.body) as Record<string, unknown>
+    return {
+      sessionId: String(body.session_id ?? ''),
+      path: String(body.path ?? ''),
+      threadId: String(body.thread_id ?? threadId)
     }
   }
 
@@ -485,7 +632,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}`, 'GET')
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to load thread'))
     const detail = JSON.parse(r.body) as ThreadDetailJson
-    const blocks: ChatBlock[] = []
+    let blocks: ChatBlock[] = []
+    let subagentCards: Record<string, SubagentCardState> = {}
     const latestTurn = Array.isArray(detail.turns) ? detail.turns.at(-1) : undefined
     let latestTurnId: string | undefined = latestTurn?.id
     const latestTurnStatus = latestTurn?.status
@@ -539,6 +687,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         blocks.push(toolBlockFromItem(it))
       } else if (it.kind === 'error') {
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text: `⚠ ${it.detail ?? it.summary}` })
+      } else if (isSubagentMailboxItem(it)) {
+        const mailbox = readSubagentMailboxFromItem(it)
+        if (mailbox) {
+          subagentCards = applyMailboxMessage(subagentCards, mailbox)
+          blocks = upsertSubagentBlock(blocks, subagentCards, mailbox.agent_id, itemCreatedAt(it))
+        }
       } else if (it.kind === 'status' || it.kind === 'context_compaction') {
         const text = it.summary || it.kind
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })

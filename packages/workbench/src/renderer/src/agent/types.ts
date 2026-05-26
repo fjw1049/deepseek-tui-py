@@ -217,6 +217,8 @@ export interface AgentProvider {
   ): Promise<void>
   /** Runtime HTTP: GET /v1/approvals/pending */
   fetchPendingApprovals?(threadId: string): Promise<ApprovalRequestPayload[]>
+  /** Runtime HTTP: GET /v1/user-inputs/pending */
+  fetchPendingUserInputs?(threadId: string): Promise<UserInputRequestPayload[]>
   /** Runtime HTTP: POST /v1/threads/import-session */
   importTuiSession?(input: {
     sessionId?: string
@@ -224,6 +226,28 @@ export interface AgentProvider {
     title?: string
     workspace?: string
   }): Promise<NormalizedThread>
+  /** Runtime HTTP: GET /v1/sessions */
+  listSessions?(limit?: number): Promise<{
+    dir: string
+    sessions: Array<{
+      kind: 'tui' | 'thread'
+      sessionId?: string
+      path?: string
+      threadId?: string
+      title: string
+      model?: string
+      workspace?: string
+      messageCount?: number
+      modifiedAt: string
+      importState: 'available' | 'linked' | 'native'
+      linkedThreadId?: string | null
+    }>
+  }>
+  /** Runtime HTTP: POST /v1/threads/{id}/export-session */
+  exportThreadToSession?(
+    threadId: string,
+    sessionId?: string
+  ): Promise<{ sessionId: string; path: string; threadId: string }>
   /** Runtime HTTP compatibility path for request_user_input responses. */
   submitUserInputResponse?(requestId: string, answers: UserInputAnswer[]): Promise<void>
   cancelUserInput?(requestId: string): Promise<void>

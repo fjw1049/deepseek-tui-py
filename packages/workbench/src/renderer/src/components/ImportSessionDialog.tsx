@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { FolderOpen, Loader2, Upload, X } from 'lucide-react'
 import type { TuiSessionSummary } from '@shared/ds-gui-api'
 import { formatRelativeTime } from '../lib/format-relative-time'
+import { getProvider } from '../agent/registry'
 import { useChatStore } from '../store/chat-store'
 
 type Props = {
@@ -10,34 +11,83 @@ type Props = {
   onClose: () => void
 }
 
+type SessionRow = TuiSessionSummary & {
+  importState?: 'available' | 'linked' | 'native'
+  linkedThreadId?: string | null
+}
+
+function mapRuntimeSession(row: {
+  kind: 'tui' | 'thread'
+  sessionId?: string
+  path?: string
+  title: string
+  model?: string
+  workspace?: string
+  messageCount?: number
+  modifiedAt: string
+  importState: 'available' | 'linked' | 'native'
+  linkedThreadId?: string | null
+}): SessionRow | null {
+  if (row.kind !== 'tui' || !row.path) return null
+  return {
+    sessionId: row.sessionId ?? row.path,
+    path: row.path,
+    title: row.title,
+    model: row.model,
+    workspace: row.workspace,
+    messageCount: row.messageCount ?? 0,
+    modifiedAt: row.modifiedAt,
+    importState: row.importState,
+    linkedThreadId: row.linkedThreadId
+  }
+}
+
+function mapIpcSession(session: TuiSessionSummary): SessionRow {
+  return { ...session, importState: 'available' }
+}
+
 export function ImportSessionDialog({ open, onClose }: Props): ReactElement | null {
   const { t, i18n } = useTranslation('common')
   const importTuiSession = useChatStore((s) => s.importTuiSession)
+  const selectThread = useChatStore((s) => s.selectThread)
+  const providerId = useChatStore((s) => s.providerId)
   const [sessionsDir, setSessionsDir] = useState('')
-  const [sessions, setSessions] = useState<TuiSessionSummary[]>([])
+  const [sessions, setSessions] = useState<SessionRow[]>([])
   const [loading, setLoading] = useState(false)
   const [importingId, setImportingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const loadSessions = useCallback(async (): Promise<void> => {
-    if (typeof window.dsGui?.listTuiSessions !== 'function') {
-      setSessions([])
-      setSessionsDir('')
-      return
-    }
     setLoading(true)
     setError(null)
     try {
+      const provider = getProvider(providerId)
+      if (typeof provider.listSessions === 'function') {
+        const result = await provider.listSessions()
+        setSessionsDir(result.dir)
+        setSessions(
+          result.sessions
+            .map(mapRuntimeSession)
+            .filter((row): row is SessionRow => row != null)
+        )
+        return
+      }
+
+      if (typeof window.dsGui?.listTuiSessions !== 'function') {
+        setSessions([])
+        setSessionsDir('')
+        return
+      }
       const result = await window.dsGui.listTuiSessions()
       setSessionsDir(result.dir)
-      setSessions(result.sessions)
+      setSessions(result.sessions.map(mapIpcSession))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSessions([])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [providerId])
 
   useEffect(() => {
     if (!open) return
@@ -52,6 +102,19 @@ export function ImportSessionDialog({ open, onClose }: Props): ReactElement | nu
     setError(null)
     try {
       await importTuiSession(input)
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setImportingId(null)
+    }
+  }
+
+  const handleOpenLinked = async (threadId: string): Promise<void> => {
+    setImportingId(threadId)
+    setError(null)
+    try {
+      await selectThread(threadId)
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -118,17 +181,22 @@ export function ImportSessionDialog({ open, onClose }: Props): ReactElement | nu
               {sessions.map((session) => {
                 const importKey = session.path
                 const busy = importingId === importKey
+                const linked = session.importState === 'linked' && session.linkedThreadId
                 return (
                   <li key={session.path}>
                     <button
                       type="button"
                       disabled={!!importingId}
-                      onClick={() =>
+                      onClick={() => {
+                        if (linked && session.linkedThreadId) {
+                          void handleOpenLinked(session.linkedThreadId)
+                          return
+                        }
                         void handleImport({
                           path: session.path,
                           title: session.title
                         })
-                      }
+                      }}
                       className="flex w-full items-start gap-3 rounded-[16px] border border-ds-border-muted/45 bg-ds-elevated/50 px-3 py-3 text-left transition hover:border-accent/35 hover:bg-ds-hover/40 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-accent/10 text-accent">
@@ -143,10 +211,12 @@ export function ImportSessionDialog({ open, onClose }: Props): ReactElement | nu
                           {session.title}
                         </span>
                         <span className="mt-1 block text-[12px] text-ds-muted">
-                          {t('importSessionMeta', {
-                            count: session.messageCount,
-                            time: formatRelativeTime(session.modifiedAt, i18n.language)
-                          })}
+                          {linked
+                            ? t('importSessionLinked')
+                            : t('importSessionMeta', {
+                                count: session.messageCount,
+                                time: formatRelativeTime(session.modifiedAt, i18n.language)
+                              })}
                         </span>
                         {session.workspace ? (
                           <span className="mt-1 block truncate text-[11px] text-ds-faint" title={session.workspace}>

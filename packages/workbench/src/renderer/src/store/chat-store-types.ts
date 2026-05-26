@@ -84,9 +84,10 @@ export type ChatState = {
   resumeThread: (threadId: string) => Promise<void>
   compactActiveThread: () => Promise<void>
   importTuiSession: (input: { sessionId?: string; path?: string; title?: string }) => Promise<void>
+  exportThreadToSession: (threadId: string) => Promise<{ path: string } | null>
   scrollToBlock: (blockId: string) => void
   clearScrollTarget: () => void
-  resolveApproval: (blockId: string, decision: 'allow' | 'deny') => Promise<void>
+  resolveApproval: (blockId: string, decision: 'allow' | 'deny', remember?: boolean) => Promise<void>
   resolveUserInput: (
     blockId: string,
     action: { kind: 'submit'; answers: UserInputAnswer[] } | { kind: 'cancel' }

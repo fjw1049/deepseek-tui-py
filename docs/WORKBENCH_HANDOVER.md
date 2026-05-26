@@ -131,8 +131,9 @@ app_server/
 │   │   ├── approvals.py              [N] POST /v1/approvals/{id}
 │   │   ├── user_inputs.py            [N] POST /v1/user-input(s)/{id}  (P1)
 │   │   ├── workspace.py              [N] GET /v1/workspace/status
-│   │   ├── skills.py                 [N] GET /v1/skills  (P2)
-│   │   └── tasks.py                  [N] GET /v1/tasks... (P2)
+│   │   ├── skills.py                 [Y] GET /v1/skills
+│   │   ├── tasks.py                  [Y] GET/POST /v1/tasks*
+│   │   └── sessions.py               [Y] GET /v1/sessions + export-session
 │   ├── sse.py                        [N] runtime_event_payload + sse_json framing
 │   └── approval_bridge.py            [N] pending map + Engine 挂起/恢复
 ├── runtime_threads.py                [M] + title 字段；UpdateThreadRequest 扩展
@@ -406,6 +407,8 @@ Co-Authored-By: ...
 | 8.4 | 2026-05-26 | file_change diff 合成、diagnostics Bearer probe、SSE/error schema | contract 39 passed |
 | 8.5 | 2026-05-26 | auth/SSE hardening、schema lock、token 双写防护 | contract 41 passed |
 | 8.5+ | 2026-05-26 | trust_mode、steer、侧栏 fork/resume/compact、StatusEvent、skills 设置迁移、架构文档 | contract 45+ |
+| 8.6 | 2026-05-26 | ExecPolicy 接入 config、user-input pending、approval remember、子代理持久化、TUI import 工具历史 | contract 64 passed |
+| 8.7 | 2026-05-26 | `/v1/skills` `/v1/tasks` `/v1/sessions`、export-session、ThreadRecord 链接字段、GUI 导入/导出 | contract 70+ |
 
 **待办批量清单**：见 [`WORKBENCH_BACKLOG.md`](./WORKBENCH_BACKLOG.md)
 

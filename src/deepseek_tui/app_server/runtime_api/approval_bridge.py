@@ -25,6 +25,7 @@ class ApprovalBridge:
 
     _pending: dict[str, asyncio.Future[bool]] = field(default_factory=dict)
     _meta: dict[str, PendingApprovalRecord] = field(default_factory=dict)
+    _remember: dict[str, bool] = field(default_factory=dict)
 
     def register(
         self,
@@ -38,13 +39,21 @@ class ApprovalBridge:
             self._meta[approval_id] = meta
         return fut
 
-    def resolve(self, approval_id: str, approved: bool) -> bool:
+    def resolve(self, approval_id: str, approved: bool, *, remember: bool = False) -> bool:
         fut = self._pending.pop(approval_id, None)
         self._meta.pop(approval_id, None)
         if fut is None or fut.done():
+            self._remember.pop(approval_id, None)
             return False
+        if approved and remember:
+            self._remember[approval_id] = True
+        else:
+            self._remember.pop(approval_id, None)
         fut.set_result(approved)
         return True
+
+    def consume_remember(self, approval_id: str) -> bool:
+        return self._remember.pop(approval_id, False)
 
     def list_pending(self, thread_id: str | None = None) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
@@ -72,6 +81,7 @@ class ApprovalBridge:
                 fut.cancel()
         self._pending.clear()
         self._meta.clear()
+        self._remember.clear()
 
 
 class HttpApprovalHandler(ApprovalHandler):
@@ -110,8 +120,8 @@ class HttpApprovalHandler(ApprovalHandler):
             approved = await fut
         except asyncio.CancelledError:
             return ApprovalDecision.DENIED
-        return (
-            ApprovalDecision.APPROVED
-            if approved
-            else ApprovalDecision.DENIED
-        )
+        if not approved:
+            return ApprovalDecision.DENIED
+        if self._bridge.consume_remember(tool_call_id):
+            return ApprovalDecision.APPROVED_SESSION
+        return ApprovalDecision.APPROVED
