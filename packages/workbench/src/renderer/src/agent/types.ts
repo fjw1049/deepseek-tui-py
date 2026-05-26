@@ -28,6 +28,7 @@ export type NormalizedThread = {
   mode: string
   workspace?: string
   status?: string
+  archived?: boolean
 }
 
 export type RuntimeConnectionStatus = 'idle' | 'checking' | 'ready' | 'offline'

@@ -53,7 +53,13 @@ from deepseek_tui.tui.widgets.info_sidebar import (
     plan_snapshot_from_metadata,
     reset_turn_sidebar_sources,
 )
-from deepseek_tui.tui.widgets.sidebar import Sidebar
+from deepseek_tui.tui.session_restore import (
+    apply_messages_to_engine,
+    parse_session_messages,
+    session_metadata,
+    session_started_at_iso,
+)
+from deepseek_tui.tui.widgets.sidebar import Sidebar, SidebarEntry
 from deepseek_tui.tui.widgets.slash_menu import SlashMenu
 from deepseek_tui.tui.widgets.status_bar import StatusBar
 from deepseek_tui.tui.widgets.transcript import Transcript
@@ -319,39 +325,77 @@ class DeepSeekTUI(App[None]):
             data = _json.loads(path.read_text(encoding="utf-8"))
         except (OSError, _json_decode_error()) as exc:
             return f"failed to read session: {exc}"
-        messages_raw = data.get("messages", [])
-        if not isinstance(messages_raw, list):
-            return "session file has no messages"
-        from deepseek_tui.protocol.messages import Message
-
         try:
-            restored = [Message.model_validate(m) for m in messages_raw]
+            restored = parse_session_messages(data, path=path)
+            metadata = session_metadata(data, path=path)
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
-        self._engine.session_messages.clear()
-        self._engine.session_messages.extend(restored)
+        apply_messages_to_engine(self._engine, restored)
         transcript = self.query_one(Transcript)
-        transcript.clear_messages()
-        for msg in restored:
-            text_parts = [
-                getattr(b, "text", "")
-                for b in msg.content
-                if getattr(b, "type", None) == "text"
-            ]
-            text = " ".join(p for p in text_parts if p)
-            if not text:
-                continue
-            if msg.role == "user":
-                transcript.add_user_message(text)
-            elif msg.role == "assistant":
-                # Transcript has no single "add assistant message" — synthesize
-                # from the streaming primitives so the cell looks identical to
-                # a freshly-streamed turn.
-                transcript.start_assistant_message()
-                transcript.append_delta(text)
-                transcript.finalize_message()
+        transcript.hydrate_from_messages(restored)
+        started = session_started_at_iso(metadata, path=path)
+        if started:
+            self._session_started_at_iso = started
         verb = "resumed" if self._resume_session_id else "forked from"
         return f"{verb} {target_id[:8]} ({len(restored)} messages)"
+
+    def _load_session_from_path(self, path) -> str | None:  # type: ignore[no-untyped-def]
+        """Load a session JSON file into the live engine + transcript."""
+        if self._engine is None:
+            return "engine not started — cannot load session"
+        try:
+            import json as _json
+
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, _json_decode_error()) as exc:
+            return f"failed to read session: {exc}"
+        try:
+            restored = parse_session_messages(data, path=path)
+            metadata = session_metadata(data, path=path)
+        except Exception as exc:  # noqa: BLE001
+            return f"session file invalid: {exc}"
+        apply_messages_to_engine(self._engine, restored)
+        self.query_one(Transcript).hydrate_from_messages(restored)
+        started = session_started_at_iso(metadata, path=path)
+        if started:
+            self._session_started_at_iso = started
+        session_id = str(metadata.get("id", path.stem))[:8]
+        return f"loaded session {session_id} ({len(restored)} messages)"
+
+    def _refresh_sidebar_sessions(self) -> None:
+        """Populate the left sidebar from ``~/.deepseek/sessions/*.json``."""
+        from datetime import datetime
+
+        from deepseek_tui.app_server.session_catalog import scan_tui_session_files
+
+        rows = scan_tui_session_files(limit=50)
+        entries: list[SidebarEntry] = []
+        for row in rows:
+            path = row.get("path")
+            if not isinstance(path, str) or not path:
+                continue
+            modified = row.get("modified_at")
+            updated_at = 0
+            if isinstance(modified, str) and modified:
+                try:
+                    updated_at = int(
+                        datetime.fromisoformat(modified.replace("Z", "+00:00")).timestamp()
+                    )
+                except ValueError:
+                    updated_at = 0
+            title = row.get("title") if isinstance(row.get("title"), str) else path
+            model = row.get("model") if isinstance(row.get("model"), str) else ""
+            count = row.get("message_count", 0)
+            entries.append(
+                SidebarEntry(
+                    id=path,
+                    name=title,
+                    preview=f"{count} messages",
+                    updated_at=updated_at,
+                    model=model,
+                )
+            )
+        self.query_one(Sidebar).set_entries(entries)
 
     @staticmethod
     def _resolve_session_path(session_id: str):  # type: ignore[no-untyped-def]
@@ -683,9 +727,10 @@ class DeepSeekTUI(App[None]):
         A full interactive picker can be added later; for now this
         unblocks the Engine so it never deadlocks.
         """
-        response: dict[str, object] = {}
+        response: dict[str, object] = {"answers": []}
+        answers: list[dict[str, str]] = []
         for q in event.questions:
-            qid = q.get("id", "")
+            qid = str(q.get("id", ""))
             question = q.get("question", "")
             options = q.get("options", [])
             option_labels = [
@@ -694,12 +739,15 @@ class DeepSeekTUI(App[None]):
             ]
             display = f"Question: {question}\nOptions: {', '.join(option_labels)}"
             transcript.add_notice(display, severity="info")
-            if option_labels:
-                response[str(qid)] = option_labels[0]
+            if option_labels and qid:
+                selected = option_labels[0]
+                answers.append({"question_id": qid, "value": selected})
                 transcript.add_notice(
-                    f"Auto-selected: {option_labels[0]}",
+                    f"Auto-selected: {selected}",
                     severity="info",
                 )
+        if answers:
+            response = {"answers": answers}
 
         self.handle.resolve_user_input(event.tool_call_id, response)
 
@@ -737,7 +785,10 @@ class DeepSeekTUI(App[None]):
         self.exit()
 
     def action_toggle_sidebar(self) -> None:
-        self.query_one(Sidebar).toggle()
+        sidebar = self.query_one(Sidebar)
+        if not sidebar.visible:
+            self._refresh_sidebar_sessions()
+        sidebar.toggle()
 
     def action_toggle_info_sidebar(self) -> None:
         """Toggle the right-side Todos / Tasks / Agents panel (Ctrl+I)."""
@@ -912,10 +963,47 @@ class DeepSeekTUI(App[None]):
 
     def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
         """Handle session selection from sidebar."""
-        self.query_one(StatusBar).set_status(
-            f"switching to session {event.session_id[:8]}…"
-        )
+        from pathlib import Path
+
+        path = Path(event.session_id).expanduser()
+        message = self._load_session_from_path(path)
+        self.query_one(StatusBar).set_status(message or f"loaded {path.name}")
         self.query_one(Sidebar).hide_sidebar()
+
+    def on_sidebar_session_deleted(self, event: Sidebar.SessionDeleted) -> None:
+        from pathlib import Path
+
+        path = Path(event.session_id).expanduser()
+        status = self.query_one(StatusBar)
+        try:
+            if path.exists():
+                path.unlink()
+            self._refresh_sidebar_sessions()
+            status.set_status(f"deleted {path.name}")
+        except OSError as exc:
+            status.set_status(f"delete failed: {exc}")
+
+    def on_sidebar_session_archived(self, event: Sidebar.SessionArchived) -> None:
+        from pathlib import Path
+
+        from deepseek_tui.config.paths import user_sessions_dir
+
+        path = Path(event.session_id).expanduser()
+        status = self.query_one(StatusBar)
+        if not path.exists():
+            status.set_status(f"session not found: {path.name}")
+            return
+        archive_dir = user_sessions_dir() / "archived"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        dest = archive_dir / path.name
+        try:
+            if dest.exists():
+                dest.unlink()
+            path.rename(dest)
+            self._refresh_sidebar_sessions()
+            status.set_status(f"archived {path.name}")
+        except OSError as exc:
+            status.set_status(f"archive failed: {exc}")
 
     # ── info sidebar refresh ──────────────────────────────────────────
 

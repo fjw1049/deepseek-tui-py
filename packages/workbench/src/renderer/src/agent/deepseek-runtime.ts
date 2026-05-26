@@ -178,8 +178,12 @@ function readPayloadTool(payload: Record<string, unknown>): {
 }
 
 function readUserInputQuestions(value: unknown): UserInputQuestion[] | null {
-  if (!value || typeof value !== 'object') return null
-  const rawQuestions = (value as Record<string, unknown>).questions
+  if (!value) return null
+  const rawQuestions = Array.isArray(value)
+    ? value
+    : typeof value === 'object'
+      ? (value as Record<string, unknown>).questions
+      : null
   if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) return null
   const questions: UserInputQuestion[] = []
   for (const rawQuestion of rawQuestions) {
@@ -193,8 +197,8 @@ function readUserInputQuestions(value: unknown): UserInputQuestion[] | null {
         const opt = rawOption as Record<string, unknown>
         const label = typeof opt.label === 'string' ? opt.label.trim() : ''
         const description = typeof opt.description === 'string' ? opt.description.trim() : ''
-        if (!label || !description) return null
-        return { label, description }
+        if (!label) return null
+        return { label, description: description || label }
       })
       .filter((opt): opt is { label: string; description: string } => opt != null)
     const header = typeof q.header === 'string' ? q.header.trim() : ''
@@ -758,7 +762,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
   }
 
   async submitUserInputResponse(requestId: string, answers: UserInputAnswer[]): Promise<void> {
-    const body = JSON.stringify({ answers })
+    const wireAnswers = answers.map((answer) => ({
+      question_id: answer.id,
+      value: answer.value.trim() || answer.label.trim()
+    }))
+    const body = JSON.stringify({ answers: wireAnswers })
     const paths = [
       `/v1/user-inputs/${encodeURIComponent(requestId)}`,
       `/v1/user-input/${encodeURIComponent(requestId)}`

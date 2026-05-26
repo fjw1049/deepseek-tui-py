@@ -504,6 +504,29 @@ function buildThreadEventSink(
         )
       }))
     },
+    onThreadUpdated: (ev) =>
+      set((s) => {
+        const idx = s.threads.findIndex((thread) => thread.id === ev.threadId)
+        if (idx < 0) return {}
+        const current = s.threads[idx]
+        const nextTitle =
+          ev.title === undefined
+            ? current.title
+            : ev.title === null
+              ? current.title
+              : ev.title
+        const nextArchived = ev.archived ?? current.archived
+        if (nextTitle === current.title && nextArchived === current.archived) {
+          return {}
+        }
+        const threads = [...s.threads]
+        threads[idx] = {
+          ...current,
+          title: nextTitle,
+          archived: nextArchived
+        }
+        return { threads }
+      }),
     onSystemStatus: (text, itemId) =>
       set((s) => {
         if (s.blocks.some((b) => b.kind === 'system' && b.id === itemId)) return {}

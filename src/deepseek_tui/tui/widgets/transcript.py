@@ -689,6 +689,29 @@ class Transcript(VerticalScroll):
             pass
         self._show_welcome_if_empty()
 
+    def hydrate_from_messages(self, messages: list[object]) -> None:
+        """Rebuild transcript cells from persisted ``Message`` objects."""
+        from deepseek_tui.protocol.messages import Message
+
+        self.clear_messages()
+        for msg in messages:
+            if not isinstance(msg, Message):
+                continue
+            text_parts = [
+                getattr(block, "text", "")
+                for block in msg.content
+                if getattr(block, "type", None) == "text"
+            ]
+            text = " ".join(part for part in text_parts if part)
+            if not text:
+                continue
+            if msg.role == "user":
+                self.add_user_message(text)
+            elif msg.role == "assistant":
+                self.start_assistant_message()
+                self.append_delta(text)
+                self.finalize_message()
+
     def _find_tool_message_idx(self, tool_call_id: str) -> int | None:
         prefix = tool_call_id[:8]
         for i, msg in enumerate(self._messages):

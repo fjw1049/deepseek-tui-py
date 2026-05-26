@@ -517,6 +517,19 @@ class RuntimeThreadManager:
 
         now = datetime.now(timezone.utc)
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+        auto_approve = req.auto_approve if req.auto_approve is not None else thread.auto_approve
+        trust_mode = req.trust_mode if req.trust_mode is not None else thread.trust_mode
+
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is None:
+                raise RuntimeError("Thread engine not loaded")
+            state.active_turn = _ActiveTurnState(
+                turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
+            )
+            self._sync_trust_mode(state.engine, trust_mode)
+            self._touch_lru(thread_id)
+
         turn = TurnRecord(
             id=turn_id,
             thread_id=thread_id,
@@ -552,18 +565,6 @@ class RuntimeThreadManager:
             thread_id, turn_id, user_item_id, "item.completed",
             {"item": user_item.model_dump(mode="json")},
         )
-
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is None:
-                raise RuntimeError("Thread engine not loaded")
-            auto_approve = req.auto_approve if req.auto_approve is not None else thread.auto_approve
-            trust_mode = req.trust_mode if req.trust_mode is not None else thread.trust_mode
-            state.active_turn = _ActiveTurnState(
-                turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
-            )
-            self._sync_trust_mode(state.engine, trust_mode)
-            self._touch_lru(thread_id)
 
         model = req.model or thread.model
         monitor_task = asyncio.create_task(
@@ -646,10 +647,22 @@ class RuntimeThreadManager:
                 raise RuntimeError("Thread engine not loaded")
             if state.active_turn is not None:
                 raise ValueError("Thread already has an active turn")
-            engine = state.engine
 
         now = datetime.now(timezone.utc)
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is None:
+                raise RuntimeError("Thread engine not loaded")
+            state.active_turn = _ActiveTurnState(
+                turn_id=turn_id,
+                auto_approve=thread.auto_approve,
+                trust_mode=thread.trust_mode,
+            )
+            self._touch_lru(thread_id)
+            engine = state.engine
+
         turn = TurnRecord(
             id=turn_id,
             thread_id=thread_id,
@@ -716,6 +729,11 @@ class RuntimeThreadManager:
             thread_id, turn_id, None, "turn.completed",
             {"turn": turn.model_dump(mode="json")},
         )
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is not None and state.active_turn is not None:
+                if state.active_turn.turn_id == turn_id:
+                    state.active_turn = None
         return turn
 
     # --- events query --------------------------------------------------------

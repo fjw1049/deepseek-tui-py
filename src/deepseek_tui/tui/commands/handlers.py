@@ -53,13 +53,8 @@ def cmd_help(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/clear")
 def cmd_clear(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Clear transcript and engine session (same as Ctrl+N new session)."""
-    from deepseek_tui.tui.widgets.transcript import Transcript
-
-    transcript = app.query_one(Transcript)
-    transcript.clear_messages()
-    if app._engine is not None:
-        app._engine.session_messages.clear()
+    """Clear transcript and engine session — delegates to Ctrl+N action."""
+    app.action_new_session()
     return CommandResult(output="Conversation cleared.")
 
 
@@ -230,41 +225,33 @@ def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
     except json.JSONDecodeError as exc:
         return CommandResult(error=f"Failed to parse session file: {exc}")
 
-    # Validate structure
-    if "messages" not in session_data or "metadata" not in session_data:
+    # Validate structure — metadata is optional (auto-persisted current.json).
+    if "messages" not in session_data:
         return CommandResult(error="Invalid session file format")
 
-    # Restore messages to engine
-    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.tui.session_restore import (
+        apply_messages_to_engine,
+        parse_session_messages,
+        session_metadata,
+        session_started_at_iso,
+    )
+
     try:
-        restored_messages = [Message.model_validate(msg) for msg in session_data["messages"]]
-        app._engine.session_messages.clear()
-        app._engine.session_messages.extend(restored_messages)
+        restored_messages = parse_session_messages(session_data, path=load_path)
+        metadata = session_metadata(session_data, path=load_path)
+        apply_messages_to_engine(app._engine, restored_messages)
     except Exception as exc:
         return CommandResult(error=f"Failed to restore messages: {exc}")
 
     # Update UI
     transcript = app.query_one(Transcript)
-    transcript.clear_messages()
+    transcript.hydrate_from_messages(restored_messages)
 
-    # Rebuild transcript from messages
-    for msg in restored_messages:
-        if msg.role == "user":
-            # Extract text content
-            text_parts = [block.text for block in msg.content if hasattr(block, "text")]
-            if text_parts:
-                transcript.add_user_message(" ".join(text_parts))
-        elif msg.role == "assistant":
-            text_parts = [
-                block.text
-                for block in msg.content
-                if hasattr(block, "text") and block.type == "text"
-            ]
-            if text_parts:
-                transcript.add_assistant_message(" ".join(text_parts))
+    started = session_started_at_iso(metadata, path=load_path)
+    if started:
+        app._session_started_at_iso = started
 
-    metadata = session_data["metadata"]
-    session_id = metadata.get("id", "unknown")[:8]
+    session_id = str(metadata.get("id", "unknown"))[:8]
     message_count = metadata.get("message_count", len(restored_messages))
 
     return CommandResult(
