@@ -162,15 +162,35 @@ async def run_http(
         cors_origins=options.cors_origins,
     )
     if options.http_mode:
+        from deepseek_tui.app_server.runtime_api.auth import (
+            runtime_token_file,
+            write_runtime_token_file,
+        )
+
         auth = getattr(app.state, "runtime_auth", None)
         if auth is not None and auth.generated and auth.token:
-            logger.info("runtime_api_auth generated bearer token for this process")
-            print("Runtime API auth: generated bearer token for this process.")
-            print(f"  Authorization: Bearer {auth.token}")
-            print("  Set DEEPSEEK_RUNTIME_TOKEN or pass --auth-token for a stable token.")
+            token_path = write_runtime_token_file(auth.token)
+            logger.info(
+                "runtime_api_auth generated bearer token written to %s", token_path
+            )
+            print(
+                "Runtime API auth: generated bearer token (written to "
+                f"{token_path}, mode 0600)."
+            )
+            print("  Read the file or set DEEPSEEK_RUNTIME_TOKEN for a stable token.")
         elif auth is not None and auth.token:
-            logger.info("runtime_api_auth bearer token required for /v1/* routes")
-            print("Runtime API auth: bearer token required for /v1/* routes.")
+            try:
+                token_path = write_runtime_token_file(auth.token)
+                logger.info(
+                    "runtime_api_auth bearer token written to %s", token_path
+                )
+            except OSError as exc:  # noqa: BLE001
+                logger.warning("runtime_api_auth token file write failed: %s", exc)
+                token_path = runtime_token_file()
+            print(
+                "Runtime API auth: bearer token required for /v1/* routes "
+                f"(cached at {token_path})."
+            )
         else:
             logger.warning("runtime_api_auth disabled (--insecure)")
             print("Runtime API auth: disabled by explicit insecure mode.")

@@ -21,7 +21,12 @@ def attach_runtime_api(
     auth_token: str | None = None,
     cors_origins: list[str] | None = None,
 ) -> ApprovalBridge:
-    """Mount parity routes and auth middleware on an existing FastAPI app."""
+    """Mount parity routes and auth middleware on an existing FastAPI app.
+
+    This is the single construction path used by ``server.build_fastapi_app``
+    (production) and by contract tests. Tests must drive the runtime through
+    this same call so middleware / state wiring stays in lockstep with prod.
+    """
     bridge = ApprovalBridge()
     app.state.approval_bridge = bridge
     app.state.runtime_auth_token = auth_token
@@ -30,7 +35,10 @@ def attach_runtime_api(
     async def runtime_api_root() -> dict[str, str]:
         return {
             "service": "deepseek-runtime-api",
-            "hint": "HTTP API only — open DeepSeek Workbench (Electron), not this URL in a browser.",
+            "hint": (
+                "HTTP API only — open DeepSeek Workbench (Electron), "
+                "not this URL in a browser."
+            ),
             "health": "/health",
             "threads": "/v1/threads",
         }
@@ -52,15 +60,3 @@ def attach_cors(app: Any, origins: list[str]) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-
-def build_runtime_api_app(
-    *,
-    auth_token: str | None = None,
-    cors_origins: list[str] | None = None,
-) -> Any:
-    from fastapi import FastAPI
-
-    app = FastAPI(title="deepseek-runtime-api", version="0.1.0")
-    attach_runtime_api(app, auth_token=auth_token, cors_origins=cors_origins)
-    return app

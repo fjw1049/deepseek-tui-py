@@ -1,4 +1,8 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import type { AppSettingsV1 } from '../shared/app-settings'
 import {
   resolveRuntimeLauncher,
@@ -11,6 +15,36 @@ import { getRuntimeBaseUrl } from './settings-store'
 
 let child: ChildProcess | null = null
 let lastResolvedBinary: string | null = null
+
+function runtimeTokenFilePath(): string {
+  const base = process.env.DEEPSEEK_HOME?.trim() || join(homedir(), '.deepseek')
+  return join(base, 'runtime.token')
+}
+
+function resolveOrCreateRuntimeToken(): string {
+  const path = runtimeTokenFilePath()
+  if (existsSync(path)) {
+    try {
+      const cached = readFileSync(path, 'utf8').trim()
+      if (cached) return cached
+    } catch {
+      /* fall through */
+    }
+  }
+  const token = `dst_${randomBytes(16).toString('hex')}${randomBytes(16).toString('hex')}`
+  try {
+    mkdirSync(join(path, '..'), { recursive: true })
+    writeFileSync(path, token, { encoding: 'utf8' })
+    try {
+      chmodSync(path, 0o600)
+    } catch {
+      /* best-effort on platforms without POSIX perms */
+    }
+  } catch (err) {
+    process.stderr.write(`[deepseek] runtime token cache write failed: ${String(err)}\n`)
+  }
+  return token
+}
 
 type PortOwner = {
   pid: number
@@ -255,11 +289,20 @@ export async function startDeepseekChild(settings: AppSettingsV1): Promise<void>
   args.push('serve', '--http', '--host', '127.0.0.1', '--port', String(port))
   args.push('--config', resolveDeepseekConfigPath())
 
+  // Token resolution order (mirrors Python ``resolve_runtime_auth``):
+  //   1. settings.deepseek.runtimeToken (explicit user-set in GUI)
+  //   2. ~/.deepseek/runtime.token (cached generated token, shared with Python)
+  //   3. fresh local-only token written to (2)
+  // Only fall back to ``--insecure`` if the user explicitly cleared the token
+  // path via env (``DEEPSEEK_INSECURE_RUNTIME=1``); otherwise we always pass
+  // a bearer so the runtime never exposes /v1 unauthenticated.
+  const explicitInsecure = process.env.DEEPSEEK_INSECURE_RUNTIME === '1'
   const runtimeToken = settings.deepseek.runtimeToken?.trim() ?? ''
-  if (runtimeToken) {
-    args.push('--auth-token', runtimeToken)
-  } else {
+  if (explicitInsecure && !runtimeToken) {
     args.push('--insecure')
+  } else {
+    const token = runtimeToken || resolveOrCreateRuntimeToken()
+    args.push('--auth-token', token)
   }
 
   for (const origin of settings.deepseek.extraCorsOrigins) {

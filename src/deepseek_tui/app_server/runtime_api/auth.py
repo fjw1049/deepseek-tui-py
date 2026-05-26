@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -45,6 +46,31 @@ def _generate_runtime_token() -> str:
 
 def env_runtime_token() -> str | None:
     return _first_nonblank(os.environ.get("DEEPSEEK_RUNTIME_TOKEN"))
+
+
+def runtime_token_file() -> Path:
+    """``~/.deepseek/runtime.token`` — auto-generated bearer cache.
+
+    Persisting the generated token to a 0600 file lets the Electron app
+    read it back without parsing stdout, and avoids leaking the token to
+    process supervisors or log aggregators.
+    """
+    from deepseek_tui.config.paths import user_deepseek_dir
+
+    return user_deepseek_dir() / "runtime.token"
+
+
+def write_runtime_token_file(token: str) -> Path:
+    path = runtime_token_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    tmp.write_text(token, encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # best-effort on platforms without POSIX perms
+    tmp.replace(path)
+    return path
 
 
 class RuntimeAuthMiddleware(BaseHTTPMiddleware):

@@ -40,3 +40,29 @@ async def test_stream_thread_events_replays_backlog(runtime_app: object) -> None
     assert "data:" in first
 
     await gen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_subscribes_before_reading_backlog(runtime_app: object) -> None:
+    """Events emitted between backlog read and live subscribe must not be lost.
+
+    Regression for the original ordering bug where ``subscribe_events`` ran
+    *after* ``events_since``: events landing in that window fell into neither
+    path. We simulate the race by emitting an event after the generator is
+    constructed but before its first ``__anext__`` await.
+    """
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    thread = await manager.create_thread(CreateThreadRequest())
+    detail = await manager.get_thread_detail(thread.id)
+    cursor = detail.latest_seq
+
+    gen = stream_thread_events(manager, thread.id, since_seq=cursor)
+    # Emit *after* generator is built; with subscribe-first this lands in the
+    # live queue. Without the fix the event would be silently dropped.
+    await manager._emit_event(  # type: ignore[attr-defined]
+        thread.id, None, None, "thread.test_race", {"marker": True}
+    )
+
+    frame = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
+    assert "event: thread.test_race" in frame
+    await gen.aclose()

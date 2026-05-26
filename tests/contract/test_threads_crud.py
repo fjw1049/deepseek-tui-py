@@ -33,9 +33,22 @@ async def test_threads_crud(client: AsyncClient) -> None:
     assert renamed.status_code == 200
     assert renamed.json()["title"] == "Contract test thread"
 
-    archived = await client.delete(f"/v1/threads/{thread_id}")
+    # Archive flows through PATCH; DELETE is intentionally not exposed because
+    # GUI v1 never deletes threads — see WORKBENCH_HANDOVER §10.
+    archived = await client.patch(
+        f"/v1/threads/{thread_id}",
+        json={"archived": True},
+    )
     assert archived.status_code == 200
     assert archived.json()["archived"] is True
+
+    bad_json = await client.post(
+        "/v1/threads",
+        content="{not json",
+        headers={"content-type": "application/json"},
+    )
+    assert bad_json.status_code == 400
+    assert bad_json.json()["detail"]["error"] == "invalid_json"
 
 
 @pytest.mark.asyncio
