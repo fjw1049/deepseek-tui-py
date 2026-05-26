@@ -415,12 +415,8 @@ function EmptyHero({
     return (
       <div className="ds-no-drag flex flex-col items-center justify-center px-6 py-24 text-center">
         <FolderOpen className="mb-4 h-8 w-8 text-ds-muted" strokeWidth={1.6} />
-        <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">
-          {t('selectWorkspace')}
-        </h1>
-        <p className="mt-2 max-w-sm text-[14.5px] leading-6 text-ds-muted">
-          {t('emptyHeroSubNoWorkspace')}
-        </p>
+        <h1 className="ds-hero-title">{t('selectWorkspace')}</h1>
+        <p className="ds-hero-sub mt-3 max-w-sm">{t('emptyHeroSubNoWorkspace')}</p>
         <button
           type="button"
           className="ds-chip mt-5 rounded-full px-5 py-2.5 text-[13px] font-medium text-ds-ink transition hover:text-ds-ink"
@@ -471,12 +467,8 @@ function EmptyHero({
 
   return (
     <div className="ds-no-drag flex flex-col items-center justify-center px-4 pb-4 pt-20 text-center md:pt-28">
-      <h1 className="text-[40px] font-semibold tracking-[-0.045em] text-ds-ink md:text-[56px]">
-        {t('emptyHeroTitle')}
-      </h1>
-      <p className="mt-5 text-[17px] leading-8 text-ds-muted md:text-[18px]">
-        {t('emptyHeroSub')}
-      </p>
+      <h1 className="ds-hero-title">{t('emptyHeroTitle')}</h1>
+      <p className="ds-hero-sub mt-4 max-w-lg">{t('emptyHeroSub')}</p>
 
       <div className="mt-12 grid w-full max-w-[980px] grid-cols-1 gap-5 sm:grid-cols-2">
         {suggestions.map((s) => (

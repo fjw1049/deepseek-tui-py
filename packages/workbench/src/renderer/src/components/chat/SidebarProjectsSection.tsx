@@ -142,16 +142,14 @@ export function SidebarProjectsSection({
           {exportNotice}
         </p>
       ) : null}
-      <div className="flex items-center justify-between px-2 pb-1 pt-0.5">
-        <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ds-faint">
-          {t('sidebarProjects')}
-        </span>
+      <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
+        <span className="ds-sidebar-section-label">{t('sidebarProjects')}</span>
         <div className="flex items-center gap-0.5">
           <button
             type="button"
             onClick={onPickWorkspace}
             title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-            className="rounded-md p-1 text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
+            className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
@@ -181,10 +179,7 @@ export function SidebarProjectsSection({
             : sortedThreads.slice(0, 5)
           return (
             <div key={workspacePath} className="mb-1">
-              <div
-                className="group flex w-full items-center gap-0.5 rounded-[10px] text-[14px] font-medium text-ds-ink transition hover:bg-ds-hover/45"
-                title={workspacePath}
-              >
+              <div className="ds-sidebar-workspace group" title={workspacePath}>
                 <button
                   type="button"
                   onClick={() =>
@@ -210,7 +205,7 @@ export function SidebarProjectsSection({
                     event.stopPropagation()
                     onCreateThreadInWorkspace(workspacePath)
                   }}
-                  className="shrink-0 rounded-md p-1 text-ds-faint opacity-45 transition hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                  className="shrink-0 rounded-md p-1 text-ds-faint opacity-45 transition-all duration-200 hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
                   title={t('sidebarWorkspaceNewThread')}
                   aria-label={t('sidebarWorkspaceNewThread')}
                 >
@@ -222,7 +217,7 @@ export function SidebarProjectsSection({
                     event.stopPropagation()
                     void handleRemoveWorkspace(workspacePath)
                   }}
-                  className="mr-1 shrink-0 rounded-md p-1 text-ds-faint opacity-45 transition hover:bg-ds-hover/80 hover:text-red-500 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                  className="mr-1 shrink-0 rounded-md p-1 text-ds-faint opacity-45 transition-all duration-200 hover:bg-ds-hover/80 hover:text-red-500 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
                   title={t('sidebarWorkspaceRemove')}
                   aria-label={t('sidebarWorkspaceRemove')}
                 >
@@ -234,13 +229,13 @@ export function SidebarProjectsSection({
                 <div className="mt-0.5 space-y-0.5 pl-2">
                   {sortedThreads.length === 0 ? (
                     <div className="flex items-center justify-between gap-2 px-2 py-1">
-                      <div className="text-[12.5px] leading-5 text-ds-faint">
+                      <div className="text-[13.5px] leading-5 text-ds-faint">
                         {t('sidebarWorkspaceEmpty')}
                       </div>
                       <button
                         type="button"
                         onClick={() => onCreateThreadInWorkspace(workspacePath)}
-                        className="shrink-0 rounded-md px-2 py-1 text-[12px] font-medium text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                        className="shrink-0 rounded-md px-2 py-1 text-[13px] font-medium text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
                       >
                         {t('sidebarWorkspaceNewThread')}
                       </button>
@@ -281,7 +276,7 @@ export function SidebarProjectsSection({
                           [workspacePath]: !workspaceExpanded
                         }))
                       }
-                      className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[12.5px] text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                      className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13.5px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
                     >
                       {workspaceExpanded
                         ? t('sidebarWorkspaceShowLess')
@@ -338,15 +333,15 @@ function ThreadRow({
 
   return (
     <div
-      className={`group relative w-full overflow-hidden rounded-[10px] transition ${
+      className={`group relative w-full overflow-hidden rounded-[10px] transition-colors duration-200 ${
         active
           ? 'bg-black/8 text-ds-ink dark:bg-white/[0.055]'
-          : 'hover:bg-ds-hover/4 dark:hover:bg-white/[0.03]'
+          : 'hover:bg-ds-hover/50 dark:hover:bg-white/[0.04]'
       }`}
     >
       <span
         aria-hidden
-        className={`absolute bottom-1 top-1 left-0 w-[2px] rounded-full transition ${
+        className={`absolute bottom-1 top-1 left-0 w-[2px] rounded-full transition-all duration-200 ${
           active ? 'bg-accent opacity-100' : 'bg-transparent opacity-0'
         }`}
       />
@@ -381,18 +376,18 @@ function ThreadRow({
           strokeWidth={1.8}
         />
         <span
-          className={`min-w-0 flex-1 truncate text-[14px] leading-[1.35] ${
-            showUnreadDot && !active ? 'font-semibold text-ds-ink' : 'text-ds-ink'
+          className={`ds-sidebar-thread min-w-0 flex-1 truncate ${
+            showUnreadDot && !active ? 'font-semibold' : ''
           }`}
           title={thread.title}
         >
           {thread.title}
         </span>
-        <span className="shrink-0 text-[12px] tabular-nums text-ds-faint transition group-hover:opacity-0">
+        <span className="ds-sidebar-thread-meta shrink-0 transition-opacity duration-200 group-hover:opacity-0">
           {formatRelativeTime(thread.updatedAt, locale)}
         </span>
       </button>
-      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
         {canCompact ? (
           <button
             type="button"
@@ -401,7 +396,7 @@ function ThreadRow({
               onCompact()
             }}
             disabled={deleting || exporting}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
             title={t('sidebarThreadCompact')}
             aria-label={t('sidebarThreadCompact')}
           >
@@ -415,7 +410,7 @@ function ThreadRow({
             onResume()
           }}
           disabled={deleting || exporting}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
           title={t('sidebarThreadResume')}
           aria-label={t('sidebarThreadResume')}
         >
@@ -428,7 +423,7 @@ function ThreadRow({
             onFork()
           }}
           disabled={deleting || exporting}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
           title={t('sidebarThreadFork')}
           aria-label={t('sidebarThreadFork')}
         >
@@ -441,7 +436,7 @@ function ThreadRow({
             onExport()
           }}
           disabled={deleting || exporting}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
           title={t('sidebarThreadExport')}
           aria-label={t('sidebarThreadExport')}
         >
@@ -458,7 +453,7 @@ function ThreadRow({
             onDelete()
           }}
           disabled={deleting || exporting}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-100"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-100"
           title={t('sidebarThreadDelete')}
           aria-label={t('sidebarThreadDelete')}
         >
@@ -491,10 +486,12 @@ function SidebarEmpty({
       <button
         type="button"
         onClick={onPickWorkspace}
-        className="mx-1 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+        className="ds-sidebar-link ds-sidebar-link--plain mx-1 mt-1 w-[calc(100%-0.5rem)]"
       >
-        <LayoutGrid className="h-4 w-4 shrink-0 text-accent" strokeWidth={1.75} />
-        <span className="min-w-0 flex-1 truncate text-[14px] font-medium">
+        <span className="ds-sidebar-link__icon text-accent">
+          <LayoutGrid className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">
           {t('selectWorkspace')}
         </span>
       </button>
@@ -503,8 +500,8 @@ function SidebarEmpty({
 
   return (
     <div className="mx-2 mt-2 rounded-lg px-2 py-2">
-      <p className="text-[15px] font-medium text-ds-muted">{t('sidebarEmptyTitle')}</p>
-      <p className="mt-1 text-[13px] leading-5 text-ds-faint">
+      <p className="text-[16px] font-semibold text-ds-ink">{t('sidebarEmptyTitle')}</p>
+      <p className="mt-1.5 text-[14px] leading-5 text-ds-muted">
         {runtimeReady ? t('sidebarEmptySub') : t('sidebarEmptySubOffline')}
       </p>
     </div>
