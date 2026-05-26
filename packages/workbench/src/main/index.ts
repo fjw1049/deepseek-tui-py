@@ -714,6 +714,7 @@ app.whenReady().then(async () => {
       deepseek: { ...prev.deepseek, ...(partial.deepseek ?? {}) },
       log: { ...prev.log, ...(partial.log ?? {}) },
       notifications: { ...prev.notifications, ...(partial.notifications ?? {}) },
+      skills: { ...prev.skills, ...(partial.skills ?? {}) },
       claw: mergeClawSettings(prev.claw, partial.claw),
       guiUpdate: { ...prev.guiUpdate, ...(partial.guiUpdate ?? {}) },
       agentProvider: 'deepseek-runtime'

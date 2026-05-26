@@ -334,8 +334,9 @@ README.md                               [M] Workbench 快速开始一节
 | Store | `chat-store.ts` | 多会话 + 流式 blocks | ✅ |
 | UI | Timeline + Composer + Sidebar | 手动：发一条收到流式回复 | ✅ 用户手验 |
 | 审批 UI | Timeline approval 块 | on-request 策略下可点允许 | ⬜ 待手验 |
+| Steer 插队 | `chat-store` + `handle.steer` | busy 时发消息注入当前 turn | ✅ 代码 |
 
-### Stage 8.4 — 工作台（5 天） 🔄 进行中
+### Stage 8.4 — 工作台（5 天） ✅
 
 | 任务 | 文件 | 验收 | 状态 |
 |------|------|------|------|
@@ -403,6 +404,8 @@ Co-Authored-By: ...
 | 8.3 | 2026-05-26 | auth 链闭环 + GUI 手验聊天 + authed smoke | contract 32 passed + `smoke-workbench-auth.sh` |
 | 8.3 polish | 2026-05-26 | ensureRuntime TTL、token fingerprint、SSE 401 UX、probe 缓存 | workbench vitest 13+ passed |
 | 8.4 | 2026-05-26 | file_change diff 合成、diagnostics Bearer probe、SSE/error schema | contract 39 passed |
+| 8.5 | 2026-05-26 | auth/SSE hardening、schema lock、token 双写防护 | contract 41 passed |
+| 8.5+ | 2026-05-26 | trust_mode、steer、侧栏 fork/resume/compact、StatusEvent、skills 设置迁移、架构文档 | contract 45+ |
 
 **待办批量清单**：见 [`WORKBENCH_BACKLOG.md`](./WORKBENCH_BACKLOG.md)
 
@@ -412,8 +415,8 @@ Co-Authored-By: ...
 
 | 条目 | Stage | 内容 | 恢复条件 |
 |------|-------|------|----------|
-| ⬜ 8.legacy.envelope | 8.1 | 旧 `{ok,threads}` 与 parity `/v1` 双轨 | 文档 deprecated + 下 major 删除 |
-| ⬜ 8.port.8787 | 8.1 | CLI 默认 port 从 8787→7878 breaking | CHANGELOG + `--port` 兼容 |
+| ✅ 8.legacy.envelope | 8.1 | 旧 `{ok,threads}` 与 parity `/v1` 双轨 | [`RUNTIME_LEGACY.md`](./RUNTIME_LEGACY.md) |
+| ✅ 8.port.8787 | 8.1 | CLI 默认 port 从 8787→7878 breaking | README + `--port` 兼容 |
 | ⬜ 8.gui.claw | — | 故意不做 Claw | 用户要求 v3 单独立项 |
 | ⬜ 8.gui.updater | 8.5 | 无 electron-updater | 发布渠道定后再做 |
 | ⬜ 8.pack.python | 8.5 | 安装包需预装 Python | embedded python 或 installer 脚本 |

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from httpx import AsyncClient
 
 from deepseek_tui.app_server.thread_manager import _ActiveThreadState
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.tools.context import ToolContext
 
 
 @pytest.mark.asyncio
@@ -39,8 +41,11 @@ async def test_user_input_resolve_pending(client: AsyncClient, runtime_app: obje
     handle.pending_user_inputs[request_id] = future
 
     engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    stub_engine = SimpleNamespace(tool_context=ToolContext(working_directory=manager.workspace))
     async with manager._active_lock:
-        manager._active["thr_user_input_test"] = _ActiveThreadState(handle, engine_task)
+        manager._active["thr_user_input_test"] = _ActiveThreadState(
+            handle, stub_engine, engine_task
+        )
 
     try:
         r = await client.post(

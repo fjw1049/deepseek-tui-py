@@ -73,6 +73,19 @@ export type ChatBlock =
       answers?: UserInputAnswer[]
       errorMessage?: string
     }
+  | {
+      kind: 'subagent'
+      id: string
+      createdAt?: string
+      cardKind: 'delegate' | 'fanout'
+      agentId: string
+      agentType: string
+      status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+      summary?: string
+      actions?: string[]
+      truncated?: boolean
+      workers?: { id: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' }[]
+    }
 
 export type ApprovalRequestPayload = {
   approvalId: string
@@ -101,6 +114,22 @@ export type UserInputStatusPayload = {
   status: 'submitted' | 'cancelled' | 'error'
   answers?: UserInputAnswer[]
   errorMessage?: string
+}
+
+export type SubagentMailboxPayload = {
+  seq: number
+  message: {
+    kind: string
+    agent_id: string
+    agent_type?: string | null
+    status?: string | null
+    tool_name?: string | null
+    step?: number | null
+    ok?: boolean | null
+    parent_id?: string | null
+    summary?: string | null
+    error?: string | null
+  }
 }
 
 export type UserMessageEventPayload = {
@@ -137,6 +166,10 @@ export type ThreadEventSink = {
   onError(err: Error): void
   /** Optional: thread metadata changed (title / archived). */
   onThreadUpdated?(ev: ThreadUpdatedPayload): void
+  /** Optional: runtime status line (sub-agent wait, compaction, etc.). */
+  onSystemStatus?(text: string, itemId: string): void
+  /** Optional: delegate / fanout sub-agent progress cards. */
+  onSubagentMailbox?(ev: SubagentMailboxPayload): void
 }
 
 export interface AgentProvider {
@@ -167,6 +200,9 @@ export interface AgentProvider {
   interruptTurn(threadId: string, turnId: string): Promise<void>
   renameThread(threadId: string, title: string): Promise<void>
   deleteThread(threadId: string): Promise<void>
+  forkThread?(threadId: string): Promise<NormalizedThread>
+  resumeThread?(threadId: string): Promise<void>
+  compactThread?(threadId: string, reason?: string): Promise<void>
   subscribeThreadEvents(
     threadId: string,
     sinceSeq: number,

@@ -4,8 +4,10 @@ import { basename, dirname, join } from 'node:path'
 import {
   DEFAULT_DEEPSEEK_BASE_URL,
   defaultClawSettings,
+  defaultWorkbenchSkills,
   mergeClawSettings,
   normalizeAppSettings,
+  normalizeWorkbenchSkills,
   type AppSettingsPatch,
   type AppSettingsV1,
   type ClawImChannelV1,
@@ -138,6 +140,7 @@ const defaultSettings = (): AppSettingsV1 => ({
   notifications: {
     turnComplete: true
   },
+  skills: defaultWorkbenchSkills(),
   guiUpdate: {
     channel: 'frontier'
   },
@@ -152,6 +155,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     deepseek: { ...defaults.deepseek, ...parsed.deepseek },
     log: { ...defaults.log, ...parsed.log },
     notifications: { ...defaults.notifications, ...parsed.notifications },
+    skills: normalizeWorkbenchSkills(parsed.skills, parsed.claw?.skills?.extraDirs),
     claw: mergeClawSettings(defaults.claw, parsed.claw),
     guiUpdate: { ...defaults.guiUpdate, ...parsed.guiUpdate },
     agentProvider: 'deepseek-runtime'
@@ -253,6 +257,10 @@ export class JsonSettingsStore {
       deepseek: { ...cur.deepseek, ...(partial.deepseek ?? {}) },
       log: { ...cur.log, ...(partial.log ?? {}) },
       notifications: { ...cur.notifications, ...(partial.notifications ?? {}) },
+      skills: normalizeWorkbenchSkills(
+        partial.skills ? { ...cur.skills, ...partial.skills } : cur.skills,
+        partial.claw?.skills?.extraDirs
+      ),
       claw: mergeClawSettings(cur.claw, partial.claw),
       guiUpdate: { ...cur.guiUpdate, ...(partial.guiUpdate ?? {}) },
       agentProvider: 'deepseek-runtime'

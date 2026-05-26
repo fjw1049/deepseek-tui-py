@@ -32,10 +32,13 @@ import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 
 type SettingsCategory = 'general' | 'agents'
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
-type SettingsPatch = Partial<Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'claw' | 'guiUpdate'>> & {
+type SettingsPatch = Partial<
+  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate'>
+> & {
   deepseek?: Partial<AppSettingsV1['deepseek']>
   log?: Partial<AppSettingsV1['log']>
   notifications?: Partial<AppSettingsV1['notifications']>
+  skills?: Partial<AppSettingsV1['skills']>
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
 }
@@ -83,6 +86,10 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
     notifications: {
       ...current.notifications,
       ...(patch.notifications ?? {})
+    },
+    skills: {
+      ...current.skills,
+      ...(patch.skills ?? {})
     },
     claw: mergeClawSettings(current.claw, patch.claw),
     guiUpdate: {
@@ -978,13 +985,11 @@ export function SettingsView(): ReactElement {
                     wideControl
                     control={
                       <textarea
-                        value={listSettingsText(form.claw.skills.extraDirs)}
+                        value={listSettingsText(form.skills.extraDirs)}
                         onChange={(event) =>
                           update({
-                            claw: {
-                              skills: {
-                                extraDirs: splitSettingsList(event.target.value)
-                              }
+                            skills: {
+                              extraDirs: splitSettingsList(event.target.value)
                             }
                           })
                         }

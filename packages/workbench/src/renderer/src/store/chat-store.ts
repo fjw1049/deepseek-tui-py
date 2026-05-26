@@ -1,10 +1,17 @@
 import { create } from 'zustand'
 import type {
   NormalizedThread,
+  SubagentMailboxPayload,
   ThreadDeltaEvent,
   ThreadEventSink,
   ToolBlock
 } from '../agent/types'
+import {
+  applyMailboxMessage,
+  subagentBlockFromCard,
+  subagentCardsFromBlocks,
+  type MailboxMessageJson
+} from '../lib/subagent-mailbox'
 import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
@@ -458,6 +465,38 @@ function buildThreadEventSink(
         )
       }))
     },
+    onSystemStatus: (text, itemId) =>
+      set((s) => {
+        if (s.blocks.some((b) => b.kind === 'system' && b.id === itemId)) return {}
+        return {
+          blocks: [
+            ...s.blocks,
+            {
+              kind: 'system' as const,
+              id: itemId,
+              createdAt: new Date().toISOString(),
+              text
+            }
+          ]
+        }
+      }),
+    onSubagentMailbox: (ev: SubagentMailboxPayload) =>
+      set((s) => {
+        const msg = ev.message as MailboxMessageJson
+        const cards = applyMailboxMessage(subagentCardsFromBlocks(s.blocks), msg)
+        const card = cards[msg.agent_id]
+        if (!card) return {}
+        const blockId = `subagent-${card.agentId}`
+        const existing = s.blocks.find((b) => b.kind === 'subagent' && b.agentId === card.agentId)
+        const nextBlock = subagentBlockFromCard(card, existing?.createdAt)
+        const idx = s.blocks.findIndex((b) => b.id === blockId)
+        if (idx >= 0) {
+          const blocks = [...s.blocks]
+          blocks[idx] = nextBlock
+          return { blocks }
+        }
+        return { blocks: [...s.blocks, nextBlock] }
+      }),
     onTurnComplete: () => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
@@ -1100,8 +1139,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const p = getProvider(providerId)
     const hasPendingActiveTurn = get().blocks.some(hasPendingRuntimeWork)
     if (get().busy || hasPendingActiveTurn) {
-      const now = Date.now()
       const activeThreadId = get().activeThreadId
+      const turnId = get().currentTurnId
+      if (
+        activeThreadId &&
+        turnId &&
+        typeof p.steerUserMessage === 'function'
+      ) {
+        const now = Date.now()
+        const threadSnap = get().threads.find((thread) => thread.id === activeThreadId)
+        const composerModel = get().composerModel.trim()
+        const userModelChip = optimisticUserModelLabel(composerModel, threadSnap?.model)
+        const steerBlockId = `u-steer-${now}`
+        const previousBlocks = get().blocks
+        set((s) => ({
+          blocks: [
+            ...s.blocks,
+            {
+              kind: 'user' as const,
+              id: steerBlockId,
+              createdAt: new Date(now).toISOString(),
+              text: trimmedText,
+              ...(userModelChip ? { modelLabel: userModelChip } : {})
+            }
+          ],
+          error: null
+        }))
+        try {
+          await p.steerUserMessage(activeThreadId, turnId, trimmedText)
+          return true
+        } catch (error) {
+          set({
+            blocks: previousBlocks,
+            error: formatRuntimeError(error)
+          })
+          if (shouldOpenSettingsForError(error)) {
+            set({ route: 'settings', settingsSection: 'general' })
+          }
+          return false
+        }
+      }
+
+      const now = Date.now()
       const threadSnap = activeThreadId
         ? get().threads.find((thread) => thread.id === activeThreadId)
         : undefined
@@ -1373,6 +1452,88 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
+        ...(shouldOpenSettingsForError(e)
+          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          : {})
+      })
+    }
+  },
+
+  forkThread: async (threadId) => {
+    const targetId = threadId.trim()
+    if (!targetId) return
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    const p = getProvider(get().providerId)
+    if (typeof p.forkThread !== 'function') {
+      set({ error: i18n.t('common:runtimeForkUnsupported') })
+      return
+    }
+    try {
+      const forked = await p.forkThread(targetId)
+      await get().refreshThreads()
+      await get().selectThread(forked.id)
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        ...(shouldOpenSettingsForError(e)
+          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          : {})
+      })
+    }
+  },
+
+  resumeThread: async (threadId) => {
+    const targetId = threadId.trim()
+    if (!targetId) return
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    const p = getProvider(get().providerId)
+    if (typeof p.resumeThread !== 'function') {
+      set({ error: i18n.t('common:runtimeResumeUnsupported') })
+      return
+    }
+    try {
+      await p.resumeThread(targetId)
+      set({ error: null })
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        ...(shouldOpenSettingsForError(e)
+          ? { route: 'settings' as const, settingsSection: 'agents' as const }
+          : {})
+      })
+    }
+  },
+
+  compactActiveThread: async () => {
+    const threadId = get().activeThreadId
+    if (!threadId) return
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    if (get().busy) {
+      set({ error: i18n.t('common:runtimeCompactBusy') })
+      return
+    }
+    const p = getProvider(get().providerId)
+    if (typeof p.compactThread !== 'function') {
+      set({ error: i18n.t('common:runtimeCompactUnsupported') })
+      return
+    }
+    try {
+      set({ busy: true, error: null })
+      await p.compactThread(threadId)
+      await get().selectThread(threadId)
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        busy: false,
         ...(shouldOpenSettingsForError(e)
           ? { route: 'settings' as const, settingsSection: 'agents' as const }
           : {})

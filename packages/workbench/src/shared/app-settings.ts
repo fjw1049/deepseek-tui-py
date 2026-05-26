@@ -174,6 +174,11 @@ export type GuiUpdateConfigV1 = {
   channel: GuiUpdateChannel
 }
 
+export type WorkbenchSkillsConfigV1 = {
+  /** Extra skill scan directories (migrated from legacy ``claw.skills.extraDirs``). */
+  extraDirs: string[]
+}
+
 export type AppSettingsV1 = {
   version: 1
   locale: 'en' | 'zh'
@@ -184,16 +189,18 @@ export type AppSettingsV1 = {
   workspaceRoot: string
   log: LogConfigV1
   notifications: NotificationConfigV1
+  skills: WorkbenchSkillsConfigV1
   claw: ClawSettingsV1
   guiUpdate: GuiUpdateConfigV1
 }
 
 export type AppSettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'claw' | 'guiUpdate'>
+  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate'>
 > & {
   deepseek?: Partial<DeepseekSettingsV1>
   log?: Partial<LogConfigV1>
   notifications?: Partial<NotificationConfigV1>
+  skills?: Partial<WorkbenchSkillsConfigV1>
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<GuiUpdateConfigV1>
 }
@@ -562,12 +569,28 @@ export function mergeClawSettings(
   })
 }
 
+export function defaultWorkbenchSkills(): WorkbenchSkillsConfigV1 {
+  return { extraDirs: [] }
+}
+
+export function normalizeWorkbenchSkills(
+  input: Partial<WorkbenchSkillsConfigV1> | undefined,
+  legacyClawExtraDirs?: string[]
+): WorkbenchSkillsConfigV1 {
+  const source = input ?? {}
+  const fromLegacy = legacyClawExtraDirs ?? []
+  const merged = source.extraDirs?.length ? source.extraDirs : fromLegacy
+  return { extraDirs: compactStrings(merged) }
+}
+
 export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
   const maybeSettings = settings as AppSettingsV1 & {
     notifications?: Partial<NotificationConfigV1>
+    skills?: Partial<WorkbenchSkillsConfigV1>
     claw?: ClawSettingsPatchV1
     guiUpdate?: Partial<GuiUpdateConfigV1>
   }
+  const claw = normalizeClawSettings(maybeSettings.claw)
   return {
     ...settings,
     deepseek: {
@@ -577,7 +600,8 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     notifications: {
       turnComplete: maybeSettings.notifications?.turnComplete !== false
     },
-    claw: normalizeClawSettings(maybeSettings.claw),
+    skills: normalizeWorkbenchSkills(maybeSettings.skills, claw.skills.extraDirs),
+    claw,
     guiUpdate: {
       channel: normalizeGuiUpdateChannel(
         maybeSettings.guiUpdate?.channel ?? DEFAULT_GUI_UPDATE_CHANNEL

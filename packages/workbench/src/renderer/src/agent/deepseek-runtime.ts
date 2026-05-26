@@ -4,6 +4,7 @@ import type {
   ChatBlock,
   NormalizedThread,
   ThreadDeltaEvent,
+  SubagentMailboxPayload,
   ThreadEventSink,
   ToolBlock,
   ToolItemKind,
@@ -287,7 +288,8 @@ function toRuntimeError(info: RuntimeErrorJson & { message: string }): Error {
 function runtimeExecutionFlags(settings: AppSettingsV1): RuntimeExecutionFlags {
   return {
     auto_approve: settings.deepseek.approvalPolicy === 'auto',
-    trust_mode: settings.deepseek.sandboxMode === 'danger-full-access'
+    // Sandbox is enforced via ``--sandbox-mode`` on runtime spawn, not thread trust_mode.
+    trust_mode: false
   }
 }
 
@@ -619,6 +621,42 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
+  async forkThread(threadId: string): Promise<NormalizedThread> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/fork`,
+      'POST'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'fork thread failed'))
+    const t = JSON.parse(r.body) as ThreadRecordJson
+    return {
+      id: t.id,
+      title: titleFromThread(t),
+      updatedAt: t.updated_at,
+      model: t.model,
+      mode: t.mode,
+      workspace: t.workspace,
+      status: t.status
+    }
+  }
+
+  async resumeThread(threadId: string): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/resume`,
+      'POST'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resume thread failed'))
+  }
+
+  async compactThread(threadId: string, reason?: string): Promise<void> {
+    const body = reason?.trim() ? JSON.stringify({ reason: reason.trim() }) : '{}'
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/compact`,
+      'POST',
+      body
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'compact thread failed'))
+  }
+
   async subscribeThreadEvents(
     threadId: string,
     sinceSeq: number,
@@ -776,6 +814,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   if (userMessage) sink.onUserMessage(userMessage)
                   return
                 }
+                if (
+                  it &&
+                  (it.kind === 'status' || it.kind === 'context_compaction') &&
+                  sink.onSystemStatus
+                ) {
+                  const text = it.detail ?? it.summary ?? it.kind
+                  sink.onSystemStatus(text, it.id)
+                  return
+                }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {
                   if (it.kind === 'tool_call' && looksLikeUserInputToolItem(it)) {
                     sink.onUserInputStatus({
@@ -829,6 +876,31 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                         : undefined
                   const archived = typeof thread?.archived === 'boolean' ? thread.archived : undefined
                   sink.onThreadUpdated({ threadId, title, archived, changes })
+                }
+                return
+              }
+
+              if (ev === 'user_input.required') {
+                const requestId = String(payload.request_id ?? payload.id ?? '')
+                const questions = readUserInputQuestions(payload.questions)
+                if (requestId && questions && sink.onUserInput) {
+                  sink.onUserInput({
+                    itemId: requestId,
+                    requestId,
+                    questions
+                  })
+                }
+                return
+              }
+
+              if (ev === 'subagent.mailbox' && sink.onSubagentMailbox) {
+                const seq = typeof payload.seq === 'number' ? payload.seq : 0
+                const message = payload.message as Record<string, unknown> | undefined
+                if (message && typeof message.agent_id === 'string') {
+                  sink.onSubagentMailbox({
+                    seq,
+                    message: message as SubagentMailboxPayload['message']
+                  })
                 }
                 return
               }

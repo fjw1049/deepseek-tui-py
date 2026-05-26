@@ -43,6 +43,8 @@ from deepseek_tui.config.models import Config
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ErrorEvent,
+    StatusEvent,
+    SubAgentMailboxEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
@@ -52,15 +54,35 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
+from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.utils import summarize_text
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
+    from deepseek_tui.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["RuntimeThreadManager"]
+
+
+def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
+    """JSON-serializable mailbox envelope for Workbench sub-agent cards."""
+    return {
+        "kind": msg.kind.value,
+        "agent_id": msg.agent_id,
+        "agent_type": msg.agent_type,
+        "status": msg.status,
+        "tool_name": msg.tool_name,
+        "step": msg.step,
+        "ok": msg.ok,
+        "parent_id": msg.parent_id,
+        "summary": msg.summary,
+        "error": msg.error,
+        "model": msg.model,
+        "usage": msg.usage,
+    }
 
 
 # --- internal state types ----------------------------------------------------
@@ -82,10 +104,16 @@ class _ActiveTurnState:
 
 
 class _ActiveThreadState:
-    __slots__ = ("handle", "engine_task", "active_turn")
+    __slots__ = ("handle", "engine", "engine_task", "active_turn")
 
-    def __init__(self, handle: EngineHandle, engine_task: asyncio.Task[None]) -> None:
+    def __init__(
+        self,
+        handle: EngineHandle,
+        engine: Engine,
+        engine_task: asyncio.Task[None],
+    ) -> None:
         self.handle = handle
+        self.engine = engine
         self.engine_task: asyncio.Task[None] = engine_task
         self.active_turn: _ActiveTurnState | None = None
 
@@ -130,6 +158,18 @@ class RuntimeThreadManager:
         self._cancel_event = asyncio.Event()
 
         self._recover_interrupted_state()
+
+    @staticmethod
+    def _sync_trust_mode(engine: Engine, trust_mode: bool) -> None:
+        """Mirror thread / turn trust onto ToolContext (TUI session parity)."""
+        engine.tool_context.trust_mode = trust_mode
+
+    def _trust_mode_for_thread(
+        self, thread: ThreadRecord, state: _ActiveThreadState | None
+    ) -> bool:
+        if state is not None and state.active_turn is not None:
+            return state.active_turn.trust_mode
+        return thread.trust_mode
 
     # --- public lifecycle ----------------------------------------------------
 
@@ -419,6 +459,7 @@ class RuntimeThreadManager:
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
             )
+            self._sync_trust_mode(state.engine, trust_mode)
             self._touch_lru(thread_id)
 
         model = req.model or thread.model
@@ -465,7 +506,7 @@ class RuntimeThreadManager:
             handle = state.handle
             self._touch_lru(thread_id)
 
-        await handle.send_message(content=prompt)
+        await handle.steer(prompt)
 
         now = datetime.now(timezone.utc)
         turn = self.store.load_turn(turn_id)
@@ -527,6 +568,7 @@ class RuntimeThreadManager:
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id, auto_approve=thread.auto_approve, trust_mode=thread.trust_mode
             )
+            self._sync_trust_mode(state.engine, thread.trust_mode)
             self._touch_lru(thread_id)
 
         await self._emit_event(
@@ -559,6 +601,9 @@ class RuntimeThreadManager:
         async with self._active_lock:
             state = self._active.get(thread.id)
             if state is not None:
+                self._sync_trust_mode(
+                    state.engine, self._trust_mode_for_thread(thread, state)
+                )
                 self._touch_lru(thread.id)
                 return state.handle, state.engine_task
 
@@ -574,12 +619,13 @@ class RuntimeThreadManager:
             default_model=thread.model,
             start_mcp=False,
         )
+        self._sync_trust_mode(engine, thread.trust_mode)
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
 
         async with self._active_lock:
             evicted = self._enforce_lru_capacity()
             self._active[thread.id] = _ActiveThreadState(
-                handle=handle, engine_task=engine_task
+                handle=handle, engine=engine, engine_task=engine_task
             )
             self._touch_lru(thread.id)
 
@@ -807,7 +853,7 @@ class RuntimeThreadManager:
                         "id": approval_id,
                         "approval_id": approval_id,
                         "tool_name": event.request.tool_name,
-                        "description": event.request.description,
+                        "description": event.request.reason,
                     },
                 )
                 async with self._active_lock:
@@ -847,6 +893,30 @@ class RuntimeThreadManager:
                         )
                     )
 
+            elif isinstance(event, StatusEvent):
+                now = datetime.now(timezone.utc)
+                item_id = f"item_{uuid.uuid4().hex[:8]}"
+                summary = summarize_text(event.message, SUMMARY_LIMIT)
+                item = TurnItemRecord(
+                    id=item_id,
+                    turn_id=turn_id,
+                    kind=TurnItemKind.STATUS,
+                    status=TurnItemLifecycleStatus.COMPLETED,
+                    summary=summary,
+                    detail=event.message,
+                    started_at=now,
+                    ended_at=now,
+                )
+                self.store.save_item(item)
+                self._attach_item_to_turn(turn_id, item_id)
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    "item.completed",
+                    {"item": item.model_dump(mode="json")},
+                )
+
             elif isinstance(event, UserInputRequiredEvent):
                 await self._emit_event(
                     thread_id, turn_id, None, "user_input.required",
@@ -854,6 +924,18 @@ class RuntimeThreadManager:
                         "id": event.tool_call_id,
                         "request_id": event.tool_call_id,
                         "questions": event.questions,
+                    },
+                )
+
+            elif isinstance(event, SubAgentMailboxEvent):
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    None,
+                    "subagent.mailbox",
+                    {
+                        "seq": event.seq,
+                        "message": _mailbox_message_payload(event.message),
                     },
                 )
 

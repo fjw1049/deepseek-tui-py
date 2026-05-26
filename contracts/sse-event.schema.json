@@ -40,6 +40,8 @@
         "item.completed",
         "item.failed",
         "approval.required",
+        "user_input.required",
+        "subagent.mailbox",
         "turn.completed"
       ]
     },

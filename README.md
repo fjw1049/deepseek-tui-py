@@ -110,7 +110,8 @@ deepseek-tui                               # 交互式 TUI
 deepseek-tui                        # 交互式 TUI（默认）
 deepseek-tui doctor                 # 健康检查
 deepseek-tui -p "你好"              # 单次对话（stdout）
-deepseek-tui serve --port 8787      # HTTP + SSE 服务
+deepseek-tui serve --http --port 7878   # Workbench Runtime API (parity /v1)
+deepseek-tui serve --port 8787          # Legacy App Server envelope
 deepseek-tui serve --stdio          # stdio JSON-RPC（给上游 agent）
 deepseek-tui mcp-server             # 作为 MCP Server 暴露工具
 deepseek-tui resume <session-id>    # 恢复会话

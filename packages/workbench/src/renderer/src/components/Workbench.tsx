@@ -233,7 +233,10 @@ export function Workbench(): ReactElement {
     composerModel,
     composerPickList,
     setComposerModel,
-    deleteThread
+    deleteThread,
+    forkThread,
+    resumeThread,
+    compactActiveThread
   } = useChatStore(
     useShallow((s) => ({
       threads: s.threads,
@@ -263,7 +266,10 @@ export function Workbench(): ReactElement {
       composerModel: s.composerModel,
       composerPickList: s.composerPickList,
       setComposerModel: s.setComposerModel,
-      deleteThread: s.deleteThread
+      deleteThread: s.deleteThread,
+      forkThread: s.forkThread,
+      resumeThread: s.resumeThread,
+      compactActiveThread: s.compactActiveThread
     }))
   )
   const [input, setInput] = useState('')
@@ -637,6 +643,15 @@ export function Workbench(): ReactElement {
               runtimeReady={runtimeConnection === 'ready'}
               onSelectThread={openThread}
               onDeleteThread={deleteThread}
+              onForkThread={forkThread}
+              onResumeThread={resumeThread}
+              onCompactThread={async (id) => {
+                if (activeThreadId !== id) {
+                  setRoute('chat')
+                  await selectThread(id)
+                }
+                await compactActiveThread()
+              }}
               onNewChat={startNewChat}
               onNewChatInWorkspace={startNewChatInWorkspace}
               onOpenSettings={(section) => openSettings(section)}

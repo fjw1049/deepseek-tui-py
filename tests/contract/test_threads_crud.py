@@ -52,6 +52,15 @@ async def test_threads_crud(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_thread_persists_trust_mode(client: AsyncClient) -> None:
+    r = await client.post("/v1/threads", json={"trust_mode": True, "auto_approve": False})
+    assert r.status_code == 201
+    body = r.json()
+    assert body["trust_mode"] is True
+    assert body["auto_approve"] is False
+
+
+@pytest.mark.asyncio
 async def test_threads_summary(client: AsyncClient) -> None:
     await client.post("/v1/threads", json={})
     r = await client.get("/v1/threads/summary")

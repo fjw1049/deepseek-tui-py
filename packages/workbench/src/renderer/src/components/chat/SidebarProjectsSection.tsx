@@ -10,7 +10,10 @@ import {
   Loader2,
   MessageSquare,
   Plus,
-  Trash2
+  Trash2,
+  GitFork,
+  RotateCcw,
+  Archive
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { formatRelativeTime } from '../../lib/format-relative-time'
@@ -31,6 +34,9 @@ type SidebarProjectsSectionProps = {
   onCreateThreadInWorkspace: (workspacePath: string) => void
   onSelectThread: (threadId: string) => void
   onDeleteThread: (threadId: string) => Promise<void>
+  onForkThread: (threadId: string) => Promise<void>
+  onResumeThread: (threadId: string) => Promise<void>
+  onCompactThread: (threadId: string) => Promise<void>
   t: (k: string, opts?: Record<string, unknown>) => string
 }
 
@@ -48,6 +54,9 @@ export function SidebarProjectsSection({
   onCreateThreadInWorkspace,
   onSelectThread,
   onDeleteThread,
+  onForkThread,
+  onResumeThread,
+  onCompactThread,
   t
 }: SidebarProjectsSectionProps): ReactElement {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -225,6 +234,10 @@ export function SidebarProjectsSection({
                         }
                         onSelect={() => onSelectThread(thread.id)}
                         onDelete={() => void handleDeleteThread(thread)}
+                        onFork={() => void onForkThread(thread.id)}
+                        onResume={() => void onResumeThread(thread.id)}
+                        onCompact={() => void onCompactThread(thread.id)}
+                        canCompact={activeThreadId === thread.id && !busy}
                       />
                     ))
                   )}
@@ -263,8 +276,12 @@ type ThreadRowProps = {
   locale: string
   showRunning: boolean
   showUnread: boolean
+  canCompact: boolean
   onSelect: () => void
   onDelete: () => void
+  onFork: () => void
+  onResume: () => void
+  onCompact: () => void
 }
 
 function ThreadRow({
@@ -274,8 +291,12 @@ function ThreadRow({
   locale,
   showRunning,
   showUnread,
+  canCompact,
   onSelect,
-  onDelete
+  onDelete,
+  onFork,
+  onResume,
+  onCompact
 }: ThreadRowProps): ReactElement {
   const { t } = useTranslation('common')
   const showUnreadDot = showUnread && !showRunning
@@ -297,7 +318,7 @@ function ThreadRow({
       <button
         type="button"
         onClick={onSelect}
-        className="flex w-full items-center gap-1.5 px-3 py-2 pr-8 text-left"
+        className="flex w-full items-center gap-1.5 px-3 py-2 pr-[5.5rem] text-left"
         disabled={deleting}
         aria-label={
           showRunning
@@ -336,23 +357,66 @@ function ThreadRow({
           {formatRelativeTime(thread.updatedAt, locale)}
         </span>
       </button>
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation()
-          onDelete()
-        }}
-        disabled={deleting}
-        className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-ds-faint opacity-0 transition hover:bg-ds-hover hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-100"
-        title={t('sidebarThreadDelete')}
-        aria-label={t('sidebarThreadDelete')}
-      >
-        {deleting ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-        ) : (
-          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-        )}
-      </button>
+      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+        {canCompact ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onCompact()
+            }}
+            disabled={deleting}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            title={t('sidebarThreadCompact')}
+            aria-label={t('sidebarThreadCompact')}
+          >
+            <Archive className="h-3.5 w-3.5" strokeWidth={1.9} />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onResume()
+          }}
+          disabled={deleting}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          title={t('sidebarThreadResume')}
+          aria-label={t('sidebarThreadResume')}
+        >
+          <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onFork()
+          }}
+          disabled={deleting}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          title={t('sidebarThreadFork')}
+          aria-label={t('sidebarThreadFork')}
+        >
+          <GitFork className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onDelete()
+          }}
+          disabled={deleting}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-100"
+          title={t('sidebarThreadDelete')}
+          aria-label={t('sidebarThreadDelete')}
+        >
+          {deleting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+          ) : (
+            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+          )}
+        </button>
+      </div>
     </div>
   )
 }

@@ -79,6 +79,9 @@ export type ChatState = {
   interrupt: () => Promise<void>
   renameActiveThread: (title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+  forkThread: (threadId: string) => Promise<void>
+  resumeThread: (threadId: string) => Promise<void>
+  compactActiveThread: () => Promise<void>
   resolveApproval: (blockId: string, decision: 'allow' | 'deny') => Promise<void>
   resolveUserInput: (
     blockId: string,

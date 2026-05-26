@@ -534,6 +534,9 @@ function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'tool') return block.status === 'running'
   if (block.kind === 'approval') return block.status === 'pending'
   if (block.kind === 'user_input') return block.status === 'pending'
+  if (block.kind === 'subagent') {
+    return block.status === 'pending' || block.status === 'running'
+  }
   return false
 }
 
@@ -543,6 +546,7 @@ function isProcessBlock(block: ChatBlock): boolean {
     block.kind === 'tool' ||
     block.kind === 'approval' ||
     block.kind === 'user_input' ||
+    block.kind === 'subagent' ||
     block.kind === 'system'
   )
 }
@@ -1327,6 +1331,7 @@ type ProcessDetail =
   | { kind: 'tool'; text: string; isPatch: boolean; isError: boolean; filePath?: string }
   | { kind: 'approval' }
   | { kind: 'user_input' }
+  | { kind: 'subagent' }
   | { kind: 'text'; text: string }
 
 function summarizeProcessText(text: string, max = 96): string {
@@ -1436,6 +1441,7 @@ function getProcessDetail(block: ChatBlock, summaryText?: string): ProcessDetail
   }
   if (block.kind === 'approval') return { kind: 'approval' }
   if (block.kind === 'user_input') return { kind: 'user_input' }
+  if (block.kind === 'subagent') return { kind: 'subagent' }
   if (block.kind === 'system' && block.text.trim()) {
     // Short system messages already fit in the summary line — skip the
     // expand affordance so we don't duplicate the same string.
@@ -1505,6 +1511,9 @@ function ProcessEntryDetail({
   if (detail.kind === 'user_input' && block.kind === 'user_input') {
     return <MessageBubble block={block} nested />
   }
+  if (detail.kind === 'subagent' && block.kind === 'subagent') {
+    return <MessageBubble block={block} nested />
+  }
   return null
 }
 
@@ -1526,6 +1535,11 @@ function describeProcessBlock(
   }
   if (block.kind === 'user_input') {
     return t('userInputTitle')
+  }
+  if (block.kind === 'subagent') {
+    return block.cardKind === 'fanout'
+      ? t('subagentFanoutTitle', { kind: block.agentType })
+      : t('subagentDelegateTitle', { type: block.agentType })
   }
   if (block.kind === 'system') {
     return block.text
@@ -1756,6 +1770,83 @@ function CopyFeedbackButton({
       )}
       {!iconOnly ? <span>{label}</span> : null}
     </button>
+  )
+}
+
+function subagentStatusLabel(
+  status: Extract<ChatBlock, { kind: 'subagent' }>['status'],
+  t: (key: string) => string
+): string {
+  switch (status) {
+    case 'completed':
+      return t('subagentStatusCompleted')
+    case 'failed':
+      return t('subagentStatusFailed')
+    case 'cancelled':
+      return t('subagentStatusCancelled')
+    case 'running':
+      return t('subagentStatusRunning')
+    default:
+      return t('subagentStatusPending')
+  }
+}
+
+function SubagentBubble({
+  block
+}: {
+  block: Extract<ChatBlock, { kind: 'subagent' }>
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const title =
+    block.cardKind === 'fanout'
+      ? t('subagentFanoutTitle', { kind: block.agentType })
+      : t('subagentDelegateTitle', { type: block.agentType })
+  const statusLabel = subagentStatusLabel(block.status, t)
+
+  return (
+    <div className="rounded-[22px] border border-violet-300/50 bg-[linear-gradient(180deg,rgba(139,92,246,0.06),rgba(139,92,246,0.12))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)] dark:border-violet-800/50">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="font-semibold text-violet-700 dark:text-violet-300">{title}</div>
+        <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
+      </div>
+      <p className="mt-1 text-[12px] text-ds-muted">{statusLabel}</p>
+      {block.cardKind === 'delegate' && block.actions && block.actions.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-[12px] text-ds-muted">
+          {block.truncated ? (
+            <li className="text-ds-faint">…</li>
+          ) : null}
+          {block.actions.map((action, index) => (
+            <li key={`${block.id}-action-${index}`} className="truncate">
+              {action}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {block.cardKind === 'fanout' && block.workers && block.workers.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {block.workers.map((worker) => (
+            <span
+              key={worker.id}
+              title={worker.id}
+              className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-[10px] ${
+                worker.status === 'completed'
+                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                  : worker.status === 'failed'
+                    ? 'bg-red-500/15 text-red-700 dark:text-red-300'
+                    : worker.status === 'running'
+                      ? 'bg-amber-500/15 text-amber-800 dark:text-amber-200'
+                      : 'bg-ds-hover text-ds-muted'
+              }`}
+            >
+              {worker.id.slice(-2)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {block.summary ? (
+        <p className="mt-2 whitespace-pre-wrap text-[13px] text-ds-ink">{block.summary}</p>
+      ) : null}
+    </div>
   )
 }
 
@@ -2003,6 +2094,9 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
   }
   if (block.kind === 'user_input') {
     return <UserInputBubble block={block} />
+  }
+  if (block.kind === 'subagent') {
+    return <SubagentBubble block={block} />
   }
   if (block.kind === 'approval') {
     const done = block.status !== 'pending'
