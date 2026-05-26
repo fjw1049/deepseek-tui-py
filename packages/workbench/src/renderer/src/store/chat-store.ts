@@ -1529,7 +1529,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       set({ busy: true, error: null })
       await p.compactThread(threadId)
+      const errorBeforeSelect = get().error
       await get().selectThread(threadId)
+      // selectThread swallows getThreadDetail failures; compact left busy=true above.
+      if (get().error !== errorBeforeSelect) {
+        set({ busy: false })
+      }
     } catch (e) {
       set({
         error: formatRuntimeError(e),
