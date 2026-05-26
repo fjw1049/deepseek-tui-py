@@ -37,6 +37,7 @@ import {
   syncDeepseekTuiConfig
 } from './deepseek-config'
 import { configureLogger, logError, logWarn, pruneOnStartup } from './logger'
+import { createRuntimeReadyCache } from './runtime-ready-cache'
 import { sseStartPayloadSchema, streamIdSchema } from './ipc/app-ipc-schemas'
 import { createTerminalService } from './services/terminal-service'
 import { registerAppIpcHandlers } from './ipc/register-app-ipc-handlers'
@@ -307,11 +308,19 @@ function takeSseBlock(buffer: string): { block: string; rest: string } | null {
 let runtimeEnsurePromise: Promise<void> | null = null
 let runtimeSettingsApplyPromise: Promise<void> | null = null
 
+const runtimeReadyCache = createRuntimeReadyCache({
+  onTrace: (event, reason) => traceStartup(`runtime-ready:${event}${reason ? ` ${reason}` : ''}`)
+})
+function invalidateRuntimeReady(reason: string): void {
+  runtimeReadyCache.invalidate(reason)
+}
+
 function queueRuntimeSettingsApply(prev: AppSettingsV1, next: AppSettingsV1): void {
   if (!deepseekTuiConfigChanged(prev, next) && !runtimeStartupConfigChanged(prev, next)) {
     return
   }
 
+  invalidateRuntimeReady('settings-apply:queued')
   const previousTask = runtimeSettingsApplyPromise ?? Promise.resolve()
   const task = previousTask
     .catch(() => undefined)
@@ -342,6 +351,13 @@ async function waitForQueuedRuntimeSettingsApply(): Promise<void> {
 
 async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
   if (runtimeEnsurePromise) return runtimeEnsurePromise
+  if (
+    !runtimeSettingsApplyPromise &&
+    (!settings.deepseek.autoStart || isDeepseekChildRunning()) &&
+    runtimeReadyCache.isFresh()
+  ) {
+    return
+  }
   runtimeEnsurePromise = ensureRuntimeOnce(settings).finally(() => {
     runtimeEnsurePromise = null
   })
@@ -369,9 +385,11 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
             throw runtimeJsonError('runtime_port_conflict', reclaimed.message)
           }
         } else {
+          runtimeReadyCache.markReady()
           return
         }
       } else {
+        runtimeReadyCache.markReady()
         return
       }
     }
@@ -438,6 +456,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
   if (!threadApi.ok) {
     throw runtimeJsonError(threadApi.error, threadApi.message)
   }
+  runtimeReadyCache.markReady()
 }
 
 function sleep(ms: number): Promise<void> {
@@ -627,6 +646,9 @@ async function runtimeRequest(
       signal: AbortSignal.timeout(init.method === 'POST' ? 60_000 : 15_000)
     })
     const text = await res.text()
+    if (res.status === 401 || res.status === 503) {
+      invalidateRuntimeReady(`runtime-request:${res.status}`)
+    }
     return { ok: res.ok, status: res.status, body: text }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -635,6 +657,7 @@ async function runtimeRequest(
     // class without parsing free-form messages: 408 = local timeout (abort),
     // 503 = connection refused / unreachable, 0 = unknown.
     const status = isAbort ? 408 : 503
+    invalidateRuntimeReady(`runtime-request:${status}`)
     logError('runtime-request', `HTTP request to ${pathAndQuery} failed`, { message, status })
     try {
       const parsed = JSON.parse(message) as { error?: string; message?: string }
@@ -855,6 +878,7 @@ app.whenReady().then(async () => {
   // token displayed and surface the error.
   ipcMain.handle('runtime:regenerate-token', async () => {
     try {
+      invalidateRuntimeReady('regenerate-token')
       clearRuntimeTokenFile()
       await stopDeepseekChildAndWait()
       const settings = await store.load()
