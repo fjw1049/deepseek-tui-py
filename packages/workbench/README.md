@@ -1,137 +1,69 @@
-# DeepSeek Workbench
+# DeepSeek Workbench（GUI）
 
-Electron GUI for the Python `deepseek-tui` runtime (HTTP/SSE on port **7878**).
+本目录是 Electron 桌面客户端；对话与工具执行由仓库根目录的 Python Runtime（`deepseek_tui serve`，默认端口 **7878**）提供。
 
-Development branch: **`build_gui_master`**.
+## 从仓库根目录启动
 
-## Prerequisites
+```bash
+# 已在根目录 README 装过 Python + 配好 Key 后：
+cd packages/workbench && npm ci && cd ../..
+unset ELECTRON_RUN_AS_NODE
+./scripts/dev-workbench.sh
+```
 
-| Component | Version | Notes |
-|-----------|---------|--------|
-| **Python** | ≥ 3.10 (recommended **3.11–3.12**) | Runtime API needs `fastapi`, `uvicorn` from repo `pyproject.toml` |
-| **Node.js** | **20 LTS** (20.x) | Electron 34 bundles Node 20.19.1; Node 25 may work but is not the primary target |
-| **npm** | ships with Node | Use **`npm ci`** in this directory — do not run `npm update` casually |
-| **API key** | — | `<repo>/.deepseek/config.toml` (monorepo dev; GUI passes `--config` automatically) |
+- **界面**：Electron 窗口（开发时 Vite 在 `http://127.0.0.1:5173`，仅内部使用）
+- **7878**：Runtime API，**不要**在浏览器里当主界面打开
 
-### Locked GUI stack (`package-lock.json`)
+GUI 会自动拉起：
 
-These versions are what `npm ci` installs — **do not upgrade ad hoc**:
+```bash
+python -m deepseek_tui serve --http --host 127.0.0.1 --port 7878 \
+  --config <repo>/.deepseek/config.toml --insecure
+```
 
-| Package | Locked version |
-|---------|----------------|
-| `electron` | 34.5.8 |
-| `electron-vite` | 3.1.0 |
-| `vite` | 6.x |
-| `zod` | 4.4.3 |
-| `node-pty` | 1.1.0 |
+## 环境
 
-First install downloads the Electron binary (~150 MB). In China, `scripts/dev-workbench.sh` defaults to:
+| 项 | 建议 |
+|----|------|
+| Python | ≥ 3.10（推荐 3.12） |
+| Node | 20 LTS |
+| 安装 GUI 依赖 | `npm ci`（勿随意 `npm update`） |
+| API Key | 仓库根 `.deepseek/config.toml` |
+
+国内首次安装 Electron 较慢时，脚本会默认：
 
 ```bash
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 ```
 
-After install, this path must exist:
+## 常用脚本（仓库根）
 
-```text
-packages/workbench/node_modules/electron/dist/
-```
-
-`postinstall.cjs` uses bundled `node-pty` prebuilds on macOS when possible (skips slow `electron-rebuild`).
-
-## Quick start (from repo root)
-
-```bash
-git checkout build_gui_master
-git pull
-
-# Python (once per venv / machine)
-pip install -e ".[dev]"          # or: uv pip install -e ".[dev]"
-
-# GUI deps (once per machine, or after lockfile changes)
-cd packages/workbench && npm ci && cd ../..
-
-# Ensure <repo>/.deepseek/config.toml has your API key
-
-unset ELECTRON_RUN_AS_NODE       # see Troubleshooting if GUI crashes on start
-./scripts/dev-workbench.sh
-```
-
-- **UI**: Electron window (Vite dev server at `http://127.0.0.1:5173` — internal, not the main entry)
-- **7878**: Python Runtime API only — **do not open in a browser** expecting the UI
-
-Subsequent runs skip `npm ci` when `node_modules/electron/dist` already exists.
-
-## Scripts (repo root)
-
-| Script | Purpose |
-|--------|---------|
-| `./scripts/dev-workbench.sh` | Electron + Vite dev (GUI auto-starts Python runtime) |
-| `./scripts/smoke-workbench-chat.sh` | SSE chat smoke (runtime must be on 7878) |
+| 脚本 | 作用 |
+|------|------|
+| `./scripts/dev-workbench.sh` | 启动 GUI + 自动起 Runtime |
+| `./scripts/smoke-workbench-chat.sh` | SSE 聊天冒烟（需 7878 已就绪） |
+| `./scripts/verify-workbench.sh` | 类型检查 + 测试 + 可选冒烟 |
 | `./scripts/contract-check.sh` | `pytest tests/contract` |
 
-## Configuration
+## 排错
 
-Monorepo dev uses **`.deepseek/config.toml`** at the repository root (not only `~/.deepseek`).
-
-The GUI spawns:
-
-```bash
-python3 -m deepseek_tui serve --http --host 127.0.0.1 --port 7878 \
-  --config <repo>/.deepseek/config.toml --insecure
-```
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `DEEPSEEK_PYTHON` | `python3` | Python executable for runtime spawn |
-| `DEEPSEEK_RUNTIME_PORT` | `7878` | Runtime API port |
-| `DEEPSEEK_REPO_ROOT` | set by dev script | Monorepo root for config / spawn |
-| `ELECTRON_MIRROR` | npmmirror (if unset) | Faster Electron download in China |
-
-## Verify setup
-
-```bash
-pytest tests/contract -q
-./scripts/smoke-workbench-chat.sh   # after GUI is up
-```
-
-## Troubleshooting
-
-### `Cannot read properties of undefined (reading 'exports')` on Electron start
-
-**Cause**: `ELECTRON_RUN_AS_NODE=1` in the environment (common in Cursor/CI). Electron runs as plain Node — no GUI, broken module loading.
-
-**Fix**:
+**Electron 一启动就崩（`exports` undefined）**  
+在 Cursor/CI 里常有 `ELECTRON_RUN_AS_NODE=1`：
 
 ```bash
 unset ELECTRON_RUN_AS_NODE
 ./scripts/dev-workbench.sh
 ```
 
-(`dev-workbench.sh` already unsets this; run manually if your shell re-exports it.)
+**7878 在浏览器里是 JSON**  
+正常，请用 Electron 窗口。
 
-### Browser shows JSON / 404 on port 7878
-
-7878 is the **Runtime API**, not the UI. Use the **Electron window** from `./scripts/dev-workbench.sh`.
-
-### First start very slow (~3–6 min)
-
-Normal on first `npm ci` while downloading Electron. Later starts are ~10–20 s.
-
-### Clean reinstall of GUI deps
+**重装 GUI 依赖**
 
 ```bash
-cd packages/workbench
-rm -rf node_modules
-npm ci
+rm -rf node_modules && npm ci
 ```
 
-### `npm ci` vs `npm install`
+## API 契约
 
-Prefer **`npm ci`** — installs exactly what `package-lock.json` pins. Avoid `npm update` unless you intend to refresh the lockfile and re-test the GUI.
-
-## API contract
-
-Runtime routes: `contracts/runtime-api.openapi.yaml` (repo root).
-
-Implementation: `src/deepseek_tui/app_server/runtime_api/`.
+`contracts/runtime-api.openapi.yaml` · 实现：`src/deepseek_tui/app_server/runtime_api/`
