@@ -6,7 +6,13 @@ import httpx
 
 from deepseek_tui.tools._validators import optional_int as _optional_int
 from deepseek_tui.tools._validators import require_string as _require_string
-from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
+from deepseek_tui.tools.base import (
+    ApprovalRequirement,
+    ToolCapability,
+    ToolError,
+    ToolResult,
+    ToolSpec,
+)
 from deepseek_tui.tools.context import ToolContext
 
 _TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
@@ -28,6 +34,10 @@ class FetchUrlTool(ToolSpec):
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY, ToolCapability.NETWORK]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        # READ_ONLY+NETWORK default is AUTO; fetching arbitrary URLs needs review.
+        return ApprovalRequirement.SUGGEST
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")

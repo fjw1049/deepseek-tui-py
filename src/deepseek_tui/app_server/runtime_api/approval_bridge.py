@@ -17,6 +17,10 @@ class PendingApprovalRecord:
     thread_id: str
     tool_name: str
     description: str
+    input_summary: str = ""
+    impacts: list[str] = field(default_factory=list)
+    presentation_risk: str = ""
+    approval_key: str = ""
 
 
 @dataclass
@@ -55,8 +59,8 @@ class ApprovalBridge:
     def consume_remember(self, approval_id: str) -> bool:
         return self._remember.pop(approval_id, False)
 
-    def list_pending(self, thread_id: str | None = None) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
+    def list_pending(self, thread_id: str | None = None) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
         for approval_id, fut in self._pending.items():
             if fut.done():
                 continue
@@ -71,6 +75,15 @@ class ApprovalBridge:
                     "tool_name": meta.tool_name if meta else "",
                     "description": meta.description if meta else "",
                     "summary": meta.description if meta else "",
+                    "input_summary": meta.input_summary if meta else "",
+                    "impacts": list(meta.impacts) if meta else [],
+                    "risk": meta.presentation_risk if meta else "",
+                    "risk_level": (
+                        "high"
+                        if meta and meta.presentation_risk == "destructive"
+                        else "low"
+                    ),
+                    "approval_key": meta.approval_key if meta else "",
                 }
             )
         return out
@@ -108,12 +121,23 @@ class HttpApprovalHandler(ApprovalHandler):
     ) -> ApprovalDecision:
         if self._auto_approve is not None and await self._auto_approve():
             return ApprovalDecision.APPROVED
+        summary = (
+            request.title
+            or request.primary_preview
+            or request.input_summary
+            or request.reason
+            or ""
+        )
         fut = self._bridge.register(
             tool_call_id,
             meta=PendingApprovalRecord(
                 thread_id=self._thread_id,
                 tool_name=request.tool_name,
-                description=request.input_summary or request.reason or "",
+                description=request.title or summary,
+                input_summary=request.input_summary or request.primary_preview,
+                impacts=list(request.impacts),
+                presentation_risk=request.presentation_risk,
+                approval_key=request.approval_key,
             ),
         )
         try:

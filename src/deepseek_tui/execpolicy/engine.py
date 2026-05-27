@@ -47,33 +47,24 @@ class ExecPolicyEngine:
         tool_name: str,
         capabilities: list[ToolCapability],
     ) -> ApprovalRequest | None:
-        """Evaluate whether a tool call needs approval.
+        """Legacy API — delegates gate logic to ``tools.approval_gate``.
 
-        Returns None if auto-approved, or an ApprovalRequest if user
-        confirmation is needed.
+        Engine tool execution uses ``approval_request_for_tool`` instead.
+        Kept for ``PolicyRule`` overrides and contract tests.
         """
-        category = _classify_category(capabilities)
-        risk = _assess_risk(capabilities)
+        from deepseek_tui.tools.approval_gate import approval_request_for_capabilities
 
         cached = self._session_cache.get(tool_name)
         if cached == ApprovalDecision.APPROVED_SESSION:
             return None
 
-        if self.approval_policy in {"auto", "never-ask", "yolo"}:
-            return None
-        if self.approval_policy == "never" and risk is not RiskLevel.LOW:
-            return ApprovalRequest(
-                tool_name=tool_name,
-                risk_level=risk,
-                category=category,
-                reason="blocked by approval_policy=never",
-            )
-
+        category = _classify_category(capabilities)
         for rule in self._rules:
             if rule.matches(tool_name, category):
                 if rule.decision == ApprovalDecision.APPROVED:
                     return None
                 if rule.decision == ApprovalDecision.DENIED:
+                    risk = _assess_risk(capabilities)
                     return ApprovalRequest(
                         tool_name=tool_name,
                         risk_level=risk,
@@ -81,14 +72,8 @@ class ExecPolicyEngine:
                         reason="denied by policy rule",
                     )
 
-        if risk in (RiskLevel.LOW,):
-            return None
-
-        return ApprovalRequest(
-            tool_name=tool_name,
-            risk_level=risk,
-            category=category,
-            reason=f"tool has {risk.value} risk level",
+        return approval_request_for_capabilities(
+            tool_name, capabilities, self.approval_policy
         )
 
     def record_decision(self, tool_name: str, decision: ApprovalDecision) -> None:

@@ -455,7 +455,9 @@ function buildThreadEventSink(
               approvalId: req.approvalId,
               summary: req.summary,
               inputSummary: req.inputSummary,
+              impacts: req.impacts,
               riskLevel: req.riskLevel,
+              presentationRisk: req.presentationRisk,
               toolName: req.toolName,
               status: 'pending' as const
             }

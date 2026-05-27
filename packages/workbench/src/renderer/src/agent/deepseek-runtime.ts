@@ -24,6 +24,49 @@ import {
   type SubagentCardState
 } from '../lib/subagent-mailbox'
 
+function emitApprovalFromSsePayload(
+  sink: ThreadEventSink,
+  payload: Record<string, unknown>,
+  approvalId: string
+): void {
+  const req = approvalPayloadFromRecord({
+    ...payload,
+    approval_id: approvalId,
+    id: approvalId
+  })
+  if (req) sink.onApproval(req)
+}
+
+function approvalPayloadFromRecord(
+  row: Record<string, unknown>
+): ApprovalRequestPayload | null {
+  const approvalId = String(row.approval_id ?? row.id ?? '')
+  if (!approvalId) return null
+  const impacts = Array.isArray(row.impacts)
+    ? row.impacts.filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+    : undefined
+  const presentationRisk =
+    typeof row.risk === 'string'
+      ? row.risk
+      : typeof row.presentation_risk === 'string'
+        ? row.presentation_risk
+        : undefined
+  return {
+    approvalId,
+    summary: String(row.title ?? row.description ?? row.summary ?? 'Approval required'),
+    inputSummary:
+      typeof row.primary_preview === 'string' && row.primary_preview.trim()
+        ? row.primary_preview.trim()
+        : typeof row.input_summary === 'string' && row.input_summary.trim()
+          ? row.input_summary.trim()
+          : undefined,
+    impacts: impacts?.length ? impacts : undefined,
+    riskLevel: typeof row.risk_level === 'string' ? row.risk_level : undefined,
+    presentationRisk,
+    toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined
+  }
+}
+
 type ThreadRecordJson = {
   id: string
   created_at: string
@@ -481,17 +524,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     if (!r.ok) return []
     const rows = JSON.parse(r.body) as Array<Record<string, unknown>>
     return rows
-      .map((row) => ({
-        approvalId: String(row.approval_id ?? row.id ?? ''),
-        summary: String(row.description ?? row.summary ?? 'Approval required'),
-        inputSummary:
-          typeof row.input_summary === 'string' && row.input_summary.trim()
-            ? row.input_summary.trim()
-            : undefined,
-        riskLevel: typeof row.risk_level === 'string' ? row.risk_level : undefined,
-        toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined
-      }))
-      .filter((row) => row.approvalId.length > 0)
+      .map((row) => approvalPayloadFromRecord(row))
+      .filter((row): row is ApprovalRequestPayload => row !== null)
   }
 
   async fetchPendingUserInputs(threadId: string): Promise<UserInputRequestPayload[]> {
@@ -1181,30 +1215,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                       })
                       return
                     }
-                    sink.onApproval({
-                      approvalId,
-                      summary: String(payload.description ?? payload.summary ?? 'Approval required'),
-                      inputSummary:
-                        typeof payload.input_summary === 'string' && payload.input_summary.trim()
-                          ? payload.input_summary.trim()
-                          : undefined,
-                      riskLevel:
-                        typeof payload.risk_level === 'string' ? payload.risk_level : undefined,
-                      toolName: typeof payload.tool_name === 'string' ? payload.tool_name : undefined
-                    })
+                    emitApprovalFromSsePayload(sink, payload, approvalId)
                   })
                   .catch(() => {
-                    sink.onApproval({
-                      approvalId,
-                      summary: String(payload.description ?? payload.summary ?? 'Approval required'),
-                      inputSummary:
-                        typeof payload.input_summary === 'string' && payload.input_summary.trim()
-                          ? payload.input_summary.trim()
-                          : undefined,
-                      riskLevel:
-                        typeof payload.risk_level === 'string' ? payload.risk_level : undefined,
-                      toolName: typeof payload.tool_name === 'string' ? payload.tool_name : undefined
-                    })
+                    emitApprovalFromSsePayload(sink, payload, approvalId)
                   })
               }
             })

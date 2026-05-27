@@ -1100,19 +1100,17 @@ class RuntimeThreadManager:
                     )
 
             elif isinstance(event, ApprovalRequiredEvent):
+                from deepseek_tui.tools.approval_present import (
+                    approval_request_to_sse_payload,
+                )
+
                 approval_id = event.tool_call_id
                 await self._emit_event(
-                    thread_id, turn_id, None, "approval.required",
-                    {
-                        "id": approval_id,
-                        "approval_id": approval_id,
-                        "tool_name": event.request.tool_name,
-                        "description": (
-                            event.request.input_summary or event.request.reason
-                        ),
-                        "input_summary": event.request.input_summary or "",
-                        "risk_level": event.request.risk_level.value,
-                    },
+                    thread_id,
+                    turn_id,
+                    None,
+                    "approval.required",
+                    approval_request_to_sse_payload(approval_id, event.request),
                 )
 
             elif isinstance(event, StatusEvent):

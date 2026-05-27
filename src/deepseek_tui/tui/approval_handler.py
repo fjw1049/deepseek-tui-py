@@ -46,11 +46,18 @@ class TUIApprovalHandler(ApprovalHandler):
         risk_str = (
             getattr(risk, "value", None) or (str(risk) if risk is not None else "")
         )
+        presentation_risk = getattr(request, "presentation_risk", "") or ""
+        if not presentation_risk and risk_str in ("medium", "high", "critical"):
+            presentation_risk = "destructive"
         dialog = ApprovalDialog(
             tool_name=request.tool_name,
             reason=request.reason,
             input_summary=getattr(request, "input_summary", "") or "",
             risk_level=risk_str,
+            title=getattr(request, "title", "") or "",
+            impacts=list(getattr(request, "impacts", []) or []),
+            presentation_risk=presentation_risk,
+            primary_preview=getattr(request, "primary_preview", "") or "",
         )
         self._app.push_screen(dialog, _on_dismiss)
 

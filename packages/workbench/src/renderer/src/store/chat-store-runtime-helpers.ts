@@ -10,7 +10,9 @@ export type PendingApprovalPayload = {
   approvalId: string
   summary: string
   inputSummary?: string
+  impacts?: string[]
   riskLevel?: string
+  presentationRisk?: string
   toolName?: string
 }
 
@@ -79,7 +81,9 @@ export function mergePendingApprovalBlocks(
       approvalId: item.approvalId,
       summary: item.summary,
       inputSummary: item.inputSummary,
+      impacts: item.impacts,
       riskLevel: item.riskLevel,
+      presentationRisk: item.presentationRisk,
       toolName: item.toolName,
       status: 'pending'
     })

@@ -74,9 +74,15 @@ class ToolSpec(ABC):
     def approval_requirement(self) -> ApprovalRequirement:
         """Return whether this tool needs user approval before running.
 
-        Default is :attr:`ApprovalRequirement.AUTO`. Override in subclasses.
-        Mirrors Rust `ToolSpec::approval_requirement` (defaults to ``Auto``).
+        Mirrors Rust ``ToolSpec::approval_requirement`` default in ``spec.rs``.
         """
+        caps = self.capabilities()
+        if ToolCapability.EXECUTES_CODE in caps:
+            return ApprovalRequirement.REQUIRED
+        if ToolCapability.WRITES_FILES in caps:
+            return ApprovalRequirement.SUGGEST
+        if ToolCapability.REQUIRES_APPROVAL in caps:
+            return ApprovalRequirement.REQUIRED
         return ApprovalRequirement.AUTO
 
     def defer_loading(self) -> bool:

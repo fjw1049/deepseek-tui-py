@@ -54,6 +54,7 @@ from deepseek_tui.engine.session_activity import SessionActivityCoordinator
 from deepseek_tui.tools.subagent.completion import SubAgentCompletion
 from deepseek_tui.engine.handle import CancelRequestOp, EngineHandle, SendMessageOp
 from deepseek_tui.engine.prompts import build_system_prompt
+from deepseek_tui.engine.input_processor import prepare_turn_for_model
 from deepseek_tui.engine.seam_manager import SeamConfig, SeamManager
 from deepseek_tui.engine.tool_catalog import (
     CODE_EXECUTION_TOOL_NAME,
@@ -627,13 +628,21 @@ class Engine:
     async def _handle_send_message_inner(
         self, op: SendMessageOp, turn_id: str
     ) -> None:
-        user_message = Message.user(op.content)
+        processed = prepare_turn_for_model(
+            op.content or "",
+            workspace=self.tool_context.working_directory,
+            session_id=self._cycle_session_id,
+            turn_id=turn_id,
+        )
+        user_message = Message.user(processed.model_text)
         working_messages = [*self.session_messages, user_message]
-        self.working_set.observe_user_message(op.content or "")
-        preview = (op.content or "")[:200].replace("\n", " ")
+        self.working_set.observe_user_message(processed.display_text or "")
+        self.working_set.observe_references(processed.references)
+        preview = (processed.display_text or "")[:200].replace("\n", " ")
         logger.info(
-            "turn_start user_text_len=%d preview=%r model=%s session_msgs=%d",
-            len(op.content or ""),
+            "turn_start user_text_len=%d model_text_len=%d preview=%r model=%s session_msgs=%d",
+            len(processed.display_text or ""),
+            len(processed.model_text or ""),
             preview,
             op.model or self.default_model,
             len(self.session_messages),
@@ -644,7 +653,7 @@ class Engine:
 
         # Plan mode: detect quick-plan requests that skip codebase exploration
         # and inject a grounding hint (mirrors Rust engine.rs:956)
-        if should_force_update_plan_first(self.mode, op.content or ""):
+        if should_force_update_plan_first(self.mode, processed.display_text or ""):
             working_messages.append(
                 Message.user(
                     "[System] Before creating the plan, explore the repository "
@@ -654,7 +663,7 @@ class Engine:
             )
 
         try:
-            await self.handle.emit(TurnStartedEvent(user_text=op.content))
+            await self.handle.emit(TurnStartedEvent(user_text=processed.display_text))
             result = await self._run_conversation(
                 messages=working_messages,
                 model=op.model or self.default_model,
@@ -838,8 +847,18 @@ class Engine:
             for steer_text in self.handle.drain_steers():
                 steer_text = steer_text.strip()
                 if steer_text:
-                    logger.info("steer_injected text_len=%d", len(steer_text))
-                    messages.append(Message.user(steer_text))
+                    processed = prepare_turn_for_model(
+                        steer_text,
+                        workspace=self.tool_context.working_directory,
+                        session_id=self._cycle_session_id,
+                    )
+                    logger.info(
+                        "steer_injected display_len=%d model_len=%d",
+                        len(processed.display_text),
+                        len(processed.model_text),
+                    )
+                    messages.append(Message.user(processed.model_text))
+                    self.working_set.observe_references(processed.references)
 
             # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
             # 观测 token/工具调用密度,容量预检查
@@ -979,7 +998,13 @@ class Engine:
                     self.tool_registry.get(tc.name)
                     if self.tool_registry.contains(tc.name) else None
                 )
+                from deepseek_tui.tools.approval_gate import (
+                    plan_requires_approval,
+                    plan_requires_mcp_approval,
+                )
                 from deepseek_tui.tools.base import ToolCapability
+
+                policy = self.exec_policy.approval_policy
                 if tool is not None:
                     caps = tool.capabilities()
                     plans.append(ToolExecutionPlan(
@@ -987,13 +1012,10 @@ class Engine:
                         id=tc.id,
                         name=tc.name,
                         input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                        read_only=ToolCapability.READ_ONLY in caps,
-                        supports_parallel=ToolCapability.READ_ONLY in caps,
-                        approval_required=any(
-                            c in caps for c in (
-                                ToolCapability.REQUIRES_APPROVAL,
-                            )
-                        ) if hasattr(ToolCapability, "REQUIRES_APPROVAL") else False,
+                        read_only=tool.is_read_only(),
+                        supports_parallel=tool.is_read_only()
+                        and tool.supports_parallel(),
+                        approval_required=plan_requires_approval(tool, policy),
                     ))
                 elif is_mcp_tool(tc.name):
                     plans.append(ToolExecutionPlan(
@@ -1003,7 +1025,7 @@ class Engine:
                         input=tc.arguments if isinstance(tc.arguments, dict) else {},
                         read_only=mcp_tool_is_read_only(tc.name),
                         supports_parallel=mcp_tool_is_parallel_safe(tc.name),
-                        approval_required=not mcp_tool_is_read_only(tc.name),
+                        approval_required=plan_requires_mcp_approval(tc.name, policy),
                     ))
                 else:
                     plans.append(ToolExecutionPlan(
@@ -1498,16 +1520,12 @@ class Engine:
 
         # --- External MCP tools (mcp_<server>_<tool>) ---
         if is_mcp_tool(tool_name) and not self.tool_registry.contains(tool_name):
-            from deepseek_tui.engine.dispatch import mcp_tool_is_read_only
             from deepseek_tui.mcp.execute import execute_external_mcp_tool
-            from deepseek_tui.tools.base import ToolCapability
+            from deepseek_tui.tools.approval_gate import approval_request_for_mcp
 
-            mcp_caps = (
-                [ToolCapability.READ_ONLY]
-                if mcp_tool_is_read_only(tool_name)
-                else [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
+            approval_request = approval_request_for_mcp(
+                tool_name, self.exec_policy.approval_policy
             )
-            approval_request = self.exec_policy.evaluate(tool_name, mcp_caps)
             if approval_request is not None:
                 denied = await self._handle_approval_flow(
                     tool_call, approval_request
@@ -1526,9 +1544,10 @@ class Engine:
 
         tool = self.tool_registry.get(tool_name)
 
-        # Approval gate
-        approval_request = self.exec_policy.evaluate(
-            tool_name, tool.capabilities()
+        from deepseek_tui.tools.approval_gate import approval_request_for_tool
+
+        approval_request = approval_request_for_tool(
+            tool, self.exec_policy.approval_policy
         )
         if approval_request is not None:
             denied = await self._handle_approval_flow(tool_call, approval_request)
@@ -1571,6 +1590,9 @@ class Engine:
         approval_request: Any,
     ) -> bool:
         """Run the approval gate. Returns True if denied."""
+        from deepseek_tui.tools.approval_gate import NEVER_BLOCKED_PREFIX
+        from deepseek_tui.tools.approval_present import enrich_approval_request
+
         cache_key = build_approval_key(tool_call.name, tool_call.arguments)
         cache_status = self.approval_cache.check(cache_key)
 
@@ -1593,7 +1615,7 @@ class Engine:
             getattr(approval_request, "risk_level", None),
         )
         blocked_reason = getattr(approval_request, "reason", "") or ""
-        if blocked_reason.startswith("blocked by approval_policy=never"):
+        if blocked_reason.startswith(NEVER_BLOCKED_PREFIX):
             emit_tool_audit(
                 {
                     "event": "tool.approval_decision",
@@ -1617,29 +1639,17 @@ class Engine:
                 )
             )
             return True
-        # The TUI approval dialog needs to surface *what* is being
-        # approved — "exec_shell + medium risk" is useless on its own.
-        # Populate ``input_summary`` from the tool arguments here so the
-        # downstream ApprovalHandler can show the actual command/path.
-        if not getattr(approval_request, "input_summary", ""):
-            # MCP tools get a specialized description (Rust dispatch.rs:326-355)
-            if is_mcp_tool(tool_call.name):
-                from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
-
-                desc = mcp_tool_approval_description(
-                    normalize_mcp_bridge_tool_name(tool_call.name)
-                )
-                try:
-                    approval_request.input_summary = desc
-                except Exception:  # noqa: BLE001
-                    pass
-            else:
-                summary = _summarize_call_args(tool_call.arguments)
-                if summary:
-                    try:
-                        approval_request.input_summary = summary
-                    except Exception:  # noqa: BLE001 — frozen models, etc.
-                        pass
+        args = (
+            tool_call.arguments
+            if isinstance(tool_call.arguments, dict)
+            else {}
+        )
+        enrich_approval_request(
+            approval_request,
+            tool_call.name,
+            args,
+            tool_description=approval_request.reason,
+        )
         emit_tool_audit(
             {
                 "event": "tool.approval_required",

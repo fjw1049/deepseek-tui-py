@@ -35,6 +35,20 @@ class WorkingSet:
         self.message_count += 1
         self._extract_paths_from_text(text, workspace)
 
+    def observe_references(self, references: list[Any]) -> None:
+        """Track paths from expanded @mention context references."""
+        for ref in references:
+            target = getattr(ref, "target", None)
+            if isinstance(target, str) and target:
+                normalized = self._normalize_path(target, self.workspace)
+                if normalized:
+                    self.recent_paths.add(normalized)
+        if len(self.recent_paths) > self._MAX_RECENT_PATHS:
+            excess = len(self.recent_paths) - self._MAX_RECENT_PATHS
+            it = iter(self.recent_paths)
+            for _ in range(excess):
+                self.recent_paths.discard(next(it))
+
     def observe_tool_call(
         self,
         tool_name: str,

@@ -35,6 +35,13 @@ def test_sse_event_schema_locks_approval_and_user_input_payload() -> None:
         for block in schema["allOf"]  # type: ignore[index]
     }
     assert rules["approval.required"] == {"id", "approval_id", "tool_name"}
+    approval_props = next(
+        block["then"]["properties"]["payload"]["properties"]  # type: ignore[index]
+        for block in schema["allOf"]  # type: ignore[index]
+        if block["if"]["properties"]["event"]["const"] == "approval.required"  # type: ignore[index]
+    )
+    for key in ("title", "impacts", "primary_preview", "category", "risk", "approval_key"):
+        assert key in approval_props
     assert rules["user_input.required"] == {"id", "request_id", "questions"}
 
 

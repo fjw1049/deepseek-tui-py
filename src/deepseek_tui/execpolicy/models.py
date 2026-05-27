@@ -26,6 +26,11 @@ class ApprovalRequest:
     category: ToolCategory
     reason: str
     input_summary: str = ""
+    title: str = ""
+    impacts: list[str] = field(default_factory=list)
+    primary_preview: str = ""
+    presentation_risk: str = ""  # benign | destructive
+    approval_key: str = ""
 
 
 class ApprovalDecision(Enum):

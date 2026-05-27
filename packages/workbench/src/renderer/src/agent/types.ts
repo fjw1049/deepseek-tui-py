@@ -61,7 +61,9 @@ export type ChatBlock =
       approvalId: string
       summary: string
       inputSummary?: string
+      impacts?: string[]
       riskLevel?: string
+      presentationRisk?: string
       toolName?: string
       status: 'pending' | 'allowed' | 'denied' | 'error'
       errorMessage?: string
@@ -94,7 +96,9 @@ export type ApprovalRequestPayload = {
   approvalId: string
   summary: string
   inputSummary?: string
+  impacts?: string[]
   riskLevel?: string
+  presentationRisk?: string
   toolName?: string
 }
 

@@ -65,7 +65,13 @@
               "tool_name": { "type": "string" },
               "description": { "type": ["string", "null"] },
               "input_summary": { "type": ["string", "null"] },
-              "risk_level": { "type": ["string", "null"] }
+              "risk_level": { "type": ["string", "null"] },
+              "title": { "type": ["string", "null"] },
+              "impacts": { "type": "array", "items": { "type": "string" } },
+              "primary_preview": { "type": ["string", "null"] },
+              "category": { "type": ["string", "null"] },
+              "risk": { "type": ["string", "null"] },
+              "approval_key": { "type": ["string", "null"] }
             }
           }
         }
