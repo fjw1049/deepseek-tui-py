@@ -805,6 +805,7 @@ export function Workbench(): ReactElement {
             <div className="flex min-h-0 flex-1">
               {stageCentered ? (
                 <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col">
+                  <div className="min-h-0 flex-[1.2]" aria-hidden />
                   <div className="ds-chat-stage ds-empty-stage-hero shrink-0">
                     <MessageTimeline
                       blocks={blocks}
@@ -828,7 +829,7 @@ export function Workbench(): ReactElement {
                       }
                     />
                   </div>
-                  <div className="min-h-0 w-full max-w-[1000px] flex-1" aria-hidden />
+                  <div className="min-h-0 w-full max-w-[1000px] flex-[0.6]" aria-hidden />
                   <div className="ds-chat-stage ds-empty-stage-composer shrink-0">
                     <FloatingComposer
                       input={input}

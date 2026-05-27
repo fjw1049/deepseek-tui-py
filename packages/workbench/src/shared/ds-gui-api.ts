@@ -122,6 +122,17 @@ export type RuntimeTokenFingerprintResult = {
   tokenPath?: string
 }
 
+export type WorkspaceSuggestion = {
+  id: string
+  title: string
+  desc: string
+  prompt: string
+  tone: 'blue' | 'emerald' | 'violet' | 'orange'
+}
+export type WorkspaceSuggestionsResult =
+  | { ok: true; suggestions: WorkspaceSuggestion[] }
+  | { ok: false; suggestions: null }
+
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
@@ -158,6 +169,7 @@ export type DsGuiApi = {
   }>
   openHooksDir: () => Promise<PathOpenResult>
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
+  getWorkspaceSuggestions: (workspaceRoot: string) => Promise<WorkspaceSuggestionsResult>
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>

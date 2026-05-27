@@ -39,6 +39,7 @@ import {
   runtimeTokenFilePath
 } from '../deepseek-process'
 import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
+import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
 import {
   parseSessionsProbe,
@@ -649,6 +650,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       )
       return createAndSwitchGitBranch(request.workspaceRoot, request.branch)
     }
+  )
+
+  ipcMain.handle('workspace:suggestions', async (_, workspaceRoot: unknown) =>
+    getWorkspaceSuggestions(parseIpcPayload('workspace:suggestions', workspaceRootSchema, workspaceRoot))
   )
 
   ipcMain.handle('editor:list', async () => listEditorsResult())

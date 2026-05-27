@@ -36,6 +36,8 @@ const api = {
   openHooksDir: () => ipcRenderer.invoke('deepseek:hooks:open-dir'),
   diagnoseDeepseekRuntime: () =>
     ipcRenderer.invoke('deepseek:diagnostics'),
+  getWorkspaceSuggestions: (workspaceRoot) =>
+    ipcRenderer.invoke('workspace:suggestions', workspaceRoot),
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>

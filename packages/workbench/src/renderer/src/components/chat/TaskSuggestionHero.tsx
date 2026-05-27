@@ -4,16 +4,22 @@ import {
   Bot,
   Bug,
   Box,
+  CircleDot,
   FolderSearch,
+  GitBranch,
+  ListTodo,
   Palette,
+  Pen,
   ScanLine,
   Sparkles
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { WorkspaceSuggestion } from '../../../../shared/ds-gui-api'
+import { useChatStore } from '../../store/chat-store'
 
 type SuggestionTone = 'blue' | 'emerald' | 'violet' | 'orange'
 
-type SuggestionDef = {
+type StaticSuggestionDef = {
   id: string
   icon: ReactElement
   tone: SuggestionTone
@@ -25,7 +31,7 @@ type SuggestionDef = {
   promptKey: string
 }
 
-const SUGGESTIONS: SuggestionDef[] = [
+const STATIC_SUGGESTIONS: StaticSuggestionDef[] = [
   {
     id: 'structure',
     icon: <FolderSearch className="h-4 w-4" strokeWidth={1.75} />,
@@ -83,6 +89,23 @@ const TAG_TONE: Record<SuggestionTone, string> = {
   orange: 'text-orange-600 dark:text-orange-300'
 }
 
+const DYNAMIC_ICON: Record<string, ReactElement> = {
+  uncommitted: <Pen className="h-4 w-4" strokeWidth={1.75} />,
+  staged: <CircleDot className="h-4 w-4" strokeWidth={1.75} />,
+  'branch-fix': <Bug className="h-4 w-4" strokeWidth={1.75} />,
+  'branch-feat': <Box className="h-4 w-4" strokeWidth={1.75} />,
+  'branch-refactor': <GitBranch className="h-4 w-4" strokeWidth={1.75} />,
+  todos: <ListTodo className="h-4 w-4" strokeWidth={1.75} />,
+  understand: <FolderSearch className="h-4 w-4" strokeWidth={1.75} />
+}
+
+function iconForDynamic(id: string): ReactElement {
+  for (const [prefix, icon] of Object.entries(DYNAMIC_ICON)) {
+    if (id.startsWith(prefix)) return icon
+  }
+  return <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+}
+
 const CAROUSEL_INTERVAL_MS = 30_000
 
 type Props = {
@@ -93,12 +116,29 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const { t } = useTranslation('common')
   const [focusedIndex, setFocusedIndex] = useState(0)
   const [animating, setAnimating] = useState(false)
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<WorkspaceSuggestion[] | null>(null)
+  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+
+  // Fetch dynamic suggestions based on workspace
+  useEffect(() => {
+    if (!workspaceRoot) return
+    let cancelled = false
+    window.dsGui.getWorkspaceSuggestions(workspaceRoot).then((result) => {
+      if (cancelled) return
+      if (result.ok && result.suggestions && result.suggestions.length > 0) {
+        setDynamicSuggestions(result.suggestions)
+      }
+    }).catch(() => { /* fallback to static */ })
+    return () => { cancelled = true }
+  }, [workspaceRoot])
+
+  const itemCount = dynamicSuggestions ? dynamicSuggestions.length : STATIC_SUGGESTIONS.length
 
   const advanceFocus = useCallback(() => {
     setAnimating(true)
-    setFocusedIndex((prev) => (prev + 1) % SUGGESTIONS.length)
+    setFocusedIndex((prev) => (prev + 1) % itemCount)
     window.setTimeout(() => setAnimating(false), 480)
-  }, [])
+  }, [itemCount])
 
   useEffect(() => {
     const timer = window.setInterval(advanceFocus, CAROUSEL_INTERVAL_MS)
@@ -136,55 +176,93 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
             animating ? 'opacity-[0.94]' : 'opacity-100'
           }`}
         >
-          {SUGGESTIONS.map((item, index) => {
-            const focused = index === focusedIndex
-            const isRecommended = item.recommended === true
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onSelectSuggestion?.(t(item.promptKey))}
-                onMouseEnter={() => setFocusedIndex(index)}
-                className={[
-                  'group relative flex min-h-[140px] flex-col rounded-[16px] border px-3.5 py-3.5 text-left transition-all duration-300 ease-out',
-                  isRecommended
-                    ? 'border-accent/20 bg-ds-elevated ring-1 ring-accent/10 dark:border-accent/25'
-                    : focused
-                      ? 'border-ds-border-strong bg-ds-elevated ring-1 ring-accent/12'
-                      : 'border-ds-border bg-ds-card/80 hover:border-ds-border-strong hover:bg-ds-elevated'
-                ].join(' ')}
-              >
-                {isRecommended ? (
-                  <span className="absolute right-2.5 top-2.5 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-semibold text-white">
-                    {t('emptyHeroRecommended')}
-                  </span>
-                ) : null}
-                <span
-                  className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-[11px] ${ICON_TONE[item.tone]}`}
-                >
-                  {item.icon}
-                </span>
-                <span className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
-                  {t(item.titleKey)}
-                </span>
-                <span className="mt-1.5 line-clamp-2 text-[12.5px] leading-5 text-ds-muted">
-                  {t(item.descKey)}
-                </span>
-                <span className="mt-1.5 line-clamp-1 text-[11px] text-ds-faint">{t(item.flowKey)}</span>
-                <span className={`mt-auto pt-2 text-[11px] font-medium ${TAG_TONE[item.tone]}`}>
-                  {t(item.tagKey)}
-                </span>
-              </button>
-            )
-          })}
+          {dynamicSuggestions
+            ? dynamicSuggestions.map((item, index) => {
+                const focused = index === focusedIndex
+                const isFirst = index === 0
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectSuggestion?.(item.prompt)}
+                    onMouseEnter={() => setFocusedIndex(index)}
+                    className={[
+                      'group relative flex min-h-[140px] flex-col rounded-[16px] border px-3.5 py-3.5 text-left transition-all duration-300 ease-out',
+                      isFirst
+                        ? 'border-accent/20 bg-ds-elevated ring-1 ring-accent/10 dark:border-accent/25'
+                        : focused
+                          ? 'border-ds-border-strong bg-ds-elevated ring-1 ring-accent/12'
+                          : 'border-ds-border bg-ds-card/80 hover:border-ds-border-strong hover:bg-ds-elevated'
+                    ].join(' ')}
+                  >
+                    {isFirst ? (
+                      <span className="absolute right-2.5 top-2.5 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-semibold text-white">
+                        {t('emptyHeroRecommended')}
+                      </span>
+                    ) : null}
+                    <span
+                      className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-[11px] ${ICON_TONE[item.tone]}`}
+                    >
+                      {iconForDynamic(item.id)}
+                    </span>
+                    <span className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
+                      {item.title}
+                    </span>
+                    <span className="mt-1.5 line-clamp-2 text-[12.5px] leading-5 text-ds-muted">
+                      {item.desc}
+                    </span>
+                  </button>
+                )
+              })
+            : STATIC_SUGGESTIONS.map((item, index) => {
+                const focused = index === focusedIndex
+                const isRecommended = item.recommended === true
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectSuggestion?.(t(item.promptKey))}
+                    onMouseEnter={() => setFocusedIndex(index)}
+                    className={[
+                      'group relative flex min-h-[140px] flex-col rounded-[16px] border px-3.5 py-3.5 text-left transition-all duration-300 ease-out',
+                      isRecommended
+                        ? 'border-accent/20 bg-ds-elevated ring-1 ring-accent/10 dark:border-accent/25'
+                        : focused
+                          ? 'border-ds-border-strong bg-ds-elevated ring-1 ring-accent/12'
+                          : 'border-ds-border bg-ds-card/80 hover:border-ds-border-strong hover:bg-ds-elevated'
+                    ].join(' ')}
+                  >
+                    {isRecommended ? (
+                      <span className="absolute right-2.5 top-2.5 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-semibold text-white">
+                        {t('emptyHeroRecommended')}
+                      </span>
+                    ) : null}
+                    <span
+                      className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-[11px] ${ICON_TONE[item.tone]}`}
+                    >
+                      {item.icon}
+                    </span>
+                    <span className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
+                      {t(item.titleKey)}
+                    </span>
+                    <span className="mt-1.5 line-clamp-2 text-[12.5px] leading-5 text-ds-muted">
+                      {t(item.descKey)}
+                    </span>
+                    <span className="mt-1.5 line-clamp-1 text-[11px] text-ds-faint">{t(item.flowKey)}</span>
+                    <span className={`mt-auto pt-2 text-[11px] font-medium ${TAG_TONE[item.tone]}`}>
+                      {t(item.tagKey)}
+                    </span>
+                  </button>
+                )
+              })}
         </div>
 
         <div className="mt-3 flex items-center justify-center gap-1.5">
-          {SUGGESTIONS.map((item, index) => (
+          {Array.from({ length: itemCount }).map((_, index) => (
             <button
-              key={item.id}
+              key={index}
               type="button"
-              aria-label={t(item.titleKey)}
+              aria-label={`Suggestion ${index + 1}`}
               onClick={() => setFocusedIndex(index)}
               className={[
                 'h-1 rounded-full transition-all duration-500',
