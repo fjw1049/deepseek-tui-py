@@ -77,6 +77,16 @@ async def get_thread_detail(request: Request, thread_id: str) -> dict[str, Any]:
     return detail.model_dump(mode="json")
 
 
+@router.get("/threads/{thread_id}/context")
+async def get_thread_context(request: Request, thread_id: str) -> dict[str, int]:
+    """Token budget breakdown (TUI ``/context`` parity)."""
+    mgr = manager(request)
+    try:
+        return await mgr.get_thread_context_breakdown(thread_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+
+
 @router.patch("/threads/{thread_id}")
 async def update_thread(request: Request, thread_id: str) -> dict[str, Any]:
     mgr = manager(request)

@@ -418,6 +418,27 @@ textarea {
     var(--ds-shadow-composer);
 }
 
+/* Empty-state composer: slightly taller, lighter card under the hero. */
+.ds-composer-empty.ds-chat-composer {
+  border-radius: 22px;
+  border-color: var(--ds-border);
+  background: var(--ds-card-strong);
+  box-shadow: 0 10px 32px rgba(62, 52, 36, 0.07);
+  min-height: 112px;
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+}
+
+.ds-composer-empty textarea {
+  min-height: 76px;
+}
+
+[data-theme='dark'] .ds-composer-empty.ds-chat-composer {
+  background: rgba(28, 28, 28, 0.94);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+}
+
 [data-theme='dark'] .ds-chat-composer {
   background: rgba(24, 24, 24, 0.96);
   border-color: rgba(255, 255, 255, 0.12);
@@ -559,6 +580,72 @@ textarea {
   color: var(--text-secondary);
 }
 
+/* Empty-state hero + composer share one centered column. */
+.ds-chat-stage {
+  width: min(960px, 100%);
+  max-width: 960px;
+  margin-inline: auto;
+}
+
+/* Empty chat: hero upper; composer in the lower band, centered horizontally. */
+.ds-empty-stage {
+  min-height: 0;
+  align-items: center;
+}
+
+.ds-empty-stage-hero,
+.ds-empty-stage-composer {
+  width: min(1000px, calc(100% - 1.5rem));
+  max-width: 1000px;
+}
+
+.ds-empty-stage-hero {
+  padding-top: clamp(1.5rem, 5vh, 3rem);
+}
+
+.ds-empty-stage-composer {
+  padding-bottom: clamp(2rem, 7vh, 4rem);
+}
+
+.ds-chat-stage-stack {
+  display: flex;
+  width: min(960px, 100%);
+  max-width: 960px;
+  margin-inline: auto;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.ds-chat-stage-stack > * {
+  width: 100%;
+  max-width: none;
+}
+
+/* Todo rail: same canvas as chat — no panel chrome, border, or shadow. */
+.ds-todo-rail {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+@keyframes ds-task-card-pulse {
+  0%,
+  100% {
+    box-shadow: 0 18px 44px rgba(59, 130, 246, 0.14);
+  }
+  50% {
+    box-shadow: 0 22px 52px rgba(59, 130, 246, 0.22);
+  }
+}
+
+.ds-task-card-active {
+  animation: ds-task-card-pulse 2.8s ease-in-out infinite;
+}
+
+[data-theme='dark'] .ds-task-card-active {
+  animation-name: ds-task-card-pulse;
+}
+
 .ds-topbar-surface {
   background: var(--ds-topbar-bg);
   border: 1px solid color-mix(in srgb, var(--ds-border-muted) 82%, #fffdf8 18%);
@@ -597,7 +684,7 @@ textarea {
     var(--ds-sidebar-gradient);
   background-size: var(--ds-canvas-dot-size) var(--ds-canvas-dot-size), auto;
   border-right: 1px solid var(--ds-sidebar-border);
-  box-shadow: var(--ds-sidebar-shadow);
+  box-shadow: none;
 }
 
 .ds-sidebar-brand {

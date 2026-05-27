@@ -4,7 +4,7 @@ import { MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
 import { formatRelativeTime } from '../lib/format-relative-time'
-import { workspaceLabelFromPath } from '../lib/workspace-label'
+import { shouldShowWorkspaceInHeader, workspaceLabelFromPath } from '../lib/workspace-label'
 
 type Props = {
   compact?: boolean
@@ -17,6 +17,8 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const busy = useChatStore((s) => s.busy)
   const workspaceLabel = useChatStore((s) => s.workspaceLabel)
+  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const showWorkspaceMeta = shouldShowWorkspaceInHeader(workspaceRoot)
   const renameActiveThread = useChatStore((s) => s.renameActiveThread)
 
   const active = threads.find((th) => th.id === activeThreadId)
@@ -79,9 +81,15 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
               </span>
             </div>
           </div>
-        ) : (
+        ) : showWorkspaceMeta ? (
           <div className="min-w-0 pt-0.5">
             <div className="truncate text-[12.5px] font-medium text-ds-faint">{workspaceLabel}</div>
+          </div>
+        ) : (
+          <div className="min-w-0 pt-0.5">
+            <div className="truncate text-[13px] font-semibold leading-[18px] tracking-[-0.01em] text-ds-ink opacity-90">
+              {t('newChat')}
+            </div>
           </div>
         )}
       </div>
@@ -145,11 +153,13 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
         </>
       ) : (
         <div className="min-w-0">
-          <div className="text-[12.5px] font-medium uppercase tracking-[0.16em] text-ds-faint">
-            {workspaceLabel}
-          </div>
-          <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-ds-ink">
-            {t('noSessionSelected')}
+          {showWorkspaceMeta ? (
+            <div className="text-[12.5px] font-medium uppercase tracking-[0.16em] text-ds-faint">
+              {workspaceLabel}
+            </div>
+          ) : null}
+          <div className={`${showWorkspaceMeta ? 'mt-1' : ''} text-[20px] font-semibold tracking-[-0.02em] text-ds-ink`}>
+            {t('newChat')}
           </div>
           <div className="mt-1 text-[13.5px] text-ds-faint">{t('sessionHeaderHint')}</div>
         </div>

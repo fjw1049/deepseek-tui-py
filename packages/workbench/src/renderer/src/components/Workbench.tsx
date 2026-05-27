@@ -19,6 +19,8 @@ import { Sidebar } from './chat/Sidebar'
 import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { FloatingComposer } from './chat/FloatingComposer'
+import { TodoSidebarPanel } from './chat/TodoSidebarPanel'
+import { extractTodosFromBlocks } from '../lib/extract-todos-from-blocks'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
@@ -295,6 +297,7 @@ export function Workbench(): ReactElement {
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [importSessionOpen, setImportSessionOpen] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
+  const emptyStageInsetClass = 'px-4 sm:px-6 md:px-8'
 
   const shellRef = useRef<HTMLDivElement | null>(null)
   const draftByThread = useRef<Record<string, string>>({})
@@ -323,6 +326,20 @@ export function Workbench(): ReactElement {
   const showDevPreviewCard =
     route === 'chat' &&
     latestDevPreviewUrl !== null
+
+  const hasStartedConversation =
+    blocks.length > 0 ||
+    busy ||
+    liveAssistant.trim().length > 0 ||
+    liveReasoning.trim().length > 0
+
+  const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
+  const showTodoSidebar =
+    Boolean(activeThreadId) &&
+    hasStartedConversation &&
+    todoSnapshot !== null &&
+    todoSnapshot.items.length > 0
+  const stageCentered = !showTodoSidebar
 
   const handleSend = (text: string): void => {
     const v = text.trim()
@@ -638,7 +655,10 @@ export function Workbench(): ReactElement {
     >
       {!leftSidebarCollapsed ? (
         <>
-          <div className="min-h-0 shrink-0" style={{ width: leftSidebarWidth }}>
+          <div
+            className="relative min-h-0 shrink-0"
+            style={{ width: leftSidebarWidth }}
+          >
             <Sidebar
               threads={threads}
               activeThreadId={activeThreadId}
@@ -662,14 +682,15 @@ export function Workbench(): ReactElement {
               onOpenSettings={(section) => openSettings(section)}
               onOpenPlugins={() => openPlugins()}
             />
-          </div>
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            className="ds-no-drag group relative z-20 w-2 shrink-0 cursor-col-resize"
-            onPointerDown={beginLeftResize}
-          >
-            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/70 transition group-hover:bg-ds-border-strong" />
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('sidebarResize')}
+              className="ds-no-drag group absolute inset-y-0 right-0 z-30 w-2 translate-x-1/2 cursor-col-resize"
+              onPointerDown={beginLeftResize}
+            >
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
+            </div>
           </div>
         </>
       ) : null}
@@ -740,7 +761,11 @@ export function Workbench(): ReactElement {
         )}
 
         <div className="flex min-h-0 flex-1">
-          <div className={`flex min-h-0 min-w-0 flex-1 ${stageInsetClass}`}>
+          <div
+            className={`flex min-h-0 min-w-0 flex-1 ${
+              stageCentered ? emptyStageInsetClass : stageInsetClass
+            }`}
+          >
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-topbar-surface relative z-10 mt-3 flex min-h-[46px] w-full shrink-0 items-stretch overflow-visible rounded-[24px]">
               <div className="flex w-full min-w-0 items-center justify-between gap-3 px-3 py-2 sm:px-4 md:pl-5 md:pr-2">
@@ -777,59 +802,121 @@ export function Workbench(): ReactElement {
                 </div>
               </div>
             </header>
-            <MessageTimeline
-              blocks={blocks}
-              liveReasoning={liveReasoning}
-              live={liveAssistant}
-              activeThreadId={activeThreadId}
-              runtimeConnection={runtimeConnection}
-              onRetryConnection={() => void probeRuntime('user')}
-              onOpenSettings={() => openSettings('runtime')}
-              onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-              onSelectSuggestion={(text) => setInput(text)}
-              devPreviewCard={
-                showDevPreviewCard ? (
-                  <DevPreviewLaunchCard
-                    url={latestDevPreviewUrl}
-                    onOpen={openDevPreview}
+            <div className="flex min-h-0 flex-1">
+              {stageCentered ? (
+                <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col">
+                  <div className="ds-chat-stage ds-empty-stage-hero shrink-0">
+                    <MessageTimeline
+                      blocks={blocks}
+                      liveReasoning={liveReasoning}
+                      live={liveAssistant}
+                      activeThreadId={activeThreadId}
+                      runtimeConnection={runtimeConnection}
+                      stageCentered={stageCentered}
+                      useChatStageWidth={false}
+                      onRetryConnection={() => void probeRuntime('user')}
+                      onOpenSettings={() => openSettings('runtime')}
+                      onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                      onSelectSuggestion={(text) => setInput(text)}
+                      devPreviewCard={
+                        showDevPreviewCard ? (
+                          <DevPreviewLaunchCard
+                            url={latestDevPreviewUrl}
+                            onOpen={openDevPreview}
+                          />
+                        ) : null
+                      }
+                    />
+                  </div>
+                  <div className="min-h-0 w-full max-w-[1000px] flex-1" aria-hidden />
+                  <div className="ds-chat-stage ds-empty-stage-composer shrink-0">
+                    <FloatingComposer
+                      input={input}
+                      setInput={setInput}
+                      mode={mode}
+                      setMode={setMode}
+                      busy={busy}
+                      runtimeReady={runtimeConnection === 'ready'}
+                      hasActiveThread={Boolean(activeThreadId)}
+                      stageCentered={stageCentered}
+                      useChatStageWidth={false}
+                      composerModel={composerModel}
+                      composerPickList={composerPickList}
+                      onComposerModelChange={(modelId) => {
+                        setComposerModel(modelId)
+                      }}
+                      onSend={handleSend}
+                      queuedMessages={queuedMessages}
+                      onRemoveQueuedMessage={removeQueuedMessage}
+                      onInterrupt={() => void interrupt()}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  <MessageTimeline
+                    blocks={blocks}
+                    liveReasoning={liveReasoning}
+                    live={liveAssistant}
+                    activeThreadId={activeThreadId}
+                    runtimeConnection={runtimeConnection}
+                    stageCentered={stageCentered}
+                    onRetryConnection={() => void probeRuntime('user')}
+                    onOpenSettings={() => openSettings('runtime')}
+                    onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                    onSelectSuggestion={(text) => setInput(text)}
+                    devPreviewCard={
+                      showDevPreviewCard ? (
+                        <DevPreviewLaunchCard
+                          url={latestDevPreviewUrl}
+                          onOpen={openDevPreview}
+                        />
+                      ) : null
+                    }
                   />
-                ) : null
-              }
-            />
-            <div className="flex shrink-0 justify-center px-2 pb-3 pt-0 sm:px-4 md:px-6 lg:px-8">
-              <FloatingComposer
-                input={input}
-                setInput={setInput}
-                mode={mode}
-                setMode={setMode}
-                busy={busy}
-                runtimeReady={runtimeConnection === 'ready'}
-                hasActiveThread={Boolean(activeThreadId)}
-                composerModel={composerModel}
-                composerPickList={composerPickList}
-                onComposerModelChange={(modelId) => {
-                  setComposerModel(modelId)
-                }}
-                onSend={handleSend}
-                queuedMessages={queuedMessages}
-                onRemoveQueuedMessage={removeQueuedMessage}
-                onInterrupt={() => void interrupt()}
-              />
+                  <div className="flex shrink-0 justify-center pb-3 pt-0">
+                    <FloatingComposer
+                      input={input}
+                      setInput={setInput}
+                      mode={mode}
+                      setMode={setMode}
+                      busy={busy}
+                      runtimeReady={runtimeConnection === 'ready'}
+                      hasActiveThread={Boolean(activeThreadId)}
+                      composerModel={composerModel}
+                      composerPickList={composerPickList}
+                      onComposerModelChange={(modelId) => {
+                        setComposerModel(modelId)
+                      }}
+                      onSend={handleSend}
+                      queuedMessages={queuedMessages}
+                      onRemoveQueuedMessage={removeQueuedMessage}
+                      onInterrupt={() => void interrupt()}
+                    />
+                  </div>
+                </div>
+              )}
+              {showTodoSidebar ? (
+                <TodoSidebarPanel blocks={blocks} className="mb-3 shrink-0 self-stretch pl-3 pr-1" />
+              ) : null}
             </div>
           </section>
           </div>
 
           {rightPanelMode ? (
-            <>
               <div
-                role="separator"
-                aria-orientation="vertical"
-                className="ds-no-drag group relative z-20 w-2 shrink-0 cursor-col-resize"
-                onPointerDown={beginRightResize}
+                className="relative h-full min-h-0 shrink-0 border-l border-ds-border bg-ds-sidebar"
+                style={{ width: rightSidebarWidth }}
               >
-                <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/70 transition group-hover:bg-ds-border-strong" />
-              </div>
-              <div className="h-full min-h-0 shrink-0" style={{ width: rightSidebarWidth }}>
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t('rightPanelResize')}
+                  className="ds-no-drag group absolute inset-y-0 left-0 z-30 w-2 -translate-x-1/2 cursor-col-resize"
+                  onPointerDown={beginRightResize}
+                >
+                  <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
+                </div>
                 <Suspense fallback={<div className="h-full w-full bg-ds-sidebar" />}>
                   {rightPanelMode === 'changes' ? (
                     <ChangeInspector
@@ -854,7 +941,6 @@ export function Workbench(): ReactElement {
                   )}
                 </Suspense>
               </div>
-            </>
           ) : null}
         </div>
 

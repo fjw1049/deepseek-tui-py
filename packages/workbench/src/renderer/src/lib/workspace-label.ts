@@ -1,7 +1,6 @@
 import i18n from '../i18n'
 
 const DEFAULT_WORKSPACE_PATH_SUFFIX = '/.deepseekgui/default_workspace'
-const DEFAULT_WORKSPACE_LABEL = 'default'
 
 function normalizePathForMatch(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
@@ -15,10 +14,16 @@ function isDefaultWorkspacePath(path: string): boolean {
   )
 }
 
+/** Hide generic default workspace path in compact chrome (e.g. top bar). */
+export function shouldShowWorkspaceInHeader(path: string): boolean {
+  const p = path?.trim() ?? ''
+  return Boolean(p) && !isDefaultWorkspacePath(p)
+}
+
 export function workspaceLabelFromPath(path: string): string {
   const p = path?.trim() ?? ''
   if (!p) return i18n.t('common:workingDirectory')
-  if (isDefaultWorkspacePath(p)) return DEFAULT_WORKSPACE_LABEL
+  if (isDefaultWorkspacePath(p)) return i18n.t('common:workingDirectory')
   const normalized = p.replace(/[/\\]+$/, '')
   const parts = normalized.split(/[/\\]/)
   const base = parts[parts.length - 1]

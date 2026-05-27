@@ -6,6 +6,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEEPSEEK_REPO_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
+# Prefer repo venv so Electron does not fall back to system python3 (often 3.9 without deps).
+if [[ -z "${DEEPSEEK_PYTHON:-}" && -x "$ROOT/.venv/bin/python" ]]; then
+  export DEEPSEEK_PYTHON="$ROOT/.venv/bin/python"
+fi
+
 cd "$ROOT/packages/workbench"
 
 # Cursor/CI sometimes sets this — Electron then runs as plain Node (no GUI, broken imports).

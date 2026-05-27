@@ -5,20 +5,18 @@ import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
-  Bug,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
   FileEdit,
   FolderOpen,
-  Lightbulb,
   Loader2,
-  Palette,
   PencilLine,
   Terminal,
   Wrench
 } from 'lucide-react'
+import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import type {
   ChatBlock,
   RuntimeConnectionStatus,
@@ -52,6 +50,8 @@ type Props = {
   onOpenDiagnostics: () => void
   onSelectSuggestion?: (prompt: string) => void
   devPreviewCard?: ReactElement | null
+  stageCentered?: boolean
+  useChatStageWidth?: boolean
 }
 
 type Turn = {
@@ -98,7 +98,9 @@ export function MessageTimeline({
   onOpenSettings,
   onOpenDiagnostics,
   onSelectSuggestion,
-  devPreviewCard
+  devPreviewCard,
+  stageCentered = false,
+  useChatStageWidth = true
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -231,9 +233,23 @@ export function MessageTimeline({
     }
   }, [hiddenTurnCount, loadEarlierTurns, visibleTurnCount])
 
+  const showEmptyHeroOnly =
+    (!activeThreadId || (activeThreadId && !hasContent)) && hiddenTurnCount === 0
+
   return (
-    <div ref={containerRef} className="ds-no-drag flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
-      <div className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-8 px-4 pb-10 pt-8 sm:px-6 md:px-8">
+    <div
+      ref={containerRef}
+      className={`ds-no-drag flex flex-col overflow-x-hidden ${
+        stageCentered && showEmptyHeroOnly
+          ? 'shrink-0 overflow-visible'
+          : 'min-h-0 flex-1 overflow-y-auto'
+      }`}
+    >
+      <div
+        className={`flex w-full min-w-0 flex-col gap-6 ${
+          useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
+        } ${showEmptyHeroOnly ? 'pb-0 pt-0' : 'pb-8 pt-2'}`}
+      >
         {!activeThreadId && (
           <EmptyHero
             ready={runtimeConnection === 'ready'}
@@ -344,15 +360,6 @@ export function MessageTimeline({
   )
 }
 
-type SuggestionTone = 'blue' | 'emerald' | 'violet' | 'orange'
-
-const SUGGESTION_TONE: Record<SuggestionTone, string> = {
-  blue: 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300',
-  emerald: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
-  violet: 'bg-violet-50 text-violet-600 dark:bg-ds-skill-soft dark:text-ds-skill',
-  orange: 'bg-orange-50 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'
-}
-
 function EmptyHero({
   ready,
   hasWorkspace,
@@ -374,40 +381,11 @@ function EmptyHero({
 
   if (!ready) {
     return (
-      <div className="flex flex-col items-center justify-center px-8 py-20 text-center">
-        <div className="ds-card-soft mb-5 rounded-[20px] px-5 py-4">
-          <Bot className="mx-auto h-7 w-7 text-accent opacity-90" strokeWidth={1.4} />
-        </div>
-        <p className="max-w-sm text-[24px] font-semibold tracking-[-0.03em] text-ds-ink">
-          {t('runtimeOfflineHeroTitle')}
-        </p>
-        <p className="mt-3 max-w-[560px] text-[15.5px] leading-7 text-ds-muted">
-          {t('runtimeOfflineHeroSub')}
-        </p>
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            className="ds-chip rounded-full px-5 py-2.5 text-[13px] font-medium text-ds-ink transition hover:text-ds-ink"
-            onClick={onRetry}
-          >
-            {t('retryConnection')}
-          </button>
-          <button
-            type="button"
-            className="ds-chip-muted rounded-full px-5 py-2.5 text-[13px] font-medium text-ds-muted transition hover:text-ds-ink"
-            onClick={onOpenDiagnostics}
-          >
-            {t('runtimeDiagnosticsButton')}
-          </button>
-          <button
-            type="button"
-            className="ds-chip-muted rounded-full px-5 py-2.5 text-[13px] font-medium text-ds-muted transition hover:text-ds-ink"
-            onClick={onOpenSettings}
-          >
-            {t('openSettings')}
-          </button>
-        </div>
-      </div>
+      <TaskSuggestionOfflineHero
+        onRetry={onRetry}
+        onOpenSettings={onOpenSettings}
+        onOpenDiagnostics={onOpenDiagnostics}
+      />
     )
   }
 
@@ -428,74 +406,7 @@ function EmptyHero({
     )
   }
 
-  const suggestions: Array<{
-    icon: ReactElement
-    tone: SuggestionTone
-    titleKey: string
-    subKey: string
-    promptKey: string
-  }> = [
-    {
-      icon: <FolderOpen className="h-4 w-4" strokeWidth={1.8} />,
-      tone: 'blue',
-      titleKey: 'promptStructureTitle',
-      subKey: 'promptStructureSub',
-      promptKey: 'promptStructurePrompt'
-    },
-    {
-      icon: <Bug className="h-4 w-4" strokeWidth={1.8} />,
-      tone: 'emerald',
-      titleKey: 'promptBugTitle',
-      subKey: 'promptBugSub',
-      promptKey: 'promptBugPrompt'
-    },
-    {
-      icon: <Lightbulb className="h-4 w-4" strokeWidth={1.8} />,
-      tone: 'violet',
-      titleKey: 'promptPlanTitle',
-      subKey: 'promptPlanSub',
-      promptKey: 'promptPlanPrompt'
-    },
-    {
-      icon: <Palette className="h-4 w-4" strokeWidth={1.8} />,
-      tone: 'orange',
-      titleKey: 'promptDesignTitle',
-      subKey: 'promptDesignSub',
-      promptKey: 'promptDesignPrompt'
-    }
-  ]
-
-  return (
-    <div className="ds-no-drag flex flex-col items-center justify-center px-4 pb-4 pt-20 text-center md:pt-28">
-      <h1 className="ds-hero-title">{t('emptyHeroTitle')}</h1>
-      <p className="ds-hero-sub mt-4 max-w-lg">{t('emptyHeroSub')}</p>
-
-      <div className="mt-12 grid w-full max-w-[980px] grid-cols-1 gap-5 sm:grid-cols-2">
-        {suggestions.map((s) => (
-          <button
-            key={s.titleKey}
-            type="button"
-            onClick={() => onSelectSuggestion?.(t(s.promptKey))}
-            className="group flex min-h-[118px] items-center gap-4 rounded-[24px] border border-[rgba(15,23,42,0.1)] bg-[rgba(255,255,255,0.92)] px-6 py-5 text-left shadow-[0_18px_48px_rgba(86,103,136,0.08)] transition duration-200 hover:-translate-y-0.5 hover:border-[rgba(0,136,255,0.18)] hover:shadow-[0_24px_56px_rgba(86,103,136,0.14)] dark:border-white/10 dark:bg-[rgba(24,24,24,0.9)] dark:shadow-[0_20px_52px_rgba(0,0,0,0.24)]"
-          >
-            <span
-              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-[18px] ${SUGGESTION_TONE[s.tone]}`}
-            >
-              {s.icon}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[18px] font-semibold tracking-[-0.02em] text-ds-ink md:text-[20px]">
-                {t(s.titleKey)}
-              </span>
-              <span className="mt-1 block text-[15px] leading-6 text-ds-faint md:text-[16px]">
-                {t(s.subKey)}
-              </span>
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
+  return <TaskSuggestionHero onSelectSuggestion={onSelectSuggestion} />
 }
 
 function groupTurns(blocks: ChatBlock[]): Turn[] {

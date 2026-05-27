@@ -29,6 +29,7 @@ import {
   formatComposerModelLabel
 } from '../../lib/composer-model-label'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { ContextUsageMeter } from './ContextUsageMeter'
 import { GitBranchPicker } from './GitBranchPicker'
 
 export type ComposerMode = 'plan' | 'agent' | 'ask'
@@ -58,6 +59,8 @@ type Props = {
   onRemoveQueuedMessage: (id: string) => void
   onSend: (text: string) => void
   onInterrupt: () => void
+  stageCentered?: boolean
+  useChatStageWidth?: boolean
 }
 
 type SlashCommandId = ComposerMode
@@ -96,7 +99,9 @@ export function FloatingComposer({
   queuedMessages,
   onRemoveQueuedMessage,
   onSend,
-  onInterrupt
+  onInterrupt,
+  stageCentered = false,
+  useChatStageWidth = true
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -153,11 +158,6 @@ export function FloatingComposer({
       : busy
         ? t('composerQueuePlaceholder')
         : t('composerDefaultPlaceholder')
-  const footerHint = !runtimeReady
-    ? t('composerOfflineHint')
-    : !hasActiveThread && !effectiveWorkspaceRoot
-      ? t('composerWorkspaceHint')
-      : null
   const primaryActionDisabled = !canSend
 
   const slashCommands = useMemo<SlashCommand[]>(() => {
@@ -337,7 +337,11 @@ export function FloatingComposer({
   }
 
   return (
-    <div className="pointer-events-auto w-full max-w-4xl px-4 pb-5 pt-1 sm:px-6 md:px-8">
+    <div
+      className={`pointer-events-auto w-full ${
+        useChatStageWidth ? 'ds-chat-stage px-3 pb-2 pt-0 sm:px-4' : 'max-w-none px-0 pb-2 pt-0'
+      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-4 pt-1'}`}
+    >
       {pendingApprovalCount > 0 ? (
         <div className="mb-2 rounded-[22px] border border-accent/30 bg-[linear-gradient(180deg,rgba(79,124,255,0.08),rgba(79,124,255,0.14))] px-4 py-3 shadow-sm backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -454,9 +458,9 @@ export function FloatingComposer({
 
         <div
           ref={shellRef}
-          className={`ds-composer-shell ds-chat-composer ds-frosted flex flex-col gap-2 px-3 py-2.5 transition sm:px-4 ${
-            focused ? 'ds-chat-composer-focus' : ''
-          }`}
+            className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col gap-2.5 px-4 py-3 transition sm:px-5 ${
+              stageCentered ? 'ds-composer-empty' : ''
+            } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
             <div className="flex flex-wrap gap-2 px-1 pt-1">
@@ -481,10 +485,10 @@ export function FloatingComposer({
 
           <textarea
             ref={textareaRef}
-            rows={1}
-            className={`ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 py-2 text-[15px] leading-[1.55] text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              canCompose ? '' : 'opacity-80'
-            }`}
+            rows={stageCentered ? 2 : 1}
+            className={`ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 py-2.5 text-[15px] leading-[1.55] text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
+              stageCentered ? 'min-h-[76px]' : 'min-h-[52px]'
+            } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={placeholder}
             value={input}
             disabled={!canCompose}
@@ -683,14 +687,22 @@ export function FloatingComposer({
           ) : null}
         </div>
       </div>
-      <div className="mt-2 flex min-h-8 items-center justify-between gap-3 px-4">
+      <div className="mt-2 flex min-h-8 items-center justify-between gap-3 px-3 sm:px-4">
         <GitBranchPicker workspaceRoot={effectiveWorkspaceRoot} />
-        {footerHint ? (
-          <div className="min-w-0 flex-1 text-right text-[13.5px] font-medium text-ds-faint">
-            <span className="truncate">{footerHint}</span>
-          </div>
-        ) : null}
+        <ContextUsageMeter
+          blocks={blocks}
+          model={activeModelId}
+          hasActiveThread={hasActiveThread}
+          threadId={activeThreadId}
+        />
       </div>
+      {!runtimeReady ? (
+        <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">
+          {t('composerOfflineHint')}
+        </p>
+      ) : !hasActiveThread && !effectiveWorkspaceRoot ? (
+        <p className="px-3 pb-1 text-right text-[11.5px] text-ds-faint sm:px-4">{t('composerWorkspaceHint')}</p>
+      ) : null}
     </div>
   )
 }

@@ -469,53 +469,26 @@ class Engine:
         ``window`` reads ``context_window_for_model``; ``model`` defaults
         to ``self.default_model``.
 
-        Token counts use the same conservative ``len*1.5`` estimator as
-        :func:`engine.context.estimated_input_tokens` so the numbers
-        match what the capacity / compaction subsystems already act on.
+        Token counts use the same conservative estimators as
+        :func:`engine.context.estimate_context_breakdown`.
         """
-        import json as _json
-
-        from deepseek_tui.config.provider_registry import context_window_for_model
-        from deepseek_tui.engine.context import (
-            _estimate_text_tokens_conservative,
-            estimated_input_tokens,
-        )
-        from deepseek_tui.engine.prompts import build_system_prompt
+        from deepseek_tui.engine.context import estimate_context_breakdown
 
         target_model = model or self.default_model
-
-        system_text = build_system_prompt(
-            None,
-            skills_context=self._render_skills_context(),
-            working_set_summary=self.working_set.summary() or None,
-        )
-        system_tokens = _estimate_text_tokens_conservative(system_text)
-
         try:
             api_tools = self.tool_registry.to_api_tools()
         except Exception:  # noqa: BLE001 — registry may raise during boot
             api_tools = []
-        tools_json = _json.dumps(api_tools, ensure_ascii=False)
-        tools_tokens = _estimate_text_tokens_conservative(tools_json)
 
-        conv_tokens = (
-            estimated_input_tokens(self.session_messages)
-            if self.session_messages
-            else 0
+        return estimate_context_breakdown(
+            model=target_model,
+            messages=self.session_messages or None,
+            skills_context=self._render_skills_context(),
+            working_set_summary=self.working_set.summary() or None,
+            api_tools=api_tools,
+            workspace=self.tool_context.working_directory,
+            mode=(self.mode or "agent").strip() or "agent",
         )
-
-        total = system_tokens + tools_tokens + conv_tokens
-        window = context_window_for_model(target_model) or 0
-        free = max(0, window - total) if window else 0
-
-        return {
-            "system_prompt": system_tokens,
-            "tools": tools_tokens,
-            "conversation": conv_tokens,
-            "total": total,
-            "window": window,
-            "free": free,
-        }
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""

@@ -568,8 +568,67 @@ def _parse_tool_arguments(arguments: Any) -> dict[str, Any] | None:
     return args
 
 
+def _is_todo_tool_name(tool_name: str) -> bool:
+    lower = tool_name.lower()
+    return "todo" in lower or "checklist" in lower
+
+
+def _todo_items_from_arguments(args: dict[str, Any]) -> list[dict[str, Any]] | None:
+    todos = args.get("todos")
+    if isinstance(todos, list) and todos:
+        items: list[dict[str, Any]] = []
+        for index, entry in enumerate(todos, start=1):
+            if isinstance(entry, str) and entry.strip():
+                items.append({"id": index, "content": entry.strip(), "status": "pending"})
+                continue
+            if not isinstance(entry, dict):
+                continue
+            content = entry.get("content") or entry.get("text")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            status = entry.get("status") if isinstance(entry.get("status"), str) else "pending"
+            item_id = entry.get("id", index)
+            items.append(
+                {
+                    "id": item_id,
+                    "content": content.strip(),
+                    "status": status,
+                }
+            )
+        return items or None
+    legacy = args.get("items")
+    if isinstance(legacy, list) and legacy:
+        return [
+            {"id": index, "content": str(text).strip(), "status": "pending"}
+            for index, text in enumerate(legacy, start=1)
+            if isinstance(text, str) and str(text).strip()
+        ] or None
+    return None
+
+
+def todo_tool_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
+    """Expose checklist/todo payloads to Workbench sidebar consumers."""
+    if not _is_todo_tool_name(tool_name):
+        return None
+    args = _parse_tool_arguments(arguments)
+    if not args:
+        return {"tool_name": tool_name}
+    items = _todo_items_from_arguments(args)
+    if not items:
+        return {"tool_name": tool_name}
+    completed = sum(1 for item in items if str(item.get("status", "")).lower() in {"completed", "done"})
+    return {
+        "tool_name": tool_name,
+        "items": items,
+        "completion_pct": round(completed * 100 / len(items)) if items else 0,
+    }
+
+
 def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
     """Extract file path metadata for Workbench Diff / ChangeInspector."""
+    todo_meta = todo_tool_metadata(tool_name, arguments)
+    if todo_meta is not None:
+        return todo_meta
     if tool_kind_for_name(tool_name) != TurnItemKind.FILE_CHANGE:
         return None
     args = _parse_tool_arguments(arguments)

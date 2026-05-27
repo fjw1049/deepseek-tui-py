@@ -344,3 +344,63 @@ def estimated_input_tokens(messages: list[Message]) -> int:
     for m in messages:
         total_chars += len(json.dumps(m.model_dump()))
     return max(1, total_chars // 4)
+
+
+def estimate_context_breakdown(
+    *,
+    model: str,
+    messages: list[Message] | None = None,
+    system_prompt_override: str | None = None,
+    skills_context: str | None = None,
+    working_set_summary: str | None = None,
+    api_tools: list[dict[str, Any]] | None = None,
+    workspace: Any | None = None,
+    mode: str = "agent",
+) -> dict[str, int]:
+    """Estimate token occupancy by category for the next request.
+
+    Shared by :meth:`Engine.context_breakdown`, TUI ``/context``, and the
+    Workbench runtime API. Mirrors the buckets documented on ``Engine``.
+    """
+    from pathlib import Path
+
+    from deepseek_tui.engine.prompts import build_system_prompt
+    from deepseek_tui.prompts import AppMode
+
+    target_model = model or ""
+    try:
+        app_mode = AppMode((mode or "agent").strip().lower())
+    except ValueError:
+        app_mode = AppMode.AGENT
+    if system_prompt_override and system_prompt_override.strip():
+        system_text = system_prompt_override.strip()
+    else:
+        ws = Path(workspace).expanduser().resolve() if workspace else None
+        system_text = build_system_prompt(
+            None,
+            skills_context=skills_context,
+            working_set_summary=working_set_summary,
+            workspace=ws,
+            mode=app_mode,
+        )
+
+    system_tokens = _estimate_text_tokens_conservative(system_text)
+
+    tools_tokens = 0
+    if api_tools is not None:
+        tools_json = json.dumps(api_tools, ensure_ascii=False)
+        tools_tokens = _estimate_text_tokens_conservative(tools_json)
+
+    conv_tokens = estimated_input_tokens(messages) if messages else 0
+    total = system_tokens + tools_tokens + conv_tokens
+    window = context_window_for_model(target_model) or 0
+    free = max(0, window - total) if window else 0
+
+    return {
+        "system_prompt": system_tokens,
+        "tools": tools_tokens,
+        "conversation": conv_tokens,
+        "total": total,
+        "window": window,
+        "free": free,
+    }

@@ -40,6 +40,7 @@ from deepseek_tui.app_server.runtime_threads import (
     reconstruct_messages_from_turns,
     tool_kind_for_name,
     tool_item_metadata,
+    todo_tool_metadata,
 )
 from deepseek_tui.app_server.session_import import ImportTuiSessionRequest
 from deepseek_tui.config.models import Config
@@ -407,6 +408,42 @@ class RuntimeThreadManager:
             items.extend(self.store.list_items_for_turn(turn.id))
         latest_seq = await self.store.current_seq()
         return ThreadDetail(thread=thread, turns=turns, items=items, latest_seq=latest_seq)
+
+    async def get_thread_context_breakdown(self, thread_id: str) -> dict[str, int]:
+        """Context window estimate for Workbench / HTTP clients.
+
+        Uses the live engine when the thread is already loaded (same numbers
+        as TUI ``/context``). Otherwise reconstructs messages from the store
+        and estimates with the default tool registry for that thread mode.
+        """
+        from pathlib import Path
+
+        from deepseek_tui.engine.context import estimate_context_breakdown
+        from deepseek_tui.tools.builder import build_default_registry
+
+        thread = self.store.load_thread(thread_id)
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is not None:
+                return state.engine.context_breakdown(thread.model)
+
+        messages = reconstruct_messages_from_turns(self.store, thread_id)
+        workspace = Path(thread.workspace).expanduser().resolve()
+        mode = (thread.mode or "agent").strip() or "agent"
+        registry = build_default_registry(self.config, mode=mode)
+        try:
+            api_tools = registry.to_api_tools()
+        except Exception:  # noqa: BLE001
+            api_tools = []
+
+        return estimate_context_breakdown(
+            model=thread.model,
+            messages=messages or None,
+            system_prompt_override=thread.system_prompt,
+            api_tools=api_tools,
+            workspace=workspace,
+            mode=mode,
+        )
 
     async def resume_thread(self, thread_id: str) -> ThreadDetail:
         """Touch a thread so its engine is loaded and return its detail.
@@ -1040,6 +1077,13 @@ class RuntimeThreadManager:
                         )
                     else:
                         item.detail = event.content
+                    if item.metadata is None or not isinstance(item.metadata, dict):
+                        item.metadata = {"tool_name": event.tool_name}
+                    elif "tool_name" not in item.metadata:
+                        item.metadata = {**item.metadata, "tool_name": event.tool_name}
+                    refreshed = todo_tool_metadata(event.tool_name, tool_args)
+                    if refreshed:
+                        item.metadata = {**item.metadata, **refreshed}
                     self.store.save_item(item)
                     event_name = (
                         "item.completed" if item.status == TurnItemLifecycleStatus.COMPLETED
