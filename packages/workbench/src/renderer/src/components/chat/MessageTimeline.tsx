@@ -1592,8 +1592,7 @@ function UserMessageBubble({
             rows={2}
             className="block w-full min-w-0 resize-none break-words bg-transparent text-[15px] font-medium leading-[1.58] text-ds-ink outline-none [overflow-wrap:anywhere]"
           />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <span className="text-[12px] text-ds-faint">{t('rewindHint')}</span>
+          <div className="mt-2 flex items-center justify-end gap-3">
             <div className="flex items-center gap-2">
               <button
                 type="button"
