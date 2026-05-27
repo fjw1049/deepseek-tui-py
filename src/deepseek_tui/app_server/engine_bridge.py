@@ -17,6 +17,7 @@ from typing import Any
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
+    ElevationRequiredEvent,
     EngineEvent,
     ErrorEvent,
     SandboxDeniedEvent,
@@ -81,6 +82,15 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
             "tool_call_id": event.tool_call_id,
             "tool_name": event.tool_name,
             "reason": event.reason,
+        }
+    if isinstance(event, ElevationRequiredEvent):
+        return {
+            "event": "elevation_required",
+            "tool_call_id": event.tool_call_id,
+            "tool_name": event.tool_name,
+            "reason": event.reason,
+            "elevation_kind": event.elevation_kind,
+            "command_preview": event.command_preview,
         }
     if isinstance(event, ErrorEvent):
         return {

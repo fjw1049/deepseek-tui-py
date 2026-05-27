@@ -118,8 +118,11 @@ class EngineHandle:
 
     async def emit(self, event: EngineEvent) -> None:
         await self._event_queue.put(event)
+        # Await hook bridge on the main emit path so lifecycle hooks run before
+        # the caller continues (tests and JsonlHookSink rely on this). Background
+        # producers use try_emit(), which intentionally skips hooks.
         if self._hooks is not None:
-            asyncio.create_task(self._bridge_to_hooks_safe(event))
+            await self._bridge_to_hooks_safe(event)
 
     async def _bridge_to_hooks_safe(self, event: EngineEvent) -> None:
         try:

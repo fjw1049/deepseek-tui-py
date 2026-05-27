@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -219,11 +220,11 @@ class MemoryConfig(BaseModel):
     """[memory] subsection — mirrors Rust ``MemoryConfig``.
 
     Top-level ``Config.memory_path`` already covers the storage path.
-    The nested table adds opt-in / mode toggles; runtime reads
-    ``Config.memory_enabled`` heritage flag for backwards compat.
+    Default **off** (Rust parity): opt-in via ``[memory] enabled = true``
+    or ``DEEPSEEK_MEMORY=on``.
     """
 
-    enabled: bool = True
+    enabled: bool = False
     mode: str = "manual"
     max_entries: int = 500
 
@@ -360,6 +361,27 @@ class Config(BaseModel):
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()
+
+    def resolved_memory_path(self) -> Path:
+        """Resolve memory file path (``DEEPSEEK_MEMORY_PATH`` > config > default)."""
+        from deepseek_tui.config.paths import expand_path, user_memory_path
+
+        override = os.environ.get("DEEPSEEK_MEMORY_PATH")
+        if override:
+            return expand_path(override)
+        raw = self.memory_path
+        if raw.is_absolute():
+            return expand_path(raw)
+        return user_memory_path()
+
+    def memory_enabled(self) -> bool:
+        """Whether user-memory injection is active (Rust ``Config::memory_enabled``)."""
+        from deepseek_tui.memory.user_memory import memory_enabled_from_env
+
+        env = memory_enabled_from_env()
+        if env is not None:
+            return env
+        return self.memory.enabled
 
     def effective_provider_config(self) -> ProviderConfig:
         configured = self.providers.get(self.provider, ProviderConfig())

@@ -37,6 +37,7 @@ from deepseek_tui.tools.automation_scheduler import (
     run_scheduler_loop,
 )
 from deepseek_tui.tools.automation_tools import AUTOMATION_MANAGER_KEY
+from deepseek_tui.execpolicy.sandbox import sandbox_policy_for_mode
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
@@ -258,6 +259,7 @@ async def create_tool_runtime(
         task_manager=task_manager,
         subagent_manager=subagent_manager,
         network_policy=network_decider,
+        execution_sandbox_policy=sandbox_policy_for_mode(mode, workspace),
     )
 
     return ToolRuntime(

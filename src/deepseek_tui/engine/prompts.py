@@ -69,6 +69,8 @@ def build_system_prompt(
     locale_tag: str = "en",
     project_context_enabled: bool = True,
     subagent_mandate: bool = False,
+    memory_enabled: bool = False,
+    memory_path: Path | None = None,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -140,10 +142,8 @@ def build_system_prompt(
         if handoff_block:
             full_prompt += "\n\n" + handoff_block
 
-    # User memory (persistent preferences / facts from ~/.deepseek/memory/)
-    # Mirrors Rust Engine memory_path injection — re-read each turn so
-    # runtime edits take effect immediately.
-    memory_block = _load_user_memory()
+    # User memory (~/.deepseek/memory.md) — opt-in, re-read each turn.
+    memory_block = _load_user_memory(memory_enabled, memory_path)
     if memory_block:
         full_prompt += "\n\n" + memory_block
 
@@ -159,35 +159,18 @@ def build_system_prompt(
     return full_prompt
 
 
-def _load_user_memory() -> str | None:
-    """Load user memory files from ~/.deepseek/memory/.
+def _load_user_memory(
+    enabled: bool,
+    memory_path: Path | None,
+) -> str | None:
+    """Compose ``<user_memory>`` block — mirrors ``memory::compose_block``."""
+    if memory_path is None:
+        from deepseek_tui.config.paths import user_memory_path
 
-    Mirrors Rust ``inject_memory_into_system_prompt``. Reads all .md files
-    sorted by name, concatenates content within [memory] markers.
-    """
-    memory_dir = Path.home() / ".deepseek" / "memory"
-    if not memory_dir.is_dir():
-        return None
+        memory_path = user_memory_path()
+    from deepseek_tui.memory.user_memory import compose_block
 
-    parts: list[str] = []
-    try:
-        files = sorted(f for f in memory_dir.iterdir() if f.suffix == ".md")
-    except OSError:
-        return None
-
-    for f in files:
-        try:
-            content = f.read_text(encoding="utf-8").strip()
-            if content:
-                parts.append(content)
-        except OSError:
-            continue
-
-    if not parts:
-        return None
-
-    joined = "\n\n".join(parts)
-    return f"[memory]\n{joined}\n[/memory]"
+    return compose_block(enabled, memory_path)
 
 
 def _load_handoff_block(workspace: Path) -> str | None:

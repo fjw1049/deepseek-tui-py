@@ -153,6 +153,20 @@ export async function syncDeepseekTuiConfig(
 
   const launcher = resolveRuntimeLauncher(settings.deepseek.binaryPath)
   for (const command of commands) {
-    await runDeepseekCommand(launcher, command)
+    try {
+      await runDeepseekCommand(launcher, command)
+    } catch (error) {
+      const isAuthSync =
+        command.args[0] === 'auth' &&
+        (command.args[1] === 'set' || command.args[1] === 'clear')
+      if (!isAuthSync) {
+        throw error
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(
+        `[deepseek-gui] Skipped keyring auth sync (${command.args.join(' ')}): ${message}. ` +
+          'The managed runtime will still use the API key from GUI settings via DEEPSEEK_API_KEY.'
+      )
+    }
   }
 }

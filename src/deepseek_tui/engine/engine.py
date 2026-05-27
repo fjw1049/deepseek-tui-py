@@ -38,6 +38,7 @@ from deepseek_tui.engine.dispatch import (
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
+    ElevationRequiredEvent,
     ErrorEvent,
     RlmProgressEvent,
     SandboxDeniedEvent,
@@ -282,6 +283,8 @@ class Engine:
         self.default_temperature = default_temperature
         self.default_top_p = default_top_p
         self.default_extra_body: dict[str, Any] = dict(default_extra_body or {})
+        self.memory_enabled: bool = False
+        self.memory_path: Path | None = None
         from deepseek_tui.hooks.executor import HookExecutor
 
         self.hook_executor: HookExecutor = (
@@ -422,6 +425,8 @@ class Engine:
         # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
         # and ``Config.seam_enabled`` once those fields exist; today they
         # default to False so behavior is unchanged from the pre-batch state.
+        engine.memory_enabled = cfg.memory_enabled()
+        engine.memory_path = cfg.resolved_memory_path()
         engine.cycle_config = CycleConfig(
             enabled=bool(getattr(cfg, "cycle_enabled", False)),
         )
@@ -432,6 +437,13 @@ class Engine:
         engine._cycle_session_id = uuid.uuid4().hex
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
+        from deepseek_tui.execpolicy.sandbox import sync_execution_sandbox_policy
+
+        sync_execution_sandbox_policy(
+            engine.tool_context,
+            mode,
+            engine.tool_context.working_directory,
+        )
         from deepseek_tui.tools.builder import wire_registry_client
 
         wire_registry_client(
@@ -628,6 +640,13 @@ class Engine:
     async def _handle_send_message_inner(
         self, op: SendMessageOp, turn_id: str
     ) -> None:
+        from deepseek_tui.execpolicy.sandbox import sync_execution_sandbox_policy
+
+        sync_execution_sandbox_policy(
+            self.tool_context,
+            self.mode,
+            self.tool_context.working_directory,
+        )
         processed = prepare_turn_for_model(
             op.content or "",
             workspace=self.tool_context.working_directory,
@@ -664,6 +683,10 @@ class Engine:
 
         try:
             await self.handle.emit(TurnStartedEvent(user_text=processed.display_text))
+            self._save_crash_checkpoint(
+                working_messages,
+                model=op.model or self.default_model,
+            )
             result = await self._run_conversation(
                 messages=working_messages,
                 model=op.model or self.default_model,
@@ -671,6 +694,9 @@ class Engine:
                     op.system_prompt,
                     skills_context=self._render_skills_context(),
                     working_set_summary=self.working_set.summary() or None,
+                    workspace=self.tool_context.working_directory,
+                    memory_enabled=self.memory_enabled,
+                    memory_path=self.memory_path,
                 ),
                 max_tokens=op.max_tokens,
             )
@@ -684,6 +710,10 @@ class Engine:
                 return
 
             self.session_messages = working_messages
+            if not result.cancelled:
+                from deepseek_tui.state.checkpoint import clear_checkpoint
+
+                clear_checkpoint()
             usage = result.usage
             logger.info(
                 "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
@@ -869,6 +899,7 @@ class Engine:
                 messages,
                 compact_fn=self._emergency_compact,
             )
+            await self._maybe_layered_context_checkpoint(messages, model)
 
             # Hard cap: force compaction when message count is excessive,
             # as a memory safety net. The token-based threshold (500K floor)
@@ -968,6 +999,28 @@ class Engine:
             )
         )
         return TurnResult(assistant_message=None, usage=None, tool_calls=[])
+
+    async def _emit_tool_failure(
+        self, tool_call: ToolCall, error_msg: str
+    ) -> None:
+        """Emit a failed tool result so the UI/runtime can close the tool item."""
+        emit_tool_audit(
+            {
+                "event": "tool.result",
+                "tool_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "success": False,
+                "error": error_msg,
+            }
+        )
+        await self.handle.emit(
+            ToolResultEvent(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                content=error_msg,
+                success=False,
+            )
+        )
 
     def _build_tool_use_message(self, tool_calls: list[ToolCall]) -> Message:
         return Message.assistant_with_tools(
@@ -1072,6 +1125,10 @@ class Engine:
                         )
                         continue
 
+                    result = await self._maybe_elevate_and_retry_tool(
+                        tool_call, api_tools, effective_model, result
+                    )
+
                     logger.info(
                         "tool_call_end name=%s success=%s duration_ms=%d "
                         "content_bytes=%d",
@@ -1112,7 +1169,9 @@ class Engine:
                         await self._run_post_edit_lsp_hook(
                             tool_call.name, tool_call.arguments
                         )
-                    # 单次工具调用的输出太长，在送入下一轮 LLM 请求前裁剪
+                    from deepseek_tui.tools.spillover import apply_spillover
+
+                    result = apply_spillover(result, tool_call.id)
                     output_for_context = compact_tool_result_for_context(
                         effective_model, tool_call.name, result
                     )
@@ -1132,16 +1191,7 @@ class Engine:
                         duration_ms,
                         error_msg,
                     )
-                    emit_tool_audit(
-                        {
-                            "event": "tool.result",
-                            "tool_id": tool_call.id,
-                            "tool_name": tool_call.name,
-                            "success": False,
-                            "error": error_msg,
-                        }
-                    )
-                    await self.handle.emit(ErrorEvent(message=error_msg, retryable=False))
+                    await self._emit_tool_failure(tool_call, error_msg)
                     results.append(
                         Message.tool_result(
                             tool_call.id, f"Error: {error_msg}", is_error=True
@@ -1156,16 +1206,7 @@ class Engine:
                         duration_ms,
                         error_msg,
                     )
-                    emit_tool_audit(
-                        {
-                            "event": "tool.result",
-                            "tool_id": tool_call.id,
-                            "tool_name": tool_call.name,
-                            "success": False,
-                            "error": error_msg,
-                        }
-                    )
-                    await self.handle.emit(ErrorEvent(message=error_msg, retryable=False))
+                    await self._emit_tool_failure(tool_call, error_msg)
                     results.append(
                         Message.tool_result(
                             tool_call.id, f"Error: {error_msg}", is_error=True
@@ -1260,19 +1301,7 @@ class Engine:
         results: list[Message] = []
         for tool_call, result, error_msg in outcomes:
             if error_msg is not None:
-                # Error case
-                emit_tool_audit(
-                    {
-                        "event": "tool.result",
-                        "tool_id": tool_call.id,
-                        "tool_name": tool_call.name,
-                        "success": False,
-                        "error": error_msg,
-                    }
-                )
-                await self.handle.emit(
-                    ErrorEvent(message=error_msg, retryable=False)
-                )
+                await self._emit_tool_failure(tool_call, error_msg)
                 results.append(
                     Message.tool_result(
                         tool_call.id, f"Error: {error_msg}", is_error=True
@@ -1321,6 +1350,9 @@ class Engine:
                     await self._run_post_edit_lsp_hook(
                         tool_call.name, tool_call.arguments
                     )
+                from deepseek_tui.tools.spillover import apply_spillover
+
+                result = apply_spillover(result, tool_call.id)
                 output_for_context = compact_tool_result_for_context(
                     model, tool_call.name, result
                 )
@@ -1704,6 +1736,188 @@ class Engine:
         )
         self.exec_policy.record_decision(tool_call.name, decision)
         return False
+
+    @staticmethod
+    def _is_sandbox_denied_tool_result(tool_name: str, result: ToolResult) -> bool:
+        if tool_name not in (
+            "exec_shell",
+            "exec_shell_wait",
+            "exec_shell_interact",
+        ):
+            return False
+        meta = result.metadata if isinstance(result.metadata, dict) else {}
+        return bool(meta.get("sandbox_denied"))
+
+    async def _maybe_elevate_and_retry_tool(
+        self,
+        tool_call: ToolCall,
+        api_tools: list[dict[str, Any]],
+        model: str,
+        result: ToolResult,
+    ) -> ToolResult:
+        """L3: offer one-shot sandbox elevation when Seatbelt denies exec_shell."""
+        if not self._is_sandbox_denied_tool_result(tool_call.name, result):
+            return result
+        if self.tool_context.elevated_sandbox_policy is not None:
+            return result
+
+        from deepseek_tui.app_server.runtime_api.elevation_bridge import (
+            ElevationBridge,
+            PendingElevationRecord,
+        )
+        from deepseek_tui.execpolicy.sandbox import (
+            elevation_kind_label,
+            sandbox_policy_for_mode,
+            suggest_elevation_policy,
+        )
+
+        bridge = self.tool_context.metadata.get("elevation_bridge")
+        if not isinstance(bridge, ElevationBridge):
+            return result
+
+        policy = self.tool_context.execution_sandbox_policy
+        if policy is None:
+            policy = sandbox_policy_for_mode(
+                self.mode, self.tool_context.working_directory
+            )
+
+        meta = result.metadata if isinstance(result.metadata, dict) else {}
+        denial_msg = str(
+            meta.get("denial_message") or result.content or "Sandbox blocked command"
+        )
+        elevated = suggest_elevation_policy(
+            policy,
+            denial_msg,
+            workspace=self.tool_context.working_directory,
+        )
+        if elevated is None:
+            return result
+
+        cmd_preview = ""
+        if isinstance(tool_call.arguments, dict):
+            raw_cmd = tool_call.arguments.get("command")
+            if isinstance(raw_cmd, str):
+                cmd_preview = raw_cmd[:500]
+
+        kind = elevation_kind_label(elevated)
+        event = ElevationRequiredEvent(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            reason=denial_msg,
+            elevation_kind=kind,
+            command_preview=cmd_preview,
+        )
+        await self.handle.emit(event)
+
+        thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
+        fut = bridge.register(
+            tool_call.id,
+            meta=PendingElevationRecord(
+                thread_id=thread_id,
+                tool_name=tool_call.name,
+                reason=denial_msg,
+                elevation_kind=kind,
+                command_preview=cmd_preview,
+            ),
+        )
+        try:
+            approved = await asyncio.wait_for(fut, timeout=600.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            approved = False
+
+        if not approved:
+            await self.handle.emit(
+                SandboxDeniedEvent(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    reason="Sandbox elevation denied by user",
+                )
+            )
+            return ToolResult(
+                success=False,
+                content=f"Sandbox elevation denied. {denial_msg}".strip(),
+                metadata=result.metadata,
+            )
+
+        prev = self.tool_context.elevated_sandbox_policy
+        self.tool_context.elevated_sandbox_policy = elevated
+        try:
+            retry = await self._execute_single_tool(tool_call, api_tools, model)
+        finally:
+            self.tool_context.elevated_sandbox_policy = prev
+        return retry if retry is not None else result
+
+    def _save_crash_checkpoint(
+        self,
+        messages: list[Message],
+        *,
+        model: str,
+    ) -> None:
+        """Write ``latest.json`` before a turn — mirrors ``save_checkpoint``."""
+        try:
+            from deepseek_tui.state.checkpoint import save_checkpoint
+
+            save_checkpoint(
+                {
+                    "metadata": {
+                        "id": self._cycle_session_id,
+                        "workspace": str(
+                            self.tool_context.working_directory.resolve()
+                        ),
+                        "model": model,
+                    },
+                    "model": model,
+                    "turn_counter": self.turn_counter,
+                    "messages": [m.model_dump() for m in messages],
+                }
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("checkpoint save failed", exc_info=True)
+
+    async def _maybe_layered_context_checkpoint(
+        self, messages: list[Message], model: str
+    ) -> None:
+        """Pre-request soft seam — mirrors ``layered_context_checkpoint`` (#159)."""
+        seam = self.seam_manager
+        if seam is None or not seam.config.enabled:
+            return
+        from deepseek_tui.engine.context import estimated_input_tokens
+
+        try:
+            tokens = estimated_input_tokens(messages)
+        except Exception:  # noqa: BLE001
+            return
+        highest = await seam.highest_level()
+        level = seam.seam_level_for(tokens, highest)
+        if level is None:
+            return
+        msg_count = len(messages)
+        verbatim_start = seam.verbatim_window_start(msg_count)
+        if verbatim_start <= 0:
+            return
+        pinned = self.working_set.pinned_message_indices(
+            messages, self.tool_context.working_directory
+        )
+        try:
+            existing = await seam.collect_seam_texts(messages)
+            if existing:
+                recent = messages[:verbatim_start]
+                seam_text = await seam.recompact(
+                    existing, recent, level, 0, verbatim_start
+                )
+            else:
+                seam_text = await seam.produce_soft_seam(
+                    messages,
+                    level,
+                    0,
+                    verbatim_start,
+                    pinned_indices=sorted(pinned),
+                )
+        except Exception as err:  # noqa: BLE001
+            logger.warning("layered_context_checkpoint failed: %s", err)
+            return
+        if seam_text and seam_text.strip():
+            messages.append(Message.assistant(seam_text))
 
     async def _auto_persist_session(self) -> None:
         """Best-effort session persistence after each turn.

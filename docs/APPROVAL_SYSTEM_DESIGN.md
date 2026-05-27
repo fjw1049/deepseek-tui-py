@@ -56,6 +56,8 @@
 
 **阶段 A 范围**：只做 **L1 门控 + L1 展示**；L2 仅规定「shell 的 PROMPT 不得再悄悄返回 ToolResult」，必须走 L1 或显式失败。
 
+**沙箱 OS 隔离、工具矩阵、中间文件策略、分阶段实施计划**（L3 升格的技术上下文）见 **[`SANDBOX_ARCHITECTURE.md`](./SANDBOX_ARCHITECTURE.md)**。
+
 ---
 
 ## 4. 门控规则（`tools/approval_gate.py`）

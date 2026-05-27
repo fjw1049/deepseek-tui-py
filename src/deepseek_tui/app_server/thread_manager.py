@@ -46,6 +46,7 @@ from deepseek_tui.app_server.session_import import ImportTuiSessionRequest
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
+    ElevationRequiredEvent,
     ErrorEvent,
     StatusEvent,
     SubAgentMailboxEvent,
@@ -152,6 +153,7 @@ class RuntimeThreadManager:
         manager_cfg: RuntimeThreadManagerConfig,
         llm_client: LLMClient | None = None,
         approval_bridge: Any | None = None,
+        elevation_bridge: Any | None = None,
     ) -> None:
         self.config = config
         self.workspace = workspace.resolve()
@@ -159,6 +161,7 @@ class RuntimeThreadManager:
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
         self._llm_client = llm_client
         self._approval_bridge = approval_bridge
+        self._elevation_bridge = elevation_bridge
 
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
@@ -184,12 +187,55 @@ class RuntimeThreadManager:
             return state.active_turn.trust_mode
         return thread.trust_mode
 
+    async def jobs_snapshot(
+        self, thread_id: str | None = None
+    ) -> dict[str, object]:
+        """Shell background jobs + durable task counts for Workbench /v1/jobs."""
+        shell_jobs: list[dict[str, object]] = []
+        task_counts = {"queued": 0, "running": 0}
+        async with self._active_lock:
+            if thread_id and thread_id in self._active:
+                pairs = [(thread_id, self._active[thread_id])]
+            else:
+                pairs = list(self._active.items())
+            for tid, state in pairs:
+                store = state.engine.tool_context.metadata.get("shell_processes")
+                if isinstance(store, dict):
+                    for job_id, proc in store.items():
+                        pid = getattr(proc, "pid", None)
+                        rc = getattr(proc, "returncode", None)
+                        shell_jobs.append(
+                            {
+                                "id": job_id,
+                                "pid": pid,
+                                "status": "running" if rc is None else "exited",
+                                "returncode": rc,
+                                "thread_id": tid,
+                            }
+                        )
+                tm = getattr(state.engine, "task_manager", None)
+                if tm is not None:
+                    counts = await tm.counts()
+                    task_counts["queued"] += counts.queued
+                    task_counts["running"] += counts.running
+
+        return {
+            "shell_jobs": shell_jobs,
+            "tasks": task_counts,
+            "hint": (
+                "Foreground exec_shell timed out? Use task_shell_start for durable "
+                "background work, then task_shell_wait."
+            ),
+        }
+
     # --- public lifecycle ----------------------------------------------------
 
     def shutdown(self) -> None:
         self._cancel_event.set()
         if self._approval_bridge is not None:
             self._approval_bridge.cancel_all()
+        if self._elevation_bridge is not None:
+            self._elevation_bridge.cancel_all()
 
     @property
     def is_shutdown(self) -> bool:
@@ -831,6 +877,9 @@ class RuntimeThreadManager:
         )
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
+        engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        if self._elevation_bridge is not None:
+            engine.tool_context.metadata["elevation_bridge"] = self._elevation_bridge
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
 
         async with self._active_lock:
@@ -1113,6 +1162,19 @@ class RuntimeThreadManager:
                     approval_request_to_sse_payload(approval_id, event.request),
                 )
 
+            elif isinstance(event, ElevationRequiredEvent):
+                from deepseek_tui.tools.elevation_present import (
+                    elevation_request_to_sse_payload,
+                )
+
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    None,
+                    "elevation.required",
+                    elevation_request_to_sse_payload(event.tool_call_id, event),
+                )
+
             elif isinstance(event, StatusEvent):
                 now = datetime.now(timezone.utc)
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
@@ -1241,6 +1303,7 @@ class RuntimeThreadManager:
                         "total_tokens": u.input_tokens + u.output_tokens,
                     }
                 turn_status = RuntimeTurnStatus.COMPLETED
+                turn_error = None
                 break
 
         # Check if interrupt was requested
@@ -1253,6 +1316,10 @@ class RuntimeThreadManager:
                 and state.active_turn.interrupt_requested
             ):
                 turn_status = RuntimeTurnStatus.INTERRUPTED
+
+        await self._finalize_orphan_tool_items(
+            thread_id, turn_id, tool_items, turn_status
+        )
 
         # Finalize any open reasoning item
         if current_reasoning_item_id is not None:
@@ -1338,6 +1405,49 @@ class RuntimeThreadManager:
         if item_id not in turn.item_ids:
             turn.item_ids.append(item_id)
             self.store.save_turn(turn)
+
+    async def _finalize_orphan_tool_items(
+        self,
+        thread_id: str,
+        turn_id: str,
+        tool_items: dict[str, str],
+        turn_status: RuntimeTurnStatus,
+    ) -> None:
+        """Close tool items that never received a ToolResultEvent."""
+        if not tool_items:
+            return
+        now = datetime.now(timezone.utc)
+        if turn_status == RuntimeTurnStatus.INTERRUPTED:
+            orphan_summary = "Tool interrupted"
+            item_status = TurnItemLifecycleStatus.INTERRUPTED
+            event_name = "item.interrupted"
+        else:
+            orphan_summary = "Turn ended before tool result"
+            item_status = TurnItemLifecycleStatus.FAILED
+            event_name = "item.failed"
+        for item_id in list(tool_items.values()):
+            try:
+                item = self.store.load_item(item_id)
+            except FileNotFoundError:
+                continue
+            if item.status is not TurnItemLifecycleStatus.IN_PROGRESS:
+                continue
+            item.status = item_status
+            item.summary = summarize_text(
+                f"{item.summary.replace(' started', '')} failed: {orphan_summary}",
+                SUMMARY_LIMIT,
+            )
+            item.detail = orphan_summary
+            item.ended_at = now
+            self.store.save_item(item)
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                item_id,
+                event_name,
+                {"item": item.model_dump(mode="json")},
+            )
+        tool_items.clear()
 
     async def _emit_event(
         self,

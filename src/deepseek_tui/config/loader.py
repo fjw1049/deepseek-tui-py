@@ -71,6 +71,10 @@ class ConfigLoader:
         if requirements_path.exists():
             self._validate_requirements(config, requirements_path)
 
+        from deepseek_tui.config.warnings import warn_unconsumed_config_fields
+
+        warn_unconsumed_config_fields(config)
+
         return config
 
     def _discover_config_file(self, config_path: Path | None) -> Path | None:

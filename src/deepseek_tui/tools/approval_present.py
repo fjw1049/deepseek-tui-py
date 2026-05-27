@@ -82,7 +82,7 @@ def approval_request_to_sse_payload(
 def classify_tool_category(tool_name: str) -> str:
     if tool_name in ("write_file", "edit_file", "apply_patch"):
         return "file_write"
-    if tool_name in ("web_run", "web_search", "fetch_url"):
+    if tool_name in ("web_search", "fetch_url"):
         return "network"
     if tool_name in ("exec_shell", "exec_shell_wait", "exec_shell_interact"):
         return "shell"
@@ -116,7 +116,7 @@ def classify_presentation_risk(
     if category in ("safe", "mcp_read"):
         return "benign"
     if category == "network":
-        return "benign" if tool_name in ("web_search", "web_run") else "destructive"
+        return "benign" if tool_name == "web_search" else "destructive"
     if category == "shell":
         cmd = _param_preview(args, ("command", "cmd"), 96)
         if cmd and analyze_command(cmd).level == SafetyLevel.DANGEROUS:

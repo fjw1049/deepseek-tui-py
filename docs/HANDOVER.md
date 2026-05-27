@@ -151,9 +151,9 @@ make check  # = ruff + mypy + pytest
 6. `execpolicy/command_safety.py` 新建 ~1,000 行
    - **读** `crates/tui/src/command_safety.rs`（~1,200 行）
    - 163 命令 arity 字典 + 危险模式（`rm -rf`, `dd`, `format` 等）
-7. ~~`execpolicy/sandbox/seatbelt.py`~~ — **已跳过**（2026-05-07 用户决定）
-   - 原因：macOS Seatbelt OS 级隔离不做；命令黑名单 + cwd 边界 + env 清洗已足够
-   - 详见集成债清单（第九节）
+7. ~~`execpolicy/sandbox/seatbelt.py`~~ — **已恢复**（2026-05-27）
+   - macOS Seatbelt 已接入 `execpolicy/sandbox.py` + `execpolicy/seatbelt.py`；`exec_shell` 经 `SandboxManager.prepare()` 包裹 `sandbox-exec`
+   - 详见 [`docs/SANDBOX_ARCHITECTURE.md`](./SANDBOX_ARCHITECTURE.md) 与 `tests/test_seatbelt_sandbox.py`
 
 **Stage 2 Integration commit（P0，2026-05-07 审核后追加）：**
 
@@ -191,7 +191,7 @@ make check  # = ruff + mypy + pytest
 1. ~~durable Task 系统~~ ✅ **Stage 3.1 已完成**（commit `c8c72e1`）—— 实际用 JSON 文件持久化，不是 SQLite
 2. **Sub-agent runtime**（用 `asyncio.Task` + child CancellationToken，与 Rust tokio 协程对齐；**不**用 multiprocessing，2026-05-07 翻案）
 3. **apply_patch 模糊匹配**（Rust `MAX_FUZZ=50` + 合并冲突检测）
-4. **PTY shell**（用 `ptyprocess` 或 `pexpect`；不集成 Seatbelt，见第九节集成债）
+4. **PTY shell**（已实现 `pty` 模块 + Seatbelt 包裹，见 `tools/shell_tools.py`）
 
 **以下工具延后到 Stage 3.next**（核心逻辑跑通后再做）：
 
@@ -519,7 +519,7 @@ deepseek-tui-py/
 │   ├── client/                           # Stage 2.? 要扩
 │   ├── config/                           # Stage 1 补过 provider_registry
 │   ├── engine/                           # Stage 2 要重写
-│   ├── execpolicy/                       # Stage 2.5/2.6 已集成 ✓（不含 sandbox 子目录，Seatbelt 跳过）
+│   ├── execpolicy/                       # Stage 2.5/2.6/2.7 已集成 ✓（含 seatbelt.py）
 │   ├── hooks/                            # Stage 4 要补
 │   ├── lsp/                              # Stage 4 微调
 │   ├── mcp/                              # Stage 4 补 HTTP + stdio server
@@ -570,7 +570,7 @@ deepseek-tui-py/
 
 | 条目 | Stage | 简化内容 | 原因 | 恢复完整行为需要做什么 |
 |---|---|---|---|---|
-| ⬜ 2.7.simplified: macOS Seatbelt sandbox | 2.7 | 跳过 `sandbox/seatbelt.py` 不实现；`exec_shell` 直接 `subprocess.create_subprocess_shell()` 无 OS 级隔离 | 用户 2026-05-07 决定：命令黑名单 + cwd 边界 + env 清洗足够本地开发用；Seatbelt 做完约 ~800 行工作量换来的是"OS 级兜底"，在本地开发场景收益不高 | 参考 `crates/tui/src/sandbox/{mod,policy,seatbelt}.rs`（~1,364 行），实现：1) `SandboxPolicy`（读/写/执行 allowlist） 2) `SeatbeltProfile` XML 生成 3) `exec_shell` 子进程用 `sandbox-exec -p <profile>` 包装 4) `CommandSpec` 编排器 |
+| ✅ 2.7: macOS Seatbelt sandbox | 2.7 | `execpolicy/sandbox.py` + `execpolicy/seatbelt.py`；`shell_tools.py` 统一经 `SandboxManager.prepare()`；AppMode → `execution_sandbox_policy`；L3 升格 UI 仍待做 | 2026-05-07 曾跳过；2026-05-27 恢复并实现核心路径 | L3 `ElevationRequiredEvent` + `retry_tool_with_policy`；OpenSandbox backend；Hook 沙箱 |
 | ⬜ 3.1.simplified: TaskExecutor 占位版 | 3.1 | `task_manager.py::_stub_executor` 只 sleep 50ms 返回合成 summary，不真实调用 LLM / 不驱动 engine / 不真正产出 artifacts | 用户 2026-05-07 决定：让 TaskManager 的持久化/队列/状态机/重启恢复四层骨架今天落地；真 Executor 等 Stage 4 engine 链接通后替换 | 实现 `EngineTaskExecutor`：接 `engine/turn_loop` + `client/deepseek_client` + `ToolRegistry`，把 Rust `task_manager.rs::EngineTaskExecutor`（行 413-699）行为翻过来 —— 含 `TaskExecutionEvent` 流 + `apply_execution_event` + runtime_event_count 累加 + 产出 artifacts |
 | ✅ 3.1.simplified: task_shell_start/wait 空壳 | 3.1 | `TaskShellStartTool` / `TaskShellWaitTool` 原为 `raise ToolError("not yet implemented")` | PTY shell 归在 Stage 3.4 | **Stage 3.4 已还清**（commit `7456887`）：两工具直接调 `ExecShellTool`（pty=True 默认），wait 时把 output 以 `TaskArtifactRef` 形式记到 `TaskRecord.artifacts` 并 append timeline 事件；`task_shell_wait` 额外接受 `task_id` 关联任务 |
 | ✅ 4.1.simplified: /prompt 不调 LLM | 4.1 → 4.1.next → 4.1.nn | 原为 3-frame placeholder；**已还清**（commit `234dbe9`）：AppRuntime.stream_prompt 注入 LLMClient 时走真实 Engine → turn_loop → DeepSeekClient → SSE，12 种 EngineEvent 全部桥接；无 client 时保持 3-frame placeholder（向后兼容）。含真实 DeepSeek API 集成测（/prompt/stream → flash 模型 → "pong" round-trip） | — | — |
@@ -656,6 +656,24 @@ deepseek-tui-py/
 > **约定**：✅ 已还清 / ⚠️ 部分还清 / ⬜ 未还清
 >
 > **环境备注**（Stage 6 发现）：Python 3.12.13 中 `_editable_impl_*.pth` 被跳过（以 `_` 开头被视为 hidden），已通过在 `pyproject.toml` 设置 `pythonpath = ["src"]` 解决。
+
+---
+
+## 9.5 GUI-first P1 实现状态（2026-05-27）
+
+> **主路径**：`packages/workbench` → `deepseek serve --http` → `RuntimeThreadManager` + `/v1/*` SSE。TUI 键位、slash `/jobs` 为次要。
+
+| 优先级 | 项 | GUI 价值 | 状态 |
+|--------|-----|----------|------|
+| P0 | L3 沙箱升格 `elevation.required` + `POST /v1/elevations/{id}` + Workbench `ElevationBubble` | 沙箱误杀可「允许一次」继续，不必整轮失败 | ✅ |
+| P0 | `web_run` 从 `approval_present.py` 清理 | 避免 phantom 网络工具分类 | ✅ |
+| P1 | `config` 未消费字段启动 warn（`tools_file` 等） | Rust 拷来的 toml 不再静默无效 | ✅ |
+| P1 | `GET /v1/jobs?thread_id=` shell + task 快照 | 后台 shell / 长任务可观测（Workbench 可接） | ✅ |
+| P1 | `exec_shell` timeout 提示 `task_shell_start` | 长命令引导 durable task | ✅ |
+| 延后 | TUI KEYBINDINGS 40+ chord | GUI 用 Electron 快捷键，非 TUI | ⬜ |
+| 中长期 | 会话 SSOT：Thread store 为准，TUI JSON 标 legacy | Workbench 已走 thread；`/save` 迁 store 待做 | ⚠️ 文档化 |
+
+**接线要点**：`Engine._maybe_elevate_and_retry_tool` → `ElevationBridge`（HTTP 模式）→ SSE `elevation.required` → Renderer `resolveElevation`。
 
 ---
 

@@ -54,7 +54,16 @@ from .rules import (
     default_execpolicy_path,
     load_default_policy,
 )
-from .sandbox import Sandbox, SandboxResult
+from .sandbox import (
+    CommandSpec,
+    ExecEnv,
+    ExecutionSandboxPolicy,
+    SANDBOX_MANAGER,
+    SandboxManager,
+    SandboxType,
+    apply_sandbox_metadata,
+    sandbox_policy_for_mode,
+)
 
 __all__ = [
     # Rust-parity core
@@ -91,7 +100,14 @@ __all__ = [
     "ExecPolicyEngine",
     "PolicyRule",
     "RiskLevel",
-    "Sandbox",
-    "SandboxResult",
+    "CommandSpec",
+    "ExecEnv",
+    "ExecutionSandboxPolicy",
+    "SANDBOX_MANAGER",
+    "SandboxManager",
+    "SandboxType",
     "ToolCategory",
+    "apply_sandbox_metadata",
+    "sandbox_policy_for_mode",
+    "sync_execution_sandbox_policy",
 ]

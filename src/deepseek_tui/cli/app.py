@@ -102,6 +102,10 @@ def main_callback(
         console_override=log_console if log_console else None,
     )
 
+    from deepseek_tui.tools.spillover import prune_older_than
+
+    prune_older_than()
+
     if prompt is not None:
         _run_one_shot(loaded, prompt)
         return

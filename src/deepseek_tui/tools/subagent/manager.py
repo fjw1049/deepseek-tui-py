@@ -973,6 +973,12 @@ async def run_subagent_loop(
             "auto_approve": runtime.auto_approve,
         },
     )
+    from deepseek_tui.execpolicy.sandbox import sandbox_policy_for_mode
+
+    context.execution_sandbox_policy = sandbox_policy_for_mode(
+        "agent",
+        agent.workspace,
+    )
     registry.set_context(context)
     api_tools = registry.to_api_tools()
 

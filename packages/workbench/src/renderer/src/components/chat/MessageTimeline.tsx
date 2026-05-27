@@ -35,6 +35,7 @@ import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { useChatStore } from '../../store/chat-store'
 import { DiffView } from '../DiffView'
 import { ApprovalBubble } from './ApprovalBubble'
+import { ElevationBubble } from './ElevationBubble'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -2044,6 +2045,9 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
   }
   if (block.kind === 'approval') {
     return <ApprovalBubble block={block} />
+  }
+  if (block.kind === 'elevation') {
+    return <ElevationBubble block={block} />
   }
   return (
     <div className="ds-card-soft rounded-[18px] px-3 py-2 text-[13.5px] text-ds-muted">

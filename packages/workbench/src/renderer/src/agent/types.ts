@@ -69,6 +69,18 @@ export type ChatBlock =
       errorMessage?: string
     }
   | {
+      kind: 'elevation'
+      id: string
+      createdAt?: string
+      elevationId: string
+      toolName?: string
+      reason: string
+      elevationKind: string
+      commandPreview?: string
+      status: 'pending' | 'allowed' | 'denied' | 'error'
+      errorMessage?: string
+    }
+  | {
       kind: 'user_input'
       id: string
       createdAt?: string
@@ -100,6 +112,14 @@ export type ApprovalRequestPayload = {
   riskLevel?: string
   presentationRisk?: string
   toolName?: string
+}
+
+export type ElevationRequestPayload = {
+  elevationId: string
+  toolName?: string
+  reason: string
+  elevationKind: string
+  commandPreview?: string
 }
 
 export type ToolEventPayload = {
@@ -169,6 +189,7 @@ export type ThreadEventSink = {
   onUserMessage(ev: UserMessageEventPayload): void
   onTool(ev: ToolEventPayload): void
   onApproval(req: ApprovalRequestPayload): void
+  onElevation?(req: ElevationRequestPayload): void
   onUserInput(req: UserInputRequestPayload): void
   onUserInputStatus(ev: UserInputStatusPayload): void
   onTurnComplete(): void
@@ -224,6 +245,11 @@ export interface AgentProvider {
     approvalId: string,
     decision: 'allow' | 'deny',
     remember?: boolean
+  ): Promise<void>
+  /** Runtime HTTP: POST /v1/elevations/{id} */
+  submitElevationDecision?(
+    elevationId: string,
+    decision: 'allow' | 'deny'
   ): Promise<void>
   /** Runtime HTTP: GET /v1/approvals/pending */
   fetchPendingApprovals?(threadId: string): Promise<ApprovalRequestPayload[]>

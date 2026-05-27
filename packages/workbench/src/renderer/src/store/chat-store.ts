@@ -466,6 +466,34 @@ function buildThreadEventSink(
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       }),
+    onElevation: (req) =>
+      set((s) => {
+        resetBusyRecoveryAttempts()
+        if (s.blocks.some((b) => b.kind === 'elevation' && b.elevationId === req.elevationId)) {
+          return {}
+        }
+        const flushed = flushLiveBlocks(s)
+        const baseBlocks = flushed.blocks ?? s.blocks
+        return {
+          ...flushed,
+          blocks: [
+            ...baseBlocks,
+            {
+              kind: 'elevation',
+              id: `elevation-${req.elevationId}`,
+              createdAt: new Date().toISOString(),
+              elevationId: req.elevationId,
+              toolName: req.toolName,
+              reason: req.reason,
+              elevationKind: req.elevationKind,
+              commandPreview: req.commandPreview,
+              status: 'pending' as const
+            }
+          ],
+          scrollToBlockId: `elevation-${req.elevationId}`,
+          error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
+        }
+      }),
     onUserInput: (req) => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
@@ -1804,6 +1832,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'approval'
+            ? { ...b, status: 'error' as const, errorMessage: msg }
+            : b
+        )
+      }))
+    }
+  },
+
+  resolveElevation: async (blockId, decision) => {
+    const { blocks, providerId } = get()
+    const block = blocks.find((b) => b.id === blockId)
+    if (!block || block.kind !== 'elevation' || block.status !== 'pending') return
+    const p = getProvider(providerId)
+    if (typeof p.submitElevationDecision !== 'function') {
+      set({ error: 'Current provider does not support sandbox elevation.' })
+      return
+    }
+    try {
+      await p.submitElevationDecision(
+        block.elevationId,
+        decision === 'allow' ? 'allow' : 'deny'
+      )
+      set((s) => ({
+        blocks: s.blocks.map((b) =>
+          b.id === blockId && b.kind === 'elevation'
+            ? { ...b, status: decision === 'allow' ? ('allowed' as const) : ('denied' as const) }
+            : b
+        )
+      }))
+    } catch (e) {
+      const msg = formatRuntimeError(e)
+      void window.dsGui.logError('elevation', 'Failed to submit elevation decision', {
+        message: msg,
+        blockId
+      })
+      set((s) => ({
+        error: msg,
+        blocks: s.blocks.map((b) =>
+          b.id === blockId && b.kind === 'elevation'
             ? { ...b, status: 'error' as const, errorMessage: msg }
             : b
         )

@@ -66,6 +66,17 @@ class SandboxDeniedEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ElevationRequiredEvent:
+    """L3 sandbox: OS policy blocked the shell call; user may elevate once."""
+
+    tool_call_id: str
+    tool_name: str
+    reason: str
+    elevation_kind: str
+    command_preview: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ErrorEvent:
     message: str
     retryable: bool = False
@@ -149,6 +160,7 @@ EngineEvent = (
     | ApprovalRequiredEvent
     | ApprovalResolvedEvent
     | SandboxDeniedEvent
+    | ElevationRequiredEvent
     | ErrorEvent
     | TurnCancelledEvent
     | TurnCompleteEvent

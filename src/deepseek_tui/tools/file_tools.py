@@ -64,15 +64,9 @@ class WriteFileTool(ToolSpec):
 
 
 class EditFileTool(ToolSpec):
-    """Replace an exact string in a UTF-8 text file.
+    """Replace text in a UTF-8 file via exact search/replace (all occurrences).
 
-    Schema mirrors Rust ``crates/tui/src/tools/file.rs:280-340`` keys ``search``
-    and ``replace``. Legacy ``old_string`` / ``new_string`` are accepted as
-    aliases for backward compatibility. Behavior diverges from Rust on one
-    point: Python requires ``search`` to occur exactly once (safety guard),
-    while Rust replaces all occurrences. Tracked in HANDOVER as a partial
-    parity entry — the schema gap is closed; the multi-occurrence semantic
-    gap remains.
+    Schema mirrors Rust ``crates/tui/src/tools/file.rs:283-372``.
     """
 
     def name(self) -> str:
@@ -80,9 +74,8 @@ class EditFileTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Replace an exact string in a UTF-8 text file. "
-            "Use 'search' for the text to find and 'replace' for its replacement. "
-            "The search string must occur exactly once."
+            "Replace text in a single file via exact search/replace. "
+            "Use 'search' and 'replace'; all occurrences of search are substituted."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -90,7 +83,7 @@ class EditFileTool(ToolSpec):
             "type": "object",
             "properties": {
                 "path": {"type": "string"},
-                "search": {"type": "string", "description": "Text to find (must be unique)."},
+                "search": {"type": "string", "description": "Text to find."},
                 "replace": {"type": "string", "description": "Replacement text."},
             },
             "required": ["path", "search", "replace"],
@@ -104,27 +97,25 @@ class EditFileTool(ToolSpec):
         search = _require_string_with_alias(input_data, "search", "old_string")
         replace = _require_string_with_alias(input_data, "replace", "new_string")
         content = await _read_text(path)
-        matches = content.count(search)
-        if matches == 0:
+        count = content.count(search)
+        if count == 0:
             logger.warning("edit_file_no_match path=%s search_len=%d", path, len(search))
-            raise ToolError("search string not found")
-        if matches > 1:
-            logger.warning(
-                "edit_file_not_unique path=%s search_len=%d matches=%d",
-                path,
-                len(search),
-                matches,
-            )
-            raise ToolError("search string is not unique")
+            raise ToolError(f"Search string not found in {path}")
         updated = content.replace(search, replace)
         await _write_text(path, updated)
+        summary = f"Replaced {count} occurrence(s) in {path}"
         logger.info(
-            "edit_file path=%s search_len=%d replace_len=%d",
+            "edit_file path=%s search_len=%d replace_len=%d count=%d",
             path,
             len(search),
             len(replace),
+            count,
         )
-        return ToolResult(success=True, content="ok", metadata={"path": str(path)})
+        return ToolResult(
+            success=True,
+            content=summary,
+            metadata={"path": str(path), "occurrences": count},
+        )
 
 
 class ListDirTool(ToolSpec):
@@ -132,24 +123,37 @@ class ListDirTool(ToolSpec):
         return "list_dir"
 
     def description(self) -> str:
-        return "List directory entries from disk."
+        return (
+            "List entries in a directory relative to the workspace. "
+            "Returns structured JSON with name and is_dir fields."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path (default: .)",
+                }
+            },
+            "required": [],
         }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        path = context.resolve_path(_require_string(input_data, "path"))
-        entries = await _list_dir(path)
+        import json
+
+        raw_path = input_data.get("path")
+        path_str = raw_path if isinstance(raw_path, str) and raw_path.strip() else "."
+        path = context.resolve_path(path_str)
+        entries = await _list_dir_structured(path)
+        payload = json.dumps(entries, ensure_ascii=False, indent=2)
         return ToolResult(
             success=True,
-            content="\n".join(entries),
+            content=payload,
             metadata={"path": str(path), "count": len(entries)},
         )
 
@@ -185,6 +189,15 @@ async def _write_text(path: Path, content: str) -> None:
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")
 
 
-async def _list_dir(path: Path) -> list[str]:
-    entries = await asyncio.to_thread(lambda: sorted(item.name for item in path.iterdir()))
-    return entries
+async def _list_dir_structured(path: Path) -> list[dict[str, object]]:
+    def _scan() -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for entry in sorted(path.iterdir(), key=lambda p: p.name.lower()):
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                continue
+            rows.append({"name": entry.name, "is_dir": is_dir})
+        return rows
+
+    return await asyncio.to_thread(_scan)

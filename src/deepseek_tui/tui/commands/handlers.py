@@ -1121,6 +1121,54 @@ def cmd_log(args: str, app: DeepSeekTUI) -> CommandResult:
     return CommandResult(output=f"-- last {len(lines)} lines from {path} --\n{body}")
 
 
+# ── /memory ─────────────────────────────────────────────────────────────
+
+@_register("/memory")
+def cmd_memory(args: str, app: DeepSeekTUI) -> CommandResult:
+    """User memory file — mirrors Rust ``/memory`` (MEMORY.md)."""
+    cfg = getattr(app, "config", None)
+    if cfg is None:
+        return CommandResult(error="config not attached")
+    path = cfg.resolved_memory_path()
+    enabled = cfg.memory_enabled()
+    sub = (args or "").strip().lower()
+    if sub in ("help", "?"):
+        return CommandResult(
+            output=(
+                "/memory — show path and contents\n"
+                "/memory path — print file path only\n"
+                "/memory edit — open in $EDITOR\n"
+                "Composer: type `# your note` and Enter to append without a turn."
+            )
+        )
+    if sub == "path":
+        return CommandResult(output=str(path))
+    if sub == "edit":
+        editor = __import__("os").environ.get("VISUAL") or __import__("os").environ.get(
+            "EDITOR", "nano"
+        )
+        return CommandResult(
+            output=f"Open memory file:\n  {editor} {path}"
+        )
+    if not enabled:
+        return CommandResult(
+            output=(
+                f"Memory is disabled. Set [memory] enabled = true or "
+                f"DEEPSEEK_MEMORY=on, then restart.\nPath when enabled: {path}"
+            )
+        )
+    from deepseek_tui.memory.user_memory import load
+
+    content = load(path)
+    if content is None:
+        body = "(empty)"
+    else:
+        body = content if len(content) < 4000 else content[:4000] + "\n…[truncated]"
+    return CommandResult(
+        output=f"memory: enabled\npath: {path}\n\n{body}"
+    )
+
+
 # ── /undo ───────────────────────────────────────────────────────────────
 
 @_register("/undo")

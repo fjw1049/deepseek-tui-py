@@ -87,18 +87,21 @@ def build_fastapi_app(
             env_runtime_token(),
             insecure_no_auth=insecure_no_auth,
         )
-        approval_bridge = attach_runtime_api(
+        approval_bridge, elevation_bridge = attach_runtime_api(
             app,
             auth_token=resolved.token,
             cors_origins=cors_origins,
         )
         app.state.runtime_auth = resolved
+    else:
+        elevation_bridge = None
 
     app.state.thread_manager = RuntimeThreadManager(
         config=runtime.config,
         workspace=Path.cwd(),
         manager_cfg=_mgr_cfg,
         approval_bridge=approval_bridge,
+        elevation_bridge=elevation_bridge,
     )
 
     # Per-request access log: method/path/status/duration. ``uvicorn.access``

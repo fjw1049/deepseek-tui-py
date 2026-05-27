@@ -17,7 +17,9 @@ from deepseek_tui.tools.automation_tools import (
     AutomationRunTool,
     AutomationUpdateTool,
 )
+from deepseek_tui.tools.deprecation import DeprecatingAliasTool
 from deepseek_tui.tools.file_tools import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from deepseek_tui.tools.retrieve_tool_result import RetrieveToolResultTool
 from deepseek_tui.tools.git_tools import (
     GitBlameTool,
     GitDiffTool,
@@ -104,6 +106,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         GitBlameTool(),
         DiagnosticsTool(),
         ProjectMapTool(),
+        RetrieveToolResultTool(),
         # Register both legacy ``todo_list`` and canonical ``checklist_list``
         # under the same singleton class (mirrors Rust ``with_todo_tool``
         # in ``crates/tui/src/tools/registry.rs`` which registers all 8
@@ -176,15 +179,21 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             registry.register(tool)
 
     if cfg.features.subagents:
+        spawn = AgentSpawnTool()
+        send = AgentSendInputTool()
+        assign = AgentAssignTool()
         for tool in [
-            AgentSpawnTool(),
+            spawn,
+            DeprecatingAliasTool(spawn, "spawn_agent", "agent_spawn"),
             AgentResultTool(),
             AgentCancelTool(),
             AgentCloseTool(),
             AgentResumeTool(),
             AgentListTool(),
-            AgentSendInputTool(),
-            AgentAssignTool(),
+            send,
+            DeprecatingAliasTool(send, "send_input", "agent_send_input"),
+            assign,
+            DeprecatingAliasTool(assign, "assign_agent", "agent_assign"),
             AgentWaitTool(),
             DelegateToAgentTool(),
         ]:
@@ -219,7 +228,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     if cfg.features.web_search:
         registry.register(ReviewTool(config=cfg))
 
-    if getattr(cfg, "memory_enabled", True):
+    if cfg.memory_enabled():
         registry.register(RememberTool())
         registry.register(RecallArchiveTool())
 

@@ -26,6 +26,7 @@ from deepseek_tui.tools.subagent import (
     SubAgentAssignment,
     SubAgentManager,
     SubAgentResult,
+    SubAgentStatusKind,
     SubAgentType,
 )
 
@@ -76,6 +77,40 @@ def _pick_int(data: dict[str, Any], *keys: str, default: int | None = None) -> i
         if isinstance(value, int):
             return value
     return default
+
+
+def _parse_wait_ids(data: dict[str, Any]) -> list[str]:
+    """Collect wait targets from ``ids`` / ``agent_ids`` / ``agent_id`` / ``id``."""
+    ids: list[str] = []
+    for key in ("agent_ids", "ids"):
+        raw = data.get(key)
+        if not isinstance(raw, list):
+            continue
+        for value in raw:
+            if isinstance(value, str):
+                agent_id = value.strip()
+                if agent_id and agent_id not in ids:
+                    ids.append(agent_id)
+    for key in ("agent_id", "id"):
+        single = _pick_str(data, key)
+        if single and single not in ids:
+            ids.append(single)
+    return ids
+
+
+def _parse_wait_mode(data: dict[str, Any]) -> str:
+    mode = _pick_str(data, "wait_mode", "mode") or "any"
+    if mode not in ("any", "all", "first"):
+        raise ToolError(f"Invalid wait_mode '{mode}'. Use: any, all, or first")
+    return mode
+
+
+def _running_agent_ids(manager: SubAgentManager) -> list[str]:
+    return [
+        snap.agent_id
+        for snap in manager.list_filtered(include_archived=False)
+        if snap.status.kind is SubAgentStatusKind.RUNNING
+    ]
 
 
 class AgentSpawnTool(ToolSpec):
@@ -513,15 +548,37 @@ class AgentWaitTool(ToolSpec):
         return "agent_wait"
 
     def description(self) -> str:
-        return "Wait for one or more sub-agents to reach a terminal state."
+        return (
+            "Wait for one or more sub-agents to reach a terminal state. "
+            "When no ids are given, waits on all currently running sub-agents."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "agent_ids": {"type": "array", "items": {"type": "string"}},
-                "agent_id": {"type": "string"},
-                "mode": {"type": "string", "enum": ["any", "all", "first"]},
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Agent IDs to wait on. When omitted, waits on all running sub-agents.",
+                },
+                "agent_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Alias for ids",
+                },
+                "agent_id": {"type": "string", "description": "Single agent ID"},
+                "id": {"type": "string", "description": "Alias for agent_id"},
+                "wait_mode": {
+                    "type": "string",
+                    "enum": ["any", "all", "first"],
+                    "description": "Wait behavior: any (default), all, or first",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["any", "all", "first"],
+                    "description": "Alias for wait_mode",
+                },
                 "timeout_ms": {"type": "integer"},
             },
         }
@@ -533,21 +590,28 @@ class AgentWaitTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
-        ids_raw = input_data.get("agent_ids")
-        agent_ids: list[str]
-        if isinstance(ids_raw, list) and ids_raw:
-            agent_ids = [s for s in ids_raw if isinstance(s, str)]
-        else:
-            single = _pick_str(input_data, "agent_id", "id")
-            if single is None:
-                raise ToolError("agent_ids or agent_id is required")
-            agent_ids = [single]
-        mode = _pick_str(input_data, "mode") or "any"
+        mode = _parse_wait_mode(input_data)
         timeout_ms = _pick_int(input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS)
         timeout_ms = max(
             MIN_WAIT_TIMEOUT_MS,
             min(MAX_RESULT_TIMEOUT_MS, int(timeout_ms or DEFAULT_RESULT_TIMEOUT_MS)),
         )
+        agent_ids = _parse_wait_ids(input_data)
+        if not agent_ids:
+            agent_ids = _running_agent_ids(manager)
+        if not agent_ids:
+            empty: list[dict[str, Any]] = []
+            return ToolResult(
+                success=True,
+                content=json.dumps(empty, ensure_ascii=False),
+                metadata={
+                    "wait_mode": mode,
+                    "timed_out": False,
+                    "timeout_ms": timeout_ms,
+                    "waited_ids": [],
+                    "agents": empty,
+                },
+            )
         try:
             snapshots = await manager.wait(agent_ids, mode=mode, timeout_ms=timeout_ms)
         except (KeyError, ValueError) as exc:
@@ -556,7 +620,7 @@ class AgentWaitTool(ToolSpec):
         return ToolResult(
             success=True,
             content=json.dumps(payload, ensure_ascii=False),
-            metadata={"agents": payload},
+            metadata={"agents": payload, "wait_mode": mode, "waited_ids": agent_ids},
         )
 
 

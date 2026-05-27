@@ -2,6 +2,7 @@ import type {
   AgentProvider,
   AgentProviderId,
   ApprovalRequestPayload,
+  ElevationRequestPayload,
   ChatBlock,
   NormalizedThread,
   ThreadDeltaEvent,
@@ -35,6 +36,38 @@ function emitApprovalFromSsePayload(
     id: approvalId
   })
   if (req) sink.onApproval(req)
+}
+
+function elevationPayloadFromRecord(
+  row: Record<string, unknown>
+): ElevationRequestPayload | null {
+  const elevationId = String(row.elevation_id ?? row.tool_call_id ?? row.id ?? '')
+  if (!elevationId) return null
+  return {
+    elevationId,
+    toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined,
+    reason: String(row.reason ?? row.description ?? 'Sandbox blocked this command'),
+    elevationKind: String(row.elevation_kind ?? 'unknown'),
+    commandPreview:
+      typeof row.primary_preview === 'string' && row.primary_preview.trim()
+        ? row.primary_preview.trim()
+        : typeof row.command_preview === 'string' && row.command_preview.trim()
+          ? row.command_preview.trim()
+          : undefined
+  }
+}
+
+function emitElevationFromSsePayload(
+  sink: ThreadEventSink,
+  payload: Record<string, unknown>,
+  elevationId: string
+): void {
+  const req = elevationPayloadFromRecord({
+    ...payload,
+    elevation_id: elevationId,
+    id: elevationId
+  })
+  if (req && sink.onElevation) sink.onElevation(req)
 }
 
 function approvalPayloadFromRecord(
@@ -514,6 +547,20 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       JSON.stringify({ decision, remember })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, `approval decision failed: ${r.status}`))
+  }
+
+  async submitElevationDecision(
+    elevationId: string,
+    decision: 'allow' | 'deny'
+  ): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/elevations/${encodeURIComponent(elevationId)}`,
+      'POST',
+      JSON.stringify({ decision })
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `elevation decision failed: ${r.status}`))
+    }
   }
 
   async fetchPendingApprovals(threadId: string): Promise<ApprovalRequestPayload[]> {
@@ -1220,6 +1267,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   .catch(() => {
                     emitApprovalFromSsePayload(sink, payload, approvalId)
                   })
+              }
+
+              if (ev === 'elevation.required') {
+                const elevationId = String(
+                  payload.elevation_id ?? payload.tool_call_id ?? payload.id ?? ''
+                )
+                if (!elevationId) return
+                emitElevationFromSsePayload(sink, payload, elevationId)
               }
             })
 

@@ -7,10 +7,18 @@ import pty
 import shlex
 import uuid
 from asyncio.subprocess import Process
+from pathlib import Path
 from typing import Any
 
 from deepseek_tui.execpolicy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.execpolicy.decision import Decision
+from deepseek_tui.execpolicy.sandbox import (
+    CommandSpec,
+    ExecEnv,
+    ExecutionSandboxPolicy,
+    SANDBOX_MANAGER,
+    apply_sandbox_metadata,
+)
 from deepseek_tui.tools._validators import require_string as _require_string
 from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
@@ -19,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 _PROCESS_STORE_KEY = "shell_processes"
 _PTY_STORE_KEY = "shell_pty_processes"
+_EXEC_ENV_STORE_KEY = "shell_exec_envs"
 _MAX_STORED_PROCESSES = 20
 
 
@@ -99,26 +108,38 @@ class ExecShellTool(ToolSpec):
 
         if use_pty:
             return await _run_pty(
-                command, cwd=str(context.working_directory), background=background,
+                command,
+                cwd=str(context.working_directory),
+                background=background,
                 context=context,
+                timeout_ms=timeout_ms,
             )
 
         shell_env = await _shell_env_from_hooks(context, command)
-        process = await asyncio.create_subprocess_shell(
+        policy = _resolve_policy(context)
+        exec_env = _prepare_shell_exec(
             command,
-            cwd=str(context.working_directory),
-            env=shell_env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            context.working_directory,
+            policy,
+            shell_env,
+            timeout_ms,
         )
+        process = await _spawn_from_exec_env(exec_env)
         if background:
             process_id = str(uuid.uuid4())
             _process_store(context)[process_id] = process
+            _exec_env_store(context)[process_id] = exec_env
+            metadata: dict[str, Any] = {
+                "background": True,
+                "pid": process.pid,
+                "pty": False,
+                "sandboxed": exec_env.is_sandboxed(),
+                "sandbox_type": exec_env.sandbox_type.value,
+            }
             return ToolResult(
                 success=True,
                 content=process_id,
-                metadata={"background": True, "pid": process.pid, "pty": False},
+                metadata=metadata,
             )
 
         try:
@@ -147,12 +168,15 @@ class ExecShellTool(ToolSpec):
                 success=False,
                 content=(
                     f"Command timed out after {timeout_ms} ms and was killed: "
-                    f"{command}"
+                    f"{command}\n\n"
+                    "For long-running work, use task_shell_start + task_shell_wait "
+                    "on a durable task instead of foreground exec_shell."
                 ),
                 metadata={
                     "timed_out": True,
                     "timeout_ms": timeout_ms,
                     "returncode": process.returncode,
+                    "job_hint": "task_shell_start",
                 },
             )
         logger.info(
@@ -162,7 +186,14 @@ class ExecShellTool(ToolSpec):
             len(stdout) if stdout else 0,
             len(stderr) if stderr else 0,
         )
-        return _build_shell_result(process, stdout, stderr)
+        return _build_shell_result(
+            process,
+            stdout,
+            stderr,
+            exec_env=exec_env,
+            command=command,
+            policy=policy,
+        )
 
 
 def _resolve_timeout_ms(raw: object) -> int:
@@ -201,25 +232,36 @@ class ExecShellWaitTool(ToolSpec):
         if pty_proc is not None:
             await pty_proc.wait()
             text = pty_proc.output.decode("utf-8", errors="replace")
+            exec_env = _pop_exec_env(context, process_id)
+            metadata: dict[str, Any] = {
+                "returncode": pty_proc.exit_code,
+                "stdout": text,
+                "stderr": "",
+                "status": "completed",
+                "process_id": process_id,
+                "pty": True,
+            }
+            if exec_env is not None:
+                apply_sandbox_metadata(
+                    metadata,
+                    exec_env=exec_env,
+                    exit_code=pty_proc.exit_code if pty_proc.exit_code is not None else 1,
+                    stderr=text,
+                )
             return ToolResult(
                 success=pty_proc.exit_code == 0,
                 content=text.strip(),
-                metadata={
-                    "returncode": pty_proc.exit_code,
-                    "stdout": text,
-                    "stderr": "",
-                    "status": "completed",
-                    "process_id": process_id,
-                    "pty": True,
-                },
+                metadata=metadata,
             )
         process = _pop_process(context, process_id)
+        exec_env = _pop_exec_env(context, process_id)
         stdout, stderr = await process.communicate()
         return _build_shell_result(
             process,
             stdout,
             stderr,
             extra_metadata={"process_id": process_id},
+            exec_env=exec_env,
         )
 
 
@@ -385,18 +427,53 @@ def _build_shell_result(
     stderr: bytes | None,
     *,
     extra_metadata: dict[str, Any] | None = None,
+    exec_env: ExecEnv | None = None,
+    command: str | None = None,
+    policy: ExecutionSandboxPolicy | None = None,
 ) -> ToolResult:
+    stdout_text = _decode_stream(stdout)
+    stderr_text = _decode_stream(stderr)
     metadata: dict[str, Any] = {
         "returncode": process.returncode,
-        "stdout": _decode_stream(stdout),
-        "stderr": _decode_stream(stderr),
+        "stdout": stdout_text,
+        "stderr": stderr_text,
         "status": "completed",
     }
     if extra_metadata:
         metadata.update(extra_metadata)
+    if exec_env is not None:
+        apply_sandbox_metadata(
+            metadata,
+            exec_env=exec_env,
+            exit_code=process.returncode,
+            stderr=stderr_text,
+        )
+    content = _decode_output(stdout, stderr)
+    if (
+        exec_env is not None
+        and policy is not None
+        and metadata.get("sandbox_denied")
+        and not policy.has_network_access()
+        and command
+        and _command_likely_needs_network(command)
+    ):
+        content = (
+            f"{content}\n\nNetwork may be blocked by the sandbox policy."
+        ).strip()
+    elif (
+        exec_env is not None
+        and policy is not None
+        and not policy.has_network_access()
+        and command
+        and _command_likely_needs_network(command)
+        and _looks_like_network_blocked_failure(stdout_text, stderr_text)
+    ):
+        content = (
+            f"{content}\n\nNetwork may be blocked by the sandbox policy."
+        ).strip()
     return ToolResult(
         success=process.returncode == 0,
-        content=_decode_output(stdout, stderr),
+        content=content,
         metadata=metadata,
     )
 
@@ -517,12 +594,26 @@ def _safe_read(fd: int, n: int) -> bytes:
 
 
 async def _run_pty(
-    command: str, *, cwd: str, background: bool, context: ToolContext
+    command: str,
+    *,
+    cwd: str,
+    background: bool,
+    context: ToolContext,
+    timeout_ms: int = EXEC_DEFAULT_TIMEOUT_MS,
 ) -> ToolResult:
+    shell_env = await _shell_env_from_hooks(context, command)
+    policy = _resolve_policy(context)
+    exec_env = _prepare_shell_exec(
+        command,
+        Path(cwd),
+        policy,
+        shell_env,
+        timeout_ms,
+    )
     master_fd, slave_fd = pty.openpty()
     pid = os.fork()
     if pid == 0:
-        # Child: wire slave_fd to std{in,out,err}, then exec shell.
+        # Child: wire slave_fd to std{in,out,err}, then exec sandboxed shell.
         try:
             os.close(master_fd)
             os.setsid()
@@ -532,7 +623,10 @@ async def _run_pty(
             if slave_fd > 2:
                 os.close(slave_fd)
             os.chdir(cwd)
-            os.execvp("sh", ["sh", "-c", command])
+            merged_env = {**os.environ, **exec_env.env}
+            for key, value in merged_env.items():
+                os.environ[key] = value
+            os.execvp(exec_env.command[0], exec_env.command)
         except Exception:
             os._exit(127)
 
@@ -544,24 +638,38 @@ async def _run_pty(
     if background:
         process_id = str(uuid.uuid4())
         _pty_store(context)[process_id] = proc
+        _exec_env_store(context)[process_id] = exec_env
         return ToolResult(
             success=True,
             content=process_id,
-            metadata={"background": True, "pid": pid, "pty": True},
+            metadata={
+                "background": True,
+                "pid": pid,
+                "pty": True,
+                "sandboxed": exec_env.is_sandboxed(),
+                "sandbox_type": exec_env.sandbox_type.value,
+            },
         )
 
     await proc.wait()
     text = proc.output.decode("utf-8", errors="replace")
+    metadata: dict[str, Any] = {
+        "returncode": proc.exit_code,
+        "stdout": text,
+        "stderr": "",
+        "status": "completed",
+        "pty": True,
+    }
+    apply_sandbox_metadata(
+        metadata,
+        exec_env=exec_env,
+        exit_code=proc.exit_code if proc.exit_code is not None else 1,
+        stderr=text,
+    )
     return ToolResult(
         success=proc.exit_code == 0,
         content=text.strip(),
-        metadata={
-            "returncode": proc.exit_code,
-            "stdout": text,
-            "stderr": "",
-            "status": "completed",
-            "pty": True,
-        },
+        metadata=metadata,
     )
 
 
@@ -610,3 +718,138 @@ def _get_pty(context: ToolContext, process_id: str) -> PtyProcess | None:
 def _pop_pty(context: ToolContext, process_id: str) -> PtyProcess | None:
     store = _pty_store(context)
     return store.pop(process_id, None)
+
+
+def _exec_env_store(context: ToolContext) -> dict[str, ExecEnv]:
+    store = context.metadata.get(_EXEC_ENV_STORE_KEY)
+    if store is None:
+        store = {}
+        context.metadata[_EXEC_ENV_STORE_KEY] = store
+    if not isinstance(store, dict):
+        raise ToolError("shell exec env store is invalid")
+    return store
+
+
+def _pop_exec_env(context: ToolContext, process_id: str) -> ExecEnv | None:
+    return _exec_env_store(context).pop(process_id, None)
+
+
+def _resolve_policy(
+    context: ToolContext,
+    override: ExecutionSandboxPolicy | None = None,
+) -> ExecutionSandboxPolicy:
+    if override is not None:
+        return override
+    if context.elevated_sandbox_policy is not None:
+        return context.elevated_sandbox_policy
+    if context.execution_sandbox_policy is not None:
+        return context.execution_sandbox_policy
+    from deepseek_tui.execpolicy.sandbox import sandbox_policy_for_mode
+
+    return sandbox_policy_for_mode("agent", context.working_directory)
+
+
+def _prepare_shell_exec(
+    command: str,
+    cwd: Path,
+    policy: ExecutionSandboxPolicy,
+    env: dict[str, str] | None,
+    timeout_ms: int,
+) -> ExecEnv:
+    spec = CommandSpec.shell(command, cwd, timeout_ms).with_policy(policy)
+    if env:
+        spec = spec.with_env(env)
+    return SANDBOX_MANAGER.prepare(spec)
+
+
+async def _spawn_from_exec_env(exec_env: ExecEnv) -> Process:
+    merged_env = {**os.environ, **exec_env.env}
+    return await asyncio.create_subprocess_exec(
+        exec_env.program(),
+        *exec_env.args(),
+        cwd=str(exec_env.cwd),
+        env=merged_env,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+def _extract_primary_command(command: str) -> str | None:
+    normalized = command.strip()
+    if not normalized:
+        return None
+    for separator in ("&&", "||", ";", "|"):
+        if separator in normalized:
+            normalized = normalized.split(separator, 1)[0].strip()
+    return normalized.split(None, 1)[0] if normalized else None
+
+
+def _command_likely_needs_network(command: str) -> bool:
+    normalized = command.lower()
+    primary = _extract_primary_command(normalized)
+    if not primary:
+        return False
+    primary = primary.rsplit("/", 1)[-1]
+    if primary in {
+        "curl",
+        "wget",
+        "fetch",
+        "nc",
+        "netcat",
+        "ncat",
+        "ssh",
+        "scp",
+        "sftp",
+        "rsync",
+        "ftp",
+        "ping",
+        "traceroute",
+        "nslookup",
+        "dig",
+        "host",
+        "nmap",
+        "gh",
+        "hub",
+    }:
+        return True
+    if primary == "git":
+        return any(
+            needle in normalized
+            for needle in (
+                " fetch",
+                " pull",
+                " clone",
+                " ls-remote",
+                " submodule",
+                " push",
+            )
+        )
+    if primary == "cargo":
+        return any(
+            needle in normalized
+            for needle in (" install", " fetch", " update", " publish", " search")
+        )
+    if primary in {"npm", "pnpm", "yarn"}:
+        return any(
+            needle in normalized
+            for needle in (" install", " i", " add", " update", " publish")
+        )
+    return False
+
+
+def _looks_like_network_blocked_failure(stdout: str, stderr: str) -> bool:
+    output = f"{stdout}\n{stderr}".lower()
+    patterns = (
+        "could not resolve host",
+        "failed to resolve",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "nodename nor servname provided",
+        "no address associated",
+        "failed to connect",
+        "couldn't connect",
+        "connection timed out",
+        "connection reset",
+    )
+    return any(pattern in output for pattern in patterns)

@@ -93,6 +93,7 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/context", "Context inspector", _D, ("/ctx",)),
     CommandEntry("/export", "Export to markdown", _S),
     CommandEntry("/config", "Open configuration editor", _C),
+    CommandEntry("/memory", "View or edit user memory file", _C),
     CommandEntry(
         "/mode",
         "Switch or cycle mode (agent / plan / yolo / ask)",

@@ -24,6 +24,13 @@ def approval_bridge(request: Request) -> Any:
     return bridge
 
 
+def elevation_bridge(request: Request) -> Any:
+    bridge = getattr(request.app.state, "elevation_bridge", None)
+    if bridge is None:
+        raise api_error(503, "elevation bridge not configured")
+    return bridge
+
+
 async def body(request: Request) -> dict[str, Any]:
     if request.headers.get("content-length", "0") == "0":
         return {}

@@ -90,6 +90,16 @@ def user_sessions_dir() -> Path:
     return user_deepseek_dir() / "sessions"
 
 
+def user_checkpoints_dir() -> Path:
+    """``~/.deepseek/sessions/checkpoints/`` — crash recovery snapshots."""
+    return user_sessions_dir() / "checkpoints"
+
+
+def user_tool_outputs_dir() -> Path:
+    """``~/.deepseek/tool_outputs/`` — spilled large tool results (#422)."""
+    return user_deepseek_dir() / "tool_outputs"
+
+
 def user_session_dir(session_id: str) -> Path:
     return user_sessions_dir() / session_id
 

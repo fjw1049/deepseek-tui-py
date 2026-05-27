@@ -482,6 +482,8 @@ class DeepSeekTUI(App[None]):
 
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
         text = event.text or ""
+        if text.startswith("#") and self._handle_memory_quick_add(text):
+            return
         if self._engine is None:
             if self._engine_starting:
                 self._pending_messages.append(text)
@@ -504,6 +506,24 @@ class DeepSeekTUI(App[None]):
             )
             return
         await self._submit_user_message(text)
+
+    def _handle_memory_quick_add(self, text: str) -> bool:
+        """``# note`` composer prefix — append to memory without a turn."""
+        cfg = getattr(self, "config", None)
+        if cfg is None or not cfg.memory_enabled():
+            return False
+        entry = text[1:].strip()
+        if not entry:
+            return False
+        from deepseek_tui.memory.user_memory import append_entry
+
+        append_entry(cfg.resolved_memory_path(), entry)
+        transcript = self.query_one(Transcript)
+        transcript.add_notice(f"Added to memory: {entry}", severity="info")
+        composer = self.query_one(Composer)
+        composer.text = ""
+        composer.post_message(Composer.TextChanged(""))
+        return True
 
     # ── slash command handling ────────────────────────────────────────
 
