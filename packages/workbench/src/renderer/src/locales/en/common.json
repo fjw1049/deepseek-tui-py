@@ -521,6 +521,8 @@
   "subagentStatusCancelled": "Cancelled",
   "approvalTitle": "Approval required",
   "approvalTool": "Tool: {{name}}",
+  "approvalCommand": "Command",
+  "approvalRiskLevel": "Risk: {{level}}",
   "approvalPending": "Waiting for your decision…",
   "approvalAllow": "Allow",
   "approvalAllowRemember": "Allow for session",

@@ -63,7 +63,9 @@
               "id": { "type": "string" },
               "approval_id": { "type": "string" },
               "tool_name": { "type": "string" },
-              "description": { "type": ["string", "null"] }
+              "description": { "type": ["string", "null"] },
+              "input_summary": { "type": ["string", "null"] },
+              "risk_level": { "type": ["string", "null"] }
             }
           }
         }

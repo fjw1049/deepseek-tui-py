@@ -484,6 +484,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       .map((row) => ({
         approvalId: String(row.approval_id ?? row.id ?? ''),
         summary: String(row.description ?? row.summary ?? 'Approval required'),
+        inputSummary:
+          typeof row.input_summary === 'string' && row.input_summary.trim()
+            ? row.input_summary.trim()
+            : undefined,
+        riskLevel: typeof row.risk_level === 'string' ? row.risk_level : undefined,
         toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined
       }))
       .filter((row) => row.approvalId.length > 0)
@@ -1179,6 +1184,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     sink.onApproval({
                       approvalId,
                       summary: String(payload.description ?? payload.summary ?? 'Approval required'),
+                      inputSummary:
+                        typeof payload.input_summary === 'string' && payload.input_summary.trim()
+                          ? payload.input_summary.trim()
+                          : undefined,
+                      riskLevel:
+                        typeof payload.risk_level === 'string' ? payload.risk_level : undefined,
                       toolName: typeof payload.tool_name === 'string' ? payload.tool_name : undefined
                     })
                   })
@@ -1186,6 +1197,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     sink.onApproval({
                       approvalId,
                       summary: String(payload.description ?? payload.summary ?? 'Approval required'),
+                      inputSummary:
+                        typeof payload.input_summary === 'string' && payload.input_summary.trim()
+                          ? payload.input_summary.trim()
+                          : undefined,
+                      riskLevel:
+                        typeof payload.risk_level === 'string' ? payload.risk_level : undefined,
                       toolName: typeof payload.tool_name === 'string' ? payload.tool_name : undefined
                     })
                   })

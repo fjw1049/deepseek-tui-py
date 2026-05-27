@@ -96,10 +96,6 @@ function toolNameFromBlock(block: Extract<ChatBlock, { kind: 'tool' }>): string 
   return head || undefined
 }
 
-function activeTodos(items: TodoItemView[]): TodoItemView[] {
-  return items.filter((item) => item.status === 'pending' || item.status === 'in_progress')
-}
-
 export function extractTodosFromBlocks(blocks: ChatBlock[]): TodoSidebarSnapshot | null {
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index]
@@ -115,12 +111,11 @@ export function extractTodosFromBlocks(blocks: ChatBlock[]): TodoSidebarSnapshot
       parseItemsFromDetail(block.detail) ??
       null
     if (!items?.length) continue
-    const active = activeTodos(items)
     const completed = items.filter((item) => item.status === 'completed').length
     const completionPct = items.length ? Math.round((completed * 100) / items.length) : 0
     const inProgress = items.find((item) => item.status === 'in_progress')
     return {
-      items: active.length > 0 ? active : items,
+      items,
       completionPct,
       inProgressId: inProgress?.id ?? null
     }

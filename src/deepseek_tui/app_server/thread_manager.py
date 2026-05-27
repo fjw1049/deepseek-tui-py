@@ -40,7 +40,7 @@ from deepseek_tui.app_server.runtime_threads import (
     reconstruct_messages_from_turns,
     tool_kind_for_name,
     tool_item_metadata,
-    todo_tool_metadata,
+    todo_tool_metadata_from_result,
 )
 from deepseek_tui.app_server.session_import import ImportTuiSessionRequest
 from deepseek_tui.config.models import Config
@@ -1081,7 +1081,12 @@ class RuntimeThreadManager:
                         item.metadata = {"tool_name": event.tool_name}
                     elif "tool_name" not in item.metadata:
                         item.metadata = {**item.metadata, "tool_name": event.tool_name}
-                    refreshed = todo_tool_metadata(event.tool_name, tool_args)
+                    refreshed = todo_tool_metadata_from_result(
+                        event.tool_name,
+                        tool_args,
+                        event.metadata,
+                        item.metadata if isinstance(item.metadata, dict) else None,
+                    )
                     if refreshed:
                         item.metadata = {**item.metadata, **refreshed}
                     self.store.save_item(item)
@@ -1102,7 +1107,11 @@ class RuntimeThreadManager:
                         "id": approval_id,
                         "approval_id": approval_id,
                         "tool_name": event.request.tool_name,
-                        "description": event.request.reason,
+                        "description": (
+                            event.request.input_summary or event.request.reason
+                        ),
+                        "input_summary": event.request.input_summary or "",
+                        "risk_level": event.request.risk_level.value,
                     },
                 )
 

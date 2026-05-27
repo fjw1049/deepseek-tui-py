@@ -17,7 +17,7 @@ import {
   Download
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
-import { formatRelativeTime } from '../../lib/format-relative-time'
+import { formatRelativeTimeCompact } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 
@@ -384,7 +384,7 @@ function ThreadRow({
           {thread.title}
         </span>
         <span className="ds-sidebar-thread-meta shrink-0 transition-opacity duration-200 group-hover:opacity-0">
-          {formatRelativeTime(thread.updatedAt, locale)}
+          {formatRelativeTimeCompact(thread.updatedAt)}
         </span>
       </button>
       <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">

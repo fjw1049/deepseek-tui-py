@@ -113,7 +113,7 @@ class HttpApprovalHandler(ApprovalHandler):
             meta=PendingApprovalRecord(
                 thread_id=self._thread_id,
                 tool_name=request.tool_name,
-                description=request.reason or request.input_summary or "",
+                description=request.input_summary or request.reason or "",
             ),
         )
         try:

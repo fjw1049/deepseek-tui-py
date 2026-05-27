@@ -454,6 +454,8 @@ function buildThreadEventSink(
               createdAt: new Date().toISOString(),
               approvalId: req.approvalId,
               summary: req.summary,
+              inputSummary: req.inputSummary,
+              riskLevel: req.riskLevel,
               toolName: req.toolName,
               status: 'pending' as const
             }

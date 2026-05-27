@@ -9,6 +9,8 @@ import type { ChatState } from './chat-store-types'
 export type PendingApprovalPayload = {
   approvalId: string
   summary: string
+  inputSummary?: string
+  riskLevel?: string
   toolName?: string
 }
 
@@ -76,6 +78,8 @@ export function mergePendingApprovalBlocks(
       createdAt: new Date().toISOString(),
       approvalId: item.approvalId,
       summary: item.summary,
+      inputSummary: item.inputSummary,
+      riskLevel: item.riskLevel,
       toolName: item.toolName,
       status: 'pending'
     })

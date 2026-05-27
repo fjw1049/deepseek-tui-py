@@ -39,21 +39,22 @@ export function TodoSidebarPanel({ blocks, className = '' }: Props): ReactElemen
           <p className="py-4 text-[12px] leading-5 text-ds-faint">{t('todoSidebarEmpty')}</p>
         ) : (
           <ul className="space-y-1.5">
-            {snapshot.items.slice(0, 12).map((item) => {
+            {snapshot.items.map((item) => {
               const active = snapshot.inProgressId === item.id || item.status === 'in_progress'
+              const completed = item.status === 'completed'
               return (
                 <li
                   key={`${item.id}-${item.content}`}
                   className={[
                     'text-[12px] leading-5',
-                    active ? 'text-ds-ink' : 'text-ds-muted'
+                    completed ? 'text-ds-faint' : active ? 'text-ds-ink' : 'text-ds-muted'
                   ].join(' ')}
                 >
                   <div className="flex items-start gap-1.5">
                     <span
                       className={[
                         'mt-0.5 shrink-0 text-[10px] font-semibold',
-                        item.status === 'completed'
+                        completed
                           ? 'text-emerald-600/80 dark:text-emerald-300/80'
                           : active
                             ? 'text-accent'
@@ -68,11 +69,6 @@ export function TodoSidebarPanel({ blocks, className = '' }: Props): ReactElemen
                 </li>
               )
             })}
-            {snapshot.items.length > 12 ? (
-              <li className="text-[11px] text-ds-faint">
-                {t('todoSidebarMore', { count: snapshot.items.length - 12 })}
-              </li>
-            ) : null}
           </ul>
         )}
       </div>

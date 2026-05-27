@@ -1,3 +1,43 @@
+function formatDurationCompact(totalSeconds: number): string {
+  const sec = Math.max(0, Math.floor(totalSeconds))
+  if (sec < 60) return `${sec}s`
+
+  const minutes = Math.floor(sec / 60)
+  const seconds = sec % 60
+  if (minutes < 60) {
+    return seconds > 0 ? `${minutes}m${seconds}s` : `${minutes}m`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+  if (hours < 24) {
+    let out = `${hours}h`
+    if (mins > 0) out += `${mins}m`
+    if (seconds > 0) out += `${seconds}s`
+    return out
+  }
+
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d`
+
+  const weeks = Math.floor(days / 7)
+  if (weeks < 5) return `${weeks}w`
+
+  return `${Math.floor(days / 30)}mo`
+}
+
+/** Compact elapsed-time label for narrow sidebars, e.g. `11s`, `3m`, `1h22m3s`. */
+export function formatRelativeTimeCompact(input: string): string {
+  const date = new Date(input)
+  if (Number.isNaN(date.getTime())) {
+    return input
+  }
+
+  const elapsedSec = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (elapsedSec < 0) return '0s'
+  return formatDurationCompact(elapsedSec)
+}
+
 export function formatRelativeTime(input: string, locale: string): string {
   const date = new Date(input)
   if (Number.isNaN(date.getTime())) {

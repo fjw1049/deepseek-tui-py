@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
-import { formatRelativeTime } from '../lib/format-relative-time'
+import { formatRelativeTimeCompact } from '../lib/format-relative-time'
 import { shouldShowWorkspaceInHeader, workspaceLabelFromPath } from '../lib/workspace-label'
 
 type Props = {
@@ -77,7 +77,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
               <span className="shrink-0 capitalize">{active.mode}</span>
               <span className="opacity-70">·</span>
               <span className="shrink-0 tabular-nums">
-                {formatRelativeTime(active.updatedAt, i18n.language)}
+                {formatRelativeTimeCompact(active.updatedAt)}
               </span>
             </div>
           </div>
@@ -106,7 +106,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
               <span>·</span>
               <span className="capitalize">{active.mode}</span>
               <span>·</span>
-              <span>{formatRelativeTime(active.updatedAt, i18n.language)}</span>
+              <span>{formatRelativeTimeCompact(active.updatedAt)}</span>
             </div>
             <div className="flex min-w-0 items-center gap-2.5">
               {editing ? (

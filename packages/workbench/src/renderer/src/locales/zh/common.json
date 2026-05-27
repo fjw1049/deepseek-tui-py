@@ -521,6 +521,8 @@
   "subagentStatusCancelled": "已取消",
   "approvalTitle": "需要审批",
   "approvalTool": "工具：{{name}}",
+  "approvalCommand": "指令",
+  "approvalRiskLevel": "风险：{{level}}",
   "approvalPending": "等待你选择…",
   "approvalAllow": "允许",
   "approvalAllowRemember": "允许（本会话记住）",

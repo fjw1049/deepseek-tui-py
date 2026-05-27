@@ -662,11 +662,11 @@ export function FloatingComposer({
               <button
                 type="button"
                 onClick={onInterrupt}
-                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-ds-border bg-ds-card text-ds-muted shadow-sm transition hover:bg-ds-hover hover:text-ds-ink"
+                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
                 aria-label={t('interrupt')}
                 title={t('interrupt')}
               >
-                <Square className="h-3.5 w-3.5" strokeWidth={2.4} />
+                <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
               </button>
             ) : null}
 

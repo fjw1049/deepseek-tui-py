@@ -96,6 +96,59 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _clip_summary_line(text: str, limit: int = 200) -> str:
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    if len(line) > limit:
+        return line[: limit - 1] + "…"
+    return line
+
+
+def _format_checklist_entry(entry: object) -> str:
+    if isinstance(entry, str) and entry.strip():
+        return _clip_summary_line(entry, 80)
+    if isinstance(entry, dict):
+        content = entry.get("content") or entry.get("text")
+        if isinstance(content, str) and content.strip():
+            label = _clip_summary_line(content, 80)
+            status = entry.get("status")
+            if isinstance(status, str) and status.strip():
+                return f"{label} [{status.strip()}]"
+            return label
+    return ""
+
+
+def _summarize_checklist_args(arguments: dict[str, Any]) -> str:
+    """Human-readable approval text for checklist / todo tool calls."""
+    item_id = arguments.get("item_id")
+    if item_id is not None and str(item_id).strip():
+        parts = [f"checklist item #{item_id}"]
+        status = arguments.get("status")
+        if isinstance(status, str) and status.strip():
+            parts.append(f"→ {status.strip()}")
+        elif arguments.get("done") is True:
+            parts.append("→ completed")
+        elif arguments.get("done") is False:
+            parts.append("→ pending")
+        content = arguments.get("content") or arguments.get("text")
+        if isinstance(content, str) and content.strip():
+            parts.append(f": {_clip_summary_line(content, 120)}")
+        return " ".join(parts)
+
+    for key in ("todos", "items"):
+        raw = arguments.get(key)
+        if not isinstance(raw, list) or not raw:
+            continue
+        labels = [_format_checklist_entry(entry) for entry in raw]
+        labels = [label for label in labels if label]
+        if not labels:
+            continue
+        preview = "; ".join(labels[:3])
+        if len(labels) > 3:
+            preview += f"; +{len(labels) - 3} more"
+        return f"checklist ({len(labels)} items): {preview}"
+    return ""
+
+
 def _summarize_call_args(arguments: dict[str, Any] | None) -> str:
     """Return a short, single-line summary of a tool's arguments.
 
@@ -109,6 +162,10 @@ def _summarize_call_args(arguments: dict[str, Any] | None) -> str:
     """
     if not arguments:
         return ""
+
+    checklist_summary = _summarize_checklist_args(arguments)
+    if checklist_summary:
+        return checklist_summary
 
     # Priority keys that are most informative for approval decisions
     priority_keys = [
@@ -125,22 +182,17 @@ def _summarize_call_args(arguments: dict[str, Any] | None) -> str:
             if value is not None:
                 s = str(value).strip()
                 if s:
-                    s = s.splitlines()[0]
-                    if len(s) > 200:
-                        s = s[:199] + "…"
-                    return s
+                    return _clip_summary_line(s)
 
-    # Second pass: fallback to any non-empty value
-    for value in arguments.values():
-        if value is None:
+    # Second pass: fallback to any non-empty value (skip checklist ids)
+    skip_keys = {"item_id", "done"}
+    for key, value in arguments.items():
+        if key in skip_keys or value is None:
             continue
         s = str(value).strip()
         if not s:
             continue
-        s = s.splitlines()[0]
-        if len(s) > 200:
-            s = s[:199] + "…"
-        return s
+        return _clip_summary_line(s)
     return ""
 
 
@@ -1027,6 +1079,11 @@ class Engine:
                             tool_name=tool_call.name,
                             content=result.content,
                             success=result.success,
+                            metadata=(
+                                dict(result.metadata)
+                                if isinstance(result.metadata, dict)
+                                else None
+                            ),
                         )
                     )
                     if result.success:
@@ -1231,6 +1288,11 @@ class Engine:
                         tool_name=tool_call.name,
                         content=result.content,
                         success=result.success,
+                        metadata=(
+                            dict(result.metadata)
+                            if isinstance(result.metadata, dict)
+                            else None
+                        ),
                     )
                 )
                 if result.success:

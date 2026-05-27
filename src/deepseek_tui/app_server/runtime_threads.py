@@ -624,6 +624,99 @@ def todo_tool_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
     }
 
 
+def todo_tool_metadata_from_result(
+    tool_name: str,
+    arguments: Any,
+    result_metadata: dict[str, Any] | None,
+    existing_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Merge checklist snapshots from tool args and result metadata for Workbench."""
+    if not _is_todo_tool_name(tool_name):
+        return None
+    base: dict[str, Any] = dict(existing_metadata) if existing_metadata else {}
+    base["tool_name"] = tool_name
+
+    if isinstance(result_metadata, dict):
+        task_updates = result_metadata.get("task_updates")
+        if isinstance(task_updates, dict):
+            checklist = task_updates.get("checklist")
+            if isinstance(checklist, dict):
+                items_raw = checklist.get("items")
+                if isinstance(items_raw, list) and items_raw:
+                    items: list[dict[str, Any]] = []
+                    for index, entry in enumerate(items_raw, start=1):
+                        if not isinstance(entry, dict):
+                            continue
+                        content = entry.get("content") or entry.get("text")
+                        if not isinstance(content, str) or not content.strip():
+                            continue
+                        status = (
+                            entry.get("status")
+                            if isinstance(entry.get("status"), str)
+                            else "pending"
+                        )
+                        item_id = entry.get("id", index)
+                        items.append(
+                            {
+                                "id": item_id,
+                                "content": content.strip(),
+                                "status": status,
+                            }
+                        )
+                    if items:
+                        completed = sum(
+                            1
+                            for item in items
+                            if str(item.get("status", "")).lower()
+                            in {"completed", "done"}
+                        )
+                        base["items"] = items
+                        base["completion_pct"] = (
+                            round(completed * 100 / len(items)) if items else 0
+                        )
+                        in_progress = checklist.get("in_progress_id")
+                        if in_progress is not None:
+                            base["in_progress_id"] = in_progress
+                        return base
+
+    from_args = todo_tool_metadata(tool_name, arguments)
+    if from_args and from_args.get("items"):
+        base.update(from_args)
+        return base
+
+    args = _parse_tool_arguments(arguments)
+    if args and "item_id" in args:
+        items = base.get("items")
+        if isinstance(items, list):
+            item_id = str(args["item_id"])
+            new_status: str | None = None
+            if isinstance(args.get("status"), str):
+                new_status = str(args["status"]).lower()
+            elif isinstance(args.get("done"), bool):
+                new_status = "completed" if args["done"] else "pending"
+            if new_status:
+                updated: list[dict[str, Any]] = []
+                for row in items:
+                    if not isinstance(row, dict):
+                        continue
+                    copy = dict(row)
+                    if str(copy.get("id")) == item_id:
+                        copy["status"] = new_status
+                    updated.append(copy)
+                base["items"] = updated
+                completed = sum(
+                    1
+                    for item in updated
+                    if str(item.get("status", "")).lower() in {"completed", "done"}
+                )
+                base["completion_pct"] = (
+                    round(completed * 100 / len(updated)) if updated else 0
+                )
+                return base
+
+    return from_args or (base if base.get("items") else None)
+
+
 def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
     """Extract file path metadata for Workbench Diff / ChangeInspector."""
     todo_meta = todo_tool_metadata(tool_name, arguments)

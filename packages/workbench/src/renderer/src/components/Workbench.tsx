@@ -339,7 +339,7 @@ export function Workbench(): ReactElement {
     hasStartedConversation &&
     todoSnapshot !== null &&
     todoSnapshot.items.length > 0
-  const stageCentered = !showTodoSidebar
+  const stageCentered = !hasStartedConversation
 
   const handleSend = (text: string): void => {
     const v = text.trim()
@@ -897,12 +897,13 @@ export function Workbench(): ReactElement {
                   </div>
                 </div>
               )}
-              {showTodoSidebar ? (
-                <TodoSidebarPanel blocks={blocks} className="mb-3 shrink-0 self-stretch pl-3 pr-1" />
-              ) : null}
             </div>
           </section>
           </div>
+
+          {showTodoSidebar ? (
+            <TodoSidebarPanel blocks={blocks} className="mb-3 shrink-0 self-stretch pl-2 pr-4 pt-3" />
+          ) : null}
 
           {rightPanelMode ? (
               <div

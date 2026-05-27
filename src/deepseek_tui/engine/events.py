@@ -42,6 +42,7 @@ class ToolResultEvent:
     tool_name: str
     content: str
     success: bool
+    metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

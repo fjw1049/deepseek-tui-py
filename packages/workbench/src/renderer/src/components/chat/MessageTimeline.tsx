@@ -461,10 +461,30 @@ function turnHasPendingRuntimeWork(turn: Turn): boolean {
   return turn.blocks.some(blockHasPendingRuntimeWork)
 }
 
-function findTrailingAssistantContentStart(blocks: ChatBlock[]): number {
-  let start = blocks.length
+const TURN_EPILOGUE_TOOL_RE = /(?:todo|checklist)_(?:update|write|add|list)$/i
 
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+function toolNameFromProcessBlock(block: Extract<ChatBlock, { kind: 'tool' }>): string {
+  const metaName = typeof block.meta?.tool_name === 'string' ? block.meta.tool_name : undefined
+  if (metaName) return metaName
+  const summary = block.summary.trim()
+  return summary.split(/[:(]/, 1)[0]?.trim() ?? ''
+}
+
+function isTurnEpilogueBlock(block: ChatBlock): boolean {
+  if (block.kind !== 'tool') return false
+  const toolName = toolNameFromProcessBlock(block)
+  if (TURN_EPILOGUE_TOOL_RE.test(toolName)) return true
+  return TURN_EPILOGUE_TOOL_RE.test(block.summary.trim().split(/[:(]/, 1)[0]?.trim() ?? '')
+}
+
+function findTrailingAssistantContentStart(blocks: ChatBlock[]): number {
+  let scanEnd = blocks.length
+  while (scanEnd > 0 && isTurnEpilogueBlock(blocks[scanEnd - 1]!)) {
+    scanEnd -= 1
+  }
+
+  let start = scanEnd
+  for (let index = scanEnd - 1; index >= 0; index -= 1) {
     const block = blocks[index]
     if (block.kind !== 'assistant') break
 
@@ -2026,6 +2046,15 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
   }
   if (block.kind === 'approval') {
     const done = block.status !== 'pending'
+    const commandText = block.inputSummary?.trim() || ''
+    const reasonText =
+      block.summary.trim() &&
+      block.summary.trim() !== commandText &&
+      !/^tool has \w+ risk level$/i.test(block.summary.trim())
+        ? block.summary.trim()
+        : block.riskLevel
+          ? t('approvalRiskLevel', { level: block.riskLevel })
+          : ''
     const statusLabel =
       block.status === 'allowed'
         ? t('approvalAllowed')
@@ -2049,7 +2078,21 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
             {t('approvalTool', { name: block.toolName })}
           </div>
         ) : null}
-        <p className="mt-2 whitespace-pre-wrap text-[14px] text-ds-ink">{block.summary}</p>
+        {commandText ? (
+          <div className="mt-3">
+            <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-ds-faint">
+              {t('approvalCommand')}
+            </div>
+            <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-ds-border-muted bg-ds-main/80 px-3 py-2.5 font-mono text-[13px] leading-6 text-ds-ink">
+              {commandText}
+            </pre>
+          </div>
+        ) : (
+          <p className="mt-2 whitespace-pre-wrap text-[14px] text-ds-ink">{block.summary}</p>
+        )}
+        {reasonText ? (
+          <p className="mt-2 text-[12px] text-ds-muted">{reasonText}</p>
+        ) : null}
         {block.status === 'pending' ? (
           <p className="mt-2 text-[12px] text-ds-muted">{t('approvalPolicyHint')}</p>
         ) : null}
