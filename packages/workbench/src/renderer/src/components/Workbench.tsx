@@ -22,8 +22,6 @@ import { FloatingComposer, type ComposerSurface } from './chat/FloatingComposer'
 import { buildAutomationComposerPrompt } from '@shared/app-settings'
 import { resolveAutomationFeishuChatId } from '../lib/resolve-automation-feishu-chat-id'
 import { resolveAutomationMailTo } from '../lib/resolve-automation-mail-to'
-import { TodoSidebarPanel } from './chat/TodoSidebarPanel'
-import { extractTodosFromBlocks } from '../lib/extract-todos-from-blocks'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
@@ -338,12 +336,6 @@ export function Workbench(): ReactElement {
     liveAssistant.trim().length > 0 ||
     liveReasoning.trim().length > 0
 
-  const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
-  const showTodoSidebar =
-    Boolean(activeThreadId) &&
-    hasStartedConversation &&
-    todoSnapshot !== null &&
-    todoSnapshot.items.length > 0
   const stageCentered = !hasStartedConversation
 
   const handleSend = (text: string): void => {
@@ -944,10 +936,6 @@ export function Workbench(): ReactElement {
             </div>
           </section>
           </div>
-
-          {showTodoSidebar ? (
-            <TodoSidebarPanel blocks={blocks} className="mb-3 shrink-0 self-stretch pl-2 pr-4 pt-3" />
-          ) : null}
 
           {rightPanelMode ? (
               <div

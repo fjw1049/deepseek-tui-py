@@ -36,6 +36,12 @@ import { useChatStore } from '../../store/chat-store'
 import { DiffView } from '../DiffView'
 import { ApprovalBubble } from './ApprovalBubble'
 import { ElevationBubble } from './ElevationBubble'
+import { InlineTodoBlock } from './InlineTodoBlock'
+import {
+  buildTodoSessionForTurn,
+  isTodoToolBlock,
+  type TodoTurnSession
+} from '../../lib/extract-todos-from-blocks'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -498,6 +504,47 @@ function findTrailingAssistantContentStart(blocks: ChatBlock[]): number {
   return start
 }
 
+type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
+
+/** Move mid-turn assistant analysis out of the collapsible work trace. */
+function promoteProcessAssistantToAnswer(
+  processBlocks: ChatBlock[],
+  assistantContentBlocks: AssistantContentBlock[]
+): { processBlocks: ChatBlock[]; assistantContentBlocks: AssistantContentBlock[] } {
+  const processAssistants = processBlocks.filter(
+    (block): block is AssistantContentBlock => block.kind === 'assistant'
+  )
+  if (processAssistants.length === 0) {
+    return { processBlocks, assistantContentBlocks }
+  }
+
+  const trailingChars = assistantContentBlocks.reduce(
+    (total, block) => total + block.text.trim().length,
+    0
+  )
+  const processChars = processAssistants.reduce(
+    (total, block) => total + block.text.trim().length,
+    0
+  )
+  const shouldPromote =
+    processChars > 0 &&
+    (trailingChars === 0 ||
+      (trailingChars < 320 && processChars >= 280) ||
+      processChars > trailingChars * 2)
+
+  if (!shouldPromote) {
+    return { processBlocks, assistantContentBlocks }
+  }
+
+  const trailingIds = new Set(assistantContentBlocks.map((block) => block.id))
+  const promoted = processAssistants.filter((block) => !trailingIds.has(block.id))
+
+  return {
+    processBlocks: processBlocks.filter((block) => block.kind !== 'assistant'),
+    assistantContentBlocks: [...promoted, ...assistantContentBlocks]
+  }
+}
+
 type ProcessSection = {
   id: string
   kind: 'reasoning' | 'execution' | 'output'
@@ -600,6 +647,8 @@ function MessageTurn({
     setWorkExpanded(isProcessing)
   }, [isProcessing])
 
+  const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
+
   const { processBlocks, assistantContentBlocks, turnFileChanges } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
     const nextAssistantContentBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
@@ -656,6 +705,18 @@ function MessageTurn({
         })
       : []
 
+    if (!isProcessing) {
+      const promoted = promoteProcessAssistantToAnswer(
+        nextProcessBlocks,
+        nextAssistantContentBlocks
+      )
+      return {
+        processBlocks: promoted.processBlocks,
+        assistantContentBlocks: promoted.assistantContentBlocks,
+        turnFileChanges: nextTurnFileChanges
+      }
+    }
+
     return {
       processBlocks: nextProcessBlocks,
       assistantContentBlocks: nextAssistantContentBlocks,
@@ -707,11 +768,20 @@ function MessageTurn({
                   reasoningDurationMs={reasoningDurationMs}
                   singleReasoningSection={reasoningSectionCount === 1}
                   viewportRef={viewportRef}
+                  todoSession={todoSession}
                 />
               ))}
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {!workExpanded && todoSession ? (
+        <InlineTodoBlock
+          session={todoSession}
+          active={isProcessing && !todoSession.isComplete}
+          className="pb-1"
+        />
       ) : null}
 
       {assistantContentBlocks.map((block) => (
@@ -946,13 +1016,33 @@ function WorkMetaRow({
   )
 }
 
+function renderInlineTodoAtBlock(
+  block: ChatBlock,
+  todoSession: TodoTurnSession | null,
+  processing: boolean
+): ReactElement | null {
+  if (!todoSession || !isTodoToolBlock(block)) return null
+  if (block.id !== todoSession.anchorBlockId) return null
+  return (
+    <InlineTodoBlock
+      session={todoSession}
+      active={processing && !todoSession.isComplete}
+    />
+  )
+}
+
+function shouldHideTodoToolBlock(block: ChatBlock, todoSession: TodoTurnSession | null): boolean {
+  return !!todoSession && isTodoToolBlock(block) && todoSession.todoBlockIds.includes(block.id)
+}
+
 function ProcessSectionRow({
   section,
   processing,
   hasAssistantContent,
   reasoningDurationMs,
   singleReasoningSection,
-  viewportRef
+  viewportRef,
+  todoSession = null
 }: {
   section: ProcessSection
   processing: boolean
@@ -960,6 +1050,7 @@ function ProcessSectionRow({
   reasoningDurationMs?: number
   singleReasoningSection: boolean
   viewportRef: RefObject<HTMLDivElement | null>
+  todoSession?: TodoTurnSession | null
 }): ReactElement {
   const { t } = useTranslation('common')
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null)
@@ -982,7 +1073,8 @@ function ProcessSectionRow({
   const title = describeProcessSection(section, t, {
     processing,
     reasoningDurationMs,
-    singleReasoningSection
+    singleReasoningSection,
+    todoSession
   })
   const reasoningText = section.kind === 'reasoning' ? getReasoningSectionText(section) : ''
   const canToggleSection = hasDetails
@@ -995,6 +1087,9 @@ function ProcessSectionRow({
   if (section.kind === 'execution' && section.blocks.length === 1) {
     const [block] = section.blocks
     if (block) {
+      const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
+      if (inlineTodo) return inlineTodo
+      if (shouldHideTodoToolBlock(block, todoSession)) return <></>
       return <ProcessEntryRow block={block} processing={processing} />
     }
   }
@@ -1078,9 +1173,14 @@ function ProcessSectionRow({
             </div>
           ) : (
             <div className="flex flex-col gap-1">
-              {section.blocks.map((block) => (
-                <ProcessEntryRow key={block.id} block={block} processing={processing} />
-              ))}
+              {section.blocks.map((block) => {
+                const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
+                if (inlineTodo) {
+                  return <div key={`todo-${block.id}`}>{inlineTodo}</div>
+                }
+                if (shouldHideTodoToolBlock(block, todoSession)) return null
+                return <ProcessEntryRow key={block.id} block={block} processing={processing} />
+              })}
             </div>
           )
           ) : null}
@@ -1184,6 +1284,7 @@ function describeProcessSection(
     processing: boolean
     reasoningDurationMs?: number
     singleReasoningSection: boolean
+    todoSession?: TodoTurnSession | null
   }
 ): string {
   if (section.kind === 'reasoning') {
@@ -1210,7 +1311,17 @@ function describeProcessSection(
     return describeProcessBlock(section.blocks[0], t)
   }
 
-  return summarizeExecutionSection(section.blocks, t)
+  const summaryBlocks = opts.todoSession
+    ? section.blocks.filter((block) => !shouldHideTodoToolBlock(block, opts.todoSession ?? null))
+    : section.blocks
+  if (summaryBlocks.length === 0) {
+    return t('processSteps', { count: section.blocks.length })
+  }
+  if (summaryBlocks.length === 1) {
+    return describeProcessBlock(summaryBlocks[0]!, t)
+  }
+
+  return summarizeExecutionSection(summaryBlocks, t)
 }
 
 function summarizeExecutionSection(
