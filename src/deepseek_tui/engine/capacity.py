@@ -75,7 +75,7 @@ class CapacityControllerConfig:
 
     def __init__(self) -> None:
         """Initialize with Rust defaults."""
-        self.enabled: bool = True
+        self.enabled: bool = False
         self.low_risk_max: float = 0.50
         self.medium_risk_max: float = 0.62
         self.severe_min_slack: float = -0.25

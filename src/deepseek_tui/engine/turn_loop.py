@@ -108,6 +108,9 @@ class TurnLoop:
         emit: Callable[[EngineEvent], Awaitable[None]],
         cancel_event: asyncio.Event,
         tools: list[dict[str, Any]] | None = None,
+        *,
+        include_tool_search: bool = True,
+        include_code_execution: bool = True,
     ) -> TurnResult:
         """Run a single turn of the conversation loop.
 
@@ -124,7 +127,11 @@ class TurnLoop:
         tool_catalog = tools or []
         # 延迟加载，模型至少能直接调用代码执行和工具发现能力，其余工具按延迟加载策略按需激活
         if tool_catalog:
-            ensure_advanced_tooling(tool_catalog)
+            ensure_advanced_tooling(
+                tool_catalog,
+                include_tool_search=include_tool_search,
+                include_code_execution=include_code_execution,
+            )
 
         state.active_tool_names = initial_active_tools(tool_catalog)
 

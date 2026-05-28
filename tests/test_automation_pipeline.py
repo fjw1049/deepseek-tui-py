@@ -159,3 +159,78 @@ async def test_try_deliver_skips_without_active_delivery() -> None:
     task_manager.get_task = AsyncMock()
     assert await try_deliver_completed_run(automation, run, task_manager) is False
     assert run.delivery_done is False
+
+
+@pytest.mark.asyncio
+async def test_try_deliver_skips_stale_restart_failure() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from deepseek_tui.automation.pipeline import try_deliver_completed_run
+    from deepseek_tui.tools.task_manager import STALE_RESTART_ERROR, TaskStatus
+
+    automation = _sample_automation(
+        delivery={"mode": "feishu", "to": "oc_test", "best_effort": True}
+    )
+    run = AutomationRunRecord(
+        id="r-stale",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.FAILED,
+        created_at="2026-05-28T08:00:00+00:00",
+        task_id="task-stale",
+        error=STALE_RESTART_ERROR,
+    )
+    task = MagicMock()
+    task.status = TaskStatus.FAILED
+    task.error = STALE_RESTART_ERROR
+    task.result_summary = None
+    task_manager = MagicMock()
+    task_manager.get_task = AsyncMock(return_value=task)
+    deliver = AsyncMock()
+    with patch(
+        "deepseek_tui.automation.pipeline._FeishuSink.deliver",
+        deliver,
+    ):
+        ok = await try_deliver_completed_run(automation, run, task_manager)
+    assert ok is True
+    assert run.delivery_done is True
+    deliver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_try_deliver_failed_run_notifies() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from deepseek_tui.automation.pipeline import try_deliver_completed_run
+    from deepseek_tui.tools.task_manager import TaskStatus
+
+    automation = _sample_automation(
+        delivery={"mode": "feishu", "to": "oc_test", "best_effort": True}
+    )
+    run = AutomationRunRecord(
+        id="r1",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.FAILED,
+        created_at="2026-05-28T08:00:00+00:00",
+        task_id="task-1",
+        error="Tool round-trip limit exceeded",
+    )
+    task = MagicMock()
+    task.status = TaskStatus.FAILED
+    task.error = "Tool round-trip limit exceeded"
+    task.result_summary = None
+    task_manager = MagicMock()
+    task_manager.get_task = AsyncMock(return_value=task)
+    deliver = AsyncMock()
+    with patch(
+        "deepseek_tui.automation.pipeline._FeishuSink.deliver",
+        deliver,
+    ):
+        ok = await try_deliver_completed_run(automation, run, task_manager)
+    assert ok is True
+    assert run.delivery_done is True
+    deliver.assert_awaited_once()
+    summary = deliver.await_args.kwargs["summary"]
+    assert "Tool round-trip" not in summary
+    assert "❌" in summary

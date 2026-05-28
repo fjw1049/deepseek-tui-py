@@ -68,6 +68,7 @@ class ToolRuntime:
     _automation_cancel: asyncio.Event | None = field(default=None)
     _owns_task_manager: bool = True
     _owns_subagent_manager: bool = True
+    _owns_mcp_manager: bool = True
 
     async def __aenter__(self) -> ToolRuntime:
         return self
@@ -93,7 +94,7 @@ class ToolRuntime:
             await self.subagent_manager.shutdown()
         if self._owns_task_manager and self.task_manager is not None:
             await self.task_manager.shutdown()
-        if self.mcp_manager is not None:
+        if self._owns_mcp_manager and self.mcp_manager is not None:
             await self.mcp_manager.stop_all()
         if self.lsp_manager is not None:
             await self.lsp_manager.close_all()
@@ -143,6 +144,7 @@ async def create_tool_runtime(
             default_workspace=workspace,
             allow_shell=cfg.allow_shell,
             trust_mode=getattr(cfg, "trust_mode", False),
+            worker_count=1,
         )
         task_exec = _safe_task_executor()
         task_manager = TaskManager(task_cfg, executor=task_exec)
@@ -166,12 +168,16 @@ async def create_tool_runtime(
         )
 
     mcp: McpManager | None = None
+    owns_mcp_manager = True
     if mcp_manager is not None:
         mcp = mcp_manager
+        owns_mcp_manager = False
     elif cfg.features.mcp:
         mcp = await _build_mcp_manager(cfg)
     if mcp is not None and start_mcp:
         await mcp.start_all(fail_on_required=True)
+    if task_manager is not None and mcp is not None:
+        task_manager._shared_mcp_manager = mcp  # noqa: SLF001 — executor reuse
 
     lsp: LspManager | None = None
     if cfg.lsp.enabled:
@@ -275,6 +281,7 @@ async def create_tool_runtime(
         _automation_cancel=automation_cancel,
         _owns_task_manager=owns_task_manager,
         _owns_subagent_manager=True,
+        _owns_mcp_manager=owns_mcp_manager,
     )
 
 

@@ -105,6 +105,17 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
     return value
 
 
+def _optional_object(
+    input_data: dict[str, object], key: str
+) -> dict[str, Any] | None:
+    value = input_data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ToolError(f"{key} must be an object")
+    return cast(dict[str, Any], value)
+
+
 def _automation_to_payload(record: Any) -> dict[str, Any]:
     """Serialize an ``AutomationRecord`` for tool metadata."""
     return record.to_dict()
@@ -122,6 +133,23 @@ def _format_summary_line(record: Any) -> str:
 # ── tool implementations ────────────────────────────────────────────
 
 
+def _resolve_delivery(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fill default Feishu ``to`` from config when the model omits it."""
+    if raw is None:
+        return None
+    delivery = dict(raw)
+    mode = str(delivery.get("mode", "silent")).strip().lower()
+    if mode == "feishu":
+        to_val = delivery.get("to") or delivery.get("chat_id")
+        if not (isinstance(to_val, str) and to_val.strip()):
+            from deepseek_tui.automation.inbox import default_feishu_chat_id_from_config
+
+            default = default_feishu_chat_id_from_config()
+            if default:
+                delivery["to"] = default
+    return delivery
+
+
 class AutomationCreateTool(ToolSpec):
     """Create a durable scheduled automation (requires approval)."""
 
@@ -130,9 +158,16 @@ class AutomationCreateTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Create a durable scheduled automation. Creation requires "
-            "approval and recurrence is constrained to supported HOURLY/"
-            "WEEKLY RRULE forms. Runs enqueue normal durable tasks."
+            "Create a durable scheduled automation that enqueues an agent "
+            "task on a schedule. Call current_time first when the user uses "
+            "relative times ('in 10 minutes', 'tomorrow morning'). "
+            "Recurring jobs use rrule (FREQ=HOURLY;INTERVAL=N or "
+            "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30). One-shot or "
+            "delayed runs set next_run_at (ISO8601) and may use a far-future "
+            "placeholder rrule such as FREQ=HOURLY;INTERVAL=8760. Optional "
+            "delivery sends the task summary to feishu or email after "
+            "completion. For feishu include delivery.mode=feishu and "
+            "delivery.to (open_chat_id). Creation requires approval."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -148,7 +183,35 @@ class AutomationCreateTool(ToolSpec):
                         "or FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30"
                     ),
                 },
+                "next_run_at": {
+                    "type": "string",
+                    "description": (
+                        "Optional ISO8601 timestamp for the first run "
+                        "(one-shot or delayed start)."
+                    ),
+                },
                 "cwds": {"type": "array", "items": {"type": "string"}},
+                "delivery": {
+                    "type": "object",
+                    "description": (
+                        "Optional post-run delivery (feishu or email)."
+                    ),
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["feishu", "email", "silent", "notify"],
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": (
+                                "Recipient: Feishu open_chat_id or email address. "
+                                "Required when mode is feishu or email."
+                            ),
+                        },
+                        "best_effort": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
                 "paused": {"type": "boolean", "default": False},
             },
             "required": ["name", "prompt", "rrule"],
@@ -168,7 +231,9 @@ class AutomationCreateTool(ToolSpec):
         name = _require_string(input_data, "name")
         prompt = _require_string(input_data, "prompt")
         rrule = _require_string(input_data, "rrule")
+        next_run_at = _optional_string(input_data, "next_run_at")
         cwds = _optional_string_list(input_data, "cwds") or []
+        delivery = _resolve_delivery(_optional_object(input_data, "delivery"))
         paused = bool(input_data.get("paused", False))
         status = AutomationStatus.PAUSED if paused else AutomationStatus.ACTIVE
         try:
@@ -179,6 +244,8 @@ class AutomationCreateTool(ToolSpec):
                     rrule=rrule,
                     cwds=cwds,
                     status=status,
+                    delivery=delivery,
+                    next_run_at=next_run_at,
                 )
             )
         except ValueError as exc:

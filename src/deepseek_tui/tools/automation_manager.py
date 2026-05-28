@@ -424,6 +424,7 @@ class CreateAutomationRequest:
     status: AutomationStatus | None = None
     delivery: dict[str, Any] | None = None
     digest: dict[str, Any] | None = None
+    next_run_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -558,11 +559,12 @@ class AutomationManager:
         schedule = AutomationSchedule.parse_rrule(req.rrule)
         now = _utc_now()
         status = req.status or AutomationStatus.ACTIVE
-        next_run_at = (
-            schedule.next_after(now).isoformat()
-            if status is AutomationStatus.ACTIVE
-            else None
-        )
+        if req.next_run_at and str(req.next_run_at).strip():
+            next_run_at = str(req.next_run_at).strip()
+        elif status is AutomationStatus.ACTIVE:
+            next_run_at = schedule.next_after(now).isoformat()
+        else:
+            next_run_at = None
         record = AutomationRecord(
             id=uuid.uuid4().hex,
             name=req.name.strip(),
@@ -714,6 +716,11 @@ class AutomationManager:
         )
         await self._enqueue_run_task(automation, run, task_manager)
         self.save_run(run)
+        if run.status is AutomationRunStatus.FAILED:
+            from deepseek_tui.automation.pipeline import try_deliver_completed_run
+
+            if await try_deliver_completed_run(automation, run, task_manager):
+                self.save_run(run)
 
         automation.updated_at = _utc_now_iso()
         if run.status in (
@@ -774,6 +781,11 @@ class AutomationManager:
             )
             await self._enqueue_run_task(automation, run, task_manager)
             self.save_run(run)
+            if run.status is AutomationRunStatus.FAILED:
+                from deepseek_tui.automation.pipeline import try_deliver_completed_run
+
+                if await try_deliver_completed_run(automation, run, task_manager):
+                    self.save_run(run)
 
             automation.updated_at = now.isoformat()
             automation.next_run_at = schedule.next_after(due_at).isoformat()
@@ -853,7 +865,10 @@ class AutomationManager:
                         latest.last_run_at = run.ended_at or _utc_now_iso()
                         latest.updated_at = _utc_now_iso()
                         self.save_automation(latest)
-                    if run.status is AutomationRunStatus.COMPLETED:
+                    if run.status in (
+                        AutomationRunStatus.COMPLETED,
+                        AutomationRunStatus.FAILED,
+                    ):
                         from deepseek_tui.automation.pipeline import (
                             try_deliver_completed_run,
                         )

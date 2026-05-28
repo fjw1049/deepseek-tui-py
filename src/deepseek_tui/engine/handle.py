@@ -69,6 +69,7 @@ class EngineHandle:
         self._op_queue: asyncio.Queue[EngineOp] = asyncio.Queue()
         self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=4096)
         self.cancel_event = asyncio.Event()
+        self._cancel_reason: str | None = None
         self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
         self._hooks = hooks
@@ -115,6 +116,14 @@ class EngineHandle:
 
     async def next_op(self) -> EngineOp:
         return await self._op_queue.get()
+
+    async def inject_event(self, event: EngineEvent) -> None:
+        """Enqueue an event for the turn monitor without hook bridging.
+
+        Used by watchdog recovery when the engine op loop cannot emit
+        ``TurnCancelledEvent`` while blocked inside a long-running turn.
+        """
+        await self._event_queue.put(event)
 
     async def emit(self, event: EngineEvent) -> None:
         await self._event_queue.put(event)
@@ -235,11 +244,17 @@ class EngineHandle:
             yield await self._event_queue.get()
 
     async def cancel(self, reason: str = "user_cancelled") -> None:
+        self._cancel_reason = reason
         self.cancel_event.set()
         await self.send_op(CancelRequestOp(reason=reason))
 
     def reset_cancel(self) -> None:
         self.cancel_event = asyncio.Event()
+        self._cancel_reason = None
+
+    @property
+    def cancel_reason(self) -> str | None:
+        return self._cancel_reason
 
     async def steer(self, text: str) -> None:
         """Inject a user message mid-turn (mirrors Rust rx_steer)."""

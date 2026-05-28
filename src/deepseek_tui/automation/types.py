@@ -65,3 +65,29 @@ def _opt_str(value: object) -> str | None:
 def cron_prompt_prefix(automation_id: str, name: str) -> str:
     """Align with OpenHuman ``[cron:{id} {name}]`` prefix."""
     return f"[cron:{automation_id} {name}] "
+
+
+CRON_EXECUTION_PLAYBOOK = """\
+[Cron execution playbook]
+You are running a scheduled background task. Follow these rules:
+
+Tool usage:
+1. Prefer web_search (Tavily) or MCP search tools (bing, fetch, china-stock, yahoo) over exec_shell/curl.
+2. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — use the tools already available.
+3. Do NOT call request_user_input — complete the task with available tools.
+4. Do NOT run pip install or long shell setup; use MCP or web_search instead.
+5. Limit exec_shell to at most 2 attempts; if data is unavailable, stop and write a short summary.
+6. Do NOT send messages to Feishu/email/webhook yourself — the system delivers your final reply automatically.
+
+Output contract (this final reply IS the message users receive):
+7. Write ONLY the finished report in your last message — no process narration ("我来…", "让我…", "Let me…").
+8. Do NOT mention delivery, webhooks, chat_id, or "消息已发送".
+9. Use clear structure: title → key data (bullets/table) → one-line takeaway if useful.
+10. Keep it scannable (roughly 200–600 words unless the task needs a list).
+11. Match the task language (Chinese prompt → Chinese report).
+12. If data is unavailable, state what is missing and one actionable fix — do not dump tool errors or retry logs.
+"""
+
+
+def cron_execution_prefix(automation_id: str, name: str) -> str:
+    return cron_prompt_prefix(automation_id, name) + CRON_EXECUTION_PLAYBOOK + "\n\n"

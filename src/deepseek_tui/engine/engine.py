@@ -97,6 +97,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MCP_DISCOVER_TIMEOUT_S = 45
+
 
 def _clip_summary_line(text: str, limit: int = 200) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
@@ -230,6 +232,7 @@ class Engine:
             self.tool_registry = tool_registry or ToolRegistry()
             self.tool_context = tool_context or ToolContext(working_directory=Path.cwd())
         self.tool_runtime = tool_runtime
+        self._owns_tool_runtime = tool_runtime is None
         # Ensure the registry dispatcher can see the context (Stage 3
         # managers are attached on the context, not the registry).
         self.tool_registry.set_context(self.tool_context)
@@ -308,6 +311,7 @@ class Engine:
         # Engine instance: workspace lives on tool_context.working_directory.
         self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
+        self.tool_profile: str | None = None
         # Issue #756: parent turn resumes when direct children complete.
         self._subagent_completions: asyncio.Queue[SubAgentCompletion] = (
             asyncio.Queue(maxsize=64)
@@ -342,20 +346,35 @@ class Engine:
 
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
+        from deepseek_tui.engine.tool_profiles import (
+            TOOL_PROFILE_FULL,
+            filter_tools_for_profile,
+        )
+
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
+        profile = self.tool_profile or TOOL_PROFILE_FULL
         if mcp is None:
-            return native_tools
+            return filter_tools_for_profile(list(native_tools), profile)
         if self._mcp_tools_cache is None:
             try:
-                self._mcp_tools_cache = await mcp.discover_tools()
+                self._mcp_tools_cache = await asyncio.wait_for(
+                    mcp.discover_tools(),
+                    timeout=MCP_DISCOVER_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "mcp_discover_timeout seconds=%d", MCP_DISCOVER_TIMEOUT_S
+                )
+                self._mcp_tools_cache = []
             except Exception:  # noqa: BLE001
                 self._mcp_tools_cache = []
         if not self._mcp_tools_cache:
-            return native_tools
-        return build_model_tool_catalog(
+            return filter_tools_for_profile(list(native_tools), profile)
+        combined = build_model_tool_catalog(
             list(native_tools), list(self._mcp_tools_cache), self.mode
         )
+        return filter_tools_for_profile(combined, profile)
 
     @classmethod
     async def create(
@@ -373,6 +392,7 @@ class Engine:
         task_data_dir: Path | None = None,
         tool_runtime: object | None = None,
         start_mcp: bool | None = None,
+        mcp_manager: object | None = None,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
 
@@ -401,6 +421,7 @@ class Engine:
                 mode=mode,
                 task_data_dir=task_data_dir,
                 start_mcp=mcp_flag,
+                mcp_manager=mcp_manager,  # type: ignore[arg-type]
             )
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
@@ -421,6 +442,11 @@ class Engine:
             default_top_p=None,
             default_extra_body=dict(provider_cfg.extra_body or {}),
             hook_executor=hook_executor,
+        )
+        if isinstance(tool_runtime, ToolRuntime):
+            engine._owns_tool_runtime = False
+        engine.capacity_controller = CapacityController(
+            config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
         # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
         # and ``Config.seam_enabled`` once those fields exist; today they
@@ -478,7 +504,7 @@ class Engine:
     async def shutdown_session(self) -> None:
         """Stop background coordinators and tool runtime (tests / teardown)."""
         await self._activity_coordinator.stop()
-        if self.tool_runtime is not None:
+        if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
 
     def _render_skills_context(self) -> str | None:
@@ -605,27 +631,62 @@ class Engine:
         await self.handle.emit(
             SessionStartedEvent(session_id=self._cycle_session_id)
         )
+        turn_task: asyncio.Task[None] | None = None
         try:
             while True:
-                op = await self.handle.next_op()
+                if turn_task is not None and turn_task.done():
+                    try:
+                        turn_task.result()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("engine_turn_task_failed")
+                    turn_task = None
+
+                if turn_task is None:
+                    op = await self.handle.next_op()
+                else:
+                    op_wait = asyncio.create_task(
+                        self.handle.next_op(), name="engine-next-op"
+                    )
+                    done, _pending = await asyncio.wait(
+                        {op_wait, turn_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if turn_task in done:
+                        try:
+                            turn_task.result()
+                        except Exception:  # noqa: BLE001
+                            logger.exception("engine_turn_task_failed")
+                        turn_task = None
+                        if op_wait in done:
+                            op = op_wait.result()
+                        else:
+                            op_wait.cancel()
+                            continue
+                    else:
+                        op = op_wait.result()
+
                 if isinstance(op, SendMessageOp):
-                    await self._handle_send_message(op)
+                    if turn_task is not None:
+                        await turn_task
+                    turn_task = asyncio.create_task(
+                        self._handle_send_message(op),
+                        name="engine-turn",
+                    )
                 elif isinstance(op, CancelRequestOp):
                     logger.info("engine_cancel_request reason=%s", op.reason)
                     # Defense in depth: ensure the cancel_event is set even if
                     # the caller queued the op without calling handle.cancel().
-                    # ``handle.cancel()`` already sets it before enqueuing, but
-                    # any direct ``send_op(CancelRequestOp(...))`` previously
-                    # silently dropped the cancellation. TurnLoop checks the
-                    # event each chunk, so setting it here propagates cancel
-                    # into any in-flight stream. Mirrors Rust which routes
-                    # cancel through the same op channel.
                     self.handle.cancel_event.set()
-                    continue
         except asyncio.CancelledError:
             logger.info("engine_run_cancelled")
             raise
         finally:
+            if turn_task is not None:
+                turn_task.cancel()
+                try:
+                    await turn_task
+                except asyncio.CancelledError:
+                    pass
             await self._activity_coordinator.stop()
 
     async def _handle_send_message(self, op: SendMessageOp) -> None:
@@ -653,6 +714,17 @@ class Engine:
             session_id=self._cycle_session_id,
             turn_id=turn_id,
         )
+        from deepseek_tui.engine.tool_profiles import (
+            TOOL_PROFILE_FULL,
+            detect_tool_profile_from_prompt,
+            profile_includes_tool_search,
+        )
+
+        self.tool_profile = detect_tool_profile_from_prompt(
+            processed.model_text or op.content or ""
+        )
+        if self.tool_profile == TOOL_PROFILE_FULL:
+            self.tool_profile = None
         user_message = Message.user(processed.model_text)
         working_messages = [*self.session_messages, user_message]
         self.working_set.observe_user_message(processed.display_text or "")
@@ -704,9 +776,16 @@ class Engine:
             duration_ms = int((time.monotonic() - start) * 1000)
             if result.cancelled:
                 logger.info(
-                    "turn_cancelled turn=%s duration_ms=%d", turn_id, duration_ms
+                    "turn_cancelled turn=%s duration_ms=%d reason=%s",
+                    turn_id,
+                    duration_ms,
+                    self.handle.cancel_reason or "user_cancelled",
                 )
-                await self.handle.emit(TurnCancelledEvent(reason="user_cancelled"))
+                await self.handle.emit(
+                    TurnCancelledEvent(
+                        reason=self.handle.cancel_reason or "user_cancelled"
+                    )
+                )
                 return
 
             self.session_messages = working_messages
@@ -854,6 +933,8 @@ class Engine:
         system_prompt: str,
         max_tokens: int | None,
     ) -> TurnResult:
+        from deepseek_tui.engine.tool_profiles import profile_includes_tool_search
+
         tools = await self._get_tools_with_mcp()
         self.turn_counter += 1
         step_error_count = 0
@@ -941,8 +1022,20 @@ class Engine:
                 reasoning_effort=self.default_reasoning_effort,
                 extra_body=dict(self.default_extra_body),
             )
+            logger.info(
+                "llm_invoke_start round=%d msg_count=%d tools_count=%d model=%s",
+                round_idx,
+                len(messages),
+                len(tools),
+                model,
+            )
             result = await self.turn_loop.run(
-                request, self.handle.emit, self.handle.cancel_event, tools=tools
+                request,
+                self.handle.emit,
+                self.handle.cancel_event,
+                tools=tools,
+                include_tool_search=profile_includes_tool_search(self.tool_profile),
+                include_code_execution=self.tool_profile is None,
             )
             if result.cancelled:
                 return result

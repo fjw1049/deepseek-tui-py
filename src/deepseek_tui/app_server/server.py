@@ -102,6 +102,7 @@ def build_fastapi_app(
         manager_cfg=_mgr_cfg,
         approval_bridge=approval_bridge,
         elevation_bridge=elevation_bridge,
+        shared_tool_runtime=runtime.tool_runtime,
     )
 
     # Per-request access log: method/path/status/duration. ``uvicorn.access``

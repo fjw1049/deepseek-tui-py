@@ -125,6 +125,10 @@ class AppRuntime:
         self.hooks = hooks if hooks is not None else _build_hook_dispatcher(self.config)
         self._llm_client: LLMClient | None = llm_client
 
+    @property
+    def tool_runtime(self) -> ToolRuntime | None:
+        return self._tool_runtime
+
     @classmethod
     async def create(
         cls,
@@ -139,8 +143,12 @@ class AppRuntime:
 
         cfg = config or Config()
         wd = (working_directory or Path.cwd()).resolve()
+        mcp_enabled = bool(getattr(cfg.features, "mcp", False))
         tool_runtime = await create_tool_runtime(
-            config=cfg, working_directory=wd, mode=mode
+            config=cfg,
+            working_directory=wd,
+            mode=mode,
+            start_mcp=mcp_enabled,
         )
         return cls(
             config=cfg,
@@ -656,6 +664,11 @@ class AppRuntime:
             status=status,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
             digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
+            next_run_at=(
+                str(body["next_run_at"]).strip()
+                if isinstance(body.get("next_run_at"), str) and str(body["next_run_at"]).strip()
+                else None
+            ),
         )
         try:
             record = manager.create_automation(req)

@@ -139,13 +139,9 @@ export async function syncDeepseekTuiConfig(
   if (!prev || prev.apiKey !== current.apiKey) {
     const apiKey = current.apiKey.trim()
     if (apiKey) {
-      commands.push({
-        args: ['auth', 'set', '--provider', 'deepseek', '--api-key-stdin'],
-        stdin: `${apiKey}\n`
-      })
+      commands.push({ args: ['config', 'set', 'api_key', apiKey] })
     } else {
-      commands.push({ args: ['auth', 'clear', '--provider', 'deepseek'] })
-      commands.push({ args: ['config', 'unset', 'auth_mode'] })
+      commands.push({ args: ['config', 'unset', 'api_key'] })
     }
   }
 
@@ -153,20 +149,6 @@ export async function syncDeepseekTuiConfig(
 
   const launcher = resolveRuntimeLauncher(settings.deepseek.binaryPath)
   for (const command of commands) {
-    try {
-      await runDeepseekCommand(launcher, command)
-    } catch (error) {
-      const isAuthSync =
-        command.args[0] === 'auth' &&
-        (command.args[1] === 'set' || command.args[1] === 'clear')
-      if (!isAuthSync) {
-        throw error
-      }
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn(
-        `[deepseek-gui] Skipped keyring auth sync (${command.args.join(' ')}): ${message}. ` +
-          'The managed runtime will still use the API key from GUI settings via DEEPSEEK_API_KEY.'
-      )
-    }
+    await runDeepseekCommand(launcher, command)
   }
 }

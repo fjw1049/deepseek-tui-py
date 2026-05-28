@@ -6,6 +6,8 @@ in `docs/DeepSeek-TUI-main/crates/secrets/src/lib.rs:54-176`.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from abc import ABC, abstractmethod
 from threading import Lock
 
@@ -93,10 +95,40 @@ class DefaultKeyringStore(KeyringStore):
         except KeyringError as err:
             raise SecretsError(f"keyring backend error: {err}") from err
 
+    def _macos_security_set(self, account: str, value: str) -> None:
+        """Upsert via ``security(1)`` when python-keyring delete-before-set fails (-25244).
+
+        Workbench may spawn a different Python (e.g. miniconda) than the one that
+        originally wrote the Keychain item; ``add-generic-password -U`` updates in
+        place without requiring delete permissions on the old ACL.
+        """
+        proc = subprocess.run(
+            [
+                "security",
+                "add-generic-password",
+                "-s",
+                self._service,
+                "-a",
+                account,
+                "-w",
+                value,
+                "-U",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+            raise SecretsError(f"keyring backend error: macOS security(1) failed: {detail}")
+
     def set(self, key: str, value: str) -> None:
         try:
             _keyring_pkg.set_password(self._service, key, value)
         except KeyringError as err:
+            if sys.platform == "darwin":
+                self._macos_security_set(key, value)
+                return
             raise SecretsError(f"keyring backend error: {err}") from err
 
     def delete(self, key: str) -> None:

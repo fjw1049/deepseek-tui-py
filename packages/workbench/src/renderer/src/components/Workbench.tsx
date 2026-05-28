@@ -19,7 +19,9 @@ import { Sidebar } from './chat/Sidebar'
 import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { FloatingComposer, type ComposerSurface } from './chat/FloatingComposer'
-import { createClawTaskFromText } from '../lib/claw-task-from-text'
+import { buildAutomationComposerPrompt } from '@shared/app-settings'
+import { resolveAutomationFeishuChatId } from '../lib/resolve-automation-feishu-chat-id'
+import { resolveAutomationMailTo } from '../lib/resolve-automation-mail-to'
 import { TodoSidebarPanel } from './chat/TodoSidebarPanel'
 import { extractTodosFromBlocks } from '../lib/extract-todos-from-blocks'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
@@ -281,7 +283,6 @@ export function Workbench(): ReactElement {
   const [mode, setMode] = useState<'plan' | 'agent' | 'ask'>('agent')
   const [composerSurface, setComposerSurface] = useState<ComposerSurface>('chat')
   const [automationSubmitting, setAutomationSubmitting] = useState(false)
-  const [automationNotice, setAutomationNotice] = useState<string | null>(null)
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(readStoredRightPanelMode)
   const [filePreviewTarget, setFilePreviewTarget] = useState<WorkspaceFileTarget | null>(null)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
@@ -356,19 +357,29 @@ export function Workbench(): ReactElement {
     const v = text.trim()
     if (!v || automationSubmitting) return
     setAutomationSubmitting(true)
-    setAutomationNotice(null)
+    setInput('')
+    setComposerSurface('chat')
     void (async () => {
-      const result = await createClawTaskFromText(v, { workspaceRoot })
-      setAutomationSubmitting(false)
-      if (result.kind === 'error') {
-        setError(result.message)
-        return
-      }
-      if (result.kind === 'created') {
-        setComposerSurface('chat')
-        setAutomationNotice(result.confirmationText)
+      try {
+        const settings = await window.dsGui.getSettings()
+        const feishuTo =
+          (await resolveAutomationFeishuChatId()) ??
+          settings.claw?.im?.feishuReceiveId?.trim() ??
+          ''
+        const mailTo = (await resolveAutomationMailTo()) ?? ''
+        const userTimezone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
+        const wrapped = buildAutomationComposerPrompt(v, {
+          feishuChatId: feishuTo,
+          mailTo,
+          workspaceRoot,
+          userTimezone
+        })
+        const ok = await sendMessage(wrapped, 'agent', { displayText: v })
+        if (!ok) return
         setError(null)
-        return
+      } finally {
+        setAutomationSubmitting(false)
       }
     })()
   }
@@ -748,22 +759,6 @@ export function Workbench(): ReactElement {
           </>
         ) : (
           <>
-        {automationNotice ? (
-          <div className="ds-no-drag shrink-0 border-b border-emerald-200/70 bg-emerald-50/90 backdrop-blur-lg dark:border-emerald-800/50 dark:bg-emerald-950/35">
-            <div
-              className={`${stageInsetClass} flex flex-wrap items-center justify-between gap-3 py-3 text-[14px] leading-6 text-emerald-950 dark:text-emerald-100`}
-            >
-              <span>{automationNotice}</span>
-              <button
-                type="button"
-                onClick={() => openSettings('claw')}
-                className="shrink-0 rounded-lg border border-emerald-400/40 bg-white/80 px-3 py-1 text-[12px] font-semibold text-emerald-800 transition hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
-              >
-                {t('viewClawTasks')}
-              </button>
-            </div>
-          </div>
-        ) : null}
         {error && !(runtimeConnection !== 'ready' && !activeThreadId) && (
           <div className="ds-no-drag shrink-0 border-b border-amber-200/70 bg-[rgba(255,248,235,0.82)] backdrop-blur-lg dark:border-amber-800/50 dark:bg-amber-950/35">
             <div className={`${stageInsetClass} flex w-full min-w-0 items-start justify-between gap-3 py-3`}>

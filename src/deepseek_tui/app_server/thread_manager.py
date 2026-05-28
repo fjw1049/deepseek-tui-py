@@ -73,6 +73,9 @@ logger = logging.getLogger(__name__)
 __all__ = ["RuntimeThreadManager"]
 
 
+TURN_FIRST_RESPONSE_TIMEOUT_S = 120.0
+
+
 def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
     """JSON-serializable mailbox envelope for Workbench sub-agent cards."""
     return {
@@ -154,6 +157,7 @@ class RuntimeThreadManager:
         llm_client: LLMClient | None = None,
         approval_bridge: Any | None = None,
         elevation_bridge: Any | None = None,
+        shared_tool_runtime: Any | None = None,
     ) -> None:
         self.config = config
         self.workspace = workspace.resolve()
@@ -162,6 +166,7 @@ class RuntimeThreadManager:
         self._llm_client = llm_client
         self._approval_bridge = approval_bridge
         self._elevation_bridge = elevation_bridge
+        self._shared_tool_runtime = shared_tool_runtime
 
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
@@ -919,18 +924,26 @@ class RuntimeThreadManager:
         handle = EngineHandle()
         workspace = Path(thread.workspace).expanduser().resolve()
         approval_handler = self._build_approval_handler(thread.id)
-        engine = await Engine.create(
-            handle=handle,
-            client=self._get_llm_client(),
-            config=self.config,
-            working_directory=workspace,
-            default_model=thread.model,
-            mode=(thread.mode or "agent").strip() or "agent",
-            task_data_dir=self.manager_cfg.task_data_dir,
-            start_mcp=bool(getattr(self.config.features, "mcp", False)),
-            approval_handler=approval_handler,
-            exec_policy=exec_policy_for_config(self.config),
-        )
+        shared_runtime = self._shared_tool_runtime
+        shared_mcp = None
+        if shared_runtime is not None:
+            shared_mcp = getattr(shared_runtime, "mcp_manager", None)
+        create_kwargs: dict[str, Any] = {
+            "handle": handle,
+            "client": self._get_llm_client(),
+            "config": self.config,
+            "working_directory": workspace,
+            "default_model": thread.model,
+            "mode": (thread.mode or "agent").strip() or "agent",
+            "task_data_dir": self.manager_cfg.task_data_dir,
+            "start_mcp": False,
+            "mcp_manager": shared_mcp,
+            "approval_handler": approval_handler,
+            "exec_policy": exec_policy_for_config(self.config),
+        }
+        if shared_runtime is not None:
+            create_kwargs["tool_runtime"] = shared_runtime
+        engine = await Engine.create(**create_kwargs)
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
@@ -1015,6 +1028,32 @@ class RuntimeThreadManager:
 
     # --- turn monitoring -----------------------------------------------------
 
+    async def _turn_first_response_watchdog(
+        self,
+        handle: EngineHandle,
+        first_response: asyncio.Event,
+        timeout_s: float,
+    ) -> None:
+        """Cancel the turn if the model emits no content within ``timeout_s``."""
+        from deepseek_tui.engine.events import TurnCancelledEvent
+
+        try:
+            await asyncio.wait_for(first_response.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "turn_first_response_timeout after=%.0fs", timeout_s
+            )
+            await handle.cancel("first_response_timeout")
+            try:
+                await asyncio.wait_for(first_response.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.error(
+                    "turn_first_response_force_fail reason=first_response_timeout"
+                )
+                await handle.inject_event(
+                    TurnCancelledEvent(reason="first_response_timeout")
+                )
+
     async def _monitor_turn_safe(
         self, thread_id: str, turn_id: str, handle: EngineHandle
     ) -> None:
@@ -1039,6 +1078,13 @@ class RuntimeThreadManager:
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
+        first_response = asyncio.Event()
+        watchdog = asyncio.create_task(
+            self._turn_first_response_watchdog(
+                handle, first_response, TURN_FIRST_RESPONSE_TIMEOUT_S
+            ),
+            name=f"turn-watchdog-{turn_id}",
+        )
 
         async for event in handle.events():
             if self._cancel_event.is_set():
@@ -1051,6 +1097,7 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, TextDeltaEvent):
+                first_response.set()
                 if current_reasoning_item_id is not None:
                     item = self.store.load_item(current_reasoning_item_id)
                     item.status = TurnItemLifecycleStatus.COMPLETED
@@ -1093,6 +1140,7 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, ThinkingDeltaEvent):
+                first_response.set()
                 if current_reasoning_item_id is None:
                     item_id = f"item_{uuid.uuid4().hex[:8]}"
                     now = datetime.now(timezone.utc)
@@ -1121,6 +1169,7 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, ToolCallEvent):
+                first_response.set()
                 tc = event.tool_call
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
                 tool_items[tc.id] = item_id
@@ -1326,6 +1375,7 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, ErrorEvent):
+                first_response.set()
                 turn_status = RuntimeTurnStatus.FAILED
                 turn_error = event.message
                 now = datetime.now(timezone.utc)
@@ -1347,10 +1397,15 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, TurnCancelledEvent):
-                turn_status = RuntimeTurnStatus.INTERRUPTED
+                if event.reason == "first_response_timeout":
+                    turn_status = RuntimeTurnStatus.FAILED
+                    turn_error = "模型首包响应超时，请稍后重试。"
+                else:
+                    turn_status = RuntimeTurnStatus.INTERRUPTED
                 break
 
             elif isinstance(event, TurnCompleteEvent):
+                first_response.set()
                 if event.usage is not None:
                     u = event.usage
                     turn_usage = {
@@ -1361,6 +1416,12 @@ class RuntimeThreadManager:
                 turn_status = RuntimeTurnStatus.COMPLETED
                 turn_error = None
                 break
+
+        watchdog.cancel()
+        try:
+            await watchdog
+        except asyncio.CancelledError:
+            pass
 
         # Check if interrupt was requested
         async with self._active_lock:

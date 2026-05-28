@@ -49,13 +49,13 @@ export function runtimeSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.P
     env.DEEPSEEK_REPO_ROOT = repoRoot
     const srcPath = join(repoRoot, 'src')
     env.PYTHONPATH = env.PYTHONPATH ? `${srcPath}:${env.PYTHONPATH}` : srcPath
-    const projectDeepseek = join(repoRoot, '.deepseek')
-    if (existsSync(join(projectDeepseek, 'config.toml'))) {
-      env.DEEPSEEK_HOME = projectDeepseek
-    }
+    // User state (config, mcp, skills, runtime.token) defaults to ~/.deepseek.
+    // Repo .deepseek/config.toml is merged as a project override by ConfigLoader.
   }
   env.DEEPSEEK_CONFIG_PATH = resolveDeepseekConfigPath()
   env.DEEPSEEK_MCP_CONFIG = resolveMcpConfigPath()
+  // Workbench-managed runtime: config.toml + DEEPSEEK_API_KEY only; skip macOS Keychain.
+  env.DEEPSEEK_SKIP_KEYRING = '1'
   return env
 }
 

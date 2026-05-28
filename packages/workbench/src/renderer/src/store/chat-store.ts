@@ -1232,6 +1232,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providerId } = get()
     const trimmedText = text.trim()
     if (!trimmedText) return false
+    const displayText =
+      overrides?.displayText?.trim() ||
+      overrides?.queued?.displayText?.trim() ||
+      trimmedText
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
       return false
@@ -1259,7 +1263,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               kind: 'user' as const,
               id: steerBlockId,
               createdAt: new Date(now).toISOString(),
-              text: trimmedText,
+              text: displayText,
               ...(userModelChip ? { modelLabel: userModelChip } : {})
             }
           ],
@@ -1292,6 +1296,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           {
             id: `q-${now}-${s.queuedMessages.length}`,
             text: trimmedText,
+            ...(displayText !== trimmedText ? { displayText } : {}),
             ...(mode ? { mode } : {}),
             ...(composerModel ? { model: composerModel } : {}),
             ...(userModelChip ? { modelLabel: userModelChip } : {})
@@ -1310,7 +1315,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const queued = overrides?.queued
     const userBlockId = queued?.id ?? `u-${now}`
     let activeThreadId = get().activeThreadId
-    const generatedTitle = deriveThreadTitleFromPrompt(trimmedText)
+    const generatedTitle = deriveThreadTitleFromPrompt(displayText)
     const activeThread = activeThreadId
       ? get().threads.find((thread) => thread.id === activeThreadId) ?? null
       : null
@@ -1341,7 +1346,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           kind: 'user' as const,
           id: userBlockId,
           createdAt: new Date(now).toISOString(),
-          text: trimmedText,
+          text: displayText,
           ...(userModelChip ? { modelLabel: userModelChip } : {})
         }
       ],
@@ -1445,7 +1450,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             s.blocks,
             userBlockId,
             userMessageItemId,
-            trimmedText,
+            displayText,
             userModelChip
           ),
           currentTurnUserId: s.currentTurnUserId === userBlockId ? userMessageItemId : s.currentTurnUserId,

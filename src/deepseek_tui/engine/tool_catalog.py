@@ -143,14 +143,19 @@ def build_model_tool_catalog(
 # --- Advanced tooling injection (Rust tool_catalog.rs:120-180) ------------
 
 
-def ensure_advanced_tooling(tools: list[dict[str, Any]]) -> None:
+def ensure_advanced_tooling(
+    tools: list[dict[str, Any]],
+    *,
+    include_tool_search: bool = True,
+    include_code_execution: bool = True,
+) -> None:
     """Ensure built-in advanced tools (code_execution, tool_search) are present."""
     existing = set()
     for t in tools:
         fn = t.get("function", t)
         existing.add(fn.get("name"))
 
-    if CODE_EXECUTION_TOOL_NAME not in existing:
+    if CODE_EXECUTION_TOOL_NAME not in existing and include_code_execution:
         tools.append(
             {
                 "type": "function",
@@ -176,7 +181,7 @@ def ensure_advanced_tooling(tools: list[dict[str, Any]]) -> None:
             }
         )
 
-    if TOOL_SEARCH_REGEX_NAME not in existing:
+    if TOOL_SEARCH_REGEX_NAME not in existing and include_tool_search:
         tools.append(
             {
                 "type": "function",
@@ -205,7 +210,7 @@ def ensure_advanced_tooling(tools: list[dict[str, Any]]) -> None:
             }
         )
 
-    if TOOL_SEARCH_BM25_NAME not in existing:
+    if TOOL_SEARCH_BM25_NAME not in existing and include_tool_search:
         tools.append(
             {
                 "type": "function",

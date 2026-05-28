@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
@@ -42,6 +43,8 @@ class McpManager:
         self._config_path = config_path.expanduser() if config_path else None
         self._last_mtime: float | None = None
         self._config_hash: str | None = None
+        self._discovered_tools_cache: list[dict[str, Any]] | None = None
+        self._discovered_tools_cache_path: Path | None = None
         if self._config_path is not None:
             from deepseek_tui.mcp.store import validate_mcp_config_path
 
@@ -51,6 +54,10 @@ class McpManager:
                 self._configs[cfg.name] = cfg
         if self._config_path is not None and self._config_path.exists():
             self._record_config_fingerprint(self._config_path)
+            self._discovered_tools_cache_path = (
+                self._config_path.parent / "mcp-tools-cache.json"
+            )
+            self._load_discovered_tools_cache_from_disk()
 
     @property
     def server_names(self) -> list[str]:
@@ -79,21 +86,38 @@ class McpManager:
             if result is not None:
                 await result
 
-        for name, cfg in self._configs.items():
+        async def _start_server(name: str) -> tuple[str, str | None]:
+            cfg = self._configs[name]
             if not cfg.enabled:
                 await _emit_async(name, McpStartupStatus.cancelled())
-                cancelled.append(name)
-                continue
+                return name, "cancelled"
             await _emit_async(name, McpStartupStatus.starting())
             try:
                 await self._ensure_client(name)
             except Exception as exc:  # noqa: BLE001 — surface per-server failure
                 err = str(exc)
                 await _emit_async(name, McpStartupStatus.failed(err))
-                failed.append(McpStartupFailure(server_name=name, error=err))
-                continue
+                return name, err
             await _emit_async(name, McpStartupStatus.ready())
-            ready.append(name)
+            return name, None
+
+        start_names = [name for name, cfg in self._configs.items() if cfg.enabled]
+        for name, cfg in self._configs.items():
+            if not cfg.enabled:
+                await _emit_async(name, McpStartupStatus.cancelled())
+                cancelled.append(name)
+
+        if start_names:
+            results = await asyncio.gather(
+                *(_start_server(name) for name in start_names)
+            )
+            for name, err in results:
+                if err == "cancelled":
+                    continue
+                if err is None:
+                    ready.append(name)
+                else:
+                    failed.append(McpStartupFailure(server_name=name, error=err))
 
         summary = McpStartupCompleteEvent(
             ready=ready,
@@ -109,6 +133,41 @@ class McpManager:
             await client.stop()
         self._clients.clear()
         self._tool_map.clear()
+        self._discovered_tools_cache = None
+
+    def _load_discovered_tools_cache_from_disk(self) -> None:
+        path = self._discovered_tools_cache_path
+        if path is None or not path.exists() or self._config_hash is None:
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return
+        if not isinstance(raw, dict):
+            return
+        if raw.get("config_hash") != self._config_hash:
+            return
+        tools = raw.get("tools")
+        if isinstance(tools, list):
+            self._discovered_tools_cache = list(tools)
+
+    def _persist_discovered_tools_cache_to_disk(self) -> None:
+        path = self._discovered_tools_cache_path
+        if (
+            path is None
+            or self._config_hash is None
+            or self._discovered_tools_cache is None
+        ):
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "config_hash": self._config_hash,
+                "tools": self._discovered_tools_cache,
+            }
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            return
 
     async def reload_if_config_changed(self) -> bool:
         """Lazy reload when config file mtime/content changed (Rust #1267)."""
@@ -153,6 +212,10 @@ class McpManager:
         prior :meth:`start_all` — ``Engine._get_tools_with_mcp`` relies on
         this.
         """
+        if self._discovered_tools_cache is not None:
+            self._rebuild_tool_map_from_cache()
+            return list(self._discovered_tools_cache)
+
         api_tools: list[dict[str, Any]] = []
         self._tool_map.clear()
         for server_name, cfg in self._configs.items():
@@ -178,7 +241,25 @@ class McpManager:
                         },
                     }
                 )
-        return sorted(api_tools, key=lambda t: t["function"]["name"])
+        self._discovered_tools_cache = sorted(
+            api_tools, key=lambda t: t["function"]["name"]
+        )
+        self._persist_discovered_tools_cache_to_disk()
+        return list(self._discovered_tools_cache)
+
+    def _rebuild_tool_map_from_cache(self) -> None:
+        self._tool_map.clear()
+        if self._discovered_tools_cache is None:
+            return
+        for entry in self._discovered_tools_cache:
+            fn = entry.get("function", entry)
+            qualified = fn.get("name")
+            if not isinstance(qualified, str):
+                continue
+            parsed = parse_qualified_tool_name(qualified)
+            if parsed is None:
+                continue
+            self._tool_map[qualified] = parsed
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         mapping = self._tool_map.get(qualified_name)

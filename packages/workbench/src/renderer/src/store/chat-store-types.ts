@@ -9,6 +9,7 @@ import type {
 export type QueuedUserMessage = {
   id: string
   text: string
+  displayText?: string
   mode?: string
   model?: string
   modelLabel?: string
@@ -16,6 +17,8 @@ export type QueuedUserMessage = {
 
 export type SendMessageOverrides = {
   queued?: QueuedUserMessage
+  /** Shown in the timeline; `text` is still sent to the runtime. */
+  displayText?: string
 }
 
 export type InitialSetupMode = 'required' | 'preview'

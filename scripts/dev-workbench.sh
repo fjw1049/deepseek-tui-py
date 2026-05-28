@@ -5,10 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEEPSEEK_REPO_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
-# Project-local state (config, feishu.toml, runtime.token, …)
-if [[ -f "$ROOT/.deepseek/config.toml" ]]; then
-  export DEEPSEEK_HOME="$ROOT/.deepseek"
-fi
+export DEEPSEEK_SKIP_KEYRING=1
+# User state stays under ~/.deepseek (config, mcp, skills, runtime.token, …).
+# Repo-local .deepseek/config.toml is merged as a project override by ConfigLoader.
 
 # Prefer repo venv so Electron does not fall back to system python3 (often 3.9 without deps).
 if [[ -z "${DEEPSEEK_PYTHON:-}" && -x "$ROOT/.venv/bin/python" ]]; then

@@ -25,6 +25,10 @@ TIMELINE_SUMMARY_LIMIT = 240
 ARTIFACT_THRESHOLD = 1200
 MAX_WORKERS = 4
 _MAX_TERMINAL_IN_MEMORY = 50
+# Running tasks older than this at recovery are failed instead of re-queued.
+STALE_RUNNING_TASK_SECONDS = 300
+CRON_PROMPT_MARKER = "[cron:"
+STALE_RESTART_ERROR = "Task interrupted (stale after restart)"
 
 
 class TaskStatus(str, Enum):
@@ -728,6 +732,14 @@ class TaskManager:
                     counts.canceled += 1
             return counts
 
+    def _count_running_cron_tasks_locked(self) -> int:
+        return sum(
+            1
+            for task in self._tasks.values()
+            if task.status is TaskStatus.RUNNING
+            and task.prompt.lstrip().startswith(CRON_PROMPT_MARKER)
+        )
+
     async def _worker_loop(self) -> None:
         while not self._shutdown.is_set():
             next_run = await self._pop_next_task()
@@ -743,10 +755,19 @@ class TaskManager:
 
     async def _pop_next_task(self) -> tuple[str, ExecutionTask, asyncio.Event] | None:
         async with self._lock:
-            while self._queue:
+            attempts = len(self._queue)
+            while attempts > 0 and self._queue:
+                attempts -= 1
                 task_id = self._queue.popleft()
                 task = self._tasks.get(task_id)
                 if task is None or task.status is not TaskStatus.QUEUED:
+                    self._persist_queue_locked()
+                    continue
+                if (
+                    task.prompt.lstrip().startswith(CRON_PROMPT_MARKER)
+                    and self._count_running_cron_tasks_locked() >= 1
+                ):
+                    self._queue.append(task_id)
                     self._persist_queue_locked()
                     continue
                 now = _utc_now_iso()
@@ -856,6 +877,26 @@ class TaskManager:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_stale_running_task(task: TaskRecord) -> bool:
+    started = _parse_iso_utc(task.started_at)
+    if started is None:
+        return False
+    age = (datetime.now(timezone.utc) - started).total_seconds()
+    return age > STALE_RUNNING_TASK_SECONDS
 
 
 def _duration_ms(start_iso: str, end_iso: str) -> int:
@@ -980,17 +1021,31 @@ def _load_state(
                     f" v{CURRENT_TASK_SCHEMA_VERSION}"
                 )
             if task.status is TaskStatus.RUNNING:
-                task.status = TaskStatus.QUEUED
-                task.started_at = None
-                task.ended_at = None
-                task.duration_ms = None
-                task.timeline.append(
-                    TaskTimelineEntry(
-                        timestamp=_utc_now_iso(),
-                        kind="recovered",
-                        summary="Recovered from restart and re-queued",
+                if _is_stale_running_task(task):
+                    now = _utc_now_iso()
+                    task.status = TaskStatus.FAILED
+                    task.started_at = task.started_at
+                    task.ended_at = now
+                    task.error = STALE_RESTART_ERROR
+                    task.timeline.append(
+                        TaskTimelineEntry(
+                            timestamp=now,
+                            kind="failed",
+                            summary="Stale running task marked failed on recovery",
+                        )
                     )
-                )
+                else:
+                    task.status = TaskStatus.QUEUED
+                    task.started_at = None
+                    task.ended_at = None
+                    task.duration_ms = None
+                    task.timeline.append(
+                        TaskTimelineEntry(
+                            timestamp=_utc_now_iso(),
+                            kind="recovered",
+                            summary="Recovered from restart and re-queued",
+                        )
+                    )
             # Safety: if a queued task points at a workspace that no longer
             # exists on disk (common with pytest temp dirs or moved
             # projects), fail it immediately instead of looping forever on

@@ -21,13 +21,26 @@ behaves).
 
 from __future__ import annotations
 
+import os
+
 from deepseek_tui.config.models import Config
 
 from . import SecretsError
+from .env_map import env_for
 from .facade import Secrets
 from .store import DEFAULT_SERVICE, KeyringStore
 
 __all__ = ["SecretsManager"]
+
+
+def _skip_keyring() -> bool:
+    """When set, API keys come from env / config.toml only (no macOS Keychain)."""
+    return os.getenv("DEEPSEEK_SKIP_KEYRING", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 class SecretsManager:
@@ -53,27 +66,23 @@ class SecretsManager:
     def resolve_api_key(
         self, config: Config, provider_name: str | None = None
     ) -> str | None:
-        """Resolve an API key with ``keyring → env → config`` precedence.
+        """Resolve an API key.
 
-        Behavior:
+        Default: ``keyring → env → config.toml``.
 
-        1. Look up ``provider`` in the keyring (returning ``None`` for
-           empty/whitespace values, matching Rust lib.rs:367).
-        2. Otherwise return the canonical env value via
-           :func:`env_for` — this includes the NVIDIA alias chain.
-        3. Otherwise return ``config.providers[provider].api_key`` if
-           present and non-empty.
-        4. Otherwise ``None``.
+        When ``DEEPSEEK_SKIP_KEYRING=1``: ``env → config.toml`` only (Workbench default).
         """
         provider = provider_name or config.provider
 
-        # Layers 1 + 2 (keyring + env): delegate to the façade.
-        resolved = self._secrets.resolve(provider)
-        if resolved is not None:
-            return resolved
+        if not _skip_keyring():
+            resolved = self._secrets.resolve(provider)
+            if resolved is not None:
+                return resolved
+        else:
+            env_val = env_for(provider)
+            if env_val is not None and env_val.strip():
+                return env_val
 
-        # Layer 3 (config-file): the wrapped layer that Rust leaves to
-        # callers. Treat empty/whitespace values as unset for symmetry.
         provider_config = config.providers.get(provider)
         if provider_config and provider_config.api_key:
             value = provider_config.api_key

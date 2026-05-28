@@ -161,11 +161,6 @@ export type ClawRunResult =
   | { ok: true; threadId: string; turnId?: string; text?: string; message?: string }
   | { ok: false; message: string }
 
-export type ClawTaskFromTextResult =
-  | { kind: 'noop' }
-  | { kind: 'created'; taskId: string; title: string; scheduleAt: string; confirmationText: string }
-  | { kind: 'error'; message: string }
-
 export type ClawRuntimeStatus = {
   imServerRunning: boolean
   imUrl: string
@@ -211,8 +206,79 @@ export const CLAW_CURRENT_USER_REQUEST_HEADING = '[Current user request]'
 export const CLAW_MANAGED_INSTRUCTIONS_HEADING = '[Claw managed instructions]'
 export const CLAW_IM_AGENT_INSTRUCTIONS_HEADING = '[Claw IM agent instructions]'
 export const CLAW_FEISHU_INBOUND_MESSAGE_HEADING = '[Feishu / Lark inbound message]'
+export const AUTOMATION_COMPOSER_HEADING = '[Scheduled automation request]'
 const CLAW_SCHEDULE_TOOL_HINT =
-  'DeepSeek GUI scheduled-task tools are available in this Claw runtime. When the user asks to create, list, edit, enable, disable, reschedule, or delete scheduled tasks/reminders, prefer using the schedule tools (`claw_schedule_list`, `claw_schedule_create`, `claw_schedule_update`, `claw_schedule_delete`) instead of only describing steps.'
+  'When the user asks to create, list, edit, pause, resume, delete, or run scheduled automations or reminders, use the automation tools (`current_time`, `automation_create`, `automation_list`, `automation_read`, `automation_update`, `automation_pause`, `automation_resume`, `automation_delete`, `automation_run`) instead of only describing steps. Call `current_time` first for relative scheduling.'
+
+export type AutomationComposerContext = {
+  feishuChatId?: string
+  mailTo?: string
+  workspaceRoot?: string
+  /** IANA timezone for current_time and user-facing schedule confirmations. */
+  userTimezone?: string
+}
+
+export function buildAutomationComposerPrompt(
+  userText: string,
+  context: AutomationComposerContext = {}
+): string {
+  const trimmed = userText.trim()
+  const feishuTo = context.feishuChatId?.trim() ?? ''
+  const mailTo = context.mailTo?.trim() ?? ''
+  const userTimezone = context.userTimezone?.trim() || 'Asia/Shanghai'
+  const hints: string[] = [
+    'The user wants a scheduled or delayed automation. Follow this playbook:',
+    'Do NOT call tool_search_tool_regex, tool_search_tool_bm25, or any other discovery tools — tool names are listed below.',
+    'Only use these tools for this request: current_time, automation_create (and automation_list/read/update/pause/resume/delete/run if the user asks to manage existing jobs).',
+    `1. Call \`current_time\` with timezone "${userTimezone}" and offset_minutes [1] when the user says "in 1 minute" (use [2] for 2 minutes, etc.; integer 2 also works).`,
+    '2. Recurring jobs: set `rrule` (FREQ=HOURLY;INTERVAL=N or FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30).',
+    '3. One-shot or delayed runs: set `next_run_at` to the exact `in_Nmin_utc` value from current_time (ISO8601 UTC) and use a far-future placeholder rrule such as FREQ=HOURLY;INTERVAL=8760.',
+    '4. Call `automation_create` with name, prompt (the task to run), rrule, optional next_run_at/cwds, and delivery when the user wants results sent.',
+    `5. Confirm the automation id, schedule, and delivery target in plain language. Quote the exact \`in_Nmin_local\` string from current_time for the run time in ${userTimezone} — never guess or use UTC-only.`
+  ]
+  hints.push(
+    `User timezone: ${userTimezone}. Re-call current_time if more than 30 seconds pass before automation_create.`
+  )
+  const wantsFeishu = /飞书|feishu|lark/i.test(trimmed)
+  const wantsEmail = /邮箱|邮件|email|mail/i.test(trimmed)
+  if (wantsFeishu || feishuTo) {
+    if (feishuTo) {
+      hints.push(
+        'Feishu delivery is required. Do NOT ask the user for open_chat_id — use this configured target.',
+        'You MUST pass delivery exactly as:',
+        `{"mode":"feishu","to":"${feishuTo}","best_effort":true}`
+      )
+    } else {
+      hints.push(
+        'The user asked for Feishu delivery but no default chat_id is configured. Ask for the Feishu open_chat_id before calling automation_create.'
+      )
+    }
+  }
+  if (wantsEmail || mailTo) {
+    if (mailTo) {
+      hints.push(
+        'Email delivery: pass delivery as:',
+        `{"mode":"email","to":"${mailTo}","best_effort":true}`
+      )
+    } else if (!wantsFeishu) {
+      hints.push(
+        'The user asked for email delivery but no default mail_to is configured. Ask for the recipient address before calling automation_create.'
+      )
+    }
+  }
+  if (context.workspaceRoot?.trim()) {
+    hints.push(`Workspace cwd for the task: ${context.workspaceRoot.trim()}`)
+  }
+  return [
+    AUTOMATION_COMPOSER_HEADING,
+    '',
+    hints.join('\n'),
+    '',
+    '---',
+    CLAW_CURRENT_USER_REQUEST_HEADING,
+    trimmed
+  ].join('\n')
+}
 
 export function defaultClawImAgentProfile(): ClawImAgentProfileV1 {
   return {
@@ -349,6 +415,15 @@ export function buildClawRuntimePrompt(
   return `${CLAW_MANAGED_INSTRUCTIONS_HEADING}\n\n${instructions.join('\n\n')}\n\n---\n${CLAW_CURRENT_USER_REQUEST_HEADING}\n${prompt}`
 }
 
+export function unwrapAutomationComposerPromptForDisplay(text: string): string {
+  if (!text.includes(AUTOMATION_COMPOSER_HEADING)) return text
+  const markerIndex = text.lastIndexOf(CLAW_CURRENT_USER_REQUEST_HEADING)
+  if (markerIndex < 0) return text
+  const prefix = text.slice(0, markerIndex)
+  if (!prefix.includes(AUTOMATION_COMPOSER_HEADING)) return text
+  return text.slice(markerIndex + CLAW_CURRENT_USER_REQUEST_HEADING.length).trimStart()
+}
+
 export function unwrapClawRuntimePromptForDisplay(text: string): string {
   const markerIndex = text.lastIndexOf(CLAW_CURRENT_USER_REQUEST_HEADING)
   if (markerIndex < 0) return text
@@ -363,7 +438,9 @@ export function unwrapClawRuntimePromptForDisplay(text: string): string {
 }
 
 export function unwrapClawUserPromptForDisplay(text: string): string {
-  const unwrapped = unwrapClawRuntimePromptForDisplay(text)
+  const unwrapped = unwrapAutomationComposerPromptForDisplay(
+    unwrapClawRuntimePromptForDisplay(text)
+  )
   if (!unwrapped.startsWith(CLAW_FEISHU_INBOUND_MESSAGE_HEADING)) return unwrapped
   const splitIndex = unwrapped.indexOf('\n\n')
   if (splitIndex < 0) return unwrapped

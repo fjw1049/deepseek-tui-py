@@ -18,6 +18,7 @@ from deepseek_tui.tools.automation_tools import (
     AutomationUpdateTool,
 )
 from deepseek_tui.tools.deprecation import DeprecatingAliasTool
+from deepseek_tui.tools.time_tools import CurrentTimeTool
 from deepseek_tui.tools.file_tools import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from deepseek_tui.tools.retrieve_tool_result import RetrieveToolResultTool
 from deepseek_tui.tools.git_tools import (
@@ -200,6 +201,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             registry.register(tool)
 
     if cfg.features.automations:
+        registry.register(CurrentTimeTool())
         for tool in [
             AutomationCreateTool(),
             AutomationListTool(),

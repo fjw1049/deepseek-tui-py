@@ -8,12 +8,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from deepseek_tui.automation.inbox import build_digest_block, email_send_text, feishu_send_text
+from deepseek_tui.automation.delivery_format import (
+    format_delivery_body,
+    should_skip_delivery_for_error,
+)
+from deepseek_tui.automation.inbox import (
+    build_digest_block,
+    default_feishu_chat_id_from_config,
+    email_send_text,
+    feishu_send_text,
+)
 from deepseek_tui.automation.triage import TRIAGE_DEFER, TRIAGE_RUN, apply_triage
 from deepseek_tui.automation.types import (
     DeliveryConfig,
     DigestConfig,
-    cron_prompt_prefix,
+    cron_execution_prefix,
 )
 
 if TYPE_CHECKING:
@@ -22,6 +31,23 @@ if TYPE_CHECKING:
     from deepseek_tui.tools.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _skip_internal_failure_delivery(
+    automation_id: str,
+    automation_name: str,
+    error: str | None,
+) -> bool:
+    """Mark delivery done without notifying user for internal failures."""
+    if not should_skip_delivery_for_error(error):
+        return False
+    logger.info(
+        "[automation][delivery] skipped internal failure automation=%s name=%s error=%s",
+        automation_id,
+        automation_name,
+        (error or "").strip()[:120],
+    )
+    return True
 
 
 class DeliverySink(Protocol):
@@ -81,7 +107,7 @@ class _EmailSink:
         to_addr = config.to or config.chat_id
         if not to_addr:
             raise ValueError("delivery.mode=email requires to (recipient address)")
-        subject = f"[{automation_name}] 自动化摘要"
+        subject = f"{automation_name} · 自动化摘要"
         await email_send_text(to_addr=to_addr, subject=subject, body=summary)
 
 
@@ -96,9 +122,10 @@ class _FeishuSink:
     ) -> None:
         chat_id = config.chat_id or config.to
         if not chat_id:
+            chat_id = default_feishu_chat_id_from_config()
+        if not chat_id:
             raise ValueError("delivery.mode=feishu requires chat_id or to")
-        header = f"[{automation_name}]\n"
-        await feishu_send_text(receive_id=chat_id, text=header + summary)
+        await feishu_send_text(receive_id=chat_id, text=summary)
 
 
 def _sink_for_mode(
@@ -134,7 +161,7 @@ async def build_trigger_prompt(
 
 async def build_final_prompt(automation: AutomationRecord) -> str:
     digest = DigestConfig.from_mapping(automation.digest)
-    prefix = cron_prompt_prefix(automation.id, automation.name)
+    prefix = cron_execution_prefix(automation.id, automation.name)
     block = await build_digest_block(digest)
     return prefix + block + automation.prompt.strip()
 
@@ -146,7 +173,15 @@ async def enqueue_automation_task(
 ) -> None:
     """Enqueue task — same defaults as legacy ``_enqueue_run_task``."""
     from deepseek_tui.tools.automation_manager import AutomationRunStatus
-    from deepseek_tui.tools.task_manager import NewTaskRequest
+    from deepseek_tui.tools.task_manager import NewTaskRequest, TaskStatus
+
+    if run.task_id is not None:
+        try:
+            existing = await task_manager.get_task(run.task_id)
+            if existing.status in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+                return
+        except Exception:  # noqa: BLE001
+            pass
 
     workspace = automation.cwds[0] if automation.cwds else None
     new_task = NewTaskRequest(
@@ -183,36 +218,75 @@ async def try_deliver_completed_run(
     *,
     thread_manager: RuntimeThreadManager | None = None,
 ) -> bool:
-    """After reconcile marks COMPLETED: deliver summary once (OH post-run)."""
+    """Deliver once when a run reaches a terminal state (completed or failed)."""
     from deepseek_tui.tools.automation_manager import AutomationRunStatus
     from deepseek_tui.tools.task_manager import TaskStatus
 
-    if run.status is not AutomationRunStatus.COMPLETED or run.delivery_done:
+    if run.delivery_done:
         return False
-    if run.task_id is None:
+    if run.status not in (
+        AutomationRunStatus.COMPLETED,
+        AutomationRunStatus.FAILED,
+    ):
         return False
 
     delivery = DeliveryConfig.from_mapping(automation.delivery)
     if not delivery.is_active():
         return False
 
-    try:
-        task = await task_manager.get_task(run.task_id)
-    except Exception:
-        logger.warning(
-            "[automation][delivery] task missing automation=%s run=%s task=%s",
-            automation.id,
-            run.id,
-            run.task_id,
+    summary: str | None = None
+    failure_error: str | None = None
+
+    if run.status is AutomationRunStatus.FAILED:
+        task = None
+        if run.task_id is not None:
+            try:
+                task = await task_manager.get_task(run.task_id)
+            except Exception:
+                logger.warning(
+                    "[automation][delivery] task missing automation=%s run=%s task=%s",
+                    automation.id,
+                    run.id,
+                    run.task_id,
+                )
+                return False
+            if task.status is not TaskStatus.FAILED:
+                return False
+        failure_error = run.error or (task.error if task is not None else None)
+        if _skip_internal_failure_delivery(
+            automation.id, automation.name, failure_error
+        ):
+            run.delivery_done = True
+            return True
+        summary = format_delivery_body(
+            succeeded=False,
+            raw_summary=task.result_summary if task is not None else None,
+            automation_name=automation.name,
+            error=failure_error,
         )
-        return False
+    elif run.status is AutomationRunStatus.COMPLETED:
+        if run.task_id is None:
+            return False
+        try:
+            task = await task_manager.get_task(run.task_id)
+        except Exception:
+            logger.warning(
+                "[automation][delivery] task missing automation=%s run=%s task=%s",
+                automation.id,
+                run.id,
+                run.task_id,
+            )
+            return False
+        if task.status is not TaskStatus.COMPLETED:
+            return False
+        summary = format_delivery_body(
+            succeeded=True,
+            raw_summary=task.result_summary,
+            automation_name=automation.name,
+        )
 
-    if task.status is not TaskStatus.COMPLETED:
-        return False
-
-    summary = (task.result_summary or "").strip()
     if not summary:
-        summary = "automation task completed (empty summary)"
+        return False
 
     sink = _sink_for_mode(delivery.mode, thread_manager=thread_manager)
     try:
@@ -268,13 +342,28 @@ async def deliver_when_task_completes(
     except Exception:
         return
     if task.status is not TaskStatus.COMPLETED:
-        logger.warning(
-            "[automation][delivery] skip delivery task_id=%s status=%s",
-            task_id,
-            task.status,
+        if task.status is TaskStatus.FAILED:
+            if _skip_internal_failure_delivery(label_id, label, task.error):
+                return
+            summary = format_delivery_body(
+                succeeded=False,
+                raw_summary=task.result_summary,
+                automation_name=label,
+                error=task.error,
+            )
+        else:
+            logger.warning(
+                "[automation][delivery] skip delivery task_id=%s status=%s",
+                task_id,
+                task.status,
+            )
+            return
+    else:
+        summary = format_delivery_body(
+            succeeded=True,
+            raw_summary=task.result_summary,
+            automation_name=label,
         )
-        return
-    summary = (task.result_summary or "").strip() or "task completed (empty summary)"
     sink = _sink_for_mode(delivery_cfg.mode, thread_manager=thread_manager)
     try:
         await sink.deliver(
