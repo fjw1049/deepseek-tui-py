@@ -21,7 +21,8 @@ import {
   Settings,
   Shield,
   SlidersHorizontal,
-  Sparkles
+  Sparkles,
+  CalendarClock
 } from 'lucide-react'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
@@ -30,6 +31,7 @@ import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel } from './settings/PluginsPanel'
+import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
 
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -537,6 +539,10 @@ export function SettingsView(): ReactElement {
             <Anchor className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('hooks')}
           </button>
+          <button type="button" className={catCls('claw')} onClick={() => openSettings('claw')}>
+            <CalendarClock className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('claw')}
+          </button>
           <button type="button" className={catCls('permissions')} onClick={() => openSettings('permissions')}>
             <Shield className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('permissions')}
@@ -1021,6 +1027,13 @@ export function SettingsView(): ReactElement {
                   />
                 </SettingsCard>
           )}
+
+          {category === 'claw' && form ? (
+            <ClawSettingsPanel
+              form={form}
+              onClawPatch={(patch) => update({ claw: patch })}
+            />
+          ) : null}
 
           {category === 'hooks' && (
             <SettingsCard title={t('hooks')}>

@@ -1,0 +1,12 @@
+# Feishu settings now live in config.toml (same file as mail automation):
+#
+# [automation]
+# feishu_chat_id = "oc_xxxxxxxx"
+#
+# [automation.feishu]
+# app_id = "cli_xxxxxxxx"
+# app_secret = "xxxxxxxx"
+# domain = "feishu"   # or "lark"
+# chat_id = "oc_xxxxxxxx"
+#
+# Legacy path ~/.deepseek/automation/feishu.toml is still read as fallback.

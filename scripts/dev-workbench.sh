@@ -5,6 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEEPSEEK_REPO_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+# Project-local state (config, feishu.toml, runtime.token, …)
+if [[ -f "$ROOT/.deepseek/config.toml" ]]; then
+  export DEEPSEEK_HOME="$ROOT/.deepseek"
+fi
 
 # Prefer repo venv so Electron does not fall back to system python3 (often 3.9 without deps).
 if [[ -z "${DEEPSEEK_PYTHON:-}" && -x "$ROOT/.venv/bin/python" ]]; then
@@ -32,5 +36,5 @@ fi
 echo "[workbench] starting Electron + Vite dev server (UI: http://127.0.0.1:5173)"
 echo "[workbench] Python runtime API will auto-start on port ${DEEPSEEK_RUNTIME_PORT:-7878} when the GUI connects"
 echo "[workbench] do NOT open the runtime port in a browser — use the Electron window"
-echo "[workbench] smoke test (runtime must be up): ${ROOT}/scripts/smoke-workbench-chat.sh"
+echo "[workbench] smoke test (runtime must be up): ${ROOT}/scripts/smoke-workbench-chat.sh  # reads ~/.deepseek/runtime.token"
 npm run dev

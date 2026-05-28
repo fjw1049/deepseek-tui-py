@@ -12,3 +12,19 @@ show_thinking = true
 [state]
 database_path = "~/.deepseek_tui/state.db"
 autosave = true
+
+[features]
+tasks = true
+automations = true
+
+# Baidu hot search → email (see scripts/run-baidu-hotsearch-once.sh)
+[automation]
+mail_to = "you@example.com"
+
+[automation.email]
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_starttls = true
+username = "you@example.com"
+from_addr = "you@example.com"
+password_env = "DEEPSEEK_EMAIL_PASSWORD"

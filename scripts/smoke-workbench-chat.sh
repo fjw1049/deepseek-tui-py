@@ -1,19 +1,39 @@
 #!/usr/bin/env bash
 # Simulates the Workbench renderer chat path against a running runtime API.
+# Uses Bearer auth when ~/.deepseek/runtime.token (or DEEPSEEK_RUNTIME_TOKEN) exists;
+# otherwise talks to a runtime started with --insecure (no auth).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${DEEPSEEK_RUNTIME_PORT:-7878}"
 BASE="http://127.0.0.1:${PORT}"
-PYTHON="${DEEPSEEK_PYTHON:-${ROOT}/.venv/bin/python}"
+PYTHON="${DEEPSEEK_PYTHON:-}"
+if [[ -z "$PYTHON" && -x "${ROOT}/.venv/bin/python" ]]; then
+  PYTHON="${ROOT}/.venv/bin/python"
+fi
+PYTHON="${PYTHON:-python3}"
+TOKEN_FILE="${DEEPSEEK_HOME:-$HOME/.deepseek}/runtime.token"
+
+TOKEN="${DEEPSEEK_RUNTIME_TOKEN:-}"
+if [[ -z "$TOKEN" && -f "$TOKEN_FILE" ]]; then
+  TOKEN="$(tr -d '[:space:]' <"$TOKEN_FILE" || true)"
+fi
 
 if ! curl -sf "${BASE}/health" >/dev/null; then
   echo "[smoke] runtime not reachable at ${BASE}; start with:"
-  echo "  PYTHONPATH=${ROOT}/src ${PYTHON} -m deepseek_tui serve --http --insecure --port ${PORT} --config ${ROOT}/.deepseek/config.toml"
+  echo "  PYTHONPATH=${ROOT}/src ${PYTHON} -m deepseek_tui serve --http --port ${PORT} --config ${ROOT}/.deepseek/config.toml"
+  echo "  (or ./scripts/dev-workbench.sh and wait for the Electron window to connect)"
   exit 1
 fi
 
+if [[ -n "$TOKEN" ]]; then
+  echo "[smoke] using bearer token from DEEPSEEK_RUNTIME_TOKEN or ${TOKEN_FILE}"
+else
+  echo "[smoke] no runtime token — expecting --insecure runtime (no /v1 auth)"
+fi
+
 export SMOKE_BASE="$BASE"
+export SMOKE_TOKEN="$TOKEN"
 PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" <<'PY'
 import asyncio
 import json
@@ -23,6 +43,8 @@ import sys
 import httpx
 
 BASE = os.environ["SMOKE_BASE"]
+TOKEN = os.environ.get("SMOKE_TOKEN", "").strip()
+HEADERS = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
 
 
 async def read_sse_until(
@@ -39,6 +61,7 @@ async def read_sse_until(
         "GET",
         f"/v1/threads/{thread_id}/events",
         params={"since_seq": since_seq},
+        headers=HEADERS,
         timeout=None,
     ) as resp:
         resp.raise_for_status()
@@ -66,8 +89,23 @@ async def read_sse_until(
 
 
 async def main() -> int:
-    async with httpx.AsyncClient(base_url=BASE, timeout=120.0) as client:
+    async with httpx.AsyncClient(base_url=BASE, headers=HEADERS, timeout=120.0) as client:
         detail_before = await client.post("/v1/threads", json={"auto_approve": True})
+        if detail_before.status_code == 401 and not TOKEN:
+            print(
+                "[smoke] got 401 — runtime requires auth. Start with a token file, e.g.:",
+                file=sys.stderr,
+            )
+            print(
+                "  PYTHONPATH=... python -m deepseek_tui serve --http --port 7878 ...",
+                file=sys.stderr,
+            )
+            print(
+                "  then re-run this script (reads ~/.deepseek/runtime.token), or:",
+                file=sys.stderr,
+            )
+            print("  ./scripts/smoke-workbench-auth.sh", file=sys.stderr)
+            return 1
         detail_before.raise_for_status()
         thread_id = detail_before.json()["id"]
         detail = await client.get(f"/v1/threads/{thread_id}")
@@ -113,7 +151,8 @@ async def main() -> int:
             if it.get("turn_id") == turn_id and it.get("kind") == "agent_message"
         ]
         print(f"[smoke] agent_message={texts[-1] if texts else '(none)'}")
-        print("[smoke] ok")
+        label = "ok (authenticated)" if TOKEN else "ok"
+        print(f"[smoke] {label}")
         return 0
 
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from deepseek_tui.app_server.runtime_api.routes import (
     approvals,
+    automation,
     elevations,
     events,
     health,
@@ -42,4 +43,7 @@ def build_runtime_api_router() -> APIRouter:
     router.include_router(skills.router)
     router.include_router(tasks.router)
     router.include_router(workspace.router)
+    router.include_router(automation.router)
+    router.include_router(automation.ingress_router)
+    router.include_router(automation.automations_router)
     return router

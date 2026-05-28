@@ -54,6 +54,8 @@ export type ClawImSettingsV1 = {
   port: number
   path: string
   secret: string
+  /** Default Feishu open_id / chat_id for scheduled task delivery (mode=feishu). */
+  feishuReceiveId: string
   workspaceRoot: string
   model: string
   mode: ClawRunMode
@@ -453,6 +455,7 @@ export function defaultClawSettings(): ClawSettingsV1 {
       port: 8787,
       path: '/claw/im',
       secret: '',
+      feishuReceiveId: '',
       workspaceRoot: '',
       model: DEFAULT_CLAW_MODEL,
       mode: 'agent',
@@ -488,6 +491,8 @@ export function normalizeClawSettings(input: ClawSettingsPatchV1 | undefined): C
       port: normalizePositiveInteger(im.port, defaults.im.port, 1024, 65_535),
       path: normalizePathSegment(im.path),
       secret: typeof im.secret === 'string' ? im.secret.trim() : '',
+      feishuReceiveId:
+        typeof im.feishuReceiveId === 'string' ? im.feishuReceiveId.trim() : defaults.im.feishuReceiveId,
       workspaceRoot: typeof im.workspaceRoot === 'string' ? im.workspaceRoot.trim() : '',
       model: typeof im.model === 'string' && im.model.trim() ? im.model.trim() : DEFAULT_CLAW_MODEL,
       mode: normalizeRunMode(im.mode),

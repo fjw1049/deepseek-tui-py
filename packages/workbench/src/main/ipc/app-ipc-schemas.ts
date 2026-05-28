@@ -53,6 +53,15 @@ export const skillSaveFilePayloadSchema = z
 export const rootPathSchema = trimmedString(MAX_PATH_LENGTH)
 export const deepseekConfigContentSchema = z.string().max(MAX_CONFIG_FILE_BYTES)
 
+export const feishuConfigPayloadSchema = z
+  .object({
+    appId: trimmedString(200),
+    appSecret: trimmedString(500),
+    domain: trimmedString(50),
+    chatId: trimmedString(200)
+  })
+  .strict()
+
 export const workspaceRootSchema = trimmedString(MAX_PATH_LENGTH)
 export const gitBranchPayloadSchema = z
   .object({

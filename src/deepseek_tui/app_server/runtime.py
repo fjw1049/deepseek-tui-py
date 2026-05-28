@@ -612,6 +612,176 @@ class AppRuntime:
             return {"ok": False, "error": f"task not found: {exc}"}
         return {"ok": True, "task": _task_record_to_dict(record)}
 
+    def _automation_manager(self) -> Any:
+        if self._tool_runtime is None or self._tool_runtime.automation_manager is None:
+            return None
+        return self._tool_runtime.automation_manager
+
+    async def list_automations(self) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        records = manager.list_automations()
+        return {
+            "ok": True,
+            "automations": [_automation_record_to_dict(r) for r in records],
+        }
+
+    async def create_automation(self, body: dict[str, Any]) -> dict[str, Any]:
+        from deepseek_tui.tools.automation_manager import (
+            AutomationStatus,
+            CreateAutomationRequest,
+        )
+
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            name = _require_str(body, "name")
+            prompt = _require_str(body, "prompt")
+            rrule = _require_str(body, "rrule")
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        cwds_raw = body.get("cwds")
+        cwds = [str(p) for p in cwds_raw] if isinstance(cwds_raw, list) else []
+        status_raw = body.get("status")
+        status = None
+        if isinstance(status_raw, str) and status_raw.strip():
+            status = AutomationStatus(status_raw.strip().lower())
+        req = CreateAutomationRequest(
+            name=name,
+            prompt=prompt,
+            rrule=rrule,
+            cwds=cwds,
+            status=status,
+            delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
+            digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
+        )
+        try:
+            record = manager.create_automation(req)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "automation": _automation_record_to_dict(record)}
+
+    async def get_automation(self, automation_id: str) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            record = manager.get_automation(automation_id)
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "automation": _automation_record_to_dict(record)}
+
+    async def update_automation(
+        self, automation_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        from deepseek_tui.tools.automation_manager import (
+            AutomationStatus,
+            UpdateAutomationRequest,
+        )
+
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        status = None
+        status_raw = body.get("status")
+        if isinstance(status_raw, str) and status_raw.strip():
+            status = AutomationStatus(status_raw.strip().lower())
+        req = UpdateAutomationRequest(
+            name=_pick_str(body, "name"),
+            prompt=_pick_str(body, "prompt"),
+            rrule=_pick_str(body, "rrule"),
+            cwds=[str(p) for p in body["cwds"]] if isinstance(body.get("cwds"), list) else None,
+            status=status,
+            delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
+            digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
+        )
+        try:
+            record = manager.update_automation(automation_id, req)
+        except (KeyError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "automation": _automation_record_to_dict(record)}
+
+    async def delete_automation(self, automation_id: str) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            record = manager.delete_automation(automation_id)
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "automation": _automation_record_to_dict(record)}
+
+    async def run_automation(self, automation_id: str) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        try:
+            run = await manager.run_now(automation_id, self._tool_runtime.task_manager)
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "run": _automation_run_to_dict(run)}
+
+    async def pause_automation(self, automation_id: str) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            record = manager.pause_automation(automation_id)
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "automation": _automation_record_to_dict(record)}
+
+    async def resume_automation(self, automation_id: str) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            record = manager.resume_automation(automation_id)
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "automation": _automation_record_to_dict(record)}
+
+    async def fire_trigger(self, body: dict[str, Any]) -> dict[str, Any]:
+        from deepseek_tui.automation.pipeline import fire_http_trigger
+
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        prompt = _require_str(body, "prompt")
+        outcome = await fire_http_trigger(
+            prompt=prompt,
+            task_manager=self._tool_runtime.task_manager,
+            digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
+            delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
+            workspace=_pick_str(body, "workspace"),
+            triage_policy=str(body.get("triage_policy", "skip")),
+            triage_metadata=(
+                body.get("triage_metadata")
+                if isinstance(body.get("triage_metadata"), dict)
+                else None
+            ),
+        )
+        return {"ok": True, **outcome}
+
+    async def list_automation_runs(
+        self, automation_id: str, *, limit: int | None = None
+    ) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            manager.get_automation(automation_id)
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        runs = manager.list_runs(automation_id, limit=limit)
+        return {
+            "ok": True,
+            "runs": [_automation_run_to_dict(r) for r in runs],
+        }
+
     async def list_mcp_servers(self) -> dict[str, Any]:
         """Mirror Rust ``list_mcp_servers`` (runtime_api.rs:678)."""
         if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
@@ -778,6 +948,14 @@ def _require_str(data: dict[str, Any], key: str) -> str:
     if value is None:
         raise ValueError(f"{key} is required")
     return value
+
+
+def _automation_record_to_dict(record: Any) -> dict[str, Any]:
+    return record.to_dict()
+
+
+def _automation_run_to_dict(run: Any) -> dict[str, Any]:
+    return run.to_dict()
 
 
 def _thread_to_dict(rec: ThreadRecord) -> dict[str, Any]:

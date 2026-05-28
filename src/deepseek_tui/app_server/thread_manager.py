@@ -366,6 +366,62 @@ class RuntimeThreadManager:
             RuntimeTurnStatus.IN_PROGRESS,
         )
 
+    async def append_automation_notice(
+        self,
+        thread_id: str,
+        *,
+        automation_name: str,
+        summary: str,
+    ) -> None:
+        """Push a read-only STATUS item + SSE for automation delivery (no LLM)."""
+        from deepseek_tui.app_server.runtime_threads import summarize_text
+
+        thread = self.store.load_thread(thread_id)
+        now = datetime.now(timezone.utc)
+        turn_id = thread.latest_turn_id
+        if turn_id is None:
+            turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+            turn = TurnRecord(
+                id=turn_id,
+                thread_id=thread_id,
+                status=RuntimeTurnStatus.COMPLETED,
+                input_summary=summarize_text(summary, SUMMARY_LIMIT),
+                created_at=now,
+                started_at=now,
+                ended_at=now,
+            )
+            self.store.save_turn(turn)
+            thread.latest_turn_id = turn_id
+
+        item_id = f"item_{uuid.uuid4().hex[:8]}"
+        header = f"[{automation_name}] "
+        body = header + summary
+        item = TurnItemRecord(
+            id=item_id,
+            turn_id=turn_id,
+            kind=TurnItemKind.STATUS,
+            status=TurnItemLifecycleStatus.COMPLETED,
+            summary=summarize_text(body, SUMMARY_LIMIT),
+            detail=body,
+            started_at=now,
+            ended_at=now,
+            metadata={"source": "automation_delivery"},
+        )
+        turn = self.store.load_turn(turn_id)
+        if item_id not in turn.item_ids:
+            turn.item_ids.append(item_id)
+        self.store.save_item(item)
+        self.store.save_turn(turn)
+        thread.updated_at = now
+        self.store.save_thread(thread)
+        await self._emit_event(
+            thread_id,
+            turn_id,
+            item_id,
+            "automation.delivered",
+            {"automation_name": automation_name, "summary": summary},
+        )
+
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
         if req.archived is None and req.title is None:
             raise ValueError("At least one thread field is required")

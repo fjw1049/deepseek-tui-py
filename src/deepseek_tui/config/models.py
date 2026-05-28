@@ -92,6 +92,42 @@ class FeatureConfig(BaseModel):
     automations: bool = False
 
 
+class AutomationEmailConfig(BaseModel):
+    """SMTP/IMAP for automation delivery — lives under ``[automation.email]`` in config.toml."""
+
+    imap_host: str | None = None
+    imap_port: int = 993
+    ssl: bool = True
+    mailbox: str = "INBOX"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_ssl: bool = False
+    smtp_starttls: bool = True
+    username: str | None = None
+    from_addr: str | None = None
+    to_addr: str | None = None
+    password: str | None = None
+    password_env: str | None = None
+
+
+class AutomationFeishuConfig(BaseModel):
+    """Feishu / Lark bot credentials and default delivery target (``[automation.feishu]``)."""
+
+    app_id: str | None = None
+    app_secret: str | None = None
+    domain: str = "feishu"
+    chat_id: str | None = None
+
+
+class AutomationConfig(BaseModel):
+    """Defaults for HTTP triggers / baidu-hotsearch one-shot (``[automation]``)."""
+
+    mail_to: str | None = None
+    feishu_chat_id: str | None = None
+    email: AutomationEmailConfig = Field(default_factory=AutomationEmailConfig)
+    feishu: AutomationFeishuConfig = Field(default_factory=AutomationFeishuConfig)
+
+
 class SnapshotConfig(BaseModel):
     enabled: bool = True
     max_age_days: int = 7
@@ -350,6 +386,7 @@ class Config(BaseModel):
     network: NetworkPolicyConfig = Field(default_factory=NetworkPolicyConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    automation: AutomationConfig = Field(default_factory=AutomationConfig)
     tools_file: Path | None = None
     # Cycle / seam toggles consumed by ``Engine.create``. Mirror Rust
     # ``cycle_manager.rs`` + ``seam_manager.rs`` opt-in behavior. Off by

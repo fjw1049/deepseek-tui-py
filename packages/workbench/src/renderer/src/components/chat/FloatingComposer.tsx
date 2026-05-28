@@ -9,6 +9,7 @@ import {
 } from 'react'
 import {
   Bot,
+  CalendarClock,
   ChevronDown,
   Clock3,
   FileImage,
@@ -33,6 +34,7 @@ import { ContextUsageMeter } from './ContextUsageMeter'
 import { GitBranchPicker } from './GitBranchPicker'
 
 export type ComposerMode = 'plan' | 'agent' | 'ask'
+export type ComposerSurface = 'chat' | 'automation'
 
 type ComposerAttachment = {
   id: string
@@ -59,6 +61,10 @@ type Props = {
   onRemoveQueuedMessage: (id: string) => void
   onSend: (text: string) => void
   onInterrupt: () => void
+  composerSurface?: ComposerSurface
+  onComposerSurfaceChange?: (surface: ComposerSurface) => void
+  onSubmitAutomation?: (text: string) => void
+  automationSubmitting?: boolean
   stageCentered?: boolean
   useChatStageWidth?: boolean
 }
@@ -100,6 +106,10 @@ export function FloatingComposer({
   onRemoveQueuedMessage,
   onSend,
   onInterrupt,
+  composerSurface = 'chat',
+  onComposerSurfaceChange,
+  onSubmitAutomation,
+  automationSubmitting = false,
   stageCentered = false,
   useChatStageWidth = true
 }: Props): ReactElement {
@@ -127,8 +137,10 @@ export function FloatingComposer({
     (block) => block.kind === 'approval' && block.status === 'pending'
   )?.id
 
+  const isAutomation = composerSurface === 'automation'
   const canCompose = runtimeReady && (hasActiveThread || !!effectiveWorkspaceRoot)
-  const canChangeModel = canCompose && !busy
+  const canChangeModel = canCompose && !busy && !isAutomation
+  const canSubmitAutomation = canCompose && !automationSubmitting && onSubmitAutomation != null
   const outboundPreview = buildOutboundMessage(attachments, input)
   const canSend = canCompose && outboundPreview.length > 0
   const slashQuery = getSlashQuery(input)
@@ -155,10 +167,12 @@ export function FloatingComposer({
     ? t('runtimeActionNeedsConnection')
     : !hasActiveThread && !effectiveWorkspaceRoot
       ? t('workspaceRequiredToCreateThread')
-      : busy
-        ? t('composerQueuePlaceholder')
-        : t('composerDefaultPlaceholder')
-  const primaryActionDisabled = !canSend
+      : isAutomation
+        ? t('composerAutomationPlaceholder')
+        : busy
+          ? t('composerQueuePlaceholder')
+          : t('composerDefaultPlaceholder')
+  const primaryActionDisabled = isAutomation ? !canSubmitAutomation || outboundPreview.length === 0 : !canSend
 
   const slashCommands = useMemo<SlashCommand[]>(() => {
     const commands: SlashCommand[] = [
@@ -209,11 +223,15 @@ export function FloatingComposer({
     filteredSlashCommands.length > 0
       ? filteredSlashCommands[Math.min(selectedCommandIndex, filteredSlashCommands.length - 1)]
       : null
-  const primaryActionLabel = highlightedSlashCommand
-    ? t('slashCommandApply')
-    : busy
-      ? t('queueMessage')
-      : t('send')
+  const primaryActionLabel = isAutomation
+    ? automationSubmitting
+      ? t('composerAutomationCreating')
+      : t('composerAutomationCreate')
+    : highlightedSlashCommand
+      ? t('slashCommandApply')
+      : busy
+        ? t('queueMessage')
+        : t('send')
 
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current
@@ -325,6 +343,13 @@ export function FloatingComposer({
   }
 
   const handlePrimaryAction = (): void => {
+    if (isAutomation) {
+      const payload = input.trim()
+      if (!payload || !onSubmitAutomation) return
+      setInput('')
+      onSubmitAutomation(payload)
+      return
+    }
     if (highlightedSlashCommand) {
       applySlashCommand(highlightedSlashCommand.id)
       return
@@ -334,6 +359,16 @@ export function FloatingComposer({
     setAttachments([])
     setInput('')
     onSend(payload)
+  }
+
+  const toggleAutomationSurface = (): void => {
+    const next = isAutomation ? 'chat' : 'automation'
+    onComposerSurfaceChange?.(next)
+    setPlusMenuOpen(false)
+    setModelMenuOpen(false)
+    if (next === 'chat') {
+      focusComposer()
+    }
   }
 
   return (
@@ -398,7 +433,7 @@ export function FloatingComposer({
       ) : null}
 
       <div className="relative">
-        {slashQuery != null ? (
+        {slashQuery != null && !isAutomation ? (
           <div className="ds-card-strong absolute inset-x-2 bottom-full z-30 mb-3 overflow-hidden rounded-[26px] p-2 shadow-[0_26px_70px_rgba(15,23,42,0.16)]">
             <div className="px-3 pb-2 pt-1 text-[12px] font-medium uppercase tracking-[0.14em] text-ds-faint">
               {t('slashCommandMenuTitle')}
@@ -460,9 +495,17 @@ export function FloatingComposer({
           ref={shellRef}
             className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col gap-2.5 px-4 py-3 transition sm:px-5 ${
               stageCentered ? 'ds-composer-empty' : ''
-            } ${focused ? 'ds-chat-composer-focus' : ''}`}
+            } ${focused ? 'ds-chat-composer-focus' : ''} ${isAutomation ? 'ring-1 ring-accent/25' : ''}`}
         >
-          {attachments.length > 0 ? (
+          {isAutomation ? (
+            <div className="flex items-center justify-between gap-2 px-1 pt-0.5">
+              <span className="text-[12px] font-semibold uppercase tracking-[0.12em] text-accent">
+                {t('composerAutomationBadge')}
+              </span>
+              <span className="truncate text-[12px] text-ds-faint">{t('composerAutomationHint')}</span>
+            </div>
+          ) : null}
+          {attachments.length > 0 && !isAutomation ? (
             <div className="flex flex-wrap gap-2 px-1 pt-1">
               {attachments.map((item) => (
                 <div
@@ -491,7 +534,7 @@ export function FloatingComposer({
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={placeholder}
             value={input}
-            disabled={!canCompose}
+            disabled={!canCompose || automationSubmitting}
             onChange={(e) => setInput(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
@@ -622,10 +665,12 @@ export function FloatingComposer({
                 className="ds-no-drag inline-flex max-w-[min(100%,280px)] items-center gap-1.5 rounded-full border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
                 title={t('composerModel')}
               >
-                <span className="truncate">{modelChipLabel}</span>
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                <span className="truncate">{isAutomation ? t('composerAutomationBadge') : modelChipLabel}</span>
+                {!isAutomation ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                ) : null}
               </button>
-              {modelMenuOpen ? (
+              {modelMenuOpen && !isAutomation ? (
                 <div className="absolute bottom-full left-0 z-40 mb-2 min-w-[180px] overflow-hidden rounded-2xl border border-ds-border bg-ds-card p-1.5 shadow-lg">
                   <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerModelSection')}
@@ -655,6 +700,22 @@ export function FloatingComposer({
                 </div>
               ) : null}
             </div>
+
+            <button
+              type="button"
+              disabled={!canCompose || automationSubmitting}
+              onClick={toggleAutomationSurface}
+              className={`ds-no-drag inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                isAutomation
+                  ? 'border-accent/35 bg-accent/12 text-accent'
+                  : 'border-ds-border bg-ds-card text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+              }`}
+              title={t('composerAutomationToggle')}
+              aria-pressed={isAutomation}
+            >
+              <CalendarClock className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+              <span>{t('composerAutomationToggle')}</span>
+            </button>
 
             <div className="min-w-0 flex-1" />
 

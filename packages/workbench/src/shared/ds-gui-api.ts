@@ -40,6 +40,19 @@ export type PathOpenResult = { ok: boolean; message?: string; path?: string }
 export type SkillSaveResult = { ok: true; path: string } | { ok: false; message: string }
 export type DeepseekConfigFileResult = { path: string; content: string; exists: boolean }
 export type DeepseekConfigSaveResult = { ok: true; path: string }
+
+export type FeishuConfigV1 = {
+  appId: string
+  appSecret: string
+  domain: string
+  chatId: string
+}
+
+export type FeishuConfigFileResult = {
+  path: string
+  exists: boolean
+  config: FeishuConfigV1
+}
 export type DeepseekRuntimeDiagnosticIssue = {
   severity: 'info' | 'warning' | 'error'
   code: string
@@ -160,6 +173,9 @@ export type DsGuiApi = {
   getMcpConfigFile: () => Promise<DeepseekConfigFileResult>
   setMcpConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>
   openMcpConfigDir: () => Promise<PathOpenResult>
+  getFeishuConfig: () => Promise<FeishuConfigFileResult>
+  setFeishuConfig: (config: FeishuConfigV1) => Promise<FeishuConfigSaveResult>
+  openFeishuConfigDir: () => Promise<PathOpenResult>
   getDeepseekPaths: () => Promise<{
     home: string
     configPath: string

@@ -26,6 +26,7 @@ export type SettingsRouteSection =
   | 'mcp'
   | 'skill'
   | 'hooks'
+  | 'claw'
 
 /** @deprecated Use `runtime`; kept for deep-link normalization. */
 export type LegacySettingsRouteSection = SettingsRouteSection | 'agents'

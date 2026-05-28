@@ -14,6 +14,7 @@ import type {
 } from '../../shared/ds-gui-api'
 import {
   deepseekConfigContentSchema,
+  feishuConfigPayloadSchema,
   defaultPathSchema,
   gitBranchPayloadSchema,
   logErrorPayloadSchema,
@@ -52,6 +53,7 @@ import {
   resolveMcpConfigPath,
   resolveUserDeepseekDir
 } from '../deepseek-paths'
+import { readFeishuConfigFile, writeFeishuConfigFile } from '../feishu-config'
 import {
   expandHomePath,
   listEditorsResult,
@@ -527,6 +529,42 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           await writeFile(path, '', 'utf8')
+        } else {
+          throw error
+        }
+      }
+      shell.showItemInFolder(path)
+      return { ok: true as const, path }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('feishu:config:read', async () => readFeishuConfigFile())
+
+  ipcMain.handle('feishu:config:write', async (_, payload: unknown) => {
+    const config = parseIpcPayload('feishu:config:write', feishuConfigPayloadSchema, payload)
+    const { path } = await writeFeishuConfigFile(config)
+    return { ok: true as const, path }
+  })
+
+  ipcMain.handle('feishu:config:open-dir', async () => {
+    try {
+      const path = resolveDeepseekConfigPath()
+      await mkdir(dirname(path), { recursive: true })
+      try {
+        await readFile(path, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          await writeFeishuConfigFile({
+            appId: '',
+            appSecret: '',
+            domain: 'feishu',
+            chatId: ''
+          })
         } else {
           throw error
         }

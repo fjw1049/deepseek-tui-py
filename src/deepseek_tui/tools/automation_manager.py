@@ -300,10 +300,12 @@ class AutomationRecord:
     cwds: list[str] = field(default_factory=list)
     next_run_at: str | None = None
     last_run_at: str | None = None
+    delivery: dict[str, Any] | None = None
+    digest: dict[str, Any] | None = None
     schema_version: int = CURRENT_AUTOMATION_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "schema_version": self.schema_version,
             "id": self.id,
             "name": self.name,
@@ -316,6 +318,11 @@ class AutomationRecord:
             "next_run_at": self.next_run_at,
             "last_run_at": self.last_run_at,
         }
+        if self.delivery is not None:
+            out["delivery"] = dict(self.delivery)
+        if self.digest is not None:
+            out["digest"] = dict(self.digest)
+        return out
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> AutomationRecord:
@@ -337,6 +344,14 @@ class AutomationRecord:
             updated_at=str(raw["updated_at"]),
             next_run_at=raw.get("next_run_at"),
             last_run_at=raw.get("last_run_at"),
+            delivery=(
+                dict(raw["delivery"])
+                if isinstance(raw.get("delivery"), dict)
+                else None
+            ),
+            digest=(
+                dict(raw["digest"]) if isinstance(raw.get("digest"), dict) else None
+            ),
         )
 
 
@@ -355,6 +370,7 @@ class AutomationRunRecord:
     thread_id: str | None = None
     turn_id: str | None = None
     error: str | None = None
+    delivery_done: bool = False
     schema_version: int = CURRENT_RUN_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -371,6 +387,7 @@ class AutomationRunRecord:
             "thread_id": self.thread_id,
             "turn_id": self.turn_id,
             "error": self.error,
+            "delivery_done": self.delivery_done,
         }
 
     @classmethod
@@ -394,6 +411,7 @@ class AutomationRunRecord:
             thread_id=raw.get("thread_id"),
             turn_id=raw.get("turn_id"),
             error=raw.get("error"),
+            delivery_done=bool(raw.get("delivery_done", False)),
         )
 
 
@@ -404,6 +422,8 @@ class CreateAutomationRequest:
     rrule: str
     cwds: list[str] = field(default_factory=list)
     status: AutomationStatus | None = None
+    delivery: dict[str, Any] | None = None
+    digest: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -413,6 +433,8 @@ class UpdateAutomationRequest:
     rrule: str | None = None
     cwds: list[str] | None = None
     status: AutomationStatus | None = None
+    delivery: dict[str, Any] | None = None
+    digest: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -552,6 +574,8 @@ class AutomationManager:
             updated_at=now.isoformat(),
             next_run_at=next_run_at,
             last_run_at=None,
+            delivery=dict(req.delivery) if req.delivery else None,
+            digest=dict(req.digest) if req.digest else None,
         )
         self.save_automation(record)
         return record
@@ -610,6 +634,10 @@ class AutomationManager:
             else:
                 schedule = AutomationSchedule.parse_rrule(existing.rrule)
                 existing.next_run_at = schedule.next_after(_utc_now()).isoformat()
+        if req.delivery is not None:
+            existing.delivery = dict(req.delivery)
+        if req.digest is not None:
+            existing.digest = dict(req.digest)
 
         existing.updated_at = _utc_now_iso()
         self.save_automation(existing)
@@ -666,40 +694,10 @@ class AutomationManager:
         run: AutomationRunRecord,
         task_manager: TaskManager,
     ) -> None:
-        """Mirrors Rust ``enqueue_run_task`` (539-574).
+        """Mirrors Rust ``enqueue_run_task`` (539-574) via ``automation.pipeline``."""
+        from deepseek_tui.automation.pipeline import enqueue_automation_task
 
-        Builds a ``NewTaskRequest`` matching Rust defaults
-        (``mode=agent``, ``allow_shell=False``, ``trust_mode=False``,
-        ``auto_approve=True``) and submits it to the task manager. On
-        success the run goes Running with ``task_id`` linked. On failure
-        the run goes straight to Failed.
-        """
-        from deepseek_tui.tools.task_manager import NewTaskRequest
-
-        workspace = automation.cwds[0] if automation.cwds else None
-
-        new_task = NewTaskRequest(
-            prompt=automation.prompt,
-            model=None,
-            workspace=str(workspace) if workspace else None,
-            mode="agent",
-            allow_shell=False,
-            trust_mode=False,
-            auto_approve=True,
-        )
-
-        try:
-            task = await task_manager.add_task(new_task)
-            run.status = AutomationRunStatus.RUNNING
-            run.started_at = _utc_now_iso()
-            run.task_id = task.id
-            run.thread_id = getattr(task, "thread_id", None)
-            run.turn_id = getattr(task, "turn_id", None)
-            run.error = None
-        except Exception as exc:  # noqa: BLE001 — Rust treats any err same
-            run.status = AutomationRunStatus.FAILED
-            run.ended_at = _utc_now_iso()
-            run.error = f"Failed to enqueue task: {exc}"
+        await enqueue_automation_task(automation, run, task_manager)
 
     async def run_now(
         self, automation_id: str, task_manager: TaskManager
@@ -855,3 +853,12 @@ class AutomationManager:
                         latest.last_run_at = run.ended_at or _utc_now_iso()
                         latest.updated_at = _utc_now_iso()
                         self.save_automation(latest)
+                    if run.status is AutomationRunStatus.COMPLETED:
+                        from deepseek_tui.automation.pipeline import (
+                            try_deliver_completed_run,
+                        )
+
+                        if await try_deliver_completed_run(
+                            automation, run, task_manager
+                        ):
+                            self.save_run(run)

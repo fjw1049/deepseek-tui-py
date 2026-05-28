@@ -49,6 +49,10 @@ export function runtimeSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.P
     env.DEEPSEEK_REPO_ROOT = repoRoot
     const srcPath = join(repoRoot, 'src')
     env.PYTHONPATH = env.PYTHONPATH ? `${srcPath}:${env.PYTHONPATH}` : srcPath
+    const projectDeepseek = join(repoRoot, '.deepseek')
+    if (existsSync(join(projectDeepseek, 'config.toml'))) {
+      env.DEEPSEEK_HOME = projectDeepseek
+    }
   }
   env.DEEPSEEK_CONFIG_PATH = resolveDeepseekConfigPath()
   env.DEEPSEEK_MCP_CONFIG = resolveMcpConfigPath()

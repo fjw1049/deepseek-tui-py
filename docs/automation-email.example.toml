@@ -1,0 +1,19 @@
+# Copy to ~/.deepseek/automation/email.toml
+# Password: set DEEPSEEK_EMAIL_PASSWORD or password_env below (never commit secrets).
+
+[default]
+imap_host = "imap.gmail.com"
+imap_port = 993
+ssl = true
+mailbox = "INBOX"
+username = "you@gmail.com"
+password_env = "DEEPSEEK_EMAIL_PASSWORD"
+
+# Outbound (automation delivery.mode=email)
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+smtp_starttls = true
+smtp_ssl = false
+from_addr = "you@gmail.com"
+# Optional default recipient if delivery.to is omitted:
+# to_addr = "you@gmail.com"
