@@ -252,6 +252,46 @@ class SkillsConfig(BaseModel):
     auto_update: bool = False
 
 
+class MemorySmartConfig(BaseModel):
+    """[memory.smart] — native L0/L1 smart memory (TencentDB-style, Python-native)."""
+
+    enabled: bool = False
+    data_dir: str = ""
+    recall_enabled: bool = True
+    capture_enabled: bool = True
+    recall_timeout_ms: int = 5000
+    recall_score_threshold: float = 0.3
+    recall_limit: int = 8
+    capture_min_user_chars: int = 20
+    capture_skip_slash_commands: bool = True
+    l1_every_n: int = 5
+    l1_idle_timeout_seconds: int = 600
+    l1_confidence_min: float = 0.6
+    l1_max_per_session: int = 20
+    l1_decay_half_life_days: int = 180
+    l1_inject_position: str = "user"
+    hybrid_search: bool = True
+    embedding_provider: str = "none"
+    embedding_model: str = "text-embedding-3-large"
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_dimensions: int | None = None
+    embedding_timeout_ms: int = 90000
+    embedding_dedup_threshold: float = 0.92
+    embedding_backfill_on_start: bool = False
+    fts_tokenizer: str = "auto"
+
+    def embedding_enabled(self) -> bool:
+        return self.embedding_provider.strip().lower() in ("openai", "remote")
+
+    def resolved_data_dir(self) -> Path:
+        from deepseek_tui.config.paths import user_memory_data_dir
+
+        if self.data_dir.strip():
+            return Path(self.data_dir).expanduser()
+        return user_memory_data_dir()
+
+
 class MemoryConfig(BaseModel):
     """[memory] subsection — mirrors Rust ``MemoryConfig``.
 
@@ -263,6 +303,7 @@ class MemoryConfig(BaseModel):
     enabled: bool = False
     mode: str = "manual"
     max_entries: int = 500
+    smart: MemorySmartConfig = Field(default_factory=MemorySmartConfig)
 
 
 class ServerConfig(BaseModel):
@@ -419,6 +460,10 @@ class Config(BaseModel):
         if env is not None:
             return env
         return self.memory.enabled
+
+    def smart_memory_enabled(self) -> bool:
+        """Whether native smart memory (L0/L1/FTS) is active."""
+        return self.memory.smart.enabled
 
     def effective_provider_config(self) -> ProviderConfig:
         configured = self.providers.get(self.provider, ProviderConfig())

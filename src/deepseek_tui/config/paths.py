@@ -75,6 +75,11 @@ def user_memory_path() -> Path:
     return user_deepseek_dir() / "memory.md"
 
 
+def user_memory_data_dir() -> Path:
+    """``~/.deepseek/memory_data/`` — native L0 JSONL + L1 SQLite store."""
+    return user_deepseek_dir() / "memory_data"
+
+
 def user_notes_path() -> Path:
     """``~/.deepseek/notes.txt`` — user scratch notes (matches Rust .txt)."""
     return user_deepseek_dir() / "notes.txt"

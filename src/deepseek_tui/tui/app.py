@@ -268,6 +268,12 @@ class DeepSeekTUI(App[None]):
                 exec_policy=exec_policy_for_config(self.config),
                 approval_handler=approval_handler,
             )
+            session_tid = self._resume_session_id or self._fork_session_id
+            if session_tid:
+                self._engine.memory_thread_id = session_tid
+            elif self._engine._cycle_session_id:
+                self._engine.memory_thread_id = self._engine._cycle_session_id
+            self._engine.memory_mode = self.config.memory.mode
             self._engine_task = asyncio.create_task(self._engine.run())
             logger.info("tui_engine_started")
             status = self.query_one(StatusBar)
@@ -332,6 +338,9 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
+        mm = metadata.get("memory_mode")
+        if isinstance(mm, str) and mm.strip():
+            self._engine.memory_mode = mm.strip().lower()
         transcript = self.query_one(Transcript)
         transcript.hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
@@ -356,6 +365,9 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
+        mm = metadata.get("memory_mode")
+        if isinstance(mm, str) and mm.strip():
+            self._engine.memory_mode = mm.strip().lower()
         self.query_one(Transcript).hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
         if started:

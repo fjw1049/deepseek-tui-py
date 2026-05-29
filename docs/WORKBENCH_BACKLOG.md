@@ -73,6 +73,15 @@
 - [x] [`RUNTIME_LEGACY.md`](./RUNTIME_LEGACY.md) legacy 废弃说明
 - [x] README 7878/8787 端口说明
 
+## 智能记忆（Native L0+L1）
+
+> 规格：`docs/MEMORY_INTEGRATION.md`；集中测试清单：`docs/MEMORY_INTEGRATION_BACKLOG.md`
+
+- [x] P1 代码 + Engine/Workbench 接线（默认 `memory.smart.enabled=false`）
+- [x] `pytest tests/memory -q`（无 API）
+- [x] **批次 B**：真实 API L1 提取 `test_l1_extraction_live.py`（`-m live`，无 key 则 skip）
+- [ ] **批次 C–F**：§6 手验（L0/L1 文件、recall 注入、门控、workspace）
+
 ## 测试计数
 
-`pytest tests/contract -q` → **69**；TUI smoke：`tests/test_tui_smoke.py`
+`pytest tests/contract -q` → **69**；TUI smoke：`tests/test_tui_smoke.py`；memory 单元：`pytest tests/memory -q`

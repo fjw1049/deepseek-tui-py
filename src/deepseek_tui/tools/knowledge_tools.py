@@ -6,6 +6,7 @@ and ``crates/tui/src/commands/{note,review}.rs``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -67,10 +68,35 @@ class RememberTool(ToolSpec):
         with memory_path.open("a", encoding="utf-8") as f:
             f.write(entry)
 
+        l1_id: str | None = None
+        from deepseek_tui.tools.memory_tools import MEMORY_PROVIDER_KEY
+
+        provider = context.metadata.get(MEMORY_PROVIDER_KEY)
+        if provider is not None and hasattr(provider, "remember_instruction"):
+            tid = context.metadata.get("runtime_thread_id")
+            thread_id = tid if isinstance(tid, str) and tid else None
+            ws = str(context.working_directory.resolve())
+            fn = provider.remember_instruction
+            if asyncio.iscoroutinefunction(fn):
+                l1_id = await fn(
+                    note.strip(),
+                    workspace=ws,
+                    thread_id=thread_id,
+                )
+            else:
+                l1_id = fn(
+                    note.strip(),
+                    workspace=ws,
+                    thread_id=thread_id,
+                )
+
+        meta: dict[str, object] = {"path": str(memory_path)}
+        if l1_id:
+            meta["l1_memory_id"] = l1_id
         return ToolResult(
             success=True,
             content=f"remembered: {note.strip()}",
-            metadata={"path": str(memory_path)},
+            metadata=meta,
         )
 
 

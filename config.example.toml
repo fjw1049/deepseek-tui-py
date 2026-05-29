@@ -17,6 +17,38 @@ autosave = true
 tasks = true
 automations = true
 
+# Cross-project memory.md (manual/hybrid). Smart memory is separate.
+[memory]
+enabled = false
+mode = "hybrid"   # manual | auto | hybrid
+
+[memory.smart]
+enabled = false
+# data_dir = ""   # default ~/.deepseek/memory_data
+recall_enabled = true
+capture_enabled = true
+recall_timeout_ms = 5000
+recall_score_threshold = 0.3
+capture_min_user_chars = 20
+l1_every_n = 5
+l1_idle_timeout_seconds = 600
+l1_confidence_min = 0.6
+# Max L1 rows extracted per thread_id (resume reuses thread → long chats hit cap and stop learning).
+# Raise to 50+ for always-on sessions; does not affect recall of existing rows.
+l1_max_per_session = 20
+l1_decay_half_life_days = 180
+l1_inject_position = "user"
+hybrid_search = true
+fts_tokenizer = "auto"   # auto | simple | jieba (pip install jieba)
+# embedding_backfill_on_start = false
+# embedding_provider = "none"   # none | openai
+# embedding_model = "text-embedding-3-small"
+# embedding_base_url = "https://api.example.com"
+# embedding_api_key = ""        # or DEEPSEEK_EMBEDDING_API_KEY
+# embedding_dimensions = 3072   # optional; model default if omitted
+# embedding_dedup_threshold = 0.92
+# P2 tools (registered when memory.smart.enabled): memory_search, conversation_search
+
 # Baidu hot search → email (see scripts/run-baidu-hotsearch-once.sh)
 [automation]
 mail_to = "you@example.com"

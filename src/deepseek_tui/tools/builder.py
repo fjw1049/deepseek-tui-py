@@ -18,9 +18,7 @@ from deepseek_tui.tools.automation_tools import (
     AutomationUpdateTool,
 )
 from deepseek_tui.tools.deprecation import DeprecatingAliasTool
-from deepseek_tui.tools.time_tools import CurrentTimeTool
 from deepseek_tui.tools.file_tools import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from deepseek_tui.tools.retrieve_tool_result import RetrieveToolResultTool
 from deepseek_tui.tools.git_tools import (
     GitBlameTool,
     GitDiffTool,
@@ -51,6 +49,7 @@ from deepseek_tui.tools.mcp_tools import (
 )
 from deepseek_tui.tools.parallel_tool import MultiToolUseParallelTool
 from deepseek_tui.tools.registry import ToolRegistry
+from deepseek_tui.tools.retrieve_tool_result import RetrieveToolResultTool
 from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.search_tools import FileSearchTool, GrepFilesTool
 from deepseek_tui.tools.shell_tools import (
@@ -84,6 +83,7 @@ from deepseek_tui.tools.task_tools import (
     TaskShellStartTool,
     TaskShellWaitTool,
 )
+from deepseek_tui.tools.time_tools import CurrentTimeTool
 from deepseek_tui.tools.todo_tools import TodoAddTool, TodoListTool, TodoUpdateTool, TodoWriteTool
 from deepseek_tui.tools.user_input_tool import RequestUserInputTool
 from deepseek_tui.tools.utility_tools import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
@@ -233,6 +233,15 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     if cfg.memory_enabled():
         registry.register(RememberTool())
         registry.register(RecallArchiveTool())
+
+    if cfg.smart_memory_enabled():
+        from deepseek_tui.tools.memory_tools import (
+            ConversationSearchTool,
+            MemorySearchTool,
+        )
+
+        registry.register(MemorySearchTool())
+        registry.register(ConversationSearchTool())
 
     registry.register(ValidateDataTool())
     registry.register(RunTestsTool())

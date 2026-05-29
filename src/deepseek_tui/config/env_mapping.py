@@ -20,6 +20,8 @@ ENV_TO_FIELD: dict[str, tuple[str, ...]] = {
     "DEEPSEEK_MCP_CONFIG": ("mcp_config_path",),
     "DEEPSEEK_NOTES_PATH": ("notes_path",),
     "DEEPSEEK_MEMORY_PATH": ("memory_path",),
+    "DEEPSEEK_EMBEDDING_API_KEY": ("memory", "smart", "embedding_api_key"),
+    "DEEPSEEK_EMBEDDING_BASE_URL": ("memory", "smart", "embedding_base_url"),
     "DEEPSEEK_ALLOW_SHELL": ("allow_shell",),
     "DEEPSEEK_APPROVAL_POLICY": ("approval_policy",),
     "DEEPSEEK_SANDBOX_MODE": ("sandbox_mode",),

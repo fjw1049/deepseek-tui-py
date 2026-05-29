@@ -9,6 +9,8 @@ import os
 import sys
 from pathlib import Path
 
+from deepseek_tui.memory.formatting import wrap_relevant_memories_system_block
+from deepseek_tui.memory.provider import RecallResult
 from deepseek_tui.prompts import (
     COMPACT_TEMPLATE,
     AppMode,
@@ -71,6 +73,7 @@ def build_system_prompt(
     subagent_mandate: bool = False,
     memory_enabled: bool = False,
     memory_path: Path | None = None,
+    memory_recall: RecallResult | None = None,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -114,6 +117,9 @@ def build_system_prompt(
     if workspace is not None:
         full_prompt += "\n\n" + render_environment_block(workspace, locale_tag)
 
+    if memory_recall and memory_recall.append_system.strip():
+        full_prompt += "\n\n" + memory_recall.append_system.strip()
+
     # Context Management (Agent / Yolo only)
     if mode in (AppMode.AGENT, AppMode.YOLO):
         full_prompt += (
@@ -141,6 +147,15 @@ def build_system_prompt(
         handoff_block = _load_handoff_block(workspace)
         if handoff_block:
             full_prompt += "\n\n" + handoff_block
+
+    if (
+        memory_recall
+        and memory_recall.l1_context.strip()
+        and memory_recall.inject_position == "system_volatile"
+    ):
+        volatile_l1 = wrap_relevant_memories_system_block(memory_recall.l1_context)
+        if volatile_l1:
+            full_prompt += "\n\n" + volatile_l1
 
     # User memory (~/.deepseek/memory.md) — opt-in, re-read each turn.
     memory_block = _load_user_memory(memory_enabled, memory_path)

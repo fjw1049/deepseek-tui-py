@@ -120,6 +120,7 @@ class ThreadRecord(BaseModel):
     title: str | None = None
     source_session_id: str | None = None
     source_session_path: str | None = None
+    memory_mode: str | None = None
 
 
 class TurnRecord(BaseModel):
@@ -198,6 +199,7 @@ class CreateThreadRequest(BaseModel):
 class UpdateThreadRequest(BaseModel):
     archived: bool | None = None
     title: str | None = None
+    memory_mode: str | None = None
 
 
 class StartTurnRequest(BaseModel):

@@ -276,6 +276,7 @@ class RuntimeThreadManager:
             archived=req.archived,
             system_prompt=req.system_prompt,
             task_id=req.task_id,
+            memory_mode=self.config.memory.mode,
         )
         self.store.save_thread(thread)
         await self._emit_event(
@@ -427,8 +428,20 @@ class RuntimeThreadManager:
             {"automation_name": automation_name, "summary": summary},
         )
 
+    async def _flush_thread_memory(self, thread_id: str) -> None:
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+        if state is None:
+            return
+        coordinator = state.engine.memory_coordinator
+        if coordinator is not None:
+            from deepseek_tui.memory.coordinator import MemoryCoordinator
+
+            if isinstance(coordinator, MemoryCoordinator):
+                await coordinator.flush_session(thread_id)
+
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
-        if req.archived is None and req.title is None:
+        if req.archived is None and req.title is None and req.memory_mode is None:
             raise ValueError("At least one thread field is required")
         thread = self.store.load_thread(thread_id)
         changed = False
@@ -437,6 +450,8 @@ class RuntimeThreadManager:
             thread.archived = req.archived
             changed = True
             changes["archived"] = thread.archived
+            if thread.archived:
+                await self._flush_thread_memory(thread_id)
         if req.title is not None:
             normalized = req.title.strip()
             title = normalized or None
@@ -444,6 +459,16 @@ class RuntimeThreadManager:
                 thread.title = title
                 changed = True
                 changes["title"] = thread.title
+        if req.memory_mode is not None:
+            mode = req.memory_mode.strip().lower() or None
+            if thread.memory_mode != mode:
+                thread.memory_mode = mode
+                changed = True
+                changes["memory_mode"] = thread.memory_mode
+                async with self._active_lock:
+                    state = self._active.get(thread_id)
+                if state is not None:
+                    state.engine.memory_mode = mode
         if changed:
             thread.updated_at = datetime.now(timezone.utc)
             self.store.save_thread(thread)
@@ -700,13 +725,16 @@ class RuntimeThreadManager:
         )
 
         user_item_id = f"item_{uuid.uuid4().hex[:8]}"
+        from deepseek_tui.memory.formatting import strip_relevant_memories
+
+        persisted_prompt = strip_relevant_memories(prompt)
         user_item = TurnItemRecord(
             id=user_item_id,
             turn_id=turn_id,
             kind=TurnItemKind.USER_MESSAGE,
             status=TurnItemLifecycleStatus.COMPLETED,
-            summary=summarize_text(prompt, SUMMARY_LIMIT),
-            detail=prompt,
+            summary=summarize_text(persisted_prompt, SUMMARY_LIMIT),
+            detail=persisted_prompt,
             started_at=now,
             ended_at=now,
         )
@@ -777,13 +805,16 @@ class RuntimeThreadManager:
         turn.steer_count += 1
         self.store.save_turn(turn)
 
+        from deepseek_tui.memory.formatting import strip_relevant_memories
+
+        persisted_prompt = strip_relevant_memories(prompt)
         item = TurnItemRecord(
             id=f"item_{uuid.uuid4().hex[:8]}",
             turn_id=turn_id,
             kind=TurnItemKind.USER_MESSAGE,
             status=TurnItemLifecycleStatus.COMPLETED,
-            summary=summarize_text(prompt, SUMMARY_LIMIT),
-            detail=prompt,
+            summary=summarize_text(persisted_prompt, SUMMARY_LIMIT),
+            detail=persisted_prompt,
             started_at=now,
             ended_at=now,
         )
@@ -947,6 +978,8 @@ class RuntimeThreadManager:
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        engine.memory_thread_id = thread.id
+        engine.memory_mode = thread.memory_mode
         if self._elevation_bridge is not None:
             engine.tool_context.metadata["elevation_bridge"] = self._elevation_bridge
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
@@ -958,7 +991,13 @@ class RuntimeThreadManager:
             )
             self._touch_lru(thread.id)
 
-        for evicted_state in evicted:
+        for evicted_tid, evicted_state in evicted:
+            coordinator = evicted_state.engine.memory_coordinator
+            if coordinator is not None:
+                from deepseek_tui.memory.coordinator import MemoryCoordinator
+
+                if isinstance(coordinator, MemoryCoordinator):
+                    await coordinator.flush_session(evicted_tid)
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
 
@@ -1006,9 +1045,9 @@ class RuntimeThreadManager:
         self._lru.pop(thread_id, None)
         self._lru[thread_id] = None
 
-    def _enforce_lru_capacity(self) -> list[_ActiveThreadState]:
+    def _enforce_lru_capacity(self) -> list[tuple[str, _ActiveThreadState]]:
         max_active = self.manager_cfg.max_active_threads
-        evicted: list[_ActiveThreadState] = []
+        evicted: list[tuple[str, _ActiveThreadState]] = []
         if max_active == 0 or len(self._active) < max_active:
             return evicted
         protected = {
@@ -1021,7 +1060,7 @@ class RuntimeThreadManager:
                 continue
             state = self._active.pop(tid, None)
             if state is not None:
-                evicted.append(state)
+                evicted.append((tid, state))
             self._lru.pop(tid, None)
             break
         return evicted
