@@ -26,6 +26,7 @@ import {
 } from '../lib/thread-title'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
+import { emitPetEvent } from '../lib/pet/pet-events'
 import type {
   AppRoute,
   ChatState,
@@ -313,6 +314,7 @@ function buildThreadEventSink(
             ? Date.parse(ev.createdAt)
             : Date.now()
         armBusyWatchdog(set, get)
+        emitPetEvent('user_message')
         return {
           ...flushed,
           blocks: nextBlocks,
@@ -597,6 +599,7 @@ function buildThreadEventSink(
     onTurnComplete: () => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
+      emitPetEvent('turn_complete')
       const completedState = get()
       const completedThreadId = completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
@@ -630,6 +633,7 @@ function buildThreadEventSink(
     onError: (err) => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
+      emitPetEvent('turn_error')
       set((s) => {
         const wasBusy = s.busy
         const out = flushLiveBlocks(s, {
@@ -1357,6 +1361,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       turnStartedAtByUserId: { ...s.turnStartedAtByUserId, [userBlockId]: now },
       queuedMessages: queued ? s.queuedMessages.filter((message) => message.id !== queued.id) : s.queuedMessages
     }))
+    emitPetEvent('user_message')
     if (!activeThreadId) {
       try {
         const settings = await window.dsGui.getSettings()

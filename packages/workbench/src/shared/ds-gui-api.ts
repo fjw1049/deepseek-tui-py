@@ -2,6 +2,11 @@ import type { AppSettingsPatch, AppSettingsV1 } from './app-settings'
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
 import type {
+  PetFeaturedCacheResult,
+  PetManifestFetchResult,
+  PetSpritesheetResolveResult
+} from './pet-manifest'
+import type {
   TerminalCreateOptions,
   TerminalCreateResult,
   TerminalDataPayload,
@@ -53,6 +58,7 @@ export type FeishuConfigFileResult = {
   exists: boolean
   config: FeishuConfigV1
 }
+export type FeishuConfigSaveResult = { ok: true; path: string }
 export type DeepseekRuntimeDiagnosticIssue = {
   severity: 'info' | 'warning' | 'error'
   code: string
@@ -214,4 +220,7 @@ export type DsGuiApi = {
   logError: (category: string, message: string, detail?: unknown) => Promise<void>
   getLogPath: () => Promise<string>
   openLogDir: () => Promise<{ ok: boolean; message?: string }>
+  fetchPetManifest: (force?: boolean) => Promise<PetManifestFetchResult>
+  resolvePetSpritesheet: (slug?: string) => Promise<PetSpritesheetResolveResult>
+  cacheFeaturedPets: (limit?: number) => Promise<PetFeaturedCacheResult>
 }

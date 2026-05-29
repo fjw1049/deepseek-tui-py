@@ -18,7 +18,8 @@ import {
 import { Sidebar } from './chat/Sidebar'
 import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
 import { MessageTimeline } from './chat/MessageTimeline'
-import { FloatingComposer, type ComposerSurface } from './chat/FloatingComposer'
+import { ComposerStage } from './chat/ComposerStage'
+import type { ComposerSurface } from './chat/FloatingComposer'
 import { buildAutomationComposerPrompt } from '@shared/app-settings'
 import { resolveAutomationFeishuChatId } from '../lib/resolve-automation-feishu-chat-id'
 import { resolveAutomationMailTo } from '../lib/resolve-automation-mail-to'
@@ -859,7 +860,7 @@ export function Workbench(): ReactElement {
                   </div>
                   <div className="min-h-0 w-full max-w-[1000px] flex-[0.6]" aria-hidden />
                   <div className="ds-chat-stage ds-empty-stage-composer shrink-0">
-                    <FloatingComposer
+                    <ComposerStage
                       input={input}
                       setInput={setInput}
                       mode={mode}
@@ -908,7 +909,7 @@ export function Workbench(): ReactElement {
                     }
                   />
                   <div className="flex shrink-0 justify-center pb-3 pt-0">
-                    <FloatingComposer
+                    <ComposerStage
                       input={input}
                       setInput={setInput}
                       mode={mode}

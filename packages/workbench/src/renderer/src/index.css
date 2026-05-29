@@ -1436,3 +1436,76 @@ summary,
 .ds-no-drag {
   -webkit-app-region: no-drag;
 }
+
+.pet-mascot-dock {
+  height: 66px;
+  overflow: hidden;
+  position: relative;
+}
+
+.pet-mascot-shell {
+  align-self: flex-end;
+  margin-bottom: -3px;
+  width: min(26%, 240px);
+  min-width: 140px;
+  padding-right: 0;
+}
+
+@media (max-width: 640px) {
+  .pet-mascot-shell {
+    width: 32%;
+    min-width: 120px;
+    padding-right: 0;
+  }
+}
+
+.pet-sprite-frame {
+  --pet-scale: 1;
+  --pet-roam-offset: 0px;
+  width: calc(192px * var(--pet-scale));
+  height: calc(208px * var(--pet-scale));
+  overflow: hidden;
+  contain: layout paint;
+  transform: translateX(var(--pet-roam-offset));
+  transition: transform 80ms linear;
+  will-change: transform;
+}
+
+.pet-sprite {
+  --sprite-row: 0;
+  --sprite-frames: 6;
+  --sprite-duration: 1100ms;
+  --sprite-y: calc(var(--sprite-row) * -208px);
+  --sprite-end-x: calc(var(--sprite-frames) * -192px);
+  width: 192px;
+  height: 208px;
+  background-image: var(--sprite-url);
+  background-repeat: no-repeat;
+  background-size: 1536px 1872px;
+  image-rendering: pixelated;
+  transform: scale(var(--pet-scale)) translateZ(0);
+  transform-origin: top left;
+  will-change: background-position;
+  animation: pet-state var(--sprite-duration) steps(var(--sprite-frames)) infinite;
+}
+
+@keyframes pet-state {
+  from {
+    background-position: 0 var(--sprite-y);
+  }
+
+  to {
+    background-position: var(--sprite-end-x) var(--sprite-y);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-sprite {
+    animation: none;
+  }
+
+  .pet-sprite-frame {
+    transition: none;
+    transform: none;
+  }
+}

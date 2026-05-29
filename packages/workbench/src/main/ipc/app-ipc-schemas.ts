@@ -139,6 +139,12 @@ export const logErrorPayloadSchema = z
   })
   .strict()
 
+export const petResolveSpritesheetPayloadSchema = z
+  .object({
+    slug: optionalTrimmedString(80)
+  })
+  .strict()
+
 export const sseStartPayloadSchema = z
   .object({
     threadId: trimmedString(MAX_ID_LENGTH),

@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+declare module '*.webp' {
+  const src: string
+  export default src
+}
+
 import type { DetailedHTMLProps, HTMLAttributes } from 'react'
 
 declare module 'react' {

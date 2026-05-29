@@ -30,6 +30,7 @@ import {
   formatComposerModelLabel
 } from '../../lib/composer-model-label'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash-commands'
 import { ContextUsageMeter } from './ContextUsageMeter'
 import { GitBranchPicker } from './GitBranchPicker'
 
@@ -67,6 +68,15 @@ type Props = {
   automationSubmitting?: boolean
   stageCentered?: boolean
   useChatStageWidth?: boolean
+  petSlashCommands?: Array<{
+    command: string
+    token: string
+    title: string
+    description: string
+    icon: ReactElement
+  }>
+  onApplyPetSlashCommand?: (command: string) => boolean
+  filterPetSlashCommands?: (query: string) => PetSlashMenuItem[]
 }
 
 type SlashCommandId = ComposerMode
@@ -78,6 +88,8 @@ type SlashCommand = {
   keywords: string[]
   icon: ReactElement
 }
+
+type PetSlashCommandView = NonNullable<Props['petSlashCommands']>[number]
 
 function getSlashQuery(input: string): string | null {
   const trimmed = input.trimStart()
@@ -111,7 +123,10 @@ export function FloatingComposer({
   onSubmitAutomation,
   automationSubmitting = false,
   stageCentered = false,
-  useChatStageWidth = true
+  useChatStageWidth = true,
+  petSlashCommands = [],
+  onApplyPetSlashCommand,
+  filterPetSlashCommands
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -143,7 +158,8 @@ export function FloatingComposer({
   const canSubmitAutomation = canCompose && !automationSubmitting && onSubmitAutomation != null
   const outboundPreview = buildOutboundMessage(attachments, input)
   const canSend = canCompose && outboundPreview.length > 0
-  const slashQuery = getSlashQuery(input)
+  const petSlashQuery = getPetSlashQuery(input)
+  const slashQuery = petSlashQuery == null ? getSlashQuery(input) : null
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
 
   const modelOptions = useMemo(
@@ -219,15 +235,34 @@ export function FloatingComposer({
     })
   }, [slashCommands, slashQuery])
 
+  const filteredPetSlashCommands = useMemo(() => {
+    if (petSlashQuery == null || petSlashCommands.length === 0) return []
+    const filtered = filterPetSlashCommands
+      ? filterPetSlashCommands(petSlashQuery).map((item) =>
+          petSlashCommands.find((command) => command.token === item.token)
+        )
+      : petSlashCommands
+    return filtered.filter((command): command is PetSlashCommandView => command != null)
+  }, [filterPetSlashCommands, petSlashCommands, petSlashQuery])
+
   const highlightedSlashCommand =
     filteredSlashCommands.length > 0
       ? filteredSlashCommands[Math.min(selectedCommandIndex, filteredSlashCommands.length - 1)]
       : null
+  const highlightedPetSlashCommand =
+    filteredPetSlashCommands.length > 0
+      ? filteredPetSlashCommands[
+          Math.min(selectedCommandIndex, filteredPetSlashCommands.length - 1)
+        ]
+      : null
+  const activeSlashMenu = petSlashQuery != null ? filteredPetSlashCommands : filteredSlashCommands
+  const activeHighlightedSlashCommand =
+    petSlashQuery != null ? highlightedPetSlashCommand : highlightedSlashCommand
   const primaryActionLabel = isAutomation
     ? automationSubmitting
       ? t('composerAutomationCreating')
       : t('composerAutomationCreate')
-    : highlightedSlashCommand
+    : activeHighlightedSlashCommand
       ? t('slashCommandApply')
       : busy
         ? t('queueMessage')
@@ -272,7 +307,7 @@ export function FloatingComposer({
 
   useEffect(() => {
     setSelectedCommandIndex(0)
-  }, [slashQuery])
+  }, [petSlashQuery, slashQuery])
 
   useEffect(() => {
     if (!plusMenuOpen && !modelMenuOpen) return
@@ -295,6 +330,13 @@ export function FloatingComposer({
     setMode(commandId)
     setInput('')
     focusComposer()
+  }
+
+  const applyPetSlashCommand = (command: string): void => {
+    if (onApplyPetSlashCommand?.(command)) {
+      setInput('')
+      focusComposer()
+    }
   }
 
   const clearAttachNotice = (): void => {
@@ -348,6 +390,25 @@ export function FloatingComposer({
       if (!payload || !onSubmitAutomation) return
       setInput('')
       onSubmitAutomation(payload)
+      return
+    }
+    if (petSlashQuery != null) {
+      const trimmed = input.trim()
+      if (/^\/pet\s*$/i.test(trimmed)) {
+        if (onApplyPetSlashCommand?.(trimmed)) {
+          setInput('')
+          focusComposer()
+        }
+        return
+      }
+      if (highlightedPetSlashCommand) {
+        applyPetSlashCommand(highlightedPetSlashCommand.command)
+        return
+      }
+      if (trimmed && onApplyPetSlashCommand?.(trimmed)) {
+        setInput('')
+        focusComposer()
+      }
       return
     }
     if (highlightedSlashCommand) {
@@ -433,12 +494,56 @@ export function FloatingComposer({
       ) : null}
 
       <div className="relative">
-        {slashQuery != null && !isAutomation ? (
+        {(slashQuery != null || petSlashQuery != null) && !isAutomation ? (
           <div className="ds-card-strong absolute inset-x-2 bottom-full z-30 mb-3 overflow-hidden rounded-[26px] p-2 shadow-[0_26px_70px_rgba(15,23,42,0.16)]">
             <div className="px-3 pb-2 pt-1 text-[12px] font-medium uppercase tracking-[0.14em] text-ds-faint">
-              {t('slashCommandMenuTitle')}
+              {petSlashQuery != null ? t('petSlashCommandMenuTitle') : t('slashCommandMenuTitle')}
             </div>
-            {filteredSlashCommands.length > 0 ? (
+            {petSlashQuery != null ? (
+              filteredPetSlashCommands.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  {filteredPetSlashCommands.map((command) => {
+                    const active = highlightedPetSlashCommand?.command === command.command
+                    return (
+                      <button
+                        key={command.command}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => applyPetSlashCommand(command.command)}
+                        className={`flex w-full items-center gap-3 rounded-[20px] px-3 py-3 text-left transition ${
+                          active
+                            ? 'bg-accent/10 text-ds-ink shadow-[inset_0_0_0_1px_rgba(0,136,255,0.14)]'
+                            : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                        }`}
+                      >
+                        <span
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${
+                            active ? 'bg-accent/12 text-accent' : 'bg-ds-hover text-ds-muted'
+                          }`}
+                        >
+                          {command.icon}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[15px] font-semibold text-inherit">
+                            {command.title}
+                          </span>
+                          <span className="mt-0.5 block text-[13px] leading-5 text-ds-faint">
+                            {command.description}
+                          </span>
+                        </span>
+                        <span className="rounded-full border border-ds-border-muted px-2.5 py-1 text-[11px] font-semibold text-ds-faint">
+                          {command.command}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-[20px] border border-dashed border-ds-border-muted px-4 py-5 text-[13px] text-ds-faint">
+                  {t('slashCommandEmpty')}
+                </div>
+              )
+            ) : filteredSlashCommands.length > 0 ? (
               <div className="flex flex-col gap-1">
                 {filteredSlashCommands.map((command) => {
                   const active = highlightedSlashCommand?.id === command.id
@@ -550,16 +655,16 @@ export function FloatingComposer({
               const composing =
                 e.nativeEvent.isComposing || composingRef.current || e.keyCode === 229
 
-              if (!composing && slashQuery != null) {
-                if (e.key === 'ArrowDown' && filteredSlashCommands.length > 0) {
+              if (!composing && (slashQuery != null || petSlashQuery != null)) {
+                if (e.key === 'ArrowDown' && activeSlashMenu.length > 0) {
                   e.preventDefault()
-                  setSelectedCommandIndex((current) => (current + 1) % filteredSlashCommands.length)
+                  setSelectedCommandIndex((current) => (current + 1) % activeSlashMenu.length)
                   return
                 }
-                if (e.key === 'ArrowUp' && filteredSlashCommands.length > 0) {
+                if (e.key === 'ArrowUp' && activeSlashMenu.length > 0) {
                   e.preventDefault()
                   setSelectedCommandIndex((current) =>
-                    current === 0 ? filteredSlashCommands.length - 1 : current - 1
+                    current === 0 ? activeSlashMenu.length - 1 : current - 1
                   )
                   return
                 }

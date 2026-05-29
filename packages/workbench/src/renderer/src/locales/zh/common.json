@@ -772,5 +772,16 @@
   "toolKindFile": "文件变更",
   "toolKindCommand": "命令",
   "toolKindTool": "工具",
-  "sidebarFooterHint": "连接本地运行后即可创建会话并与代理对话。"
+  "sidebarFooterHint": "连接本地运行后即可创建会话并与代理对话。",
+  "petMascotLabel": "桌面宠物伙伴",
+  "petFallbackBadge": "离线",
+  "petSlashCommandMenuTitle": "宠物命令",
+  "petSlashWaveTitle": "挥手",
+  "petSlashWaveDescription": "播放一次挥手动画，不会发送消息。",
+  "petSlashJumpTitle": "跳跃",
+  "petSlashJumpDescription": "播放一次跳跃动画，不会发送消息。",
+  "petSlashWakeTitle": "唤醒宠物",
+  "petSlashWakeDescription": "重新显示桌面宠物。",
+  "petSlashTuckTitle": "收起宠物",
+  "petSlashTuckDescription": "隐藏桌面宠物，直到再次唤醒。"
 }

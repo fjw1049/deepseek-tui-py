@@ -20,6 +20,7 @@ import {
   logErrorPayloadSchema,
   notificationPayloadSchema,
   openEditorPathPayloadSchema,
+  petResolveSpritesheetPayloadSchema,
   rootPathSchema,
   runtimeRequestPayloadSchema,
   shellOpenExternalUrlSchema,
@@ -63,6 +64,11 @@ import {
   readWorkspaceFile,
   resolveWorkspaceFile
 } from '../services/workspace-service'
+import {
+  cacheFeaturedPets,
+  fetchPetManifest,
+  resolvePetSpritesheet
+} from '../services/pet-asset-service'
 import type { createTerminalService } from '../services/terminal-service'
 
 type TerminalService = ReturnType<typeof createTerminalService>
@@ -760,4 +766,19 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     if (error) return { ok: false, message: error }
     return { ok: true }
   })
+
+  ipcMain.handle('pet:fetch-manifest', async (_, force: unknown) =>
+    fetchPetManifest(force === true)
+  )
+  ipcMain.handle('pet:resolve-spritesheet', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'pet:resolve-spritesheet',
+      petResolveSpritesheetPayloadSchema,
+      payload ?? {}
+    )
+    return resolvePetSpritesheet(request.slug)
+  })
+  ipcMain.handle('pet:cache-featured', async (_, limit: unknown) =>
+    cacheFeaturedPets(typeof limit === 'number' ? limit : 15)
+  )
 }

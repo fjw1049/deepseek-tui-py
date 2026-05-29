@@ -769,5 +769,16 @@
   "toolKindFile": "File change",
   "toolKindCommand": "Command",
   "toolKindTool": "Tool",
-  "sidebarFooterHint": "Connect the local runtime to create threads and chat with the agent."
+  "sidebarFooterHint": "Connect the local runtime to create threads and chat with the agent.",
+  "petMascotLabel": "Desktop pet companion",
+  "petFallbackBadge": "Offline",
+  "petSlashCommandMenuTitle": "Pet commands",
+  "petSlashWaveTitle": "Wave",
+  "petSlashWaveDescription": "Play a short wave animation without sending a message.",
+  "petSlashJumpTitle": "Jump",
+  "petSlashJumpDescription": "Play a short jump animation without sending a message.",
+  "petSlashWakeTitle": "Wake pet",
+  "petSlashWakeDescription": "Show the desktop pet again.",
+  "petSlashTuckTitle": "Tuck pet away",
+  "petSlashTuckDescription": "Hide the desktop pet until you wake it again."
 }

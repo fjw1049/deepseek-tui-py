@@ -113,7 +113,11 @@ const api = {
   logError: (category, message, detail) =>
     ipcRenderer.invoke('log:error', { category, message, detail }),
   getLogPath: () => ipcRenderer.invoke('log:get-path'),
-  openLogDir: () => ipcRenderer.invoke('log:open-dir')
+  openLogDir: () => ipcRenderer.invoke('log:open-dir'),
+  fetchPetManifest: (force) => ipcRenderer.invoke('pet:fetch-manifest', force === true),
+  resolvePetSpritesheet: (slug) =>
+    ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {}),
+  cacheFeaturedPets: (limit) => ipcRenderer.invoke('pet:cache-featured', limit)
 } satisfies DsGuiApi
 
 contextBridge.exposeInMainWorld('dsGui', api)
