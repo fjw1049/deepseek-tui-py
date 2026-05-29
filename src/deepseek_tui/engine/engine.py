@@ -933,8 +933,6 @@ class Engine:
         system_prompt: str,
         max_tokens: int | None,
     ) -> TurnResult:
-        from deepseek_tui.engine.tool_profiles import profile_includes_tool_search
-
         tools = await self._get_tools_with_mcp()
         self.turn_counter += 1
         step_error_count = 0
