@@ -64,6 +64,8 @@ def _map_automation_error(message: str) -> None:
     lowered = message.lower()
     if "not found" in lowered:
         raise api_error(404, message, error="automation_not_found")
+    if "not configured" in lowered:
+        raise api_error(503, message, error="runtime_error")
     raise api_error(400, message, error="automation_error")
 
 
@@ -104,7 +106,7 @@ async def post_trigger(
                 task_id=str(payload["task_id"]),
                 task_manager=tm,
                 delivery=body.delivery,
-                label="baidu-hotsearch",
+                label="trigger",
                 label_id=tid,
             )
     return payload

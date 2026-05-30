@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from deepseek_tui.app_server.runtime_api.approval_bridge import ApprovalBridge
 from deepseek_tui.app_server.runtime_api.elevation_bridge import ElevationBridge
 from deepseek_tui.app_server.runtime_api.auth import RuntimeAuthMiddleware
 from deepseek_tui.app_server.runtime_api.routes import build_runtime_api_router
-
-
-@dataclass(slots=True)
-class RuntimeApiOptions:
-    auth_token: str | None = None
 
 
 def attach_runtime_api(

@@ -12,7 +12,7 @@ export async function reloadMcpWithRuntime(loadFromDisk: () => Promise<unknown>)
     if (!health.ok) {
       return { disk: true, runtime: false }
     }
-    const startup = await window.dsGui.runtimeRequest('/mcp/startup', 'POST')
+    const startup = await window.dsGui.runtimeRequest('/v1/mcp/startup', 'POST')
     return { disk: true, runtime: startup.ok }
   } catch {
     return { disk: true, runtime: false }

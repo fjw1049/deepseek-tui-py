@@ -1,27 +1,23 @@
 """Backwards-compatible high-level manager.
 
 This module preserves the original ``SecretsManager`` API used by the
-TUI/CLI while delegating actual secret storage to the new
+TUI/CLI while delegating optional secret *storage* to the
 :class:`~deepseek_tui.secrets.facade.Secrets` façade.
 
-The Rust ``Secrets`` struct is intentionally a *two-layer* lookup
-(``keyring → env → none``); the ``config.toml`` ``[providers.X] api_key``
-fallback is the responsibility of the *caller*. ``SecretsManager`` is
-that caller in this codebase, and stitches the third layer on after
-:meth:`Secrets.resolve` returns ``None``.
+Runtime API-key resolution intentionally does **not** read the OS
+keychain (macOS Keychain / Credential Manager / Secret Service): on
+macOS the per-binary keychain ACL prompts for the login password every
+time a different Python interpreter reads the item, which is hostile to
+local dev. Keys come from env vars or ``config.toml`` instead:
 
-Final precedence delivered by :meth:`SecretsManager.resolve_api_key`::
+    env (with NVIDIA aliases etc.) → config.toml api_key → None
 
-    keyring → env (with NVIDIA aliases etc.) → config.toml api_key → None
-
-This is the order the user signed off on for the Python port; do NOT
-swap layers without their approval (it changes how every login flow
-behaves).
+The keychain backend is still available on demand for the explicit
+``deepseek auth`` CLI commands via :attr:`store` / :meth:`set_api_key`,
+but it is constructed lazily so a normal runtime start never touches it.
 """
 
 from __future__ import annotations
-
-import os
 
 from deepseek_tui.config.models import Config
 
@@ -33,31 +29,28 @@ from .store import DEFAULT_SERVICE, KeyringStore
 __all__ = ["SecretsManager"]
 
 
-def _skip_keyring() -> bool:
-    """When set, API keys come from env / config.toml only (no macOS Keychain)."""
-    return os.getenv("DEEPSEEK_SKIP_KEYRING", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 class SecretsManager:
     """Stable wrapper used by the rest of the codebase."""
 
     SERVICE_NAME = DEFAULT_SERVICE
 
     def __init__(self, secrets: Secrets | None = None) -> None:
-        self._secrets = secrets if secrets is not None else Secrets.auto_detect()
+        # Built lazily: runtime key resolution no longer uses the OS keychain,
+        # so a plain ``SecretsManager()`` must never construct/probe it.
+        self._secrets = secrets
+
+    def _ensure_secrets(self) -> Secrets:
+        if self._secrets is None:
+            self._secrets = Secrets.auto_detect()
+        return self._secrets
 
     @property
     def store(self) -> KeyringStore:
-        return self._secrets.store
+        return self._ensure_secrets().store
 
     @property
     def backend_name(self) -> str:
-        return self._secrets.backend_name
+        return self._ensure_secrets().backend_name
 
     # ------------------------------------------------------------------
     # API key resolution
@@ -66,22 +59,12 @@ class SecretsManager:
     def resolve_api_key(
         self, config: Config, provider_name: str | None = None
     ) -> str | None:
-        """Resolve an API key.
-
-        Default: ``keyring → env → config.toml``.
-
-        When ``DEEPSEEK_SKIP_KEYRING=1``: ``env → config.toml`` only (Workbench default).
-        """
+        """Resolve an API key from ``env → config.toml`` (no OS keychain)."""
         provider = provider_name or config.provider
 
-        if not _skip_keyring():
-            resolved = self._secrets.resolve(provider)
-            if resolved is not None:
-                return resolved
-        else:
-            env_val = env_for(provider)
-            if env_val is not None and env_val.strip():
-                return env_val
+        env_val = env_for(provider)
+        if env_val is not None and env_val.strip():
+            return env_val
 
         provider_config = config.providers.get(provider)
         if provider_config and provider_config.api_key:
@@ -100,18 +83,19 @@ class SecretsManager:
     # ------------------------------------------------------------------
 
     def set_api_key(self, provider: str, value: str) -> None:
-        self._secrets.set(provider, value)
+        self._ensure_secrets().set(provider, value)
 
     def delete_api_key(self, provider: str) -> bool:
         """Delete a stored key. Returns False when no key was present."""
         # Mirror the legacy contract: True iff something was actually
         # stored. We probe before deleting to make the boolean meaningful.
+        secrets = self._ensure_secrets()
         try:
-            existed = self._secrets.get(provider) is not None
+            existed = secrets.get(provider) is not None
         except SecretsError:
             existed = False
         try:
-            self._secrets.delete(provider)
+            secrets.delete(provider)
         except SecretsError:
             return False
         return existed
