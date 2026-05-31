@@ -19,10 +19,6 @@ import { Sidebar } from './chat/Sidebar'
 import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
-import type { ComposerSurface } from './chat/FloatingComposer'
-import { buildAutomationComposerPrompt } from '@shared/app-settings'
-import { resolveAutomationFeishuChatId } from '../lib/resolve-automation-feishu-chat-id'
-import { resolveAutomationMailTo } from '../lib/resolve-automation-mail-to'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
@@ -36,6 +32,9 @@ const DevBrowserPanel = lazy(() =>
 )
 const PluginMarketplaceView = lazy(() =>
   import('./PluginMarketplaceView').then((module) => ({ default: module.PluginMarketplaceView }))
+)
+const AutomationTaskForm = lazy(() =>
+  import('./automation/AutomationTaskForm').then((module) => ({ default: module.AutomationTaskForm }))
 )
 const WorkspaceFilePreviewPanel = lazy(() =>
   import('./WorkspaceFilePreviewPanel').then((module) => ({
@@ -280,8 +279,6 @@ export function Workbench(): ReactElement {
   )
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<'plan' | 'agent' | 'ask'>('agent')
-  const [composerSurface, setComposerSurface] = useState<ComposerSurface>('chat')
-  const [automationSubmitting, setAutomationSubmitting] = useState(false)
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(readStoredRightPanelMode)
   const [filePreviewTarget, setFilePreviewTarget] = useState<WorkspaceFileTarget | null>(null)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
@@ -344,37 +341,6 @@ export function Workbench(): ReactElement {
     if (!v) return
     setInput('')
     void sendMessage(v, mode)
-  }
-
-  const handleSubmitAutomation = (text: string): void => {
-    const v = text.trim()
-    if (!v || automationSubmitting) return
-    setAutomationSubmitting(true)
-    setInput('')
-    setComposerSurface('chat')
-    void (async () => {
-      try {
-        const settings = await window.dsGui.getSettings()
-        const feishuTo =
-          (await resolveAutomationFeishuChatId()) ??
-          settings.claw?.im?.feishuReceiveId?.trim() ??
-          ''
-        const mailTo = (await resolveAutomationMailTo()) ?? ''
-        const userTimezone =
-          Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
-        const wrapped = buildAutomationComposerPrompt(v, {
-          feishuChatId: feishuTo,
-          mailTo,
-          workspaceRoot,
-          userTimezone
-        })
-        const ok = await sendMessage(wrapped, 'agent', { displayText: v })
-        if (!ok) return
-        setError(null)
-      } finally {
-        setAutomationSubmitting(false)
-      }
-    })()
   }
 
   useEffect(() => {
@@ -537,6 +503,10 @@ export function Workbench(): ReactElement {
   const startNewChat = (): void => {
     setRoute('chat')
     void createThread()
+  }
+
+  const startNewAutomationTask = (): void => {
+    setRoute('automation')
   }
 
   const startNewChatInWorkspace = (workspaceRoot: string): void => {
@@ -706,6 +676,7 @@ export function Workbench(): ReactElement {
               }}
               onExportThread={exportThreadToSession}
               onNewChat={startNewChat}
+              onNewAutomationTask={startNewAutomationTask}
               onNewChatInWorkspace={startNewChatInWorkspace}
               onImportSession={() => setImportSessionOpen(true)}
               onOpenSettings={(section) => openSettings(section)}
@@ -750,6 +721,16 @@ export function Workbench(): ReactElement {
               <PluginMarketplaceView />
             </Suspense>
           </>
+        ) : route === 'automation' ? (
+          <Suspense fallback={<div className="h-full bg-ds-main" />}>
+            <AutomationTaskForm
+              runtimeReady={runtimeConnection === 'ready'}
+              workspaceRoot={workspaceRoot}
+              onBackToChat={() => setRoute('chat')}
+              onOpenAutomationSettings={() => openSettings('claw')}
+              onOpenRuntimeSettings={() => openSettings('runtime')}
+            />
+          </Suspense>
         ) : (
           <>
         {error && !(runtimeConnection !== 'ready' && !activeThreadId) && (
@@ -879,10 +860,6 @@ export function Workbench(): ReactElement {
                       queuedMessages={queuedMessages}
                       onRemoveQueuedMessage={removeQueuedMessage}
                       onInterrupt={() => void interrupt()}
-                      composerSurface={composerSurface}
-                      onComposerSurfaceChange={setComposerSurface}
-                      onSubmitAutomation={handleSubmitAutomation}
-                      automationSubmitting={automationSubmitting}
                     />
                   </div>
                 </div>
@@ -926,10 +903,6 @@ export function Workbench(): ReactElement {
                       queuedMessages={queuedMessages}
                       onRemoveQueuedMessage={removeQueuedMessage}
                       onInterrupt={() => void interrupt()}
-                      composerSurface={composerSurface}
-                      onComposerSurfaceChange={setComposerSurface}
-                      onSubmitAutomation={handleSubmitAutomation}
-                      automationSubmitting={automationSubmitting}
                     />
                   </div>
                 </div>

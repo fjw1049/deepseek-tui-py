@@ -186,8 +186,8 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
     }
   }
 
-  const goCreateInComposer = (): void => {
-    setRoute('chat')
+  const goCreateAutomation = (): void => {
+    setRoute('automation')
   }
 
   return (
@@ -238,7 +238,7 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
             </button>
             <button
               type="button"
-              onClick={goCreateInComposer}
+              onClick={goCreateAutomation}
               className="inline-flex items-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-[13px] font-medium text-accent transition hover:bg-accent/15"
             >
               <CalendarClock className="h-3.5 w-3.5" />

@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  CalendarClock,
   ChevronRight,
   Command,
   LayoutGrid,
@@ -26,6 +27,7 @@ type Props = {
   onCompactThread: (id: string) => Promise<void>
   onExportThread: (id: string) => Promise<{ path: string } | null>
   onNewChat: () => void
+  onNewAutomationTask: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onImportSession: () => void
   onOpenSettings: (section?: SettingsRouteSection) => void
@@ -44,6 +46,7 @@ export function Sidebar({
   onCompactThread,
   onExportThread,
   onNewChat,
+  onNewAutomationTask,
   onNewChatInWorkspace,
   onImportSession,
   onOpenSettings,
@@ -76,6 +79,14 @@ export function Sidebar({
           disabledHint={t('runtimeActionNeedsConnection')}
           shortcut="⌘N"
           variant="flat-accent"
+        />
+        <SidebarLink
+          icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
+          label={t('newAutomationTask')}
+          onClick={runtimeReady ? onNewAutomationTask : undefined}
+          disabled={!runtimeReady}
+          disabledHint={t('runtimeActionNeedsConnection')}
+          variant="flat"
         />
         <SidebarLink
           icon={<Upload className="h-4 w-4" strokeWidth={1.85} />}

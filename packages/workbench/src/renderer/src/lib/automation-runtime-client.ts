@@ -13,6 +13,16 @@ export type AutomationRecord = {
   delivery?: { mode?: string; to?: string; best_effort?: boolean }
 }
 
+export type CreateAutomationInput = {
+  name: string
+  prompt: string
+  rrule: string
+  cwds?: string[]
+  status?: AutomationStatus
+  delivery?: { mode: string; to: string; best_effort?: boolean }
+  next_run_at?: string | null
+}
+
 async function runtimeJson<T>(path: string, method: string, body?: unknown): Promise<T> {
   const raw = await window.dsGui.runtimeRequest(
     path,
@@ -91,6 +101,10 @@ export function formatAutomationWhen(iso: string | null | undefined): string {
 export async function listAutomations(): Promise<AutomationRecord[]> {
   const rows = await runtimeJson<AutomationRecord[]>('/v1/automations', 'GET')
   return Array.isArray(rows) ? rows : []
+}
+
+export async function createAutomation(input: CreateAutomationInput): Promise<AutomationRecord> {
+  return runtimeJson<AutomationRecord>('/v1/automations', 'POST', input)
 }
 
 export async function pauseAutomation(id: string): Promise<AutomationRecord> {
