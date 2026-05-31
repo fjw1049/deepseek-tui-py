@@ -501,10 +501,9 @@ class Engine:
             runtime.subagent_manager.attach_parent_completion_sink(
                 engine._enqueue_subagent_completion
             )
-            from deepseek_tui.engine.handle import AutoApprovalHandler
             from deepseek_tui.tools.subagent.manager import SubAgentRuntime
 
-            auto_approve = isinstance(approval_handler, AutoApprovalHandler)
+            auto_approve = await engine.approval_handler.auto_approve_enabled()
             loop_runtime = SubAgentRuntime(
                 manager=runtime.subagent_manager,
                 client=client,

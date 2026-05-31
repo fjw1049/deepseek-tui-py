@@ -114,12 +114,15 @@ class HttpApprovalHandler(ApprovalHandler):
         self._thread_id = thread_id
         self._auto_approve = auto_approve
 
+    async def auto_approve_enabled(self) -> bool:
+        return self._auto_approve is not None and await self._auto_approve()
+
     async def request_approval(
         self,
         tool_call_id: str,
         request: ApprovalRequest,
     ) -> ApprovalDecision:
-        if self._auto_approve is not None and await self._auto_approve():
+        if await self.auto_approve_enabled():
             return ApprovalDecision.APPROVED
         summary = (
             request.title

@@ -992,11 +992,6 @@ async def run_subagent_loop(
     steps = 0
     last_usage: object | None = None
 
-    if runtime.mailbox is not None:
-        runtime.mailbox.send(
-            MailboxMessage.started(agent.id, agent.agent_type.value)
-        )
-
     async def _noop_emit(_event: object) -> None:
         return None
 

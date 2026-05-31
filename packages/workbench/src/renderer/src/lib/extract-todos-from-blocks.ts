@@ -21,6 +21,14 @@ export type TodoTurnSession = {
   isComplete: boolean
 }
 
+export type TodoTurnEvent = {
+  blockId: string
+  kind: 'completed'
+  item: TodoItemView
+  done: number
+  total: number
+}
+
 const TODO_TOOL_RE = /(?:todo|checklist)_(?:write|update|add|list)/i
 const TODO_WRITE_RE = /(?:todo|checklist)_write$/i
 
@@ -160,6 +168,30 @@ function mergeTodoUpdate(items: TodoItemView[], block: Extract<ChatBlock, { kind
   )
 }
 
+function todoItemsAfterBlock(
+  items: TodoItemView[],
+  block: Extract<ChatBlock, { kind: 'tool' }>
+): TodoItemView[] {
+  const toolName = toolNameFromTodoBlock(block)
+  const parsed = parseTodoItemsFromBlock(block)
+
+  if (isTodoWriteToolName(toolName)) {
+    return parsed?.length ? parsed : items
+  }
+
+  if (parsed?.length) return parsed
+
+  if (/(?:todo|checklist)_add$/i.test(toolName ?? '')) {
+    return items
+  }
+
+  if (/(?:todo|checklist)_update$/i.test(toolName ?? '')) {
+    return mergeTodoUpdate(items, block)
+  }
+
+  return items
+}
+
 export function buildTodoSessionForTurn(blocks: ChatBlock[]): TodoTurnSession | null {
   let anchorBlockId: string | null = null
   let items: TodoItemView[] = []
@@ -167,6 +199,7 @@ export function buildTodoSessionForTurn(blocks: ChatBlock[]): TodoTurnSession | 
 
   for (const block of blocks) {
     if (!isTodoToolBlock(block)) continue
+    if (block.status === 'error') continue
 
     todoBlockIds.push(block.id)
     const toolName = toolNameFromTodoBlock(block)
@@ -213,10 +246,48 @@ export function buildTodoSessionForTurn(blocks: ChatBlock[]): TodoTurnSession | 
   }
 }
 
+export function buildTodoEventsForTurn(blocks: ChatBlock[]): TodoTurnEvent[] {
+  const events: TodoTurnEvent[] = []
+  let items: TodoItemView[] = []
+
+  for (const block of blocks) {
+    if (!isTodoToolBlock(block)) continue
+    if (block.status === 'error') continue
+
+    const previous = items
+    const next = todoItemsAfterBlock(items, block)
+    if (next === items) continue
+    items = next
+
+    if (previous.length === 0 || next.length === 0) continue
+
+    const previousById = new Map(previous.map((item) => [item.id, item]))
+    const done = next.filter((item) => item.status === 'completed').length
+    const total = next.length
+
+    for (const item of next) {
+      const before = previousById.get(item.id)
+      if (!before) continue
+      if (before.status !== 'completed' && item.status === 'completed') {
+        events.push({
+          blockId: block.id,
+          kind: 'completed',
+          item,
+          done,
+          total
+        })
+      }
+    }
+  }
+
+  return events
+}
+
 export function extractTodosFromBlocks(blocks: ChatBlock[]): TodoSidebarSnapshot | null {
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index]
     if (!isTodoToolBlock(block)) continue
+    if (block.status === 'error') continue
     const items = parseTodoItemsFromBlock(block)
     if (!items?.length) continue
     return snapshotFromItems(items)

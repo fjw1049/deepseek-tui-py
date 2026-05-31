@@ -35,6 +35,9 @@ EngineOp = SendMessageOp | CancelRequestOp
 
 
 class ApprovalHandler:
+    async def auto_approve_enabled(self) -> bool:
+        return False
+
     async def request_approval(
         self,
         tool_call_id: str,
@@ -44,6 +47,9 @@ class ApprovalHandler:
 
 
 class AutoApprovalHandler(ApprovalHandler):
+    async def auto_approve_enabled(self) -> bool:
+        return True
+
     async def request_approval(
         self,
         tool_call_id: str,

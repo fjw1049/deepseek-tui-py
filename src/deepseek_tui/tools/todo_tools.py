@@ -133,8 +133,10 @@ def _enforce_single_in_progress(items: list[TodoItem]) -> None:
     in_progress_ids = [i.id for i in items if i.status == "in_progress"]
     if len(in_progress_ids) > 1:
         raise ToolError(
-            f"only one item may be in_progress at a time; "
-            f"already in progress: {in_progress_ids}"
+            f"only one item may be in_progress at a time "
+            f"(already in progress: {in_progress_ids}). "
+            f"For parallel sub-agents, keep one coordinator item in_progress "
+            f"and track per-agent state via the Agents panel."
         )
 
 
