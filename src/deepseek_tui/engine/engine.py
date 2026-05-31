@@ -69,6 +69,7 @@ from deepseek_tui.engine.tool_catalog import (
 )
 from deepseek_tui.engine.dispatch import emit_tool_audit, is_mcp_tool
 from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
+from deepseek_tui.engine.tool_profiles import profile_includes_tool_search
 from deepseek_tui.engine.working_set import WorkingSet
 from deepseek_tui.execpolicy.approval_cache import (
     ApprovalCache,
@@ -712,8 +713,14 @@ class Engine:
                 if turn_task is not None and turn_task.done():
                     try:
                         turn_task.result()
-                    except Exception:  # noqa: BLE001
+                    except Exception as exc:  # noqa: BLE001
                         logger.exception("engine_turn_task_failed")
+                        await self.handle.emit(
+                            ErrorEvent(
+                                message=f"Internal engine error: {exc}",
+                                retryable=False,
+                            )
+                        )
                     turn_task = None
 
                 if turn_task is None:
@@ -729,8 +736,14 @@ class Engine:
                     if turn_task in done:
                         try:
                             turn_task.result()
-                        except Exception:  # noqa: BLE001
+                        except Exception as exc:  # noqa: BLE001
                             logger.exception("engine_turn_task_failed")
+                            await self.handle.emit(
+                                ErrorEvent(
+                                    message=f"Internal engine error: {exc}",
+                                    retryable=False,
+                                )
+                            )
                         turn_task = None
                         if op_wait in done:
                             op = op_wait.result()

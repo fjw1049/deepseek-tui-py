@@ -44,6 +44,7 @@ import { registerAppIpcHandlers } from './ipc/register-app-ipc-handlers'
 
 const mainDir = import.meta.dirname
 const APP_USER_MODEL_ID = 'com.deepseek.workbench'
+const MANAGED_RUNTIME_STARTUP_TIMEOUT_MS = 180_000
 
 // Ensure Python spawn helpers can find the monorepo checkout in dev.
 const detectedRepoRoot = resolveRepoRoot()
@@ -469,7 +470,10 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
     console.error('[deepseek-gui] failed to start deepseek:', e)
     throw e
   }
-  const started = await waitForRuntimeHealth(settings.deepseek.port, 20_000)
+  const started = await waitForRuntimeHealth(
+    settings.deepseek.port,
+    MANAGED_RUNTIME_STARTUP_TIMEOUT_MS
+  )
   if (!started) {
     throw runtimeJsonError(
       'runtime_unhealthy',
@@ -645,7 +649,10 @@ async function restartManagedRuntimeForSettingsChange(
 
   try {
     await startDeepseekChild(next)
-    const healthy = await waitForRuntimeHealth(next.deepseek.port, 20_000)
+    const healthy = await waitForRuntimeHealth(
+      next.deepseek.port,
+      MANAGED_RUNTIME_STARTUP_TIMEOUT_MS
+    )
     if (!healthy) {
       console.warn('[deepseek-gui] runtime restart did not become healthy after settings change')
     }
@@ -817,7 +824,10 @@ app.whenReady().then(async () => {
         message: e instanceof Error ? e.message : String(e)
       }
     }
-    const ok = await waitForRuntimeHealth(s.deepseek.port, 2_000)
+    const ok = await waitForRuntimeHealth(
+      s.deepseek.port,
+      MANAGED_RUNTIME_STARTUP_TIMEOUT_MS
+    )
     return { started: true, healthy: ok, pid: isDeepseekChildRunning() }
   })
 
