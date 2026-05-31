@@ -12,6 +12,7 @@ Split into two layers:
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -210,6 +211,8 @@ class StartTurnRequest(BaseModel):
     allow_shell: bool | None = None
     trust_mode: bool | None = None
     auto_approve: bool | None = None
+    ui_submit_at_ms: int | None = None
+    main_runtime_request_start_ms: int | None = None
 
 
 class SteerTurnRequest(BaseModel):
@@ -278,6 +281,11 @@ class RuntimeThreadStore:
         import asyncio
 
         self._seq_lock = asyncio.Lock()
+        self._events_since_checkpoint = 0
+        self._last_checkpoint_at = time.monotonic()
+
+    CHECKPOINT_EVENT_INTERVAL = 16
+    CHECKPOINT_MAX_INTERVAL_S = 0.5
 
     # --- paths ---------------------------------------------------------------
 
@@ -402,11 +410,22 @@ class RuntimeThreadStore:
         item_id: str | None,
         event: str,
         payload: dict[str, Any],
+        *,
+        force_checkpoint: bool = False,
     ) -> RuntimeEventRecord:
         async with self._seq_lock:
             seq = self._state.next_seq
             self._state.next_seq += 1
-            write_json_atomic(self._state_path, self._state.model_dump())
+            self._events_since_checkpoint += 1
+            now = time.monotonic()
+            checkpoint_due = force_checkpoint or (
+                self._events_since_checkpoint >= self.CHECKPOINT_EVENT_INTERVAL
+                or (now - self._last_checkpoint_at) >= self.CHECKPOINT_MAX_INTERVAL_S
+            )
+            if checkpoint_due:
+                write_json_atomic(self._state_path, self._state.model_dump())
+                self._events_since_checkpoint = 0
+                self._last_checkpoint_at = now
 
         record = RuntimeEventRecord(
             schema_version=CURRENT_RUNTIME_SCHEMA_VERSION,
@@ -424,9 +443,19 @@ class RuntimeThreadStore:
         line = record.model_dump_json()
         with path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
-            f.flush()
+            if checkpoint_due:
+                f.flush()
 
         return record
+
+    async def flush_event_checkpoint(self) -> None:
+        """Persist ``state.next_seq`` after a batched delta flush."""
+        async with self._seq_lock:
+            if self._events_since_checkpoint <= 0:
+                return
+            write_json_atomic(self._state_path, self._state.model_dump())
+            self._events_since_checkpoint = 0
+            self._last_checkpoint_at = time.monotonic()
 
     def events_since(
         self, thread_id: str, since_seq: int | None = None

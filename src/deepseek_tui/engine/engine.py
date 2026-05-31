@@ -355,17 +355,22 @@ class Engine:
 
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
+        from deepseek_tui.app_server.turn_latency import get_turn_latency, now_ms
         from deepseek_tui.engine.tool_profiles import (
             TOOL_PROFILE_FULL,
             filter_tools_for_profile,
         )
 
+        turn_id = self.tool_context.metadata.get("turn_latency_turn_id")
+        trace = get_turn_latency(str(turn_id)) if turn_id else None
+        build_start = now_ms() if trace is not None else None
+
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
         profile = self.tool_profile or TOOL_PROFILE_FULL
         if mcp is None:
-            return filter_tools_for_profile(list(native_tools), profile)
-        if self._mcp_tools_cache is None:
+            result = filter_tools_for_profile(list(native_tools), profile)
+        elif self._mcp_tools_cache is None:
             try:
                 self._mcp_tools_cache = await asyncio.wait_for(
                     mcp.discover_tools(),
@@ -378,12 +383,24 @@ class Engine:
                 self._mcp_tools_cache = []
             except Exception:  # noqa: BLE001
                 self._mcp_tools_cache = []
-        if not self._mcp_tools_cache:
-            return filter_tools_for_profile(list(native_tools), profile)
-        combined = build_model_tool_catalog(
-            list(native_tools), list(self._mcp_tools_cache), self.mode
-        )
-        return filter_tools_for_profile(combined, profile)
+            if not self._mcp_tools_cache:
+                result = filter_tools_for_profile(list(native_tools), profile)
+            else:
+                combined = build_model_tool_catalog(
+                    list(native_tools), list(self._mcp_tools_cache), self.mode
+                )
+                result = filter_tools_for_profile(combined, profile)
+        elif not self._mcp_tools_cache:
+            result = filter_tools_for_profile(list(native_tools), profile)
+        else:
+            combined = build_model_tool_catalog(
+                list(native_tools), list(self._mcp_tools_cache), self.mode
+            )
+            result = filter_tools_for_profile(combined, profile)
+
+        if trace is not None and build_start is not None:
+            trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
+        return result
 
     @classmethod
     async def create(
@@ -571,7 +588,7 @@ class Engine:
             content = "\n".join(parts).strip()
             if not content:
                 continue
-            out.append({"role": str(msg.role), "content": content})
+            out.append({"role": msg.role.value, "content": content})
         return out
 
     @staticmethod
@@ -1154,7 +1171,13 @@ class Engine:
         # never block the conversation.
         if self.cycle_config.enabled:
             await self._maybe_advance_cycle(messages, model)
+        turn_id = self.tool_context.metadata.get("turn_latency_turn_id")
+        from deepseek_tui.app_server.turn_latency import get_turn_latency
+
+        latency_turn_id = str(turn_id) if turn_id else None
         for round_idx in range(self.max_tool_round_trips + 1):
+            trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
+            round_trace = trace.start_round(round_idx) if trace is not None else None
             logger.info(
                 "round_start round=%d msg_count=%d tools_count=%d model=%s",
                 round_idx,
@@ -1245,7 +1268,11 @@ class Engine:
                 tools=tools,
                 include_tool_search=profile_includes_tool_search(self.tool_profile),
                 include_code_execution=self.tool_profile is None,
+                latency_turn_id=latency_turn_id,
+                round_idx=round_idx,
             )
+            if round_trace is not None:
+                round_trace.tool_calls = len(result.tool_calls or [])
             if result.cancelled:
                 return result
             if result.assistant_message is not None:
@@ -1256,7 +1283,12 @@ class Engine:
                 return result
 
             messages.append(self._build_tool_use_message(result.tool_calls))
+            from deepseek_tui.app_server.turn_latency import now_ms as latency_now_ms
+
+            tool_exec_start = latency_now_ms()
             tool_results = await self._execute_tool_calls(result.tool_calls, model)
+            if round_trace is not None:
+                round_trace.tool_exec_ms = latency_now_ms() - tool_exec_start
             tool_errors = sum(1 for m in tool_results if any(
                 getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error")
             ))

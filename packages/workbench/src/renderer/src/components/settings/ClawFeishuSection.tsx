@@ -1,7 +1,15 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, ExternalLink, FolderOpen, Loader2, Send } from 'lucide-react'
+import {
+  ChevronDown,
+  CircleHelp,
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  Loader2,
+  Send
+} from 'lucide-react'
 import type { AppSettingsV1, ClawSettingsPatchV1 } from '@shared/app-settings'
 import type { FeishuConfigV1 } from '@shared/ds-gui-api'
 
@@ -15,6 +23,23 @@ type Props = {
 type Notice = { tone: 'success' | 'error' | 'info'; message: string }
 
 const FEISHU_OPEN_PLATFORM = 'https://open.feishu.cn/app'
+
+function maskCredential(value: string, head = 4, tail = 4): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= head + tail) return '••••••••'
+  const hidden = Math.min(6, trimmed.length - head - tail)
+  return `${trimmed.slice(0, head)}${'•'.repeat(hidden)}${trimmed.slice(-tail)}`
+}
+
+function hasFeishuCredentials(config: FeishuConfigV1, webhookSecret: string): boolean {
+  return Boolean(
+    config.appId.trim() ||
+      config.appSecret.trim() ||
+      config.chatId.trim() ||
+      webhookSecret.trim()
+  )
+}
 
 export function ClawFeishuSection({
   form,
@@ -34,9 +59,13 @@ export function ClawFeishuSection({
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [credentialsOpen, setCredentialsOpen] = useState(false)
+  const [credentialsInitialized, setCredentialsInitialized] = useState(false)
 
   const receiveId = config.chatId.trim()
   const webhookSecret = form.claw.im.secret.trim()
+  const configured = hasFeishuCredentials(config, webhookSecret)
   const inboundUrl = useMemo(
     () => `http://127.0.0.1:${runtimePort}/v1/automation/feishu/inbound`,
     [runtimePort]
@@ -66,6 +95,15 @@ export function ClawFeishuSection({
     void loadConfig()
   }, [loadConfig])
 
+  useEffect(() => {
+    if (loading || credentialsInitialized) return
+    const file = config
+    const secret = form.claw.im.secret.trim()
+    const hasValues = hasFeishuCredentials(file, secret)
+    setCredentialsOpen(!hasValues)
+    setCredentialsInitialized(true)
+  }, [config, credentialsInitialized, form.claw.im.secret, loading])
+
   const handleSave = async (): Promise<void> => {
     setSaving(true)
     setNotice(null)
@@ -83,6 +121,7 @@ export function ClawFeishuSection({
   const handleTestSend = async (): Promise<void> => {
     if (!receiveId) {
       setNotice({ tone: 'error', message: t('clawFeishuReceiveIdRequired') })
+      setCredentialsOpen(true)
       return
     }
     if (!runtimeReady) {
@@ -139,31 +178,64 @@ export function ClawFeishuSection({
     ].join('\n')
   }, [config.appId, config.appSecret, config.domain, form.deepseek.runtimeToken, runtimePort])
 
+  const credentialsSummary = useMemo(() => {
+    if (!configured) return t('clawFeishuCredentialsEmpty')
+    const hints: string[] = []
+    if (config.appId.trim()) hints.push(`App ID ${maskCredential(config.appId)}`)
+    if (receiveId) hints.push(maskCredential(receiveId))
+    if (hints.length === 0) {
+      return `${t('clawFeishuCredentialsConfigured')} · ${t('clawFeishuCredentialsHint')}`
+    }
+    return `${t('clawFeishuCredentialsConfigured')} · ${hints.join(' · ')}`
+  }, [config.appId, configured, receiveId, t])
+
   return (
     <div className="rounded-2xl border border-ds-border bg-ds-card/95 shadow-sm">
       <div className="border-b border-ds-border-muted px-5 py-3">
-        <h2 className="text-[16px] font-semibold text-ds-ink">{t('clawFeishuTitle')}</h2>
-        <p className="mt-1 text-[13px] leading-6 text-ds-muted">{t('clawFeishuDesc')}</p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[16px] font-semibold text-ds-ink">{t('clawFeishuTitle')}</h2>
+            <p className="mt-1 text-[13px] leading-6 text-ds-muted">{t('clawFeishuDesc')}</p>
+          </div>
+          <button
+            type="button"
+            aria-expanded={helpOpen}
+            aria-label={helpOpen ? t('clawFeishuHelpClose') : t('clawFeishuHelp')}
+            title={helpOpen ? t('clawFeishuHelpClose') : t('clawFeishuHelp')}
+            onClick={() => setHelpOpen((open) => !open)}
+            className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${
+              helpOpen
+                ? 'border-accent/30 bg-accent/10 text-accent'
+                : 'border-ds-border bg-ds-main text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+            }`}
+          >
+            <CircleHelp className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
+
+        {helpOpen ? (
+          <div className="mt-3 rounded-xl border border-ds-border-muted bg-ds-subtle/50 px-4 py-3">
+            <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-6 text-ds-muted">
+              <li>
+                {t('clawFeishuStep1')}{' '}
+                <button
+                  type="button"
+                  className="text-accent underline-offset-2 hover:underline"
+                  onClick={() => void window.dsGui.openExternal(FEISHU_OPEN_PLATFORM)}
+                >
+                  {t('clawFeishuOpenPlatform')}
+                  <ExternalLink className="ml-0.5 inline h-3 w-3" />
+                </button>
+              </li>
+              <li>{t('clawFeishuStep2')}</li>
+              <li>{t('clawFeishuStep3')}</li>
+              <li>{t('clawFeishuStep4')}</li>
+            </ol>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-4 px-5 py-4">
-        <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-6 text-ds-muted">
-          <li>
-            {t('clawFeishuStep1')}{' '}
-            <button
-              type="button"
-              className="text-accent underline-offset-2 hover:underline"
-              onClick={() => void window.dsGui.openExternal(FEISHU_OPEN_PLATFORM)}
-            >
-              {t('clawFeishuOpenPlatform')}
-              <ExternalLink className="ml-0.5 inline h-3 w-3" />
-            </button>
-          </li>
-          <li>{t('clawFeishuStep2')}</li>
-          <li>{t('clawFeishuStep3')}</li>
-          <li>{t('clawFeishuStep4')}</li>
-        </ol>
-
         {notice ? (
           <p
             className={`rounded-xl px-3 py-2 text-[13px] ${
@@ -185,63 +257,125 @@ export function ClawFeishuSection({
           </div>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex flex-col gap-1">
-                <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuAppId')}</span>
-                <input
-                  className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
-                  value={config.appId}
-                  onChange={(e) => setConfig((c) => ({ ...c, appId: e.target.value }))}
-                  placeholder="cli_xxxxxxxx"
-                  autoComplete="off"
+            <details
+              open={credentialsOpen}
+              onToggle={(e) => setCredentialsOpen(e.currentTarget.open)}
+              className="rounded-xl border border-ds-border bg-ds-main/40"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium text-ds-ink">{t('clawFeishuCredentials')}</div>
+                  <div className="mt-0.5 truncate text-[12px] text-ds-faint">{credentialsSummary}</div>
+                </div>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-ds-faint transition ${credentialsOpen ? 'rotate-180' : ''}`}
+                  strokeWidth={1.75}
                 />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuDomain')}</span>
-                <select
-                  className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
-                  value={config.domain}
-                  onChange={(e) => setConfig((c) => ({ ...c, domain: e.target.value }))}
-                >
-                  <option value="feishu">feishu（国内）</option>
-                  <option value="lark">lark（国际）</option>
-                </select>
-              </label>
-            </div>
-            <label className="flex flex-col gap-1">
-              <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuAppSecret')}</span>
-              <input
-                type="password"
-                className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
-                value={config.appSecret}
-                onChange={(e) => setConfig((c) => ({ ...c, appSecret: e.target.value }))}
-                autoComplete="off"
-              />
-            </label>
+              </summary>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuReceiveId')}</span>
-              <span className="text-[12px] text-ds-faint">{t('clawFeishuReceiveIdDesc')}</span>
-              <input
-                className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
-                value={receiveId}
-                onChange={(e) => setConfig((c) => ({ ...c, chatId: e.target.value }))}
-                placeholder="ou_xxxxxxxx 或 oc_xxxxxxxx"
-                autoComplete="off"
-              />
-            </label>
+              <div className="flex flex-col gap-4 border-t border-ds-border-muted px-4 pb-4 pt-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuAppId')}</span>
+                    <input
+                      className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
+                      value={config.appId}
+                      onChange={(e) => setConfig((c) => ({ ...c, appId: e.target.value }))}
+                      placeholder="cli_xxxxxxxx"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuDomain')}</span>
+                    <select
+                      className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
+                      value={config.domain}
+                      onChange={(e) => setConfig((c) => ({ ...c, domain: e.target.value }))}
+                    >
+                      <option value="feishu">feishu（国内）</option>
+                      <option value="lark">lark（国际）</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuAppSecret')}</span>
+                  <input
+                    type="password"
+                    className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
+                    value={config.appSecret}
+                    onChange={(e) => setConfig((c) => ({ ...c, appSecret: e.target.value }))}
+                    autoComplete="off"
+                  />
+                </label>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuWebhookSecret')}</span>
-              <span className="text-[12px] text-ds-faint">{t('clawFeishuWebhookSecretDesc')}</span>
-              <input
-                type="password"
-                className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
-                value={webhookSecret}
-                onChange={(e) => onClawPatch({ im: { secret: e.target.value } })}
-                autoComplete="off"
-              />
-            </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuReceiveId')}</span>
+                  <span className="text-[12px] text-ds-faint">{t('clawFeishuReceiveIdDesc')}</span>
+                  <input
+                    className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
+                    value={receiveId}
+                    onChange={(e) => setConfig((c) => ({ ...c, chatId: e.target.value }))}
+                    placeholder="ou_xxxxxxxx 或 oc_xxxxxxxx"
+                    autoComplete="off"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuWebhookSecret')}</span>
+                  <span className="text-[12px] text-ds-faint">{t('clawFeishuWebhookSecretDesc')}</span>
+                  <input
+                    type="password"
+                    className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
+                    value={webhookSecret}
+                    onChange={(e) => onClawPatch({ im: { secret: e.target.value } })}
+                    autoComplete="off"
+                  />
+                </label>
+
+                <div className="rounded-xl border border-ds-border-muted bg-ds-subtle/40 px-3 py-2">
+                  <div className="text-[12px] font-medium text-ds-muted">{t('clawFeishuBridgeEnv')}</div>
+                  <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[11px] text-ds-ink">
+                    {bridgeEnvSnippet}
+                  </pre>
+                  <p className="mt-2 text-[12px] text-ds-faint">{t('clawFeishuBridgeHint')}</p>
+                </div>
+
+                {configPath ? (
+                  <p className="text-[11px] text-ds-faint">
+                    {t('clawFeishuConfigPath')}: <code>{configPath}</code>
+                  </p>
+                ) : null}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleSave()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-[13px] font-medium text-accent hover:bg-accent/15 disabled:opacity-50"
+                  >
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {t('clawFeishuSave')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!runtimeReady || testing}
+                    onClick={() => void handleTestSend()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
+                  >
+                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    {t('clawFeishuTestSend')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void window.dsGui.openFeishuConfigDir()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                    {t('clawFeishuOpenConfig')}
+                  </button>
+                </div>
+              </div>
+            </details>
 
             <div className="rounded-xl border border-ds-border-muted bg-ds-subtle/40 px-3 py-2">
               <div className="text-[12px] font-medium text-ds-muted">{t('clawFeishuInboundUrl')}</div>
@@ -257,49 +391,6 @@ export function ClawFeishuSection({
                 </button>
               </div>
               <div className="mt-2 text-[12px] text-ds-faint">{t('clawFeishuTestSendHint', { url: testSendUrl })}</div>
-            </div>
-
-            <div className="rounded-xl border border-ds-border-muted bg-ds-subtle/40 px-3 py-2">
-              <div className="text-[12px] font-medium text-ds-muted">{t('clawFeishuBridgeEnv')}</div>
-              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[11px] text-ds-ink">
-                {bridgeEnvSnippet}
-              </pre>
-              <p className="mt-2 text-[12px] text-ds-faint">{t('clawFeishuBridgeHint')}</p>
-            </div>
-
-            {configPath ? (
-              <p className="text-[11px] text-ds-faint">
-                {t('clawFeishuConfigPath')}: <code>{configPath}</code>
-              </p>
-            ) : null}
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => void handleSave()}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-[13px] font-medium text-accent hover:bg-accent/15 disabled:opacity-50"
-              >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                {t('clawFeishuSave')}
-              </button>
-              <button
-                type="button"
-                disabled={!runtimeReady || testing}
-                onClick={() => void handleTestSend()}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
-              >
-                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                {t('clawFeishuTestSend')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void window.dsGui.openFeishuConfigDir()}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover"
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-                {t('clawFeishuOpenConfig')}
-              </button>
             </div>
           </>
         )}

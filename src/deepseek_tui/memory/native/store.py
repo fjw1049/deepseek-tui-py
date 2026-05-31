@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deepseek_tui.memory.native.embedding import cosine_similarity, pack_embedding, unpack_embedding
-from deepseek_tui.memory.native.fts_tokenize import build_fts_query
+from deepseek_tui.memory.native.fts_tokenize import build_fts_query, collect_query_tokens
 from deepseek_tui.memory.native.hybrid_search import reciprocal_rank_fusion
 
 
@@ -277,29 +277,51 @@ class MemoryStore:
         conn.commit()
         return mem_id
 
-    def _fetch_fts_rows(self, query: str, *, limit: int) -> list[sqlite3.Row]:
+    def _fetch_fts_rows(
+        self, query: str, *, workspace: str | None, limit: int
+    ) -> list[sqlite3.Row]:
         fts_q = build_fts_query(query, mode=self._fts_tokenizer)
         conn = self._conn_required()
+        scope_sql = ""
+        params: tuple[object, ...]
+        if workspace:
+            scope_sql = "AND (m.workspace = ? OR m.workspace IS NULL)"
+            params = (fts_q, workspace, limit)
+        else:
+            params = (fts_q, limit)
         try:
             return conn.execute(
-                """
+                f"""
                 SELECT m.*, bm25(memories_fts) AS rank
                 FROM memories_fts
                 JOIN memories m ON m.rowid = memories_fts.rowid
                 WHERE memories_fts MATCH ?
+                {scope_sql}
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (fts_q, limit),
+                params,
             ).fetchall()
         except sqlite3.OperationalError:
             return []
 
-    def _fetch_like_rows(self, query: str, *, limit: int) -> list[sqlite3.Row]:
+    def _fetch_like_rows(
+        self, query: str, *, workspace: str | None, limit: int
+    ) -> list[sqlite3.Row]:
         needle = query.strip()[:80]
         if not needle:
             return []
         conn = self._conn_required()
+        if workspace:
+            return conn.execute(
+                """
+                SELECT m.*, -1.0 AS rank
+                FROM memories m
+                WHERE m.content LIKE ? AND (m.workspace = ? OR m.workspace IS NULL)
+                LIMIT ?
+                """,
+                (f"%{needle}%", workspace, limit),
+            ).fetchall()
         return conn.execute(
             """
             SELECT m.*, -1.0 AS rank
@@ -314,6 +336,7 @@ class MemoryStore:
         self,
         rows: list[sqlite3.Row],
         *,
+        query_tokens: list[str],
         workspace: str | None,
         score_threshold: float,
         half_life_days: float,
@@ -331,11 +354,20 @@ class MemoryStore:
         for row in rows:
             if not _row_in_workspace_scope(row["workspace"], workspace):
                 continue
+            content_lower = str(row["content"]).lower()
+            matched_terms = sum(
+                1 for token in query_tokens if token.lower() in content_lower
+            )
+            if len(query_tokens) >= 2 and matched_terms < 2:
+                continue
             raw_rank = float(row["rank"])
             if span < 1e-5:
                 fts_score = 1.0
             else:
                 fts_score = (max_rank - raw_rank) / span
+            if query_tokens:
+                coverage = matched_terms / len(query_tokens)
+                fts_score *= max(0.25, coverage)
             age_days = max(0.0, (now_ms - int(row["created_at"])) / 86_400_000.0)
             if half_life_days > 0:
                 decay = 0.5 ** (age_days / half_life_days)
@@ -374,16 +406,19 @@ class MemoryStore:
         query_embedding: list[float] | None = None,
     ) -> list[tuple[MemoryRow, float]]:
         cap = limit * 4
+        query_tokens = collect_query_tokens(query, mode=self._fts_tokenizer)
         if hybrid:
             fts_scored = self._score_rows(
-                self._fetch_fts_rows(query, limit=cap),
+                self._fetch_fts_rows(query, workspace=workspace, limit=cap),
+                query_tokens=query_tokens,
                 workspace=workspace,
                 score_threshold=0.0,
                 half_life_days=half_life_days,
                 workspace_boost=workspace_boost,
             )
             like_scored = self._score_rows(
-                self._fetch_like_rows(query, limit=cap),
+                self._fetch_like_rows(query, workspace=workspace, limit=cap),
+                query_tokens=query_tokens,
                 workspace=workspace,
                 score_threshold=0.0,
                 half_life_days=half_life_days,
@@ -407,11 +442,12 @@ class MemoryStore:
                     out.append((row, final))
             return out[:limit]
 
-        rows = self._fetch_fts_rows(query, limit=cap)
+        rows = self._fetch_fts_rows(query, workspace=workspace, limit=cap)
         if not rows:
-            rows = self._fetch_like_rows(query, limit=cap)
+            rows = self._fetch_like_rows(query, workspace=workspace, limit=cap)
         return self._score_rows(
             rows,
+            query_tokens=query_tokens,
             workspace=workspace,
             score_threshold=score_threshold,
             half_life_days=half_life_days,

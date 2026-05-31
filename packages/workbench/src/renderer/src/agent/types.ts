@@ -225,7 +225,7 @@ export interface AgentProvider {
   sendUserMessage(
     threadId: string,
     text: string,
-    options?: { mode?: string; model?: string }
+    options?: { mode?: string; model?: string; uiSubmitAtMs?: number }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }>
   steerUserMessage?(threadId: string, turnId: string, text: string): Promise<void>
   interruptTurn(threadId: string, turnId: string): Promise<void>

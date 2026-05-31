@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from deepseek_tui.memory.native.l2_scenes import SceneStore
-from deepseek_tui.memory.native.l3_persona import refresh_persona_from_store
+from deepseek_tui.memory.native.l3_persona import (
+    persona_path_for_workspace,
+    refresh_persona_from_store,
+)
 from deepseek_tui.memory.native.store import MemoryStore
 
 
@@ -54,8 +57,11 @@ def test_l3_persona_refresh(tmp_path) -> None:
             confidence=0.95,
         )
         assert refresh_persona_from_store(store, persona, workspace="/ws")
-        text = persona.read_text(encoding="utf-8")
+        text = persona_path_for_workspace(persona, workspace="/ws").read_text(
+            encoding="utf-8"
+        )
         assert "TypeScript" in text
+        assert not persona.exists()
     finally:
         store.close()
 
@@ -74,3 +80,21 @@ def test_l2_scene_navigation(tmp_path) -> None:
     nav = scenes.navigation_markdown(workspace="/ws")
     assert "Onboarding" in nav
     assert "Scene navigation" in nav
+
+
+def test_l2_scene_files_are_workspace_scoped(tmp_path) -> None:
+    scenes = SceneStore(tmp_path / "data")
+    scenes.record_scenes(
+        [{"scene_name": "Deployment", "memories": [{"content": "A uses Helm"}]}],
+        workspace="/ws/a",
+    )
+    scenes.record_scenes(
+        [{"scene_name": "Deployment", "memories": [{"content": "B uses Kustomize"}]}],
+        workspace="/ws/b",
+    )
+
+    nav_a = scenes.navigation_markdown(workspace="/ws/a")
+    nav_b = scenes.navigation_markdown(workspace="/ws/b")
+    assert "Deployment" in nav_a
+    assert "Deployment" in nav_b
+    assert nav_a != nav_b

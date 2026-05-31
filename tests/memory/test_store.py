@@ -110,3 +110,73 @@ def test_recall_excludes_other_workspace_facts(tmp_path) -> None:
         assert "ALPHA-7" not in contents
     finally:
         store.close()
+
+
+def test_workspace_filter_applies_before_candidate_limit(tmp_path) -> None:
+    """Other workspaces should not crowd out current-workspace candidates."""
+    store = MemoryStore(tmp_path / "m.db")
+    store.open()
+    try:
+        for i in range(20):
+            store.insert_memory(
+                content=f"shared deployment token noisy fact {i}",
+                mem_type="instruction",
+                workspace=f"/ws/noise-{i}",
+                thread_id=f"noise-{i}",
+                confidence=1.0,
+            )
+        store.insert_memory(
+            content="shared deployment token current workspace fact",
+            mem_type="instruction",
+            workspace="/ws/current",
+            thread_id="current",
+            confidence=1.0,
+        )
+
+        hits = store.search_memories(
+            "shared deployment token",
+            workspace="/ws/current",
+            limit=2,
+            score_threshold=0.0,
+        )
+        assert any(row.workspace == "/ws/current" for row, _ in hits)
+    finally:
+        store.close()
+
+
+def test_multi_term_query_requires_more_than_one_weak_match(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "m.db")
+    store.open()
+    try:
+        store.insert_memory(
+            content="API base URL is stored in config",
+            mem_type="instruction",
+            workspace="/ws",
+            thread_id="t1",
+            confidence=1.0,
+        )
+        weak_hits = store.search_memories(
+            "api deployment timeout",
+            workspace="/ws",
+            limit=5,
+            score_threshold=0.3,
+        )
+        assert weak_hits == []
+
+        store.insert_memory(
+            content="API deployment timeout is fixed by raising gateway limits",
+            mem_type="instruction",
+            workspace="/ws",
+            thread_id="t2",
+            confidence=1.0,
+        )
+        strong_hits = store.search_memories(
+            "api deployment timeout",
+            workspace="/ws",
+            limit=5,
+            score_threshold=0.3,
+        )
+        assert strong_hits
+        assert "gateway limits" in strong_hits[0][0].content
+    finally:
+        store.close()

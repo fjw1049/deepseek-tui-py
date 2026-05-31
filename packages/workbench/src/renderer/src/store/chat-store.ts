@@ -1499,6 +1499,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const seqAtSend = get().lastSeq
       const { turnId, userMessageItemId } = await p.sendUserMessage(activeThreadId, trimmedText, {
         mode,
+        uiSubmitAtMs: now,
         ...(composerModel ? { model: composerModel } : {})
       })
       // Mirror the composer model selection against the runtime's stable

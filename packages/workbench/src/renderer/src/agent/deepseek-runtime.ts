@@ -828,7 +828,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
   async sendUserMessage(
     threadId: string,
     text: string,
-    options?: { mode?: string; model?: string }
+    options?: { mode?: string; model?: string; uiSubmitAtMs?: number }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }> {
     const settings = await window.dsGui.getSettings()
     const flags = runtimeExecutionFlags(settings)
@@ -839,6 +839,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         prompt: text,
         mode: options?.mode,
         model: options?.model,
+        ui_submit_at_ms: options?.uiSubmitAtMs,
         ...flags
       })
     )

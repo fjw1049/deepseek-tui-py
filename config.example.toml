@@ -33,8 +33,8 @@ capture_min_user_chars = 20
 l1_every_n = 5
 l1_idle_timeout_seconds = 600
 l1_confidence_min = 0.6
-# Max L1 rows extracted per thread_id (resume reuses thread → long chats hit cap and stop learning).
-# Raise to 50+ for always-on sessions; does not affect recall of existing rows.
+# Max L1 rows inserted per extraction batch.
+# Long-running threads continue learning across later batches.
 l1_max_per_session = 20
 l1_decay_half_life_days = 180
 l1_inject_position = "user"

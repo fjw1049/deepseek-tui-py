@@ -140,6 +140,11 @@ class ConversationSearchTool(ToolSpec):
                     "type": "integer",
                     "description": f"Max hits (default 5, max {HARD_MAX_SEARCH_LIMIT}).",
                 },
+                "scope": {
+                    "type": "string",
+                    "enum": ["workspace", "current_thread", "all"],
+                    "description": "Search scope. Defaults to workspace.",
+                },
             },
             "required": ["query"],
         }
@@ -154,14 +159,20 @@ class ConversationSearchTool(ToolSpec):
         if not query:
             raise ToolError("'query' is required")
         limit = _parse_limit(input_data)
+        raw_scope = input_data.get("scope", "workspace")
+        scope = raw_scope if isinstance(raw_scope, str) else "workspace"
+        if scope not in ("workspace", "current_thread", "all"):
+            raise ToolError("'scope' must be one of: workspace, current_thread, all")
+        workspace = None if scope == "all" else _workspace(context)
+        thread_id = _thread_id(context) if scope == "current_thread" else None
         text = await provider.search_conversations(
             query,
-            workspace=_workspace(context),
-            thread_id=_thread_id(context),
+            workspace=workspace,
+            thread_id=thread_id,
             limit=limit,
         )
         return ToolResult(
             success=True,
             content=text,
-            metadata={"query": query, "limit": limit},
+            metadata={"query": query, "limit": limit, "scope": scope},
         )

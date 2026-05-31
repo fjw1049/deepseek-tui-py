@@ -12,6 +12,7 @@ from deepseek_tui.engine.engine import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.memory.coordinator import MemoryCoordinator
 from deepseek_tui.memory.formatting import strip_relevant_memories, wrap_relevant_memories
+from deepseek_tui.protocol.messages import Message
 
 
 @pytest.mark.asyncio
@@ -77,3 +78,14 @@ def test_wrap_strip_relevant_memories_roundtrip() -> None:
     l1 = "- (instruction) pool size is 50"
     wrapped = wrap_relevant_memories(user, l1)
     assert strip_relevant_memories(wrapped) == user
+
+
+def test_messages_for_capture_uses_wire_role_values() -> None:
+    captured = Engine._messages_for_capture(
+        [
+            Message.user("user text"),
+            Message.assistant("assistant text"),
+            Message.tool_result("tool-1", "tool text"),
+        ]
+    )
+    assert [m["role"] for m in captured] == ["user", "assistant", "tool"]

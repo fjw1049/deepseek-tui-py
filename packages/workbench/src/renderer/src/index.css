@@ -695,6 +695,21 @@ textarea {
   color: var(--text-primary);
 }
 
+.ds-sidebar-brand-mark {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.ds-sidebar-brand-wordmark-img {
+  width: min(100%, 110px);
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+}
+
 .ds-sidebar-section-label {
   font-size: 0.8125rem;
   font-weight: 600;

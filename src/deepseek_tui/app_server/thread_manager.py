@@ -59,8 +59,18 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
-from deepseek_tui.tools.subagent.mailbox import MailboxMessage
+from deepseek_tui.app_server.turn_delta_batcher import TurnDeltaBatcher
+from deepseek_tui.app_server.turn_latency import (
+    TurnLatencyTrace,
+    bind_turn_latency,
+    first_response_timeout_message,
+    first_response_timeout_s,
+    get_turn_latency,
+    now_ms,
+    pop_turn_latency,
+)
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 from deepseek_tui.utils import summarize_text
 
 if TYPE_CHECKING:
@@ -71,9 +81,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["RuntimeThreadManager"]
-
-
-TURN_FIRST_RESPONSE_TIMEOUT_S = 120.0
 
 
 def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
@@ -692,25 +699,38 @@ class RuntimeThreadManager:
             raise ValueError("prompt is required")
 
         thread = self.store.load_thread(thread_id)
-        handle, engine_task = await self._ensure_engine_loaded(thread)
-
         effective_mode = (req.mode or thread.mode or "agent").strip() or "agent"
+        turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+        timeout_s = first_response_timeout_s(effective_mode)
+        trace = TurnLatencyTrace(
+            turn_id=turn_id,
+            mode=effective_mode,
+            ui_submit_at_ms=req.ui_submit_at_ms,
+            main_runtime_request_start_ms=req.main_runtime_request_start_ms,
+            first_response_timeout_s=timeout_s,
+        )
+        bind_turn_latency(trace)
+
+        handle, engine_task = await self._ensure_engine_loaded(thread, trace=trace)
+        trace.runtime_turn_created_ms = now_ms()
 
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
+                pop_turn_latency(turn_id)
                 raise ValueError("Thread already has an active turn")
             if state is not None:
                 state.engine.mode = effective_mode
+                state.engine.tool_context.metadata["turn_latency_turn_id"] = turn_id
 
         now = datetime.now(timezone.utc)
-        turn_id = f"turn_{uuid.uuid4().hex[:8]}"
         auto_approve = req.auto_approve if req.auto_approve is not None else thread.auto_approve
         trust_mode = req.trust_mode if req.trust_mode is not None else thread.trust_mode
 
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is None:
+                pop_turn_latency(turn_id)
                 raise RuntimeError("Thread engine not loaded")
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
@@ -759,7 +779,7 @@ class RuntimeThreadManager:
 
         model = req.model or thread.model
         monitor_task = asyncio.create_task(
-            self._monitor_turn_safe(thread_id, turn_id, handle),
+            self._monitor_turn_safe(thread_id, turn_id, handle, effective_mode),
             name=f"monitor-{turn_id}",
         )
         await handle.send_message(content=prompt, model=model)
@@ -940,8 +960,10 @@ class RuntimeThreadManager:
     # --- engine loading + LRU ------------------------------------------------
 
     async def _ensure_engine_loaded(
-        self, thread: ThreadRecord
+        self, thread: ThreadRecord, *, trace: TurnLatencyTrace | None = None
     ) -> tuple[EngineHandle, asyncio.Task[None]]:
+        if trace is not None:
+            trace.engine_load_start_ms = now_ms()
         async with self._active_lock:
             state = self._active.get(thread.id)
             if state is not None:
@@ -950,11 +972,16 @@ class RuntimeThreadManager:
                 )
                 state.engine.mode = (thread.mode or "agent").strip() or "agent"
                 self._touch_lru(thread.id)
+                if trace is not None:
+                    trace.engine_load_cache_hit = True
+                    trace.engine_load_end_ms = now_ms()
                 return state.handle, state.engine_task
 
         from deepseek_tui.engine.engine import Engine
         from deepseek_tui.execpolicy.engine import exec_policy_for_config
 
+        if trace is not None:
+            trace.engine_load_cache_hit = False
         handle = EngineHandle()
         workspace = Path(thread.workspace).expanduser().resolve()
         approval_handler = self._build_approval_handler(thread.id)
@@ -1004,6 +1031,8 @@ class RuntimeThreadManager:
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
 
+        if trace is not None:
+            trace.engine_load_end_ms = now_ms()
         return handle, engine_task
 
     def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:
@@ -1075,6 +1104,7 @@ class RuntimeThreadManager:
         handle: EngineHandle,
         first_response: asyncio.Event,
         timeout_s: float,
+        turn_id: str,
     ) -> None:
         """Cancel the turn if the model emits no content within ``timeout_s``."""
         from deepseek_tui.engine.events import TurnCancelledEvent
@@ -1082,30 +1112,63 @@ class RuntimeThreadManager:
         try:
             await asyncio.wait_for(first_response.wait(), timeout=timeout_s)
         except asyncio.TimeoutError:
+            trace = get_turn_latency(turn_id)
+            if trace is not None:
+                trace.timeout_reason = "first_response_timeout"
             logger.warning(
-                "turn_first_response_timeout after=%.0fs", timeout_s
+                "turn_first_response_timeout turn_id=%s after=%.0fs mode=%s",
+                turn_id,
+                timeout_s,
+                trace.mode if trace else "?",
             )
             await handle.cancel("first_response_timeout")
             try:
                 await asyncio.wait_for(first_response.wait(), timeout=10.0)
             except asyncio.TimeoutError:
                 logger.error(
-                    "turn_first_response_force_fail reason=first_response_timeout"
+                    "turn_first_response_force_fail turn_id=%s reason=first_response_timeout",
+                    turn_id,
                 )
                 await handle.inject_event(
                     TurnCancelledEvent(reason="first_response_timeout")
                 )
 
     async def _monitor_turn_safe(
-        self, thread_id: str, turn_id: str, handle: EngineHandle
+        self,
+        thread_id: str,
+        turn_id: str,
+        handle: EngineHandle,
+        mode: str,
     ) -> None:
         try:
-            await self._monitor_turn(thread_id, turn_id, handle)
+            await self._monitor_turn(thread_id, turn_id, handle, mode)
         except Exception as exc:
             logger.error("Turn monitor failed for %s: %s", turn_id, exc)
+        finally:
+            pop_turn_latency(turn_id)
+
+    async def _emit_item_delta(
+        self,
+        thread_id: str,
+        turn_id: str,
+        item_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        trace = get_turn_latency(turn_id)
+        if trace is not None and trace.runtime_first_delta_emitted_ms is None:
+            trace.runtime_first_delta_emitted_ms = now_ms()
+        if trace is not None:
+            trace.delta_events_emitted += 1
+        await self._emit_event(
+            thread_id, turn_id, item_id, "item.delta", payload
+        )
 
     async def _monitor_turn(
-        self, thread_id: str, turn_id: str, handle: EngineHandle
+        self,
+        thread_id: str,
+        turn_id: str,
+        handle: EngineHandle,
+        mode: str,
     ) -> None:
         """Consume engine events and persist turn items + runtime events.
 
@@ -1121,9 +1184,40 @@ class RuntimeThreadManager:
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
         first_response = asyncio.Event()
+        timeout_s = first_response_timeout_s(mode)
+        delta_batcher = TurnDeltaBatcher(
+            thread_id,
+            turn_id,
+            lambda tid, tuid, iid, kind, payload: self._emit_item_delta(
+                tid, tuid, iid, payload
+            ),
+        )
+        tool_call_started_ms: dict[str, int] = {}
+        approval_pending_ms: dict[str, int] = {}
+
+        def note_tool_result_timing(tool_call_id: str) -> None:
+            trace = get_turn_latency(turn_id)
+            if trace is None:
+                return
+            end = now_ms()
+            started = tool_call_started_ms.pop(tool_call_id, None)
+            approval_start = approval_pending_ms.pop(tool_call_id, None)
+            if started is None:
+                return
+            if approval_start is not None:
+                trace.note_approval_wait(end - approval_start)
+                trace.note_tool_exec(max(0, approval_start - started))
+            else:
+                trace.note_tool_exec(end - started)
+
+        async def flush_delta_batch() -> None:
+            emitted = await delta_batcher.flush()
+            if emitted:
+                await self.store.flush_event_checkpoint()
+
         watchdog = asyncio.create_task(
             self._turn_first_response_watchdog(
-                handle, first_response, TURN_FIRST_RESPONSE_TIMEOUT_S
+                handle, first_response, timeout_s, turn_id
             ),
             name=f"turn-watchdog-{turn_id}",
         )
@@ -1134,6 +1228,7 @@ class RuntimeThreadManager:
                 break
 
             if isinstance(event, TurnStartedEvent):
+                await flush_delta_batch()
                 await self._emit_event(
                     thread_id, turn_id, None, "turn.lifecycle", {"status": "in_progress"}
                 )
@@ -1141,6 +1236,7 @@ class RuntimeThreadManager:
             elif isinstance(event, TextDeltaEvent):
                 first_response.set()
                 if current_reasoning_item_id is not None:
+                    await flush_delta_batch()
                     item = self.store.load_item(current_reasoning_item_id)
                     item.status = TurnItemLifecycleStatus.COMPLETED
                     item.summary = summarize_text(current_reasoning_text, SUMMARY_LIMIT)
@@ -1155,6 +1251,7 @@ class RuntimeThreadManager:
                     current_reasoning_text = ""
 
                 if current_message_item_id is None:
+                    await flush_delta_batch()
                     item_id = f"item_{uuid.uuid4().hex[:8]}"
                     now = datetime.now(timezone.utc)
                     item = TurnItemRecord(
@@ -1176,14 +1273,14 @@ class RuntimeThreadManager:
                     current_message_text = ""
 
                 current_message_text += event.text
-                await self._emit_event(
-                    thread_id, turn_id, current_message_item_id, "item.delta",
-                    {"delta": event.text, "kind": "agent_message"},
+                await delta_batcher.append(
+                    current_message_item_id, "agent_message", event.text
                 )
 
             elif isinstance(event, ThinkingDeltaEvent):
                 first_response.set()
                 if current_reasoning_item_id is None:
+                    await flush_delta_batch()
                     item_id = f"item_{uuid.uuid4().hex[:8]}"
                     now = datetime.now(timezone.utc)
                     item = TurnItemRecord(
@@ -1205,14 +1302,15 @@ class RuntimeThreadManager:
                     current_reasoning_text = ""
 
                 current_reasoning_text += event.thinking
-                await self._emit_event(
-                    thread_id, turn_id, current_reasoning_item_id, "item.delta",
-                    {"delta": event.thinking, "kind": "agent_reasoning"},
+                await delta_batcher.append(
+                    current_reasoning_item_id, "agent_reasoning", event.thinking
                 )
 
             elif isinstance(event, ToolCallEvent):
+                await flush_delta_batch()
                 first_response.set()
                 tc = event.tool_call
+                tool_call_started_ms[tc.id] = now_ms()
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
                 tool_items[tc.id] = item_id
                 tool_call_args[tc.id] = tc.arguments
@@ -1249,6 +1347,7 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, ToolResultEvent):
+                note_tool_result_timing(event.tool_call_id)
                 item_id = tool_items.pop(event.tool_call_id, None)
                 tool_args = tool_call_args.pop(event.tool_call_id, None)
                 if item_id is not None:
@@ -1301,6 +1400,7 @@ class RuntimeThreadManager:
                 )
 
                 approval_id = event.tool_call_id
+                approval_pending_ms[approval_id] = now_ms()
                 await self._emit_event(
                     thread_id,
                     turn_id,
@@ -1314,6 +1414,7 @@ class RuntimeThreadManager:
                     elevation_request_to_sse_payload,
                 )
 
+                approval_pending_ms[event.tool_call_id] = now_ms()
                 await self._emit_event(
                     thread_id,
                     turn_id,
@@ -1417,6 +1518,7 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, ErrorEvent):
+                await flush_delta_batch()
                 first_response.set()
                 turn_status = RuntimeTurnStatus.FAILED
                 turn_error = event.message
@@ -1439,14 +1541,19 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, TurnCancelledEvent):
+                await flush_delta_batch()
                 if event.reason == "first_response_timeout":
+                    trace = get_turn_latency(turn_id)
+                    if trace is not None:
+                        trace.timeout_reason = event.reason
                     turn_status = RuntimeTurnStatus.FAILED
-                    turn_error = "模型首包响应超时，请稍后重试。"
+                    turn_error = first_response_timeout_message(trace)
                 else:
                     turn_status = RuntimeTurnStatus.INTERRUPTED
                 break
 
             elif isinstance(event, TurnCompleteEvent):
+                await flush_delta_batch()
                 first_response.set()
                 if event.usage is not None:
                     u = event.usage
@@ -1543,7 +1650,15 @@ class RuntimeThreadManager:
 
         await self._emit_event(
             thread_id, turn_id, None, "turn.completed",
-            {"turn": turn.model_dump(mode="json")},
+            {
+                "turn": turn.model_dump(mode="json"),
+                **(
+                    {"latency_trace": latency_payload}
+                    if (latency_payload := self._finalize_turn_latency(turn_id))
+                    else {}
+                ),
+            },
+            force_checkpoint=True,
         )
 
         # Clear active turn
@@ -1615,10 +1730,22 @@ class RuntimeThreadManager:
         item_id: str | None,
         event: str,
         payload: dict[str, Any],
+        *,
+        force_checkpoint: bool = False,
     ) -> RuntimeEventRecord:
-        record = await self.store.append_event(thread_id, turn_id, item_id, event, payload)
+        record = await self.store.append_event(
+            thread_id, turn_id, item_id, event, payload, force_checkpoint=force_checkpoint
+        )
         self.event_bus.send(record)
         return record
+
+    def _finalize_turn_latency(self, turn_id: str) -> dict[str, Any] | None:
+        trace = get_turn_latency(turn_id)
+        if trace is None:
+            return None
+        trace.turn_completed_ms = now_ms()
+        trace.log_summary()
+        return trace.to_payload()
 
     def _recover_interrupted_state(self) -> None:
         """On startup, mark any Queued/InProgress turns as Interrupted.

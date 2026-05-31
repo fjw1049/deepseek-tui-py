@@ -28,6 +28,41 @@ describe('JsonSettingsStore', () => {
     expect(loaded.deepseek.autoStart).toBe(false)
   })
 
+  it('loads and normalizes memory settings', async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), 'ds-gui-settings-'))
+    const workspaceRoot = join(userDataDir, 'workspace')
+    await mkdir(workspaceRoot, { recursive: true })
+
+    await writeFile(
+      join(userDataDir, 'deepseek-gui-settings.json'),
+      JSON.stringify({
+        version: 1,
+        workspaceRoot,
+        memory: {
+          enabled: true,
+          mode: 'auto',
+          smart: {
+            enabled: true,
+            recallLimit: 12,
+            recallScoreThreshold: 0.5,
+            dataDir: '~/custom-memory'
+          }
+        }
+      }),
+      'utf8'
+    )
+
+    const store = new JsonSettingsStore(userDataDir)
+    const loaded = await store.load()
+
+    expect(loaded.memory.enabled).toBe(true)
+    expect(loaded.memory.mode).toBe('auto')
+    expect(loaded.memory.smart.enabled).toBe(true)
+    expect(loaded.memory.smart.recallLimit).toBe(12)
+    expect(loaded.memory.smart.recallScoreThreshold).toBe(0.5)
+    expect(loaded.memory.smart.dataDir).toBe('~/custom-memory')
+  })
+
   it('backs up invalid JSON and replaces it with defaults', async () => {
     const userDataDir = await mkdtemp(join(tmpdir(), 'ds-gui-settings-'))
     const settingsPath = join(userDataDir, 'deepseek-gui-settings.json')

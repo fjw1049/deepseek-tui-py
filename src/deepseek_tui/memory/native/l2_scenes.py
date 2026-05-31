@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,10 @@ from typing import Any
 def _safe_filename(name: str) -> str:
     slug = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", name.strip())[:80]
     return slug or "scene"
+
+
+def _workspace_key(workspace: str) -> str:
+    return hashlib.sha256(workspace.encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass(slots=True)
@@ -45,7 +50,7 @@ class SceneStore:
             name = str(scene.get("scene_name", "") or "").strip()
             if not name:
                 continue
-            filename = f"{_safe_filename(name)}.md"
+            filename = f"{_workspace_key(workspace)}_{_safe_filename(name)}.md"
             path = self._blocks_dir / filename
             memories = scene.get("memories") or []
             lines = [f"# {name}", "", f"workspace: {workspace}", ""]

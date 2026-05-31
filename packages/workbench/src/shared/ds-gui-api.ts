@@ -95,12 +95,20 @@ export type DeepseekRuntimeDiagnosticsResult = {
   }
   runtime: {
     baseUrl: string
+    configuredPort: number
     portOwner: {
       pid: number
       command: string
       parentPid: number | null
       parentCommand: string | null
     } | null
+    alternateRuntimes: Array<{
+      port: number
+      pid: number
+      command: string
+      parentPid: number | null
+      parentCommand: string | null
+    }>
     health: { ok: boolean; status: number; body: string; message?: string }
     threadApi: { ok: boolean; status: number; body: string; message?: string } | null
     workspaceStatus: { ok: boolean; status: number; body: string; message?: string } | null

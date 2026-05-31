@@ -7,13 +7,15 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.memory.formatting import wrap_relevant_memories_system_block
 from deepseek_tui.memory.native.embedding import EmbeddingClient
 from deepseek_tui.memory.native.l0_recorder import L0Recorder
 from deepseek_tui.memory.native.l0_search import format_l0_hits, search_l0_jsonl
 from deepseek_tui.memory.native.l1_extractor import L1Extractor
 from deepseek_tui.memory.native.l2_scenes import SceneStore
-from deepseek_tui.memory.native.l3_persona import refresh_persona_from_store
+from deepseek_tui.memory.native.l3_persona import (
+    persona_paths_for_workspace,
+    refresh_persona_from_store,
+)
 from deepseek_tui.memory.native.scheduler import L1Scheduler
 from deepseek_tui.memory.native.store import MemoryStore
 from deepseek_tui.memory.provider import CaptureInput, RecallResult
@@ -236,9 +238,14 @@ class NativeMemoryProvider:
         nav = self._scenes.navigation_markdown(workspace=workspace)
         if nav:
             append_parts.append(nav)
-        if self._persona_path.is_file():
+        for persona_path in persona_paths_for_workspace(
+            self._persona_path,
+            workspace=workspace,
+        ):
+            if not persona_path.is_file():
+                continue
             try:
-                persona = self._persona_path.read_text(encoding="utf-8").strip()
+                persona = persona_path.read_text(encoding="utf-8").strip()
             except OSError:
                 persona = ""
             if persona:
@@ -246,7 +253,6 @@ class NativeMemoryProvider:
         append_system = "\n\n".join(append_parts)
 
         if inject == "system_volatile" and l1_context:
-            l1_context = wrap_relevant_memories_system_block(l1_context)
             return RecallResult(
                 l1_context=l1_context,
                 append_system=append_system,

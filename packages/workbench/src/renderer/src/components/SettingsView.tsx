@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   mergeClawSettings,
+  mergeMemorySettings,
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
+  type MemorySettingsPatchV1,
   type SandboxMode
 } from '@shared/app-settings'
 import {
@@ -24,6 +26,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   CalendarClock,
+  Brain,
   PawPrint,
   X
 } from 'lucide-react'
@@ -47,17 +50,19 @@ import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel } from './settings/PluginsPanel'
 import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
+import { MemorySettingsPanel } from './settings/MemorySettingsPanel'
 import { PetSprite } from './pet/PetSprite'
 
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate'>
+  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate'>
 > & {
   deepseek?: Partial<AppSettingsV1['deepseek']>
   log?: Partial<AppSettingsV1['log']>
   notifications?: Partial<AppSettingsV1['notifications']>
   skills?: Partial<AppSettingsV1['skills']>
+  memory?: MemorySettingsPatchV1
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
 }
@@ -104,6 +109,7 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
       ...current.skills,
       ...(patch.skills ?? {})
     },
+    memory: mergeMemorySettings(current.memory, patch.memory),
     claw: mergeClawSettings(current.claw, patch.claw),
     guiUpdate: {
       ...current.guiUpdate,
@@ -672,6 +678,10 @@ export function SettingsView(): ReactElement {
             <SlidersHorizontal className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('runtime')}
           </button>
+          <button type="button" className={catCls('memory')} onClick={() => openSettings('memory')}>
+            <Brain className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('memory')}
+          </button>
           <button type="button" className={catCls('mcp')} onClick={() => openSettings('mcp')}>
             <Plug className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('mcp')}
@@ -1159,6 +1169,14 @@ export function SettingsView(): ReactElement {
                 }
               />
             </SettingsCard>
+          )}
+
+          {category === 'memory' && (
+            <MemorySettingsPanel
+              form={form}
+              configPath={deepseekPaths.configPath}
+              onMemoryPatch={(patch) => update({ memory: patch })}
+            />
           )}
 
           {category === 'skill' && (

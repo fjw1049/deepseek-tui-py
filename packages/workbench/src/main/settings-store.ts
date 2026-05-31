@@ -4,9 +4,12 @@ import { basename, dirname, join } from 'node:path'
 import {
   DEFAULT_DEEPSEEK_BASE_URL,
   defaultClawSettings,
+  defaultMemorySettings,
   defaultWorkbenchSkills,
   mergeClawSettings,
+  mergeMemorySettings,
   normalizeAppSettings,
+  normalizeMemorySettings,
   normalizeWorkbenchSkills,
   type AppSettingsPatch,
   type AppSettingsV1,
@@ -141,6 +144,7 @@ const defaultSettings = (): AppSettingsV1 => ({
     turnComplete: true
   },
   skills: defaultWorkbenchSkills(),
+  memory: defaultMemorySettings(),
   guiUpdate: {
     channel: 'frontier'
   },
@@ -156,6 +160,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     log: { ...defaults.log, ...parsed.log },
     notifications: { ...defaults.notifications, ...parsed.notifications },
     skills: normalizeWorkbenchSkills(parsed.skills, parsed.claw?.skills?.extraDirs),
+    memory: normalizeMemorySettings(parsed.memory),
     claw: mergeClawSettings(defaults.claw, parsed.claw),
     guiUpdate: { ...defaults.guiUpdate, ...parsed.guiUpdate },
     agentProvider: 'deepseek-runtime'
@@ -261,6 +266,7 @@ export class JsonSettingsStore {
         partial.skills ? { ...cur.skills, ...partial.skills } : cur.skills,
         partial.claw?.skills?.extraDirs
       ),
+      memory: mergeMemorySettings(cur.memory, partial.memory),
       claw: mergeClawSettings(cur.claw, partial.claw),
       guiUpdate: { ...cur.guiUpdate, ...(partial.guiUpdate ?? {}) },
       agentProvider: 'deepseek-runtime'

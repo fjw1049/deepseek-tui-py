@@ -84,8 +84,6 @@ class L1Extractor:
     ) -> ExtractionResult:
         if not new_messages:
             return ExtractionResult()
-        if self._store.count_memories_for_thread(thread_id) >= self._max_per_session:
-            return ExtractionResult()
 
         user_prompt = format_extraction_user_prompt(
             new_messages,
@@ -140,6 +138,6 @@ class L1Extractor:
                     )
                 if mem_id:
                     inserted += 1
-                    if self._store.count_memories_for_thread(thread_id) >= self._max_per_session:
+                    if inserted >= self._max_per_session:
                         return ExtractionResult(inserted=inserted, scenes=scenes)
         return ExtractionResult(inserted=inserted, scenes=scenes)

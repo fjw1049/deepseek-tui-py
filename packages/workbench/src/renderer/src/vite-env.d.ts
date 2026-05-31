@@ -5,6 +5,11 @@ declare module '*.webp' {
   export default src
 }
 
+declare module '*.png' {
+  const src: string
+  export default src
+}
+
 import type { DetailedHTMLProps, HTMLAttributes } from 'react'
 
 declare module 'react' {

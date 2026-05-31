@@ -38,3 +38,5 @@ def test_build_system_prompt_system_volatile_l1(tmp_path: Path) -> None:
     )
     assert "<relevant-memories>" in prompt
     assert "shipped v2" in prompt
+    assert prompt.count("<relevant-memories>") == 1
+    assert prompt.count("</relevant-memories>") == 1

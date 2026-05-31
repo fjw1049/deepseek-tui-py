@@ -111,16 +111,19 @@ class MemoryCoordinator:
             user_text, had_tool_calls=had_tool_calls, success=success
         ):
             return
-        await self._provider.capture(
-            CaptureInput(
-                thread_id=thread_id,
-                user_text=user_text,
-                workspace=workspace,
-                messages=messages,
-                had_tool_calls=had_tool_calls,
-                success=success,
+        try:
+            await self._provider.capture(
+                CaptureInput(
+                    thread_id=thread_id,
+                    user_text=user_text,
+                    workspace=workspace,
+                    messages=messages,
+                    had_tool_calls=had_tool_calls,
+                    success=success,
+                )
             )
-        )
+        except Exception:
+            logger.exception("memory_capture_failed thread_id=%s", thread_id)
 
     async def flush_session(self, thread_id: str) -> None:
         if self.enabled:

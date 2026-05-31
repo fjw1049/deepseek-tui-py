@@ -92,6 +92,10 @@ type PortOwner = {
   parentCommand: string | null
 }
 
+export type RuntimePortListener = PortOwner & { port: number }
+
+export const COMMON_RUNTIME_PORTS = [7878, 7879, 8787] as const
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -145,6 +149,36 @@ export async function findListeningProcessOnPort(port: number): Promise<PortOwne
   } catch {
     return null
   }
+}
+
+export async function findAlternateDeepseekRuntimes(
+  configuredPort: number
+): Promise<RuntimePortListener[]> {
+  const out: RuntimePortListener[] = []
+  for (const port of COMMON_RUNTIME_PORTS) {
+    if (port === configuredPort) continue
+    const owner = await findListeningProcessOnPort(port)
+    if (!owner) continue
+    const command = [owner.parentCommand, owner.command].filter(Boolean).join('\n')
+    if (!isDeepseekCommand(command)) continue
+    out.push({ port, ...owner })
+  }
+  return out
+}
+
+export function formatAlternateRuntimeHint(
+  alternates: RuntimePortListener[],
+  configuredPort: number
+): string {
+  if (alternates.length === 0) return ''
+  const lines = alternates
+    .map((entry) => `  • port ${entry.port} (PID ${entry.pid}: ${entry.command})`)
+    .join('\n')
+  return (
+    `Nothing is listening on the configured port ${configuredPort}, ` +
+    `but another DeepSeek runtime is active on:\n${lines}\n` +
+    `Update Settings → Runtime port to match, or stop the other process.`
+  )
 }
 
 function escapeRegExp(value: string): string {

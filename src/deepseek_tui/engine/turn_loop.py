@@ -111,6 +111,8 @@ class TurnLoop:
         *,
         include_tool_search: bool = True,
         include_code_execution: bool = True,
+        latency_turn_id: str | None = None,
+        round_idx: int = 0,
     ) -> TurnResult:
         """Run a single turn of the conversation loop.
 
@@ -142,6 +144,8 @@ class TurnLoop:
             cancel_event=cancel_event,
             tool_catalog=tool_catalog,
             state=state,
+            latency_turn_id=latency_turn_id,
+            round_idx=round_idx,
         )
 
         return result
@@ -153,11 +157,38 @@ class TurnLoop:
         cancel_event: asyncio.Event,
         tool_catalog: list[dict[str, Any]],
         state: _TurnState,
+        latency_turn_id: str | None = None,
+        round_idx: int = 0,
     ) -> TurnResult:
         """Core turn loop logic (mirrors Rust handle_deepseek_turn main loop)."""
+        from deepseek_tui.app_server.turn_latency import get_turn_latency, now_ms
+
         buffer = AssistantResponseBuffer()
         usage: Usage | None = None
         tool_calls: list[ToolCall] = []
+        trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
+        round_trace = trace.current_round() if trace is not None else None
+        if round_trace is not None and round_trace.round_idx != round_idx:
+            round_trace = None
+
+        def mark_llm_request_started(active_count: int) -> None:
+            ts = now_ms()
+            if round_trace is not None and round_trace.llm_request_start_ms is None:
+                round_trace.llm_request_start_ms = ts
+            if trace is not None and trace.llm_request_start_ms is None:
+                trace.llm_request_start_ms = ts
+                trace.active_tools_count = active_count
+
+        def mark_first_sse_chunk() -> None:
+            ts = now_ms()
+            if round_trace is not None and round_trace.llm_first_sse_chunk_ms is None:
+                round_trace.llm_first_sse_chunk_ms = ts
+            if trace is not None and trace.llm_first_sse_chunk_ms is None:
+                trace.llm_first_sse_chunk_ms = ts
+
+        def mark_llm_stream_end() -> None:
+            if round_trace is not None:
+                round_trace.llm_stream_end_ms = now_ms()
         logger.info(
             "stream_start model=%s msg_count=%d tools_count=%d "
             "max_tokens=%s reasoning_effort=%s",
@@ -254,8 +285,10 @@ class TurnLoop:
                 content_bytes = 0
                 fake_filter = FakeWrapperFilter()
                 fake_notice_sent = False
+                mark_llm_request_started(len(active_tools or []))
 
                 async for stream_event in self.client.stream_with_retry(stream_request):
+                    mark_first_sse_chunk()
                     if cancel_event.is_set():
                         return TurnResult(
                             assistant_message=buffer.build_message(),
@@ -358,6 +391,7 @@ class TurnLoop:
                         )
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage
+                        mark_llm_stream_end()
                         logger.info(
                             "stream_done duration_ms=%d input_tokens=%s "
                             "output_tokens=%s reasoning_tokens=%s",
@@ -406,6 +440,7 @@ class TurnLoop:
                                 await emit(ToolCallEvent(tool_call=converted))
                             buffer.text_parts[:] = [parsed.clean_text]
 
+                    mark_llm_stream_end()
                     state.context_recovery_attempts = 0
                     break  # success — exit retry loop
 

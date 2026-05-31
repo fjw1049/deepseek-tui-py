@@ -30,6 +30,11 @@ class _StubProvider:
         pass
 
 
+class _FailingCaptureProvider(_StubProvider):
+    async def capture(self, inp: CaptureInput) -> None:
+        raise RuntimeError("disk full")
+
+
 def _config(*, smart_enabled: bool = True, mode: str = "hybrid") -> Config:
     return Config(
         memory=MemoryConfig(
@@ -68,6 +73,19 @@ async def test_coordinator_recall_and_capture() -> None:
     )
     assert len(provider.captures) == 1
     await coord.stop()
+
+
+@pytest.mark.asyncio
+async def test_capture_failure_is_best_effort() -> None:
+    coord = MemoryCoordinator(_config(), _FailingCaptureProvider())
+    await coord.capture_after_turn(
+        thread_id="thr_1",
+        user_text="please tune the database connection pool",
+        workspace="/proj",
+        messages=[],
+        had_tool_calls=True,
+        success=True,
+    )
 
 
 def test_thread_memory_mode_overrides_global_recall() -> None:

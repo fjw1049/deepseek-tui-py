@@ -72,3 +72,39 @@ async def test_combined_search_call_limit(tmp_path: Path) -> None:
             await tool_m.execute({"query": "d"}, ctx)
     finally:
         await provider.stop()
+
+
+@pytest.mark.asyncio
+async def test_conversation_search_defaults_to_workspace_scope(tmp_path: Path) -> None:
+    data_dir = tmp_path / "mem3"
+    provider = _MinimalProvider(data_dir)
+    await provider.start()
+    try:
+        provider._l0.append_turn(
+            "thread_a",
+            user_text="thread a mentions local-only detail",
+            messages=[],
+            workspace="/proj",
+        )
+        provider._l0.append_turn(
+            "thread_b",
+            user_text="thread b mentions workspace-wide needle",
+            messages=[],
+            workspace="/proj",
+        )
+        ctx = ToolContext(working_directory=Path("/proj"))
+        ctx.metadata[MEMORY_PROVIDER_KEY] = provider
+        ctx.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
+        ctx.metadata["runtime_thread_id"] = "thread_a"
+
+        result = await ConversationSearchTool().execute(
+            {"query": "workspace-wide needle"}, ctx
+        )
+        assert "thread_b" in result.content
+
+        result_current = await ConversationSearchTool().execute(
+            {"query": "workspace-wide needle", "scope": "current_thread"}, ctx
+        )
+        assert "No matching" in result_current.content
+    finally:
+        await provider.stop()

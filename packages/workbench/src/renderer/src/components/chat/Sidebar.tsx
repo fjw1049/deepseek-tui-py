@@ -12,6 +12,7 @@ import type { NormalizedThread } from '../../agent/types'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { SidebarProjectsSection } from './SidebarProjectsSection'
+import { SidebarBrand } from './SidebarBrand'
 
 type Props = {
   threads: NormalizedThread[]
@@ -60,10 +61,10 @@ export function Sidebar({
     <aside className="ds-drag ds-sidebar-shell ds-frosted relative flex h-full w-full shrink-0 flex-col px-3 pb-3">
       <div className="shrink-0 px-1 pb-2 pt-3">
         <div aria-hidden className="ds-titlebar-safe-block" />
-        <div className="flex min-h-8 items-center justify-center px-1 pt-1">
-          <div className="ds-sidebar-brand truncate text-center">{t('appName')}</div>
+        <div className="flex min-h-[84px] items-center justify-center px-1 py-1">
+          <SidebarBrand />
         </div>
-        <div className="mx-1 mt-4 border-t border-ds-border-muted/20" />
+        <div className="mx-1 mt-3 border-t border-ds-border-muted/20" />
       </div>
 
       <div className="ds-no-drag flex flex-col gap-0.5 px-1">

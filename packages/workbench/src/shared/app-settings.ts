@@ -14,6 +14,9 @@ export type ClawImProvider = 'feishu'
 export type ClawScheduleKind = 'manual' | 'interval' | 'daily' | 'at'
 export type ClawTaskStatus = 'idle' | 'running' | 'success' | 'error'
 export type ClawModel = 'auto' | 'deepseek-v4-pro' | 'deepseek-v4-flash'
+export type MemoryMode = 'manual' | 'hybrid' | 'auto'
+export type MemoryFtsTokenizer = 'auto' | 'simple' | 'jieba'
+export type MemoryEmbeddingProvider = 'none' | 'openai'
 
 export const DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com/beta'
 export const DEFAULT_CLAW_MODEL = 'auto'
@@ -176,6 +179,41 @@ export type WorkbenchSkillsConfigV1 = {
   extraDirs: string[]
 }
 
+export type MemorySmartSettingsV1 = {
+  enabled: boolean
+  dataDir: string
+  recallEnabled: boolean
+  captureEnabled: boolean
+  recallTimeoutMs: number
+  recallScoreThreshold: number
+  recallLimit: number
+  captureMinUserChars: number
+  l1EveryN: number
+  l1IdleTimeoutSeconds: number
+  l1ConfidenceMin: number
+  l1MaxPerSession: number
+  l1DecayHalfLifeDays: number
+  hybridSearch: boolean
+  ftsTokenizer: MemoryFtsTokenizer
+  embeddingProvider: MemoryEmbeddingProvider
+  embeddingModel: string
+  embeddingBaseUrl: string
+  embeddingApiKey: string
+  embeddingDimensions: number | null
+  embeddingDedupThreshold: number
+  embeddingBackfillOnStart: boolean
+}
+
+export type MemorySettingsV1 = {
+  enabled: boolean
+  mode: MemoryMode
+  smart: MemorySmartSettingsV1
+}
+
+export type MemorySettingsPatchV1 = Partial<Omit<MemorySettingsV1, 'smart'>> & {
+  smart?: Partial<MemorySmartSettingsV1>
+}
+
 export type AppSettingsV1 = {
   version: 1
   locale: 'en' | 'zh'
@@ -187,6 +225,7 @@ export type AppSettingsV1 = {
   log: LogConfigV1
   notifications: NotificationConfigV1
   skills: WorkbenchSkillsConfigV1
+  memory: MemorySettingsV1
   claw: ClawSettingsV1
   guiUpdate: GuiUpdateConfigV1
 }
@@ -198,6 +237,7 @@ export type AppSettingsPatch = Partial<
   log?: Partial<LogConfigV1>
   notifications?: Partial<NotificationConfigV1>
   skills?: Partial<WorkbenchSkillsConfigV1>
+  memory?: MemorySettingsPatchV1
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<GuiUpdateConfigV1>
 }
@@ -471,6 +511,12 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
+function normalizeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
 function normalizePositiveInteger(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(parsed)) return fallback
@@ -516,6 +562,153 @@ function normalizePathSegment(value: unknown): string {
 function normalizeStatus(value: unknown): ClawTaskStatus {
   if (value === 'running' || value === 'success' || value === 'error') return value
   return 'idle'
+}
+
+function normalizeMemoryMode(value: unknown): MemoryMode {
+  if (value === 'manual' || value === 'auto') return value
+  return 'hybrid'
+}
+
+function normalizeFtsTokenizer(value: unknown): MemoryFtsTokenizer {
+  if (value === 'simple' || value === 'jieba') return value
+  return 'auto'
+}
+
+function normalizeEmbeddingProvider(value: unknown): MemoryEmbeddingProvider {
+  return value === 'openai' ? 'openai' : 'none'
+}
+
+export function defaultMemorySettings(): MemorySettingsV1 {
+  return {
+    enabled: false,
+    mode: 'hybrid',
+    smart: {
+      enabled: false,
+      dataDir: '',
+      recallEnabled: true,
+      captureEnabled: true,
+      recallTimeoutMs: 5000,
+      recallScoreThreshold: 0.3,
+      recallLimit: 8,
+      captureMinUserChars: 20,
+      l1EveryN: 5,
+      l1IdleTimeoutSeconds: 600,
+      l1ConfidenceMin: 0.6,
+      l1MaxPerSession: 20,
+      l1DecayHalfLifeDays: 180,
+      hybridSearch: true,
+      ftsTokenizer: 'auto',
+      embeddingProvider: 'none',
+      embeddingModel: 'text-embedding-3-large',
+      embeddingBaseUrl: '',
+      embeddingApiKey: '',
+      embeddingDimensions: null,
+      embeddingDedupThreshold: 0.92,
+      embeddingBackfillOnStart: false
+    }
+  }
+}
+
+export function normalizeMemorySettings(input: MemorySettingsPatchV1 | undefined): MemorySettingsV1 {
+  const defaults = defaultMemorySettings()
+  const source = input ?? {}
+  const smart = source.smart ?? {}
+  const rawDimensions = smart.embeddingDimensions
+  return {
+    enabled: normalizeBoolean(source.enabled, defaults.enabled),
+    mode: normalizeMemoryMode(source.mode),
+    smart: {
+      enabled: normalizeBoolean(smart.enabled, defaults.smart.enabled),
+      dataDir: typeof smart.dataDir === 'string' ? smart.dataDir.trim() : defaults.smart.dataDir,
+      recallEnabled: normalizeBoolean(smart.recallEnabled, defaults.smart.recallEnabled),
+      captureEnabled: normalizeBoolean(smart.captureEnabled, defaults.smart.captureEnabled),
+      recallTimeoutMs: normalizePositiveInteger(
+        smart.recallTimeoutMs,
+        defaults.smart.recallTimeoutMs,
+        250,
+        30_000
+      ),
+      recallScoreThreshold: normalizeNumber(
+        smart.recallScoreThreshold,
+        defaults.smart.recallScoreThreshold,
+        0,
+        1
+      ),
+      recallLimit: normalizePositiveInteger(smart.recallLimit, defaults.smart.recallLimit, 1, 20),
+      captureMinUserChars: normalizePositiveInteger(
+        smart.captureMinUserChars,
+        defaults.smart.captureMinUserChars,
+        0,
+        500
+      ),
+      l1EveryN: normalizePositiveInteger(smart.l1EveryN, defaults.smart.l1EveryN, 1, 100),
+      l1IdleTimeoutSeconds: normalizePositiveInteger(
+        smart.l1IdleTimeoutSeconds,
+        defaults.smart.l1IdleTimeoutSeconds,
+        5,
+        86_400
+      ),
+      l1ConfidenceMin: normalizeNumber(
+        smart.l1ConfidenceMin,
+        defaults.smart.l1ConfidenceMin,
+        0,
+        1
+      ),
+      l1MaxPerSession: normalizePositiveInteger(
+        smart.l1MaxPerSession,
+        defaults.smart.l1MaxPerSession,
+        1,
+        100
+      ),
+      l1DecayHalfLifeDays: normalizePositiveInteger(
+        smart.l1DecayHalfLifeDays,
+        defaults.smart.l1DecayHalfLifeDays,
+        0,
+        3650
+      ),
+      hybridSearch: normalizeBoolean(smart.hybridSearch, defaults.smart.hybridSearch),
+      ftsTokenizer: normalizeFtsTokenizer(smart.ftsTokenizer),
+      embeddingProvider: normalizeEmbeddingProvider(smart.embeddingProvider),
+      embeddingModel:
+        typeof smart.embeddingModel === 'string' && smart.embeddingModel.trim()
+          ? smart.embeddingModel.trim()
+          : defaults.smart.embeddingModel,
+      embeddingBaseUrl:
+        typeof smart.embeddingBaseUrl === 'string' ? smart.embeddingBaseUrl.trim() : '',
+      embeddingApiKey:
+        typeof smart.embeddingApiKey === 'string' ? smart.embeddingApiKey.trim() : '',
+      embeddingDimensions:
+        rawDimensions == null
+          ? null
+          : normalizePositiveInteger(rawDimensions, defaults.smart.embeddingDimensions ?? 3072, 1, 10_000),
+      embeddingDedupThreshold: normalizeNumber(
+        smart.embeddingDedupThreshold,
+        defaults.smart.embeddingDedupThreshold,
+        0,
+        1
+      ),
+      embeddingBackfillOnStart: normalizeBoolean(
+        smart.embeddingBackfillOnStart,
+        defaults.smart.embeddingBackfillOnStart
+      )
+    }
+  }
+}
+
+export function mergeMemorySettings(
+  current: MemorySettingsV1 | undefined,
+  patch: MemorySettingsPatchV1 | undefined
+): MemorySettingsV1 {
+  const base = current ?? defaultMemorySettings()
+  if (!patch) return normalizeMemorySettings(base)
+  return normalizeMemorySettings({
+    ...base,
+    ...patch,
+    smart: {
+      ...base.smart,
+      ...(patch.smart ?? {})
+    }
+  })
 }
 
 export function defaultClawSettings(): ClawSettingsV1 {
@@ -669,6 +862,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
   const maybeSettings = settings as AppSettingsV1 & {
     notifications?: Partial<NotificationConfigV1>
     skills?: Partial<WorkbenchSkillsConfigV1>
+    memory?: MemorySettingsPatchV1
     claw?: ClawSettingsPatchV1
     guiUpdate?: Partial<GuiUpdateConfigV1>
   }
@@ -683,6 +877,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
       turnComplete: maybeSettings.notifications?.turnComplete !== false
     },
     skills: normalizeWorkbenchSkills(maybeSettings.skills, claw.skills.extraDirs),
+    memory: normalizeMemorySettings(maybeSettings.memory),
     claw,
     guiUpdate: {
       channel: normalizeGuiUpdateChannel(

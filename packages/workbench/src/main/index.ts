@@ -15,7 +15,9 @@ import {
   resolveEffectiveRuntimeToken,
   readRuntimeTokenFile,
   clearRuntimeTokenFile,
-  runtimeTokenFilePath
+  runtimeTokenFilePath,
+  findAlternateDeepseekRuntimes,
+  formatAlternateRuntimeHint
 } from './deepseek-process'
 import {
   resolveRuntimeLauncher,
@@ -388,6 +390,13 @@ async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
   return runtimeEnsurePromise
 }
 
+async function runtimeOfflineMessage(settings: AppSettingsV1): Promise<string> {
+  const alternates = await findAlternateDeepseekRuntimes(settings.deepseek.port)
+  const hint = formatAlternateRuntimeHint(alternates, settings.deepseek.port)
+  if (hint) return hint
+  return 'The local runtime is offline. Enable automatic startup in Settings, or start `deepseek serve --http` manually.'
+}
+
 async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
   await waitForQueuedRuntimeSettingsApply()
 
@@ -444,10 +453,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
       )
     }
     if (!settings.deepseek.autoStart) {
-      throw runtimeJsonError(
-        'runtime_offline',
-        'The local runtime is offline. Enable automatic startup in Settings, or start `deepseek serve --http` manually.'
-      )
+      throw runtimeJsonError('runtime_offline', await runtimeOfflineMessage(settings))
     }
   }
 
@@ -458,10 +464,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
     )
   }
   if (!settings.deepseek.autoStart) {
-    throw runtimeJsonError(
-      'runtime_offline',
-      'The local runtime is offline. Enable automatic startup in Settings, or start `deepseek serve --http` manually.'
-    )
+    throw runtimeJsonError('runtime_offline', await runtimeOfflineMessage(settings))
   }
   await syncDeepseekTuiConfig(settings)
   try {
@@ -673,6 +676,22 @@ async function runtimeRequest(
     const url = `${base}${pathNorm}`
     const hdrs = new Headers(init.headers ?? {})
     hdrs.set('Accept', 'application/json')
+    let requestBody = init.body
+    const isStartTurn =
+      (init.method ?? 'GET') === 'POST' &&
+      /\/v1\/threads\/[^/]+\/turns$/.test(pathNorm.split('?')[0] ?? pathNorm)
+    const mainRequestStartMs = Date.now()
+    if (isStartTurn && requestBody) {
+      try {
+        const payload = JSON.parse(requestBody) as Record<string, unknown>
+        if (payload.main_runtime_request_start_ms == null) {
+          payload.main_runtime_request_start_ms = mainRequestStartMs
+        }
+        requestBody = JSON.stringify(payload)
+      } catch {
+        /* keep original body */
+      }
+    }
     if (init.body && !hdrs.has('Content-Type')) {
       hdrs.set('Content-Type', 'application/json')
     }
@@ -683,10 +702,15 @@ async function runtimeRequest(
     const res = await fetch(url, {
       method: init.method ?? 'GET',
       headers: hdrs,
-      body: init.body,
+      body: requestBody,
       signal: AbortSignal.timeout(init.method === 'POST' ? 60_000 : 15_000)
     })
     const text = await res.text()
+    if (isStartTurn) {
+      console.info(
+        `[deepseek-gui] turn_request path=${pathNorm} status=${res.status} elapsed_ms=${Date.now() - mainRequestStartMs}`
+      )
+    }
     if (res.status === 401 || res.status === 503) {
       invalidateRuntimeReady(`runtime-request:${res.status}`)
     }

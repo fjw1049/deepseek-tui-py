@@ -36,7 +36,9 @@ import {
 import type { JsonSettingsStore } from '../settings-store'
 import { getRuntimeBaseUrl } from '../settings-store'
 import {
+  findAlternateDeepseekRuntimes,
   findListeningProcessOnPort,
+  formatAlternateRuntimeHint,
   resolveEffectiveRuntimeToken,
   runtimeTokenFilePath
 } from '../deepseek-process'
@@ -191,6 +193,7 @@ async function diagnoseDeepseekRuntime(
   const binary = await options.prepareDeepseekBinary()
   const baseUrl = getRuntimeBaseUrl(settings.deepseek.port)
   const portOwner = await findListeningProcessOnPort(settings.deepseek.port)
+  const alternateRuntimes = await findAlternateDeepseekRuntimes(settings.deepseek.port)
   const runtimeToken = resolveEffectiveRuntimeToken(settings) ?? undefined
   const health = await probeRuntimeEndpoint(`${baseUrl}/health`)
   const threadApi = health.ok
@@ -245,6 +248,14 @@ async function diagnoseDeepseekRuntime(
       title: 'No runtime is listening on the configured port',
       message: `Nothing is listening on ${baseUrl}. Retry will ask the GUI to start the managed runtime.`
     })
+    if (alternateRuntimes.length > 0) {
+      issues.push({
+        severity: 'error',
+        code: 'runtime_port_mismatch',
+        title: 'Another DeepSeek runtime is listening on a different port',
+        message: formatAlternateRuntimeHint(alternateRuntimes, settings.deepseek.port)
+      })
+    }
   } else if (
     !portOwner.command.toLowerCase().includes('deepseek') &&
     !portOwner.command.toLowerCase().includes('python')
@@ -290,7 +301,9 @@ async function diagnoseDeepseekRuntime(
     },
     runtime: {
       baseUrl,
+      configuredPort: settings.deepseek.port,
       portOwner,
+      alternateRuntimes,
       health,
       threadApi,
       workspaceStatus,
