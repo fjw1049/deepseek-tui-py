@@ -1446,16 +1446,16 @@ summary,
 .pet-mascot-shell {
   align-self: flex-end;
   margin-bottom: -3px;
-  width: min(26%, 240px);
-  min-width: 140px;
-  padding-right: 0;
+  margin-right: clamp(12px, 4vw, 48px);
+  width: min(30%, 280px);
+  min-width: 168px;
 }
 
 @media (max-width: 640px) {
   .pet-mascot-shell {
-    width: 32%;
-    min-width: 120px;
-    padding-right: 0;
+    margin-right: clamp(8px, 3vw, 24px);
+    width: 42%;
+    min-width: 148px;
   }
 }
 

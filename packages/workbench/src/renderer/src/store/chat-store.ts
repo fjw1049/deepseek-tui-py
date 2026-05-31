@@ -314,7 +314,7 @@ function buildThreadEventSink(
             ? Date.parse(ev.createdAt)
             : Date.now()
         armBusyWatchdog(set, get)
-        emitPetEvent('user_message')
+        emitPetEvent({ type: 'user_message' })
         return {
           ...flushed,
           blocks: nextBlocks,
@@ -328,7 +328,10 @@ function buildThreadEventSink(
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       }),
-    onDeltas: (deltas) =>
+    onDeltas: (deltas) => {
+      if (deltas.some((delta) => delta.kind === 'agent_reasoning')) {
+        emitPetEvent({ type: 'agent_reasoning' })
+      }
       set((s) => {
         if (deltas.length === 0) return {}
         resetBusyRecoveryAttempts()
@@ -384,8 +387,25 @@ function buildThreadEventSink(
             ? { turnReasoningLastAtByUserId: nextReasoningLastAtByUserId }
             : {})
         }
-      }),
-    onTool: (ev) =>
+      })
+    },
+    onTool: (ev) => {
+      emitPetEvent(
+        ev.status === 'running'
+          ? {
+              type: 'tool_started',
+              itemId: ev.itemId,
+              summary: ev.summary,
+              toolKind: ev.toolKind
+            }
+          : {
+              type: 'tool_completed',
+              itemId: ev.itemId,
+              status: ev.status,
+              summary: ev.summary,
+              toolKind: ev.toolKind
+            }
+      )
       set((s) => {
         resetBusyRecoveryAttempts()
         // Restore busy state on tool events (same reasoning as onDelta).
@@ -437,8 +457,14 @@ function buildThreadEventSink(
           blocks: [...baseBlocks, block],
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
-      }),
-    onApproval: (req) =>
+      })
+    },
+    onApproval: (req) => {
+      emitPetEvent({
+        type: 'approval_waiting',
+        itemId: `approval-${req.approvalId}`,
+        toolName: req.toolName
+      })
       set((s) => {
         resetBusyRecoveryAttempts()
         if (s.blocks.some((b) => b.kind === 'approval' && b.approvalId === req.approvalId)) {
@@ -467,8 +493,14 @@ function buildThreadEventSink(
           scrollToBlockId: `approval-${req.approvalId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
-      }),
-    onElevation: (req) =>
+      })
+    },
+    onElevation: (req) => {
+      emitPetEvent({
+        type: 'elevation_waiting',
+        itemId: `elevation-${req.elevationId}`,
+        toolName: req.toolName
+      })
       set((s) => {
         resetBusyRecoveryAttempts()
         if (s.blocks.some((b) => b.kind === 'elevation' && b.elevationId === req.elevationId)) {
@@ -495,10 +527,12 @@ function buildThreadEventSink(
           scrollToBlockId: `elevation-${req.elevationId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
-      }),
+      })
+    },
     onUserInput: (req) => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
+      emitPetEvent({ type: 'user_input_waiting', itemId: req.itemId })
       set((s) => {
         if (s.blocks.some((b) => b.kind === 'user_input' && b.requestId === req.requestId)) {
           return {}
@@ -524,6 +558,11 @@ function buildThreadEventSink(
     },
     onUserInputStatus: (ev) => {
       resetBusyRecoveryAttempts()
+      emitPetEvent({
+        type: 'user_input_resolved',
+        itemId: ev.itemId,
+        status: ev.status
+      })
       if (ev.status === 'submitted' && get().busy) {
         armBusyWatchdog(set, get)
       }
@@ -579,7 +618,25 @@ function buildThreadEventSink(
           ]
         }
       }),
-    onSubagentMailbox: (ev: SubagentMailboxPayload) =>
+    onSubagentMailbox: (ev: SubagentMailboxPayload) => {
+      const mailboxStatus = ev.message.status
+      if (mailboxStatus === 'running' || mailboxStatus === 'pending') {
+        emitPetEvent({
+          type: 'subagent_started',
+          itemId: `subagent-${ev.message.agent_id}`,
+          agentType: ev.message.agent_type ?? 'subagent'
+        })
+      } else if (
+        mailboxStatus === 'completed' ||
+        mailboxStatus === 'failed' ||
+        mailboxStatus === 'cancelled'
+      ) {
+        emitPetEvent({
+          type: 'subagent_completed',
+          itemId: `subagent-${ev.message.agent_id}`,
+          status: mailboxStatus
+        })
+      }
       set((s) => {
         const msg = ev.message as MailboxMessageJson
         const cards = applyMailboxMessage(subagentCardsFromBlocks(s.blocks), msg)
@@ -595,11 +652,12 @@ function buildThreadEventSink(
           return { blocks }
         }
         return { blocks: [...s.blocks, nextBlock] }
-      }),
+      })
+    },
     onTurnComplete: () => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      emitPetEvent('turn_complete')
+      emitPetEvent({ type: 'turn_complete' })
       const completedState = get()
       const completedThreadId = completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
@@ -633,7 +691,7 @@ function buildThreadEventSink(
     onError: (err) => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      emitPetEvent('turn_error')
+      emitPetEvent({ type: 'turn_error' })
       set((s) => {
         const wasBusy = s.busy
         const out = flushLiveBlocks(s, {
@@ -1361,7 +1419,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       turnStartedAtByUserId: { ...s.turnStartedAtByUserId, [userBlockId]: now },
       queuedMessages: queued ? s.queuedMessages.filter((message) => message.id !== queued.id) : s.queuedMessages
     }))
-    emitPetEvent('user_message')
+    emitPetEvent({ type: 'user_message' })
     if (!activeThreadId) {
       try {
         const settings = await window.dsGui.getSettings()
@@ -1829,6 +1887,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : b
         )
       }))
+      emitPetEvent({
+        type: 'approval_resolved',
+        itemId: blockId,
+        status: decision === 'allow' ? 'allowed' : 'denied'
+      })
     } catch (e) {
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('approval', 'Failed to submit approval decision', {
@@ -1846,6 +1909,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : b
         )
       }))
+      emitPetEvent({ type: 'approval_resolved', itemId: blockId, status: 'error' })
     }
   },
 
@@ -1870,6 +1934,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : b
         )
       }))
+      emitPetEvent({
+        type: 'elevation_resolved',
+        itemId: blockId,
+        status: decision === 'allow' ? 'allowed' : 'denied'
+      })
     } catch (e) {
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('elevation', 'Failed to submit elevation decision', {
@@ -1884,6 +1953,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : b
         )
       }))
+      emitPetEvent({ type: 'elevation_resolved', itemId: blockId, status: 'error' })
     }
   },
 
@@ -1906,6 +1976,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               : b
           )
         }))
+        emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'submitted' })
         return
       }
 
@@ -1920,6 +1991,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : b
         )
       }))
+      emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'cancelled' })
     } catch (e) {
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('user-input', 'Failed to resolve user input', {
@@ -1937,6 +2009,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : b
         )
       }))
+      emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'error' })
     }
   },
 

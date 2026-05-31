@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import demoSpritesheet from '../../../asset/pet/demo-spritesheet.webp'
 import { useChatStore } from '../store/chat-store'
 import { resolvePetSpritesheetSrc } from '../lib/pet/pet-catalog'
-import { subscribePetEvents } from '../lib/pet/pet-events'
+import { subscribePetEvents, type PetActivityEvent } from '../lib/pet/pet-events'
 import {
   readPetEnabled,
   readPetSlug,
@@ -17,15 +17,34 @@ import {
   parsePetSlashCommand,
   type PetSlashAction
 } from '../lib/pet/pet-slash-commands'
-import { resolvePetState, type PetBurst } from '../lib/pet/pet-state-machine'
+import {
+  resolvePetState,
+  type PetActivityOverride,
+  type PetBurst
+} from '../lib/pet/pet-state-machine'
 import type { PetStateId } from '../lib/pet/pet-states'
 
 export type PetMascotStatus = 'ready' | 'fallback' | 'hidden'
 
-const ROAM_MIN = -42
-const ROAM_MAX = 42
+const ROAM_MIN = -70
+const ROAM_MAX = 70
 const ROAM_STEP = 0.85
 const ROAM_TICK_MS = 48
+const FAILED_HOLD_MS = 2200
+const RESOLVED_BURST_MS = 700
+const REASONING_HOLD_MS = 1200
+
+const READ_LIKE_ACTIVITY = /\b(read|grep|glob|list_dir|search|find|cat)\b/i
+
+function stateForToolActivity(event: {
+  summary: string
+  toolKind?: string
+}): PetStateId {
+  if (event.toolKind === 'file_change' || event.toolKind === 'command_execution') {
+    return 'running'
+  }
+  return READ_LIKE_ACTIVITY.test(event.summary) ? 'review' : 'running'
+}
 
 function applyPetSlashAction(
   action: PetSlashAction,
@@ -63,10 +82,13 @@ export function usePetController() {
   const [roam, setRoam] = useState({ offset: 0, direction: 1 as 1 | -1 })
   const revokeRef = useRef<(() => void) | null>(null)
   const [burst, setBurstState] = useState<PetBurst | null>(null)
+  const [activityOverride, setActivityOverride] = useState<PetActivityOverride | null>(null)
   const [turnErrorActive, setTurnErrorActive] = useState(false)
   const lastStateRef = useRef<PetStateId>('idle')
   const lastChangeAtRef = useRef(0)
   const previousTurnIdRef = useRef<string | null>(null)
+  const activeToolIdRef = useRef<string | null>(null)
+  const activeSubagentIdRef = useRef<string | null>(null)
 
   const setBurst = useCallback(
     (burst: PetBurst) => {
@@ -117,17 +139,85 @@ export function usePetController() {
   }, [loadSpritesheet])
 
   useEffect(() => {
-    return subscribePetEvents((kind) => {
-      if (kind === 'user_message') {
+    const failFor = (durationMs = FAILED_HOLD_MS, persistent = true): void => {
+      if (persistent) setTurnErrorActive(true)
+      setActivityOverride({
+        stateId: 'failed',
+        priority: 'critical',
+        expiresAt: Date.now() + durationMs
+      })
+    }
+
+    const handleResolved = (
+      status: 'allowed' | 'denied' | 'submitted' | 'cancelled' | 'error'
+    ): void => {
+      if (status === 'denied' || status === 'cancelled' || status === 'error') {
+        failFor(FAILED_HOLD_MS, false)
+        return
+      }
+      setActivityOverride(null)
+      setBurst({ stateId: 'jumping', expiresAt: Date.now() + RESOLVED_BURST_MS })
+    }
+
+    return subscribePetEvents((event: PetActivityEvent) => {
+      if (event.type === 'user_message') {
+        activeToolIdRef.current = null
+        activeSubagentIdRef.current = null
         setTurnErrorActive(false)
+        setActivityOverride(null)
         setBurst({ stateId: 'jumping', expiresAt: Date.now() + 840 })
-      } else if (kind === 'turn_complete' || kind === 'wave') {
+      } else if (event.type === 'agent_reasoning') {
+        if (activeToolIdRef.current == null) {
+          setActivityOverride({
+            stateId: 'review',
+            priority: 'sustained',
+            expiresAt: Date.now() + REASONING_HOLD_MS
+          })
+        }
+      } else if (event.type === 'tool_started') {
+        activeToolIdRef.current = event.itemId
         setTurnErrorActive(false)
+        setActivityOverride({
+          stateId: stateForToolActivity(event),
+          priority: 'sustained'
+        })
+      } else if (event.type === 'tool_completed') {
+        if (event.status === 'error') {
+          failFor()
+        } else if (activeToolIdRef.current === event.itemId) {
+          activeToolIdRef.current = null
+          setActivityOverride(null)
+        }
+      } else if (
+        event.type === 'approval_waiting' ||
+        event.type === 'elevation_waiting' ||
+        event.type === 'user_input_waiting'
+      ) {
+        setActivityOverride({ stateId: 'waiting', priority: 'critical' })
+      } else if (event.type === 'approval_resolved' || event.type === 'elevation_resolved') {
+        handleResolved(event.status)
+      } else if (event.type === 'user_input_resolved') {
+        handleResolved(event.status)
+      } else if (event.type === 'subagent_started') {
+        activeSubagentIdRef.current = event.itemId
+        setActivityOverride({ stateId: 'running', priority: 'sustained' })
+      } else if (event.type === 'subagent_completed') {
+        if (event.status === 'failed' || event.status === 'cancelled') {
+          failFor(FAILED_HOLD_MS, false)
+        } else if (activeSubagentIdRef.current === event.itemId) {
+          activeSubagentIdRef.current = null
+          setActivityOverride(null)
+        }
+      } else if (event.type === 'turn_complete' || event.type === 'manual_wave') {
+        activeToolIdRef.current = null
+        activeSubagentIdRef.current = null
+        setTurnErrorActive(false)
+        setActivityOverride(null)
         setBurst({ stateId: 'waving', expiresAt: Date.now() + 700 })
-      } else if (kind === 'jump') {
+      } else if (event.type === 'manual_jump') {
         setBurst({ stateId: 'jumping', expiresAt: Date.now() + 840 })
-      } else if (kind === 'turn_error') {
-        setTurnErrorActive(true)
+      } else if (event.type === 'turn_error') {
+        failFor()
       }
     })
   }, [setBurst])
@@ -141,6 +231,9 @@ export function usePetController() {
     lastStateRef.current = 'idle'
     lastChangeAtRef.current = 0
     setTurnErrorActive(false)
+    setActivityOverride(null)
+    activeToolIdRef.current = null
+    activeSubagentIdRef.current = null
     setRoam({ offset: 0, direction: 1 })
   }, [currentTurnId])
 
@@ -153,6 +246,15 @@ export function usePetController() {
     return () => window.clearTimeout(timer)
   }, [burst])
 
+  useEffect(() => {
+    if (!activityOverride?.expiresAt) return
+    const delay = Math.max(0, activityOverride.expiresAt - Date.now())
+    const timer = window.setTimeout(() => {
+      setActivityOverride((current) => (current === activityOverride ? null : current))
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [activityOverride])
+
   const stateId = useMemo(() => {
     const now = Date.now()
     const next = resolvePetState({
@@ -161,6 +263,7 @@ export function usePetController() {
       liveReasoning,
       turnErrorActive,
       burst,
+      activityOverride,
       now,
       lastState: lastStateRef.current,
       lastChangeAt: lastChangeAtRef.current
@@ -168,7 +271,7 @@ export function usePetController() {
     lastStateRef.current = next.stateId
     lastChangeAtRef.current = next.changedAt
     return next.stateId
-  }, [busy, blocks, burst, liveReasoning, turnErrorActive])
+  }, [activityOverride, busy, blocks, burst, liveReasoning, turnErrorActive])
 
   const visibleStatus: PetMascotStatus = enabled
     ? spritesheetSrc === demoSpritesheet

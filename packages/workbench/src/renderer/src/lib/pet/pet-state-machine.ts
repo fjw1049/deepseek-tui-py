@@ -10,12 +10,19 @@ export type PetBurst = {
   expiresAt: number
 }
 
+export type PetActivityOverride = {
+  stateId: PetStateId
+  priority: 'critical' | 'sustained' | 'decorative'
+  expiresAt?: number
+}
+
 export type PetStateMachineInput = {
   busy: boolean
   blocks: ChatBlock[]
   liveReasoning: string
   turnErrorActive: boolean
   burst: PetBurst | null
+  activityOverride: PetActivityOverride | null
   now: number
   lastState: PetStateId
   lastChangeAt: number
@@ -95,19 +102,49 @@ function deriveDecorativeBurst(
   return burst.stateId
 }
 
+function activeOverride(
+  activityOverride: PetActivityOverride | null,
+  now: number
+): PetActivityOverride | null {
+  if (!activityOverride) return null
+  if (activityOverride.expiresAt != null && now >= activityOverride.expiresAt) return null
+  return activityOverride
+}
+
+function criticalRank(stateId: PetStateId): number {
+  if (stateId === 'failed') return 2
+  if (stateId === 'waiting') return 1
+  return 0
+}
+
+function pickCriticalState(
+  derived: PetStateId | null,
+  override: PetActivityOverride | null
+): PetStateId | null {
+  const overrideState = override?.priority === 'critical' ? override.stateId : null
+  if (!derived) return overrideState
+  if (!overrideState) return derived
+  return criticalRank(overrideState) > criticalRank(derived) ? overrideState : derived
+}
+
 export function resolvePetState(input: PetStateMachineInput): {
   stateId: PetStateId
   changedAt: number
 } {
-  const critical = deriveCritical(input)
+  const override = activeOverride(input.activityOverride, input.now)
+  const critical = pickCriticalState(deriveCritical(input), override)
   if (critical) {
     return critical === input.lastState
       ? { stateId: input.lastState, changedAt: input.lastChangeAt }
       : { stateId: critical, changedAt: input.now }
   }
 
-  const sustained = deriveSustained(input)
-  const decorative = deriveDecorativeBurst(input.burst, sustained, input.now)
+  const sustained =
+    override?.priority === 'sustained' ? override.stateId : deriveSustained(input)
+  const decorative =
+    override?.priority === 'decorative'
+      ? override.stateId
+      : deriveDecorativeBurst(input.burst, sustained, input.now)
   const next = decorative ?? sustained
   return applyDwell(next, input)
 }

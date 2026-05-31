@@ -12,6 +12,7 @@ function baseInput(
     liveReasoning: '',
     turnErrorActive: false,
     burst: null,
+    activityOverride: null,
     now: 10_000,
     lastState: 'idle',
     lastChangeAt: 0,
@@ -139,5 +140,44 @@ describe('resolvePetState', () => {
         })
       ).stateId
     ).toBe('waiting')
+  })
+
+  it('lets critical activity override sustained running state', () => {
+    expect(
+      resolvePetState(
+        baseInput({
+          busy: true,
+          activityOverride: { stateId: 'waiting', priority: 'critical' }
+        })
+      ).stateId
+    ).toBe('waiting')
+  })
+
+  it('uses sustained activity while a tool is active', () => {
+    expect(
+      resolvePetState(
+        baseInput({
+          busy: true,
+          activityOverride: { stateId: 'review', priority: 'sustained' },
+          lastState: 'idle',
+          lastChangeAt: 0
+        })
+      ).stateId
+    ).toBe('review')
+  })
+
+  it('ignores expired activity overrides', () => {
+    expect(
+      resolvePetState(
+        baseInput({
+          busy: true,
+          activityOverride: {
+            stateId: 'review',
+            priority: 'sustained',
+            expiresAt: 9_999
+          }
+        })
+      ).stateId
+    ).toBe('running')
   })
 })
