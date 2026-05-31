@@ -346,6 +346,31 @@ def estimated_input_tokens(messages: list[Message]) -> int:
     return max(1, total_chars // 4)
 
 
+def _api_tool_name(tool: dict[str, Any]) -> str:
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return ""
+    name = function.get("name")
+    return name if isinstance(name, str) else ""
+
+
+def _tool_schema_buckets(api_tools: list[dict[str, Any]] | None) -> tuple[int, int]:
+    if not api_tools:
+        return 0, 0
+
+    from deepseek_tui.engine.dispatch import is_mcp_tool
+
+    tool_definitions = 0
+    mcp = 0
+    for tool in api_tools:
+        tokens = _estimate_text_tokens_conservative(json.dumps(tool, ensure_ascii=False))
+        if is_mcp_tool(_api_tool_name(tool)):
+            mcp += tokens
+        else:
+            tool_definitions += tokens
+    return tool_definitions, mcp
+
+
 def estimate_context_breakdown(
     *,
     model: str,
@@ -360,7 +385,11 @@ def estimate_context_breakdown(
     """Estimate token occupancy by category for the next request.
 
     Shared by :meth:`Engine.context_breakdown`, TUI ``/context``, and the
-    Workbench runtime API. Mirrors the buckets documented on ``Engine``.
+    Workbench runtime API.
+
+    ``tools`` and ``free`` are retained for old Workbench/TUI clients. Newer
+    clients should prefer the more explainable top-level buckets:
+    ``tool_definitions``, ``mcp``, ``skills``, ``rules``, and ``conversation``.
     """
     from pathlib import Path
 
@@ -373,32 +402,61 @@ def estimate_context_breakdown(
     except ValueError:
         app_mode = AppMode.AGENT
     if system_prompt_override and system_prompt_override.strip():
-        system_text = system_prompt_override.strip()
+        system_tokens = _estimate_text_tokens_conservative(
+            system_prompt_override.strip()
+        )
+        rules_tokens = 0
+        skills_tokens = 0
     else:
         ws = Path(workspace).expanduser().resolve() if workspace else None
         system_text = build_system_prompt(
             None,
-            skills_context=skills_context,
             working_set_summary=working_set_summary,
             workspace=ws,
             mode=app_mode,
+            project_context_enabled=False,
+        )
+        system_tokens = _estimate_text_tokens_conservative(system_text)
+
+        rules_text = ""
+        if ws is not None:
+            from deepseek_tui.engine.project_context import (
+                load_project_context_with_parents,
+            )
+
+            rules_text = load_project_context_with_parents(ws).as_system_block()
+        rules_tokens = (
+            _estimate_text_tokens_conservative(rules_text.strip())
+            if rules_text.strip()
+            else 0
+        )
+        skills_tokens = (
+            _estimate_text_tokens_conservative(skills_context.strip())
+            if skills_context and skills_context.strip()
+            else 0
         )
 
-    system_tokens = _estimate_text_tokens_conservative(system_text)
-
-    tools_tokens = 0
-    if api_tools is not None:
-        tools_json = json.dumps(api_tools, ensure_ascii=False)
-        tools_tokens = _estimate_text_tokens_conservative(tools_json)
+    tool_definitions_tokens, mcp_tokens = _tool_schema_buckets(api_tools)
+    tools_tokens = tool_definitions_tokens + mcp_tokens
 
     conv_tokens = estimated_input_tokens(messages) if messages else 0
-    total = system_tokens + tools_tokens + conv_tokens
+    total = (
+        system_tokens
+        + rules_tokens
+        + skills_tokens
+        + tools_tokens
+        + conv_tokens
+    )
     window = context_window_for_model(target_model) or 0
     free = max(0, window - total) if window else 0
 
     return {
         "system_prompt": system_tokens,
+        "tool_definitions": tool_definitions_tokens,
         "tools": tools_tokens,
+        "mcp": mcp_tokens,
+        "skills": skills_tokens,
+        "rules": rules_tokens,
         "conversation": conv_tokens,
         "total": total,
         "window": window,

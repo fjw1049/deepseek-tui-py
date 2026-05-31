@@ -2,7 +2,11 @@ import type { ChatBlock } from '../agent/types'
 
 export type ContextBreakdownJson = {
   system_prompt: number
+  tool_definitions?: number
   tools: number
+  mcp?: number
+  skills?: number
+  rules?: number
   conversation: number
   total: number
   window: number
@@ -21,6 +25,24 @@ const DEFAULT_CONTEXT_WINDOW = 128_000
 /** Fallback when runtime context API is unavailable (TUI-style buckets). */
 export const ENGINE_SYSTEM_BASELINE_TOKENS = 600
 export const ENGINE_TOOLS_BASELINE_TOKENS = 7800
+
+export function contextBucketTokens(
+  breakdown: ContextBreakdownJson,
+  bucket: 'system_prompt' | 'tool_definitions' | 'mcp' | 'skills' | 'rules' | 'conversation'
+): number {
+  switch (bucket) {
+    case 'tool_definitions':
+      return Math.max(0, breakdown.tool_definitions ?? breakdown.tools ?? 0)
+    case 'mcp':
+      return Math.max(0, breakdown.mcp ?? 0)
+    case 'skills':
+      return Math.max(0, breakdown.skills ?? 0)
+    case 'rules':
+      return Math.max(0, breakdown.rules ?? 0)
+    default:
+      return Math.max(0, breakdown[bucket] ?? 0)
+  }
+}
 
 function contextWindowForModel(model: string): number {
   const lower = model.trim().toLowerCase()
@@ -98,11 +120,26 @@ export function fallbackContextBreakdown(
     conversation += blocks.length * 12 + 48
   }
   const system_prompt = ENGINE_SYSTEM_BASELINE_TOKENS
-  const tools = ENGINE_TOOLS_BASELINE_TOKENS
-  const total = system_prompt + tools + conversation
+  const tool_definitions = ENGINE_TOOLS_BASELINE_TOKENS
+  const mcp = 0
+  const skills = 0
+  const rules = 0
+  const tools = tool_definitions + mcp
+  const total = system_prompt + tools + skills + rules + conversation
   const window = contextWindowForModel(model)
   const free = Math.max(0, window - total)
-  return { system_prompt, tools, conversation, total, window, free }
+  return {
+    system_prompt,
+    tool_definitions,
+    tools,
+    mcp,
+    skills,
+    rules,
+    conversation,
+    total,
+    window,
+    free
+  }
 }
 
 /** Match TUI ``/context`` and footer ``fmt_tokens`` (e.g. 33.4k, 8.5k). */

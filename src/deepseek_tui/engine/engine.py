@@ -61,9 +61,14 @@ from deepseek_tui.engine.tool_catalog import (
     CODE_EXECUTION_TOOL_NAME,
     MULTI_TOOL_PARALLEL_NAME,
     REQUEST_USER_INPUT_NAME,
+    active_tools_for_step,
+    apply_mcp_tool_deferral,
+    apply_native_tool_deferral,
     build_model_tool_catalog,
     execute_code_execution_tool,
     execute_tool_search,
+    ensure_advanced_tooling,
+    initial_active_tools,
     is_tool_search_tool,
     missing_tool_error_message,
 )
@@ -627,8 +632,12 @@ class Engine:
         Returns ``{bucket_name: tokens, ..., "total": int, "window": int}``.
         Buckets:
 
-        - ``system_prompt`` — full system prompt body (incl. skills section)
-        - ``tools`` — JSON schema of every tool the registry will send
+        - ``system_prompt`` — base system prompt body
+        - ``tools`` — legacy combined JSON schema bucket
+        - ``tool_definitions`` — initially active built-in tool schemas
+        - ``mcp`` — initially active MCP tool schemas
+        - ``skills`` — available skills prompt section
+        - ``rules`` — project instruction files (AGENTS / CLAUDE / instructions)
         - ``conversation`` — accumulated user/assistant/tool messages
         - ``free`` — derived as ``window - total``, clamped at 0
 
@@ -645,6 +654,7 @@ class Engine:
             api_tools = self.tool_registry.to_api_tools()
         except Exception:  # noqa: BLE001 — registry may raise during boot
             api_tools = []
+        api_tools = self._initial_request_tools_for_context(api_tools)
 
         return estimate_context_breakdown(
             model=target_model,
@@ -655,6 +665,73 @@ class Engine:
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
         )
+
+    async def context_breakdown_live(self, model: str | None = None) -> dict[str, int]:
+        """Estimate context using the same tool catalog sent to the model.
+
+        Unlike :meth:`context_breakdown`, this async path considers dynamically
+        discovered MCP tools, then applies TurnLoop's initial active filter.
+        """
+        from deepseek_tui.engine.context import estimate_context_breakdown
+
+        target_model = model or self.default_model
+        try:
+            api_tools = await self._get_tools_with_mcp()
+        except Exception:  # noqa: BLE001 — keep the context endpoint best-effort
+            api_tools = []
+        api_tools = self._initial_request_tools_for_context(api_tools)
+
+        return estimate_context_breakdown(
+            model=target_model,
+            messages=self.session_messages or None,
+            skills_context=self._render_skills_context(),
+            working_set_summary=self.working_set.summary() or None,
+            api_tools=api_tools,
+            workspace=self.tool_context.working_directory,
+            mode=(self.mode or "agent").strip() or "agent",
+        )
+
+    def _initial_request_tools_for_context(
+        self, api_tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Mirror TurnLoop's initial active tool filtering for context counts.
+
+        Replays the same ordering the streaming turn uses so the breakdown
+        counts only the tools sent on the first request: apply native/MCP
+        deferral, append the always-active advanced tools, then keep the
+        initially active set. Deferral is idempotent, so this is safe whether
+        the caller passes a raw registry catalog (``context_breakdown``) or a
+        catalog that already went through ``build_model_tool_catalog``
+        (``context_breakdown_live``).
+        """
+        tools = [dict(tool) for tool in api_tools]
+        for tool in tools:
+            function = tool.get("function")
+            if isinstance(function, dict):
+                tool["function"] = dict(function)
+        if not tools:
+            return []
+
+        def _name(tool: dict[str, Any]) -> str:
+            function = tool.get("function")
+            if isinstance(function, dict) and isinstance(function.get("name"), str):
+                return function["name"]
+            return ""
+
+        mode = (self.mode or "agent").strip() or "agent"
+        native = [t for t in tools if not is_mcp_tool(_name(t))]
+        mcp = [t for t in tools if is_mcp_tool(_name(t))]
+        apply_native_tool_deferral(native, mode)
+        apply_mcp_tool_deferral(mcp, mode)
+        catalog = native + mcp
+
+        ensure_advanced_tooling(
+            catalog,
+            include_tool_search=profile_includes_tool_search(self.tool_profile),
+            include_code_execution=self.tool_profile is None,
+        )
+        active_names = initial_active_tools(catalog)
+        return active_tools_for_step(catalog, active_names, force_update_plan_first=False)
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""

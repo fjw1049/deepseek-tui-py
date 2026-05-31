@@ -544,9 +544,9 @@ class RuntimeThreadManager:
     async def get_thread_context_breakdown(self, thread_id: str) -> dict[str, int]:
         """Context window estimate for Workbench / HTTP clients.
 
-        Uses the live engine when the thread is already loaded (same numbers
-        as TUI ``/context``). Otherwise reconstructs messages from the store
-        and estimates with the default tool registry for that thread mode.
+        Uses the live engine when the thread is already loaded, including
+        dynamically discovered MCP tools. Otherwise reconstructs messages from
+        the store and estimates with the default tool registry for that mode.
         """
         from pathlib import Path
 
@@ -554,10 +554,13 @@ class RuntimeThreadManager:
         from deepseek_tui.tools.builder import build_default_registry
 
         thread = self.store.load_thread(thread_id)
+        active_engine = None
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is not None:
-                return state.engine.context_breakdown(thread.model)
+                active_engine = state.engine
+        if active_engine is not None:
+            return await active_engine.context_breakdown_live(thread.model)
 
         messages = reconstruct_messages_from_turns(self.store, thread_id)
         workspace = Path(thread.workspace).expanduser().resolve()

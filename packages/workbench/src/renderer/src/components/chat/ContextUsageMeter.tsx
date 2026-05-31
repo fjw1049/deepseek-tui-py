@@ -12,8 +12,8 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import {
+  contextBucketTokens,
   fallbackContextBreakdown,
-  formatBucketPercent,
   formatTokenCount,
   snapshotFromContextBreakdown,
   type ContextBreakdownJson
@@ -27,9 +27,10 @@ type Props = {
 }
 
 type BreakdownRow = {
-  branch: string
+  key: string
   label: string
   tokens: number
+  color: string
 }
 
 function breakdownRows(
@@ -37,15 +38,49 @@ function breakdownRows(
   labels: {
     system: string
     tools: string
+    mcp: string
+    skills: string
+    rules: string
     conversation: string
-    free: string
   }
 ): BreakdownRow[] {
   return [
-    { branch: '├─', label: labels.system, tokens: breakdown.system_prompt },
-    { branch: '├─', label: labels.tools, tokens: breakdown.tools },
-    { branch: '├─', label: labels.conversation, tokens: breakdown.conversation },
-    { branch: '└─', label: labels.free, tokens: breakdown.free }
+    {
+      key: 'system',
+      label: labels.system,
+      tokens: contextBucketTokens(breakdown, 'system_prompt'),
+      color: '#8b7cf6'
+    },
+    {
+      key: 'tools',
+      label: labels.tools,
+      tokens: contextBucketTokens(breakdown, 'tool_definitions'),
+      color: '#6f8cff'
+    },
+    {
+      key: 'mcp',
+      label: labels.mcp,
+      tokens: contextBucketTokens(breakdown, 'mcp'),
+      color: '#52b788'
+    },
+    {
+      key: 'skills',
+      label: labels.skills,
+      tokens: contextBucketTokens(breakdown, 'skills'),
+      color: '#f2b56b'
+    },
+    {
+      key: 'rules',
+      label: labels.rules,
+      tokens: contextBucketTokens(breakdown, 'rules'),
+      color: '#c69bd3'
+    },
+    {
+      key: 'conversation',
+      label: labels.conversation,
+      tokens: contextBucketTokens(breakdown, 'conversation'),
+      color: '#dc7f68'
+    }
   ]
 }
 
@@ -169,11 +204,12 @@ export function ContextUsageMeter({
   const rowLabels = {
     system: t('contextBreakdownSystem'),
     tools: t('contextBreakdownTools'),
-    conversation: t('contextBreakdownConversation'),
-    free: t('contextBreakdownFree')
+    mcp: t('contextBreakdownMcp'),
+    skills: t('contextBreakdownSkills'),
+    rules: t('contextBreakdownRules'),
+    conversation: t('contextBreakdownConversation')
   }
   const rows = breakdownRows(effectiveBreakdown, rowLabels)
-  const labelWidth = Math.max(...rows.map((row) => row.label.length))
   const windowTokens = effectiveBreakdown.window
 
   const panel =
@@ -184,28 +220,53 @@ export function ContextUsageMeter({
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
             style={panelStyle}
-            className="w-[min(320px,calc(100vw-24px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated px-3 py-2.5 font-mono text-[11px] leading-[1.45] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-ds-border bg-ds-elevated px-4 py-3.5 text-[12px] leading-[1.45] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="mb-2 text-[12px] font-sans font-medium text-ds-ink">
-              {t('contextUsageLabel', {
-                used: formatTokenCount(usage.usedTokens),
-                max: formatTokenCount(usage.maxTokens),
-                percent: Math.round(usage.percent)
+            <div className="mb-2.5 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[13px] font-medium text-ds-ink">
+                  {t('contextBreakdownTitle')}
+                </div>
+                <div className="mt-2 text-[12px] text-ds-muted">
+                  {t('contextBreakdownFull', { percent: Math.round(usage.percent) })}
+                </div>
+              </div>
+              <div className="mt-8 shrink-0 text-right text-[12px] tabular-nums text-ds-muted">
+                {t('contextBreakdownTokenSummary', {
+                  used: formatTokenCount(usage.usedTokens),
+                  max: formatTokenCount(usage.maxTokens)
+                })}
+              </div>
+            </div>
+            <div className="mb-4 flex h-2 overflow-hidden rounded-full bg-ds-border/70">
+              {rows.map((row) => {
+                const pct = windowTokens > 0 ? (row.tokens / windowTokens) * 100 : 0
+                if (pct <= 0) return null
+                return (
+                  <span
+                    key={row.key}
+                    className="h-full shrink-0"
+                    style={{
+                      width: `${Math.max(0.8, pct)}%`,
+                      backgroundColor: row.color
+                    }}
+                  />
+                )
               })}
             </div>
-            <ul className="space-y-0.5">
+            <ul className="space-y-2.5">
               {rows.map((row) => (
-                <li key={row.label} className="flex gap-2 whitespace-pre">
-                  <span className="shrink-0 text-ds-faint">{row.branch}</span>
-                  <span className="shrink-0" style={{ minWidth: `${labelWidth}ch` }}>
+                <li key={row.key} className="flex items-center gap-3">
+                  <span
+                    className="h-3.5 w-3.5 shrink-0 rounded-[3px]"
+                    style={{ backgroundColor: row.color }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-ds-muted">
                     {row.label}
                   </span>
-                  <span className="ml-auto shrink-0 tabular-nums text-ds-ink">
-                    {formatTokenCount(row.tokens).padStart(6, ' ')}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-ds-faint">
-                    ({formatBucketPercent(row.tokens, windowTokens)})
+                  <span className="shrink-0 tabular-nums text-ds-muted">
+                    {formatTokenCount(row.tokens)}
                   </span>
                 </li>
               ))}
