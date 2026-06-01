@@ -129,6 +129,41 @@ class AppRuntime:
     def tool_runtime(self) -> ToolRuntime | None:
         return self._tool_runtime
 
+    def schedule_mcp_preload(self) -> None:
+        """Background MCP tool discovery — does not block HTTP serve."""
+        if not getattr(self.config.features, "mcp", False):
+            return
+        tr = self._tool_runtime
+        if tr is None:
+            return
+        mcp = getattr(tr, "mcp_manager", None)
+        if mcp is None:
+            return
+        mcp.schedule_startup_preload()
+
+    def mcp_preload_status(self) -> dict[str, Any]:
+        """Current MCP warmup state for Workbench / readiness probes."""
+        if not getattr(self.config.features, "mcp", False):
+            return {
+                "phase": "disabled",
+                "warming": False,
+                "ready": True,
+                "enabled_servers": 0,
+                "connected_servers": 0,
+                "tools_count": 0,
+                "from_disk_cache": False,
+                "started_at_ms": None,
+                "completed_at_ms": None,
+                "error": None,
+            }
+        tr = self._tool_runtime
+        if tr is None:
+            return {"phase": "idle", "warming": False, "ready": False}
+        mcp = getattr(tr, "mcp_manager", None)
+        if mcp is None:
+            return {"phase": "disabled", "warming": False, "ready": True}
+        return mcp.preload_status()
+
     @classmethod
     async def create(
         cls,
@@ -143,19 +178,20 @@ class AppRuntime:
 
         cfg = config or Config()
         wd = (working_directory or Path.cwd()).resolve()
-        mcp_enabled = bool(getattr(cfg.features, "mcp", False))
         tool_runtime = await create_tool_runtime(
             config=cfg,
             working_directory=wd,
             mode=mode,
-            start_mcp=mcp_enabled,
+            start_mcp=False,
         )
-        return cls(
+        runtime = cls(
             config=cfg,
             tool_runtime=tool_runtime,
             working_directory=wd,
             llm_client=llm_client,
         )
+        runtime.schedule_mcp_preload()
+        return runtime
 
     async def shutdown(self) -> None:
         if self._tool_runtime is not None:
@@ -894,6 +930,8 @@ class AppRuntime:
             summary = await manager.start_all(_on_update, fail_on_required=True)
         except McpError as exc:
             return {"ok": False, "error": str(exc), "summary": {"servers": []}}
+
+        manager.schedule_startup_preload(force=True)
 
         complete = McpStartupCompleteEventFrame(summary=summary)
         await self.hooks.emit(generic_event_frame(complete))

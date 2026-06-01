@@ -178,6 +178,9 @@ class RuntimeThreadManager:
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
         self._active_lock = asyncio.Lock()
+        self._engine_load_tasks: dict[
+            str, asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]]
+        ] = {}
         self._pending_user_inputs: dict[str, _PendingUserInputRecord] = {}
 
         self.event_bus: AsyncBroadcast[RuntimeEventRecord] = AsyncBroadcast(
@@ -952,6 +955,23 @@ class RuntimeThreadManager:
                     state.active_turn = None
         return turn
 
+    async def warmup_thread(self, thread_id: str) -> dict[str, Any]:
+        """Pre-load a thread's Engine without starting a turn.
+
+        Workbench calls this after a thread is selected/created so the first
+        user message does not pay the full Engine.create cold path. The regular
+        start_turn path still calls _ensure_engine_loaded, so this is only an
+        opportunistic latency warmup.
+        """
+        started = now_ms()
+        thread = self.store.load_thread(thread_id)
+        await self._ensure_engine_loaded(thread)
+        return {
+            "thread_id": thread_id,
+            "status": "ready",
+            "elapsed_ms": max(0, now_ms() - started),
+        }
+
     # --- events query --------------------------------------------------------
 
     def events_since(
@@ -966,6 +986,8 @@ class RuntimeThreadManager:
     ) -> tuple[EngineHandle, asyncio.Task[None]]:
         if trace is not None:
             trace.engine_load_start_ms = now_ms()
+        load_task: asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]] | None = None
+        owns_load_task = False
         async with self._active_lock:
             state = self._active.get(thread.id)
             if state is not None:
@@ -978,12 +1000,34 @@ class RuntimeThreadManager:
                     trace.engine_load_cache_hit = True
                     trace.engine_load_end_ms = now_ms()
                 return state.handle, state.engine_task
-
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.execpolicy.engine import exec_policy_for_config
+            load_task = self._engine_load_tasks.get(thread.id)
+            if load_task is None:
+                load_task = asyncio.create_task(
+                    self._load_engine_for_thread(thread),
+                    name=f"engine-load-{thread.id}",
+                )
+                self._engine_load_tasks[thread.id] = load_task
+                owns_load_task = True
 
         if trace is not None:
             trace.engine_load_cache_hit = False
+        try:
+            handle, engine_task = await load_task
+        finally:
+            if owns_load_task:
+                async with self._active_lock:
+                    if self._engine_load_tasks.get(thread.id) is load_task:
+                        self._engine_load_tasks.pop(thread.id, None)
+        if trace is not None:
+            trace.engine_load_end_ms = now_ms()
+        return handle, engine_task
+
+    async def _load_engine_for_thread(
+        self, thread: ThreadRecord
+    ) -> tuple[EngineHandle, asyncio.Task[None]]:
+        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.execpolicy.engine import exec_policy_for_config
+
         handle = EngineHandle()
         workspace = Path(thread.workspace).expanduser().resolve()
         approval_handler = self._build_approval_handler(thread.id)
@@ -1033,8 +1077,6 @@ class RuntimeThreadManager:
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
 
-        if trace is not None:
-            trace.engine_load_end_ms = now_ms()
         return handle, engine_task
 
     def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:

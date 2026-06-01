@@ -139,6 +139,23 @@ export type DeepseekSpawnResult = {
 export type SseEventPayload = { streamId: string; data: unknown }
 export type SseEndPayload = { streamId: string }
 export type SseErrorPayload = { streamId: string; status?: number; message?: string }
+export type StartupPhase =
+  | 'app-ready'
+  | 'settings'
+  | 'renderer-loading'
+  | 'runtime-check'
+  | 'runtime-config-sync'
+  | 'runtime-spawn'
+  | 'runtime-health'
+  | 'thread-api'
+  | 'runtime-ready'
+  | 'offline'
+
+export type StartupPhasePayload = {
+  phase: StartupPhase
+  at: number
+  detail?: string
+}
 
 export type RuntimeTokenRegenerateResult =
   | { ok: true; fingerprint: string; restarted: boolean; tokenPath?: string }
@@ -163,6 +180,8 @@ export type WorkspaceSuggestionsResult =
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
+  getStartupPhase: () => Promise<StartupPhasePayload | null>
+  onStartupPhase: (handler: (payload: StartupPhasePayload) => void) => () => void
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   runtimeRequest: (path: string, method?: string, body?: string) => Promise<RuntimeRequestResult>
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>

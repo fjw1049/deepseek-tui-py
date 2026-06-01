@@ -10,36 +10,63 @@ type Props = {
 export function ConnectionStatusBar({ compact = false }: Props): ReactElement {
   const { t } = useTranslation('common')
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
+  const startupPhase = useChatStore((s) => s.startupPhase)
+  const activeThreadWarmup = useChatStore((s) => s.activeThreadWarmup)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
 
+  const startupLabel =
+    startupPhase?.phase === 'settings'
+      ? t('startupSettings')
+      : startupPhase?.phase === 'renderer-loading'
+        ? t('startupRenderer')
+        : startupPhase?.phase === 'runtime-check'
+          ? t('startupRuntimeCheck')
+          : startupPhase?.phase === 'runtime-config-sync'
+            ? t('startupRuntimeConfigSync')
+            : startupPhase?.phase === 'runtime-spawn'
+              ? t('startupRuntimeSpawn')
+              : startupPhase?.phase === 'runtime-health'
+                ? t('startupRuntimeHealth')
+                : startupPhase?.phase === 'thread-api'
+                  ? t('startupThreadApi')
+                  : null
+  const warmingThread =
+    runtimeConnection === 'ready' &&
+    activeThreadId !== null &&
+    activeThreadWarmup.threadId === activeThreadId &&
+    activeThreadWarmup.status === 'warming'
   const label =
-    runtimeConnection === 'checking'
-      ? t('runtimeChecking')
-      : runtimeConnection === 'ready'
-        ? t('runtimeReady')
-        : runtimeConnection === 'offline'
-          ? t('runtimeOfflineShort')
-          : t('runtimeIdle')
+    warmingThread
+      ? t('startupWorkspacePreparing')
+      : runtimeConnection === 'checking'
+        ? startupLabel ?? t('runtimeChecking')
+        : runtimeConnection === 'ready'
+          ? t('runtimeReady')
+          : runtimeConnection === 'offline'
+            ? t('runtimeOfflineShort')
+            : t('runtimeIdle')
 
   const barTone = compact
-    ? runtimeConnection === 'ready'
-      ? 'text-emerald-700/90 dark:text-emerald-200/80'
-      : runtimeConnection === 'checking'
+    ? warmingThread || runtimeConnection === 'checking'
         ? 'text-amber-700/90 dark:text-amber-100/80'
-        : 'text-ds-faint'
-    : runtimeConnection === 'ready'
-      ? 'bg-emerald-500/12 text-emerald-900 dark:text-emerald-100/90'
-      : runtimeConnection === 'checking'
+        : runtimeConnection === 'ready'
+          ? 'text-emerald-700/90 dark:text-emerald-200/80'
+          : 'text-ds-faint'
+    : warmingThread || runtimeConnection === 'checking'
         ? 'bg-amber-500/12 text-amber-950 dark:text-amber-100/90'
-        : 'bg-ds-subtle text-ds-muted'
+        : runtimeConnection === 'ready'
+          ? 'bg-emerald-500/12 text-emerald-900 dark:text-emerald-100/90'
+          : 'bg-ds-subtle text-ds-muted'
 
   const dotClass =
-    runtimeConnection === 'ready'
-      ? 'bg-emerald-500'
-      : runtimeConnection === 'checking'
-        ? 'animate-pulse bg-amber-500'
-        : 'bg-ds-faint'
+    warmingThread
+      ? 'animate-pulse bg-amber-500'
+      : runtimeConnection === 'ready'
+        ? 'bg-emerald-500'
+        : runtimeConnection === 'checking'
+          ? 'animate-pulse bg-amber-500'
+          : 'bg-ds-faint'
 
   const showRetry =
     (runtimeConnection === 'offline' || runtimeConnection === 'idle') && activeThreadId !== null

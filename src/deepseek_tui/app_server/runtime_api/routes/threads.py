@@ -67,6 +67,15 @@ async def thread_turn_active(request: Request, thread_id: str) -> dict[str, bool
     return {"active": active}
 
 
+@router.post("/threads/{thread_id}/warmup")
+async def warmup_thread(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        return await mgr.warmup_thread(thread_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+
+
 @router.get("/threads/{thread_id}")
 async def get_thread_detail(request: Request, thread_id: str) -> dict[str, Any]:
     mgr = manager(request)

@@ -20,3 +20,9 @@ router = APIRouter(prefix="/v1")
 async def mcp_startup(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)
     return await runtime.mcp_startup()
+
+
+@router.get("/mcp/preload-status")
+async def mcp_preload_status(request: Request) -> dict[str, Any]:
+    runtime = runtime_from_request(request)
+    return runtime.mcp_preload_status()

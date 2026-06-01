@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Union
@@ -14,6 +15,7 @@ from deepseek_tui.mcp.client import (
     qualify_tool_name,
 )
 from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
+from deepseek_tui.mcp.preload import DEFAULT_PRELOAD_TIMEOUT_S, McpPreloadTracker
 from deepseek_tui.mcp.startup import raise_if_required_mcp_failed
 from deepseek_tui.mcp.store import hash_mcp_document, load_raw_document
 from deepseek_tui.protocol.mcp_lifecycle import (
@@ -26,6 +28,8 @@ from deepseek_tui.protocol.mcp_lifecycle import (
 StartupUpdateCallback = Callable[
     [McpStartupUpdateEvent], Union[None, Awaitable[None]]
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class McpManager:
@@ -46,7 +50,10 @@ class McpManager:
         self._discovered_tools_cache: list[dict[str, Any]] | None = None
         self._stale_cache: list[dict[str, Any]] | None = None
         self._background_refresh_task: asyncio.Task[None] | None = None
+        self._discover_inflight: asyncio.Task[list[dict[str, Any]]] | None = None
+        self._discover_lock = asyncio.Lock()
         self._discovered_tools_cache_path: Path | None = None
+        self._preload = McpPreloadTracker()
         if self._config_path is not None:
             from deepseek_tui.mcp.store import validate_mcp_config_path
 
@@ -60,6 +67,131 @@ class McpManager:
                 self._config_path.parent / "mcp-tools-cache.json"
             )
             self._load_discovered_tools_cache_from_disk()
+        if self._discovered_tools_cache is not None:
+            self._preload.mark_ready_from_disk(
+                tools_count=len(self._discovered_tools_cache),
+                enabled_servers=len(self._enabled_server_names()),
+            )
+
+    def _enabled_server_names(self) -> list[str]:
+        return [name for name, cfg in self._configs.items() if cfg.enabled]
+
+    def _connected_server_count(self) -> int:
+        count = 0
+        for name in self._enabled_server_names():
+            client = self._clients.get(name)
+            if client is not None and client.is_running:
+                count += 1
+        return count
+
+    def preload_status(self) -> dict[str, Any]:
+        cached = self.cached_tools()
+        tools_count = len(cached) if cached is not None else 0
+        enabled = len(self._enabled_server_names())
+        if enabled == 0:
+            payload = self._preload.snapshot(
+                enabled_servers=0,
+                connected_servers=0,
+                tools_count=tools_count,
+            ).to_payload()
+            payload["phase"] = "disabled"
+            payload["ready"] = True
+            payload["warming"] = False
+            return payload
+        return self._preload.snapshot(
+            enabled_servers=enabled,
+            connected_servers=self._connected_server_count(),
+            tools_count=tools_count,
+        ).to_payload()
+
+    def schedule_startup_preload(
+        self,
+        *,
+        timeout_s: float = DEFAULT_PRELOAD_TIMEOUT_S,
+        force: bool = False,
+    ) -> None:
+        """Background MCP connect + tool discovery after runtime serve starts."""
+        enabled = self._enabled_server_names()
+        if not enabled:
+            self._preload.phase = "disabled"
+            return
+        task = self._preload._task
+        if task is not None and not task.done():
+            return
+        if force:
+            self._discovered_tools_cache = None
+            self._preload.phase = "idle"
+            self._preload.from_disk_cache = False
+            self._preload.completed_at_ms = None
+            self._preload.error = None
+        if self._discovered_tools_cache is not None and not force:
+            self._preload.mark_ready_from_disk(
+                tools_count=len(self._discovered_tools_cache),
+                enabled_servers=len(enabled),
+            )
+            logger.info(
+                "mcp_preload_skip tools=%d reason=disk_cache enabled_servers=%d",
+                len(self._discovered_tools_cache),
+                len(enabled),
+            )
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._preload._task = loop.create_task(
+            self._run_startup_preload(timeout_s),
+            name="mcp-preload",
+        )
+
+    async def _run_startup_preload(self, timeout_s: float) -> None:
+        import time
+
+        enabled = self._enabled_server_names()
+        self._preload.phase = "warming"
+        self._preload.started_at_ms = int(time.time() * 1000)
+        self._preload.error = None
+        logger.info(
+            "mcp_preload_start enabled_servers=%d timeout_s=%.0f",
+            len(enabled),
+            timeout_s,
+        )
+        tools: list[dict[str, Any]] = []
+        try:
+            tools = await asyncio.wait_for(self.discover_tools(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            self._preload.error = f"timeout after {timeout_s:.0f}s"
+            logger.warning("mcp_preload_timeout seconds=%.0f", timeout_s)
+            cached = self.cached_tools()
+            if cached is not None:
+                tools = cached
+        except Exception as exc:  # noqa: BLE001
+            self._preload.error = str(exc)
+            logger.exception("mcp_preload_failed")
+            cached = self.cached_tools()
+            if cached is not None:
+                tools = cached
+
+        connected = self._connected_server_count()
+        self._preload.completed_at_ms = int(time.time() * 1000)
+        if tools:
+            self._preload.phase = (
+                "partial" if connected < len(enabled) else "ready"
+            )
+            logger.info(
+                "mcp_preload_complete phase=%s tools=%d connected=%d/%d",
+                self._preload.phase,
+                len(tools),
+                connected,
+                len(enabled),
+            )
+        else:
+            self._preload.phase = "failed"
+            logger.warning(
+                "mcp_preload_failed_no_tools connected=%d/%d",
+                connected,
+                len(enabled),
+            )
 
     @property
     def server_names(self) -> list[str]:
@@ -135,6 +267,10 @@ class McpManager:
             await client.stop()
         self._clients.clear()
         self._tool_map.clear()
+        # Demote live cache to stale rather than discarding — discover_tools()
+        # can serve it immediately while reconnecting in the background.
+        if self._discovered_tools_cache is not None:
+            self._stale_cache = self._discovered_tools_cache
         self._discovered_tools_cache = None
 
     def _load_discovered_tools_cache_from_disk(self) -> None:
@@ -211,6 +347,27 @@ class McpManager:
                 pass
         return await self.start_all()
 
+    def cached_tools(self) -> list[dict[str, Any]] | None:
+        """Return warm MCP tool descriptors without starting discovery."""
+        if self._discovered_tools_cache is not None:
+            return list(self._discovered_tools_cache)
+        if self._stale_cache is not None:
+            return list(self._stale_cache)
+        return None
+
+    def schedule_background_discover(self) -> None:
+        """Kick off tool discovery without blocking the caller."""
+        if self.cached_tools() is not None or self._discover_inflight is not None:
+            return
+        task = self._preload._task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.discover_tools(), name="mcp-discover-bg")
+
     async def discover_tools(self) -> list[dict[str, Any]]:
         """Discover tools from all enabled servers, returns API-format list.
 
@@ -221,6 +378,8 @@ class McpManager:
         All servers are discovered **in parallel** with per-server timeouts
         derived from each server's ``connect_timeout`` config (default 10s).
         A single slow or unreachable server will not block the others.
+
+        Concurrent callers share one in-flight discovery task (singleflight).
         """
         if self._discovered_tools_cache is not None:
             self._rebuild_tool_map_from_cache()
@@ -237,6 +396,24 @@ class McpManager:
             )
             return list(self._discovered_tools_cache)
 
+        async with self._discover_lock:
+            if self._discovered_tools_cache is not None:
+                self._rebuild_tool_map_from_cache()
+                return list(self._discovered_tools_cache)
+            if self._discover_inflight is not None:
+                return await asyncio.shield(self._discover_inflight)
+            self._discover_inflight = asyncio.create_task(
+                self._discover_tools_fresh(), name="mcp-discover"
+            )
+            task = self._discover_inflight
+        try:
+            return await asyncio.shield(task)
+        finally:
+            async with self._discover_lock:
+                if self._discover_inflight is task:
+                    self._discover_inflight = None
+
+    async def _discover_tools_fresh(self) -> list[dict[str, Any]]:
         timed_out_servers: list[tuple[str, McpServerConfig]] = []
 
         async def _discover_one(
@@ -347,14 +524,24 @@ class McpManager:
             self._persist_discovered_tools_cache_to_disk()
 
     async def _refresh_cache_in_background(self) -> None:
-        """Re-discover tools and update the cache silently."""
-        # Invalidate so the parallel discover path runs fresh.
+        """Re-discover tools in background and replace the stale cache.
+
+        The stale cache continues serving requests while this runs. On
+        success the fresh result replaces it; on failure the stale cache
+        remains valid until next app restart.
+        """
+        # Invalidate only the live cache so discover_tools() runs the
+        # parallel discovery path. Keep _stale_cache untouched as fallback.
         self._discovered_tools_cache = None
         self._tool_map.clear()
         try:
             await self.discover_tools()
         except Exception:  # noqa: BLE001
-            pass
+            # Restore stale cache if refresh failed entirely.
+            if self._discovered_tools_cache is None and self._stale_cache is not None:
+                self._discovered_tools_cache = self._stale_cache
+                self._stale_cache = None
+                self._rebuild_tool_map_from_cache()
 
     def _rebuild_tool_map_from_cache(self) -> None:
         self._tool_map.clear()

@@ -31,6 +31,7 @@ import {
   type AppSettingsPatch,
   type AppSettingsV1
 } from '../shared/app-settings'
+import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { isAllowedDevPreviewUrl } from '../shared/dev-preview-url'
 import { fetchUpstreamModelIds } from './upstream-models'
 import {
@@ -56,6 +57,7 @@ if (detectedRepoRoot && !process.env.DEEPSEEK_REPO_ROOT) {
 Object.assign(process.env, runtimeSpawnEnv())
 const startupTraceEnabled = process.env.DEEPSEEK_GUI_STARTUP_TRACE === '1'
 const startupTraceStart = Date.now()
+let currentStartupPhase: StartupPhasePayload | null = null
 
 function traceStartup(label: string, detail?: unknown): void {
   if (!startupTraceEnabled) return
@@ -64,6 +66,18 @@ function traceStartup(label: string, detail?: unknown): void {
     console.info(`[startup +${elapsed}ms] ${label}`)
   } else {
     console.info(`[startup +${elapsed}ms] ${label}`, detail)
+  }
+}
+
+function emitStartupPhase(phase: StartupPhase, detail?: string): void {
+  currentStartupPhase = {
+    phase,
+    at: Date.now(),
+    ...(detail ? { detail } : {})
+  }
+  traceStartup(`phase:${phase}`, detail)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('startup:phase', currentStartupPhase)
   }
 }
 
@@ -384,9 +398,17 @@ async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
   ) {
     return
   }
-  runtimeEnsurePromise = ensureRuntimeOnce(settings).finally(() => {
-    runtimeEnsurePromise = null
-  })
+  runtimeEnsurePromise = ensureRuntimeOnce(settings)
+    .catch((error) => {
+      emitStartupPhase(
+        'offline',
+        error instanceof Error ? error.message : String(error)
+      )
+      throw error
+    })
+    .finally(() => {
+      runtimeEnsurePromise = null
+    })
   return runtimeEnsurePromise
 }
 
@@ -402,9 +424,11 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
 
   const hasApiKey = Boolean(resolveConfiguredApiKey(settings))
   const runtimeToken = settings.deepseek.runtimeToken?.trim() ?? ''
+  emitStartupPhase('runtime-check')
   const healthy = await waitForRuntimeHealth(settings.deepseek.port, 2000)
 
   if (healthy) {
+    emitStartupPhase('thread-api')
     const threadApi = await probeThreadApi(settings)
     if (threadApi.ok) {
       if (!isDeepseekChildRunning() && settings.deepseek.autoStart && hasApiKey) {
@@ -419,10 +443,12 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
             throw runtimeJsonError('runtime_port_conflict', reclaimed.message)
           }
         } else {
+          emitStartupPhase('runtime-ready')
           runtimeReadyCache.markReady()
           return
         }
       } else {
+        emitStartupPhase('runtime-ready')
         runtimeReadyCache.markReady()
         return
       }
@@ -466,13 +492,19 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
   if (!settings.deepseek.autoStart) {
     throw runtimeJsonError('runtime_offline', await runtimeOfflineMessage(settings))
   }
+  emitStartupPhase('runtime-config-sync')
   await syncDeepseekTuiConfig(settings)
   try {
+    emitStartupPhase(
+      'runtime-spawn',
+      'Starting the local Python runtime. Dev launches can take 15-25s.'
+    )
     await startDeepseekChild(settings)
   } catch (e) {
     console.error('[deepseek-gui] failed to start deepseek:', e)
     throw e
   }
+  emitStartupPhase('runtime-health')
   const started = await waitForRuntimeHealth(
     settings.deepseek.port,
     MANAGED_RUNTIME_STARTUP_TIMEOUT_MS
@@ -484,10 +516,12 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
     )
   }
 
+  emitStartupPhase('thread-api')
   const threadApi = await probeThreadApi(settings)
   if (!threadApi.ok) {
     throw runtimeJsonError(threadApi.error, threadApi.message)
   }
+  emitStartupPhase('runtime-ready')
   runtimeReadyCache.markReady()
 }
 
@@ -550,6 +584,7 @@ function createWindow(): void {
   })
   const devUrl = devServerHintUrl(app.isPackaged)
   traceStartup('createWindow:load', { devUrl: devUrl ?? 'file' })
+  emitStartupPhase('renderer-loading')
 
   const loadRenderer = async (): Promise<void> => {
     if (!mainWindow || mainWindow.isDestroyed()) return
@@ -742,6 +777,7 @@ async function runtimeRequest(
 
 app.whenReady().then(async () => {
   traceStartup('app.whenReady:start')
+  emitStartupPhase('app-ready')
   if (!gotSingleInstanceLock) return
 
   traceStartup('install webview guards:start')
@@ -754,6 +790,7 @@ app.whenReady().then(async () => {
 
   store = new JsonSettingsStore(app.getPath('userData'))
   traceStartup('settings load:start')
+  emitStartupPhase('settings')
   const initial = await store.load()
   traceStartup('settings load:done')
 
@@ -825,6 +862,7 @@ app.whenReady().then(async () => {
     resolveLogDirectory,
     logError
   })
+  ipcMain.handle('startup:phase:get', async () => currentStartupPhase)
 
   ipcMain.handle('deepseek:spawn-if-needed', async () => {
     const s = await store.load()
@@ -993,6 +1031,14 @@ app.whenReady().then(async () => {
 
   createWindow()
   traceStartup('createWindow:returned')
+
+  if (resolveConfiguredApiKey(initial)) {
+    void ensureRuntime(initial).catch((error) => {
+      logWarn('runtime-startup', 'Initial runtime startup failed', {
+        message: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }
 
   void pruneOnStartup().catch((err) => {
     console.warn('[deepseek-gui] prune logs:', err)

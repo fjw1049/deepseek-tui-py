@@ -79,6 +79,7 @@ const sseAbortRef = {
 }
 let composerModelLoadPromise: Promise<void> | null = null
 let bootPromise: Promise<void> | null = null
+let threadWarmupSeq = 0
 const BUSY_WATCHDOG_MS = 180_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 let drainingQueuedMessages = false
@@ -725,6 +726,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   workspaceRoot: '',
   workspaceLabel: i18n.t('common:workingDirectory'),
   runtimeConnection: 'idle',
+  startupPhase: null,
+  activeThreadWarmup: { threadId: null, status: 'idle' },
   threads: [],
   activeThreadId: null,
   blocks: [],
@@ -764,6 +767,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
     workspaceLabelFromPath,
     normalizeWorkspaceRoot: (workspaceRoot) => normalizeWorkspaceRoot(workspaceRoot ?? undefined)
   }),
+
+  setStartupPhase: (phase) => {
+    if (phase == null) {
+      set({ startupPhase: null })
+      return
+    }
+    set((state) => {
+      if (phase.phase === 'offline') {
+        return {
+          startupPhase: phase,
+          runtimeConnection: 'offline',
+          runtimeErrorDetail: phase.detail ?? state.runtimeErrorDetail
+        }
+      }
+      if (
+        phase.phase === 'runtime-check' ||
+        phase.phase === 'runtime-config-sync' ||
+        phase.phase === 'runtime-spawn' ||
+        phase.phase === 'runtime-health' ||
+        phase.phase === 'thread-api'
+      ) {
+        return {
+          startupPhase: phase,
+          runtimeConnection:
+            state.runtimeConnection === 'ready' ? state.runtimeConnection : 'checking'
+        }
+      }
+      return { startupPhase: phase }
+    })
+    if (phase.phase === 'runtime-ready' && get().runtimeConnection !== 'ready') {
+      void get().probeRuntime('background')
+    }
+  },
 
   openCode: async () => {
     const state = get()
@@ -1197,6 +1233,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  warmActiveThread: async (threadId) => {
+    const targetId = threadId ?? get().activeThreadId
+    if (!targetId || get().runtimeConnection !== 'ready') return
+    const p = getProvider(get().providerId)
+    if (typeof p.warmThread !== 'function') {
+      set({ activeThreadWarmup: { threadId: targetId, status: 'ready' } })
+      return
+    }
+    const seq = ++threadWarmupSeq
+    set({ activeThreadWarmup: { threadId: targetId, status: 'warming' } })
+    try {
+      await p.warmThread(targetId)
+      if (seq !== threadWarmupSeq || get().activeThreadId !== targetId) return
+      set({ activeThreadWarmup: { threadId: targetId, status: 'ready' } })
+    } catch (e) {
+      if (seq !== threadWarmupSeq || get().activeThreadId !== targetId) return
+      set({ activeThreadWarmup: { threadId: targetId, status: 'failed' } })
+      if (typeof window.dsGui?.logError === 'function') {
+        void window.dsGui.logError('thread-warmup', 'Failed to warm thread engine', {
+          threadId: targetId,
+          message: e instanceof Error ? e.message : String(e)
+        })
+      }
+    }
+  },
+
   selectThread: async (id) => {
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
@@ -1238,6 +1300,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         watchTurnCompletion: nextWatch,
         unreadThreadIds: nextUnread,
         activeThreadId: id,
+        activeThreadWarmup: {
+          threadId: id,
+          status: busy ? 'ready' : 'idle'
+        },
         blocks: synced.blocks,
         lastSeq: latestSeq,
         liveReasoning: '',
@@ -1259,6 +1325,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const sink = buildThreadEventSink(set, get)
       void p.subscribeThreadEvents(id, latestSeq, sink, ac.signal)
       if (busy) armBusyWatchdog(set, get)
+      if (!busy) void get().warmActiveThread(id)
     } catch (e) {
       set({
         error: formatRuntimeError(e),
@@ -1460,6 +1527,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeThreadId = threadId
         set((s) => ({
           activeThreadId: threadId,
+          activeThreadWarmup: {
+            threadId,
+            status: 'warming'
+          },
           lastSeq: 0,
           inspectorSelectedId: null,
           threads:
@@ -1502,6 +1573,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         uiSubmitAtMs: now,
         ...(composerModel ? { model: composerModel } : {})
       })
+      set({ activeThreadWarmup: { threadId: activeThreadId, status: 'ready' } })
       // Mirror the composer model selection against the runtime's stable
       // user_message item id so the badge survives page refresh / thread
       // re-selection. The runtime itself doesn't persist per-turn metadata.

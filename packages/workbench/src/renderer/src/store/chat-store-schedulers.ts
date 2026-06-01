@@ -33,7 +33,7 @@ export function scheduleStartupRuntimeProbe(get: ChatStoreGet): void {
   startupRuntimeProbeTimer = setTimeout(() => {
     startupRuntimeProbeTimer = null
     void get().probeRuntime('user')
-  }, 900)
+  }, 0)
 }
 
 export function clearBusyWatchdog(): void {

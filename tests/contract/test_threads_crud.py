@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 from httpx import AsyncClient
+
+from deepseek_tui.tools.context import ToolContext
 
 
 @pytest.mark.asyncio
@@ -69,6 +75,35 @@ async def test_thread_active_endpoint(client: AsyncClient) -> None:
     active = await client.get(f"/v1/threads/{thread_id}/active")
     assert active.status_code == 200
     assert active.json() == {"active": False}
+
+
+@pytest.mark.asyncio
+async def test_thread_warmup_endpoint_loads_engine(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        nonlocal calls
+        calls += 1
+        wd = kwargs.get("working_directory", Path("."))
+        ctx = ToolContext(working_directory=Path(wd))  # type: ignore[arg-type]
+        return SimpleNamespace(tool_context=ctx, run=AsyncMock())
+
+    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+
+    create = await client.post("/v1/threads", json={"model": "deepseek-chat"})
+    assert create.status_code == 201
+    thread_id = create.json()["id"]
+
+    first = await client.post(f"/v1/threads/{thread_id}/warmup")
+    assert first.status_code == 200
+    assert first.json()["status"] == "ready"
+    assert first.json()["thread_id"] == thread_id
+
+    second = await client.post(f"/v1/threads/{thread_id}/warmup")
+    assert second.status_code == 200
+    assert calls == 1
 
 
 @pytest.mark.asyncio

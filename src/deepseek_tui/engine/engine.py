@@ -103,9 +103,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MCP_DISCOVER_TIMEOUT_S = 8
-
-
 def _clip_summary_line(text: str, limit: int = 200) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
     if len(line) > limit:
@@ -370,33 +367,23 @@ class Engine:
         profile = self.tool_profile or TOOL_PROFILE_FULL
         if mcp is None:
             result = filter_tools_for_profile(list(native_tools), profile)
-        elif self._mcp_tools_cache is None:
-            try:
-                self._mcp_tools_cache = await asyncio.wait_for(
-                    mcp.discover_tools(),
-                    timeout=MCP_DISCOVER_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "mcp_discover_timeout seconds=%d", MCP_DISCOVER_TIMEOUT_S
-                )
-                self._mcp_tools_cache = []
-            except Exception:  # noqa: BLE001
-                self._mcp_tools_cache = []
-            if not self._mcp_tools_cache:
+        else:
+            mcp_tools = self._mcp_tools_cache
+            if mcp_tools is None:
+                mcp_tools = mcp.cached_tools()
+            if mcp_tools is None:
+                # Never block a user turn on cold MCP subprocess startup.
+                mcp.schedule_background_discover()
+                logger.info("mcp_discover_deferred native_tools=%d", len(native_tools))
+                result = filter_tools_for_profile(list(native_tools), profile)
+            elif not mcp_tools:
                 result = filter_tools_for_profile(list(native_tools), profile)
             else:
+                self._mcp_tools_cache = list(mcp_tools)
                 combined = build_model_tool_catalog(
-                    list(native_tools), list(self._mcp_tools_cache), self.mode
+                    list(native_tools), list(mcp_tools), self.mode
                 )
                 result = filter_tools_for_profile(combined, profile)
-        elif not self._mcp_tools_cache:
-            result = filter_tools_for_profile(list(native_tools), profile)
-        else:
-            combined = build_model_tool_catalog(
-                list(native_tools), list(self._mcp_tools_cache), self.mode
-            )
-            result = filter_tools_for_profile(combined, profile)
 
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
@@ -688,14 +675,42 @@ class Engine:
 
         Unlike :meth:`context_breakdown`, this async path considers dynamically
         discovered MCP tools, then applies TurnLoop's initial active filter.
+
+        Never starts a cold MCP discovery — Workbench polls this endpoint and
+        must not block on subprocess startup.
         """
         from deepseek_tui.engine.context import estimate_context_breakdown
+        from deepseek_tui.engine.tool_profiles import (
+            TOOL_PROFILE_FULL,
+            filter_tools_for_profile,
+        )
 
         target_model = model or self.default_model
+        profile = self.tool_profile or TOOL_PROFILE_FULL
         try:
-            api_tools = await self._get_tools_with_mcp()
-        except Exception:  # noqa: BLE001 — keep the context endpoint best-effort
-            api_tools = []
+            native_tools = self.tool_registry.to_api_tools()
+        except Exception:  # noqa: BLE001
+            native_tools = []
+        mcp = self.mcp_manager
+        if mcp is None:
+            api_tools = filter_tools_for_profile(list(native_tools), profile)
+        elif self._mcp_tools_cache is not None:
+            if not self._mcp_tools_cache:
+                api_tools = filter_tools_for_profile(list(native_tools), profile)
+            else:
+                combined = build_model_tool_catalog(
+                    list(native_tools), list(self._mcp_tools_cache), self.mode
+                )
+                api_tools = filter_tools_for_profile(combined, profile)
+        else:
+            cached = mcp.cached_tools()
+            if cached is None:
+                api_tools = filter_tools_for_profile(list(native_tools), profile)
+            else:
+                combined = build_model_tool_catalog(
+                    list(native_tools), cached, self.mode
+                )
+                api_tools = filter_tools_for_profile(combined, profile)
         api_tools = self._initial_request_tools_for_context(api_tools)
 
         return estimate_context_breakdown(

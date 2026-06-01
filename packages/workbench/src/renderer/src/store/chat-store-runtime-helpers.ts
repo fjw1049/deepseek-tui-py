@@ -187,6 +187,7 @@ export function collectAssistantTextForTurn(
 export function clearedThreadSelection(): Pick<
   ChatState,
   | 'activeThreadId'
+  | 'activeThreadWarmup'
   | 'blocks'
   | 'lastSeq'
   | 'liveReasoning'
@@ -204,6 +205,7 @@ export function clearedThreadSelection(): Pick<
 > {
   return {
     activeThreadId: null,
+    activeThreadWarmup: { threadId: null, status: 'idle' },
     blocks: [],
     lastSeq: 0,
     liveReasoning: '',

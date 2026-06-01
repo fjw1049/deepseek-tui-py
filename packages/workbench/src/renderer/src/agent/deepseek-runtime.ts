@@ -536,6 +536,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     return body.active === true
   }
 
+  async warmThread(threadId: string): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/warmup`,
+      'POST'
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `failed to warm thread (${r.status || 0})`))
+    }
+  }
+
   async submitApprovalDecision(
     approvalId: string,
     decision: 'allow' | 'deny',

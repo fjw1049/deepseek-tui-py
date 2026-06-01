@@ -20,9 +20,17 @@ function RouteFallback(): React.ReactElement {
 export default function AppShell(): React.ReactElement {
   const route = useChatStore((s) => s.route)
   const boot = useChatStore((s) => s.boot)
+  const setStartupPhase = useChatStore((s) => s.setStartupPhase)
   const initialSetupOpen = useChatStore((s) => s.initialSetupOpen)
 
   useEffect(() => {
+    if (typeof window.dsGui?.getStartupPhase === 'function') {
+      void window.dsGui.getStartupPhase().then(setStartupPhase).catch(() => undefined)
+    }
+    const unsubscribe =
+      typeof window.dsGui?.onStartupPhase === 'function'
+        ? window.dsGui.onStartupPhase(setStartupPhase)
+        : undefined
     let frame = 0
     const timer = window.setTimeout(() => {
       frame = window.requestAnimationFrame(() => {
@@ -32,8 +40,9 @@ export default function AppShell(): React.ReactElement {
     return () => {
       window.clearTimeout(timer)
       if (frame) window.cancelAnimationFrame(frame)
+      unsubscribe?.()
     }
-  }, [boot])
+  }, [boot, setStartupPhase])
 
   return (
     <div className="h-full min-h-0 bg-transparent">

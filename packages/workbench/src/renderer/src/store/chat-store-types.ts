@@ -5,6 +5,7 @@ import type {
   RuntimeConnectionStatus,
   UserInputAnswer
 } from '../agent/types'
+import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
 export type QueuedUserMessage = {
   id: string
@@ -36,6 +37,11 @@ export type SettingsRouteSection =
 export type LegacySettingsRouteSection = SettingsRouteSection | 'agents'
 export type AppRoute = 'chat' | 'settings' | 'plugins' | 'automation'
 export type PluginHostRoute = 'chat'
+export type ThreadWarmupStatus = 'idle' | 'warming' | 'ready' | 'failed'
+export type ThreadWarmupState = {
+  threadId: string | null
+  status: ThreadWarmupStatus
+}
 
 export type ChatState = {
   route: AppRoute
@@ -47,6 +53,8 @@ export type ChatState = {
   workspaceRoot: string
   workspaceLabel: string
   runtimeConnection: RuntimeConnectionStatus
+  startupPhase: StartupPhasePayload | null
+  activeThreadWarmup: ThreadWarmupState
   threads: NormalizedThread[]
   activeThreadId: string | null
   blocks: ChatBlock[]
@@ -70,6 +78,7 @@ export type ChatState = {
   unreadThreadIds: Record<string, boolean>
   scrollToBlockId: string | null
   setError: (message: string | null) => void
+  setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void
   loadComposerModels: () => Promise<void>
   setRoute: (r: AppRoute) => void
@@ -86,6 +95,7 @@ export type ChatState = {
   refreshThreads: () => Promise<void>
   createThread: (options?: { workspaceRoot?: string }) => Promise<void>
   selectThread: (id: string) => Promise<void>
+  warmActiveThread: (threadId?: string) => Promise<void>
   recoverActiveTurn: () => Promise<boolean>
   sendMessage: (text: string, mode?: string, overrides?: SendMessageOverrides) => Promise<boolean>
   drainQueuedMessages: () => Promise<void>

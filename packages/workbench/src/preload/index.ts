@@ -4,6 +4,15 @@ import type { DsGuiApi } from '../shared/ds-gui-api'
 const api = {
   platform: process.platform,
   getSettings: () => ipcRenderer.invoke('settings:get'),
+  getStartupPhase: () => ipcRenderer.invoke('startup:phase:get'),
+  onStartupPhase: (handler) => {
+    const wrapped = (
+      _: Electron.IpcRendererEvent,
+      payload: Parameters<typeof handler>[0]
+    ) => handler(payload)
+    ipcRenderer.on('startup:phase', wrapped)
+    return () => ipcRenderer.removeListener('startup:phase', wrapped)
+  },
   setSettings: (partial) =>
     ipcRenderer.invoke('settings:set', partial),
   runtimeRequest: (path, method, body) =>
