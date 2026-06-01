@@ -21,7 +21,7 @@ import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
 import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
-import { PluginsPanel } from './settings/PluginsPanel'
+import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
 
 type PluginKind = 'mcp' | 'skill'
 type PluginFilter = 'all' | 'recommended' | 'installed'
@@ -511,15 +511,21 @@ export function PluginMarketplaceView(): ReactElement {
             />
           </div>
         ) : (
-          <div className="mt-8 rounded-2xl border border-ds-border bg-ds-card/80 p-5 shadow-sm">
-            <h2 className="mb-4 text-[18px] font-semibold text-ds-ink">{tSettings('pluginsInstalled')}</h2>
-            <PluginsPanel
-              skillsDir={deepseekPaths.skillsDir}
-              plugins={installedSkills}
-              loading={skillsListLoading}
-              onReload={() => void refreshSkillsList()}
-              onOpenSkillsDir={() => void openManageTarget()}
-            />
+          <div className="mt-8 overflow-hidden rounded-2xl border border-ds-border bg-ds-card/80 shadow-sm">
+            <div className="border-b border-ds-border-muted px-5 py-4">
+              <h2 className="text-[16px] font-semibold text-ds-ink">{tSettings('pluginsInstalled')}</h2>
+              <PluginsPanelHeader />
+            </div>
+            <div className="px-5 py-5">
+              <PluginsPanel
+                showIntro={false}
+                skillsDir={deepseekPaths.skillsDir}
+                plugins={installedSkills}
+                loading={skillsListLoading}
+                onReload={() => void refreshSkillsList()}
+                onOpenSkillsDir={() => void openManageTarget()}
+              />
+            </div>
           </div>
         )}
 

@@ -48,7 +48,7 @@ import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
-import { PluginsPanel } from './settings/PluginsPanel'
+import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
 import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
 import { MemorySettingsPanel } from './settings/MemorySettingsPanel'
 import { PetSprite } from './pet/PetSprite'
@@ -821,6 +821,7 @@ export function SettingsView(): ReactElement {
                   }
                 />
                 <SettingRow
+                  controlWidth="full"
                   title={t('petMascotEnabled')}
                   description={
                     <PetMascotSettingPreview
@@ -865,34 +866,38 @@ export function SettingsView(): ReactElement {
                   }
                 />
                 <SettingRow
+                  layout="stacked"
                   title={t('workspaceRoot')}
                   description={t('workspaceRootDesc')}
                   control={
-                    <div className="w-full min-w-[200px] md:max-w-xl">
-                      <div className="flex items-center gap-2">
+                    <div className="flex w-full min-w-0 flex-col gap-2">
+                      <div className="grid w-full gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-4">
                         <input
-                          className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                          className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                           value={form.workspaceRoot}
                           onChange={(e) => update({ workspaceRoot: e.target.value })}
                           placeholder={t('workspaceRootPlaceholder')}
+                          title={form.workspaceRoot}
                         />
-                        <button
-                          type="button"
-                          onClick={resetWorkspaceToDefault}
-                          className="shrink-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
-                        >
-                          {t('restoreWorkspaceDefault')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void pickWorkspace()}
-                          className="shrink-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
-                        >
-                          {t('browse')}
-                        </button>
+                        <div className="flex flex-col gap-2 sm:w-[7.5rem]">
+                          <button
+                            type="button"
+                            onClick={resetWorkspaceToDefault}
+                            className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                          >
+                            {t('restoreWorkspaceDefault')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void pickWorkspace()}
+                            className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                          >
+                            {t('browse')}
+                          </button>
+                        </div>
                       </div>
                       {workspacePickerError ? (
-                        <p className="mt-2 text-[13px] leading-5 text-amber-700 dark:text-amber-300">
+                        <p className="text-[13px] leading-5 text-amber-700 dark:text-amber-300">
                           {workspacePickerError}
                         </p>
                       ) : null}
@@ -932,13 +937,17 @@ export function SettingsView(): ReactElement {
                   }
                 />
                 <SettingRow
+                  relaxed
                   title={t('logDir')}
                   description={t('logDirDesc')}
-                  wideControl
+                  controlWidth="medium"
                   control={
-                    <div className="flex w-full min-w-0 flex-col items-start gap-2">
+                    <div className="flex w-full flex-col items-end gap-2">
                       {logPath ? (
-                        <code className="block w-full max-w-full break-all rounded-xl bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-muted shadow-sm">
+                        <code
+                          className="block w-full max-w-[280px] truncate rounded-xl bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-muted shadow-sm"
+                          title={logPath}
+                        >
                           {logPath}
                         </code>
                       ) : (
@@ -946,7 +955,7 @@ export function SettingsView(): ReactElement {
                       )}
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:opacity-50"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:opacity-50"
                         disabled={typeof window.dsGui?.openLogDir !== 'function'}
                         onClick={async () => {
                           if (typeof window.dsGui?.openLogDir !== 'function') return
@@ -963,7 +972,7 @@ export function SettingsView(): ReactElement {
                         {t('logDirOpen')}
                       </button>
                       {logDirOpenError ? (
-                        <p className="text-[12px] text-red-700 dark:text-red-300">
+                        <p className="max-w-[280px] text-right text-[12px] text-red-700 dark:text-red-300">
                           {logDirOpenError}
                         </p>
                       ) : null}
@@ -980,8 +989,9 @@ export function SettingsView(): ReactElement {
                   <SettingRow
                     title={t('configFilePath')}
                     description={t('configFilePathDesc')}
+                    controlWidth="medium"
                     control={
-                      <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm md:max-w-md">
+                      <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
                         <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
                           {deepseekPaths.configPath}
                         </code>
@@ -991,6 +1001,7 @@ export function SettingsView(): ReactElement {
                   <SettingRow
                     title={t('apiKey')}
                     description={t('apiKeyDesc')}
+                    controlWidth="medium"
                     control={
                       <SecretInput
                         value={form.deepseek.apiKey}
@@ -1002,16 +1013,16 @@ export function SettingsView(): ReactElement {
                         invalid={!form.deepseek.apiKey.trim()}
                         showLabel={t('showSecret')}
                         hideLabel={t('hideSecret')}
-                        className="md:max-w-md"
                       />
                     }
                   />
                   <SettingRow
                     title={t('baseUrl')}
                     description={t('baseUrlDesc')}
+                    controlWidth="medium"
                     control={
                       <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 md:max-w-md"
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                         placeholder={t('baseUrlPlaceholder')}
                         value={form.deepseek.baseUrl}
                         onChange={(e) => update({ deepseek: { baseUrl: e.target.value } })}
@@ -1054,9 +1065,10 @@ export function SettingsView(): ReactElement {
                   <SettingRow
                     title={t('deepseekBinary')}
                     description={t('deepseekBinaryHint')}
+                    controlWidth="medium"
                     control={
                       <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 md:max-w-md"
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                         placeholder={t('deepseekBinaryPlaceholder')}
                         value={form.deepseek.binaryPath}
                         onChange={(e) => update({ deepseek: { binaryPath: e.target.value } })}
@@ -1066,8 +1078,9 @@ export function SettingsView(): ReactElement {
                   <SettingRow
                     title={t('runtimeToken')}
                     description={t('runtimeTokenDesc')}
+                    controlWidth="medium"
                     control={
-                      <div className="flex flex-col gap-2 md:max-w-md">
+                      <div className="flex w-full flex-col gap-2">
                         <input
                           type="text"
                           readOnly
@@ -1100,9 +1113,10 @@ export function SettingsView(): ReactElement {
                   <SettingRow
                     title={t('corsOrigins')}
                     description={t('corsOriginsDesc')}
+                    controlWidth="medium"
                     control={
                       <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 md:max-w-md"
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                         value={corsValue}
                         onChange={(e) =>
                           update({
@@ -1181,23 +1195,25 @@ export function SettingsView(): ReactElement {
 
           {category === 'skill' && (
                 <SettingsCard title={t('skill')}>
-                  <SettingRow
-                    title={t('pluginsInstalled')}
-                    description={t('pluginsInstalledDesc')}
-                    wideControl
-                    control={
-                      <div className="flex w-full flex-col gap-3">
-                        <PluginsPanel
-                          skillsDir={deepseekPaths.skillsDir}
-                          plugins={installedSkills}
-                          loading={skillsListLoading}
-                          onReload={() => void loadInstalledPlugins()}
-                          onOpenSkillsDir={() => void openPluginsDir()}
-                        />
-                        {skillNotice ? <InlineNoticeView notice={skillNotice} /> : null}
-                      </div>
-                    }
-                  />
+                  <div className="px-4 py-5">
+                    <h3 className="text-[14px] font-semibold text-ds-ink">{t('pluginsInstalled')}</h3>
+                    <PluginsPanelHeader />
+                    <div className="mt-4 w-full min-w-0">
+                      <PluginsPanel
+                        showIntro={false}
+                        skillsDir={deepseekPaths.skillsDir}
+                        plugins={installedSkills}
+                        loading={skillsListLoading}
+                        onReload={() => void loadInstalledPlugins()}
+                        onOpenSkillsDir={() => void openPluginsDir()}
+                      />
+                      {skillNotice ? (
+                        <div className="mt-3">
+                          <InlineNoticeView notice={skillNotice} />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
                 </SettingsCard>
           )}
 
@@ -1235,37 +1251,55 @@ export function SettingsView(): ReactElement {
           {category === 'hooks' && (
             <SettingsCard title={t('hooks')}>
               <SettingRow
+                relaxed
+                alignControl="center"
                 title={t('hooksConfigPath')}
-                description={t('hooksConfigPathDesc')}
-                wideControl
-                control={
-                  <div className="flex w-full flex-col gap-3">
+                description={
+                  <>
+                    <p className="text-[13px] leading-6 text-ds-muted">{t('hooksConfigPathDesc')}</p>
                     <p className="text-[13px] leading-6 text-ds-muted">{t('hooksDesc')}</p>
-                    <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
-                      <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
-                        {deepseekPaths.configPath} · [hooks]
-                        <span className="mt-2 block text-ds-faint">{deepseekPaths.hooksDir}</span>
-                      </code>
-                    </div>
+                  </>
+                }
+                controlWidth="medium"
+                control={
+                  <div
+                    className="w-full max-w-[280px] rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm"
+                    title={`${deepseekPaths.configPath} · [hooks]\n${deepseekPaths.hooksDir}`}
+                  >
+                    <code className="block truncate rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
+                      {deepseekPaths.configPath} · [hooks]
+                    </code>
+                    <span className="mt-1.5 block truncate text-[11px] text-ds-faint">
+                      {deepseekPaths.hooksDir}
+                    </span>
                   </div>
                 }
               />
               <SettingRow
+                relaxed
+                alignControl="center"
                 title={t('hooksActions')}
-                description={t('hooksActionsDesc')}
-                wideControl
+                description={
+                  <>
+                    <p className="text-[13px] leading-6 text-ds-muted">{t('hooksActionsDesc')}</p>
+                    <p className="text-[13px] leading-6 text-ds-faint">{t('hooksOpenConfigHint')}</p>
+                  </>
+                }
                 control={
-                  <div className="flex w-full flex-col gap-3">
-                    <p className="text-[12px] leading-5 text-ds-faint">{t('hooksOpenConfigHint')}</p>
+                  <div className="flex flex-col items-end gap-2">
                     <button
                       type="button"
                       onClick={() => void openHooksConfigDir()}
-                      className="inline-flex items-center gap-1.5 self-start rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
                     >
                       <FolderOpen className="h-4 w-4" />
                       {t('hooksOpenConfigDir')}
                     </button>
-                    {hooksNotice ? <InlineNoticeView notice={hooksNotice} /> : null}
+                    {hooksNotice ? (
+                      <div className="w-full max-w-[280px]">
+                        <InlineNoticeView notice={hooksNotice} />
+                      </div>
+                    ) : null}
                   </div>
                 }
               />
@@ -1370,35 +1404,106 @@ function SettingsCard({
   )
 }
 
+const settingControlWidthClass = {
+  compact: 'sm:max-w-[210px]',
+  medium: 'sm:max-w-[280px]',
+  wide: 'sm:max-w-xl',
+  full: 'sm:max-w-[420px]'
+} as const
+
 function SettingRow({
   title,
   description,
   control,
-  wideControl = false
+  wideControl = false,
+  relaxed = false,
+  layout = 'default',
+  alignControl = 'start',
+  controlWidth = 'compact'
 }: {
   title: string
   description?: ReactNode
   control: ReactNode
   wideControl?: boolean
+  relaxed?: boolean
+  layout?: 'default' | 'stacked'
+  alignControl?: 'start' | 'center'
+  controlWidth?: keyof typeof settingControlWidthClass
 }): ReactElement {
+  const descriptionNode =
+    typeof description === 'string' ? (
+      <p
+        className={
+          layout === 'stacked' || relaxed
+            ? 'mt-1 max-w-2xl text-[13px] leading-6 text-ds-muted'
+            : 'mt-0.5 max-w-md text-pretty text-[13px] leading-relaxed text-ds-muted break-keep'
+        }
+      >
+        {description}
+      </p>
+    ) : description ? (
+      <div
+        className={
+          layout === 'stacked' || relaxed ? 'mt-1 max-w-2xl space-y-2' : 'mt-0.5 max-w-md'
+        }
+      >
+        {description}
+      </div>
+    ) : null
+
+  if (layout === 'stacked') {
+    return (
+      <div className="flex flex-col gap-4 px-4 py-5">
+        <div className="min-w-0">
+          <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
+          {descriptionNode}
+        </div>
+        <div className="w-full min-w-0">{control}</div>
+      </div>
+    )
+  }
+
+  const rowAlignClass =
+    alignControl === 'center' ? 'sm:items-center' : 'sm:items-start'
+
   return (
     <div
-      className={`flex gap-3 px-3 py-4 ${
+      className={`flex ${
         wideControl
-          ? 'flex-col sm:gap-3.5'
-          : 'flex-col sm:flex-row sm:items-start sm:justify-between sm:gap-8'
+          ? 'flex-col gap-3.5 px-3 py-4 sm:px-4'
+          : relaxed
+            ? `flex-col gap-4 px-4 py-5 sm:flex-row ${rowAlignClass} sm:justify-between sm:gap-10`
+            : `flex-col gap-3 px-3 py-4 sm:flex-row ${rowAlignClass} sm:justify-between sm:gap-8`
       }`}
     >
-      <div className={`min-w-0 ${wideControl ? 'w-full max-w-none shrink-0' : 'flex-1'}`}>
+      <div
+        className={`min-w-0 ${
+          wideControl
+            ? 'w-full max-w-none shrink-0'
+            : relaxed
+              ? 'flex-1 sm:min-w-[220px] sm:max-w-[52%] sm:pr-6'
+              : 'flex-1'
+        }`}
+      >
         <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
-        {typeof description === 'string' ? (
-          <p className="mt-0.5 text-[13px] leading-relaxed text-ds-muted">{description}</p>
-        ) : description ? (
-          <div className="mt-0.5">{description}</div>
-        ) : null}
+        {descriptionNode}
       </div>
-      <div className={`w-full min-w-0 ${wideControl ? '' : 'sm:max-w-[420px]'}`}>
-        {control}
+      <div
+        className={`w-full min-w-0 sm:ml-auto sm:shrink-0 ${
+          wideControl ? '' : settingControlWidthClass[controlWidth]
+        }`}
+      >
+        {wideControl || controlWidth === 'full' ? (
+          control
+        ) : (
+          <div
+            className={`flex w-full ${
+              alignControl === 'center' ? 'justify-center sm:justify-end' : 'justify-end'
+            }`}
+          >
+            {control}
+          </div>
+        )}
       </div>
     </div>
   )

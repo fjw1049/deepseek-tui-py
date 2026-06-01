@@ -87,7 +87,9 @@ function Row({
           <div className="mt-0.5 text-[13px] leading-relaxed text-ds-muted">{description}</div>
         ) : null}
       </div>
-      <div className={`w-full min-w-0 ${wide ? '' : 'sm:max-w-[420px]'}`}>{control}</div>
+      <div className={`w-full min-w-0 sm:ml-auto sm:shrink-0 ${wide ? '' : 'sm:max-w-[210px]'}`}>
+        {wide ? control : <div className="flex w-full justify-end">{control}</div>}
+      </div>
     </div>
   )
 }

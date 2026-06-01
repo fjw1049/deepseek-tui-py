@@ -1,7 +1,13 @@
 import type { ReactElement, ReactNode } from 'react'
 
-export function SettingsActionToolbar({ children }: { children: ReactNode }): ReactElement {
-  return <div className="flex flex-wrap gap-2">{children}</div>
+export function SettingsActionToolbar({
+  children,
+  className = ''
+}: {
+  children: ReactNode
+  className?: string
+}): ReactElement {
+  return <div className={`flex flex-wrap gap-2 ${className}`.trim()}>{children}</div>
 }
 
 export function settingsToolbarButtonClass(disabled = false): string {
