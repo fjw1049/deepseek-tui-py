@@ -2,12 +2,50 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deepseek_tui.memory.native.l2_scenes import SceneStore
 from deepseek_tui.memory.native.l3_persona import (
     persona_path_for_workspace,
     refresh_persona_from_store,
+    refresh_persona_with_llm,
 )
 from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.protocol.responses import StreamTextDelta, StreamToolCallComplete, ToolCall
+
+
+class _PersonaClient:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.requests = []
+
+    async def stream_with_retry(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        yield StreamTextDelta(text=self.text)
+
+
+class _CoroutineClient:
+    async def stream_with_retry(self, request):  # noqa: ANN001, ARG002
+        return []
+
+
+class _PersonaToolClient:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.requests = []
+
+    async def stream_with_retry(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield StreamToolCallComplete(
+                tool_call=ToolCall(
+                    id="call_1",
+                    name="write",
+                    arguments={"path": "persona.md", "content": self.content},
+                )
+            )
+            return
+        yield StreamTextDelta(text="done")
 
 
 def test_hybrid_search_merges_fts_and_like(tmp_path) -> None:
@@ -62,6 +100,98 @@ def test_l3_persona_refresh(tmp_path) -> None:
         )
         assert "TypeScript" in text
         assert not persona.exists()
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_l3_persona_refresh_with_llm(tmp_path) -> None:
+    db = tmp_path / "memory.db"
+    persona = tmp_path / "persona.md"
+    store = MemoryStore(db)
+    store.open()
+    try:
+        store.insert_memory(
+            content="Prefers concise answers and Python tests with pytest",
+            mem_type="persona",
+            workspace="/ws",
+            thread_id="t1",
+            confidence=0.95,
+            priority=95,
+        )
+        client = _PersonaClient("# Persona\n\n- Prefers concise pytest-focused help.")
+        assert await refresh_persona_with_llm(
+            client,
+            store,
+            persona,
+            model="fake-model",
+            workspace="/ws",
+        )
+        text = persona_path_for_workspace(persona, workspace="/ws").read_text(
+            encoding="utf-8"
+        )
+        assert "pytest-focused" in text
+        assert client.requests
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_l3_persona_refresh_prefers_tool_agent_and_backs_up(tmp_path) -> None:
+    db = tmp_path / "memory.db"
+    persona = tmp_path / "persona.md"
+    persona.write_text("# Persona\n\nold\n", encoding="utf-8")
+    store = MemoryStore(db)
+    store.open()
+    try:
+        store.insert_memory(
+            content="Prefers direct answers",
+            mem_type="persona",
+            workspace=None,
+            thread_id="t1",
+            confidence=0.95,
+        )
+        client = _PersonaToolClient("# Persona\n\nPrefers direct answers.")
+        assert await refresh_persona_with_llm(
+            client,
+            store,
+            persona,
+            model="fake-model",
+            workspace=None,
+        )
+        assert "direct answers" in persona.read_text(encoding="utf-8")
+        backups = list((tmp_path / ".backup" / "persona").glob("*persona.md"))
+        assert backups
+        assert "old" in backups[0].read_text(encoding="utf-8")
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_l3_persona_refresh_with_llm_falls_back_for_non_stream_client(tmp_path) -> None:
+    db = tmp_path / "memory.db"
+    persona = tmp_path / "persona.md"
+    store = MemoryStore(db)
+    store.open()
+    try:
+        store.insert_memory(
+            content="Prefers concise answers and TypeScript",
+            mem_type="persona",
+            workspace="/ws",
+            thread_id="t1",
+            confidence=0.95,
+        )
+        assert await refresh_persona_with_llm(
+            _CoroutineClient(),
+            store,
+            persona,
+            model="fake-model",
+            workspace="/ws",
+        )
+        text = persona_path_for_workspace(persona, workspace="/ws").read_text(
+            encoding="utf-8"
+        )
+        assert "TypeScript" in text
     finally:
         store.close()
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from deepseek_tui.memory.native.embedding import cosine_similarity, pack_embedding, unpack_embedding
 from deepseek_tui.memory.native.fts_tokenize import build_fts_query, collect_query_tokens
@@ -25,6 +27,13 @@ class MemoryRow:
     created_at: int
     updated_at: int
     last_recalled_at: int | None
+    priority: int = 100
+    scene_name: str = ""
+    source_message_ids: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    timestamps: list[str] | None = None
+    session_key: str | None = None
+    session_id: str = ""
 
 
 def _now_ms() -> int:
@@ -36,6 +45,53 @@ def _row_in_workspace_scope(row_workspace: str | None, workspace: str | None) ->
     if not workspace:
         return True
     return row_workspace is None or row_workspace == workspace
+
+
+def _json_dumps(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _json_list(raw: object) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(x) for x in data]
+
+
+def _json_dict(raw: object) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _memory_row(row: sqlite3.Row) -> MemoryRow:
+    return MemoryRow(
+        id=row["id"],
+        content=row["content"],
+        type=row["type"],
+        workspace=row["workspace"],
+        thread_id=row["thread_id"],
+        confidence=float(row["confidence"]),
+        created_at=int(row["created_at"]),
+        updated_at=int(row["updated_at"]),
+        last_recalled_at=row["last_recalled_at"],
+        priority=int(row["priority"] if row["priority"] is not None else 100),
+        scene_name=str(row["scene_name"] or ""),
+        source_message_ids=_json_list(row["source_message_ids_json"]),
+        metadata=_json_dict(row["metadata_json"]),
+        timestamps=_json_list(row["timestamps_json"]),
+        session_key=row["session_key"],
+        session_id=str(row["session_id"] or ""),
+    )
 
 
 class MemoryStore:
@@ -76,6 +132,13 @@ class MemoryStore:
               workspace TEXT,
               thread_id TEXT,
               confidence REAL NOT NULL DEFAULT 1.0,
+              priority INTEGER NOT NULL DEFAULT 100,
+              scene_name TEXT NOT NULL DEFAULT '',
+              source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              timestamps_json TEXT NOT NULL DEFAULT '[]',
+              session_key TEXT,
+              session_id TEXT NOT NULL DEFAULT '',
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
               last_recalled_at INTEGER,
@@ -118,7 +181,26 @@ class MemoryStore:
             );
             """
         )
+        self._ensure_memory_columns(conn)
         conn.commit()
+
+    def _ensure_memory_columns(self, conn: sqlite3.Connection) -> None:
+        existing = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        additions = {
+            "priority": "INTEGER NOT NULL DEFAULT 100",
+            "scene_name": "TEXT NOT NULL DEFAULT ''",
+            "source_message_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+            "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
+            "timestamps_json": "TEXT NOT NULL DEFAULT '[]'",
+            "session_key": "TEXT",
+            "session_id": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, ddl in additions.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {ddl}")
 
     def save_embedding(
         self, memory_id: str, *, model: str, vector: list[float]
@@ -180,17 +262,7 @@ class MemoryStore:
             if not blob:
                 continue
             sim = cosine_similarity(q, unpack_embedding(blob))
-            mem = MemoryRow(
-                id=row["id"],
-                content=row["content"],
-                type=row["type"],
-                workspace=row["workspace"],
-                thread_id=row["thread_id"],
-                confidence=float(row["confidence"]),
-                created_at=int(row["created_at"]),
-                updated_at=int(row["updated_at"]),
-                last_recalled_at=row["last_recalled_at"],
-            )
+            mem = _memory_row(row)
             scored.append((mem, sim))
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:limit]
@@ -229,38 +301,54 @@ class MemoryStore:
         workspace: str | None,
         thread_id: str | None,
         confidence: float,
+        priority: int | None = None,
+        scene_name: str = "",
+        source_message_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        timestamps: list[str] | None = None,
+        session_key: str | None = None,
+        session_id: str = "",
+        allow_duplicate: bool = False,
     ) -> str | None:
         text = content.strip()
         if not text:
             return None
         content_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         conn = self._conn_required()
-        dup = conn.execute(
-            "SELECT id FROM memories WHERE content_hash = ? LIMIT 1",
-            (content_hash,),
-        ).fetchone()
-        if dup is not None:
-            return None
-        if len(text) >= 24:
-            prefix = text[:48]
-            near = conn.execute(
-                """
-                SELECT id FROM memories
-                WHERE content LIKE ? AND (workspace = ? OR workspace IS NULL)
-                LIMIT 1
-                """,
-                (f"%{prefix}%", workspace),
+        if not allow_duplicate:
+            dup = conn.execute(
+                "SELECT id FROM memories WHERE content_hash = ? LIMIT 1",
+                (content_hash,),
             ).fetchone()
-            if near is not None:
+            if dup is not None:
                 return None
+            if len(text) >= 24:
+                prefix = text[:48]
+                near = conn.execute(
+                    """
+                    SELECT id FROM memories
+                    WHERE content LIKE ? AND (workspace = ? OR workspace IS NULL)
+                    LIMIT 1
+                    """,
+                    (f"%{prefix}%", workspace),
+                ).fetchone()
+                if near is not None:
+                    return None
         now = _now_ms()
+        effective_priority = (
+            priority
+            if priority is not None
+            else max(0, min(100, int(round(confidence * 100))))
+        )
+        effective_timestamps = timestamps or [str(now)]
         mem_id = f"mem_{uuid.uuid4().hex[:12]}"
         conn.execute(
             """
             INSERT INTO memories (
-              id, content, type, workspace, thread_id, confidence,
-              created_at, updated_at, content_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              id, content, type, workspace, thread_id, confidence, priority,
+              scene_name, source_message_ids_json, metadata_json, timestamps_json,
+              session_key, session_id, created_at, updated_at, content_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 mem_id,
@@ -269,6 +357,13 @@ class MemoryStore:
                 workspace,
                 thread_id,
                 confidence,
+                effective_priority,
+                scene_name,
+                _json_dumps(source_message_ids or []),
+                _json_dumps(metadata or {}),
+                _json_dumps(effective_timestamps),
+                session_key or thread_id,
+                session_id,
                 now,
                 now,
                 content_hash,
@@ -276,6 +371,20 @@ class MemoryStore:
         )
         conn.commit()
         return mem_id
+
+    def get_memory(self, memory_id: str) -> MemoryRow | None:
+        conn = self._conn_required()
+        row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        return _memory_row(row) if row else None
+
+    def delete_memories(self, memory_ids: list[str]) -> int:
+        if not memory_ids:
+            return 0
+        conn = self._conn_required()
+        before = conn.total_changes
+        conn.executemany("DELETE FROM memories WHERE id = ?", [(mid,) for mid in memory_ids])
+        conn.commit()
+        return conn.total_changes - before
 
     def _fetch_fts_rows(
         self, query: str, *, workspace: str | None, limit: int
@@ -377,17 +486,7 @@ class MemoryStore:
             final = fts_score * decay * boost
             if final < score_threshold:
                 continue
-            mem = MemoryRow(
-                id=row["id"],
-                content=row["content"],
-                type=row["type"],
-                workspace=row["workspace"],
-                thread_id=row["thread_id"],
-                confidence=float(row["confidence"]),
-                created_at=int(row["created_at"]),
-                updated_at=int(row["updated_at"]),
-                last_recalled_at=row["last_recalled_at"],
-            )
+            mem = _memory_row(row)
             scored.append((mem, final))
 
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -482,20 +581,7 @@ class MemoryStore:
                 """,
                 (mem_type, limit),
             ).fetchall()
-        return [
-            MemoryRow(
-                id=row["id"],
-                content=row["content"],
-                type=row["type"],
-                workspace=row["workspace"],
-                thread_id=row["thread_id"],
-                confidence=float(row["confidence"]),
-                created_at=int(row["created_at"]),
-                updated_at=int(row["updated_at"]),
-                last_recalled_at=row["last_recalled_at"],
-            )
-            for row in rows
-        ]
+        return [_memory_row(row) for row in rows]
 
     def touch_recalled(self, memory_ids: list[str]) -> None:
         if not memory_ids:
@@ -515,3 +601,14 @@ class MemoryStore:
             (thread_id,),
         ).fetchone()
         return int(row[0]) if row else 0
+
+    def delete_memories_older_than(self, cutoff_ms: int) -> int:
+        conn = self._conn_required()
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM memories WHERE created_at < ?",
+            (cutoff_ms,),
+        ).fetchone()
+        count = int(row["c"]) if row else 0
+        conn.execute("DELETE FROM memories WHERE created_at < ?", (cutoff_ms,))
+        conn.commit()
+        return count

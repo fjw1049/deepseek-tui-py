@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # --- Config errors (formerly config/errors.py) --------------------------------
 
 
@@ -265,10 +264,21 @@ class MemorySmartConfig(BaseModel):
     capture_min_user_chars: int = 20
     capture_skip_slash_commands: bool = True
     l1_every_n: int = 5
+    l1_warmup_enabled: bool = True
     l1_idle_timeout_seconds: int = 600
     l1_confidence_min: float = 0.6
     l1_max_per_session: int = 20
+    l2_enabled: bool = True
+    l2_delay_after_l1_seconds: int = 90
+    l2_min_interval_seconds: int = 900
+    l2_max_interval_seconds: int = 3600
+    l2_session_active_window_hours: int = 24
+    l2_max_scenes: int = 15
+    l3_persona_llm_enabled: bool = True
+    l3_persona_interval: int = 50
     l1_decay_half_life_days: int = 180
+    retention_days: int = 0
+    cleanup_on_start: bool = False
     l1_inject_position: str = "user"
     hybrid_search: bool = True
     embedding_provider: str = "none"

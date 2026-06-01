@@ -16,6 +16,7 @@ class _ThreadScheduleState:
     conversation_count: int = 0
     pending_messages: list[dict[str, Any]] = field(default_factory=list)
     idle_task: asyncio.Task[None] | None = None
+    warmup_threshold: int = 1
 
 
 class L1Scheduler:
@@ -24,20 +25,39 @@ class L1Scheduler:
         *,
         every_n: int,
         idle_timeout_s: float,
+        warmup_enabled: bool = True,
         run_extraction: Callable[
             [str, list[dict[str, Any]]], Coroutine[Any, Any, None]
         ],
     ) -> None:
         self._every_n = max(1, every_n)
         self._idle_timeout_s = idle_timeout_s
+        self._warmup_enabled = warmup_enabled
         self._run_extraction = run_extraction
         self._states: dict[str, _ThreadScheduleState] = {}
         self._tasks: set[asyncio.Task[None]] = set()
 
     def _state(self, thread_id: str) -> _ThreadScheduleState:
         if thread_id not in self._states:
-            self._states[thread_id] = _ThreadScheduleState()
+            warmup_threshold = 1 if self._warmup_enabled and self._every_n > 1 else 0
+            self._states[thread_id] = _ThreadScheduleState(
+                warmup_threshold=warmup_threshold
+            )
         return self._states[thread_id]
+
+    def _effective_threshold(self, state: _ThreadScheduleState) -> int:
+        if not self._warmup_enabled or state.warmup_threshold <= 0:
+            return self._every_n
+        return min(state.warmup_threshold, self._every_n)
+
+    def _advance_warmup(self, state: _ThreadScheduleState) -> None:
+        if not self._warmup_enabled or state.warmup_threshold <= 0:
+            return
+        next_threshold = state.warmup_threshold * 2
+        if next_threshold >= self._every_n:
+            state.warmup_threshold = 0
+        else:
+            state.warmup_threshold = next_threshold
 
     def notify_messages(self, thread_id: str, messages: list[dict[str, Any]]) -> None:
         if not messages:
@@ -45,10 +65,11 @@ class L1Scheduler:
         state = self._state(thread_id)
         state.pending_messages.extend(messages)
         state.conversation_count += 1
-        if state.conversation_count >= self._every_n:
+        if state.conversation_count >= self._effective_threshold(state):
             self._schedule_job(thread_id, state.pending_messages.copy())
             state.pending_messages.clear()
             state.conversation_count = 0
+            self._advance_warmup(state)
             if state.idle_task is not None:
                 state.idle_task.cancel()
                 state.idle_task = None
@@ -69,6 +90,7 @@ class L1Scheduler:
             batch = state.pending_messages.copy()
             state.pending_messages.clear()
             state.conversation_count = 0
+            self._advance_warmup(state)
             self._schedule_job(thread_id, batch)
         except asyncio.CancelledError:
             pass
@@ -87,6 +109,15 @@ class L1Scheduler:
         except Exception:
             logger.exception("l1_scheduled_job_failed thread_id=%s", thread_id)
 
+    async def _drain_thread_jobs(self, thread_id: str) -> None:
+        pending = [
+            task
+            for task in list(self._tasks)
+            if not task.done() and task.get_name() == f"l1-extract-{thread_id}"
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     async def flush_session(self, thread_id: str) -> None:
         state = self._states.get(thread_id)
         if state is None:
@@ -98,7 +129,9 @@ class L1Scheduler:
             batch = state.pending_messages.copy()
             state.pending_messages.clear()
             state.conversation_count = 0
+            self._advance_warmup(state)
             await self._run_extraction(thread_id, batch)
+        await self._drain_thread_jobs(thread_id)
 
     async def stop(self) -> None:
         for state in self._states.values():

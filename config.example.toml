@@ -31,12 +31,24 @@ recall_timeout_ms = 5000
 recall_score_threshold = 0.3
 capture_min_user_chars = 20
 l1_every_n = 5
+l1_warmup_enabled = true
 l1_idle_timeout_seconds = 600
 l1_confidence_min = 0.6
 # Max L1 rows inserted per extraction batch.
 # Long-running threads continue learning across later batches.
 l1_max_per_session = 20
+l2_enabled = true
+l2_delay_after_l1_seconds = 90
+l2_min_interval_seconds = 900
+l2_max_interval_seconds = 3600
+l2_session_active_window_hours = 24
+l2_max_scenes = 15
+l3_persona_llm_enabled = true
+l3_persona_interval = 50
 l1_decay_half_life_days = 180
+# 0 disables TTL cleanup. When enabled, L0/L1 rows older than this are removed.
+retention_days = 0
+cleanup_on_start = false
 l1_inject_position = "user"
 hybrid_search = true
 fts_tokenizer = "auto"   # auto | simple | jieba (pip install jieba)

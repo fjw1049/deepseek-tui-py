@@ -180,3 +180,36 @@ def test_multi_term_query_requires_more_than_one_weak_match(tmp_path) -> None:
         assert "gateway limits" in strong_hits[0][0].content
     finally:
         store.close()
+
+
+def test_l1_tencentdb_compatible_fields_are_persisted(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "m.db")
+    store.open()
+    try:
+        mem_id = store.insert_memory(
+            content="用户要求 AI 以后回答时先给结论",
+            mem_type="instruction",
+            workspace="/ws",
+            thread_id="thr",
+            confidence=0.95,
+            priority=95,
+            scene_name="我（AI）在和用户约定回答风格",
+            source_message_ids=["msg_1"],
+            metadata={"activity_start_time": "2026-06-01T00:00:00Z"},
+            timestamps=["2026-06-01T00:00:00Z"],
+            session_key="session-key",
+            session_id="session-id",
+        )
+        assert mem_id
+
+        row = store.get_memory(mem_id)
+        assert row is not None
+        assert row.priority == 95
+        assert row.scene_name == "我（AI）在和用户约定回答风格"
+        assert row.source_message_ids == ["msg_1"]
+        assert row.metadata == {"activity_start_time": "2026-06-01T00:00:00Z"}
+        assert row.timestamps == ["2026-06-01T00:00:00Z"]
+        assert row.session_key == "session-key"
+        assert row.session_id == "session-id"
+    finally:
+        store.close()
