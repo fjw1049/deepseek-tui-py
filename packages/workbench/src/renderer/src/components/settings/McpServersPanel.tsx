@@ -60,26 +60,26 @@ export function McpServersPanel({
 
   return (
     <div className="flex w-full flex-col gap-4">
-      <p className="text-[13px] leading-6 text-ds-muted">{t('mcpListDesc')}</p>
-      <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[11px] text-ds-faint">
+      <p className="max-w-3xl text-[13px] leading-6 text-ds-muted">{t('mcpListDesc')}</p>
+      <code className="block w-full break-all rounded-lg bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-faint">
         {configPath}
       </code>
 
       {loading ? (
-        <div className="flex items-center gap-2 py-6 text-[13px] text-ds-muted">
+        <div className="flex w-full items-center gap-2 py-6 text-[13px] text-ds-muted">
           <Loader2 className="h-4 w-4 animate-spin" />
           {t('loading')}
         </div>
       ) : servers.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-ds-border bg-ds-main/40 px-4 py-6 text-center text-[13px] leading-6 text-ds-muted">
+        <div className="w-full rounded-lg border border-dashed border-ds-border bg-ds-main/40 px-4 py-6 text-center text-[13px] leading-6 text-ds-muted">
           {configExists ? t('mcpListEmpty') : t('mcpFileStatusMissing')}
         </div>
       ) : (
-        <ul className="divide-y divide-ds-border-muted overflow-hidden rounded-xl border border-ds-border bg-ds-card">
+        <ul className="w-full max-h-[520px] divide-y divide-ds-border-muted overflow-y-auto rounded-lg border border-ds-border bg-ds-card">
           {servers.map((server) => (
             <li
               key={server.id}
-              className="flex items-center gap-3 px-4 py-3"
+              className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3"
             >
               <div className="min-w-0 flex-1">
                 <div className="text-[14px] font-semibold text-ds-ink">{server.id}</div>
@@ -88,19 +88,21 @@ export function McpServersPanel({
                   {server.enabled ? t('mcpServerEnabled') : t('mcpServerDisabled')}
                 </div>
               </div>
-              <McpToggle
-                checked={server.enabled}
-                disabled={busy || loading}
-                onChange={(enabled) => toggleServer(server.id, enabled)}
-              />
+              <div className="flex min-w-12 justify-end self-center">
+                <McpToggle
+                  checked={server.enabled}
+                  disabled={busy || loading}
+                  onChange={(enabled) => toggleServer(server.id, enabled)}
+                />
+              </div>
             </li>
           ))}
         </ul>
       )}
 
-      <p className="text-[12px] leading-5 text-ds-faint">{t('mcpRuntimeHint')}</p>
+      <p className="w-full text-[12px] leading-5 text-ds-faint">{t('mcpRuntimeHint')}</p>
 
-      <SettingsActionToolbar>
+      <SettingsActionToolbar className="w-full">
         <button
           type="button"
           onClick={() => void onReload()}
@@ -131,7 +133,7 @@ export function McpServersPanel({
       <details
         open={advancedOpen}
         onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
-        className="rounded-xl border border-ds-border bg-ds-main/40"
+        className="w-full rounded-lg border border-ds-border bg-ds-main/40"
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-[13px] font-medium text-ds-ink [&::-webkit-details-marker]:hidden">
           {t('mcpAdvancedJson')}
@@ -162,7 +164,7 @@ export function McpServersPanel({
 
       {notice ? (
         <div
-          className={`rounded-xl border px-3 py-2 text-[12px] ${
+          className={`w-full rounded-lg border px-3 py-2 text-[12px] ${
             notice.tone === 'error'
               ? 'border-red-300/80 bg-red-50 text-red-800 dark:border-red-800/70 dark:bg-red-950/25 dark:text-red-200'
               : notice.tone === 'success'

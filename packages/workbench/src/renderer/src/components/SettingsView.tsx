@@ -1219,11 +1219,10 @@ export function SettingsView(): ReactElement {
 
           {category === 'mcp' && (
                 <SettingsCard title={t('mcp')}>
-                  <SettingRow
-                    title={t('mcpInstalled')}
-                    description={t('mcpPathDesc')}
-                    wideControl
-                    control={
+                  <div className="px-4 py-5">
+                    <h3 className="text-[14px] font-semibold text-ds-ink">{t('mcpInstalled')}</h3>
+                    <p className="mt-1 max-w-3xl text-[13px] leading-6 text-ds-muted">{t('mcpPathDesc')}</p>
+                    <div className="mt-4 w-full min-w-0">
                       <McpServersPanel
                         configPath={mcpConfigPath}
                         configText={mcpConfigText}
@@ -1236,8 +1235,8 @@ export function SettingsView(): ReactElement {
                         onSave={(content, quiet) => void saveMcpConfig(content, quiet)}
                         onOpenConfigFolder={() => void openMcpConfigDir()}
                       />
-                    }
-                  />
+                    </div>
+                  </div>
                 </SettingsCard>
           )}
 

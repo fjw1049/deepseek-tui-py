@@ -45,12 +45,12 @@ export function PluginsPanel({
       {showIntro ? (
         <>
           <p className="max-w-3xl text-[13px] leading-6 text-ds-muted">{t('pluginsListDesc')}</p>
-          <code className="block w-full break-all rounded-xl bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-faint">
+          <code className="block w-full break-all rounded-lg bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-faint">
             {skillsDir}
           </code>
         </>
       ) : (
-        <code className="block w-full break-all rounded-xl bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-faint">
+        <code className="block w-full break-all rounded-lg bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-faint">
           {skillsDir}
         </code>
       )}
@@ -61,11 +61,11 @@ export function PluginsPanel({
           {t('loading')}
         </div>
       ) : plugins.length === 0 ? (
-        <div className="w-full rounded-xl border border-dashed border-ds-border bg-ds-main/40 px-4 py-8 text-center text-[13px] leading-6 text-ds-muted">
+        <div className="w-full rounded-lg border border-dashed border-ds-border bg-ds-main/40 px-4 py-8 text-center text-[13px] leading-6 text-ds-muted">
           {t('pluginsListEmpty')}
         </div>
       ) : (
-        <ul className="w-full divide-y divide-ds-border-muted overflow-hidden rounded-xl border border-ds-border bg-ds-card">
+        <ul className="w-full max-h-[520px] divide-y divide-ds-border-muted overflow-y-auto rounded-lg border border-ds-border bg-ds-card">
           {plugins.map((plugin) => (
             <li key={plugin.id} className="px-4 py-3">
               <div className="text-[14px] font-semibold text-ds-ink">{plugin.name}</div>
