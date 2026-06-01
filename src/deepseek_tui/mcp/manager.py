@@ -44,6 +44,8 @@ class McpManager:
         self._last_mtime: float | None = None
         self._config_hash: str | None = None
         self._discovered_tools_cache: list[dict[str, Any]] | None = None
+        self._stale_cache: list[dict[str, Any]] | None = None
+        self._background_refresh_task: asyncio.Task[None] | None = None
         self._discovered_tools_cache_path: Path | None = None
         if self._config_path is not None:
             from deepseek_tui.mcp.store import validate_mcp_config_path
@@ -145,11 +147,15 @@ class McpManager:
             return
         if not isinstance(raw, dict):
             return
-        if raw.get("config_hash") != self._config_hash:
-            return
         tools = raw.get("tools")
-        if isinstance(tools, list):
+        if not isinstance(tools, list):
+            return
+        if raw.get("config_hash") == self._config_hash:
+            # Fresh cache — use directly.
             self._discovered_tools_cache = list(tools)
+        else:
+            # Stale cache (config changed) — serve immediately, refresh later.
+            self._stale_cache = list(tools)
 
     def _persist_discovered_tools_cache_to_disk(self) -> None:
         path = self._discovered_tools_cache_path
@@ -211,27 +217,54 @@ class McpManager:
         Connects lazily via :meth:`_ensure_client` so callers do not need a
         prior :meth:`start_all` — ``Engine._get_tools_with_mcp`` relies on
         this.
+
+        All servers are discovered **in parallel** with per-server timeouts
+        derived from each server's ``connect_timeout`` config (default 10s).
+        A single slow or unreachable server will not block the others.
         """
         if self._discovered_tools_cache is not None:
             self._rebuild_tool_map_from_cache()
             return list(self._discovered_tools_cache)
 
-        api_tools: list[dict[str, Any]] = []
-        self._tool_map.clear()
-        for server_name, cfg in self._configs.items():
-            if not cfg.enabled:
-                continue
+        # Stale-while-revalidate: if config changed but we have a prior cache,
+        # return it immediately and refresh in the background.
+        if self._stale_cache is not None:
+            self._discovered_tools_cache = self._stale_cache
+            self._stale_cache = None
+            self._rebuild_tool_map_from_cache()
+            self._background_refresh_task = asyncio.create_task(
+                self._refresh_cache_in_background(), name="mcp-cache-refresh"
+            )
+            return list(self._discovered_tools_cache)
+
+        timed_out_servers: list[tuple[str, McpServerConfig]] = []
+
+        async def _discover_one(
+            server_name: str, cfg: McpServerConfig
+        ) -> list[tuple[str, str, str, dict[str, Any]]]:
+            """Returns [(qualified, server_name, raw_name, api_dict), ...]."""
+            timeout = cfg.connect_timeout or 10.0
             try:
-                client = await self._ensure_client(server_name)
-                descriptors = await client.list_tools()
-            except McpError:
-                continue
+                client = await asyncio.wait_for(
+                    self._ensure_client(server_name), timeout=timeout
+                )
+                descriptors = await asyncio.wait_for(
+                    client.list_tools(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                timed_out_servers.append((server_name, cfg))
+                return []
+            except (McpError, Exception):  # noqa: BLE001
+                return []
+            results: list[tuple[str, str, str, dict[str, Any]]] = []
             for desc in descriptors:
                 if cfg.tool_filter and not cfg.tool_filter.accepts(desc.name):
                     continue
                 qualified = qualify_tool_name(server_name, desc.name)
-                self._tool_map[qualified] = (server_name, desc.name)
-                api_tools.append(
+                results.append((
+                    qualified,
+                    server_name,
+                    desc.name,
                     {
                         "type": "function",
                         "function": {
@@ -239,13 +272,89 @@ class McpManager:
                             "description": desc.description,
                             "parameters": desc.input_schema,
                         },
-                    }
-                )
+                    },
+                ))
+            return results
+
+        enabled = [
+            (name, cfg) for name, cfg in self._configs.items() if cfg.enabled
+        ]
+        all_results = await asyncio.gather(
+            *(_discover_one(name, cfg) for name, cfg in enabled)
+        )
+
+        api_tools: list[dict[str, Any]] = []
+        self._tool_map.clear()
+        for server_results in all_results:
+            for qualified, server_name, raw_name, api_dict in server_results:
+                self._tool_map[qualified] = (server_name, raw_name)
+                api_tools.append(api_dict)
+
         self._discovered_tools_cache = sorted(
             api_tools, key=lambda t: t["function"]["name"]
         )
         self._persist_discovered_tools_cache_to_disk()
+
+        # Schedule background retry for servers that timed out so their tools
+        # become available on subsequent turns without blocking the user now.
+        if timed_out_servers:
+            self._background_refresh_task = asyncio.create_task(
+                self._retry_timed_out_servers(timed_out_servers),
+                name="mcp-retry-timed-out",
+            )
+
         return list(self._discovered_tools_cache)
+
+    async def _retry_timed_out_servers(
+        self, servers: list[tuple[str, McpServerConfig]]
+    ) -> None:
+        """Retry connecting timed-out servers in background, merge tools into cache.
+
+        Waits 5s for network/processes to settle, then retries with 3x the
+        original timeout. If still unreachable, the server is abandoned for
+        this session — it will be retried on next full discover (e.g. next
+        app launch or config change).
+        """
+        await asyncio.sleep(5)
+        new_tools: list[dict[str, Any]] = []
+        for server_name, cfg in servers:
+            timeout = (cfg.connect_timeout or 10.0) * 3
+            try:
+                client = await asyncio.wait_for(
+                    self._ensure_client(server_name), timeout=timeout
+                )
+                descriptors = await asyncio.wait_for(
+                    client.list_tools(), timeout=timeout
+                )
+            except (McpError, asyncio.TimeoutError, Exception):  # noqa: BLE001
+                continue
+            for desc in descriptors:
+                if cfg.tool_filter and not cfg.tool_filter.accepts(desc.name):
+                    continue
+                qualified = qualify_tool_name(server_name, desc.name)
+                self._tool_map[qualified] = (server_name, desc.name)
+                new_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": qualified,
+                        "description": desc.description,
+                        "parameters": desc.input_schema,
+                    },
+                })
+        if new_tools and self._discovered_tools_cache is not None:
+            self._discovered_tools_cache.extend(new_tools)
+            self._discovered_tools_cache.sort(key=lambda t: t["function"]["name"])
+            self._persist_discovered_tools_cache_to_disk()
+
+    async def _refresh_cache_in_background(self) -> None:
+        """Re-discover tools and update the cache silently."""
+        # Invalidate so the parallel discover path runs fresh.
+        self._discovered_tools_cache = None
+        self._tool_map.clear()
+        try:
+            await self.discover_tools()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _rebuild_tool_map_from_cache(self) -> None:
         self._tool_map.clear()

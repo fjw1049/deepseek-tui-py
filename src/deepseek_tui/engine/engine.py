@@ -103,7 +103,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MCP_DISCOVER_TIMEOUT_S = 45
+MCP_DISCOVER_TIMEOUT_S = 8
 
 
 def _clip_summary_line(text: str, limit: int = 200) -> str:

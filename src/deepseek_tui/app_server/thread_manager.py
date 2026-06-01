@@ -184,8 +184,10 @@ class RuntimeThreadManager:
             capacity=EVENT_CHANNEL_CAPACITY
         )
         self._cancel_event = asyncio.Event()
+        self._mcp_warmup_task: asyncio.Task[None] | None = None
 
         self._recover_interrupted_state()
+        self._schedule_mcp_warmup()
 
     @staticmethod
     def _sync_trust_mode(engine: Engine, trust_mode: bool) -> None:
@@ -1746,6 +1748,33 @@ class RuntimeThreadManager:
         trace.turn_completed_ms = now_ms()
         trace.log_summary()
         return trace.to_payload()
+
+    def _schedule_mcp_warmup(self) -> None:
+        """Fire-and-forget background MCP tool discovery so first turn is fast."""
+        if self._shared_tool_runtime is None:
+            return
+        mcp = getattr(self._shared_tool_runtime, "mcp_manager", None)
+        if mcp is None:
+            return
+        self._mcp_warmup_task = asyncio.create_task(
+            self._warmup_mcp(mcp), name="mcp-warmup"
+        )
+
+    async def _warmup_mcp(self, mcp: object) -> None:
+        """Background MCP discover_tools so cache is hot before first turn."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            discover = getattr(mcp, "discover_tools", None)
+            if discover is None:
+                return
+            await asyncio.wait_for(discover(), timeout=30)
+            logger.info("[mcp-warmup] tool discovery completed in background")
+        except asyncio.TimeoutError:
+            logger.warning("[mcp-warmup] background discovery timed out (30s)")
+        except Exception:  # noqa: BLE001
+            logger.debug("[mcp-warmup] background discovery failed (non-fatal)")
 
     def _recover_interrupted_state(self) -> None:
         """On startup, mark any Queued/InProgress turns as Interrupted.

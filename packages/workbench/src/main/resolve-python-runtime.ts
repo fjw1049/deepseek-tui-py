@@ -28,13 +28,28 @@ export function resolveRepoRoot(): string | undefined {
   return undefined
 }
 
+function repoVenvPythonBin(): string | undefined {
+  const repoRoot = resolveRepoRoot()
+  if (!repoRoot) return undefined
+  const bin =
+    process.platform === 'win32'
+      ? join(repoRoot, '.venv', 'Scripts', 'python.exe')
+      : join(repoRoot, '.venv', 'bin', 'python')
+  return existsSync(bin) ? bin : undefined
+}
+
+export function resolveDefaultPythonBin(): string {
+  const fromEnv = process.env.DEEPSEEK_PYTHON?.trim()
+  if (fromEnv) return fromEnv
+  return repoVenvPythonBin() ?? 'python3'
+}
+
 export function resolveRuntimeLauncher(binaryPath: string | undefined): RuntimeLauncher {
   const explicit = binaryPath?.trim()
   if (explicit) {
     return { bin: explicit, prefixArgs: [] }
   }
-  const python = process.env.DEEPSEEK_PYTHON?.trim() || 'python3'
-  return { bin: python, prefixArgs: ['-m', 'deepseek_tui'] }
+  return { bin: resolveDefaultPythonBin(), prefixArgs: ['-m', 'deepseek_tui'] }
 }
 
 export function runtimeLauncherLabel(launcher: RuntimeLauncher): string {

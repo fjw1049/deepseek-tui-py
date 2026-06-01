@@ -522,6 +522,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+memory = [
+    { name = "jieba" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -531,6 +534,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "httpx", specifier = ">=0.26.0" },
     { name = "httpx-sse", specifier = ">=0.4.0" },
+    { name = "jieba", marker = "extra == 'memory'", specifier = ">=0.42.1" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "keyring", specifier = ">=24.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
@@ -548,7 +552,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.9.0" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["memory", "dev"]
 
 [[package]]
 name = "distlib"
@@ -737,6 +741,12 @@ sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/7b/6f/357efd76024867
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b2/a3/e137168c9c44d18eff0376253da9f1e9234d0239e0ee230d2fee6cea8e55/jeepney-0.9.0-py3-none-any.whl", hash = "sha256:97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683", size = 49010, upload-time = "2025-02-27T18:51:00.104Z" },
 ]
+
+[[package]]
+name = "jieba"
+version = "0.42.1"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c6/cb/18eeb235f833b726522d7ebed54f2278ce28ba9438e3135ab0278d9792a2/jieba-0.42.1.tar.gz", hash = "sha256:055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2", size = 19214172, upload-time = "2020-01-20T14:27:23.5Z" }
 
 [[package]]
 name = "jsonschema"
