@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { resolveDeepseekConfigPath, resolveMcpConfigPath } from './deepseek-paths'
 
 export type RuntimeLauncher = {
@@ -44,9 +44,27 @@ export function resolveDefaultPythonBin(): string {
   return repoVenvPythonBin() ?? 'python3'
 }
 
+function isPythonInterpreterPath(path: string): boolean {
+  const base = basename(path).toLowerCase()
+  return (
+    base === 'python' ||
+    base === 'python3' ||
+    base === 'python.exe' ||
+    /^python3(\.\d+)?$/.test(base)
+  )
+}
+
+/**
+ * Settings → Runtime → binary path is the deepseek CLI when set.
+ * If a Python interpreter was saved by mistake (e.g. repo `.venv/bin/python`),
+ * still launch via `-m deepseek_tui` so `serve --http` works.
+ */
 export function resolveRuntimeLauncher(binaryPath: string | undefined): RuntimeLauncher {
   const explicit = binaryPath?.trim()
   if (explicit) {
+    if (isPythonInterpreterPath(explicit)) {
+      return { bin: explicit, prefixArgs: ['-m', 'deepseek_tui'] }
+    }
     return { bin: explicit, prefixArgs: [] }
   }
   return { bin: resolveDefaultPythonBin(), prefixArgs: ['-m', 'deepseek_tui'] }

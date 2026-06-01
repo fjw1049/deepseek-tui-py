@@ -154,7 +154,7 @@ export function McpServersPanel({
             type="button"
             onClick={() => void onSave()}
             disabled={busy || loading}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-ds-userbubble px-3 py-1.5 text-[12px] font-medium text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+            className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-ds-userbubble px-3 py-1.5 text-center text-[12px] font-medium leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} /> : null}
             {t('mcpSave')}

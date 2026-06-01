@@ -478,7 +478,7 @@ export function PluginMarketplaceView(): ReactElement {
             <button
               type="button"
               onClick={() => void openManageTarget()}
-              className="inline-flex items-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-[13px] font-semibold text-ds-ink transition hover:bg-ds-hover"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover"
             >
               <Settings className="h-4 w-4" strokeWidth={1.75} />
               {t('pluginManage')}
@@ -486,7 +486,7 @@ export function PluginMarketplaceView(): ReactElement {
             <button
               type="button"
               onClick={() => setCustomOpen((value) => !value)}
-              className="inline-flex items-center gap-2 rounded-xl bg-ds-userbubble px-3 py-2 text-[13px] font-semibold text-ds-userbubbleFg shadow-sm transition hover:opacity-90"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-userbubble px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90"
             >
               <Plus className="h-4 w-4" strokeWidth={1.9} />
               {t('pluginCreate')}
@@ -632,7 +632,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg px-4 py-2 text-[15px] font-semibold transition ${
+      className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-center text-[15px] font-semibold leading-none transition ${
         active ? activeClass : 'text-ds-muted hover:text-ds-ink'
       }`}
     >
@@ -801,7 +801,7 @@ function CustomPluginPanel({
           type="button"
           onClick={onAdd}
           disabled={busy}
-          className="inline-flex items-center gap-2 rounded-xl bg-ds-userbubble px-4 py-2 text-[13px] font-semibold text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-userbubble px-4 py-2 text-center text-[13px] font-semibold leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Plus className="h-4 w-4" strokeWidth={2} />}
           {t('pluginAddCustom')}

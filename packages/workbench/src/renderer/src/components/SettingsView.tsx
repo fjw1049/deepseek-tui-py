@@ -51,6 +51,8 @@ import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
 import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
 import { MemorySettingsPanel } from './settings/MemorySettingsPanel'
+import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
+import { SettingsSelect } from './settings/SettingsSelect'
 import { PetSprite } from './pet/PetSprite'
 
 type SettingsCategory = SettingsRouteSection
@@ -600,7 +602,7 @@ export function SettingsView(): ReactElement {
         <p className="max-w-md text-sm text-red-700 dark:text-red-300">{msg}</p>
         <button
           type="button"
-          className="rounded-xl bg-ds-userbubble px-4 py-2 text-sm font-medium text-ds-userbubbleFg"
+          className="inline-flex items-center justify-center rounded-xl bg-ds-userbubble px-4 py-2 text-center text-sm font-medium leading-none text-ds-userbubbleFg"
           onClick={goBack}
         >
           {t('back')}
@@ -652,9 +654,6 @@ export function SettingsView(): ReactElement {
         ? 'bg-ds-subtle text-ds-ink shadow-sm ring-1 ring-ds-border-muted'
         : 'text-ds-muted hover:bg-ds-hover'
     }`
-  const selectControlClass =
-    'w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30'
-
   return (
     <div className="ds-drag flex h-full min-h-0 w-full min-w-0 bg-ds-main">
       <aside className="ds-drag flex w-[260px] shrink-0 flex-col border-r border-ds-border bg-ds-sidebar backdrop-blur-md">
@@ -763,29 +762,27 @@ export function SettingsView(): ReactElement {
                   title={t('language')}
                   description={t('languageDesc')}
                   control={
-                    <select
-                      className={selectControlClass}
+                    <SettingsSelect
                       value={form.locale}
                       onChange={(e) => update({ locale: e.target.value as 'en' | 'zh' })}
                     >
                       <option value="en">English</option>
                       <option value="zh">简体中文</option>
-                    </select>
+                    </SettingsSelect>
                   }
                 />
                 <SettingRow
                   title={t('theme')}
                   description={t('themeDesc')}
                   control={
-                    <select
-                      className={selectControlClass}
+                    <SettingsSelect
                       value={form.theme}
                       onChange={(e) => update({ theme: e.target.value as AppSettingsV1['theme'] })}
                     >
                       <option value="system">{t('themeSystem')}</option>
                       <option value="light">{t('themeLight')}</option>
                       <option value="dark">{t('themeDark')}</option>
-                    </select>
+                    </SettingsSelect>
                   }
                 />
                 <SettingRow
@@ -795,7 +792,7 @@ export function SettingsView(): ReactElement {
                     <button
                       type="button"
                       onClick={openOnboardingPreview}
-                      className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                      className={`${settingsBlockButtonClass()} text-[14px]`}
                     >
                       {t('onboardingPreviewOpen')}
                     </button>
@@ -805,8 +802,7 @@ export function SettingsView(): ReactElement {
                   title={t('fontScale')}
                   description={t('fontScaleDesc')}
                   control={
-                    <select
-                      className={selectControlClass}
+                    <SettingsSelect
                       value={form.uiFontScale}
                       onChange={(e) =>
                         update({
@@ -817,7 +813,7 @@ export function SettingsView(): ReactElement {
                       <option value="small">{t('fontScaleSmall')}</option>
                       <option value="medium">{t('fontScaleMedium')}</option>
                       <option value="large">{t('fontScaleLarge')}</option>
-                    </select>
+                    </SettingsSelect>
                   }
                 />
                 <SettingRow
@@ -879,18 +875,18 @@ export function SettingsView(): ReactElement {
                           placeholder={t('workspaceRootPlaceholder')}
                           title={form.workspaceRoot}
                         />
-                        <div className="flex flex-col gap-2 sm:w-[7.5rem]">
+                        <div className="flex flex-col gap-2 sm:min-w-[8.5rem]">
                           <button
                             type="button"
                             onClick={resetWorkspaceToDefault}
-                            className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                            className={settingsBlockButtonClass()}
                           >
                             {t('restoreWorkspaceDefault')}
                           </button>
                           <button
                             type="button"
                             onClick={() => void pickWorkspace()}
-                            className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                            className={settingsBlockButtonClass()}
                           >
                             {t('browse')}
                           </button>
@@ -921,8 +917,7 @@ export function SettingsView(): ReactElement {
                   title={t('logRetention')}
                   description={t('logRetentionDesc')}
                   control={
-                    <select
-                      className={selectControlClass}
+                    <SettingsSelect
                       value={form.log.retentionDays}
                       onChange={(e) =>
                         update({ log: { retentionDays: Number(e.target.value) } })
@@ -933,7 +928,7 @@ export function SettingsView(): ReactElement {
                       <option value={3}>{t('logRetentionThree')}</option>
                       <option value={5}>{t('logRetentionFive')}</option>
                       <option value={7}>{t('logRetentionSeven')}</option>
-                    </select>
+                    </SettingsSelect>
                   }
                 />
                 <SettingRow
@@ -955,7 +950,7 @@ export function SettingsView(): ReactElement {
                       )}
                       <button
                         type="button"
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:opacity-50"
+                        className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-center text-[13px] font-medium leading-none text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:opacity-50"
                         disabled={typeof window.dsGui?.openLogDir !== 'function'}
                         onClick={async () => {
                           if (typeof window.dsGui?.openLogDir !== 'function') return
@@ -1096,7 +1091,7 @@ export function SettingsView(): ReactElement {
                         <button
                           type="button"
                           disabled={tokenRegenBusy}
-                          className="inline-flex items-center gap-1.5 self-start rounded-md border border-ds-border px-2 py-1 text-[12px] hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-55"
+                          className="inline-flex items-center justify-center gap-1.5 self-start rounded-md border border-ds-border px-2 py-1 text-center text-[12px] leading-none hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-55"
                           onClick={() => void handleRegenerateRuntimeToken()}
                         >
                           {tokenRegenBusy ? (
@@ -1141,8 +1136,7 @@ export function SettingsView(): ReactElement {
                 title={t('approvalPolicy')}
                 description={t('approvalPolicyDesc')}
                 control={
-                  <select
-                    className={selectControlClass}
+                  <SettingsSelect
                     value={form.deepseek.approvalPolicy}
                     onChange={(e) =>
                       update({
@@ -1157,15 +1151,14 @@ export function SettingsView(): ReactElement {
                     <option value="untrusted">{t('approvalUntrusted')}</option>
                     <option value="suggest">{t('approvalSuggest')}</option>
                     <option value="never">{t('approvalNever')}</option>
-                  </select>
+                  </SettingsSelect>
                 }
               />
               <SettingRow
                 title={t('sandboxMode')}
                 description={t('sandboxModeDesc')}
                 control={
-                  <select
-                    className={selectControlClass}
+                  <SettingsSelect
                     value={form.deepseek.sandboxMode}
                     onChange={(e) =>
                       update({
@@ -1179,7 +1172,7 @@ export function SettingsView(): ReactElement {
                     <option value="read-only">{t('sandboxReadOnly')}</option>
                     <option value="danger-full-access">{t('sandboxFullAccess')}</option>
                     <option value="external-sandbox">{t('sandboxExternal')}</option>
-                  </select>
+                  </SettingsSelect>
                 }
               />
             </SettingsCard>
@@ -1289,7 +1282,7 @@ export function SettingsView(): ReactElement {
                     <button
                       type="button"
                       onClick={() => void openHooksConfigDir()}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover"
+                      className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-center text-[13px] font-medium leading-none text-ds-ink shadow-sm transition hover:bg-ds-hover"
                     >
                       <FolderOpen className="h-4 w-4" />
                       {t('hooksOpenConfigDir')}
@@ -1355,7 +1348,7 @@ function SecretInput({
         aria-label={visible ? hideLabel : showLabel}
         title={visible ? hideLabel : showLabel}
         onClick={onToggleVisibility}
-        className="shrink-0 border-l border-ds-border-muted px-3 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+        className="inline-flex shrink-0 items-center justify-center self-stretch border-l border-ds-border-muted px-3 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
       >
         {visible ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
       </button>
@@ -1667,21 +1660,21 @@ function PetMascotSettingsControl({
                 </span>
               </div>
             </span>
-            <select
+            <SettingsSelect
               value={selectedPet?.slug ?? ''}
               disabled={selectablePets.length === 0}
+              selectClassName="rounded-lg bg-ds-main focus-within:border-accent/50"
               onChange={(event) => {
                 const pet = selectablePets.find((item) => item.slug === event.target.value)
                 if (pet) onSelect(pet)
               }}
-              className="w-full rounded-lg border border-ds-border bg-ds-main px-3 py-2.5 text-[14px] font-medium text-ds-ink outline-none transition focus:border-accent/50 disabled:cursor-not-allowed"
             >
               {selectablePets.map((pet) => (
                 <option key={pet.slug} value={pet.slug}>
                   {pet.displayName} - {pet.slug}
                 </option>
               ))}
-            </select>
+            </SettingsSelect>
           </label>
         </div>
         <div className="rounded-xl border border-ds-border-muted bg-ds-main/45">
@@ -1759,7 +1752,7 @@ function PetMascotSettingsControl({
                   type="button"
                   onClick={onRefresh}
                   disabled={loading}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-2.5 py-1.5 text-[12px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-wait disabled:opacity-60"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-2.5 py-1.5 text-center text-[12px] font-medium leading-none text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-wait disabled:opacity-60"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
                   {loading ? t('petMascotCachingList') : t('petMascotRefresh')}

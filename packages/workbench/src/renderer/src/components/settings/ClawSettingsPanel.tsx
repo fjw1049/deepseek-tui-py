@@ -227,7 +227,7 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
               type="button"
               disabled={!runtimeReady || loading}
               onClick={() => void refresh()}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-center text-[13px] font-medium leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
             >
               {loading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -239,7 +239,7 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
             <button
               type="button"
               onClick={goCreateAutomation}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-[13px] font-medium text-accent transition hover:bg-accent/15"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-center text-[13px] font-medium leading-none text-accent transition hover:bg-accent/15"
             >
               <CalendarClock className="h-3.5 w-3.5" />
               {t('clawTaskAddFromComposer')}
@@ -321,7 +321,7 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
                         disabled={isBusy}
                         title={t('clawRunNow')}
                         onClick={() => void handleRunNow(row)}
-                        className="rounded-lg border border-ds-border p-2 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
+                        className="inline-flex items-center justify-center rounded-lg border border-ds-border p-2 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
                       >
                         <Zap className="h-4 w-4" />
                       </button>
@@ -330,7 +330,7 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
                         disabled={isBusy}
                         title={isActive ? t('clawPause') : t('clawResume')}
                         onClick={() => void handlePauseResume(row)}
-                        className="rounded-lg border border-ds-border p-2 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
+                        className="inline-flex items-center justify-center rounded-lg border border-ds-border p-2 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
                       >
                         {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                       </button>
@@ -339,7 +339,7 @@ export function ClawSettingsPanel({ form, onClawPatch }: Props): ReactElement {
                         disabled={isBusy}
                         title={t('clawTaskDelete')}
                         onClick={() => void handleDelete(row)}
-                        className="rounded-lg border border-red-500/25 p-2 text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+                        className="inline-flex items-center justify-center rounded-lg border border-red-500/25 p-2 text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>

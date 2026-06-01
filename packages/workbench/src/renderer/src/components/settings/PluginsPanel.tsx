@@ -79,7 +79,7 @@ export function PluginsPanel({
 
       <div className="flex w-full flex-col gap-3 border-t border-ds-border-muted pt-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <p className="min-w-0 flex-1 text-[12px] leading-5 text-ds-faint">{t('pluginsRuntimeHint')}</p>
-        <SettingsActionToolbar className="shrink-0 sm:justify-end">
+        <SettingsActionToolbar className="w-full shrink-0 sm:w-auto sm:justify-end">
           <button
             type="button"
             onClick={() => void onReload()}

@@ -22,9 +22,16 @@ describe('resolveRuntimeLauncher', () => {
     }
   })
 
-  it('uses explicit binaryPath from Settings', () => {
+  it('treats explicit Python interpreters as module launchers', () => {
     expect(resolveRuntimeLauncher('/custom/python')).toEqual({
       bin: '/custom/python',
+      prefixArgs: ['-m', 'deepseek_tui']
+    })
+  })
+
+  it('uses explicit deepseek CLI path without -m prefix', () => {
+    expect(resolveRuntimeLauncher('/usr/local/bin/deepseek')).toEqual({
+      bin: '/usr/local/bin/deepseek',
       prefixArgs: []
     })
   })

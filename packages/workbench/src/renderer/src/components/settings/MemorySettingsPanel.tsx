@@ -9,6 +9,7 @@ import type {
 } from '@shared/app-settings'
 import { defaultMemorySettings, mergeMemorySettings } from '@shared/app-settings'
 import { Database, Search, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { SettingsSelect } from './SettingsSelect'
 
 type Props = {
   form: AppSettingsV1
@@ -120,9 +121,6 @@ function NumberInput({
   )
 }
 
-const selectClass =
-  'w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30'
-
 const textInputClass =
   'w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30'
 
@@ -149,15 +147,14 @@ export function MemorySettingsPanel({
           title={t('memoryMode')}
           description={t('memoryModeDesc')}
           control={
-            <select
-              className={selectClass}
+            <SettingsSelect
               value={memory.mode}
               onChange={(event) => onMemoryPatch({ mode: event.target.value as MemoryMode })}
             >
               <option value="manual">{t('memoryModeManual')}</option>
               <option value="hybrid">{t('memoryModeHybrid')}</option>
               <option value="auto">{t('memoryModeAuto')}</option>
-            </select>
+            </SettingsSelect>
           }
         />
         <Row
@@ -209,8 +206,7 @@ export function MemorySettingsPanel({
           title={t('memoryRecallStrictness')}
           description={t('memoryRecallStrictnessDesc')}
           control={
-            <select
-              className={selectClass}
+            <SettingsSelect
               value={String(smart.recallScoreThreshold)}
               onChange={(event) =>
                 onMemoryPatch({ smart: { recallScoreThreshold: Number(event.target.value) } })
@@ -219,7 +215,7 @@ export function MemorySettingsPanel({
               <option value="0.15">{t('memoryStrictnessLoose')}</option>
               <option value="0.3">{t('memoryStrictnessBalanced')}</option>
               <option value="0.5">{t('memoryStrictnessStrict')}</option>
-            </select>
+            </SettingsSelect>
           }
         />
         <Row
@@ -326,8 +322,7 @@ export function MemorySettingsPanel({
           title={t('memoryFtsTokenizer')}
           description={t('memoryFtsTokenizerDesc')}
           control={
-            <select
-              className={selectClass}
+            <SettingsSelect
               value={smart.ftsTokenizer}
               onChange={(event) =>
                 onMemoryPatch({ smart: { ftsTokenizer: event.target.value as MemoryFtsTokenizer } })
@@ -336,7 +331,7 @@ export function MemorySettingsPanel({
               <option value="auto">{t('memoryTokenizerAuto')}</option>
               <option value="simple">{t('memoryTokenizerSimple')}</option>
               <option value="jieba">{t('memoryTokenizerJieba')}</option>
-            </select>
+            </SettingsSelect>
           }
         />
         <div className="px-3 py-3 text-[12px] leading-5 text-ds-faint">
@@ -349,8 +344,7 @@ export function MemorySettingsPanel({
           title={t('memoryEmbeddingProvider')}
           description={t('memoryEmbeddingProviderDesc')}
           control={
-            <select
-              className={selectClass}
+            <SettingsSelect
               value={smart.embeddingProvider}
               onChange={(event) =>
                 onMemoryPatch({
@@ -360,7 +354,7 @@ export function MemorySettingsPanel({
             >
               <option value="none">{t('memoryEmbeddingNone')}</option>
               <option value="openai">{t('memoryEmbeddingOpenAI')}</option>
-            </select>
+            </SettingsSelect>
           }
         />
         <fieldset disabled={!embeddingActive} className={embeddingActive ? '' : 'opacity-45'}>

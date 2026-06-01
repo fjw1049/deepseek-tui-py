@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import type { AppSettingsV1, ClawSettingsPatchV1 } from '@shared/app-settings'
 import type { FeishuConfigV1 } from '@shared/ds-gui-api'
+import { SettingsSelect } from './SettingsSelect'
 
 type Props = {
   form: AppSettingsV1
@@ -287,14 +288,14 @@ export function ClawFeishuSection({
                   </label>
                   <label className="flex flex-col gap-1">
                     <span className="text-[13px] font-medium text-ds-ink">{t('clawFeishuDomain')}</span>
-                    <select
-                      className="rounded-xl border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink"
+                    <SettingsSelect
+                      selectClassName="bg-ds-main text-[13px]"
                       value={config.domain}
                       onChange={(e) => setConfig((c) => ({ ...c, domain: e.target.value }))}
                     >
                       <option value="feishu">feishu（国内）</option>
                       <option value="lark">lark（国际）</option>
-                    </select>
+                    </SettingsSelect>
                   </label>
                 </div>
                 <label className="flex flex-col gap-1">
@@ -351,7 +352,7 @@ export function ClawFeishuSection({
                     type="button"
                     disabled={saving}
                     onClick={() => void handleSave()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-[13px] font-medium text-accent hover:bg-accent/15 disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-accent/25 bg-accent/10 px-3 py-1.5 text-center text-[13px] font-medium leading-none text-accent hover:bg-accent/15 disabled:opacity-50"
                   >
                     {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                     {t('clawFeishuSave')}
@@ -360,7 +361,7 @@ export function ClawFeishuSection({
                     type="button"
                     disabled={!runtimeReady || testing}
                     onClick={() => void handleTestSend()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-center text-[13px] font-medium leading-none text-ds-ink hover:bg-ds-hover disabled:opacity-50"
                   >
                     {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                     {t('clawFeishuTestSend')}
@@ -368,7 +369,7 @@ export function ClawFeishuSection({
                   <button
                     type="button"
                     onClick={() => void window.dsGui.openFeishuConfigDir()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-main px-3 py-1.5 text-center text-[13px] font-medium leading-none text-ds-ink hover:bg-ds-hover"
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
                     {t('clawFeishuOpenConfig')}
@@ -383,7 +384,7 @@ export function ClawFeishuSection({
                 <code className="break-all text-[12px] text-ds-ink">{inboundUrl}</code>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 rounded-lg border border-ds-border px-2 py-1 text-[11px] text-ds-muted hover:bg-ds-hover"
+                  className="inline-flex items-center justify-center gap-1 rounded-lg border border-ds-border px-2 py-1 text-center text-[11px] leading-none text-ds-muted hover:bg-ds-hover"
                   onClick={() => void copyText(inboundUrl)}
                 >
                   <Copy className="h-3 w-3" />
