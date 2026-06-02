@@ -38,7 +38,11 @@ unset ELECTRON_RUN_AS_NODE   # 在 Cursor 里开发时建议执行
 - **工作区**：绑定本地项目目录，让 Agent 读写你的代码
 - **工具审批**：写文件、跑命令、访问网络等操作会弹出说明，可允许 / 拒绝 / 本会话记住
 - **变更与 Diff**：查看 Agent 改动的文件
-- **设置**：模型、审批策略（`on-request` / `auto` 等）、Runtime 连接
+- **联网搜索**：内置 Web 搜索（AnySearch + Tavily，结果合并）与网页抓取
+- **智能记忆**：可选的 L0→L3 分层记忆，跨会话记住用户偏好、项目习惯与踩坑（默认关闭，见「配置说明」）
+- **自动化任务**：定时 / 触发式 Agent 任务，结果可投递到飞书或邮件
+- **桌面宠物**：输入框旁的小挂件（可在设置里关闭）
+- **设置**：模型、审批策略（`on-request` / `auto` 等）、Runtime 连接、记忆、自动化、宠物
 
 在输入框里可以用 `@文件路径` 把文件内容带进上下文。
 
@@ -64,13 +68,26 @@ unset ELECTRON_RUN_AS_NODE   # 在 Cursor 里开发时建议执行
 ```toml
 # .deepseek/config.toml
 provider = "deepseek"
-model = "deepseek-chat"
+model = "deepseek-v4-pro"
 
 [providers.deepseek]
 api_key = "sk-your-key-here"
+
+# 可选：联网搜索（任一 Key 即可，结果合并）
+# anysearch_api_key = ""   # 或环境变量 ANYSEARCH_API_KEY
+# tavily_api_key = ""      # 或环境变量 TAVILY_API_KEY
+
+[features]
+tasks = true
+automations = true
 ```
 
 也可用环境变量 `DEEPSEEK_API_KEY`。跨项目共享配置可设 `DEEPSEEK_HOME=~/.deepseek-shared`。
+
+完整可配项见 [`config.example.toml`](config.example.toml)，含：
+
+- **`[memory.smart]`** — 智能分层记忆（L0→L3）。默认关闭，置 `enabled = true` 开启；召回阈值、L1/L2/L3 节奏、混合检索与可选向量召回均可调。设计细节见 [`docs/MEMORY_INTEGRATION.md`](docs/MEMORY_INTEGRATION.md)。
+- **`[automation]` / `[automation.email]`** — 自动化任务的投递配置（SMTP 邮件等）。飞书投递见 [`scripts/start-feishu-bridge.sh`](scripts/start-feishu-bridge.sh)，热搜示例见 [`scripts/run-baidu-hotsearch-once.sh`](scripts/run-baidu-hotsearch-once.sh)。
 
 ---
 
