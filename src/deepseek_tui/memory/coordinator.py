@@ -126,8 +126,23 @@ class MemoryCoordinator:
             logger.exception("memory_capture_failed thread_id=%s", thread_id)
 
     async def flush_session(self, thread_id: str) -> None:
-        if self.enabled:
-            await self._provider.flush_session(thread_id)
+        if not self.enabled:
+            return
+        timeout_s = self._smart.flush_timeout_ms / 1000.0
+        try:
+            await asyncio.wait_for(
+                self._provider.flush_session(thread_id),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "memory_flush_timeout thread_id=%s timeout_ms=%d "
+                "(pending work resumes via checkpoint)",
+                thread_id,
+                self._smart.flush_timeout_ms,
+            )
+        except Exception:
+            logger.exception("memory_flush_failed thread_id=%s", thread_id)
 
     @property
     def provider(self) -> MemoryProvider:

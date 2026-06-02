@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from deepseek_tui.memory.native.store import MemoryStore
 
@@ -140,6 +141,54 @@ def test_workspace_filter_applies_before_candidate_limit(tmp_path) -> None:
             score_threshold=0.0,
         )
         assert any(row.workspace == "/ws/current" for row, _ in hits)
+    finally:
+        store.close()
+
+
+def test_concurrent_reads_and_writes_are_thread_safe(tmp_path) -> None:
+    """RLock guard: concurrent insert + search on one shared connection must
+    not raise sqlite3 ProgrammingError/recursive-cursor errors (regression
+    guard for the to_thread offload path)."""
+    store = MemoryStore(tmp_path / "m.db")
+    store.open()
+    try:
+        def writer(i: int) -> None:
+            store.insert_memory(
+                content=f"concurrent fact number {i} about deployment",
+                mem_type="instruction",
+                workspace="/ws/c",
+                thread_id=f"t{i}",
+                confidence=1.0,
+            )
+
+        def reader(_i: int) -> None:
+            store.search_memories(
+                "concurrent deployment fact",
+                workspace="/ws/c",
+                limit=5,
+                score_threshold=0.0,
+            )
+
+        errors: list[BaseException] = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = []
+            for i in range(40):
+                futures.append(pool.submit(writer, i))
+                futures.append(pool.submit(reader, i))
+            for fut in futures:
+                exc = fut.exception()
+                if exc is not None:
+                    errors.append(exc)
+
+        assert not errors, f"concurrent access raised: {errors[:3]}"
+        assert store.count_memories_for_thread("t0") >= 0
+        hits = store.search_memories(
+            "concurrent deployment fact",
+            workspace="/ws/c",
+            limit=50,
+            score_threshold=0.0,
+        )
+        assert len(hits) >= 1
     finally:
         store.close()
 

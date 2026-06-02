@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -206,32 +207,25 @@ class NativeMemoryProvider:
         """Index rows missing vectors (best-effort background)."""
         if self._embedder is None:
             return 0
-        conn = self._store._conn_required()
-        rows = conn.execute(
-            """
-            SELECT m.id, m.content FROM memories m
-            LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-            WHERE e.memory_id IS NULL
-            ORDER BY m.updated_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        rows = await asyncio.to_thread(self._store.iter_unembedded, limit=limit)
         done = 0
-        for row in rows:
-            content = str(row["content"] or "").strip()
+        for row_id, raw_content in rows:
+            content = raw_content.strip()
             if not content:
                 continue
             try:
                 vec = await self._embedder.embed(content)
-                self._store.save_embedding(
-                    str(row["id"]),
-                    model=self._embedder._model,
-                    vector=vec,
+                await asyncio.to_thread(
+                    functools.partial(
+                        self._store.save_embedding,
+                        row_id,
+                        model=self._embedder._model,
+                        vector=vec,
+                    )
                 )
                 done += 1
             except Exception:
-                logger.exception("embedding_backfill_failed id=%s", row["id"])
+                logger.exception("embedding_backfill_failed id=%s", row_id)
         if done:
             logger.info("memory_embedding_backfill_done count=%d", done)
         return done
@@ -288,36 +282,47 @@ class NativeMemoryProvider:
         if self._embedder is not None:
             try:
                 query_vec = await self._embedder.embed(text)
-                if action == "store" and self._store.is_semantic_duplicate(
-                    query_vec,
-                    workspace=workspace,
-                    threshold=self._smart.embedding_dedup_threshold,
-                ):
-                    return None
+                if action == "store":
+                    is_dup = await asyncio.to_thread(
+                        functools.partial(
+                            self._store.is_semantic_duplicate,
+                            query_vec,
+                            workspace=workspace,
+                            threshold=self._smart.embedding_dedup_threshold,
+                        )
+                    )
+                    if is_dup:
+                        return None
             except Exception:
                 logger.exception("memory_embed_dedup_failed")
                 query_vec = None
-        mem_id = self._store_l1_decision(
-            action=action,
-            content=text,
-            mem_type=mem_type,
-            workspace=workspace,
-            thread_id=thread_id,
-            confidence=confidence,
-            priority=priority,
-            scene_name=scene_name,
-            source_message_ids=source_message_ids,
-            metadata=metadata,
-            timestamps=timestamps,
-            session_key=session_key or thread_id,
-            session_id=session_id,
-            target_ids=target_ids or [],
+        mem_id = await asyncio.to_thread(
+            functools.partial(
+                self._store_l1_decision,
+                action=action,
+                content=text,
+                mem_type=mem_type,
+                workspace=workspace,
+                thread_id=thread_id,
+                confidence=confidence,
+                priority=priority,
+                scene_name=scene_name,
+                source_message_ids=source_message_ids,
+                metadata=metadata,
+                timestamps=timestamps,
+                session_key=session_key or thread_id,
+                session_id=session_id,
+                target_ids=target_ids or [],
+            )
         )
         if mem_id and query_vec is not None and self._embedder is not None:
-            self._store.save_embedding(
-                mem_id,
-                model=self._embedder._model,
-                vector=query_vec,
+            await asyncio.to_thread(
+                functools.partial(
+                    self._store.save_embedding,
+                    mem_id,
+                    model=self._embedder._model,
+                    vector=query_vec,
+                )
             )
         return mem_id
 
@@ -435,14 +440,17 @@ class NativeMemoryProvider:
             inject = "user"
 
         query_vec = await self._embed_query(query) if self._smart.hybrid_search else None
-        hits = self._store.search_memories(
-            query,
-            workspace=workspace,
-            limit=self._smart.recall_limit,
-            score_threshold=self._smart.recall_score_threshold,
-            half_life_days=float(self._smart.l1_decay_half_life_days),
-            hybrid=self._smart.hybrid_search,
-            query_embedding=query_vec,
+        hits = await asyncio.to_thread(
+            functools.partial(
+                self._store.search_memories,
+                query,
+                workspace=workspace,
+                limit=self._smart.recall_limit,
+                score_threshold=self._smart.recall_score_threshold,
+                half_life_days=float(self._smart.l1_decay_half_life_days),
+                hybrid=self._smart.hybrid_search,
+                query_embedding=query_vec,
+            )
         )
         lines: list[str] = []
         ids: list[str] = []
@@ -456,7 +464,7 @@ class NativeMemoryProvider:
             ids.append(row.id)
         l1_context = "\n".join(lines)
         if ids:
-            self._store.touch_recalled(ids)
+            await asyncio.to_thread(self._store.touch_recalled, ids)
 
         append_parts: list[str] = []
         nav = self._scenes.navigation_markdown(workspace=workspace)
@@ -516,14 +524,17 @@ class NativeMemoryProvider:
         mem_type: str | None = None,
     ) -> str:
         query_vec = await self._embed_query(query) if self._smart.hybrid_search else None
-        hits = self._store.search_memories(
-            query,
-            workspace=workspace,
-            limit=limit,
-            score_threshold=0.0,
-            half_life_days=float(self._smart.l1_decay_half_life_days),
-            hybrid=self._smart.hybrid_search,
-            query_embedding=query_vec,
+        hits = await asyncio.to_thread(
+            functools.partial(
+                self._store.search_memories,
+                query,
+                workspace=workspace,
+                limit=limit,
+                score_threshold=0.0,
+                half_life_days=float(self._smart.l1_decay_half_life_days),
+                hybrid=self._smart.hybrid_search,
+                query_embedding=query_vec,
+            )
         )
         if mem_type:
             hits = [(r, s) for r, s in hits if r.type == mem_type]

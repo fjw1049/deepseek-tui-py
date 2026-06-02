@@ -259,6 +259,7 @@ class MemorySmartConfig(BaseModel):
     recall_enabled: bool = True
     capture_enabled: bool = True
     recall_timeout_ms: int = 5000
+    flush_timeout_ms: int = 2000
     recall_score_threshold: float = 0.3
     recall_limit: int = 8
     capture_min_user_chars: int = 20

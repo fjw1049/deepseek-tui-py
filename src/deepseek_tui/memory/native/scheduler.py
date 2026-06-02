@@ -17,6 +17,7 @@ class _ThreadScheduleState:
     pending_messages: list[dict[str, Any]] = field(default_factory=list)
     idle_task: asyncio.Task[None] | None = None
     warmup_threshold: int = 1
+    l1_running: bool = False
 
 
 class L1Scheduler:
@@ -66,13 +67,21 @@ class L1Scheduler:
         state.pending_messages.extend(messages)
         state.conversation_count += 1
         if state.conversation_count >= self._effective_threshold(state):
-            self._schedule_job(thread_id, state.pending_messages.copy())
+            batch = state.pending_messages.copy()
             state.pending_messages.clear()
             state.conversation_count = 0
             self._advance_warmup(state)
             if state.idle_task is not None:
                 state.idle_task.cancel()
                 state.idle_task = None
+            scheduled = self._schedule_job(thread_id, batch)
+            if not scheduled:
+                # L1 busy: _schedule_job re-buffered the batch. Arm the idle
+                # timer so it drains once the running job frees up.
+                state.idle_task = asyncio.create_task(
+                    self._idle_fire(thread_id),
+                    name=f"l1-idle-{thread_id}",
+                )
             return
         if state.idle_task is not None:
             state.idle_task.cancel()
@@ -91,23 +100,41 @@ class L1Scheduler:
             state.pending_messages.clear()
             state.conversation_count = 0
             self._advance_warmup(state)
-            self._schedule_job(thread_id, batch)
+            scheduled = self._schedule_job(thread_id, batch)
+            if not scheduled:
+                # L1 still running; re-arm idle timer to drain after it finishes.
+                state.idle_task = asyncio.create_task(
+                    self._idle_fire(thread_id),
+                    name=f"l1-idle-{thread_id}",
+                )
         except asyncio.CancelledError:
             pass
 
-    def _schedule_job(self, thread_id: str, batch: list[dict[str, Any]]) -> None:
+    def _schedule_job(self, thread_id: str, batch: list[dict[str, Any]]) -> bool:
+        state = self._state(thread_id)
+        if state.l1_running:
+            # A job is already in flight for this thread; re-buffer the batch
+            # (prepended, preserving order) so the next trigger drains it.
+            state.pending_messages[:0] = batch
+            return False
+        state.l1_running = True
         task = asyncio.create_task(
             self._run_job(thread_id, batch),
             name=f"l1-extract-{thread_id}",
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return True
 
     async def _run_job(self, thread_id: str, batch: list[dict[str, Any]]) -> None:
         try:
             await self._run_extraction(thread_id, batch)
         except Exception:
             logger.exception("l1_scheduled_job_failed thread_id=%s", thread_id)
+        finally:
+            state = self._states.get(thread_id)
+            if state is not None:
+                state.l1_running = False
 
     async def _drain_thread_jobs(self, thread_id: str) -> None:
         pending = [
@@ -125,13 +152,20 @@ class L1Scheduler:
         if state.idle_task is not None:
             state.idle_task.cancel()
             state.idle_task = None
+        # Drain any in-flight scheduled job first so we never run two L1
+        # extractions for the same thread concurrently. Its finally clears
+        # l1_running and surfaces any re-buffered batch into pending_messages.
+        await self._drain_thread_jobs(thread_id)
         if state.pending_messages:
             batch = state.pending_messages.copy()
             state.pending_messages.clear()
             state.conversation_count = 0
             self._advance_warmup(state)
-            await self._run_extraction(thread_id, batch)
-        await self._drain_thread_jobs(thread_id)
+            state.l1_running = True
+            try:
+                await self._run_extraction(thread_id, batch)
+            finally:
+                state.l1_running = False
 
     async def stop(self) -> None:
         for state in self._states.values():

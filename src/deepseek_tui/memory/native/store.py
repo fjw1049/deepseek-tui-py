@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -99,22 +100,27 @@ class MemoryStore:
         self._db_path = db_path
         self._fts_tokenizer = fts_tokenizer
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
 
     @property
     def path(self) -> Path:
         return self._db_path
 
     def open(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._init_schema()
+        with self._lock:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=5000")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._init_schema()
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
 
     def _conn_required(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -205,19 +211,20 @@ class MemoryStore:
     def save_embedding(
         self, memory_id: str, *, model: str, vector: list[float]
     ) -> None:
-        conn = self._conn_required()
-        conn.execute(
-            """
-            INSERT INTO memory_embeddings (memory_id, model, dims, embedding)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(memory_id) DO UPDATE SET
-              model = excluded.model,
-              dims = excluded.dims,
-              embedding = excluded.embedding
-            """,
-            (memory_id, model, len(vector), pack_embedding(vector)),
-        )
-        conn.commit()
+        with self._lock:
+            conn = self._conn_required()
+            conn.execute(
+                """
+                INSERT INTO memory_embeddings (memory_id, model, dims, embedding)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(memory_id) DO UPDATE SET
+                  model = excluded.model,
+                  dims = excluded.dims,
+                  embedding = excluded.embedding
+                """,
+                (memory_id, model, len(vector), pack_embedding(vector)),
+            )
+            conn.commit()
 
     def is_semantic_duplicate(
         self,
@@ -226,7 +233,8 @@ class MemoryStore:
         workspace: str | None,
         threshold: float,
     ) -> bool:
-        hits = self._vector_search(vector, workspace=workspace, limit=32)
+        with self._lock:
+            hits = self._vector_search(vector, workspace=workspace, limit=32)
         return any(score >= threshold for _, score in hits)
 
     def _vector_search(
@@ -268,11 +276,12 @@ class MemoryStore:
         return scored[:limit]
 
     def get_l0_cursor(self, thread_id: str) -> tuple[int, int]:
-        conn = self._conn_required()
-        row = conn.execute(
-            "SELECT last_timestamp_ms, last_message_count FROM l0_cursors WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
+        with self._lock:
+            conn = self._conn_required()
+            row = conn.execute(
+                "SELECT last_timestamp_ms, last_message_count FROM l0_cursors WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
         if row is None:
             return 0, 0
         return int(row[0]), int(row[1])
@@ -280,18 +289,19 @@ class MemoryStore:
     def set_l0_cursor(
         self, thread_id: str, *, last_timestamp_ms: int, last_message_count: int
     ) -> None:
-        conn = self._conn_required()
-        conn.execute(
-            """
-            INSERT INTO l0_cursors (thread_id, last_timestamp_ms, last_message_count)
-            VALUES (?, ?, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-              last_timestamp_ms = excluded.last_timestamp_ms,
-              last_message_count = excluded.last_message_count
-            """,
-            (thread_id, last_timestamp_ms, last_message_count),
-        )
-        conn.commit()
+        with self._lock:
+            conn = self._conn_required()
+            conn.execute(
+                """
+                INSERT INTO l0_cursors (thread_id, last_timestamp_ms, last_message_count)
+                VALUES (?, ?, ?)
+                ON CONFLICT(thread_id) DO UPDATE SET
+                  last_timestamp_ms = excluded.last_timestamp_ms,
+                  last_message_count = excluded.last_message_count
+                """,
+                (thread_id, last_timestamp_ms, last_message_count),
+            )
+            conn.commit()
 
     def insert_memory(
         self,
@@ -314,77 +324,80 @@ class MemoryStore:
         if not text:
             return None
         content_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
-        conn = self._conn_required()
-        if not allow_duplicate:
-            dup = conn.execute(
-                "SELECT id FROM memories WHERE content_hash = ? LIMIT 1",
-                (content_hash,),
-            ).fetchone()
-            if dup is not None:
-                return None
-            if len(text) >= 24:
-                prefix = text[:48]
-                near = conn.execute(
-                    """
-                    SELECT id FROM memories
-                    WHERE content LIKE ? AND (workspace = ? OR workspace IS NULL)
-                    LIMIT 1
-                    """,
-                    (f"%{prefix}%", workspace),
+        with self._lock:
+            conn = self._conn_required()
+            if not allow_duplicate:
+                dup = conn.execute(
+                    "SELECT id FROM memories WHERE content_hash = ? LIMIT 1",
+                    (content_hash,),
                 ).fetchone()
-                if near is not None:
+                if dup is not None:
                     return None
-        now = _now_ms()
-        effective_priority = (
-            priority
-            if priority is not None
-            else max(0, min(100, int(round(confidence * 100))))
-        )
-        effective_timestamps = timestamps or [str(now)]
-        mem_id = f"mem_{uuid.uuid4().hex[:12]}"
-        conn.execute(
-            """
-            INSERT INTO memories (
-              id, content, type, workspace, thread_id, confidence, priority,
-              scene_name, source_message_ids_json, metadata_json, timestamps_json,
-              session_key, session_id, created_at, updated_at, content_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                mem_id,
-                text,
-                mem_type,
-                workspace,
-                thread_id,
-                confidence,
-                effective_priority,
-                scene_name,
-                _json_dumps(source_message_ids or []),
-                _json_dumps(metadata or {}),
-                _json_dumps(effective_timestamps),
-                session_key or thread_id,
-                session_id,
-                now,
-                now,
-                content_hash,
-            ),
-        )
-        conn.commit()
-        return mem_id
+                if len(text) >= 24:
+                    prefix = text[:48]
+                    near = conn.execute(
+                        """
+                        SELECT id FROM memories
+                        WHERE content LIKE ? AND (workspace = ? OR workspace IS NULL)
+                        LIMIT 1
+                        """,
+                        (f"%{prefix}%", workspace),
+                    ).fetchone()
+                    if near is not None:
+                        return None
+            now = _now_ms()
+            effective_priority = (
+                priority
+                if priority is not None
+                else max(0, min(100, int(round(confidence * 100))))
+            )
+            effective_timestamps = timestamps or [str(now)]
+            mem_id = f"mem_{uuid.uuid4().hex[:12]}"
+            conn.execute(
+                """
+                INSERT INTO memories (
+                  id, content, type, workspace, thread_id, confidence, priority,
+                  scene_name, source_message_ids_json, metadata_json, timestamps_json,
+                  session_key, session_id, created_at, updated_at, content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mem_id,
+                    text,
+                    mem_type,
+                    workspace,
+                    thread_id,
+                    confidence,
+                    effective_priority,
+                    scene_name,
+                    _json_dumps(source_message_ids or []),
+                    _json_dumps(metadata or {}),
+                    _json_dumps(effective_timestamps),
+                    session_key or thread_id,
+                    session_id,
+                    now,
+                    now,
+                    content_hash,
+                ),
+            )
+            conn.commit()
+            return mem_id
 
     def get_memory(self, memory_id: str) -> MemoryRow | None:
-        conn = self._conn_required()
-        row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
-        return _memory_row(row) if row else None
+        with self._lock:
+            conn = self._conn_required()
+            row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+            return _memory_row(row) if row else None
 
     def delete_memories(self, memory_ids: list[str]) -> int:
         if not memory_ids:
             return 0
-        conn = self._conn_required()
-        before = conn.total_changes
-        conn.executemany("DELETE FROM memories WHERE id = ?", [(mid,) for mid in memory_ids])
-        conn.commit()
-        return conn.total_changes - before
+        with self._lock:
+            conn = self._conn_required()
+            before = conn.total_changes
+            conn.executemany("DELETE FROM memories WHERE id = ?", [(mid,) for mid in memory_ids])
+            conn.commit()
+            return conn.total_changes - before
 
     def _fetch_fts_rows(
         self, query: str, *, workspace: str | None, limit: int
@@ -506,52 +519,53 @@ class MemoryStore:
     ) -> list[tuple[MemoryRow, float]]:
         cap = limit * 4
         query_tokens = collect_query_tokens(query, mode=self._fts_tokenizer)
-        if hybrid:
-            fts_scored = self._score_rows(
-                self._fetch_fts_rows(query, workspace=workspace, limit=cap),
-                query_tokens=query_tokens,
-                workspace=workspace,
-                score_threshold=0.0,
-                half_life_days=half_life_days,
-                workspace_boost=workspace_boost,
-            )
-            like_scored = self._score_rows(
-                self._fetch_like_rows(query, workspace=workspace, limit=cap),
-                query_tokens=query_tokens,
-                workspace=workspace,
-                score_threshold=0.0,
-                half_life_days=half_life_days,
-                workspace_boost=workspace_boost,
-            )
-            ranked_lists: list[list[tuple[MemoryRow, float]]] = [fts_scored, like_scored]
-            vec_scored: list[tuple[MemoryRow, float]] = []
-            if query_embedding:
-                vec_scored = self._vector_search(
-                    query_embedding, workspace=workspace, limit=cap
+        with self._lock:
+            if hybrid:
+                fts_scored = self._score_rows(
+                    self._fetch_fts_rows(query, workspace=workspace, limit=cap),
+                    query_tokens=query_tokens,
+                    workspace=workspace,
+                    score_threshold=0.0,
+                    half_life_days=half_life_days,
+                    workspace_boost=workspace_boost,
                 )
-                ranked_lists.append(vec_scored)
-            merged = reciprocal_rank_fusion(ranked_lists)
-            score_by_id: dict[str, float] = {}
-            for row, score in fts_scored + like_scored + vec_scored:
-                score_by_id[row.id] = max(score_by_id.get(row.id, 0.0), score)
-            out: list[tuple[MemoryRow, float]] = []
-            for row, _ in merged:
-                final = score_by_id.get(row.id, 0.0)
-                if final >= score_threshold:
-                    out.append((row, final))
-            return out[:limit]
+                like_scored = self._score_rows(
+                    self._fetch_like_rows(query, workspace=workspace, limit=cap),
+                    query_tokens=query_tokens,
+                    workspace=workspace,
+                    score_threshold=0.0,
+                    half_life_days=half_life_days,
+                    workspace_boost=workspace_boost,
+                )
+                ranked_lists: list[list[tuple[MemoryRow, float]]] = [fts_scored, like_scored]
+                vec_scored: list[tuple[MemoryRow, float]] = []
+                if query_embedding:
+                    vec_scored = self._vector_search(
+                        query_embedding, workspace=workspace, limit=cap
+                    )
+                    ranked_lists.append(vec_scored)
+                merged = reciprocal_rank_fusion(ranked_lists)
+                score_by_id: dict[str, float] = {}
+                for row, score in fts_scored + like_scored + vec_scored:
+                    score_by_id[row.id] = max(score_by_id.get(row.id, 0.0), score)
+                out: list[tuple[MemoryRow, float]] = []
+                for row, _ in merged:
+                    final = score_by_id.get(row.id, 0.0)
+                    if final >= score_threshold:
+                        out.append((row, final))
+                return out[:limit]
 
-        rows = self._fetch_fts_rows(query, workspace=workspace, limit=cap)
-        if not rows:
-            rows = self._fetch_like_rows(query, workspace=workspace, limit=cap)
-        return self._score_rows(
-            rows,
-            query_tokens=query_tokens,
-            workspace=workspace,
-            score_threshold=score_threshold,
-            half_life_days=half_life_days,
-            workspace_boost=workspace_boost,
-        )[:limit]
+            rows = self._fetch_fts_rows(query, workspace=workspace, limit=cap)
+            if not rows:
+                rows = self._fetch_like_rows(query, workspace=workspace, limit=cap)
+            return self._score_rows(
+                rows,
+                query_tokens=query_tokens,
+                workspace=workspace,
+                score_threshold=score_threshold,
+                half_life_days=half_life_days,
+                workspace_boost=workspace_boost,
+            )[:limit]
 
     def list_memories_by_type(
         self,
@@ -560,55 +574,75 @@ class MemoryStore:
         workspace: str | None = None,
         limit: int = 40,
     ) -> list[MemoryRow]:
-        conn = self._conn_required()
-        if workspace:
-            rows = conn.execute(
-                """
-                SELECT * FROM memories
-                WHERE type = ? AND (workspace = ? OR workspace IS NULL)
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (mem_type, workspace, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT * FROM memories
-                WHERE type = ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (mem_type, limit),
-            ).fetchall()
-        return [_memory_row(row) for row in rows]
+        with self._lock:
+            conn = self._conn_required()
+            if workspace:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM memories
+                    WHERE type = ? AND (workspace = ? OR workspace IS NULL)
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (mem_type, workspace, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM memories
+                    WHERE type = ?
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (mem_type, limit),
+                ).fetchall()
+            return [_memory_row(row) for row in rows]
 
     def touch_recalled(self, memory_ids: list[str]) -> None:
         if not memory_ids:
             return
         now = _now_ms()
-        conn = self._conn_required()
-        conn.executemany(
-            "UPDATE memories SET last_recalled_at = ? WHERE id = ?",
-            [(now, mid) for mid in memory_ids],
-        )
-        conn.commit()
+        with self._lock:
+            conn = self._conn_required()
+            conn.executemany(
+                "UPDATE memories SET last_recalled_at = ? WHERE id = ?",
+                [(now, mid) for mid in memory_ids],
+            )
+            conn.commit()
 
     def count_memories_for_thread(self, thread_id: str) -> int:
-        conn = self._conn_required()
-        row = conn.execute(
-            "SELECT COUNT(*) AS c FROM memories WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-        return int(row[0]) if row else 0
+        with self._lock:
+            conn = self._conn_required()
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM memories WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
 
     def delete_memories_older_than(self, cutoff_ms: int) -> int:
-        conn = self._conn_required()
-        row = conn.execute(
-            "SELECT COUNT(*) AS c FROM memories WHERE created_at < ?",
-            (cutoff_ms,),
-        ).fetchone()
-        count = int(row["c"]) if row else 0
-        conn.execute("DELETE FROM memories WHERE created_at < ?", (cutoff_ms,))
-        conn.commit()
-        return count
+        with self._lock:
+            conn = self._conn_required()
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM memories WHERE created_at < ?",
+                (cutoff_ms,),
+            ).fetchone()
+            count = int(row["c"]) if row else 0
+            conn.execute("DELETE FROM memories WHERE created_at < ?", (cutoff_ms,))
+            conn.commit()
+            return count
+
+    def iter_unembedded(self, *, limit: int) -> list[tuple[str, str]]:
+        """Rows lacking a vector index, newest first — for background backfill."""
+        with self._lock:
+            conn = self._conn_required()
+            rows = conn.execute(
+                """
+                SELECT m.id, m.content FROM memories m
+                LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+                WHERE e.memory_id IS NULL
+                ORDER BY m.updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [(str(r["id"]), str(r["content"] or "")) for r in rows]
