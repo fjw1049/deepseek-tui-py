@@ -72,7 +72,7 @@ CRON_EXECUTION_PLAYBOOK = """\
 You are running a scheduled background task. Follow these rules:
 
 Tool usage:
-1. Prefer web_search (Tavily) or MCP search tools (bing, fetch, china-stock, yahoo) over exec_shell/curl.
+1. Prefer web_search (AnySearch + Tavily) or MCP search tools (bing, fetch, china-stock, yahoo) over exec_shell/curl.
 2. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — use the tools already available.
 3. Do NOT call request_user_input — complete the task with available tools.
 4. Do NOT run pip install or long shell setup; use MCP or web_search instead.

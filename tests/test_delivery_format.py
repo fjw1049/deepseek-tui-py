@@ -30,9 +30,10 @@ def test_classify_tool_round_trip_limit() -> None:
     assert "步骤过多" in msg
 
 
-def test_classify_tavily_missing() -> None:
-    msg = classify_task_error_for_user("TAVILY_API_KEY not configured")
-    assert "TAVILY" in msg
+def test_classify_web_search_failed() -> None:
+    msg = classify_task_error_for_user("web_search failed: anysearch: timeout")
+    assert "ANYSEARCH" in msg or "anysearch" in msg.lower()
+    assert "TAVILY" in msg or "tavily" in msg.lower()
 
 
 def test_sanitize_drops_process_narration() -> None:

@@ -1,6 +1,10 @@
 provider = "deepseek"
 model = "deepseek-v4-pro"
 
+# Web search: AnySearch (optional key) + Tavily (optional key); results are merged.
+# anysearch_api_key = ""   # or ANYSEARCH_API_KEY
+# tavily_api_key = ""      # or TAVILY_API_KEY
+
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 timeout = 120

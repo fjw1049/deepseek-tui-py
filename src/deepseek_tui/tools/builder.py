@@ -134,8 +134,13 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         registry.register(ApplyPatchTool())
 
     if cfg.features.web_search:
-        registry.register(WebSearchTool(api_key=cfg.tavily_api_key))
-        registry.register(FetchUrlTool())
+        registry.register(
+            WebSearchTool(
+                tavily_api_key=cfg.tavily_api_key,
+                anysearch_api_key=cfg.anysearch_api_key,
+            )
+        )
+        registry.register(FetchUrlTool(anysearch_api_key=cfg.anysearch_api_key))
 
     if cfg.allow_shell and cfg.features.shell_tool and mode != "plan":
         for tool in [

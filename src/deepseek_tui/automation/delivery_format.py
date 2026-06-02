@@ -83,8 +83,13 @@ def classify_task_error_for_user(error: str) -> str:
             "任务步骤过多已自动停止。请简化自动化描述，或检查工具是否陷入重复调用。"
         )
 
-    if "tavily" in lower or "web_search" in lower and "not configured" in lower:
-        return "网络搜索未配置。请设置 TAVILY_API_KEY 环境变量后重启服务。"
+    if "web_search failed" in lower or (
+        "web_search" in lower and "not configured" in lower
+    ):
+        return (
+            "网络搜索失败。请检查 ANYSEARCH_API_KEY / TAVILY_API_KEY "
+            "或 config.toml 中的 anysearch_api_key / tavily_api_key 后重启服务。"
+        )
 
     if "canceled" in lower or "cancelled" in lower:
         return "任务已取消。"

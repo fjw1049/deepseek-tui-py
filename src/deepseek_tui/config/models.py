@@ -407,6 +407,7 @@ class Config(BaseModel):
     sandbox_mode: str = "workspace-write"
     allow_shell: bool = True
     tavily_api_key: str | None = None
+    anysearch_api_key: str | None = None
     managed_config_path: Path | None = None
     requirements_path: Path | None = None
     skills_dir: Path = Path(".deepseek/skills")
