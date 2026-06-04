@@ -229,6 +229,12 @@ class L1Extractor:
                 if decision and decision.action in ("update", "merge") and decision.merged_content
                 else memory.content
             )
+            from deepseek_tui.evolution.safety import scan_memory_content
+
+            ok, scan_reason = scan_memory_content(final_content)
+            if not ok:
+                logger.warning("l1_content_blocked reason=%s", scan_reason)
+                continue
             final_type = (
                 decision.merged_type
                 if decision and decision.action in ("update", "merge") and decision.merged_type

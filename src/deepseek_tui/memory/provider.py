@@ -60,5 +60,7 @@ class MemoryProvider(Protocol):
         *,
         workspace: str | None = None,
         thread_id: str | None = None,
+        exclude_thread_id: str | None = None,
         limit: int = 5,
+        summarize: bool = True,
     ) -> str: ...

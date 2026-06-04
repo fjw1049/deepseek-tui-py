@@ -24,6 +24,7 @@ from deepseek_tui.engine.events import (
     ApprovalResolvedEvent,
     ErrorEvent,
     RlmProgressEvent,
+    WorkflowProgressEvent,
     SandboxDeniedEvent,
     SessionActivityEvent,
     StatusEvent,
@@ -733,6 +734,15 @@ class DeepSeekTUI(App[None]):
                 status.set_phase(
                     f"rlm round {event.iteration}: {event.summary[:80]}"
                 )
+            elif isinstance(event, WorkflowProgressEvent):
+                from deepseek_tui.workflow.models import WorkflowSnapshot
+                from deepseek_tui.workflow.runtime import render_workflow_text
+
+                snap = event.snapshot
+                if isinstance(snap, WorkflowSnapshot):
+                    status.set_phase(
+                        render_workflow_text(snap, completed=event.completed)[:120]
+                    )
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
                 if "Waiting on" in event.message and "sub-agent" in event.message:
@@ -795,15 +805,27 @@ class DeepSeekTUI(App[None]):
 
         self.push_screen(CommandPalette(), _on_result)
 
-    def action_new_session(self) -> None:
+    async def action_new_session(self) -> None:
+        if self._engine is not None and self._engine.session_messages:
+            if self._engine.post_turn is not None:
+                evidence = self._engine._build_flush_evidence(self._engine.session_messages)
+                await self._engine.post_turn.flush_before_loss(evidence)
+            self._engine._user_turn_index = 0
         transcript = self.query_one(Transcript)
         transcript.clear_messages()
         if self._engine is not None:
             self._engine.session_messages.clear()
+            if self._engine._evolution_pipeline is not None:
+                self._engine._curated_snapshot = (
+                    self._engine._evolution_pipeline.curated_stable_block()
+                )
 
     async def action_quit(self) -> None:
         logger.info("tui_quit")
         if self._engine is not None:
+            if self._engine.session_messages and self._engine.post_turn is not None:
+                evidence = self._engine._build_flush_evidence(self._engine.session_messages)
+                await self._engine.post_turn.flush_before_loss(evidence)
             await self._engine.run_lifecycle_hook("session_end")
             await self._engine.shutdown()
         if self._engine_task is not None:

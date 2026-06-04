@@ -14,6 +14,7 @@ import {
   subagentCardsFromBlocks,
   type MailboxMessageJson
 } from '../lib/subagent-mailbox'
+import { workflowSnapshotFromToolMeta } from '../lib/workflow-snapshot'
 import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
@@ -51,11 +52,13 @@ import {
   findReusableEmptyThreadId,
   hasPendingRuntimeWork,
   mergePendingApprovalBlocks,
+  mergePendingEvolutionBlocks,
   mergePendingUserInputBlocks,
   reconcileOptimisticUserBlock,
   threadBelongsToWorkspace,
   threadSnapshotLooksRunning,
-  upsertUserBlock
+  upsertUserBlock,
+  upsertWorkflowBlock
 } from './chat-store-runtime-helpers'
 import {
   armBusyWatchdog as armBusyWatchdogImpl,
@@ -199,6 +202,16 @@ async function syncRuntimePendingApprovals(
       const merged = mergePendingApprovalBlocks(nextBlocks, pending)
       nextBlocks = merged.blocks
       scrollToBlockId = merged.firstAddedBlockId
+    } catch {
+      /* ignore */
+    }
+  }
+  if (typeof provider.fetchPendingEvolution === 'function') {
+    try {
+      const pendingEvolution = await provider.fetchPendingEvolution(threadId)
+      const merged = mergePendingEvolutionBlocks(nextBlocks, pendingEvolution)
+      nextBlocks = merged.blocks
+      scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
     } catch {
       /* ignore */
     }
@@ -416,9 +429,27 @@ function buildThreadEventSink(
           armBusyWatchdog(set, get)
         }
         const idx = s.blocks.findIndex((b) => b.kind === 'tool' && b.id === ev.itemId)
+        let blocks = s.blocks
+        const snap = workflowSnapshotFromToolMeta(ev.meta)
+        if (snap) {
+          const wfName =
+            typeof ev.meta?.workflow === 'object' &&
+            ev.meta.workflow !== null &&
+            typeof (ev.meta.workflow as Record<string, unknown>).name === 'string'
+              ? String((ev.meta.workflow as Record<string, unknown>).name)
+              : snap.name
+          blocks = upsertWorkflowBlock(blocks, {
+            toolCallId: ev.itemId,
+            workflowName: wfName,
+            snapshot: snap,
+            completed: ev.status !== 'running'
+          })
+        }
         if (idx >= 0) {
-          const cur = s.blocks[idx]
-          if (cur.kind !== 'tool') return { ...base }
+          const cur = blocks[idx]
+          if (cur.kind !== 'tool') {
+            return { ...base, blocks }
+          }
           const next: ToolBlock = {
             ...cur,
             summary: ev.summary || cur.summary,
@@ -428,11 +459,11 @@ function buildThreadEventSink(
             filePath: ev.filePath ?? cur.filePath,
             meta: ev.meta ?? cur.meta
           }
-          const blocks = [...s.blocks]
-          blocks[idx] = next
+          const nextBlocks = [...blocks]
+          nextBlocks[idx] = next
           return {
             ...base,
-            blocks,
+            blocks: nextBlocks,
             error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
           }
         }
@@ -452,10 +483,19 @@ function buildThreadEventSink(
           filePath: ev.filePath,
           meta: ev.meta
         }
+        let nextBlocks = [...baseBlocks, block]
+        if (snap) {
+          nextBlocks = upsertWorkflowBlock(nextBlocks, {
+            toolCallId: ev.itemId,
+            workflowName: snap.name,
+            snapshot: snap,
+            completed: false
+          })
+        }
         return {
           ...base,
           ...flushed,
-          blocks: [...baseBlocks, block],
+          blocks: nextBlocks,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       })
@@ -492,6 +532,34 @@ function buildThreadEventSink(
             }
           ],
           scrollToBlockId: `approval-${req.approvalId}`,
+          error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
+        }
+      })
+    },
+    onEvolutionProposal: (req) => {
+      set((s) => {
+        resetBusyRecoveryAttempts()
+        if (s.blocks.some((b) => b.kind === 'evolution' && b.recordId === req.recordId)) {
+          return {}
+        }
+        const flushed = flushLiveBlocks(s)
+        const baseBlocks = flushed.blocks ?? s.blocks
+        return {
+          ...flushed,
+          blocks: [
+            ...baseBlocks,
+            {
+              kind: 'evolution',
+              id: `evolution-${req.recordId}`,
+              createdAt: new Date().toISOString(),
+              recordId: req.recordId,
+              kindLabel: req.kind,
+              summary: req.summary,
+              assetPath: req.assetPath,
+              status: 'pending' as const
+            }
+          ],
+          scrollToBlockId: `evolution-${req.recordId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       })
@@ -653,6 +721,22 @@ function buildThreadEventSink(
           return { blocks }
         }
         return { blocks: [...s.blocks, nextBlock] }
+      })
+    },
+    onWorkflowProgress: (ev) => {
+      set((s) => {
+        resetBusyRecoveryAttempts()
+        if (!s.busy) {
+          armBusyWatchdog(set, get)
+        }
+        const flushed = flushLiveBlocks(s)
+        const baseBlocks = flushed.blocks ?? s.blocks
+        return {
+          ...flushed,
+          busy: true,
+          blocks: upsertWorkflowBlock(baseBlocks, ev),
+          error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
+        }
       })
     },
     onTurnComplete: () => {
@@ -1983,6 +2067,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
       }))
       emitPetEvent({ type: 'approval_resolved', itemId: blockId, status: 'error' })
+    }
+  },
+
+  resolveEvolution: async (blockId, decision) => {
+    const { blocks, providerId, activeThreadId } = get()
+    const block = blocks.find((b) => b.id === blockId)
+    if (!block || block.kind !== 'evolution' || block.status !== 'pending') return
+    if (!activeThreadId) return
+    const p = getProvider(providerId)
+    if (typeof p.submitEvolutionDecision !== 'function') {
+      set({ error: 'Current provider does not support evolution approvals.' })
+      return
+    }
+    try {
+      await p.submitEvolutionDecision(block.recordId, decision, activeThreadId)
+      set((s) => ({
+        blocks: s.blocks.map((b) =>
+          b.id === blockId && b.kind === 'evolution'
+            ? {
+                ...b,
+                status: decision === 'approve' ? ('approved' as const) : ('rejected' as const)
+              }
+            : b
+        )
+      }))
+    } catch (e) {
+      const msg = formatRuntimeError(e)
+      void window.dsGui.logError('evolution', 'Failed to submit evolution decision', {
+        message: msg,
+        blockId
+      })
+      set((s) => ({
+        error: msg,
+        blocks: s.blocks.map((b) =>
+          b.id === blockId && b.kind === 'evolution'
+            ? { ...b, status: 'error' as const, errorMessage: msg }
+            : b
+        )
+      }))
     }
   },
 

@@ -65,6 +65,45 @@ fts_tokenizer = "auto"   # auto | simple | jieba (pip install jieba)
 # embedding_dedup_threshold = 0.92
 # P2 tools (registered when memory.smart.enabled): memory_search, conversation_search
 
+[post_turn]
+enabled = true
+
+[evolution]
+enabled = false
+mode = "suggest"
+review_model = ""
+review_max_steps = 8
+flush_min_user_turns = 6
+flush_timeout_s = 30.0
+notify = true
+
+[evolution.curated]
+enabled = true
+# dir = ""  # default ~/.deepseek/memories
+memory_char_limit = 2200
+user_char_limit = 1375
+
+[evolution.procedural]
+enabled = true
+default_scope = "project"
+
+[evolution.schedulers]
+memory_nudge_every_n = 10
+skill_nudge_tool_rounds = 10
+review_idle_timeout_seconds = 600
+min_tool_calls_signal = 5
+
+[evolution.ledger]
+enabled = true
+retain_days = 90
+memory_curate = "auto"
+skill_patch = "auto"
+skill_create = "propose"
+
+[evolution.sinks]
+trajectory_enabled = false
+# trajectory_path = "~/.deepseek/trajectories"
+
 # Baidu hot search → email (see scripts/run-baidu-hotsearch-once.sh)
 [automation]
 mail_to = "you@example.com"

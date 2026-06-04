@@ -17,6 +17,7 @@ from deepseek_tui.tools.automation_tools import (
     AutomationRunTool,
     AutomationUpdateTool,
 )
+from deepseek_tui.tools.base import ToolSpec
 from deepseek_tui.tools.deprecation import DeprecatingAliasTool
 from deepseek_tui.tools.file_tools import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from deepseek_tui.tools.git_tools import (
@@ -185,6 +186,9 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             registry.register(tool)
 
     if cfg.features.subagents:
+        from deepseek_tui.tools.workflow_tool import WorkflowTool
+
+        registry.register(WorkflowTool())
         spawn = AgentSpawnTool()
         send = AgentSendInputTool()
         assign = AgentAssignTool()
@@ -248,6 +252,15 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         registry.register(MemorySearchTool())
         registry.register(ConversationSearchTool())
 
+    if cfg.evolution.enabled and cfg.evolution.curated.enabled:
+        from deepseek_tui.tools.memory_curate_tool import MemoryCurateTool
+
+        registry.register(MemoryCurateTool())
+    if cfg.evolution.enabled and cfg.evolution.procedural.enabled:
+        from deepseek_tui.tools.skill_manage_tool import SkillManageTool
+
+        registry.register(SkillManageTool())
+
     registry.register(ValidateDataTool())
     registry.register(RunTestsTool())
     if mode != "plan":
@@ -263,6 +276,7 @@ def build_subagent_registry(
     allowed_tools: list[str] | None = None,
     client: LLMClient | None = None,
     root_model: str | None = None,
+    extra_tools: list[ToolSpec] | None = None,
 ) -> ToolRegistry:
     """Tool surface for a sub-agent loop (mirrors Rust ``SubAgentToolRegistry``).
 
@@ -274,6 +288,8 @@ def build_subagent_registry(
     wire_registry_client(registry, client, root_model=root_model or "deepseek-chat")
     if allowed_tools is not None:
         registry.filter_by_names(set(allowed_tools))
+    if extra_tools:
+        registry.register_all(extra_tools)
     return registry
 
 
@@ -292,4 +308,5 @@ def wire_registry_client(
     if not registry.contains("rlm"):
         return
     model = root_model or "deepseek-chat"
+    registry.remove("rlm")
     registry.register(RlmTool(client=client, root_model=model))

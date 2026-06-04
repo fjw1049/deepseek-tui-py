@@ -105,6 +105,18 @@ class RlmProgressEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkflowProgressEvent:
+    """Workflow orchestration progress while the ``workflow`` tool runs."""
+
+    tool_call_id: str
+    thread_id: str | None
+    workflow_name: str
+    snapshot: object
+    completed: bool = False
+    status: str = "running"
+
+
+@dataclass(frozen=True, slots=True)
 class SessionActivityEvent:
     """Background work snapshot (sub-agents + durable tasks)."""
 
@@ -140,6 +152,16 @@ class UserInputRequiredEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class EvolutionProposalEvent:
+    """Workbench: evolution mutation awaiting user approval."""
+
+    record_id: str
+    kind: str
+    summary: str
+    asset_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SessionStartedEvent:
     session_id: str
 
@@ -166,8 +188,10 @@ EngineEvent = (
     | TurnCompleteEvent
     | SubAgentMailboxEvent
     | RlmProgressEvent
+    | WorkflowProgressEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
+    | EvolutionProposalEvent
     | SessionStartedEvent
     | SessionEndedEvent
 )

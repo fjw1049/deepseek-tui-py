@@ -1,7 +1,8 @@
 import type {
   ChatBlock,
   UserInputQuestion,
-  UserMessageEventPayload
+  UserMessageEventPayload,
+  WorkflowProgressPayload
 } from '../agent/types'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import type { ChatState } from './chat-store-types'
@@ -95,6 +96,45 @@ export function mergePendingApprovalBlocks(
   }
 }
 
+export type PendingEvolutionPayload = {
+  recordId: string
+  kind: string
+  summary: string
+  assetPath?: string
+}
+
+export function mergePendingEvolutionBlocks(
+  blocks: ChatBlock[],
+  pending: PendingEvolutionPayload[]
+): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
+  if (!pending.length) return { blocks, firstAddedBlockId: null }
+  const existing = new Set(
+    blocks
+      .filter((block) => block.kind === 'evolution')
+      .map((block) => block.recordId)
+  )
+  const additions: ChatBlock[] = []
+  for (const item of pending) {
+    if (!item.recordId || existing.has(item.recordId)) continue
+    existing.add(item.recordId)
+    additions.push({
+      kind: 'evolution',
+      id: `evolution-${item.recordId}`,
+      createdAt: new Date().toISOString(),
+      recordId: item.recordId,
+      kindLabel: item.kind,
+      summary: item.summary,
+      assetPath: item.assetPath,
+      status: 'pending'
+    })
+  }
+  if (!additions.length) return { blocks, firstAddedBlockId: null }
+  return {
+    blocks: [...blocks, ...additions],
+    firstAddedBlockId: additions[0]?.id ?? null
+  }
+}
+
 export function countPendingApprovals(blocks: ChatBlock[]): number {
   return blocks.filter((block) => block.kind === 'approval' && block.status === 'pending').length
 }
@@ -106,11 +146,51 @@ type ThreadDetailProviderLike = {
 export function hasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'tool') return block.status === 'running'
   if (block.kind === 'approval') return block.status === 'pending'
+  if (block.kind === 'evolution') return block.status === 'pending'
   if (block.kind === 'user_input') return block.status === 'pending'
+  if (block.kind === 'workflow') return block.status === 'running'
   if (block.kind === 'subagent') {
     return block.status === 'pending' || block.status === 'running'
   }
   return false
+}
+
+export function upsertWorkflowBlock(
+  blocks: ChatBlock[],
+  ev: WorkflowProgressPayload
+): ChatBlock[] {
+  const status: 'running' | 'completed' | 'failed' = ev.completed
+    ? ev.status === 'failed' || ev.status === 'cancelled' || ev.status === 'timed_out'
+      ? 'failed'
+      : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
+      ? 'failed'
+      : 'completed'
+    : 'running'
+  const nextBlock: ChatBlock = {
+    kind: 'workflow',
+    id: ev.toolCallId,
+    toolCallId: ev.toolCallId,
+    workflowName: ev.workflowName,
+    status,
+    snapshot: ev.snapshot,
+    createdAt: new Date().toISOString()
+  }
+  const idx = blocks.findIndex(
+    (b) => b.kind === 'workflow' && b.toolCallId === ev.toolCallId
+  )
+  if (idx < 0) return [...blocks, nextBlock]
+  const current = blocks[idx]
+  const merged: ChatBlock =
+    current.kind === 'workflow'
+      ? {
+          ...current,
+          ...nextBlock,
+          createdAt: current.createdAt ?? nextBlock.createdAt
+        }
+      : nextBlock
+  const next = [...blocks]
+  next[idx] = merged
+  return next
 }
 
 export function threadSnapshotLooksRunning(blocks: ChatBlock[], threadStatus?: string): boolean {

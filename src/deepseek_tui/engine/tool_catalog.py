@@ -66,6 +66,7 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "agent_list",
         "agent_cancel",
         "delegate_to_agent",
+        "workflow",
         "github_issue_context",
         "github_pr_context",
         REQUEST_USER_INPUT_NAME,

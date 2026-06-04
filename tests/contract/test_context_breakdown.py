@@ -57,6 +57,7 @@ def test_initial_request_tools_apply_native_deferral(tmp_path):
 
     raw_catalog = [
         _api_tool("read_file"),
+        _api_tool("workflow"),
         _api_tool("write_file"),
     ]
 
@@ -64,6 +65,7 @@ def test_initial_request_tools_apply_native_deferral(tmp_path):
     active_names = {tool["function"]["name"] for tool in active}
 
     assert "read_file" in active_names
+    assert "workflow" in active_names
     assert "write_file" not in active_names
 
 

@@ -118,4 +118,26 @@ SCHEMA_STATEMENTS = [
     """
     INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS evolution_events (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        workspace TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        asset_path TEXT,
+        diff_json TEXT,
+        reason TEXT,
+        source TEXT NOT NULL,
+        source_turn_id TEXT,
+        created_at REAL NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_evolution_events_thread
+    ON evolution_events(thread_id, created_at DESC)
+    """,
+    """
+    INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)
+    """,
 ]

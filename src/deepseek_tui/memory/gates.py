@@ -1,14 +1,9 @@
-"""Turn capture quality gates — MEMORY_INTEGRATION v3 §3.3."""
+"""Turn capture quality gates — re-export from post_turn."""
 
 from __future__ import annotations
 
-import re
-
-_CONFIRM_ONLY = re.compile(
-    r"^(?:好的?|继续|ok|okay|yes|yep|sure|thanks?|thank you|got it|"
-    r"明白|知道了|嗯|行|可以|收到)[\s!.。]*$",
-    re.IGNORECASE,
-)
+from deepseek_tui.post_turn.evidence import TurnEvidence
+from deepseek_tui.post_turn.gates import GateConfig, passes_base_gate, should_capture
 
 
 def should_capture_turn(
@@ -20,15 +15,24 @@ def should_capture_turn(
     skip_slash: bool = True,
     skip_confirmations: bool = True,
 ) -> bool:
-    if not success:
-        return False
-    if had_tool_calls:
-        return True
-    text = user_text.strip()
-    if skip_slash and text.startswith("/"):
-        return False
-    if len(text) < min_chars:
-        return False
-    if skip_confirmations and _CONFIRM_ONLY.match(text):
-        return False
-    return True
+    evidence = TurnEvidence(
+        thread_id="",
+        user_text=user_text,
+        workspace="",
+        messages=[],
+        had_tool_calls=had_tool_calls,
+        success=success,
+    )
+    cfg = GateConfig(
+        min_chars=min_chars,
+        skip_slash=skip_slash,
+        skip_confirmations=skip_confirmations,
+    )
+    return should_capture(evidence, cfg)
+
+
+__all__ = [
+    "GateConfig",
+    "passes_base_gate",
+    "should_capture_turn",
+]

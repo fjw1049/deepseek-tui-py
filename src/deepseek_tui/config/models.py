@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -317,6 +317,57 @@ class MemoryConfig(BaseModel):
     smart: MemorySmartConfig = Field(default_factory=MemorySmartConfig)
 
 
+class PostTurnConfig(BaseModel):
+    enabled: bool = True
+
+
+class EvolutionCuratedConfig(BaseModel):
+    enabled: bool = True
+    dir: str = ""
+    memory_char_limit: int = 2200
+    user_char_limit: int = 1375
+
+
+class EvolutionProceduralConfig(BaseModel):
+    enabled: bool = True
+    default_scope: Literal["project", "user"] = "project"
+
+
+class EvolutionSchedulersConfig(BaseModel):
+    memory_nudge_every_n: int = 10
+    skill_nudge_tool_rounds: int = 10
+    review_idle_timeout_seconds: int = 600
+    min_tool_calls_signal: int = 5
+
+
+class EvolutionLedgerConfig(BaseModel):
+    enabled: bool = True
+    retain_days: int = 90
+    memory_curate: Literal["auto", "propose", "deny"] = "auto"
+    skill_patch: Literal["auto", "propose", "deny"] = "auto"
+    skill_create: Literal["auto", "propose", "deny"] = "propose"
+
+
+class EvolutionSinksConfig(BaseModel):
+    trajectory_enabled: bool = False
+    trajectory_path: str = ""
+
+
+class EvolutionConfig(BaseModel):
+    enabled: bool = False
+    mode: Literal["suggest", "auto_patch"] = "suggest"
+    review_model: str = ""
+    review_max_steps: int = 8
+    flush_min_user_turns: int = 6
+    flush_timeout_s: float = 30.0
+    notify: bool = True
+    curated: EvolutionCuratedConfig = Field(default_factory=EvolutionCuratedConfig)
+    procedural: EvolutionProceduralConfig = Field(default_factory=EvolutionProceduralConfig)
+    schedulers: EvolutionSchedulersConfig = Field(default_factory=EvolutionSchedulersConfig)
+    ledger: EvolutionLedgerConfig = Field(default_factory=EvolutionLedgerConfig)
+    sinks: EvolutionSinksConfig = Field(default_factory=EvolutionSinksConfig)
+
+
 class ServerConfig(BaseModel):
     """[server] subsection for HTTP server settings."""
 
@@ -439,6 +490,8 @@ class Config(BaseModel):
     network: NetworkPolicyConfig = Field(default_factory=NetworkPolicyConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    post_turn: PostTurnConfig = Field(default_factory=PostTurnConfig)
+    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     tools_file: Path | None = None
     # Cycle / seam toggles consumed by ``Engine.create``. Mirror Rust

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,20 +14,21 @@ from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.protocol.responses import Usage
 from deepseek_tui.tools.builder import build_default_registry, wire_registry_client
 from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.registry import ToolRegistry
 from deepseek_tui.tools.rlm.repl import ReplRuntime, chunk_coverage
 from deepseek_tui.tools.rlm.tool import RlmTool
 from deepseek_tui.tools.rlm.turn import RlmUsage
 from deepseek_tui.tools.subagent.manager import (
+    SpawnRequest,
     SubAgentAssignment,
     SubAgentManager,
     SubAgentType,
-    SpawnRequest,
     build_subagent_system_prompt,
     whale_nickname_for_index,
 )
 from deepseek_tui.tools.task_manager import (
     NewTaskRequest as TaskNewTaskRequest,
+)
+from deepseek_tui.tools.task_manager import (
     TaskManager,
     TaskManagerConfig,
 )
@@ -41,6 +43,14 @@ class TestRlmWiring:
         assert isinstance(rlm, RlmTool)
         assert rlm._client is client
         assert rlm._root_model == "deepseek-v4-pro"
+
+    def test_wire_registry_injects_client_without_overwrite_warning(self, caplog):
+        registry = build_default_registry()
+        client = MagicMock()
+        with caplog.at_level(logging.WARNING, logger="deepseek_tui.tools.registry"):
+            wire_registry_client(registry, client, root_model="deepseek-v4-pro")
+
+        assert "Overwriting existing tool: rlm" not in caplog.text
 
     def test_rlm_description_does_not_suppress_use(self):
         tool = RlmTool(client=None, root_model="x")

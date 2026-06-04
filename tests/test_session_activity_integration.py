@@ -17,16 +17,16 @@ from deepseek_tui.engine.events import (
     SessionActivityEvent,
     SubAgentMailboxEvent,
 )
-from deepseek_tui.tools.subagent.completion import SubAgentCompletion
+from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.subagent import (
     SpawnRequest,
     SubAgentAssignment,
     SubAgentRuntime,
     SubAgentType,
 )
+from deepseek_tui.tools.subagent.completion import SubAgentCompletion
 from deepseek_tui.tools.subagent.mailbox import MailboxMessage, MailboxMessageKind
 from deepseek_tui.tools.subagent_tools import AgentSpawnTool
-from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.task_manager import NewTaskRequest
 
 
@@ -149,6 +149,40 @@ async def test_turn_handoff_injects_completion_messages(engine_ctx: tuple) -> No
     assert injected is True
     assert len(messages) == 1
     assert "subagent.done" in str(messages[0].content)
+
+
+@pytest.mark.asyncio
+async def test_turn_handoff_skips_agent_wait_consumed_completion(
+    engine_ctx: tuple,
+) -> None:
+    engine, _handle = engine_ctx
+    engine._mark_subagent_tool_result_consumed(
+        "agent_wait",
+        {
+            "agents": [
+                {
+                    "agent_id": "agent_done01",
+                    "status": {"kind": "completed"},
+                }
+            ]
+        },
+    )
+    engine._enqueue_subagent_completion(
+        SubAgentCompletion(
+            agent_id="agent_done01",
+            payload=(
+                "summary line\n"
+                '<deepseek:subagent.done>{"agent_id":"agent_done01"}'
+                "</deepseek:subagent.done>"
+            ),
+        )
+    )
+
+    messages = []
+    injected = await engine._handle_subagent_turn_handoff(messages)
+
+    assert injected is False
+    assert messages == []
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from deepseek_tui.tools.task_manager import CRON_PROMPT_MARKER
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.subagent.manager import SubAgent
+    from deepseek_tui.tools.subagent.output import AgentRunOutput
     from deepseek_tui.tools.task_manager import ExecutionTask, TaskExecutionResult
 
 logger = logging.getLogger(__name__)
@@ -167,9 +168,10 @@ async def real_task_executor(
     return await _run_task_engine_turn(task, cancel)
 
 
-async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
+async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> AgentRunOutput:
     """Drive ``run_subagent_loop`` — no nested Engine / managers."""
     from deepseek_tui.tools.subagent.manager import run_subagent_loop
+    from deepseek_tui.tools.subagent.output import AgentRunOutput
 
     runtime = agent.loop_runtime
     if runtime is None:
@@ -177,4 +179,7 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
             "Sub-agent loop runtime is missing; Engine.create must call "
             "SubAgentManager.attach_loop_runtime"
         )
-    return await run_subagent_loop(agent, runtime, cancel)
+    out = await run_subagent_loop(agent, runtime, cancel)
+    if isinstance(out, AgentRunOutput):
+        return out
+    return AgentRunOutput(text=str(out), structured=None)

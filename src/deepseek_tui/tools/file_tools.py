@@ -16,12 +16,30 @@ class ReadFileTool(ToolSpec):
         return "read_file"
 
     def description(self) -> str:
-        return "Read a UTF-8 text file from disk."
+        return (
+            "Read a UTF-8 text file from disk. Use offset/limit to read a "
+            "specific line range instead of loading large files in full."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
-            "properties": {"path": {"type": "string"}},
+            "properties": {
+                "path": {"type": "string"},
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Optional 1-based starting line number; 0 means the "
+                        "beginning of the file."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Optional maximum number of lines to return.",
+                },
+            },
             "required": ["path"],
         }
 
@@ -31,8 +49,23 @@ class ReadFileTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         path = context.resolve_path(_require_string(input_data, "path"))
         content = await _read_text(path)
+        offset = _optional_non_negative_int(input_data, "offset")
+        limit = _optional_non_negative_int(input_data, "limit")
+        metadata: dict[str, object] = {"path": str(path)}
+        if offset is not None or limit is not None:
+            lines = content.splitlines(keepends=True)
+            start = max((offset or 0) - 1, 0)
+            end = None if limit is None else start + limit
+            content = "".join(lines[start:end])
+            metadata.update(
+                {
+                    "line_offset": offset or 0,
+                    "line_limit": limit,
+                    "total_lines": len(lines),
+                }
+            )
         logger.info("read_file path=%s bytes=%d", path, len(content))
-        return ToolResult(success=True, content=content, metadata={"path": str(path)})
+        return ToolResult(success=True, content=content, metadata=metadata)
 
 
 class WriteFileTool(ToolSpec):
@@ -177,6 +210,19 @@ def _require_string_with_alias(
         raise ToolError(f"{primary} (or {alias}) must be provided")
     if not isinstance(value, str):
         raise ToolError(f"{primary} must be a string")
+    return value
+
+
+def _optional_non_negative_int(
+    input_data: dict[str, object], key: str
+) -> int | None:
+    if key not in input_data:
+        return None
+    value = input_data[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ToolError(f"{key} must be a non-negative integer")
+    if value < 0:
+        raise ToolError(f"{key} must be a non-negative integer")
     return value
 
 

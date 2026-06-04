@@ -25,6 +25,7 @@ class MemorySubagentLoopResult:
     steps: int = 0
     tool_calls: int = 0
     errors: list[str] = field(default_factory=list)
+    tool_results: list[tuple[str, dict, str]] = field(default_factory=list)
 
 
 async def run_memory_subagent_loop(
@@ -49,6 +50,7 @@ async def run_memory_subagent_loop(
     messages = [Message.user(user_prompt)]
     final_text = ""
     errors: list[str] = []
+    tool_results: list[tuple[str, dict, str]] = []
     total_tool_calls = 0
 
     for step in range(1, max(1, max_steps) + 1):
@@ -71,6 +73,7 @@ async def run_memory_subagent_loop(
                 steps=step - 1,
                 tool_calls=total_tool_calls,
                 errors=["client did not return an async event stream"],
+                tool_results=tool_results,
             )
         async for event in stream:
             if isinstance(event, StreamTextDelta):
@@ -100,6 +103,7 @@ async def run_memory_subagent_loop(
                 steps=step,
                 tool_calls=total_tool_calls,
                 errors=errors,
+                tool_results=tool_results,
             )
 
         total_tool_calls += len(tool_calls)
@@ -113,6 +117,12 @@ async def run_memory_subagent_loop(
         )
         for tool_call in tool_calls:
             output, is_error = await _execute_memory_tool(registry, context, tool_call)
+            args = (
+                dict(tool_call.arguments)
+                if isinstance(tool_call.arguments, dict)
+                else {}
+            )
+            tool_results.append((tool_call.name, args, output))
             if is_error:
                 errors.append(output)
             messages.append(Message.tool_result(tool_call.id, output, is_error=is_error))
@@ -122,6 +132,7 @@ async def run_memory_subagent_loop(
         steps=max_steps,
         tool_calls=total_tool_calls,
         errors=errors,
+        tool_results=tool_results,
     )
 
 

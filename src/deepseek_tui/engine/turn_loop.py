@@ -78,6 +78,7 @@ class TurnResult:
     cancelled: bool = False
     outcome: TurnOutcomeStatus = TurnOutcomeStatus.SUCCESS
     error_message: str | None = None
+    tool_round_count: int = 0
 
 
 @dataclass
@@ -285,6 +286,7 @@ class TurnLoop:
                 content_bytes = 0
                 fake_filter = FakeWrapperFilter()
                 fake_notice_sent = False
+                stream_done_logged = False
                 mark_llm_request_started(len(active_tools or []))
 
                 async for stream_event in self.client.stream_with_retry(stream_request):
@@ -392,14 +394,16 @@ class TurnLoop:
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage
                         mark_llm_stream_end()
-                        logger.info(
-                            "stream_done duration_ms=%d input_tokens=%s "
-                            "output_tokens=%s reasoning_tokens=%s",
-                            int((time.monotonic() - stream_start) * 1000),
-                            getattr(usage, "input_tokens", 0) if usage else 0,
-                            getattr(usage, "output_tokens", 0) if usage else 0,
-                            getattr(usage, "reasoning_tokens", 0) if usage else 0,
-                        )
+                        if not stream_done_logged:
+                            stream_done_logged = True
+                            logger.info(
+                                "stream_done duration_ms=%d input_tokens=%s "
+                                "output_tokens=%s reasoning_tokens=%s",
+                                int((time.monotonic() - stream_start) * 1000),
+                                getattr(usage, "input_tokens", 0) if usage else 0,
+                                getattr(usage, "output_tokens", 0) if usage else 0,
+                                getattr(usage, "reasoning_tokens", 0) if usage else 0,
+                            )
 
                     # Content byte guard (10 MB)
                     if content_bytes > STREAM_MAX_CONTENT_BYTES:

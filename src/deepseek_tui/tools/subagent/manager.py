@@ -31,14 +31,14 @@ from typing import TYPE_CHECKING, Any
 from deepseek_tui.config.models import Config
 
 if TYPE_CHECKING:
-    from deepseek_tui.client.base import LLMClient
-    from deepseek_tui.tools.task_manager import TaskManager
+    from deepseek_tui.protocol.messages import Message
 
 from deepseek_tui.tools.subagent.completion import (
     SubAgentCompletion,
     build_completion_payload,
 )
 from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
+from deepseek_tui.tools.subagent.output import AgentRunOutput
 
 DEFAULT_MAX_STEPS = 100
 DEFAULT_MAX_AGENTS = 10
@@ -299,6 +299,7 @@ class SubAgentResult:
     steps_taken: int
     duration_ms: int
     from_prior_session: bool = False
+    structured: Any | None = None
 
 
 @dataclass(slots=True)
@@ -312,26 +313,24 @@ class SpawnRequest:
     parent_depth: int = 0
     fork_context: bool = False
     fork_messages: list[dict[str, Any]] | None = None
+    output_schema: dict[str, Any] | None = None
+    auto_approve: bool | None = None
 
 
-# Executor signature — takes a SubAgent handle plus cancel token, returns
-# a free-form result string or raises.
+# Executor signature — takes a SubAgent handle plus cancel token.
 SubAgentExecutor = Callable[
-    ["SubAgent", asyncio.Event], Awaitable[str]
+    ["SubAgent", asyncio.Event], Awaitable[AgentRunOutput | str]
 ]
 
 
-async def _stub_executor(agent: SubAgent, cancel: asyncio.Event) -> str:
-    """Placeholder executor — sleeps briefly, returns synthetic summary.
-
-    Integration debt: Stage 3.2.simplified. Use ``real_subagent_executor``
-    from ``engine.executors`` for production.
-    """
+async def _stub_executor(agent: SubAgent, cancel: asyncio.Event) -> AgentRunOutput:
+    """Placeholder executor — sleeps briefly, returns synthetic summary."""
     try:
         await asyncio.wait_for(cancel.wait(), timeout=0.05)
     except asyncio.TimeoutError:
         agent.steps_taken += 1
-        return f"[stub] agent {agent.id} completed prompt '{agent.prompt[:80]}'"
+        text = f"[stub] agent {agent.id} completed prompt '{agent.prompt[:80]}'"
+        return AgentRunOutput(text=text, structured=None)
     raise asyncio.CancelledError
 
 
@@ -363,6 +362,7 @@ class SubAgent:
         parent_cancel: asyncio.Event | None = None,
         mailbox: Mailbox | None = None,
         loop_runtime: SubAgentRuntime | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -372,6 +372,8 @@ class SubAgent:
         self.nickname = nickname
         self.status: SubAgentStatus = SubAgentStatus.running()
         self.result: str | None = None
+        self.structured_result: Any | None = None
+        self.output_schema = output_schema
         self.steps_taken: int = 0
         self.started_at_ms: int = _epoch_ms()
         self.allowed_tools = allowed_tools
@@ -399,6 +401,7 @@ class SubAgent:
             steps_taken=self.steps_taken,
             duration_ms=duration_ms,
             from_prior_session=False,
+            structured=self.structured_result,
         )
 
 
@@ -496,6 +499,18 @@ class SubAgentManager:
     def list_agents(self) -> list[SubAgentResult]:
         return self.list_filtered(include_archived=False)
 
+    def _loop_runtime_for_spawn(
+        self, request: SpawnRequest, child_depth: int
+    ) -> SubAgentRuntime | None:
+        if self._loop_runtime is None:
+            return None
+        from dataclasses import replace
+
+        rt = self._loop_runtime.with_spawn_depth(child_depth)
+        if request.auto_approve is not None:
+            rt = replace(rt, auto_approve=request.auto_approve)
+        return rt
+
     async def spawn(self, request: SpawnRequest) -> SubAgentResult:
         async with self._lock:
             if self.running_count() >= self.max_agents:
@@ -523,11 +538,8 @@ class SubAgentManager:
                 fork_messages=request.fork_messages if request.fork_context else None,
                 parent_cancel=self._parent_cancel,
                 mailbox=self._mailbox,
-                loop_runtime=(
-                    self._loop_runtime.with_spawn_depth(child_depth)
-                    if self._loop_runtime is not None
-                    else None
-                ),
+                loop_runtime=self._loop_runtime_for_spawn(request, child_depth),
+                output_schema=request.output_schema,
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()
@@ -546,9 +558,11 @@ class SubAgentManager:
             return agent.snapshot()
 
     async def cancel(self, agent_id: str) -> SubAgentResult:
+        task: asyncio.Task[None] | None = None
         async with self._lock:
             agent = self._require_agent(agent_id)
             agent.cancel_token.set()
+            task = agent.task
             if agent.status.kind is SubAgentStatusKind.RUNNING:
                 agent.status = SubAgentStatus.cancelled()
             self._persist_best_effort()
@@ -556,6 +570,8 @@ class SubAgentManager:
 
         if self._mailbox is not None:
             self._mailbox.send(MailboxMessage.cancelled(agent_id))
+        if task is not None and not task.done():
+            task.cancel()
         return snapshot
 
     async def send_input(
@@ -722,14 +738,19 @@ class SubAgentManager:
                     agent.status = SubAgentStatus.cancelled()
             else:
                 agent.status = SubAgentStatus.completed()
-                agent.result = result
+                if isinstance(result, AgentRunOutput):
+                    agent.result = result.text
+                    agent.structured_result = result.structured
+                else:
+                    agent.result = str(result) if result is not None else None
+                    agent.structured_result = None
             self._persist_best_effort()
 
         if self._mailbox is not None:
             if agent.status.kind is SubAgentStatusKind.CANCELLED:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
             else:
-                summary = (result or "")[:500] if result else ""
+                summary = (agent.result or "")[:500] if agent.result else ""
                 self._mailbox.send(MailboxMessage.completed(agent.id, summary))
 
         self._notify_parent_completion(agent)
@@ -942,25 +963,45 @@ async def _execute_subagent_tool(
         return f"Error: {exc}"
 
 
+def _structured_output_contract() -> str:
+    return (
+        "Final output contract:\n"
+        "- Your final action MUST be a structured_output tool call.\n"
+        "- The structured_output arguments are the return value of this subagent.\n"
+        "- Do not emit a prose final answer instead of structured_output.\n"
+        "- If you need to inspect files or run commands first, do so, then call "
+        "structured_output exactly once."
+    )
+
+
 async def run_subagent_loop(
     agent: SubAgent,
     runtime: SubAgentRuntime,
     cancel: asyncio.Event,
-) -> str:
+) -> AgentRunOutput:
     """Drive one sub-agent to completion without nesting a full Engine."""
     from deepseek_tui.engine.turn_loop import TurnLoop
     from deepseek_tui.protocol.messages import Message
     from deepseek_tui.protocol.requests import MessageRequest
     from deepseek_tui.tools.builder import build_subagent_registry
     from deepseek_tui.tools.context import ToolContext
+    from deepseek_tui.tools.structured_output_tool import (
+        STRUCTURED_OUTPUT_TOOL_NAME,
+        StructuredOutputTool,
+    )
     from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 
     system_prompt = build_subagent_system_prompt(agent.agent_type, agent.assignment)
+    extra_tools = []
+    if agent.output_schema:
+        extra_tools.append(StructuredOutputTool(agent.output_schema))
+        system_prompt = f"{system_prompt}\n\n{_structured_output_contract()}"
     registry = build_subagent_registry(
         runtime.config,
         allowed_tools=agent.allowed_tools,
         client=runtime.client,
         root_model=agent.model,
+        extra_tools=extra_tools or None,
     )
     context = ToolContext(
         working_directory=agent.workspace,
@@ -989,6 +1030,7 @@ async def run_subagent_loop(
 
     turn_loop = TurnLoop(runtime.client)
     final_text = ""
+    structured_value: Any | None = None
     steps = 0
     last_usage: object | None = None
 
@@ -1054,14 +1096,25 @@ async def run_subagent_loop(
                 runtime.mailbox.send(
                     MailboxMessage.tool_call_started(agent.id, tc.name, steps)
                 )
-            output = await _execute_subagent_tool(
-                registry,
-                context,
-                tool_name=tc.name,
-                tool_input=tc.arguments,
-                auto_approve=runtime.auto_approve,
-            )
-            ok = not output.startswith("Error:")
+            if tc.name == STRUCTURED_OUTPUT_TOOL_NAME:
+                tool_result = await registry.execute(tc.name, tc.arguments, context)
+                output = (
+                    tool_result.content
+                    if tool_result.success
+                    else f"Error: {tool_result.content}"
+                )
+                ok = tool_result.success
+                if ok and tool_result.metadata.get("terminate_subagent"):
+                    structured_value = tool_result.metadata.get("value")
+            else:
+                output = await _execute_subagent_tool(
+                    registry,
+                    context,
+                    tool_name=tc.name,
+                    tool_input=tc.arguments,
+                    auto_approve=runtime.auto_approve,
+                )
+                ok = not output.startswith("Error:")
             if runtime.mailbox is not None:
                 runtime.mailbox.send(
                     MailboxMessage.tool_call_completed(
@@ -1069,6 +1122,10 @@ async def run_subagent_loop(
                     )
                 )
             messages.append(Message.tool_result(tc.id, output, is_error=not ok))
+            if structured_value is not None:
+                break
+        if structured_value is not None:
+            break
 
     if runtime.mailbox is not None and last_usage is not None:
         runtime.mailbox.send(
@@ -1084,7 +1141,9 @@ async def run_subagent_loop(
         )
 
     agent.steps_taken = steps
-    return final_text
+    if agent.output_schema and structured_value is None:
+        raise RuntimeError("sub-agent did not return structured_output")
+    return AgentRunOutput(text=final_text, structured=structured_value)
 
 
 def _messages_from_fork_dicts(raw_messages: list[dict[str, Any]]) -> list[Message]:

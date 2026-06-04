@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -9,7 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.engine.handle import ApprovalHandler, AutoApprovalHandler
 from deepseek_tui.engine.capacity import CapacityController, CapacityControllerConfig
 from deepseek_tui.engine.capacity_flow import (
     run_error_escalation_checkpoint,
@@ -28,8 +26,9 @@ from deepseek_tui.engine.cycle_manager import (
     should_advance_cycle,
 )
 from deepseek_tui.engine.dispatch import (
+    emit_tool_audit,
     format_tool_error,
-    mcp_tool_approval_description,
+    is_mcp_tool,
     parse_parallel_tool_calls,
     should_force_update_plan_first,
     should_parallelize_tool_batch,
@@ -50,13 +49,19 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
+    WorkflowProgressEvent,
 )
-from deepseek_tui.engine.session_activity import SessionActivityCoordinator
-from deepseek_tui.tools.subagent.completion import SubAgentCompletion
-from deepseek_tui.engine.handle import CancelRequestOp, EngineHandle, SendMessageOp
-from deepseek_tui.engine.prompts import build_system_prompt
+from deepseek_tui.engine.handle import (
+    ApprovalHandler,
+    AutoApprovalHandler,
+    CancelRequestOp,
+    EngineHandle,
+    SendMessageOp,
+)
 from deepseek_tui.engine.input_processor import prepare_turn_for_model
+from deepseek_tui.engine.prompts import build_system_prompt
 from deepseek_tui.engine.seam_manager import SeamConfig, SeamManager
+from deepseek_tui.engine.session_activity import SessionActivityCoordinator
 from deepseek_tui.engine.tool_catalog import (
     CODE_EXECUTION_TOOL_NAME,
     MULTI_TOOL_PARALLEL_NAME,
@@ -65,16 +70,15 @@ from deepseek_tui.engine.tool_catalog import (
     apply_mcp_tool_deferral,
     apply_native_tool_deferral,
     build_model_tool_catalog,
+    ensure_advanced_tooling,
     execute_code_execution_tool,
     execute_tool_search,
-    ensure_advanced_tooling,
     initial_active_tools,
     is_tool_search_tool,
     missing_tool_error_message,
 )
-from deepseek_tui.engine.dispatch import emit_tool_audit, is_mcp_tool
-from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
 from deepseek_tui.engine.tool_profiles import profile_includes_tool_search
+from deepseek_tui.engine.turn_loop import TurnLoop, TurnResult
 from deepseek_tui.engine.working_set import WorkingSet
 from deepseek_tui.execpolicy.approval_cache import (
     ApprovalCache,
@@ -96,9 +100,11 @@ from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.tools.base import ToolError, ToolResult
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
+from deepseek_tui.tools.subagent.completion import SubAgentCompletion
 from deepseek_tui.trace import bind_tool, bind_turn
 
 if TYPE_CHECKING:
+    from deepseek_tui.hooks.executor import HookContext
     from deepseek_tui.tools.runtime import ToolRuntime
 
 logger = logging.getLogger(__name__)
@@ -294,6 +300,11 @@ class Engine:
         self.memory_coordinator: object | None = None
         self.memory_thread_id: str | None = None
         self.memory_mode: str | None = None
+        self.post_turn: object | None = None
+        self._user_turn_index: int = 0
+        self._curated_snapshot: str | None = None
+        self._evolution_pipeline: object | None = None
+        self._current_turn_evidence: object | None = None
         from deepseek_tui.hooks.executor import HookExecutor
 
         self.hook_executor: HookExecutor = (
@@ -322,6 +333,7 @@ class Engine:
         self._subagent_completions: asyncio.Queue[SubAgentCompletion] = (
             asyncio.Queue(maxsize=64)
         )
+        self._consumed_subagent_completions: set[str] = set()
         self._activity_coordinator = SessionActivityCoordinator(
             self, self.handle.try_emit
         )
@@ -526,11 +538,58 @@ class Engine:
                 mailbox=runtime.mailbox,
             )
             runtime.subagent_manager.attach_loop_runtime(loop_runtime)
+
+        pipelines: list[object] = []
+        if engine.memory_coordinator is not None:
+            from deepseek_tui.post_turn.pipelines.memory_pipeline import MemoryPipeline
+
+            pipelines.append(MemoryPipeline(engine.memory_coordinator, cfg))
+
+        engine._curated_snapshot = None
+        engine._evolution_pipeline = None
+        if cfg.evolution.enabled:
+            from deepseek_tui.evolution.constants import (
+                CURATED_MEMORY_STORE_KEY,
+                EVOLUTION_LEDGER_KEY,
+                SKILL_STORE_KEY,
+            )
+            from deepseek_tui.evolution.pipeline import build_evolution_pipeline
+
+            evo = build_evolution_pipeline(
+                cfg,
+                client,
+                ws.resolve(),  # noqa: ASYNC240
+                emit_event=engine.handle.emit,
+            )
+            pipelines.append(evo)
+            engine._curated_snapshot = evo.curated_stable_block()
+            engine._evolution_pipeline = evo
+            engine.tool_context.metadata[CURATED_MEMORY_STORE_KEY] = evo.curated_store
+            engine.tool_context.metadata[SKILL_STORE_KEY] = evo.skill_store
+            engine.tool_context.metadata[EVOLUTION_LEDGER_KEY] = evo.ledger
+
+        if cfg.post_turn.enabled and pipelines:
+            from deepseek_tui.post_turn.orchestrator import PostTurnOrchestrator
+
+            engine.post_turn = PostTurnOrchestrator(
+                pipelines,  # type: ignore[arg-type]
+                flush_timeout_s=cfg.evolution.flush_timeout_s,
+            )
+            await engine.post_turn.start()
+        else:
+            engine.post_turn = None
+
         return engine
 
     async def shutdown_session(self) -> None:
         """Stop background coordinators and tool runtime (tests / teardown)."""
         await self._activity_coordinator.stop()
+        if self.post_turn is not None:
+            from deepseek_tui.post_turn.orchestrator import PostTurnOrchestrator
+
+            if isinstance(self.post_turn, PostTurnOrchestrator):
+                await self.post_turn.stop()
+            self.post_turn = None
         coordinator = self.memory_coordinator
         if coordinator is not None:
             from deepseek_tui.memory.coordinator import MemoryCoordinator
@@ -590,6 +649,87 @@ class Engine:
                     if isinstance(block, ToolUseBlock):
                         return True
         return False
+
+    def _build_turn_evidence(
+        self,
+        *,
+        thread_id: str,
+        user_text: str,
+        turn_slice: list[Message],
+        success: bool,
+        tool_rounds: int,
+        turn_id: str,
+        flush_mode: bool = False,
+    ) -> object:
+        from deepseek_tui.post_turn.evidence import TurnEvidence
+
+        workspace_str = str(self.tool_context.working_directory.resolve())
+        return TurnEvidence(
+            thread_id=thread_id,
+            user_text=user_text,
+            workspace=workspace_str,
+            messages=self._messages_for_capture(turn_slice),
+            had_tool_calls=self._turn_had_tool_calls(turn_slice),
+            success=success,
+            tool_rounds=tool_rounds,
+            user_turn_index=self._user_turn_index,
+            turn_id=turn_id,
+            flush_mode=flush_mode,
+        )
+
+    def _sync_tool_turn_evidence(
+        self,
+        *,
+        working_messages: list[Message],
+        prior_count: int,
+        user_text: str,
+        turn_id: str,
+        success: bool,
+        tool_rounds: int = 0,
+    ) -> None:
+        """Publish turn evidence for post-turn pipelines and optional evolution tools."""
+        from deepseek_tui.evolution.constants import EVOLUTION_LEDGER_KEY, TURN_EVIDENCE_KEY
+
+        thread_id = self._resolve_memory_thread_id()
+        turn_slice = working_messages[prior_count:]
+        evidence = self._build_turn_evidence(
+            thread_id=thread_id,
+            user_text=user_text,
+            turn_slice=turn_slice,
+            success=success,
+            tool_rounds=tool_rounds,
+            turn_id=turn_id,
+        )
+        self._current_turn_evidence = evidence
+        if EVOLUTION_LEDGER_KEY in self.tool_context.metadata:
+            self.tool_context.metadata[TURN_EVIDENCE_KEY] = evidence
+            pipeline = self._evolution_pipeline
+            if pipeline is not None and hasattr(pipeline, "note_active_turn"):
+                pipeline.note_active_turn(thread_id)
+
+    def _build_flush_evidence(self, messages: list[Message]) -> object:
+        thread_id = self._resolve_memory_thread_id()
+        turn_slice = messages[-20:] if len(messages) > 20 else messages
+        user_text = ""
+        for msg in reversed(messages):
+            if msg.role.value == "user":
+                from deepseek_tui.protocol.messages import TextBlock
+
+                parts = [
+                    b.text for b in msg.content if isinstance(b, TextBlock)
+                ]
+                user_text = "\n".join(parts).strip()
+                if user_text:
+                    break
+        return self._build_turn_evidence(
+            thread_id=thread_id,
+            user_text=user_text,
+            turn_slice=turn_slice,
+            success=True,
+            tool_rounds=0,
+            turn_id=str(self.tool_context.metadata.get("turn_latency_turn_id") or ""),
+            flush_mode=True,
+        )
 
     def _render_skills_context(self) -> str | None:
         """Render skills context for system prompt injection."""
@@ -676,41 +816,16 @@ class Engine:
         Unlike :meth:`context_breakdown`, this async path considers dynamically
         discovered MCP tools, then applies TurnLoop's initial active filter.
 
-        Never starts a cold MCP discovery — Workbench polls this endpoint and
-        must not block on subprocess startup.
+        Never blocks on cold MCP discovery — Workbench polls this endpoint and
+        must not wait on subprocess startup.
         """
         from deepseek_tui.engine.context import estimate_context_breakdown
-        from deepseek_tui.engine.tool_profiles import (
-            TOOL_PROFILE_FULL,
-            filter_tools_for_profile,
-        )
 
         target_model = model or self.default_model
-        profile = self.tool_profile or TOOL_PROFILE_FULL
         try:
-            native_tools = self.tool_registry.to_api_tools()
+            api_tools = await self._get_tools_with_mcp()
         except Exception:  # noqa: BLE001
-            native_tools = []
-        mcp = self.mcp_manager
-        if mcp is None:
-            api_tools = filter_tools_for_profile(list(native_tools), profile)
-        elif self._mcp_tools_cache is not None:
-            if not self._mcp_tools_cache:
-                api_tools = filter_tools_for_profile(list(native_tools), profile)
-            else:
-                combined = build_model_tool_catalog(
-                    list(native_tools), list(self._mcp_tools_cache), self.mode
-                )
-                api_tools = filter_tools_for_profile(combined, profile)
-        else:
-            cached = mcp.cached_tools()
-            if cached is None:
-                api_tools = filter_tools_for_profile(list(native_tools), profile)
-            else:
-                combined = build_model_tool_catalog(
-                    list(native_tools), cached, self.mode
-                )
-                api_tools = filter_tools_for_profile(combined, profile)
+            api_tools = []
         api_tools = self._initial_request_tools_for_context(api_tools)
 
         return estimate_context_breakdown(
@@ -799,6 +914,10 @@ class Engine:
         )
         with bind_turn() as turn_id:
             self.handle.reset_cancel()
+            if self.tool_context.subagent_manager is not None:
+                self.tool_context.subagent_manager.attach_parent_cancel(
+                    self.handle.cancel_event
+                )
             self.handle._mark_turn_active()
             try:
                 await self._handle_send_message_inner(op, turn_id)
@@ -888,6 +1007,10 @@ class Engine:
     async def _handle_send_message(self, op: SendMessageOp) -> None:
         with bind_turn() as turn_id:
             self.handle.reset_cancel()
+            if self.tool_context.subagent_manager is not None:
+                self.tool_context.subagent_manager.attach_parent_cancel(
+                    self.handle.cancel_event
+                )
             self.handle._mark_turn_active()
             try:
                 await self._handle_send_message_inner(op, turn_id)
@@ -913,7 +1036,6 @@ class Engine:
         from deepseek_tui.engine.tool_profiles import (
             TOOL_PROFILE_FULL,
             detect_tool_profile_from_prompt,
-            profile_includes_tool_search,
         )
 
         self.tool_profile = detect_tool_profile_from_prompt(
@@ -954,6 +1076,13 @@ class Engine:
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
+        self._sync_tool_turn_evidence(
+            working_messages=working_messages,
+            prior_count=prior_count,
+            user_text=processed.model_text or op.content or "",
+            turn_id=turn_id,
+            success=False,
+        )
         self.working_set.observe_user_message(processed.display_text or "")
         self.working_set.observe_references(processed.references)
         preview = (processed.display_text or "")[:200].replace("\n", " ")
@@ -997,6 +1126,14 @@ class Engine:
                     memory_enabled=self._memory_md_enabled(),
                     memory_path=self.memory_path,
                     memory_recall=memory_recall,
+                    curated_snapshot=getattr(self, "_curated_snapshot", None),
+                    session_evolution_lines=(
+                        self._evolution_pipeline.volatile_lines()
+                        if self._evolution_pipeline is not None
+                        else None
+                    ),
+                    evolution_enabled=self._evolution_pipeline is not None,
+                    workflow_guidelines=self.tool_registry.contains("workflow"),
                 ),
                 max_tokens=op.max_tokens,
             )
@@ -1024,13 +1161,15 @@ class Engine:
             usage = result.usage
             logger.info(
                 "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
-                "cache_hit=%s reasoning_tokens=%s tool_calls=%d",
+                "cache_hit=%s reasoning_tokens=%s last_round_tool_calls=%d "
+                "tool_rounds=%d",
                 duration_ms,
                 getattr(usage, "input_tokens", 0) if usage else 0,
                 getattr(usage, "output_tokens", 0) if usage else 0,
                 getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
                 getattr(usage, "reasoning_tokens", 0) if usage else 0,
                 len(result.tool_calls or []),
+                result.tool_round_count,
             )
             # Accumulate session cost from the DeepSeek usage payload.
             # Hidden when pricing is unknown (off-platform providers,
@@ -1083,26 +1222,42 @@ class Engine:
                 )
             )
             await self._auto_persist_session()
-            if coordinator is not None and not result.cancelled:
+            if not result.cancelled:
                 from deepseek_tui.engine.turn_loop import TurnOutcomeStatus
-                from deepseek_tui.memory.coordinator import MemoryCoordinator
 
-                if isinstance(coordinator, MemoryCoordinator):
-                    turn_slice = working_messages[prior_count:]
-                    turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
-                    await coordinator.capture_after_turn(
-                        thread_id=thread_id,
-                        user_text=processed.model_text or op.content or "",
-                        workspace=workspace_str,
-                        messages=self._messages_for_capture(turn_slice),
-                        had_tool_calls=self._turn_had_tool_calls(turn_slice),
-                        success=turn_ok,
-                    )
+                self._user_turn_index += 1
+                turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
+                self._sync_tool_turn_evidence(
+                    working_messages=working_messages,
+                    prior_count=prior_count,
+                    user_text=processed.model_text or op.content or "",
+                    turn_id=turn_id,
+                    success=turn_ok,
+                    tool_rounds=result.tool_round_count,
+                )
+                evidence = self._current_turn_evidence
+                if self.post_turn is not None and evidence is not None:
+                    await self.post_turn.after_turn(evidence)
+                elif coordinator is not None and evidence is not None:
+                    from deepseek_tui.memory.coordinator import MemoryCoordinator
+
+                    if isinstance(coordinator, MemoryCoordinator):
+                        inp = evidence.to_capture_input()  # type: ignore[attr-defined]
+                        await coordinator.capture_after_turn(
+                            thread_id=inp.thread_id,
+                            user_text=inp.user_text,
+                            workspace=inp.workspace,
+                            messages=inp.messages,
+                            had_tool_calls=inp.had_tool_calls,
+                            success=inp.success,
+                        )
         finally:
             self.handle.clear_response_id()
 
     def _enqueue_subagent_completion(self, completion: SubAgentCompletion) -> None:
         """Thread-safe enqueue from sub-agent driver tasks (#756)."""
+        if completion.agent_id in self._consumed_subagent_completions:
+            return
         try:
             self._subagent_completions.put_nowait(completion)
         except asyncio.QueueFull:
@@ -1112,10 +1267,61 @@ class Engine:
         out: list[SubAgentCompletion] = []
         while True:
             try:
-                out.append(self._subagent_completions.get_nowait())
+                completion = self._subagent_completions.get_nowait()
             except asyncio.QueueEmpty:
                 break
+            if completion.agent_id in self._consumed_subagent_completions:
+                continue
+            out.append(completion)
         return out
+
+    def _mark_subagent_tool_result_consumed(
+        self, tool_name: str, metadata: dict[str, Any] | None
+    ) -> None:
+        """Mark sub-agent completions already returned by wait/result tools."""
+        if not isinstance(metadata, dict):
+            return
+
+        if tool_name == "resume_agent":
+            agent_id = metadata.get("agent_id")
+            if isinstance(agent_id, str):
+                self._consumed_subagent_completions.discard(agent_id)
+            return
+
+        if tool_name not in {
+            "agent_wait",
+            "agent_result",
+            "delegate_to_agent",
+            "agent_cancel",
+            "close_agent",
+        }:
+            return
+
+        def terminal_agent_id(raw: object) -> str | None:
+            if not isinstance(raw, dict):
+                return None
+            agent_id = raw.get("agent_id")
+            status = raw.get("status")
+            if not isinstance(agent_id, str) or not isinstance(status, dict):
+                return None
+            kind = status.get("kind")
+            if kind in {"completed", "failed", "cancelled", "interrupted"}:
+                return agent_id
+            return None
+
+        agents = metadata.get("agents")
+        consumed: set[str] = set()
+        if isinstance(agents, list):
+            for raw in agents:
+                agent_id = terminal_agent_id(raw)
+                if agent_id is not None:
+                    consumed.add(agent_id)
+        else:
+            agent_id = terminal_agent_id(metadata)
+            if agent_id is not None:
+                consumed.add(agent_id)
+
+        self._consumed_subagent_completions.update(consumed)
 
     async def _handle_subagent_turn_handoff(self, messages: list[Message]) -> bool:
         """Wait for direct children and inject ``<deepseek:subagent.done>`` (#756).
@@ -1147,7 +1353,8 @@ class Engine:
                     completion = await asyncio.wait_for(
                         self._subagent_completions.get(), timeout=0.25
                     )
-                    completions.append(completion)
+                    if completion.agent_id not in self._consumed_subagent_completions:
+                        completions.append(completion)
                 except asyncio.TimeoutError:
                     pass
                 completions.extend(self._drain_subagent_completions())
@@ -1190,6 +1397,7 @@ class Engine:
         from deepseek_tui.app_server.turn_latency import get_turn_latency
 
         latency_turn_id = str(turn_id) if turn_id else None
+        tool_round_count = 0
         for round_idx in range(self.max_tool_round_trips + 1):
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -1234,6 +1442,9 @@ class Engine:
             # handles normal compaction; this catches pathological cases where
             # many small messages accumulate without hitting the token floor.
             if len(messages) > 500 or should_compact(messages, self.compaction_config):
+                if self.post_turn is not None and messages:
+                    flush_evidence = self._build_flush_evidence(messages)
+                    await self.post_turn.flush_before_loss(flush_evidence)
                 logger.info(
                     "compact_triggered before_count=%d", len(messages)
                 )
@@ -1289,13 +1500,19 @@ class Engine:
             if round_trace is not None:
                 round_trace.tool_calls = len(result.tool_calls or [])
             if result.cancelled:
-                return result
+                from dataclasses import replace
+
+                return replace(result, tool_round_count=tool_round_count)
             if result.assistant_message is not None:
                 messages.append(result.assistant_message)
             if not result.tool_calls:
                 if await self._handle_subagent_turn_handoff(messages):
                     continue
-                return result
+                from dataclasses import replace
+
+                return replace(result, tool_round_count=tool_round_count)
+
+            tool_round_count += 1
 
             messages.append(self._build_tool_use_message(result.tool_calls))
             from deepseek_tui.app_server.turn_latency import now_ms as latency_now_ms
@@ -1336,7 +1553,9 @@ class Engine:
                 for tc in result.tool_calls
             ):
                 logger.info("plan_tool_stop mode=%s", self.mode)
-                return result
+                from dataclasses import replace
+
+                return replace(result, tool_round_count=tool_round_count)
 
         logger.warning(
             "round_trip_limit_exceeded limit=%d", self.max_tool_round_trips
@@ -1404,11 +1623,9 @@ class Engine:
                     plan_requires_approval,
                     plan_requires_mcp_approval,
                 )
-                from deepseek_tui.tools.base import ToolCapability
 
                 policy = self.exec_policy.approval_policy
                 if tool is not None:
-                    caps = tool.capabilities()
                     plans.append(ToolExecutionPlan(
                         index=i,
                         id=tc.id,
@@ -1494,6 +1711,10 @@ class Engine:
                             "success": result.success,
                         }
                     )
+                    if result.success:
+                        self._mark_subagent_tool_result_consumed(
+                            tool_call.name, result.metadata
+                        )
                     self.working_set.observe_tool_call(
                         tool_call.name,
                         tool_call.arguments
@@ -1501,6 +1722,8 @@ class Engine:
                         else None,
                         result.content,
                     )
+                    if self.post_turn is not None:
+                        self.post_turn.on_main_tool_called(tool_call.name)
                     await self.handle.emit(
                         ToolResultEvent(
                             tool_call_id=tool_call.id,
@@ -1675,6 +1898,10 @@ class Engine:
                         "success": result.success,
                     }
                 )
+                if result.success:
+                    self._mark_subagent_tool_result_consumed(
+                        tool_call.name, result.metadata
+                    )
                 self.working_set.observe_tool_call(
                     tool_call.name,
                     tool_call.arguments
@@ -1682,6 +1909,8 @@ class Engine:
                     else None,
                     result.content,
                 )
+                if self.post_turn is not None:
+                    self.post_turn.on_main_tool_called(tool_call.name)
                 await self.handle.emit(
                     ToolResultEvent(
                         tool_call_id=tool_call.id,
@@ -1789,9 +2018,10 @@ class Engine:
         message: str | None = None,
         error_message: str | None = None,
         previous_mode: str | None = None,
-    ) -> "HookContext":
-        from deepseek_tui.hooks.executor import HookContext
+    ) -> HookContext:
         import json
+
+        from deepseek_tui.hooks.executor import HookContext
 
         return HookContext(
             tool_name=tool_name,
@@ -1947,12 +2177,30 @@ class Engine:
                 )
 
             self.tool_context.metadata["rlm_progress_cb"] = _rlm_progress
+        elif tool_name == "workflow":
+            self.tool_context.metadata["engine_cancel_event"] = self.handle.cancel_event
+            self.tool_context.metadata["workflow_tool_call_id"] = tool_call.id
+
+            def _workflow_emit(ev: WorkflowProgressEvent) -> None:
+                self.handle.try_emit(ev)
+
+            self.tool_context.metadata["workflow_emit"] = _workflow_emit
+
+            def _workflow_status(message: str) -> None:
+                self.handle.try_emit(StatusEvent(message))
+
+            self.tool_context.metadata["workflow_status_cb"] = _workflow_status
         try:
             return await self.tool_registry.execute(
                 tool_name, tool_call.arguments, self.tool_context
             )
         finally:
             self.tool_context.metadata.pop("rlm_progress_cb", None)
+            if tool_name == "workflow":
+                self.tool_context.metadata.pop("engine_cancel_event", None)
+                self.tool_context.metadata.pop("workflow_tool_call_id", None)
+                self.tool_context.metadata.pop("workflow_emit", None)
+                self.tool_context.metadata.pop("workflow_status_cb", None)
 
     async def _execute_mcp_tool(
         self, name: str, arguments: dict[str, Any]

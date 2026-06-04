@@ -80,6 +80,11 @@ def user_memory_data_dir() -> Path:
     return user_deepseek_dir() / "memory_data"
 
 
+def user_curated_memories_dir() -> Path:
+    """``~/.deepseek/memories/`` — curated MEMORY.md / USER.md (evolution)."""
+    return user_deepseek_dir() / "memories"
+
+
 def user_notes_path() -> Path:
     """``~/.deepseek/notes.txt`` — user scratch notes (matches Rust .txt)."""
     return user_deepseek_dir() / "notes.txt"

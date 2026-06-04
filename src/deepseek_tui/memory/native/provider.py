@@ -555,16 +555,19 @@ class NativeMemoryProvider:
         *,
         workspace: str | None = None,
         thread_id: str | None = None,
+        exclude_thread_id: str | None = None,
         limit: int = 5,
+        summarize: bool = True,
     ) -> str:
         hits = search_l0_jsonl(
             self._data_dir / "l0",
             query,
             thread_id=thread_id,
             workspace=workspace,
+            exclude_thread_id=exclude_thread_id,
             limit=limit,
         )
-        return format_l0_hits(hits)
+        return format_l0_hits(hits, summarize=summarize)
 
     async def remember_instruction(
         self,

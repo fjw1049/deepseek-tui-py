@@ -123,7 +123,8 @@ class ConversationSearchTool(ToolSpec):
     def description(self) -> str:
         return (
             "Search raw conversation archives when structured memory_search results "
-            "are insufficient. Returns message excerpts with thread/line metadata. "
+            "are insufficient. Workspace scope excludes the current thread by default. "
+            "Use for past session progress — not for durable preferences (memory_curate). "
             f"Limit: memory_search and conversation_search share {MAX_COMBINED_SEARCH_CALLS} "
             "calls per turn combined."
         )
@@ -145,6 +146,13 @@ class ConversationSearchTool(ToolSpec):
                     "enum": ["workspace", "current_thread", "all"],
                     "description": "Search scope. Defaults to workspace.",
                 },
+                "summarize": {
+                    "type": "boolean",
+                    "description": (
+                        "When true (default), return a grouped digest instead of "
+                        "raw excerpts."
+                    ),
+                },
             },
             "required": ["query"],
         }
@@ -165,14 +173,21 @@ class ConversationSearchTool(ToolSpec):
             raise ToolError("'scope' must be one of: workspace, current_thread, all")
         workspace = None if scope == "all" else _workspace(context)
         thread_id = _thread_id(context) if scope == "current_thread" else None
+        exclude_thread_id = (
+            _thread_id(context) if scope == "workspace" and thread_id is None else None
+        )
+        summarize_raw = input_data.get("summarize", True)
+        summarize = bool(summarize_raw) if isinstance(summarize_raw, bool) else True
         text = await provider.search_conversations(
             query,
-            workspace=workspace,
+            workspace=workspace or "",
             thread_id=thread_id,
+            exclude_thread_id=exclude_thread_id,
             limit=limit,
+            summarize=summarize,
         )
         return ToolResult(
             success=True,
             content=text,
-            metadata={"query": query, "limit": limit, "scope": scope},
+            metadata={"query": query, "limit": limit, "scope": scope, "summarize": summarize},
         )

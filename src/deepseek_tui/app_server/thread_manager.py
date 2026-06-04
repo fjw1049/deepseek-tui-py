@@ -38,16 +38,27 @@ from deepseek_tui.app_server.runtime_threads import (
     duration_ms,
     file_change_completion_detail,
     reconstruct_messages_from_turns,
-    tool_kind_for_name,
-    tool_item_metadata,
     todo_tool_metadata_from_result,
+    tool_item_metadata,
+    tool_kind_for_name,
 )
 from deepseek_tui.app_server.session_import import ImportTuiSessionRequest
+from deepseek_tui.app_server.turn_delta_batcher import TurnDeltaBatcher
+from deepseek_tui.app_server.turn_latency import (
+    TurnLatencyTrace,
+    bind_turn_latency,
+    first_response_timeout_message,
+    first_response_timeout_s,
+    get_turn_latency,
+    now_ms,
+    pop_turn_latency,
+)
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ElevationRequiredEvent,
     ErrorEvent,
+    EvolutionProposalEvent,
     StatusEvent,
     SubAgentMailboxEvent,
     TextDeltaEvent,
@@ -58,16 +69,7 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
-)
-from deepseek_tui.app_server.turn_delta_batcher import TurnDeltaBatcher
-from deepseek_tui.app_server.turn_latency import (
-    TurnLatencyTrace,
-    bind_turn_latency,
-    first_response_timeout_message,
-    first_response_timeout_s,
-    get_turn_latency,
-    now_ms,
-    pop_turn_latency,
+    WorkflowProgressEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.tools.subagent.mailbox import MailboxMessage
@@ -81,6 +83,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["RuntimeThreadManager"]
+
+
+def _resolved_workspace_path(raw: str) -> Path:
+    return Path(raw).expanduser().resolve()
 
 
 def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
@@ -440,17 +446,24 @@ class RuntimeThreadManager:
             {"automation_name": automation_name, "summary": summary},
         )
 
-    async def _flush_thread_memory(self, thread_id: str) -> None:
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-        if state is None:
+    async def _flush_engine_memory(self, engine: Engine, thread_id: str) -> None:
+        if engine.post_turn is not None and engine.session_messages:
+            evidence = engine._build_flush_evidence(engine.session_messages)
+            await engine.post_turn.flush_before_loss(evidence)
             return
-        coordinator = state.engine.memory_coordinator
+        coordinator = engine.memory_coordinator
         if coordinator is not None:
             from deepseek_tui.memory.coordinator import MemoryCoordinator
 
             if isinstance(coordinator, MemoryCoordinator):
                 await coordinator.flush_session(thread_id)
+
+    async def _flush_thread_memory(self, thread_id: str) -> None:
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+        if state is None:
+            return
+        await self._flush_engine_memory(state.engine, thread_id)
 
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
         if req.archived is None and req.title is None and req.memory_mode is None:
@@ -560,8 +573,6 @@ class RuntimeThreadManager:
         dynamically discovered MCP tools. Otherwise reconstructs messages from
         the store and estimates with the default tool registry for that mode.
         """
-        from pathlib import Path
-
         from deepseek_tui.engine.context import estimate_context_breakdown
         from deepseek_tui.tools.builder import build_default_registry
 
@@ -575,7 +586,7 @@ class RuntimeThreadManager:
             return await active_engine.context_breakdown_live(thread.model)
 
         messages = reconstruct_messages_from_turns(self.store, thread_id)
-        workspace = Path(thread.workspace).expanduser().resolve()
+        workspace = _resolved_workspace_path(thread.workspace)
         mode = (thread.mode or "agent").strip() or "agent"
         registry = build_default_registry(self.config, mode=mode)
         try:
@@ -1029,7 +1040,7 @@ class RuntimeThreadManager:
         from deepseek_tui.execpolicy.engine import exec_policy_for_config
 
         handle = EngineHandle()
-        workspace = Path(thread.workspace).expanduser().resolve()
+        workspace = _resolved_workspace_path(thread.workspace)
         approval_handler = self._build_approval_handler(thread.id)
         shared_runtime = self._shared_tool_runtime
         shared_mcp = None
@@ -1068,12 +1079,7 @@ class RuntimeThreadManager:
             self._touch_lru(thread.id)
 
         for evicted_tid, evicted_state in evicted:
-            coordinator = evicted_state.engine.memory_coordinator
-            if coordinator is not None:
-                from deepseek_tui.memory.coordinator import MemoryCoordinator
-
-                if isinstance(coordinator, MemoryCoordinator):
-                    await coordinator.flush_session(evicted_tid)
+            await self._flush_engine_memory(evicted_state.engine, evicted_tid)
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
 
@@ -1223,6 +1229,7 @@ class RuntimeThreadManager:
         current_reasoning_item_id: str | None = None
         current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
+        workflow_items: dict[str, str] = {}  # tool_call_id -> item_id (workflow progress)
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
@@ -1467,6 +1474,69 @@ class RuntimeThreadManager:
                     elevation_request_to_sse_payload(event.tool_call_id, event),
                 )
 
+            elif isinstance(event, WorkflowProgressEvent):
+                import json as _json
+
+                from deepseek_tui.workflow.models import WorkflowSnapshot
+                from deepseek_tui.workflow.serialize import snapshot_to_dict
+
+                snap = event.snapshot
+                snapshot_payload = (
+                    snapshot_to_dict(snap)
+                    if isinstance(snap, WorkflowSnapshot)
+                    else snap
+                )
+                payload = {
+                    "tool_call_id": event.tool_call_id,
+                    "workflow_name": event.workflow_name,
+                    "snapshot": snapshot_payload,
+                    "completed": event.completed,
+                    "status": event.status,
+                }
+                item_id = workflow_items.get(event.tool_call_id)
+                now = datetime.now(timezone.utc)
+                if item_id is None:
+                    item_id = f"item_{uuid.uuid4().hex[:8]}"
+                    workflow_items[event.tool_call_id] = item_id
+                    item = TurnItemRecord(
+                        id=item_id,
+                        turn_id=turn_id,
+                        kind=TurnItemKind.STATUS,
+                        status=TurnItemLifecycleStatus.IN_PROGRESS,
+                        summary=f"workflow:{event.workflow_name}",
+                        detail=_json.dumps(payload, default=str),
+                        metadata={"workflow_progress": True},
+                        started_at=now,
+                    )
+                    self.store.save_item(item)
+                    self._attach_item_to_turn(turn_id, item_id)
+                    await self._emit_event(
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        "item.started",
+                        {"item": item.model_dump(mode="json")},
+                    )
+                else:
+                    item = self.store.load_item(item_id)
+                    item.detail = _json.dumps(payload, default=str)
+                    if event.completed:
+                        if event.status == "failed":
+                            item.status = TurnItemLifecycleStatus.FAILED
+                        elif event.status == "cancelled":
+                            item.status = TurnItemLifecycleStatus.CANCELED
+                        else:
+                            item.status = TurnItemLifecycleStatus.COMPLETED
+                        item.ended_at = now
+                    self.store.save_item(item)
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    "workflow.progress",
+                    payload,
+                )
+
             elif isinstance(event, StatusEvent):
                 now = datetime.now(timezone.utc)
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
@@ -1489,6 +1559,20 @@ class RuntimeThreadManager:
                     item_id,
                     "item.completed",
                     {"item": item.model_dump(mode="json")},
+                )
+
+            elif isinstance(event, EvolutionProposalEvent):
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    None,
+                    "evolution.suggested",
+                    {
+                        "record_id": event.record_id,
+                        "kind": event.kind,
+                        "summary": event.summary,
+                        "asset_path": event.asset_path,
+                    },
                 )
 
             elif isinstance(event, UserInputRequiredEvent):
@@ -1630,6 +1714,9 @@ class RuntimeThreadManager:
         await self._finalize_orphan_tool_items(
             thread_id, turn_id, tool_items, turn_status
         )
+        await self._finalize_orphan_workflow_items(
+            thread_id, turn_id, workflow_items, turn_status
+        )
 
         # Finalize any open reasoning item
         if current_reasoning_item_id is not None:
@@ -1766,6 +1853,72 @@ class RuntimeThreadManager:
                 {"item": item.model_dump(mode="json")},
             )
         tool_items.clear()
+
+    async def _finalize_orphan_workflow_items(
+        self,
+        thread_id: str,
+        turn_id: str,
+        workflow_items: dict[str, str],
+        turn_status: RuntimeTurnStatus,
+    ) -> None:
+        """Close workflow progress items that never received a terminal event."""
+        if not workflow_items:
+            return
+        import json as _json
+
+        now = datetime.now(timezone.utc)
+        interrupted = turn_status in (
+            RuntimeTurnStatus.INTERRUPTED,
+            RuntimeTurnStatus.CANCELED,
+        )
+        workflow_status = "cancelled" if interrupted else "failed"
+        item_status = (
+            TurnItemLifecycleStatus.INTERRUPTED
+            if interrupted
+            else TurnItemLifecycleStatus.FAILED
+        )
+        event_name = "item.interrupted" if interrupted else "item.failed"
+
+        for tool_call_id, item_id in list(workflow_items.items()):
+            try:
+                item = self.store.load_item(item_id)
+            except FileNotFoundError:
+                continue
+            if item.status != TurnItemLifecycleStatus.IN_PROGRESS:
+                continue
+            payload: dict[str, Any]
+            try:
+                parsed = _json.loads(item.detail or "{}")
+                payload = parsed if isinstance(parsed, dict) else {}
+            except _json.JSONDecodeError:
+                payload = {}
+            payload["tool_call_id"] = str(payload.get("tool_call_id") or tool_call_id)
+            payload["completed"] = True
+            payload["status"] = workflow_status
+
+            item.status = item_status
+            item.summary = summarize_text(
+                f"{item.summary}: {workflow_status}",
+                SUMMARY_LIMIT,
+            )
+            item.detail = _json.dumps(payload, default=str)
+            item.ended_at = now
+            self.store.save_item(item)
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                item_id,
+                event_name,
+                {"item": item.model_dump(mode="json")},
+            )
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                item_id,
+                "workflow.progress",
+                payload,
+            )
+        workflow_items.clear()
 
     async def _emit_event(
         self,

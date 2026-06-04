@@ -3,6 +3,7 @@ import type {
   AgentProviderId,
   ApprovalRequestPayload,
   ElevationRequestPayload,
+  EvolutionProposalPayload,
   ChatBlock,
   NormalizedThread,
   ThreadDeltaEvent,
@@ -13,7 +14,8 @@ import type {
   UserMessageEventPayload,
   UserInputAnswer,
   UserInputQuestion,
-  UserInputRequestPayload
+  UserInputRequestPayload,
+  WorkflowProgressPayload
 } from './types'
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { unwrapClawRuntimePromptForDisplay, unwrapClawUserPromptForDisplay } from '@shared/app-settings'
@@ -24,6 +26,12 @@ import {
   type MailboxMessageJson,
   type SubagentCardState
 } from '../lib/subagent-mailbox'
+import {
+  parseWorkflowProgressPayload,
+  parseWorkflowSnapshot,
+  workflowSnapshotFromToolMeta
+} from '../lib/workflow-snapshot'
+import { upsertWorkflowBlock } from '../store/chat-store-runtime-helpers'
 
 function emitApprovalFromSsePayload(
   sink: ThreadEventSink,
@@ -36,6 +44,35 @@ function emitApprovalFromSsePayload(
     id: approvalId
   })
   if (req) sink.onApproval(req)
+}
+
+function evolutionPayloadFromRecord(
+  row: Record<string, unknown>
+): EvolutionProposalPayload | null {
+  const recordId = String(row.record_id ?? row.id ?? '')
+  if (!recordId) return null
+  return {
+    recordId,
+    kind: String(row.kind ?? 'unknown'),
+    summary: String(row.summary ?? 'Experience evolution proposal'),
+    assetPath:
+      typeof row.asset_path === 'string' && row.asset_path.trim()
+        ? row.asset_path.trim()
+        : undefined
+  }
+}
+
+function emitEvolutionFromSsePayload(
+  sink: ThreadEventSink,
+  payload: Record<string, unknown>,
+  recordId: string
+): void {
+  const req = evolutionPayloadFromRecord({
+    ...payload,
+    record_id: recordId,
+    id: recordId
+  })
+  if (req && sink.onEvolutionProposal) sink.onEvolutionProposal(req)
 }
 
 function elevationPayloadFromRecord(
@@ -422,6 +459,53 @@ function isSubagentMailboxItem(it: TurnItemJson): boolean {
   return it.kind === 'status' && meta?.subagent_mailbox === true
 }
 
+function isWorkflowProgressItem(it: TurnItemJson): boolean {
+  const meta = it.metadata && typeof it.metadata === 'object' ? it.metadata : undefined
+  return it.kind === 'status' && meta?.workflow_progress === true
+}
+
+function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload | null {
+  const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
+  if (!detail) return null
+  try {
+    const parsed = JSON.parse(detail) as Record<string, unknown>
+    const toolCallId =
+      typeof parsed.tool_call_id === 'string'
+        ? parsed.tool_call_id
+        : typeof it.metadata === 'object' && it.metadata && typeof it.metadata.tool_call_id === 'string'
+          ? String(it.metadata.tool_call_id)
+          : ''
+    const payload = {
+      tool_call_id: toolCallId,
+      workflow_name: parsed.workflow_name,
+      snapshot: parsed.snapshot,
+      completed: parsed.completed === true || it.status === 'completed',
+      status: parsed.status
+    }
+    const progress = parseWorkflowProgressPayload(payload)
+    if (progress) return progress
+    const snapshot = parseWorkflowSnapshot(parsed.snapshot)
+    if (!snapshot || !toolCallId) return null
+    return {
+      toolCallId,
+      workflowName:
+        typeof parsed.workflow_name === 'string' ? parsed.workflow_name : snapshot.name,
+      snapshot,
+      completed: parsed.completed === true || it.status === 'completed',
+      status:
+        parsed.status === 'running' ||
+        parsed.status === 'completed' ||
+        parsed.status === 'failed' ||
+        parsed.status === 'cancelled' ||
+        parsed.status === 'timed_out'
+          ? parsed.status
+          : undefined
+    }
+  } catch {
+    return null
+  }
+}
+
 function readSubagentMailboxFromItem(it: TurnItemJson): MailboxMessageJson | null {
   const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
   if (!detail) return null
@@ -583,6 +667,45 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     return rows
       .map((row) => approvalPayloadFromRecord(row))
       .filter((row): row is ApprovalRequestPayload => row !== null)
+  }
+
+  async submitEvolutionDecision(
+    recordId: string,
+    decision: 'approve' | 'reject',
+    threadId: string
+  ): Promise<void> {
+    const action = decision === 'approve' ? 'approve' : 'reject'
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/evolution/${encodeURIComponent(recordId)}/${action}?thread_id=${encodeURIComponent(threadId)}`,
+      'POST',
+      decision === 'reject' ? JSON.stringify({ reason: 'user rejected' }) : undefined
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `evolution decision failed: ${r.status}`))
+    }
+  }
+
+  async fetchPendingEvolution(threadId: string): Promise<EvolutionProposalPayload[]> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/evolution/pending?thread_id=${encodeURIComponent(threadId)}`,
+      'GET'
+    )
+    if (!r.ok) return []
+    const rows = JSON.parse(r.body) as Array<Record<string, unknown>>
+    return rows
+      .map((row) => {
+        const nested =
+          row.mutation && typeof row.mutation === 'object'
+            ? (row.mutation as Record<string, unknown>)
+            : {}
+        return evolutionPayloadFromRecord({
+          record_id: row.id ?? row.record_id,
+          kind: nested.kind ?? row.kind,
+          summary: row.summary ?? row.reason ?? nested.reason,
+          asset_path: row.asset_path
+        })
+      })
+      .filter((row): row is EvolutionProposalPayload => row !== null)
   }
 
   async fetchPendingUserInputs(threadId: string): Promise<UserInputRequestPayload[]> {
@@ -812,7 +935,17 @@ export class DeepseekRuntimeProvider implements AgentProvider {
           blocks.push(toolBlockFromItem(it))
         }
       } else if (TOOL_ITEM_KINDS.has(it.kind)) {
-        blocks.push(toolBlockFromItem(it))
+        const toolBlock = toolBlockFromItem(it)
+        blocks.push(toolBlock)
+        const snap = workflowSnapshotFromToolMeta(toolBlock.meta)
+        if (snap) {
+          blocks = upsertWorkflowBlock(blocks, {
+            toolCallId: it.id,
+            workflowName: snap.name,
+            snapshot: snap,
+            completed: statusFromString(it.status) !== 'running'
+          })
+        }
       } else if (it.kind === 'error') {
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text: `⚠ ${it.detail ?? it.summary}` })
       } else if (isSubagentMailboxItem(it)) {
@@ -820,6 +953,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         if (mailbox) {
           subagentCards = applyMailboxMessage(subagentCards, mailbox)
           blocks = upsertSubagentBlock(blocks, subagentCards, mailbox.agent_id, itemCreatedAt(it))
+        }
+      } else if (isWorkflowProgressItem(it)) {
+        const progress = readWorkflowProgressFromItem(it)
+        if (progress) {
+          blocks = upsertWorkflowBlock(blocks, progress)
         }
       } else if (it.kind === 'status' || it.kind === 'context_compaction') {
         const text = it.summary || it.kind
@@ -1243,6 +1381,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 return
               }
 
+              if (ev === 'workflow.progress' && sink.onWorkflowProgress) {
+                const progress = parseWorkflowProgressPayload(payload)
+                if (progress) {
+                  sink.onWorkflowProgress(progress)
+                }
+                return
+              }
+
               if (ev === 'subagent.mailbox' && sink.onSubagentMailbox) {
                 const seq = typeof payload.seq === 'number' ? payload.seq : 0
                 const message = payload.message as Record<string, unknown> | undefined
@@ -1286,6 +1432,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 )
                 if (!elevationId) return
                 emitElevationFromSsePayload(sink, payload, elevationId)
+              }
+
+              if (ev === 'evolution.suggested') {
+                const recordId = String(payload.record_id ?? payload.id ?? '')
+                if (!recordId) return
+                emitEvolutionFromSsePayload(sink, payload, recordId)
               }
             })
 

@@ -168,7 +168,9 @@ class MemoryCoordinator:
         *,
         workspace: str,
         thread_id: str | None = None,
+        exclude_thread_id: str | None = None,
         limit: int = 5,
+        summarize: bool = True,
     ) -> str:
         if not self.enabled:
             return "Smart memory is disabled. Enable [memory.smart] in config."
@@ -176,5 +178,7 @@ class MemoryCoordinator:
             query,
             workspace=workspace,
             thread_id=thread_id,
+            exclude_thread_id=exclude_thread_id,
             limit=limit,
+            summarize=summarize,
         )

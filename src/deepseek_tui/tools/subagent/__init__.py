@@ -9,6 +9,7 @@ from deepseek_tui.tools.subagent.mailbox import (
     MailboxMessage,
     MailboxMessageKind,
 )
+from deepseek_tui.tools.subagent.output import AgentRunOutput
 from deepseek_tui.tools.subagent.manager import (
     DEFAULT_MAX_AGENTS,
     DEFAULT_MAX_SPAWN_DEPTH,
@@ -31,6 +32,7 @@ from deepseek_tui.tools.subagent.manager import (
 )
 
 __all__ = [
+    "AgentRunOutput",
     "DEFAULT_MAX_AGENTS",
     "DEFAULT_MAX_SPAWN_DEPTH",
     "DEFAULT_MAX_STEPS",

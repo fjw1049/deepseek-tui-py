@@ -74,6 +74,10 @@ def build_system_prompt(
     memory_enabled: bool = False,
     memory_path: Path | None = None,
     memory_recall: RecallResult | None = None,
+    curated_snapshot: str | None = None,
+    session_evolution_lines: list[str] | None = None,
+    evolution_enabled: bool = False,
+    workflow_guidelines: bool = False,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -117,6 +121,17 @@ def build_system_prompt(
     if workspace is not None:
         full_prompt += "\n\n" + render_environment_block(workspace, locale_tag)
 
+    if evolution_enabled and curated_snapshot:
+        full_prompt += "\n\n" + curated_snapshot
+    if evolution_enabled:
+        from deepseek_tui.evolution.prompts import (
+            EVOLUTION_GUIDANCE,
+            SKILLS_EVOLUTION_GUIDANCE,
+        )
+
+        full_prompt += "\n\n" + EVOLUTION_GUIDANCE
+        full_prompt += "\n\n" + SKILLS_EVOLUTION_GUIDANCE
+
     if memory_recall and memory_recall.append_system.strip():
         full_prompt += "\n\n" + memory_recall.append_system.strip()
 
@@ -138,6 +153,13 @@ def build_system_prompt(
     if skills_context and skills_context.strip():
         full_prompt += "\n\n" + skills_context
 
+    if workflow_guidelines:
+        from deepseek_tui.workflow.prompts import workflow_guidelines_snippet
+
+        snippet = workflow_guidelines_snippet()
+        if snippet:
+            full_prompt += "\n\n" + snippet
+
     # Compaction handoff template
     full_prompt += "\n\n" + COMPACT_TEMPLATE()
 
@@ -156,6 +178,11 @@ def build_system_prompt(
         volatile_l1 = wrap_relevant_memories_system_block(memory_recall.l1_context)
         if volatile_l1:
             full_prompt += "\n\n" + volatile_l1
+
+    if session_evolution_lines:
+        full_prompt += "\n\n<session-evolution>\n"
+        full_prompt += "\n".join(session_evolution_lines)
+        full_prompt += "\n</session-evolution>"
 
     # User memory (~/.deepseek/memory.md) — opt-in, re-read each turn.
     memory_block = _load_user_memory(memory_enabled, memory_path)

@@ -112,6 +112,7 @@ export type ChatState = {
   scrollToBlock: (blockId: string) => void
   clearScrollTarget: () => void
   resolveApproval: (blockId: string, decision: 'allow' | 'deny', remember?: boolean) => Promise<void>
+  resolveEvolution: (blockId: string, decision: 'approve' | 'reject') => Promise<void>
   resolveElevation: (blockId: string, decision: 'allow' | 'deny') => Promise<void>
   resolveUserInput: (
     blockId: string,

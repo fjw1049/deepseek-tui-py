@@ -35,8 +35,10 @@ import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { useChatStore } from '../../store/chat-store'
 import { DiffView } from '../DiffView'
 import { ApprovalBubble } from './ApprovalBubble'
+import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
+import { WorkflowBlock } from './WorkflowBlock'
 import {
   buildTodoEventsForTurn,
   buildTodoSessionForTurn,
@@ -449,6 +451,7 @@ function splitThink(text: string): { think: string; content: string } {
 function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'tool') return block.status === 'running'
   if (block.kind === 'approval') return block.status === 'pending'
+  if (block.kind === 'evolution') return block.status === 'pending'
   if (block.kind === 'user_input') return block.status === 'pending'
   if (block.kind === 'subagent') {
     return block.status === 'pending' || block.status === 'running'
@@ -456,10 +459,15 @@ function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   return false
 }
 
+function isWorkflowBlock(block: ChatBlock): boolean {
+  return block.kind === 'workflow'
+}
+
 function isProcessBlock(block: ChatBlock): boolean {
   return (
     block.kind === 'reasoning' ||
     block.kind === 'tool' ||
+    block.kind === 'workflow' ||
     block.kind === 'approval' ||
     block.kind === 'user_input' ||
     block.kind === 'subagent' ||
@@ -1892,6 +1900,12 @@ function describeProcessBlock(
       ? t('subagentFanoutTitle', { kind: block.agentType })
       : t('subagentDelegateTitle', { type: block.agentType })
   }
+  if (block.kind === 'workflow') {
+    return t('workflowProcessTitle', {
+      defaultValue: 'workflow: {{name}}',
+      name: block.workflowName
+    })
+  }
   if (block.kind === 'system') {
     return block.text
   }
@@ -2447,8 +2461,20 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
   if (block.kind === 'subagent') {
     return <SubagentBubble block={block} />
   }
+  if (block.kind === 'workflow') {
+    return (
+      <WorkflowBlock
+        workflowName={block.workflowName}
+        status={block.status}
+        snapshot={block.snapshot}
+      />
+    )
+  }
   if (block.kind === 'approval') {
     return <ApprovalBubble block={block} />
+  }
+  if (block.kind === 'evolution') {
+    return <EvolutionBubble block={block} />
   }
   if (block.kind === 'elevation') {
     return <ElevationBubble block={block} />

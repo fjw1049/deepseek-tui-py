@@ -20,6 +20,7 @@ from deepseek_tui.engine.events import (
     ElevationRequiredEvent,
     EngineEvent,
     ErrorEvent,
+    EvolutionProposalEvent,
     SandboxDeniedEvent,
     StatusEvent,
     TextDeltaEvent,
@@ -29,6 +30,7 @@ from deepseek_tui.engine.events import (
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
+    WorkflowProgressEvent,
 )
 
 
@@ -108,6 +110,31 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
         }
     if isinstance(event, StatusEvent):
         return {"event": "status", "message": event.message}
+    if isinstance(event, WorkflowProgressEvent):
+        from deepseek_tui.workflow.models import WorkflowSnapshot
+        from deepseek_tui.workflow.serialize import snapshot_to_dict
+
+        snap = event.snapshot
+        snapshot_payload = (
+            snapshot_to_dict(snap) if isinstance(snap, WorkflowSnapshot) else snap
+        )
+        return {
+            "event": "workflow.progress",
+            "tool_call_id": event.tool_call_id,
+            "thread_id": event.thread_id,
+            "workflow_name": event.workflow_name,
+            "snapshot": snapshot_payload,
+            "completed": event.completed,
+            "status": event.status,
+        }
+    if isinstance(event, EvolutionProposalEvent):
+        return {
+            "event": "evolution.suggested",
+            "record_id": event.record_id,
+            "kind": event.kind,
+            "summary": event.summary,
+            "asset_path": event.asset_path,
+        }
     # EngineEvent is a closed Union; this is only reached if a new variant
     # lands without a branch above. Raise instead of silent pass-through.
     raise TypeError(f"Unhandled EngineEvent variant: {type(event).__name__}")

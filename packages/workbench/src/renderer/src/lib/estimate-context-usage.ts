@@ -82,9 +82,28 @@ function blockTextLength(block: ChatBlock): number {
     case 'tool':
       return (block.detail?.length ?? 0) + block.summary.length
     case 'approval':
-    case 'user_input':
+    case 'evolution':
     case 'subagent':
       return block.summary?.length ?? 0
+    case 'elevation':
+      return (
+        block.reason.length +
+        block.elevationKind.length +
+        (block.commandPreview?.length ?? 0)
+      )
+    case 'user_input':
+      return block.questions.reduce(
+        (sum, question) =>
+          sum +
+          question.header.length +
+          question.question.length +
+          question.options.reduce(
+            (optionSum, option) =>
+              optionSum + option.label.length + option.description.length,
+            0
+          ),
+        0
+      )
     default:
       return 0
   }

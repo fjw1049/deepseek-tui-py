@@ -24,6 +24,7 @@ def search_l0_jsonl(
     *,
     thread_id: str | None = None,
     workspace: str | None = None,
+    exclude_thread_id: str | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     """BM25 search over ``l0/*.jsonl`` lines."""
@@ -58,6 +59,8 @@ def search_l0_jsonl(
                 continue
             content = str(row.get("content", "") or "")
             if not content.strip():
+                continue
+            if exclude_thread_id and tid == exclude_thread_id.replace("/", "_"):
                 continue
             docs.append(
                 {
@@ -113,9 +116,13 @@ def search_l0_jsonl(
     return out
 
 
-def format_l0_hits(hits: list[dict[str, Any]]) -> str:
+def format_l0_hits(hits: list[dict[str, Any]], *, summarize: bool = False) -> str:
     if not hits:
         return "No matching conversation lines found."
+    if summarize:
+        from deepseek_tui.memory.native.l0_summarize import summarize_l0_hits
+
+        return summarize_l0_hits(hits)
     lines: list[str] = []
     for hit in hits:
         lines.append(

@@ -19,9 +19,18 @@ __all__ = [
     "claude_global_skills_dir",
     "default_skills_dir",
     "discover_in_workspace",
+    "invalidate_skills_prompt_cache",
     "render_available_skills_context",
     "skills_directories",
 ]
+
+_skills_prompt_cache_token = 0
+
+
+def invalidate_skills_prompt_cache() -> None:
+    """Bump skills prompt cache generation after evolution skill writes."""
+    global _skills_prompt_cache_token
+    _skills_prompt_cache_token += 1
 
 _LOG = logging.getLogger(__name__)
 
