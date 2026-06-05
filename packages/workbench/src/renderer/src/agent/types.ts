@@ -123,7 +123,7 @@ export type ChatBlock =
       toolCallId: string
       createdAt?: string
       workflowName: string
-      status: 'running' | 'completed' | 'failed'
+      status: 'running' | 'completed' | 'failed' | 'cancelled'
       snapshot: WorkflowSnapshotPayload
     }
 

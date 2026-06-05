@@ -159,8 +159,10 @@ export function upsertWorkflowBlock(
   blocks: ChatBlock[],
   ev: WorkflowProgressPayload
 ): ChatBlock[] {
-  const status: 'running' | 'completed' | 'failed' = ev.completed
-    ? ev.status === 'failed' || ev.status === 'cancelled' || ev.status === 'timed_out'
+  const status: 'running' | 'completed' | 'failed' | 'cancelled' = ev.completed
+    ? ev.status === 'cancelled' || ev.status === 'timed_out'
+      ? 'cancelled'
+      : ev.status === 'failed'
       ? 'failed'
       : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
       ? 'failed'

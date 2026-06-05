@@ -17,7 +17,7 @@ from deepseek_tui.tools.subagent.manager import (
 from deepseek_tui.tools.subagent.output import AgentRunOutput
 from deepseek_tui.tools.workflow_tool import WorkflowTool
 from deepseek_tui.workflow.agent_runner import DeepSeekAgentRunner
-from deepseek_tui.workflow.models import StepOutput, WorkflowPolicy
+from deepseek_tui.workflow.models import StepOutput, WorkflowAbortedError, WorkflowPolicy
 from deepseek_tui.workflow.template import make_step_output
 
 
@@ -126,9 +126,9 @@ async def test_agent_runner_cancel_interrupts_spawned_subagent_task(
         await asyncio.sleep(0.01)
 
     cancel_event.set()
-    result = await asyncio.wait_for(task, timeout=1)
+    with pytest.raises(WorkflowAbortedError):
+        await asyncio.wait_for(task, timeout=1)
 
-    assert result is None
     await asyncio.wait_for(cancelled.wait(), timeout=1)
     assert manager.running_count() == 0
 

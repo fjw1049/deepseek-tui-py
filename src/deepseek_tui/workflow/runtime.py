@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
 
-from deepseek_tui.tools.subagent.manager import SubAgentManager, SubAgentStatusKind
+from deepseek_tui.tools.subagent.manager import SubAgentManager
 from deepseek_tui.workflow.agent_runner import WorkflowRunner
 from deepseek_tui.workflow.models import (
     AgentStep,
@@ -18,21 +18,16 @@ from deepseek_tui.workflow.models import (
     PipelineStep,
     StepOutput,
     SynthesisStep,
+    WorkflowAbortedError,
     WorkflowAgentRun,
+    WorkflowFailedError,
     WorkflowRunContext,
     WorkflowRunResult,
     WorkflowSnapshot,
     WorkflowSpec,
+    WorkflowStepError,
 )
 from deepseek_tui.workflow.template import make_step_output, render_template
-
-
-class WorkflowAbortedError(Exception):
-    pass
-
-
-class WorkflowFailedError(Exception):
-    pass
 
 
 def _recompute_snapshot(snapshot: WorkflowSnapshot) -> WorkflowSnapshot:
@@ -52,12 +47,18 @@ def _json_serializable(value: Any) -> None:
     json.dumps(value)
 
 
+def _collect_errors(snapshot: WorkflowSnapshot) -> list[WorkflowStepError]:
+    return [
+        WorkflowStepError(step_id=a.step_id, error=a.error or "unknown")
+        for a in snapshot.agents
+        if a.status == "error"
+    ]
+
+
 async def _cancel_spawned(manager: SubAgentManager, agent_ids: list[str]) -> None:
     for agent_id in list(agent_ids):
         try:
-            agent = manager._require_agent(agent_id)  # noqa: SLF001
-            if agent.status.kind is SubAgentStatusKind.RUNNING:
-                await manager.cancel(agent_id)
+            await manager.cancel(agent_id)
         except KeyError:
             pass
 
@@ -113,6 +114,15 @@ async def run_workflow(
         }
         pending: set[asyncio.Task[StepOutput | None]] = set(tasks)
         outputs: dict[int, tuple[str, StepOutput]] = {}
+
+        def _suppress_unretreived() -> None:
+            for t in tasks:
+                if t.done() and not t.cancelled():
+                    try:
+                        t.exception()
+                    except (asyncio.CancelledError, BaseException):
+                        pass
+
         try:
             while pending:
                 done, pending = await asyncio.wait(
@@ -147,6 +157,7 @@ async def run_workflow(
                     outputs[idx] = (item, result)
         except BaseException:
             await cancel_pending(pending)
+            _suppress_unretreived()
             raise
         return [outputs[idx] for idx in sorted(outputs)]
 
@@ -200,6 +211,10 @@ async def run_workflow(
         phase_id: str,
         step_id: str,
     ) -> StepOutput | None:
+        if len(ctx.spawned_agent_ids) >= spec.policy.max_agents:
+            raise WorkflowFailedError(
+                f"max_agents limit ({spec.policy.max_agents}) reached at step {step_id}"
+            )
         label = cfg.label or (
             render_template(cfg.label_template or "agent", item=item)
             if cfg.label_template
@@ -213,6 +228,13 @@ async def run_workflow(
         )
         if not prompt.strip():
             return None
+        def _on_agent_id(aid: str) -> None:
+            ctx.spawned_agent_ids.append(aid)
+            for run in reversed(snapshot.agents):
+                if run.step_id == step_id and run.agent_id is None:
+                    run.agent_id = aid
+                    break
+
         out = await runner.run(
             prompt=prompt,
             label=label,
@@ -222,7 +244,7 @@ async def run_workflow(
             output_schema=cfg.output_schema,
             policy=spec.policy,
             cancel_event=cancel_event,
-            on_agent_id=lambda aid: ctx.spawned_agent_ids.append(aid),
+            on_agent_id=_on_agent_id,
         )
         if cancel_event is not None and cancel_event.is_set():
             raise WorkflowAbortedError("workflow cancelled")
@@ -364,6 +386,13 @@ async def run_workflow(
                         s: SynthesisStep = step,
                         rendered_prompt: str = prompt,
                     ) -> StepOutput | None:
+                        def _on_syn_aid(aid: str) -> None:
+                            ctx.spawned_agent_ids.append(aid)
+                            for run in reversed(snapshot.agents):
+                                if run.step_id == s.id and run.agent_id is None:
+                                    run.agent_id = aid
+                                    break
+
                         return await runner.run(
                             prompt=rendered_prompt,
                             label=s.label,
@@ -373,7 +402,7 @@ async def run_workflow(
                             output_schema=s.output_schema,
                             policy=spec.policy,
                             cancel_event=cancel_event,
-                            on_agent_id=lambda aid: ctx.spawned_agent_ids.append(aid),
+                            on_agent_id=_on_syn_aid,
                         )
 
                     out = await run_step(step.id, step.label, phase.id, _syn_coro())
@@ -384,13 +413,15 @@ async def run_workflow(
         _json_serializable(result)
         snapshot.result = result
         snapshot.duration_ms = int((time.monotonic() - started) * 1000)
+        final_snapshot = _recompute_snapshot(snapshot)
         progress()
         return WorkflowRunResult(
             meta=spec.meta,
             result=result,
-            snapshot=_recompute_snapshot(snapshot),
+            snapshot=final_snapshot,
             logs=logs,
             duration_ms=snapshot.duration_ms or 0,
+            errors=_collect_errors(final_snapshot),
         )
     except WorkflowAbortedError:
         if manager is not None:

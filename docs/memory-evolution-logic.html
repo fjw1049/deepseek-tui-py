@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory 与自主进化实现逻辑审核</title>
+<style>
+  :root {
+    --bg: #0f1218;
+    --surface: #151a23;
+    --surface-2: #1b2230;
+    --surface-3: #202938;
+    --line: #2d384c;
+    --text: #edf2fa;
+    --muted: #aebbd0;
+    --subtle: #7f8da6;
+    --blue: #6bb6ff;
+    --green: #60d394;
+    --amber: #f6c35f;
+    --red: #ff7a7a;
+    --violet: #b394ff;
+    --cyan: #57d6d0;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--text);
+    background: var(--bg);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  a { color: var(--blue); text-decoration: none; }
+  code {
+    color: #d7e7ff;
+    background: #101722;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1px 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 28px 22px 72px; }
+  .toc {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    margin: -28px -22px 22px;
+    padding: 11px 22px;
+    background: rgba(15, 18, 24, 0.92);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    backdrop-filter: blur(8px);
+    font-size: 13px;
+  }
+  .toc b { color: var(--amber); }
+  .toc a { color: var(--muted); }
+  .toc a:hover { color: var(--blue); }
+
+  header {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 24px 26px;
+  }
+  h1 { margin: 0 0 8px; font-size: 28px; line-height: 1.25; letter-spacing: 0; }
+  .subtitle { color: var(--muted); margin: 0 0 18px; max-width: 920px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag {
+    color: var(--amber);
+    border: 1px solid #514322;
+    background: #211b0d;
+    padding: 4px 9px;
+    border-radius: 7px;
+    font-size: 12px;
+  }
+
+  section { margin-top: 28px; }
+  h2 {
+    margin: 0 0 6px;
+    font-size: 19px;
+    line-height: 1.35;
+    letter-spacing: 0;
+  }
+  h3 { margin: 0 0 7px; font-size: 15px; }
+  .lead { margin: 0 0 14px; color: var(--muted); }
+
+  .summary {
+    border-left: 4px solid var(--amber);
+    background: #1e1a10;
+    border-radius: 9px;
+    padding: 16px 18px;
+    margin-top: 16px;
+  }
+  .summary strong { color: var(--amber); }
+
+  .grid { display: grid; gap: 13px; }
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 980px) { .g3, .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .g2, .g3, .g4 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 15px 16px;
+  }
+  .card p { margin: 7px 0; color: var(--muted); }
+  .file { color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+  .accent-blue { border-top: 3px solid var(--blue); }
+  .accent-green { border-top: 3px solid var(--green); }
+  .accent-amber { border-top: 3px solid var(--amber); }
+  .accent-red { border-top: 3px solid var(--red); }
+  .accent-violet { border-top: 3px solid var(--violet); }
+  .accent-cyan { border-top: 3px solid var(--cyan); }
+
+  .flow {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .lane {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(120px, 1fr));
+    gap: 8px;
+    align-items: stretch;
+  }
+  @media (max-width: 1100px) { .lane { grid-template-columns: repeat(3, minmax(120px, 1fr)); } }
+  @media (max-width: 680px) { .lane { grid-template-columns: 1fr; } }
+  .node {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 11px 12px;
+    min-height: 110px;
+  }
+  .node .name { font-weight: 700; color: var(--text); }
+  .node .path { margin-top: 2px; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+  .node .desc { margin-top: 6px; color: var(--muted); font-size: 13px; }
+  .node.key { border-color: var(--amber); background: #20190d; }
+  .node.key .name { color: var(--amber); }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 14px;
+  }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 11px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--text); background: var(--surface-3); font-size: 13px; }
+  td { color: var(--muted); font-size: 13px; }
+  tr:last-child td { border-bottom: 0; }
+
+  .finding {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 9px;
+    padding: 14px 16px;
+    margin-top: 10px;
+  }
+  .finding .sev {
+    display: inline-block;
+    border-radius: 5px;
+    padding: 2px 7px;
+    margin-right: 8px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .p1 { color: #261111; background: var(--red); }
+  .p2 { color: #251a06; background: var(--amber); }
+  .p3 { color: #091c14; background: var(--green); }
+  .finding p { margin: 7px 0 0; color: var(--muted); }
+
+  .ok { color: var(--green); }
+  .warn { color: var(--amber); }
+  .bad { color: var(--red); }
+  .source-list { columns: 2; column-gap: 22px; }
+  .source-list li { break-inside: avoid; margin-bottom: 6px; color: var(--muted); }
+  @media (max-width: 760px) { .source-list { columns: 1; } }
+
+  ul { margin: 8px 0 0; padding-left: 19px; }
+  li { margin: 4px 0; color: var(--muted); }
+  footer { margin-top: 36px; padding-top: 15px; border-top: 1px solid var(--line); color: var(--subtle); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc">
+    <b>导航</b>
+    <a href="#conclusion">结论</a>
+    <a href="#concepts">三个记忆概念</a>
+    <a href="#main-flow">主链路</a>
+    <a href="#smart-memory">Smart Memory</a>
+    <a href="#evolution">自主进化</a>
+    <a href="#config">配置</a>
+    <a href="#findings">审核发现</a>
+    <a href="#tests">测试结果</a>
+    <a href="#sources">源码索引</a>
+  </nav>
+
+  <header>
+    <h1>Memory 与自主进化实现逻辑审核</h1>
+    <p class="subtitle">
+      审核对象为 2026-06-05 当前工作区内的 Smart Memory、Post-Turn 编排层与 Experience Evolution。
+      本文档按真实源码调用链整理，不只复述设计稿。
+    </p>
+    <div class="tags">
+      <span class="tag">Memory 管“知道什么”</span>
+      <span class="tag">Evolution 管“下次怎么做更好”</span>
+      <span class="tag">PostTurn 管“什么时候学习”</span>
+      <span class="tag">默认关闭，配置开启</span>
+      <span class="tag">新增审核风险清单</span>
+    </div>
+  </header>
+
+  <section id="conclusion">
+    <h2>1. 总结论</h2>
+    <div class="summary">
+      <strong>一句话：</strong>
+      这两套能力已经被接入同一个 turn 生命周期：每轮对话前召回经验，每轮对话后捕获/复盘经验，压缩或线程销毁前执行 flush 抢救。
+      Smart Memory 负责自动沉淀事实、偏好、场景和 persona；自主进化负责把“值得复用的做法”沉淀为 curated memory 或 procedural skill，并通过 ledger 审计。
+    </div>
+    <div class="grid g4" style="margin-top:14px">
+      <div class="card accent-blue">
+        <h3>入口</h3>
+        <p><code>Engine.create()</code> 创建 MemoryPipeline 与 EvolutionPipeline，再交给 <code>PostTurnOrchestrator</code>。</p>
+      </div>
+      <div class="card accent-green">
+        <h3>学习时机</h3>
+        <p>普通轮次走 <code>after_turn()</code>；上下文压缩、退出、LRU 回收前走 <code>flush_before_loss()</code>。</p>
+      </div>
+      <div class="card accent-violet">
+        <h3>写入策略</h3>
+        <p>Memory 自动写 L0/L1/L2/L3；Evolution 先生成 mutation，再由 ledger 按策略 auto/propose/deny。</p>
+      </div>
+      <div class="card accent-red">
+        <h3>审核重点</h3>
+        <p>当前完整三组测试有 1 个 L0 cursor 失败；另有几处行为边界需要明确。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="concepts">
+    <h2>2. 不要混淆的三个“记忆”</h2>
+    <p class="lead">代码里同时存在三种 memory，作用不同，存储位置不同，进入 prompt 的方式也不同。</p>
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>用途</th>
+          <th>主要文件/目录</th>
+          <th>进入模型的方式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Legacy memory.md</strong></td>
+          <td>人工维护的跨项目记忆，偏“用户可见笔记”。</td>
+          <td><code>~/.deepseek/memory.md</code></td>
+          <td><code>&lt;user_memory&gt;</code> volatile block，manual/hybrid 模式注入。</td>
+        </tr>
+        <tr>
+          <td><strong>Smart Memory</strong></td>
+          <td>自动从对话中抽取结构化记忆、场景和 persona。</td>
+          <td><code>~/.deepseek/memory_data/</code></td>
+          <td>召回 L1 命中；追加 scene navigation 与 persona；必要时工具搜索。</td>
+        </tr>
+        <tr>
+          <td><strong>Curated Memory</strong></td>
+          <td>自主进化维护的精炼 agent 记忆和用户事实。</td>
+          <td><code>~/.deepseek/memories/MEMORY.md</code>、<code>USER.md</code></td>
+          <td>Session 启动时读取为稳定快照，作为系统 prompt 的 stable block。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="main-flow">
+    <h2>3. 一轮对话的总链路</h2>
+    <p class="lead">这是两套功能共同依附的主路径。先看这条链，再看各自内部实现。</p>
+    <div class="flow">
+      <div class="lane">
+        <div class="node key">
+          <div class="name">1. Session 启动</div>
+          <div class="path">engine/engine.py</div>
+          <div class="desc">创建 MemoryCoordinator；如果 evolution 开启，创建 EvolutionPipeline 并把 store/ledger 放进 ToolContext metadata。</div>
+        </div>
+        <div class="node">
+          <div class="name">2. 对话前召回</div>
+          <div class="path">memory/coordinator.py</div>
+          <div class="desc">Smart Memory 根据用户输入搜索 L1；Curated Memory 的 stable snapshot 已缓存。</div>
+        </div>
+        <div class="node">
+          <div class="name">3. 组系统提示词</div>
+          <div class="path">engine/prompts.py</div>
+          <div class="desc">顺序注入项目规则、环境、curated snapshot、evolution 指南、Smart Memory、skills、volatile 内容。</div>
+        </div>
+        <div class="node key">
+          <div class="name">4. 工具循环</div>
+          <div class="path">engine/turn_loop.py</div>
+          <div class="desc">模型可调用 memory_search / conversation_search / memory_curate / skill_manage。</div>
+        </div>
+        <div class="node">
+          <div class="name">5. TurnEvidence</div>
+          <div class="path">post_turn/evidence.py</div>
+          <div class="desc">把 thread_id、user_text、workspace、新消息、工具轮数、成功状态打包为后处理输入。</div>
+        </div>
+        <div class="node key">
+          <div class="name">6. Turn 后处理</div>
+          <div class="path">post_turn/orchestrator.py</div>
+          <div class="desc">依次调用 MemoryPipeline 和 EvolutionPipeline；异常被记录，不打断主对话。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="smart-memory">
+    <h2>4. Smart Memory 实现逻辑</h2>
+    <div class="split">
+      <div>
+        <h3>4.1 写入链路</h3>
+        <table>
+          <thead>
+            <tr><th>步骤</th><th>实现</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Gate</td>
+              <td><code>post_turn/gates.py</code></td>
+              <td>要求 turn 成功；有工具调用直接捕获；否则用户文本需超过最小长度且不是斜杠命令/简单确认。</td>
+            </tr>
+            <tr>
+              <td>L0 原始归档</td>
+              <td><code>memory/native/l0_recorder.py</code></td>
+              <td>把用户、assistant、tool 消息追加到 per-thread JSONL；tool 消息保留在 L0 但不送 L1 抽取。</td>
+            </tr>
+            <tr>
+              <td>L1 结构化抽取</td>
+              <td><code>memory/native/l1_extractor.py</code></td>
+              <td>LLM 抽取 persona / episodic / instruction；质量 gate、置信度阈值、批量去重、安全扫描后写 SQLite。</td>
+            </tr>
+            <tr>
+              <td>L2 场景索引</td>
+              <td><code>memory/native/pipeline.py</code></td>
+              <td>L1 写入后延迟聚合场景，生成可导航的 scene summary。</td>
+            </tr>
+            <tr>
+              <td>L3 Persona</td>
+              <td><code>memory/native/l3_persona.py</code></td>
+              <td>按 interval 刷新长期用户画像，可结合场景导航。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3>4.2 召回链路</h3>
+        <div class="card accent-blue">
+          <p><strong>召回入口：</strong><code>MemoryCoordinator.recall_for_turn()</code>，带 5 秒默认超时，失败只记录日志并降级为空。</p>
+          <p><strong>结构化召回：</strong><code>NativeMemoryProvider.recall()</code> 走 SQLite FTS，可选 hybrid embedding，根据 score threshold、limit、时间衰减返回 L1 命中。</p>
+          <p><strong>Prompt 注入：</strong>L1 可以包进 user message，也可以放到 system volatile；scene navigation、persona、memory tools guide 追加到 system block。</p>
+          <p><strong>主动下钻：</strong><code>memory_search</code> 查 L1；<code>conversation_search</code> 查 L0 原始对话。每轮合计最多 3 次。</p>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:18px">4.3 Smart Memory 的作用</h3>
+    <div class="grid g3">
+      <div class="card accent-green">
+        <h3>跨会话记住事实</h3>
+        <p>例如用户偏好、项目约定、曾经踩过的坑，通过 L1 结构化条目在后续对话召回。</p>
+      </div>
+      <div class="card accent-cyan">
+        <h3>保留原始证据</h3>
+        <p>L0 JSONL 是审计和 conversation_search 的证据库，解决“结构化摘要不够时回查原文”的问题。</p>
+      </div>
+      <div class="card accent-violet">
+        <h3>形成长期画像</h3>
+        <p>L2/L3 把碎片化事件变成场景导航和 persona，让模型更稳定地理解用户和项目。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="evolution">
+    <h2>5. 自主进化实现逻辑</h2>
+    <p class="lead">自主进化的核心抽象是 mutation。所有写入都先变成 ExperienceMutation，再交给 ledger 审批和审计。</p>
+    <div class="flow">
+      <div class="lane">
+        <div class="node key">
+          <div class="name">1. 触发</div>
+          <div class="path">evolution/pipeline.py</div>
+          <div class="desc">计数到期、工具轮数多、用户纠正、失败后恢复、显式要求记住流程，或 flush 前。</div>
+        </div>
+        <div class="node">
+          <div class="name">2. 后台 review</div>
+          <div class="path">evolution/review/runner.py</div>
+          <div class="desc">复用 bounded tool loop，只开放 memory_curate / skill_manage，在 review_mode 下只产 mutation 不直接写盘。</div>
+        </div>
+        <div class="node">
+          <div class="name">3. Backend 转换</div>
+          <div class="path">evolution/backends/*</div>
+          <div class="desc">memory_curate 变 curated memory mutation；skill_manage 变 skill mutation。</div>
+        </div>
+        <div class="node key">
+          <div class="name">4. Ledger 决策</div>
+          <div class="path">evolution/ledger.py</div>
+          <div class="desc">按策略写入 evolution_events：auto 自动 apply，propose 等用户批准，deny 拒绝。</div>
+        </div>
+        <div class="node">
+          <div class="name">5. 落盘</div>
+          <div class="path">curated/store.py · skill_store.py</div>
+          <div class="desc">写 MEMORY.md / USER.md 或项目/用户 skills，并做审计与事件通知。</div>
+        </div>
+        <div class="node">
+          <div class="name">6. 后续生效</div>
+          <div class="path">engine/prompts.py</div>
+          <div class="desc">Curated memory 下个 session 作为 stable snapshot 生效；skill 更新后提示模型 load_skill。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card accent-amber">
+        <h3>5.1 Curated Memory Backend</h3>
+        <p><code>memory_curate</code> 支持 <code>add</code>、<code>replace</code>、<code>remove</code>，目标为 <code>memory</code> 或 <code>user</code>。</p>
+        <ul>
+          <li><code>MEMORY.md</code>：agent 可复用的项目/工作方法事实。</li>
+          <li><code>USER.md</code>：稳定用户偏好、身份、沟通习惯。</li>
+          <li>条目用 <code>§</code> 分隔，写入前去重、限长、文件锁、原子替换。</li>
+          <li>Session 中 stable snapshot 冻结，mid-session 新写入不直接改变当前系统提示词。</li>
+        </ul>
+      </div>
+      <div class="card accent-violet">
+        <h3>5.2 Procedural Skill Backend</h3>
+        <p><code>skill_manage</code> 支持 <code>create</code>、<code>patch</code>、<code>edit</code>、<code>delete</code>、<code>write_file</code>、<code>remove_file</code>。</p>
+        <ul>
+          <li>默认写项目级 <code>.deepseek/skills/&lt;name&gt;/SKILL.md</code>。</li>
+          <li>也可写用户级 <code>~/.deepseek/skills/</code>。</li>
+          <li>要求 <code>SKILL.md</code> 有 YAML frontmatter，且 name/description 合法。</li>
+          <li>禁止绝对路径和 <code>..</code> 越界，支持 references/templates/scripts/assets 辅助文件。</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:18px">5.3 Ledger 状态机</h3>
+    <table>
+      <thead>
+        <tr><th>策略返回</th><th>记录状态</th><th>后续行为</th><th>默认配置</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>auto</code></td>
+          <td><code>pending_apply</code> → <code>applied</code> 或 <code>failed</code></td>
+          <td>马上调用对应 backend 写盘。</td>
+          <td><code>memory_curate=auto</code>，<code>skill_patch=auto</code></td>
+        </tr>
+        <tr>
+          <td><code>propose</code></td>
+          <td><code>proposed</code></td>
+          <td>发 EvolutionProposalEvent，等待用户 approve/reject。</td>
+          <td><code>skill_create=propose</code>，多数非低风险 skill 变更走 propose。</td>
+        </tr>
+        <tr>
+          <td><code>deny</code></td>
+          <td><code>denied</code></td>
+          <td>不写盘，只记录审计和 rejected event。</td>
+          <td>ledger disabled 时全部 deny。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="config">
+    <h2>6. 关键配置</h2>
+    <table>
+      <thead>
+        <tr><th>配置</th><th>默认值</th><th>影响</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>[memory.smart].enabled</code></td><td><code>false</code></td><td>开启 Smart Memory 的 L0/L1/L2/L3 自动记忆。</td></tr>
+        <tr><td><code>[post_turn].enabled</code></td><td><code>true</code></td><td>开启统一 turn 后处理编排。关闭后 Evolution 不跑，Memory 有 Engine fallback 捕获。</td></tr>
+        <tr><td><code>[evolution].enabled</code></td><td><code>false</code></td><td>开启自主进化工具、后台 review、ledger 和 curated/skill stores。</td></tr>
+        <tr><td><code>memory_nudge_every_n</code></td><td><code>10</code></td><td>每 N 个 turn 触发一次 memory review 机会。</td></tr>
+        <tr><td><code>skill_nudge_tool_rounds</code></td><td><code>10</code></td><td>累计工具轮数达到阈值后触发 skill review 机会。</td></tr>
+        <tr><td><code>flush_min_user_turns</code></td><td><code>6</code></td><td>少于该 turn 数时，丢失前 evolution flush 不运行。</td></tr>
+        <tr><td><code>evolution.ledger.memory_curate</code></td><td><code>auto</code></td><td>curated memory 默认自动落盘。</td></tr>
+        <tr><td><code>evolution.ledger.skill_create</code></td><td><code>propose</code></td><td>创建/删除/编辑 skill 默认需要提案审批。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="findings">
+    <h2>7. 审核发现</h2>
+    <p class="lead">以下是按源码和测试得出的风险点。优先级是对功能正确性/副作用影响的判断。</p>
+
+    <div class="finding">
+      <span class="sev p1">P1</span><strong>L0 cursor 在未来时间戳场景会重复记录旧 assistant 消息。</strong>
+      <p>
+        完整 memory/post_turn/evolution 测试中，<code>test_l0_cursor_skips_already_recorded_messages</code> 失败。
+        现实现用 append 调用时的 <code>now_ms</code> 写 cursor，但被记录消息可能自带更大的 timestamp；
+        下一轮判断 <code>msg_ts &lt;= last_ts</code> 时旧消息没有被跳过，导致 L0 重复，进而可能让 L1 重复抽取。
+      </p>
+      <p>相关文件：<code>memory/native/l0_recorder.py</code>、<code>tests/memory/test_manifest_cleaner_seed.py</code>。</p>
+    </div>
+
+    <div class="finding">
+      <span class="sev p2">P2</span><strong>主 agent 直接调用 memory_curate / skill_manage 时，用的是 turn 前半段 evidence。</strong>
+      <p>
+        Engine 在模型调用前先写入 <code>TURN_EVIDENCE_KEY</code>，此时 <code>success=False</code> 且消息只有用户输入；
+        之后工具调用可立即通过 ledger 自动落盘。若该 turn 后续失败或被取消，已经 auto applied 的 mutation 不会回滚。
+      </p>
+      <p>相关文件：<code>engine/engine.py</code>、<code>tools/memory_curate_tool.py</code>、<code>tools/skill_manage_tool.py</code>、<code>evolution/ledger.py</code>。</p>
+    </div>
+
+    <div class="finding">
+      <span class="sev p2">P2</span><strong><code>review_idle_timeout_seconds</code> 配置目前没有实际 idle 定时效果。</strong>
+      <p>
+        EvolutionPipeline 把该值传给 <code>PeriodicTurnScheduler</code>，但这个 scheduler 只实现计数阈值，没有 idle timer。
+        所以 evolution review 触发来自 turn 计数、工具轮数、signals 或 flush，不会因为空闲 600 秒自动运行。
+      </p>
+      <p>相关文件：<code>post_turn/scheduler.py</code>、<code>evolution/pipeline.py</code>、<code>config.example.toml</code>。</p>
+    </div>
+
+    <div class="finding">
+      <span class="sev p3">P3</span><strong>工具返回给模型的 apply 细节偏少。</strong>
+      <p>
+        Ledger 会拿到 backend 的 ApplyResult，但 main tool response 构造时没有传入该结果。
+        <code>memory_curate</code> 还能返回 current_entries；<code>skill_manage</code> 在 applied 时多半只回 mutation target_path，可能不是实际 patch/write 的具体文件路径。
+      </p>
+      <p>相关文件：<code>evolution/tool_response.py</code>、<code>evolution/ledger.py</code>、<code>tools/skill_manage_tool.py</code>。</p>
+    </div>
+
+    <div class="finding">
+      <span class="sev p3">P3</span><strong>安全扫描是基础防线，不是完整 prompt-injection 防线。</strong>
+      <p>
+        <code>scan_memory_content()</code> 当前只拦截少量正则模式，例如 <code>&lt;script</code>、忽略之前指令、<code>system: you are</code>。
+        对 curated memory 和 skill 内容来说这是最低限度过滤，真正的安全仍依赖 ledger 策略、审批和人工审核。
+      </p>
+      <p>相关文件：<code>evolution/safety.py</code>、<code>curated/store.py</code>、<code>procedural/skill_store.py</code>。</p>
+    </div>
+  </section>
+
+  <section id="tests">
+    <h2>8. 验证结果</h2>
+    <div class="grid g2">
+      <div class="card accent-green">
+        <h3>核心窄测通过</h3>
+        <p class="ok"><strong>62 passed</strong></p>
+        <p><code>pytest --import-mode=importlib tests/post_turn tests/evolution tests/memory/test_l0_summarize.py ... -q</code></p>
+      </div>
+      <div class="card accent-red">
+        <h3>完整相关测试有 1 个失败</h3>
+        <p class="bad"><strong>124 passed, 3 skipped, 1 failed</strong></p>
+        <p><code>pytest --import-mode=importlib tests/memory tests/post_turn tests/evolution -q</code></p>
+        <p>失败点是 P1 的 L0 cursor 重复记录问题。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="sources">
+    <h2>9. 源码索引</h2>
+    <p class="lead">掌握这两个功能，优先按下面顺序读源码。</p>
+    <ul class="source-list">
+      <li><code>src/deepseek_tui/engine/engine.py</code>：Session 创建、prompt 前召回、TurnEvidence、post_turn 调用、压缩前 flush。</li>
+      <li><code>src/deepseek_tui/engine/prompts.py</code>：curated snapshot、evolution guidance、Smart Memory、legacy memory.md 的注入顺序。</li>
+      <li><code>src/deepseek_tui/post_turn/orchestrator.py</code>：统一 after_turn / flush_before_loss 生命周期。</li>
+      <li><code>src/deepseek_tui/post_turn/gates.py</code>：Memory 捕获与 Evolution review 共用 gate。</li>
+      <li><code>src/deepseek_tui/post_turn/pipelines/memory_pipeline.py</code>：Smart Memory 的 post-turn 包装。</li>
+      <li><code>src/deepseek_tui/memory/coordinator.py</code>：记忆开关、召回超时、捕获、flush、搜索接口。</li>
+      <li><code>src/deepseek_tui/memory/native/provider.py</code>：L0/L1/L2/L3 provider 主实现。</li>
+      <li><code>src/deepseek_tui/memory/native/l0_recorder.py</code>：L0 JSONL 原始消息归档。</li>
+      <li><code>src/deepseek_tui/memory/native/l1_extractor.py</code>：L1 LLM 抽取、去重、安全扫描和写入。</li>
+      <li><code>src/deepseek_tui/memory/native/pipeline.py</code>：L2 场景和 L3 persona 调度。</li>
+      <li><code>src/deepseek_tui/evolution/pipeline.py</code>：自主进化后台 review 的调度核心。</li>
+      <li><code>src/deepseek_tui/evolution/review/runner.py</code>：复用 subagent tool loop 进行 memory/skill review。</li>
+      <li><code>src/deepseek_tui/evolution/ledger.py</code>：policy、audit、apply、approve/reject 的中心。</li>
+      <li><code>src/deepseek_tui/evolution/curated/store.py</code>：MEMORY.md / USER.md 的读写规则。</li>
+      <li><code>src/deepseek_tui/evolution/procedural/skill_store.py</code>：skills 的创建、patch、辅助文件写入和路径限制。</li>
+      <li><code>src/deepseek_tui/tools/memory_curate_tool.py</code>：主 agent 和 review mode 下 curated memory mutation 入口。</li>
+      <li><code>src/deepseek_tui/tools/skill_manage_tool.py</code>：主 agent 和 review mode 下 skill mutation 入口。</li>
+      <li><code>config.example.toml</code>：这两个功能的默认开关和阈值。</li>
+    </ul>
+  </section>
+
+  <footer>
+    生成时间：2026-06-05。审核基于当前工作区源码、最近两天主提交 <code>0ad815d</code> 以及当前未提交工作区状态。
+  </footer>
+</div>
+</body>
+</html>

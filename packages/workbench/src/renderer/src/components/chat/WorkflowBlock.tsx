@@ -16,16 +16,18 @@ export function WorkflowBlock({
   snapshot
 }: {
   workflowName: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
   snapshot: WorkflowSnapshotPayload
 }): ReactElement {
   const { t } = useTranslation('common')
   const header =
     status === 'completed'
       ? t('workflowCompleted', { defaultValue: 'Workflow completed' })
-      : status === 'failed'
-        ? t('workflowFailed', { defaultValue: 'Workflow failed' })
-        : t('workflowRunning', { defaultValue: 'Workflow running' })
+      : status === 'cancelled'
+        ? t('workflowCancelled', { defaultValue: 'Workflow cancelled' })
+        : status === 'failed'
+          ? t('workflowFailed', { defaultValue: 'Workflow failed' })
+          : t('workflowRunning', { defaultValue: 'Workflow running' })
 
   const stateLine =
     snapshot.error_count > 0

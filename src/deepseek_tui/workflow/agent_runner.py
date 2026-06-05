@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import replace
 from typing import Any, Protocol
 
 from deepseek_tui.tools.subagent.manager import (
-    DEFAULT_RESULT_TIMEOUT_MS,
     SpawnRequest,
     SubAgentAssignment,
     SubAgentManager,
@@ -17,7 +15,7 @@ from deepseek_tui.tools.subagent.manager import (
     SubAgentType,
 )
 from deepseek_tui.workflow.constants import ANALYSIS_ONLY_TOOLS, WAIT_TIMEOUT_MS
-from deepseek_tui.workflow.models import StepOutput, WorkflowPolicy
+from deepseek_tui.workflow.models import StepOutput, WorkflowAbortedError, WorkflowPolicy
 from deepseek_tui.workflow.template import make_step_output
 
 
@@ -52,13 +50,6 @@ class DeepSeekAgentRunner:
         self._parent_depth = parent_depth
         self._register_spawned = register_spawned
 
-    def _runtime_for_policy(self, policy: WorkflowPolicy) -> SubAgentRuntime:
-        if policy.approval_mode == "trusted_workflow":
-            return replace(self._base_runtime, auto_approve=True)
-        if policy.approval_mode == "strict":
-            return replace(self._base_runtime, auto_approve=False)
-        return replace(self._base_runtime, auto_approve=True)
-
     def _allowed_tools(
         self, policy: WorkflowPolicy, allowed: list[str] | None
     ) -> list[str] | None:
@@ -80,7 +71,7 @@ class DeepSeekAgentRunner:
         on_agent_id: Any = None,
     ) -> StepOutput | None:
         if cancel_event is not None and cancel_event.is_set():
-            return None
+            raise WorkflowAbortedError("workflow cancelled")
         parsed = SubAgentType.parse(agent_type) or SubAgentType.GENERAL
         auto_approve: bool | None = None
         if policy.approval_mode == "trusted_workflow":
@@ -107,22 +98,30 @@ class DeepSeekAgentRunner:
         if self._register_spawned is not None:
             self._register_spawned(snap.agent_id)
 
-        timeout_s = min(WAIT_TIMEOUT_MS, DEFAULT_RESULT_TIMEOUT_MS) / 1000
+        timeout_s = WAIT_TIMEOUT_MS / 1000
         deadline = time.monotonic() + timeout_s
         final = snap
+        async def _try_cancel() -> None:
+            try:
+                await self._manager.cancel(snap.agent_id)
+            except KeyError:
+                pass
+
         while True:
             if cancel_event is not None and cancel_event.is_set():
-                await self._manager.cancel(snap.agent_id)
-                return None
+                await _try_cancel()
+                raise WorkflowAbortedError("workflow cancelled")
             try:
                 final = await self._manager.get_result(snap.agent_id)
+            except KeyError:
+                return None
             except Exception:
-                await self._manager.cancel(snap.agent_id)
+                await _try_cancel()
                 return None
             if final.status.kind is not SubAgentStatusKind.RUNNING:
                 break
             if time.monotonic() >= deadline:
-                await self._manager.cancel(snap.agent_id)
+                await _try_cancel()
                 return None
             await asyncio.sleep(0.1)
 
@@ -131,6 +130,8 @@ class DeepSeekAgentRunner:
             SubAgentStatusKind.CANCELLED,
             SubAgentStatusKind.INTERRUPTED,
         ):
+            if cancel_event is not None and cancel_event.is_set():
+                raise WorkflowAbortedError("workflow cancelled")
             return None
         text = final.result or ""
         structured = final.structured

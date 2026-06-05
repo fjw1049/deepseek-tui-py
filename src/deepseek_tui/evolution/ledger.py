@@ -141,12 +141,7 @@ class ExperienceLedger:
         return await self._audit.get(record_id)
 
     async def reject(self, record_id: str, *, reason: str = "user rejected") -> LedgerRecord | None:
-        async with aiosqlite.connect(self._audit._path) as conn:  # noqa: SLF001
-            await conn.execute(
-                "UPDATE evolution_events SET status = ?, reason = ? WHERE id = ?",
-                ("rejected", reason, record_id),
-            )
-            await conn.commit()
+        await self._audit.mark_rejected(record_id, reason)
         await self._maybe_emit(EvolutionRejectedEvent(record_id=record_id, reason=reason))
         record = await self._audit.get(record_id)
         if record is not None:

@@ -88,6 +88,22 @@ class ApprovalBridge:
             )
         return out
 
+    def cancel_for_thread(self, thread_id: str) -> None:
+        """Cancel all pending approvals belonging to a specific thread."""
+        to_cancel: list[str] = []
+        for approval_id, fut in self._pending.items():
+            if fut.done():
+                continue
+            meta = self._meta.get(approval_id)
+            if meta is not None and meta.thread_id == thread_id:
+                to_cancel.append(approval_id)
+        for approval_id in to_cancel:
+            fut = self._pending.pop(approval_id, None)
+            self._meta.pop(approval_id, None)
+            self._remember.pop(approval_id, None)
+            if fut is not None and not fut.done():
+                fut.cancel()
+
     def cancel_all(self) -> None:
         for fut in self._pending.values():
             if not fut.done():

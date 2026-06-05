@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -10,6 +11,7 @@ from typing import Any
 class _KeyState:
     count: int = 0
     last_payload: Any = None
+    last_notify_ts: float = field(default_factory=time.monotonic)
 
 
 class PeriodicTurnScheduler:
@@ -23,13 +25,21 @@ class PeriodicTurnScheduler:
         state = self._states.setdefault(key, _KeyState())
         state.count += 1
         state.last_payload = payload
+        state.last_notify_ts = time.monotonic()
 
     def is_due(self, key: str) -> bool:
         state = self._states.get(key)
         if state is None:
             return False
-        threshold = self._effective_threshold(state.count)
-        return state.count >= threshold
+        if state.count >= self._effective_threshold(state.count):
+            return True
+        if (
+            self._idle_timeout_s > 0
+            and state.count > 0
+            and (time.monotonic() - state.last_notify_ts) >= self._idle_timeout_s
+        ):
+            return True
+        return False
 
     def reset(self, key: str) -> None:
         if key in self._states:

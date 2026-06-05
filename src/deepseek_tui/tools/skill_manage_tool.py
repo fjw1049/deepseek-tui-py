@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from deepseek_tui.evolution.backends.procedural_skill import ProceduralSkillBackend
-from deepseek_tui.evolution.constants import EVOLUTION_LEDGER_KEY, TURN_EVIDENCE_KEY
+from deepseek_tui.evolution.constants import EVOLUTION_LEDGER_KEY, resolve_turn_evidence
 from deepseek_tui.evolution.tool_response import (
     build_evolution_tool_response,
     decision_from_record_status,
@@ -74,7 +74,7 @@ class SkillManageTool(ToolSpec):
             )
 
         ledger = context.metadata.get(EVOLUTION_LEDGER_KEY)
-        evidence = context.metadata.get(TURN_EVIDENCE_KEY)
+        evidence = resolve_turn_evidence(context.metadata)
         if ledger is None or evidence is None:
             return ToolResult(success=False, content="evolution ledger not available")
 

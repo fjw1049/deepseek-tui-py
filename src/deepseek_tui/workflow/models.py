@@ -5,6 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+
+class WorkflowAbortedError(Exception):
+    pass
+
+
+class WorkflowFailedError(Exception):
+    pass
+
+
 StepType = Literal["agent", "fanout", "pipeline", "synthesis"]
 ApprovalMode = Literal["analysis_only", "trusted_workflow", "strict"]
 OnErrorMode = Literal["continue", "fail_fast"]
@@ -141,17 +150,23 @@ class WorkflowSnapshot:
 
 
 @dataclass(slots=True)
+class WorkflowStepError:
+    step_id: str
+    error: str
+
+
+@dataclass(slots=True)
 class WorkflowRunResult:
     meta: WorkflowMeta
     result: Any
     snapshot: WorkflowSnapshot
     logs: list[str]
     duration_ms: int
+    errors: list[WorkflowStepError] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class WorkflowRunContext:
     outputs: dict[str, StepOutput] = field(default_factory=dict)
     spawned_agent_ids: list[str] = field(default_factory=list)
-    spent_tokens: int = 0
     synthesis_step_ids: list[str] = field(default_factory=list)

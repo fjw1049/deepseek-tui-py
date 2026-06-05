@@ -16,9 +16,8 @@ from deepseek_tui.tools.base import (
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.workflow.agent_runner import DeepSeekAgentRunner
 from deepseek_tui.workflow.models import WorkflowSnapshot
+from deepseek_tui.workflow.models import WorkflowAbortedError, WorkflowFailedError
 from deepseek_tui.workflow.runtime import (
-    WorkflowAbortedError,
-    WorkflowFailedError,
     render_workflow_text,
     run_workflow,
 )
@@ -136,10 +135,12 @@ class WorkflowTool(ToolSpec):
             tool_call_id = ""
 
         emit = context.metadata.get("workflow_emit")
+        spawned_ids: list[str] = []
         runner = DeepSeekAgentRunner(
             manager,
             loop_runtime,
             parent_depth=loop_runtime.spawn_depth,
+            register_spawned=lambda aid: spawned_ids.append(aid),
         )
         last_snapshot = WorkflowSnapshot(
             name=spec.meta.name,
@@ -235,6 +236,10 @@ class WorkflowTool(ToolSpec):
 
             emit_progress(result.snapshot, completed=True, status="completed")
 
+            errors_list = [
+                {"step_id": e.step_id, "error": e.error}
+                for e in result.errors
+            ]
             return ToolResult(
                 success=True,
                 content=text,
@@ -245,20 +250,31 @@ class WorkflowTool(ToolSpec):
                         "result": result.result,
                         "logs": result.logs,
                         "duration_ms": result.duration_ms,
+                        **({"errors": errors_list} if errors_list else {}),
                     }
                 },
             )
 
         timeout = spec.policy.wall_clock_seconds
         if timeout > 0:
+            task = asyncio.create_task(_run())
             try:
-                return await asyncio.wait_for(_run(), timeout=timeout)
+                return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
             except TimeoutError:
                 cancel_event.set()
-                from deepseek_tui.tools.subagent_tools import _running_agent_ids
-
-                for agent_id in _running_agent_ids(manager):
-                    await manager.cancel(agent_id)
+                for agent_id in list(spawned_ids):
+                    try:
+                        await manager.cancel(agent_id)
+                    except KeyError:
+                        pass
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except (TimeoutError, asyncio.CancelledError, Exception):
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 emit_progress(last_snapshot, completed=True, status="timed_out")
                 return ToolResult(
                     success=False,

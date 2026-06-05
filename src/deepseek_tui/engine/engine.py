@@ -687,8 +687,19 @@ class Engine:
         success: bool,
         tool_rounds: int = 0,
     ) -> None:
-        """Publish turn evidence for post-turn pipelines and optional evolution tools."""
-        from deepseek_tui.evolution.constants import EVOLUTION_LEDGER_KEY, TURN_EVIDENCE_KEY
+        """Publish turn evidence for post-turn pipelines and optional evolution tools.
+
+        Called twice per turn: once before the tool loop (success=False) and
+        once after (with the real outcome).  On the first call we install a
+        *factory* so that mid-turn tool calls always build evidence from the
+        live ``working_messages`` list.  On the second call we freeze a
+        static ``TURN_EVIDENCE_KEY`` with the final state.
+        """
+        from deepseek_tui.evolution.constants import (
+            EVOLUTION_LEDGER_KEY,
+            TURN_EVIDENCE_FACTORY_KEY,
+            TURN_EVIDENCE_KEY,
+        )
 
         thread_id = self._resolve_memory_thread_id()
         turn_slice = working_messages[prior_count:]
@@ -702,7 +713,29 @@ class Engine:
         )
         self._current_turn_evidence = evidence
         if EVOLUTION_LEDGER_KEY in self.tool_context.metadata:
-            self.tool_context.metadata[TURN_EVIDENCE_KEY] = evidence
+            if success or tool_rounds > 0:
+                self.tool_context.metadata[TURN_EVIDENCE_KEY] = evidence
+                self.tool_context.metadata.pop(TURN_EVIDENCE_FACTORY_KEY, None)
+            else:
+                self.tool_context.metadata.pop(TURN_EVIDENCE_KEY, None)
+
+                def _live_evidence_factory(
+                    _msgs: list[Message] = working_messages,
+                    _pc: int = prior_count,
+                    _ut: str = user_text,
+                    _tid: str = turn_id,
+                    _thid: str = thread_id,
+                ) -> object:
+                    return self._build_turn_evidence(
+                        thread_id=_thid,
+                        user_text=_ut,
+                        turn_slice=_msgs[_pc:],
+                        success=True,
+                        tool_rounds=0,
+                        turn_id=_tid,
+                    )
+
+                self.tool_context.metadata[TURN_EVIDENCE_FACTORY_KEY] = _live_evidence_factory
             pipeline = self._evolution_pipeline
             if pipeline is not None and hasattr(pipeline, "note_active_turn"):
                 pipeline.note_active_turn(thread_id)
@@ -992,6 +1025,8 @@ class Engine:
                     # Defense in depth: ensure the cancel_event is set even if
                     # the caller queued the op without calling handle.cancel().
                     self.handle.cancel_event.set()
+                    if turn_task is not None and not turn_task.done():
+                        turn_task.cancel()
         except asyncio.CancelledError:
             logger.info("engine_run_cancelled")
             raise
@@ -2182,7 +2217,11 @@ class Engine:
             self.tool_context.metadata["workflow_tool_call_id"] = tool_call.id
 
             def _workflow_emit(ev: WorkflowProgressEvent) -> None:
-                self.handle.try_emit(ev)
+                if not self.handle.try_emit(ev):
+                    if getattr(ev, "completed", False):
+                        logger.warning(
+                            "workflow_completed_event_dropped queue_full"
+                        )
 
             self.tool_context.metadata["workflow_emit"] = _workflow_emit
 

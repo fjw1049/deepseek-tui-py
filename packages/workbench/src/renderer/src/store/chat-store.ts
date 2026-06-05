@@ -725,16 +725,20 @@ function buildThreadEventSink(
     },
     onWorkflowProgress: (ev) => {
       set((s) => {
+        const flushed = flushLiveBlocks(s)
+        const baseBlocks = flushed.blocks ?? s.blocks
+        const nextBlocks = upsertWorkflowBlock(baseBlocks, ev)
+        if (!s.currentTurnId && !s.busy) {
+          return { ...flushed, blocks: nextBlocks }
+        }
         resetBusyRecoveryAttempts()
         if (!s.busy) {
           armBusyWatchdog(set, get)
         }
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
         return {
           ...flushed,
           busy: true,
-          blocks: upsertWorkflowBlock(baseBlocks, ev),
+          blocks: nextBlocks,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       })

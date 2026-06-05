@@ -815,6 +815,9 @@ class RuntimeThreadManager:
             await state.handle.cancel(reason="interrupt_requested")
             self._touch_lru(thread_id)
 
+        if self._approval_bridge is not None:
+            self._approval_bridge.cancel_for_thread(thread_id)
+
         await self._emit_event(
             thread_id, turn_id, None, "turn.interrupt_requested",
             {"thread_id": thread_id, "turn_id": turn_id},

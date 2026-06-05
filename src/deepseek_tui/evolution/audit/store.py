@@ -116,6 +116,14 @@ class EvolutionAuditStore:
             )
             await conn.commit()
 
+    async def mark_rejected(self, record_id: str, reason: str = "user rejected") -> None:
+        async with aiosqlite.connect(self._path) as conn:
+            await conn.execute(
+                "UPDATE evolution_events SET status = ?, reason = ? WHERE id = ?",
+                ("rejected", reason, record_id),
+            )
+            await conn.commit()
+
     async def get(self, record_id: str) -> LedgerRecord | None:
         async with aiosqlite.connect(self._path) as conn:
             conn.row_factory = aiosqlite.Row

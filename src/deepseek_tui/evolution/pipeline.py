@@ -138,7 +138,9 @@ class EvolutionPipeline:
         *,
         review_memory: bool,
         review_skill: bool,
+        _retry: int = 0,
     ) -> None:
+        max_retries = 1
         try:
             mutations = await run_evolution_review(
                 self._client,
@@ -156,7 +158,34 @@ class EvolutionPipeline:
             for mutation in mutations:
                 await self._ledger.submit(mutation, source="review", evidence=evidence)
         except Exception:
-            logger.exception("evolution review failed thread_id=%s", evidence.thread_id)
+            logger.exception(
+                "evolution review failed thread_id=%s attempt=%d",
+                evidence.thread_id,
+                _retry + 1,
+            )
+            if _retry < max_retries:
+                await asyncio.sleep(2 ** _retry)
+                await self._run_review(
+                    evidence,
+                    review_memory=review_memory,
+                    review_skill=review_skill,
+                    _retry=_retry + 1,
+                )
+            else:
+                await self._emit_review_failure(evidence.thread_id)
+
+    async def _emit_review_failure(self, thread_id: str) -> None:
+        emit = self._emit_event
+        if not callable(emit):
+            return
+        try:
+            from deepseek_tui.engine.events import StatusEvent
+
+            await emit(StatusEvent(
+                message="⚠️ Evolution review failed after retries"
+            ))
+        except Exception:
+            logger.debug("failed to emit review failure status for %s", thread_id)
 
     async def flush_before_loss(self, evidence: TurnEvidence) -> None:
         if not self._enabled:

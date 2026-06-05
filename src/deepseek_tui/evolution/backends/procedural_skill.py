@@ -40,15 +40,11 @@ class ProceduralSkillBackend:
                 path = str(self._store.skill_root(name))
             except ValueError:
                 return None
-        risk: RiskLevel = "low" if action == "patch" else "medium"
-        if action in ("create", "delete"):
-            risk = "medium" if action == "patch" else "high" if action == "delete" else "medium"
-        if action == "create":
-            risk = "medium"
-        elif action == "delete":
+        risk: RiskLevel = "low"
+        if action == "delete":
             risk = "high"
-        elif action == "patch":
-            risk = "low"
+        elif action != "patch":
+            risk = "medium"
         return ExperienceMutation(
             kind=kind,  # type: ignore[arg-type]
             payload=dict(args),
