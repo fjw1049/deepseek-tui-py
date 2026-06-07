@@ -13,6 +13,7 @@ import {
   createAutomation,
   formatAutomationWhen,
   runAutomationNow,
+  updateAutomation,
   type AutomationRecord
 } from '../../lib/automation-runtime-client'
 import {
@@ -31,6 +32,8 @@ type Props = {
   onBackToChat: () => void
   onOpenAutomationSettings: () => void
   onOpenRuntimeSettings: () => void
+  initialAutomation?: AutomationRecord | null
+  onSaved?: (record: AutomationRecord) => void
 }
 
 const WEEKDAY_LABELS: Record<WeekdayToken, string> = {
@@ -69,23 +72,29 @@ export function AutomationTaskForm({
   workspaceRoot,
   onBackToChat,
   onOpenAutomationSettings,
-  onOpenRuntimeSettings
+  onOpenRuntimeSettings,
+  initialAutomation = null,
+  onSaved
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [name, setName] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [scheduleKind, setScheduleKind] = useState<AutomationScheduleKind>('daily')
+  const [name, setName] = useState(initialAutomation?.name ?? '')
+  const [prompt, setPrompt] = useState(initialAutomation?.prompt ?? '')
+  const [scheduleKind, setScheduleKind] = useState<AutomationScheduleKind>(initialAutomation ? 'custom' : 'daily')
   const [onceAt, setOnceAt] = useState(defaultOnceAt)
   const [everyHours, setEveryHours] = useState('1')
   const [timeOfDay, setTimeOfDay] = useState('09:00')
   const [weekdays, setWeekdays] = useState<WeekdayToken[]>(['MO', 'TU', 'WE', 'TH', 'FR'])
-  const [customRrule, setCustomRrule] = useState('')
-  const [workspaceOverride, setWorkspaceOverride] = useState(workspaceRoot)
-  const [deliveryMode, setDeliveryMode] = useState<AutomationDeliveryMode>('none')
-  const [deliveryTarget, setDeliveryTarget] = useState('')
+  const [customRrule, setCustomRrule] = useState(initialAutomation?.rrule ?? '')
+  const [workspaceOverride, setWorkspaceOverride] = useState(initialAutomation?.cwds?.[0] ?? workspaceRoot)
+  const initialDeliveryMode: AutomationDeliveryMode =
+    initialAutomation?.delivery?.mode === 'feishu' || initialAutomation?.delivery?.mode === 'email'
+      ? initialAutomation.delivery.mode
+      : 'none'
+  const [deliveryMode, setDeliveryMode] = useState<AutomationDeliveryMode>(initialDeliveryMode)
+  const [deliveryTarget, setDeliveryTarget] = useState(initialAutomation?.delivery?.to ?? '')
   const [feishuDefault, setFeishuDefault] = useState('')
   const [emailDefault, setEmailDefault] = useState('')
-  const [createPaused, setCreatePaused] = useState(false)
+  const [createPaused, setCreatePaused] = useState(initialAutomation?.status === 'paused')
   const [submitting, setSubmitting] = useState(false)
   const [runningNow, setRunningNow] = useState(false)
   const [created, setCreated] = useState<AutomationRecord | null>(null)
@@ -152,7 +161,16 @@ export function AutomationTaskForm({
         deliveryTarget,
         createPaused
       })
-      const record = await createAutomation(input)
+      const record = initialAutomation
+        ? await updateAutomation(initialAutomation.id, {
+            ...input,
+            delivery: input.delivery ?? {}
+          })
+        : await createAutomation(input)
+      if (onSaved) {
+        onSaved(record)
+        return
+      }
       setCreated(record)
       setNotice({ tone: 'success', message: t('automationCreateSuccess', { name: record.name }) })
     } catch (err) {
@@ -198,13 +216,13 @@ export function AutomationTaskForm({
             </button>
             <div className="inline-flex items-center gap-2 rounded-full bg-accent/10 px-3 py-1 text-[12px] font-semibold text-accent">
               <Sparkles className="h-3.5 w-3.5" />
-              {t('automationTaskBadge')}
+              {initialAutomation ? t('automationEditBadge') : t('automationTaskBadge')}
             </div>
             <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-ds-ink">
-              {t('automationTaskTitle')}
+              {initialAutomation ? t('automationEditTitle') : t('automationTaskTitle')}
             </h1>
             <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">
-              {t('automationTaskSubtitle')}
+              {initialAutomation ? t('automationEditSubtitle') : t('automationTaskSubtitle')}
             </p>
           </div>
           {!runtimeReady ? (
@@ -366,6 +384,33 @@ export function AutomationTaskForm({
               </div>
             </div>
 
+            <div className="rounded-3xl border border-ds-border-muted bg-ds-main/70 p-4">
+              <div className="mb-3 text-[13px] font-semibold text-ds-ink">{t('automationDeliveryLabel')}</div>
+              <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                <label className="grid gap-2">
+                  <select
+                    value={deliveryMode}
+                    onChange={(event) => setDeliveryMode(event.target.value as AutomationDeliveryMode)}
+                    className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                  >
+                    <option value="none">{t('automationDeliveryNone')}</option>
+                    <option value="feishu">{t('automationDeliveryFeishu')}</option>
+                    <option value="email">{t('automationDeliveryEmail')}</option>
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <input
+                    value={deliveryTarget}
+                    disabled={deliveryMode === 'none'}
+                    onChange={(event) => setDeliveryTarget(event.target.value)}
+                    placeholder={t('automationDeliveryTargetPlaceholder')}
+                    aria-label={t('automationDeliveryTarget')}
+                    className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60 disabled:opacity-50"
+                  />
+                </label>
+              </div>
+            </div>
+
             <details className="rounded-3xl border border-ds-border-muted bg-ds-main/50 p-4">
               <summary className="cursor-pointer text-[13px] font-semibold text-ds-ink">
                 {t('automationAdvanced')}
@@ -380,30 +425,6 @@ export function AutomationTaskForm({
                     className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 font-mono text-[13px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60"
                   />
                 </label>
-                <div className="grid gap-3 md:grid-cols-[220px_1fr]">
-                  <label className="grid gap-2">
-                    <span className="text-[13px] font-semibold text-ds-ink">{t('automationDeliveryLabel')}</span>
-                    <select
-                      value={deliveryMode}
-                      onChange={(event) => setDeliveryMode(event.target.value as AutomationDeliveryMode)}
-                      className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none focus:border-accent/60"
-                    >
-                      <option value="none">{t('automationDeliveryNone')}</option>
-                      <option value="feishu">{t('automationDeliveryFeishu')}</option>
-                      <option value="email">{t('automationDeliveryEmail')}</option>
-                    </select>
-                  </label>
-                  <label className="grid gap-2">
-                    <span className="text-[13px] font-semibold text-ds-ink">{t('automationDeliveryTarget')}</span>
-                    <input
-                      value={deliveryTarget}
-                      disabled={deliveryMode === 'none'}
-                      onChange={(event) => setDeliveryTarget(event.target.value)}
-                      placeholder={t('automationDeliveryTargetPlaceholder')}
-                      className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60 disabled:opacity-50"
-                    />
-                  </label>
-                </div>
               </div>
             </details>
 
@@ -434,7 +455,7 @@ export function AutomationTaskForm({
                 className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent/90 disabled:opacity-60"
               >
                 {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
-                {t('automationCreate')}
+                {initialAutomation ? t('automationSave') : t('automationCreate')}
               </button>
             </div>
           </div>

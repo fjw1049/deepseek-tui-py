@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Command,
   LayoutGrid,
+  MessageCircle,
   Plus,
   Settings
 } from 'lucide-react'
@@ -18,6 +19,8 @@ type Props = {
   threads: NormalizedThread[]
   activeThreadId: string | null
   pluginsActive: boolean
+  automationActive: boolean
+  channelsActive: boolean
   runtimeReady: boolean
   onSelectThread: (id: string) => void
   onDeleteThread: (id: string) => Promise<void>
@@ -26,7 +29,8 @@ type Props = {
   onCompactThread: (id: string) => Promise<void>
   onExportThread: (id: string) => Promise<{ path: string } | null>
   onNewChat: () => void
-  onNewAutomationTask: () => void
+  onOpenAutomations: () => void
+  onOpenChannels: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onImportSession: () => void
   onOpenSettings: (section?: SettingsRouteSection) => void
@@ -37,6 +41,8 @@ export function Sidebar({
   threads,
   activeThreadId,
   pluginsActive,
+  automationActive,
+  channelsActive,
   runtimeReady,
   onSelectThread,
   onDeleteThread,
@@ -45,7 +51,8 @@ export function Sidebar({
   onCompactThread,
   onExportThread,
   onNewChat,
-  onNewAutomationTask,
+  onOpenAutomations,
+  onOpenChannels,
   onNewChatInWorkspace,
   onImportSession,
   onOpenSettings,
@@ -82,10 +89,18 @@ export function Sidebar({
         <SidebarLink
           icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
           label={t('newAutomationTask')}
-          onClick={runtimeReady ? onNewAutomationTask : undefined}
+          onClick={runtimeReady ? onOpenAutomations : undefined}
           disabled={!runtimeReady}
           disabledHint={t('runtimeActionNeedsConnection')}
           variant="flat"
+          active={automationActive}
+        />
+        <SidebarLink
+          icon={<MessageCircle className="h-4 w-4" strokeWidth={1.9} />}
+          label={t('messageChannels')}
+          onClick={onOpenChannels}
+          variant="flat"
+          active={channelsActive}
         />
         {WORKBENCH_FEATURES.pluginMarketplace ? (
           <SidebarLink

@@ -35,7 +35,7 @@ export type SettingsRouteSection =
 
 /** @deprecated Use `runtime`; kept for deep-link normalization. */
 export type LegacySettingsRouteSection = SettingsRouteSection | 'agents'
-export type AppRoute = 'chat' | 'settings' | 'plugins' | 'automation'
+export type AppRoute = 'chat' | 'settings' | 'plugins' | 'automation' | 'channels'
 export type PluginHostRoute = 'chat'
 export type ThreadWarmupStatus = 'idle' | 'warming' | 'ready' | 'failed'
 export type ThreadWarmupState = {

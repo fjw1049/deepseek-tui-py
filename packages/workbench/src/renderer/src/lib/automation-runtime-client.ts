@@ -8,9 +8,13 @@ export type AutomationRecord = {
   prompt: string
   rrule: string
   status: AutomationStatus | string
+  created_at?: string
+  updated_at?: string
+  cwds?: string[]
   next_run_at?: string | null
   last_run_at?: string | null
   delivery?: { mode?: string; to?: string; best_effort?: boolean }
+  digest?: Record<string, unknown>
 }
 
 export type CreateAutomationInput = {
@@ -21,6 +25,25 @@ export type CreateAutomationInput = {
   status?: AutomationStatus
   delivery?: { mode: string; to: string; best_effort?: boolean }
   next_run_at?: string | null
+}
+
+export type UpdateAutomationInput = Omit<Partial<CreateAutomationInput>, 'delivery'> & {
+  delivery?: CreateAutomationInput['delivery'] | Record<string, never>
+}
+
+export type AutomationRunRecord = {
+  id: string
+  automation_id: string
+  scheduled_for: string
+  status: string
+  created_at: string
+  started_at?: string | null
+  ended_at?: string | null
+  task_id?: string | null
+  thread_id?: string | null
+  turn_id?: string | null
+  error?: string | null
+  delivery_done?: boolean
 }
 
 async function runtimeJson<T>(path: string, method: string, body?: unknown): Promise<T> {
@@ -107,6 +130,17 @@ export async function createAutomation(input: CreateAutomationInput): Promise<Au
   return runtimeJson<AutomationRecord>('/v1/automations', 'POST', input)
 }
 
+export async function getAutomation(id: string): Promise<AutomationRecord> {
+  return runtimeJson<AutomationRecord>(`/v1/automations/${encodeURIComponent(id)}`, 'GET')
+}
+
+export async function updateAutomation(
+  id: string,
+  input: UpdateAutomationInput
+): Promise<AutomationRecord> {
+  return runtimeJson<AutomationRecord>(`/v1/automations/${encodeURIComponent(id)}`, 'PATCH', input)
+}
+
 export async function pauseAutomation(id: string): Promise<AutomationRecord> {
   return runtimeJson<AutomationRecord>(`/v1/automations/${encodeURIComponent(id)}/pause`, 'POST', {})
 }
@@ -121,4 +155,15 @@ export async function deleteAutomation(id: string): Promise<AutomationRecord> {
 
 export async function runAutomationNow(id: string): Promise<{ id: string; status: string; task_id?: string }> {
   return runtimeJson(`/v1/automations/${encodeURIComponent(id)}/run`, 'POST', {})
+}
+
+export async function listAutomationRuns(
+  id: string,
+  limit = 50
+): Promise<AutomationRunRecord[]> {
+  const rows = await runtimeJson<AutomationRunRecord[]>(
+    `/v1/automations/${encodeURIComponent(id)}/runs?limit=${limit}`,
+    'GET'
+  )
+  return Array.isArray(rows) ? rows : []
 }

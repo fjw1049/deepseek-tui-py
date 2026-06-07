@@ -33,8 +33,11 @@ const DevBrowserPanel = lazy(() =>
 const PluginMarketplaceView = lazy(() =>
   import('./PluginMarketplaceView').then((module) => ({ default: module.PluginMarketplaceView }))
 )
-const AutomationTaskForm = lazy(() =>
-  import('./automation/AutomationTaskForm').then((module) => ({ default: module.AutomationTaskForm }))
+const AutomationCenter = lazy(() =>
+  import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter }))
+)
+const ChannelCenter = lazy(() =>
+  import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter }))
 )
 const WorkspaceFilePreviewPanel = lazy(() =>
   import('./WorkspaceFilePreviewPanel').then((module) => ({
@@ -509,6 +512,10 @@ export function Workbench(): ReactElement {
     setRoute('automation')
   }
 
+  const openChannels = (): void => {
+    setRoute('channels')
+  }
+
   const startNewChatInWorkspace = (workspaceRoot: string): void => {
     setRoute('chat')
     void createThread({ workspaceRoot })
@@ -662,6 +669,8 @@ export function Workbench(): ReactElement {
               threads={threads}
               activeThreadId={activeThreadId}
               pluginsActive={route === 'plugins'}
+              automationActive={route === 'automation'}
+              channelsActive={route === 'channels'}
               runtimeReady={runtimeConnection === 'ready'}
               onSelectThread={openThread}
               onDeleteThread={deleteThread}
@@ -676,7 +685,8 @@ export function Workbench(): ReactElement {
               }}
               onExportThread={exportThreadToSession}
               onNewChat={startNewChat}
-              onNewAutomationTask={startNewAutomationTask}
+              onOpenAutomations={startNewAutomationTask}
+              onOpenChannels={openChannels}
               onNewChatInWorkspace={startNewChatInWorkspace}
               onImportSession={() => setImportSessionOpen(true)}
               onOpenSettings={(section) => openSettings(section)}
@@ -723,13 +733,15 @@ export function Workbench(): ReactElement {
           </>
         ) : route === 'automation' ? (
           <Suspense fallback={<div className="h-full bg-ds-main" />}>
-            <AutomationTaskForm
+            <AutomationCenter
               runtimeReady={runtimeConnection === 'ready'}
               workspaceRoot={workspaceRoot}
-              onBackToChat={() => setRoute('chat')}
-              onOpenAutomationSettings={() => openSettings('claw')}
               onOpenRuntimeSettings={() => openSettings('runtime')}
             />
+          </Suspense>
+        ) : route === 'channels' ? (
+          <Suspense fallback={<div className="h-full bg-ds-main" />}>
+            <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
           </Suspense>
         ) : (
           <>
