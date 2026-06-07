@@ -388,6 +388,17 @@ class RuntimeThreadStore:
         out: list[TurnItemRecord] = []
         if not self._items_dir.exists():
             return out
+        try:
+            turn = self.load_turn(turn_id)
+        except FileNotFoundError:
+            turn = None
+        if turn is not None and turn.item_ids:
+            for item_id in turn.item_ids:
+                try:
+                    out.append(self.load_item(item_id))
+                except FileNotFoundError:
+                    continue
+            return out
         for path in self._items_dir.glob("*.json"):
             raw = json.loads(path.read_text(encoding="utf-8"))
             record = TurnItemRecord.model_validate(raw)

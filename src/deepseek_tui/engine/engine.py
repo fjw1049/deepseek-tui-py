@@ -109,6 +109,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_TRIVIAL_RECALL_PROMPTS = {
+    "hi",
+    "hello",
+    "hey",
+    "ok",
+    "okay",
+    "thanks",
+    "thank you",
+    "你好",
+    "您好",
+    "好的",
+    "好",
+    "嗯",
+    "谢谢",
+}
+
+
+def _should_skip_memory_recall(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return True
+    return normalized in _TRIVIAL_RECALL_PROMPTS
+
+
 def _clip_summary_line(text: str, limit: int = 200) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
     if len(line) > limit:
@@ -1085,7 +1109,9 @@ class Engine:
         workspace_str = str(self.tool_context.working_directory.resolve())
         memory_recall = None
         coordinator = self.memory_coordinator
-        if coordinator is not None:
+        if coordinator is not None and not _should_skip_memory_recall(
+            processed.model_text or ""
+        ):
             from deepseek_tui.memory.coordinator import MemoryCoordinator
 
             if isinstance(coordinator, MemoryCoordinator):

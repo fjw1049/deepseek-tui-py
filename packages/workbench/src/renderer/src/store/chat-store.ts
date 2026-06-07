@@ -83,6 +83,7 @@ const sseAbortRef = {
 let composerModelLoadPromise: Promise<void> | null = null
 let bootPromise: Promise<void> | null = null
 let threadWarmupSeq = 0
+let threadWarmupTask: { threadId: string; promise: Promise<void> } | null = null
 const BUSY_WATCHDOG_MS = 180_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 let drainingQueuedMessages = false
@@ -1324,17 +1325,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   warmActiveThread: async (threadId) => {
     const targetId = threadId ?? get().activeThreadId
     if (!targetId || get().runtimeConnection !== 'ready') return
+    if (threadWarmupTask?.threadId === targetId) {
+      await threadWarmupTask.promise
+      return
+    }
     const p = getProvider(get().providerId)
-    if (typeof p.warmThread !== 'function') {
+    const warmThread = p.warmThread?.bind(p)
+    if (typeof warmThread !== 'function') {
       set({ activeThreadWarmup: { threadId: targetId, status: 'ready' } })
       return
     }
     const seq = ++threadWarmupSeq
     set({ activeThreadWarmup: { threadId: targetId, status: 'warming' } })
-    try {
-      await p.warmThread(targetId)
+    const task = (async () => {
+      await warmThread(targetId)
       if (seq !== threadWarmupSeq || get().activeThreadId !== targetId) return
       set({ activeThreadWarmup: { threadId: targetId, status: 'ready' } })
+    })()
+    threadWarmupTask = { threadId: targetId, promise: task }
+    try {
+      await task
     } catch (e) {
       if (seq !== threadWarmupSeq || get().activeThreadId !== targetId) return
       set({ activeThreadWarmup: { threadId: targetId, status: 'failed' } })
@@ -1343,6 +1353,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           threadId: targetId,
           message: e instanceof Error ? e.message : String(e)
         })
+      }
+    } finally {
+      if (threadWarmupTask?.threadId === targetId && threadWarmupTask.promise === task) {
+        threadWarmupTask = null
       }
     }
   },
@@ -1655,6 +1669,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sseAbort = null
     clearBusyWatchdog()
     try {
+      const warmup = get().activeThreadWarmup
+      if (
+        warmup.threadId !== activeThreadId ||
+        warmup.status === 'idle' ||
+        warmup.status === 'warming' ||
+        warmup.status === 'failed'
+      ) {
+        await get().warmActiveThread(activeThreadId)
+        if (get().activeThreadId !== activeThreadId) return false
+        const nextWarmup = get().activeThreadWarmup
+        if (nextWarmup.threadId === activeThreadId && nextWarmup.status === 'failed') {
+          throw new Error('Thread warmup failed')
+        }
+      }
       const seqAtSend = get().lastSeq
       const { turnId, userMessageItemId } = await p.sendUserMessage(activeThreadId, trimmedText, {
         mode,

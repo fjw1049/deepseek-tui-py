@@ -6,8 +6,7 @@ import {
   Command,
   LayoutGrid,
   Plus,
-  Settings,
-  Upload
+  Settings
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
@@ -88,14 +87,6 @@ export function Sidebar({
           disabledHint={t('runtimeActionNeedsConnection')}
           variant="flat"
         />
-        <SidebarLink
-          icon={<Upload className="h-4 w-4" strokeWidth={1.85} />}
-          label={t('importSession')}
-          onClick={runtimeReady ? onImportSession : undefined}
-          disabled={!runtimeReady}
-          disabledHint={t('runtimeActionNeedsConnection')}
-          variant="flat"
-        />
         {WORKBENCH_FEATURES.pluginMarketplace ? (
           <SidebarLink
             icon={<LayoutGrid className="h-4 w-4" strokeWidth={1.75} />}
@@ -120,6 +111,7 @@ export function Sidebar({
         onPickWorkspace={() => void chooseWorkspace()}
         onRemoveWorkspace={deleteWorkspace}
         onCreateThreadInWorkspace={onNewChatInWorkspace}
+        onImportSession={onImportSession}
         onSelectThread={onSelectThread}
         onDeleteThread={onDeleteThread}
         onForkThread={onForkThread}

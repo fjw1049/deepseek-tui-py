@@ -33,6 +33,7 @@ type SidebarProjectsSectionProps = {
   onPickWorkspace: () => void
   onRemoveWorkspace: (workspacePath: string) => Promise<void>
   onCreateThreadInWorkspace: (workspacePath: string) => void
+  onImportSession: () => void
   onSelectThread: (threadId: string) => void
   onDeleteThread: (threadId: string) => Promise<void>
   onForkThread: (threadId: string) => Promise<void>
@@ -54,6 +55,7 @@ export function SidebarProjectsSection({
   onPickWorkspace,
   onRemoveWorkspace,
   onCreateThreadInWorkspace,
+  onImportSession,
   onSelectThread,
   onDeleteThread,
   onForkThread,
@@ -145,6 +147,14 @@ export function SidebarProjectsSection({
       <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
         <span className="ds-sidebar-section-label">{t('sidebarProjects')}</span>
         <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={onImportSession}
+            title={t('importSession')}
+            className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+          >
+            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+          </button>
           <button
             type="button"
             onClick={onPickWorkspace}
