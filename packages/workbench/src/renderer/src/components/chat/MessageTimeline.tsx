@@ -196,6 +196,18 @@ export function MessageTimeline({
   }, [activeThreadId])
 
   useEffect(() => {
+    if (!currentTurnUserId) return
+    stickToBottomRef.current = true
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current)
+    }
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null
+      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    })
+  }, [currentTurnUserId])
+
+  useEffect(() => {
     if (!scrollToBlockId) return
     const target = document.getElementById(`block-${scrollToBlockId}`)
     if (target) {
@@ -439,12 +451,14 @@ function groupTurns(blocks: ChatBlock[]): Turn[] {
   return turns
 }
 
-function splitThink(text: string): { think: string; content: string } {
-  const match = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/)
-  if (!match) return { think: '', content: text }
+const THINK_TAG_RE = /<think(?:ing)?>([\s\S]*?)(?:<\/(?:think(?:ing)?|redacted_thinking)>|$)/i
+
+export function splitThink(text: string): { think: string; content: string } {
+  const tagged = text.match(THINK_TAG_RE)
+  if (!tagged) return { think: '', content: text }
   return {
-    think: match[1].trim(),
-    content: text.replace(/<think>[\s\S]*?(?:<\/think>|$)/, '').trim()
+    think: tagged[1].trim(),
+    content: text.replace(THINK_TAG_RE, '').trim()
   }
 }
 
@@ -614,10 +628,17 @@ function sectionHasDetails(
   return block ? getProcessDetail(block, describeProcessBlock(block, t)).kind !== 'none' : false
 }
 
-function isProcessSectionActive(section: ProcessSection, processing: boolean): boolean {
+function isProcessSectionActive(
+  section: ProcessSection,
+  processing: boolean,
+  hasLiveAssistantStream = false
+): boolean {
   if (!processing) return false
   if (section.kind === 'reasoning') {
-    return section.blocks.some((block) => block.id === 'live-reasoning')
+    return (
+      !hasLiveAssistantStream &&
+      section.blocks.some((block) => block.id === 'live-reasoning')
+    )
   }
   if (section.kind === 'output') {
     return section.blocks.some((block) => block.id === 'live-assistant')
@@ -651,6 +672,7 @@ function MessageTurn({
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const { think: liveThink, content: liveContent } = splitThink(live)
   const liveProcessText = [liveReasoning, liveThink].filter(Boolean).join('\n\n')
+  const hasLiveAssistantStream = isProcessing && !!liveContent.trim()
   const [workExpanded, setWorkExpanded] = useState(isProcessing)
 
   useEffect(() => {
@@ -776,6 +798,7 @@ function MessageTurn({
                   key={section.id}
                   section={section}
                   processing={isProcessing}
+                  hasLiveAssistantStream={hasLiveAssistantStream}
                   hasAssistantContent={hasAssistantContent}
                   reasoningDurationMs={reasoningDurationMs}
                   singleReasoningSection={reasoningSectionCount === 1}
@@ -1321,6 +1344,7 @@ function SubagentSummaryRow({ block }: { block: SubagentBlock }): ReactElement {
 function ProcessSectionRow({
   section,
   processing,
+  hasLiveAssistantStream,
   hasAssistantContent,
   reasoningDurationMs,
   singleReasoningSection,
@@ -1331,6 +1355,7 @@ function ProcessSectionRow({
 }: {
   section: ProcessSection
   processing: boolean
+  hasLiveAssistantStream: boolean
   hasAssistantContent: boolean
   reasoningDurationMs?: number
   singleReasoningSection: boolean
@@ -1348,7 +1373,7 @@ function ProcessSectionRow({
         )
       : []
   const hasDetails = sectionHasDetails(section, t)
-  const active = isProcessSectionActive(section, processing)
+  const active = isProcessSectionActive(section, processing, hasLiveAssistantStream)
   const hasError = section.blocks.some(
     (block) =>
       (block.kind === 'tool' && block.status === 'error') ||
@@ -1359,6 +1384,7 @@ function ProcessSectionRow({
   const expanded = hasDetails && (userExpanded ?? defaultExpanded)
   const title = describeProcessSection(section, t, {
     processing,
+    hasLiveAssistantStream,
     reasoningDurationMs,
     singleReasoningSection,
     todoSession
@@ -1523,7 +1549,7 @@ function ProcessEntryRow({
   const wrapSummary = (block.kind === 'system' && !canExpand) || isAssistantProcessText
 
   return (
-    <div className="flex flex-col">
+    <div id={`block-${block.id}`} className="flex flex-col">
       <button
         type="button"
         onClick={canExpand && !isRunningToolOrPending ? () => setUserOpen((v) => !v) : undefined}
@@ -1583,13 +1609,17 @@ function describeProcessSection(
   t: (key: string, opts?: Record<string, unknown>) => string,
   opts: {
     processing: boolean
+    hasLiveAssistantStream: boolean
     reasoningDurationMs?: number
     singleReasoningSection: boolean
     todoSession?: TodoTurnSession | null
   }
 ): string {
   if (section.kind === 'reasoning') {
-    if (opts.processing && isProcessSectionActive(section, true)) {
+    if (
+      opts.processing &&
+      isProcessSectionActive(section, true, opts.hasLiveAssistantStream)
+    ) {
       return t('thinkingNow')
     }
     if (
@@ -1988,7 +2018,7 @@ function UserMessageBubble({
 
   if (editing) {
     return (
-      <div className="ds-user-message">
+      <div id={`block-${block.id}`} className="ds-user-message">
         <div className="ds-user-message-bubble min-w-0 border border-accent/35 ring-1 ring-accent/15">
           <textarea
             ref={textareaRef}
@@ -2039,7 +2069,7 @@ function UserMessageBubble({
   }
 
   return (
-    <div className="ds-user-message group relative">
+    <div id={`block-${block.id}`} className="ds-user-message group relative">
       <div className="ds-user-message-bubble min-w-0">
         <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">
           {block.text}
@@ -2430,7 +2460,7 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
       ? formatMessageDateTime(block.createdAt, i18n.language)
       : null
     return (
-      <div className="group/message flex min-w-0 max-w-full flex-col">
+      <div id={`block-${block.id}`} className="group/message flex min-w-0 max-w-full flex-col">
         <div className="ds-markdown ds-chat-answer min-w-0 max-w-full text-ds-ink">
           <AssistantMarkdown text={block.text} streaming={streaming} />
         </div>
@@ -2445,7 +2475,7 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
   }
   if (block.kind === 'reasoning') {
     return (
-      <div className="ds-card-soft rounded-[20px] px-4 py-3 text-[13.5px] leading-6 text-ds-muted">
+      <div id={`block-${block.id}`} className="ds-card-soft rounded-[20px] px-4 py-3 text-[13.5px] leading-6 text-ds-muted">
         <div className="ds-markdown">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
         </div>

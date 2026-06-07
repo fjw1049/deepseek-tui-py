@@ -86,7 +86,9 @@ let threadWarmupSeq = 0
 let threadWarmupTask: { threadId: string; promise: Promise<void> } | null = null
 const BUSY_WATCHDOG_MS = 180_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
+const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
+let turnCompletionProbeTimer: ReturnType<typeof setTimeout> | null = null
 const COMPLETION_NOTIFICATION_DEDUPE_LIMIT = 200
 const completionNotificationKeys: string[] = []
 const completionNotificationKeySet = new Set<string>()
@@ -160,6 +162,76 @@ function finalizeTurnTiming(state: ChatState): Partial<ChatState> {
       [userId]: Math.max(0, Date.now() - startedAt)
     }
   }
+}
+
+function appendLiveReasoningBlock(blocks: ChatBlock[], text: string): ChatBlock[] {
+  if (!text.trim()) return blocks
+  const now = Date.now()
+  return [
+    ...blocks,
+    {
+      kind: 'reasoning' as const,
+      id: `r-${now}`,
+      createdAt: new Date(now).toISOString(),
+      text
+    }
+  ]
+}
+
+function appendLiveAssistantBlock(blocks: ChatBlock[], text: string): ChatBlock[] {
+  if (!text.trim()) return blocks
+  const now = Date.now()
+  return [
+    ...blocks,
+    {
+      kind: 'assistant' as const,
+      id: `a-${now}`,
+      createdAt: new Date(now).toISOString(),
+      text
+    }
+  ]
+}
+
+function clearTurnCompletionProbe(): void {
+  if (turnCompletionProbeTimer) {
+    clearTimeout(turnCompletionProbeTimer)
+    turnCompletionProbeTimer = null
+  }
+}
+
+function scheduleTurnCompletionProbe(
+  get: () => ChatState,
+  sink: { onTurnComplete(): void }
+): void {
+  clearTurnCompletionProbe()
+  const scheduledState = get()
+  const threadId = scheduledState.activeThreadId
+  const turnId = scheduledState.currentTurnId
+  if (!threadId || !turnId) return
+
+  turnCompletionProbeTimer = setTimeout(() => {
+    turnCompletionProbeTimer = null
+    const state = get()
+    if (!state.busy || state.activeThreadId !== threadId || state.currentTurnId !== turnId) return
+    const provider = getProvider(state.providerId)
+    if (typeof provider.isThreadTurnActive !== 'function') return
+    void provider
+      .isThreadTurnActive(threadId)
+      .then((active) => {
+        const latest = get()
+        if (
+          !active &&
+          latest.busy &&
+          latest.activeThreadId === threadId &&
+          latest.currentTurnId === turnId
+        ) {
+          sink.onTurnComplete()
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      })
+  }, TURN_COMPLETION_PROBE_MS)
 }
 
 function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Partial<ChatState> {
@@ -297,7 +369,7 @@ function buildThreadEventSink(
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
   get: () => ChatState
 ): ThreadEventSink {
-  return {
+  const sink: ThreadEventSink = {
     onSeq: (seq) => {
       resetBusyRecoveryAttempts()
       set((s) => ({
@@ -366,6 +438,7 @@ function buildThreadEventSink(
           base.busy = true
           armBusyWatchdog(set, get)
         }
+        let blocks = s.blocks
         let liveReasoning = s.liveReasoning
         let liveAssistant = s.liveAssistant
         let nextReasoningFirstAtByUserId = s.turnReasoningFirstAtByUserId
@@ -389,10 +462,15 @@ function buildThreadEventSink(
             }
             continue
           }
+          if (liveReasoning.trim()) {
+            blocks = appendLiveReasoningBlock(blocks, liveReasoning)
+            liveReasoning = ''
+          }
           liveAssistant += delta.text
         }
         return {
           ...base,
+          ...(blocks !== s.blocks ? { blocks } : {}),
           ...(liveReasoning !== s.liveReasoning ? { liveReasoning } : {}),
           ...(liveAssistant !== s.liveAssistant ? { liveAssistant } : {}),
           ...(nextReasoningFirstAtByUserId !== s.turnReasoningFirstAtByUserId
@@ -744,7 +822,29 @@ function buildThreadEventSink(
         }
       })
     },
+    onLiveSegmentComplete: (kind) => {
+      resetBusyRecoveryAttempts()
+      set((s) => {
+        if (kind === 'agent_reasoning' && s.liveReasoning.trim()) {
+          return {
+            blocks: appendLiveReasoningBlock(s.blocks, s.liveReasoning),
+            liveReasoning: ''
+          }
+        }
+        if (kind === 'agent_message' && s.liveAssistant.trim()) {
+          return {
+            blocks: appendLiveAssistantBlock(s.blocks, s.liveAssistant),
+            liveAssistant: ''
+          }
+        }
+        return {}
+      })
+      if (kind === 'agent_message') {
+        scheduleTurnCompletionProbe(get, sink)
+      }
+    },
     onTurnComplete: () => {
+      clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
       emitPetEvent({ type: 'turn_complete' })
@@ -803,6 +903,7 @@ function buildThreadEventSink(
       if (get().busy) armBusyWatchdog(set, get)
     }
   }
+  return sink
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({

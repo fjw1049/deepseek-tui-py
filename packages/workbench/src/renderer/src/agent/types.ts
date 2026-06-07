@@ -232,6 +232,8 @@ export type ThreadEventSink = {
   onUserInput(req: UserInputRequestPayload): void
   onUserInputStatus(ev: UserInputStatusPayload): void
   onTurnComplete(): void
+  /** Reasoning or assistant live segment finalized on the runtime. */
+  onLiveSegmentComplete?(kind: 'agent_reasoning' | 'agent_message'): void
   onError(err: Error): void
   /** Optional: thread metadata changed (title / archived). */
   onThreadUpdated?(ev: ThreadUpdatedPayload): void

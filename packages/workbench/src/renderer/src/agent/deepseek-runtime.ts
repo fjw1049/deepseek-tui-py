@@ -1299,6 +1299,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   }
                   return
                 }
+                if (
+                  it &&
+                  (it.kind === 'agent_reasoning' || it.kind === 'agent_message') &&
+                  sink.onLiveSegmentComplete
+                ) {
+                  sink.onLiveSegmentComplete(it.kind)
+                  return
+                }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {
                   if (it.kind === 'tool_call' && looksLikeUserInputToolItem(it)) {
                     sink.onUserInputStatus({
