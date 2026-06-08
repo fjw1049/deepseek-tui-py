@@ -30,6 +30,7 @@ class GoalController:
         self.recovery = GoalRecovery()
         self._pending_follow_up: GoalFollowUp | None = None
         self._pending_steer: str | None = None
+        self._on_change: Any | None = None
 
     def rebind(self, *, thread_id: str | None = None, journal_path: Path | None = None) -> None:
         if thread_id is not None:
@@ -51,6 +52,10 @@ class GoalController:
             ),
         }
 
+    def _notify_change(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
+
     def create(
         self, objective: str, token_budget: int | None = None, *, replace_existing: bool = False
     ) -> ThreadGoal:
@@ -70,6 +75,7 @@ class GoalController:
         self.journal.append(set_entry(self.current))
         # Queue immediate follow-up so agent starts working on the goal
         self._pending_follow_up = plan_follow_up(self.current)
+        self._notify_change()
         return self.current
 
     def pause(self, reason: str | None = None) -> ThreadGoal | None:
@@ -92,6 +98,7 @@ class GoalController:
         self.journal.append(clear_entry(self.current, reason=reason))
         self.current = None
         self._pending_follow_up = None
+        self._notify_change()
 
     def _apply_status(self, request: str, *, reason: str | None = None) -> ThreadGoal | None:
         result = plan_goal_transition(self.current, request, reason=reason)  # type: ignore[arg-type]
@@ -102,6 +109,7 @@ class GoalController:
             self.journal.append(clear_entry(self.current, reason=reason))
         if self.current is None or self.current.status != GoalStatus.ACTIVE:
             self._pending_follow_up = None
+        self._notify_change()
         return self.current
 
     def on_turn_start(self) -> None:

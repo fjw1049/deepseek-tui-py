@@ -55,18 +55,19 @@ def parse_workflow_spec(raw: Any) -> WorkflowSpec:
     for phase_raw in phases_raw:
         if not isinstance(phase_raw, dict):
             raise WorkflowValidationError("each phase must be an object")
-        phase_id = phase_raw.get("id")
+        raw_id = phase_raw.get("id")
+        phase_id = str(raw_id).strip() if raw_id else ""
+        if not phase_id:
+            phase_id = f"phase_{len(phases) + 1}"
         title = phase_raw.get("title")
-        if not isinstance(phase_id, str) or not phase_id.strip():
-            raise WorkflowValidationError("phase.id must be a non-empty string")
         if not isinstance(title, str) or not title.strip():
-            raise WorkflowValidationError("phase.title must be a non-empty string")
+            title = phase_id
         steps_raw = phase_raw.get("steps")
         if not isinstance(steps_raw, list) or not steps_raw:
             raise WorkflowValidationError(f"phase {phase_id}: steps must be non-empty")
         steps: list[WorkflowStep] = []
-        for step_raw in steps_raw:
-            step = _parse_step(step_raw, phase_id)
+        for step_idx, step_raw in enumerate(steps_raw):
+            step = _parse_step(step_raw, phase_id, step_idx)
             if step.id in step_ids:
                 raise WorkflowValidationError(f"duplicate step id: {step.id}")
             step_ids.add(step.id)
@@ -115,13 +116,14 @@ def _parse_policy(raw: dict[str, Any]) -> WorkflowPolicy:
     )
 
 
-def _parse_step(raw: Any, phase_id: str) -> WorkflowStep:
+def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
     if not isinstance(raw, dict):
         raise WorkflowValidationError(f"phase {phase_id}: each step must be an object")
-    step_id = raw.get("id")
+    raw_id = raw.get("id")
+    step_id = str(raw_id).strip() if raw_id else ""
+    if not step_id:
+        step_id = f"{phase_id}_step_{step_index + 1}"
     step_type = raw.get("type")
-    if not isinstance(step_id, str) or not step_id.strip():
-        raise WorkflowValidationError(f"phase {phase_id}: step.id required")
     if step_type == "agent":
         label = raw.get("label")
         if not isinstance(label, str) or not label.strip():
@@ -148,6 +150,14 @@ def _parse_step(raw: Any, phase_id: str) -> WorkflowStep:
                 f"step {step_id}: fanout.items exceeds max {MAX_FANOUT_ITEMS}"
             )
         agent_raw = raw.get("agent")
+        if agent_raw is None:
+            agent_raw = _fanout_agent_from_flat_step(raw)
+        elif isinstance(agent_raw, dict):
+            flat = _fanout_agent_from_flat_step(raw)
+            if flat:
+                merged = dict(flat)
+                merged.update(agent_raw)
+                agent_raw = merged
         if not isinstance(agent_raw, dict):
             raise WorkflowValidationError(f"step {step_id}: fanout.agent required")
         concurrency = (
@@ -213,6 +223,28 @@ def _parse_step(raw: Any, phase_id: str) -> WorkflowStep:
     raise WorkflowValidationError(f"step {step_id}: unknown type {step_type!r}")
 
 
+def _fanout_agent_from_flat_step(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Accept the common shorthand where fanout agent fields are on the step.
+
+    The canonical IR keeps per-item agent config under ``step.agent``. LLMs
+    often flatten ``label_template`` / ``prompt_template`` onto the fanout step,
+    so normalize that shape before validation instead of failing the whole tool
+    call with ``fanout.agent required``.
+    """
+    keys = (
+        "label",
+        "label_template",
+        "agent_type",
+        "model",
+        "allowed_tools",
+        "prompt",
+        "prompt_template",
+        "output_schema",
+    )
+    agent = {key: raw[key] for key in keys if key in raw}
+    return agent or None
+
+
 def _parse_agent_config(raw: dict[str, Any]) -> AgentStepConfig:
     prompt = raw.get("prompt")
     prompt_template = raw.get("prompt_template")
@@ -223,7 +255,7 @@ def _parse_agent_config(raw: dict[str, Any]) -> AgentStepConfig:
     return AgentStepConfig(
         label=raw.get("label"),
         label_template=raw.get("label_template"),
-        agent_type=str(raw.get("agent_type", "general")),
+        agent_type=str(raw.get("agent_type") or raw.get("type") or "general"),
         model=raw.get("model"),
         allowed_tools=_parse_allowed(raw.get("allowed_tools")),
         prompt=raw.get("prompt"),

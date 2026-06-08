@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Target, Pause, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { useChatStore } from '../../store/chat-store'
@@ -111,13 +111,34 @@ export function GoalChip(): ReactElement | null {
   const goalStatus = useChatStore(useShallow((s) => s.goalStatus))
   const [panelOpen, setPanelOpen] = useState(false)
   const chipRef = useRef<HTMLDivElement>(null)
+  const prevGoalRef = useRef<GoalData | null>(null)
+  const [entering, setEntering] = useState(false)
+  const [flash, setFlash] = useState(false)
+
+  useEffect(() => {
+    const prev = prevGoalRef.current
+    if (goalStatus && !prev) {
+      setEntering(true)
+      const id = setTimeout(() => setEntering(false), 500)
+      return () => clearTimeout(id)
+    }
+    if (goalStatus && prev && prev.status !== goalStatus.status) {
+      setFlash(true)
+      const id = setTimeout(() => setFlash(false), 600)
+      return () => clearTimeout(id)
+    }
+  }, [goalStatus?.goal_id, goalStatus?.status])
+
+  useEffect(() => {
+    prevGoalRef.current = goalStatus ?? null
+  })
 
   if (!goalStatus) return null
 
-  // Fade out completed goals after a moment (still show chip briefly)
   const cfg = STATUS_CONFIG[goalStatus.status]
   const Icon = cfg.icon
   const pct = progressPercent(goalStatus)
+  const isActive = goalStatus.status === 'active'
 
   const label =
     goalStatus.objective.length > 28
@@ -135,16 +156,32 @@ export function GoalChip(): ReactElement | null {
             ? `${pct}%`
             : formatSeconds(goalStatus.active_seconds)
 
+  const chipClasses = [
+    'ds-goal-chip inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-medium transition',
+    cfg.bg,
+    cfg.border,
+    cfg.color,
+    'hover:opacity-90',
+    entering ? 'ds-goal-enter' : '',
+    flash ? 'ds-goal-flash' : '',
+    isActive ? 'ds-goal-active' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
     <div ref={chipRef} className="relative">
       <button
         type="button"
         onClick={() => setPanelOpen((v) => !v)}
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-medium transition ${cfg.bg} ${cfg.border} ${cfg.color} hover:opacity-90`}
+        className={chipClasses}
         aria-expanded={panelOpen}
         aria-label="Goal status"
       >
-        <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+        <Icon
+          className={`h-3.5 w-3.5 ${isActive ? 'ds-goal-icon-pulse' : ''}`}
+          strokeWidth={2}
+        />
         <span className="max-w-[140px] truncate">{label}</span>
         <span className="opacity-60">·</span>
         <span className="opacity-75">{sublabel}</span>

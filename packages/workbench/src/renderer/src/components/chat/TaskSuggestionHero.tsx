@@ -149,7 +149,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
   return (
     <div className="ds-no-drag w-full">
-      <div className="ds-hero-panel w-full rounded-[22px] border border-ds-border bg-ds-card/95 px-5 py-5 shadow-[0_12px_36px_rgba(62,52,36,0.06)] backdrop-blur-sm dark:bg-ds-card/90 dark:shadow-[0_16px_40px_rgba(0,0,0,0.2)] sm:px-6 sm:py-6">
+      <div className="ds-hero-panel w-full rounded-[22px] border border-ds-border bg-ds-card/95 px-5 py-7 shadow-[0_12px_36px_rgba(62,52,36,0.06)] backdrop-blur-sm dark:bg-ds-card/90 dark:shadow-[0_16px_40px_rgba(0,0,0,0.2)] sm:px-6 sm:py-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1 text-left">
             <div className="mb-2 flex items-center gap-1.5 text-accent">
@@ -172,7 +172,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
         </div>
 
         <div
-          className={`mt-5 grid grid-cols-1 gap-3 transition-opacity duration-500 sm:grid-cols-2 xl:grid-cols-4 ${
+          className={`mt-6 grid grid-cols-1 gap-3 transition-opacity duration-500 sm:grid-cols-2 xl:grid-cols-4 ${
             animating ? 'opacity-[0.94]' : 'opacity-100'
           }`}
         >
@@ -187,7 +187,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
                     onClick={() => onSelectSuggestion?.(item.prompt)}
                     onMouseEnter={() => setFocusedIndex(index)}
                     className={[
-                      'group relative flex min-h-[140px] flex-col rounded-[16px] border px-3.5 py-3.5 text-left transition-all duration-300 ease-out',
+                      'group relative flex min-h-[168px] flex-col rounded-[16px] border px-3.5 py-5 text-left transition-all duration-300 ease-out',
                       isFirst
                         ? 'border-accent/20 bg-ds-elevated ring-1 ring-accent/10 dark:border-accent/25'
                         : focused
@@ -224,7 +224,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
                     onClick={() => onSelectSuggestion?.(t(item.promptKey))}
                     onMouseEnter={() => setFocusedIndex(index)}
                     className={[
-                      'group relative flex min-h-[140px] flex-col rounded-[16px] border px-3.5 py-3.5 text-left transition-all duration-300 ease-out',
+                      'group relative flex min-h-[168px] flex-col rounded-[16px] border px-3.5 py-5 text-left transition-all duration-300 ease-out',
                       isRecommended
                         ? 'border-accent/20 bg-ds-elevated ring-1 ring-accent/10 dark:border-accent/25'
                         : focused
@@ -257,7 +257,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
               })}
         </div>
 
-        <div className="mt-3 flex items-center justify-center gap-1.5">
+        <div className="mt-4 flex items-center justify-center gap-1.5">
           {Array.from({ length: itemCount }).map((_, index) => (
             <button
               key={index}

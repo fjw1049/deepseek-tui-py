@@ -100,6 +100,49 @@ def test_fanout_items_max() -> None:
         parse_workflow_spec(raw)
 
 
+def test_fanout_accepts_flat_agent_config() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items": ["engine", "tools"],
+            "label_template": "inspect {{item}}",
+            "agent_type": "explore",
+            "prompt_template": "Inspect {{item}}.",
+        }
+    ]
+
+    spec = parse_workflow_spec(raw)
+
+    step = spec.phases[0].steps[0]
+    assert step.type == "fanout"
+    assert step.agent.label_template == "inspect {{item}}"
+    assert step.agent.agent_type == "explore"
+    assert step.agent.prompt_template == "Inspect {{item}}."
+
+
+def test_fanout_merges_flat_fields_into_partial_agent() -> None:
+    """When agent={type:explore} exists but prompt_template is on step, merge."""
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items": ["goal", "workflow", "tools"],
+            "agent": {"type": "explore"},
+            "label_template": "check_{{item}}",
+            "prompt_template": "Inspect {{item}} directory.",
+        }
+    ]
+    spec = parse_workflow_spec(raw)
+    step = spec.phases[0].steps[0]
+    assert step.type == "fanout"
+    assert step.agent.agent_type == "explore"
+    assert step.agent.prompt_template == "Inspect {{item}} directory."
+    assert step.agent.label_template == "check_{{item}}"
+
+
 def test_duplicate_step_id_rejected() -> None:
     raw = _minimal_spec()
     raw["phases"][0]["steps"].append(

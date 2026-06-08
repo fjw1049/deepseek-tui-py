@@ -1101,6 +1101,12 @@ class RuntimeThreadManager:
                 thread_id=thread.id,
                 journal_path=self.store.goal_journal_path(thread.id),
             )
+            tid = thread.id
+
+            def _goal_changed() -> None:
+                asyncio.ensure_future(self._emit_goal_status_if_needed(tid))
+
+            goal_controller._on_change = _goal_changed
         engine.memory_thread_id = thread.id
         engine.memory_mode = thread.memory_mode
         if self._elevation_bridge is not None:

@@ -215,18 +215,19 @@ function scheduleTurnCompletionProbe(
     if (!state.busy || state.activeThreadId !== threadId || state.currentTurnId !== turnId) return
     const provider = getProvider(state.providerId)
     if (typeof provider.isThreadTurnActive !== 'function') return
+    const stillWatchingSameTurn = (): boolean => {
+      const latest = get()
+      return latest.busy && latest.activeThreadId === threadId && latest.currentTurnId === turnId
+    }
     void provider
       .isThreadTurnActive(threadId)
       .then((active) => {
-        const latest = get()
-        if (
-          !active &&
-          latest.busy &&
-          latest.activeThreadId === threadId &&
-          latest.currentTurnId === turnId
-        ) {
+        if (!stillWatchingSameTurn()) return
+        if (!active) {
           sink.onTurnComplete()
+          return
         }
+        scheduleTurnCompletionProbe(get, sink)
       })
       .catch(() => {
         /* ignore */
@@ -842,9 +843,7 @@ function buildThreadEventSink(
         }
         return {}
       })
-      if (kind === 'agent_message') {
-        scheduleTurnCompletionProbe(get, sink)
-      }
+      scheduleTurnCompletionProbe(get, sink)
     },
     onTurnComplete: () => {
       clearTurnCompletionProbe()

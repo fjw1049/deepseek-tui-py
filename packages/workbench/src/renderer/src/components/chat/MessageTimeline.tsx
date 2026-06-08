@@ -790,6 +790,7 @@ function MessageTurn({
             reasoningDurationMs={reasoningDurationMs}
             expanded={workExpanded}
             onToggle={() => setWorkExpanded((value) => !value)}
+            activeWorkflowName={processBlocks.find((b): b is ChatBlock & { kind: 'workflow'; workflowName: string } => b.kind === 'workflow' && b.status === 'running')?.workflowName}
           />
           {workExpanded && processSections.length > 0 ? (
             <div className="flex flex-col gap-1">
@@ -985,7 +986,8 @@ function WorkMetaRow({
   durationMs,
   reasoningDurationMs,
   expanded,
-  onToggle
+  onToggle,
+  activeWorkflowName
 }: {
   processing: boolean
   stepCount: number
@@ -994,6 +996,7 @@ function WorkMetaRow({
   reasoningDurationMs?: number
   expanded: boolean
   onToggle: () => void
+  activeWorkflowName?: string
 }): ReactElement {
   const { t } = useTranslation('common')
   const [tickNow, setTickNow] = useState(() => Date.now())
@@ -1032,10 +1035,17 @@ function WorkMetaRow({
     >
       {processing ? (
         <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-          <Bot className="h-4 w-4 text-ds-faint ds-work-logo-pulse" strokeWidth={1.75} />
+          {activeWorkflowName ? (
+            <span className="ds-workflow-spinner" />
+          ) : (
+            <Bot className="h-4 w-4 text-ds-faint ds-work-logo-pulse" strokeWidth={1.75} />
+          )}
         </span>
       ) : null}
       <span className={`tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>{mainLabel}</span>
+      {activeWorkflowName ? (
+        <span className="ds-workflow-tag">⚡ {activeWorkflowName}</span>
+      ) : null}
       {showThoughtSuffix ? (
         <span className="text-ds-faint">
           · {t('thoughtFor', { duration: formatDuration(reasoningDurationMs!) })}
@@ -1721,6 +1731,7 @@ type ProcessDetail =
   | { kind: 'approval' }
   | { kind: 'user_input' }
   | { kind: 'subagent' }
+  | { kind: 'workflow' }
   | { kind: 'text'; text: string }
 
 function summarizeProcessText(text: string, max = 96): string {
@@ -1831,6 +1842,7 @@ function getProcessDetail(block: ChatBlock, summaryText?: string): ProcessDetail
   if (block.kind === 'approval') return { kind: 'approval' }
   if (block.kind === 'user_input') return { kind: 'user_input' }
   if (block.kind === 'subagent') return { kind: 'subagent' }
+  if (block.kind === 'workflow') return { kind: 'workflow' }
   if (block.kind === 'system' && block.text.trim()) {
     // Short system messages already fit in the summary line — skip the
     // expand affordance so we don't duplicate the same string.
@@ -1902,6 +1914,15 @@ function ProcessEntryDetail({
   }
   if (detail.kind === 'subagent' && block.kind === 'subagent') {
     return <MessageBubble block={block} nested />
+  }
+  if (detail.kind === 'workflow' && block.kind === 'workflow') {
+    return (
+      <WorkflowBlock
+        workflowName={block.workflowName}
+        status={block.status}
+        snapshot={block.snapshot}
+      />
+    )
   }
   return null
 }
@@ -2019,7 +2040,7 @@ function UserMessageBubble({
   if (editing) {
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
-        <div className="ds-user-message-bubble min-w-0 border border-accent/35 ring-1 ring-accent/15">
+        <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0 border border-accent/35 ring-1 ring-accent/15">
           <textarea
             ref={textareaRef}
             value={draft}
@@ -2039,7 +2060,7 @@ function UserMessageBubble({
               }
             }}
             rows={2}
-            className="block w-full min-w-0 resize-none break-words bg-transparent text-[15px] font-medium leading-[1.58] text-ds-ink outline-none [overflow-wrap:anywhere]"
+            className="ds-user-message-edit-textarea block w-full min-w-0 resize-none break-words bg-transparent text-[15px] font-medium leading-[1.58] text-ds-ink outline-none [overflow-wrap:anywhere]"
           />
           <div className="mt-2 flex items-center justify-end gap-3">
             <div className="flex items-center gap-2">

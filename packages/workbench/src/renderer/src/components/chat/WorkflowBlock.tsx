@@ -60,10 +60,16 @@ export function WorkflowBlock({
   const phaseOrder =
     snapshot.phases.length > 0 ? snapshot.phases : [...agentsByPhase.keys()]
 
+  const isRunning = status === 'running'
+
   return (
-    <div className="rounded-[22px] border border-sky-300/50 bg-[linear-gradient(180deg,rgba(14,165,233,0.05),rgba(14,165,233,0.12))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)] dark:border-sky-800/50">
+    <div
+      className={`rounded-[22px] border border-sky-300/50 bg-[linear-gradient(180deg,rgba(14,165,233,0.05),rgba(14,165,233,0.12))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)] dark:border-sky-800/50 ${isRunning ? 'ds-workflow-running' : ''}`}
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="font-semibold text-sky-800 dark:text-sky-200">{header}</div>
+        <div className={`font-semibold text-sky-800 dark:text-sky-200 ${isRunning ? 'ds-shiny-text' : ''}`}>
+          {header}
+        </div>
         <span className="font-mono text-[11px] text-ds-faint">{workflowName}</span>
       </div>
       <p className="mt-1 text-[12px] text-ds-muted">
@@ -91,7 +97,7 @@ export function WorkflowBlock({
                 {agents.map((agent) => (
                   <li
                     key={`${agent.step_id}-${agent.label}`}
-                    className="truncate font-mono text-[11px] text-ds-ink"
+                    className={`truncate font-mono text-[11px] text-ds-ink ${agent.status === 'running' ? 'ds-shiny-text' : ''}`}
                     title={agent.result_preview ?? agent.error ?? undefined}
                   >
                     {STATUS_ICON[agent.status] ?? '○'} {agent.label}

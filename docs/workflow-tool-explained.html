@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow 工具实现逻辑 — 完整图解</title>
+<style>
+:root {
+  --bg: #0b1020;
+  --card: rgba(255,255,255,0.04);
+  --border: rgba(255,255,255,0.1);
+  --cyan: #38bdf8;
+  --purple: #a78bfa;
+  --gold: #fbbf24;
+  --green: #34d399;
+  --red: #f87171;
+  --orange: #fb923c;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: linear-gradient(160deg, #0b1020 0%, #1a1040 50%, #0f172a 100%);
+  color: var(--text);
+  line-height: 1.75;
+  min-height: 100vh;
+}
+.container { max-width: 1180px; margin: 0 auto; padding: 48px 24px 80px; }
+h1 {
+  font-size: 2.2rem;
+  text-align: center;
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 10px;
+}
+.subtitle { text-align:center; color:var(--muted); margin-bottom:48px; font-size:1.05rem; }
+
+/* 导航 */
+.toc {
+  display:flex; flex-wrap:wrap; gap:8px; justify-content:center;
+  margin-bottom:48px;
+}
+.toc a {
+  padding:6px 14px; border-radius:20px; font-size:0.85rem;
+  background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.25);
+  color:var(--cyan); text-decoration:none; transition:background .2s;
+}
+.toc a:hover { background:rgba(56,189,248,0.2); }
+
+/* 比喻卡片 */
+.metaphor {
+  background: linear-gradient(135deg, rgba(167,139,250,0.12), rgba(56,189,248,0.08));
+  border: 1px solid rgba(167,139,250,0.3);
+  border-radius: 20px;
+  padding: 32px 36px;
+  margin-bottom: 48px;
+}
+.metaphor h2 { color:var(--purple); font-size:1.35rem; margin-bottom:14px; }
+.metaphor p { color:#cbd5e1; }
+.metaphor strong { color:var(--gold); }
+
+/* 章节 */
+.section { margin-bottom: 56px; }
+.section > h2 {
+  font-size: 1.55rem;
+  color: var(--cyan);
+  margin-bottom: 20px;
+  display: flex; align-items: center; gap: 12px;
+}
+.badge {
+  background: var(--cyan); color: #0b1020;
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem; font-weight: 700; flex-shrink: 0;
+}
+
+/* 卡片 */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px 26px;
+  margin-bottom: 14px;
+}
+.card h3 { color: var(--gold); font-size: 1.1rem; margin-bottom: 8px; }
+.card p, .card li { color: #cbd5e1; }
+.card ul { padding-left: 20px; margin-top: 8px; }
+.analogy {
+  margin-top: 12px; padding: 10px 14px;
+  background: rgba(167,139,250,0.1); border-radius: 8px;
+  font-size: 0.92rem; color: #c4b5fd;
+}
+.arrow { text-align:center; color:#475569; font-size:1.3rem; padding:4px 0; }
+
+/* 流程图 */
+.flow {
+  display: flex; flex-direction: column; gap: 0;
+}
+.flow-node {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 22px;
+  position: relative;
+}
+.flow-node .tag {
+  display: inline-block; font-size: 0.72rem; font-family: var(--mono);
+  padding: 2px 8px; border-radius: 6px; margin-bottom: 6px;
+}
+.tag-l1 { background:rgba(56,189,248,0.15); color:var(--cyan); }
+.tag-l2 { background:rgba(167,139,250,0.15); color:var(--purple); }
+.tag-l3 { background:rgba(251,191,36,0.15); color:var(--gold); }
+.tag-ui { background:rgba(52,211,153,0.15); color:var(--green); }
+.flow-node h4 { font-size: 1rem; margin-bottom: 4px; }
+.flow-node p { font-size: 0.9rem; color: var(--muted); }
+.flow-node .file { font-family:var(--mono); font-size:0.78rem; color:#64748b; margin-top:6px; }
+
+/* 架构三层 */
+.layers { display:grid; gap:12px; margin:20px 0; }
+.layer {
+  border-radius:14px; padding:18px 22px;
+  border: 1px solid var(--border);
+}
+.layer-l1 { background:rgba(56,189,248,0.06); border-color:rgba(56,189,248,0.25); }
+.layer-l2 { background:rgba(167,139,250,0.06); border-color:rgba(167,139,250,0.25); }
+.layer-l3 { background:rgba(251,191,36,0.06); border-color:rgba(251,191,36,0.25); }
+.layer h4 { margin-bottom:6px; }
+.layer-l1 h4 { color:var(--cyan); }
+.layer-l2 h4 { color:var(--purple); }
+.layer-l3 h4 { color:var(--gold); }
+.layer p, .layer li { font-size:0.9rem; color:#cbd5e1; }
+.layer ul { padding-left:18px; margin-top:6px; }
+
+/* 步骤类型网格 */
+.step-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 16px 0;
+}
+.step-type {
+  border-radius: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+}
+.step-type.agent { border-color:rgba(56,189,248,0.4); background:rgba(56,189,248,0.05); }
+.step-type.fanout { border-color:rgba(52,211,153,0.4); background:rgba(52,211,153,0.05); }
+.step-type.pipeline { border-color:rgba(251,191,36,0.4); background:rgba(251,191,36,0.05); }
+.step-type.synthesis { border-color:rgba(167,139,250,0.4); background:rgba(167,139,250,0.05); }
+.step-type h4 { font-size:1.05rem; margin-bottom:8px; }
+.step-type.agent h4 { color:var(--cyan); }
+.step-type.fanout h4 { color:var(--green); }
+.step-type.pipeline h4 { color:var(--gold); }
+.step-type.synthesis h4 { color:var(--purple); }
+.step-type p { font-size:0.88rem; color:var(--muted); }
+.step-type .icon { font-size:1.6rem; margin-bottom:8px; }
+
+/* ASCII 图 */
+.diagram {
+  background: rgba(0,0,0,0.35);
+  border-radius: 14px;
+  padding: 24px;
+  overflow-x: auto;
+  margin: 16px 0;
+}
+.diagram pre {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #7dd3fc;
+  white-space: pre;
+}
+
+/* 表格 */
+table { width:100%; border-collapse:collapse; margin:16px 0; font-size:0.9rem; }
+th { background:rgba(167,139,250,0.15); padding:11px 14px; text-align:left; color:#c4b5fd; border-bottom:2px solid rgba(167,139,250,0.3); }
+td { padding:11px 14px; border-bottom:1px solid rgba(255,255,255,0.05); color:#cbd5e1; vertical-align:top; }
+tr:hover td { background:rgba(255,255,255,0.02); }
+code, .mono { font-family:var(--mono); font-size:0.85em; color:#7dd3fc; }
+.file-path { color:#67e8f9; }
+
+/* 状态色 */
+.status-running { color:var(--cyan); }
+.status-done { color:var(--green); }
+.status-error { color:var(--red); }
+.status-skipped { color:var(--muted); }
+
+/* 折叠 */
+details {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 10px;
+}
+details summary { cursor:pointer; color:var(--cyan); font-weight:600; }
+details[open] summary { margin-bottom:10px; }
+details p, details li { color:#cbd5e1; font-size:0.9rem; }
+details ul { padding-left:20px; margin-top:6px; }
+
+/* 时间线 */
+.timeline { position:relative; padding-left:28px; }
+.timeline::before {
+  content:''; position:absolute; left:10px; top:0; bottom:0;
+  width:2px; background:linear-gradient(180deg,var(--cyan),var(--purple));
+}
+.tl-item { position:relative; margin-bottom:18px; }
+.tl-item::before {
+  content:''; position:absolute; left:-22px; top:6px;
+  width:10px; height:10px; border-radius:50%;
+  background:var(--cyan); border:2px solid var(--bg);
+}
+.tl-item h4 { color:var(--gold); font-size:0.95rem; margin-bottom:4px; }
+.tl-item p { font-size:0.88rem; color:var(--muted); }
+
+/* 示例 JSON */
+.json-block {
+  background:#0d1117; border:1px solid #30363d; border-radius:10px;
+  padding:16px; font-family:var(--mono); font-size:0.78rem;
+  color:#e6edf3; overflow-x:auto; line-height:1.5; margin:12px 0;
+}
+.json-key { color:#79c0ff; }
+.json-str { color:#a5d6ff; }
+.json-num { color:#79c0ff; }
+
+/* 对比 */
+.compare { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:16px 0; }
+@media(max-width:700px){ .compare { grid-template-columns:1fr; } }
+.compare-box { border-radius:14px; padding:18px; }
+.compare-bad { border:1px solid rgba(248,113,113,0.3); background:rgba(248,113,113,0.05); }
+.compare-good { border:1px solid rgba(52,211,153,0.3); background:rgba(52,211,153,0.05); }
+.compare-box h4 { margin-bottom:8px; }
+.compare-bad h4 { color:var(--red); }
+.compare-good h4 { color:var(--green); }
+
+/* 总结 */
+.summary {
+  background: linear-gradient(135deg, rgba(167,139,250,0.12), rgba(56,189,248,0.08));
+  border: 1px solid rgba(167,139,250,0.25);
+  border-radius: 20px;
+  padding: 32px;
+  margin-top: 48px;
+}
+.summary h2 { color:var(--gold); margin-bottom:16px; }
+.summary li { padding:6px 0 6px 22px; position:relative; color:#cbd5e1; list-style:none; }
+.summary li::before { content:'✦'; position:absolute; left:0; color:var(--purple); }
+
+footer { text-align:center; color:#475569; margin-top:48px; font-size:0.85rem; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Workflow 工具 — 实现逻辑完整图解</h1>
+<p class="subtitle">主 Agent 如何用一次工具调用，编排多个子 Agent 并行/串行协作</p>
+
+<nav class="toc">
+  <a href="#metaphor">核心比喻</a>
+  <a href="#overview">一句话定案</a>
+  <a href="#architecture">三层架构</a>
+  <a href="#full-flow">完整执行流</a>
+  <a href="#ir">Workflow IR</a>
+  <a href="#step-types">四种 Step</a>
+  <a href="#runtime">运行时细节</a>
+  <a href="#agent-runner">子 Agent 启动</a>
+  <a href="#policy">策略与容错</a>
+  <a href="#progress">进度与 UI</a>
+  <a href="#example">端到端示例</a>
+  <a href="#files">文件索引</a>
+</nav>
+
+<!-- 核心比喻 -->
+<div class="metaphor" id="metaphor">
+  <h2>🏗️ 用「工地项目经理」理解 Workflow</h2>
+  <p>
+    想象你是一个<strong>项目经理（主 Agent / Engine）</strong>，面前有一栋大楼要盖。<br><br>
+    以前的做法：你亲自跑去找每个工人（<code>agent_spawn</code>），等他们干完（<code>agent_wait</code>），再去找下一个——来回跑几十趟，还容易漏人、乱序。<br><br>
+    <strong>Workflow 的做法</strong>：你一次性交出一份<strong>施工图纸（Workflow IR JSON）</strong>，上面写着：
+    「先勘探地基 → 然后同时铺三栋楼的水电/泥瓦/木工 → 每栋楼先扫再验 → 最后总工汇总报告」。<br><br>
+    图纸交给<strong>调度中心（WorkflowTool + run_workflow）</strong>，它按图纸<strong>确定性</strong>地：
+    派工人（spawn 子 Agent）、等完工（wait）、把结果传给下一步、实时广播进度。
+    你只需要在开工前点一次「批准」，不用管中间细节。
+  </p>
+</div>
+
+<!-- 一句话定案 -->
+<div class="section" id="overview">
+  <h2><span class="badge">0</span> 一句话定案</h2>
+  <div class="card">
+    <p>
+      <code>workflow</code> 是一个普通 <strong>ToolSpec</strong>：主模型提交 <strong>Workflow Spec（JSON IR）</strong>
+      → 校验 → 解释执行 → 每步经 <strong>DeepSeekAgentRunner</strong> 复用 <strong>SubAgentManager + run_subagent_loop</strong>
+      → 流式 <strong>WorkflowProgressEvent</strong> + 最终 <strong>ToolResult</strong> 回主 Engine。
+    </p>
+    <div class="analogy">
+      💡 核心执行层是 <strong>Workflow IR</strong>，不是 Python exec、不是 Node VM。
+      全程在<strong>同一次工具调用</strong>内 await 完成，不走 subagent handoff 续回合。
+    </div>
+  </div>
+
+  <div class="compare">
+    <div class="compare-box compare-bad">
+      <h4>❌ 手工编排（旧方式）</h4>
+      <ul>
+        <li>主模型多次调用 <code>agent_spawn</code></li>
+        <li>再多次 <code>agent_wait</code> 轮询</li>
+        <li>合成靠自然语言拼 JSON，易失败</li>
+        <li>无整体进度视图，只有 Mailbox 卡片</li>
+        <li>编排逻辑靠模型「临场发挥」，不确定</li>
+      </ul>
+    </div>
+    <div class="compare-box compare-good">
+      <h4>✅ Workflow 工具（新方式）</h4>
+      <ul>
+        <li>一次 <code>workflow</code> 调用提交完整 IR</li>
+        <li>运行时确定性 fan-out / fan-in / pipeline</li>
+        <li><code>structured_output</code> 子工具 + 早停 → 结构化终态</li>
+        <li>可校验、可渲染、可取消的进度树</li>
+        <li>编排逻辑在 IR 里，执行由 Python 保证</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 三层架构 -->
+<div class="section" id="architecture">
+  <h2><span class="badge">1</span> 三层架构</h2>
+  <div class="layers">
+    <div class="layer layer-l1">
+      <h4>L1 编排语义层 — workflow/runtime.py</h4>
+      <p>解释 <code>WorkflowSpec</code>：按 phase → step 顺序调度，只依赖 <code>WorkflowRunner</code> 协议 + cancel + callbacks。</p>
+      <ul>
+        <li><code>run_workflow()</code> — 主循环</li>
+        <li><code>gather_step_outputs()</code> — fanout/pipeline 并发收集</li>
+        <li><code>run_step()</code> — 单步包装 + snapshot 更新</li>
+        <li><code>render_workflow_text()</code> — 文本进度摘要</li>
+      </ul>
+    </div>
+    <div class="layer layer-l2">
+      <h4>L2 计划层 — models.py + validate.py + template.py</h4>
+      <p>JSON IR 校验、依赖检查、模板变量渲染。可选 <code>adapters/pi_js.py</code> 解析 Pi 风格脚本 meta。</p>
+      <ul>
+        <li><code>parse_workflow_spec()</code> — 结构 + id 唯一 + outputs 拓扑依赖</li>
+        <li><code>render_template()</code> — <code>{{item}}</code> / <code>{{previous}}</code> / <code>{{outputs.*}}</code></li>
+        <li><code>make_step_output()</code> — 生成 text + structured + preview（截断）</li>
+      </ul>
+    </div>
+    <div class="layer layer-l3">
+      <h4>L3 DeepSeek 适配层 — tools/workflow_tool.py + agent_runner.py</h4>
+      <p>ToolSpec 入口、审批策略、Engine 注入 cancel/emit、SubAgentManager 绑定。</p>
+      <ul>
+        <li><code>WorkflowTool.execute()</code> — 解析 spec → 跑 workflow → 返回 ToolResult</li>
+        <li><code>DeepSeekAgentRunner.run()</code> — spawn + poll wait + 转 StepOutput</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="diagram">
+<pre>
+┌──────────────────────────────────────────────────────────────────────┐
+│  主 Agent (Engine TurnLoop)                                          │
+│  决定调用 workflow 工具，传入 spec JSON                               │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │ 一次 ToolCall（需用户批准整段编排）
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  L3  WorkflowTool.execute()                                          │
+│  _resolve_spec → DeepSeekAgentRunner → run_workflow(spec)          │
+│  注入: engine_cancel_event / workflow_emit / workflow_tool_call_id │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  L1  run_workflow(spec)                                              │
+│  for phase in phases:                                                │
+│    for step in steps:                                                │
+│      agent    → runner.run(prompt)         [1个子Agent]              │
+│      fanout   → Semaphore.gather(items)    [N个子Agent并行]          │
+│      pipeline → per item: stages串行       [N×M个子Agent]            │
+│      synthesis→ 模板拼prompt → runner.run  [汇总子Agent]             │
+│  ctx.outputs[step_id] = StepOutput                                   │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │ 每步 spawn
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  SubAgentManager.spawn(SpawnRequest)                                 │
+│  → run_subagent_loop (独立工具集 + 可选 structured_output)           │
+│  → manager.get_result() 轮询等待完成                                 │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │ WorkflowProgressEvent (实时)
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  Engine → ThreadManager SSE → Workbench WorkflowBlock               │
+└──────────────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+</div>
+
+<!-- 完整执行流 -->
+<div class="section" id="full-flow">
+  <h2><span class="badge">2</span> 完整执行流（逐步拆解）</h2>
+
+  <div class="timeline">
+    <div class="tl-item">
+      <h4>Step 0 — 主模型决定使用 workflow</h4>
+      <p>用户明确要求多 Agent 编排 / fan-out / 分阶段审查时，主模型调用 <code>workflow</code> 工具（而非手写多个 <code>agent_spawn</code>）。工具描述和 <code>prompt_guidelines.md</code> 引导模型行为。</p>
+    </div>
+    <div class="tl-item">
+      <h4>Step 1 — Engine 注入上下文</h4>
+      <p><span class="file-path">engine/engine.py</span> 在 <code>_execute_single_tool</code> 中，当 <code>tool_name == "workflow"</code> 时注入：</p>
+      <ul style="margin-top:6px;color:var(--muted);font-size:0.88rem;">
+        <li><code>engine_cancel_event</code> — 用户按 Esc 取消时联动</li>
+        <li><code>workflow_tool_call_id</code> — 进度事件主键</li>
+        <li><code>workflow_emit</code> — 发射 WorkflowProgressEvent 的回调</li>
+        <li><code>workflow_status_cb</code> — 发射 StatusEvent 一行摘要</li>
+      </ul>
+    </div>
+    <div class="tl-item">
+      <h4>Step 2 — WorkflowTool._resolve_spec()</h4>
+      <p>解析入参：纯 <code>spec</code> 对象，或 <code>script + spec</code>（Pi JS 只解析 <code>export const meta</code>，phases 必须来自 spec）。调用 <code>parse_workflow_spec()</code> 做完整校验，失败抛 <code>ToolError</code>。</p>
+    </div>
+    <div class="tl-item">
+      <h4>Step 3 — 创建 DeepSeekAgentRunner</h4>
+      <p>绑定 <code>SubAgentManager</code> + <code>loop_runtime</code>，<code>parent_depth</code> 继承当前 spawn 深度，<code>register_spawned</code> 记录所有 agent_id（用于超时/取消时批量 cancel）。</p>
+    </div>
+    <div class="tl-item">
+      <h4>Step 4 — run_workflow(spec) 主循环</h4>
+      <p>初始化 <code>WorkflowRunContext</code>（outputs 字典、spawned_agent_ids、synthesis_step_ids）和空 <code>WorkflowSnapshot</code>。按 phase 顺序、step 顺序执行，<strong>严格串行推进 phase/step 结构</strong>，仅在 fanout/pipeline 内部并发。</p>
+    </div>
+    <div class="tl-item">
+      <h4>Step 5 — 每步执行 + 进度广播</h4>
+      <p>每个 step 调用 <code>run_step()</code>：在 snapshot.agents 追加 <code>WorkflowAgentRun(status=running)</code> → await 实际协程 → 更新 done/error → 调用 <code>on_progress(snapshot)</code> → emit WorkflowProgressEvent。</p>
+    </div>
+    <div class="tl-item">
+      <h4>Step 6 — 计算最终结果</h4>
+      <p><code>_final_result()</code>：若有 synthesis step，取<strong>最后一个</strong> synthesis 的 <code>structured</code>（优先）或 <code>text</code>；否则返回所有 step 的 preview 字典。</p>
+    </div>
+    <div class="tl-item">
+      <h4>Step 7 — 返回 ToolResult</h4>
+      <p>成功时 <code>content</code> = 文本进度 + Result 正文；<code>metadata.workflow</code> 含 snapshot、result、logs、duration_ms、errors。主 Engine 拿到后继续当前回合，<strong>不触发 handoff 新回合</strong>。</p>
+    </div>
+  </div>
+</div>
+
+<!-- Workflow IR -->
+<div class="section" id="ir">
+  <h2><span class="badge">3</span> Workflow IR（施工图纸格式）</h2>
+
+  <div class="card">
+    <h3>顶层结构</h3>
+    <div class="json-block">
+{ <span class="json-key">"version"</span>: <span class="json-num">1</span>,
+  <span class="json-key">"meta"</span>: { <span class="json-key">"name"</span>: <span class="json-str">"repo_review"</span>, <span class="json-key">"description"</span>: <span class="json-str">"多视角审查"</span> },
+  <span class="json-key">"policy"</span>: { <span class="json-key">"approval_mode"</span>: <span class="json-str">"trusted_workflow"</span>, <span class="json-key">"on_error"</span>: <span class="json-str">"continue"</span>, ... },
+  <span class="json-key">"phases"</span>: [
+    { <span class="json-key">"id"</span>: <span class="json-str">"inspect"</span>, <span class="json-key">"title"</span>: <span class="json-str">"勘探阶段"</span>, <span class="json-key">"steps"</span>: [ ... ] },
+    { <span class="json-key">"id"</span>: <span class="json-str">"synthesis"</span>, <span class="json-key">"title"</span>: <span class="json-str">"汇总阶段"</span>, <span class="json-key">"steps"</span>: [ ... ] }
+  ]
+}
+    </div>
+  </div>
+
+  <table>
+    <tr><th>字段</th><th>含义</th><th>默认值 / 约束</th></tr>
+    <tr><td><code>meta.name</code></td><td>工作流名称，snake_case</td><td>必填，非空</td></tr>
+    <tr><td><code>meta.description</code></td><td>人类可读描述</td><td>必填</td></tr>
+    <tr><td><code>policy.approval_mode</code></td><td>子 Agent 审批策略</td><td><code>trusted_workflow</code></td></tr>
+    <tr><td><code>policy.on_error</code></td><td>单步失败行为</td><td><code>continue</code>（默认）或 <code>fail_fast</code></td></tr>
+    <tr><td><code>policy.max_agents</code></td><td>最多 spawn 子 Agent 数</td><td>10，范围 1~32</td></tr>
+    <tr><td><code>policy.concurrency</code></td><td>fanout/pipeline 并发上限</td><td>4，≤ max_agents</td></tr>
+    <tr><td><code>policy.wall_clock_seconds</code></td><td>整段墙钟超时</td><td>600s，超时 cancel 所有子 Agent</td></tr>
+    <tr><td><code>phases[]</code></td><td>阶段列表，每阶段含 steps</td><td>至少 1 个 phase，每 phase 至少 1 step</td></tr>
+  </table>
+
+  <details>
+    <summary>校验规则（validate.py 做了什么？）</summary>
+    <ul>
+      <li>version 必须为 1</li>
+      <li>phase.id、step.id 全局唯一</li>
+      <li>fanout/pipeline items 非空，最多 16 项</li>
+      <li>至少有一个会触发 agent 的 step（防空跑）</li>
+      <li>synthesis 引用的 <code>{{outputs.X}}</code> 必须指向<strong>已定义且拓扑在前</strong>的 step id</li>
+      <li>agent step 必须有 label + prompt；synthesis 必须有 label + prompt_template</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>模板变量（template.py 运行时替换）</summary>
+    <table>
+      <tr><th>变量</th><th>含义</th><th>截断规则</th></tr>
+      <tr><td><code>{{item}}</code></td><td>fanout/pipeline 当前 item 字符串</td><td>无</td></tr>
+      <tr><td><code>{{previous}}</code></td><td>pipeline 当前 item 上一 stage 的 preview</td><td>已截断</td></tr>
+      <tr><td><code>{{outputs.&lt;step_id&gt;}}</code></td><td>该 step 的 preview</td><td>默认最多 2000 字符</td></tr>
+      <tr><td><code>{{outputs.&lt;step_id&gt;.full}}</code></td><td>该 step 完整 text</td><td>硬上限 32KB</td></tr>
+      <tr><td><code>{{outputs}}</code></td><td>所有已完成 step 的一行 preview 索引</td><td>fanout 每项最多 800 字符</td></tr>
+    </table>
+    <p style="margin-top:8px;">缺失的 output 会渲染为 <code>(missing output: step_id)</code>，所以 synthesis prompt 要能容忍失败 step。</p>
+  </details>
+</div>
+
+<!-- 四种 Step -->
+<div class="section" id="step-types">
+  <h2><span class="badge">4</span> 四种 Step 类型（怎么「指挥」多个 Agent）</h2>
+
+  <div class="step-grid">
+    <div class="step-type agent">
+      <div class="icon">👤</div>
+      <h4>agent — 单人任务</h4>
+      <p>spawn <strong>1 个</strong>子 Agent，同步等待完成。对标 Pi 的 <code>await agent(...)</code>。</p>
+      <p style="margin-top:8px;"><code>ctx.outputs[step.id] = 结果</code></p>
+    </div>
+    <div class="step-type fanout">
+      <div class="icon">🔀</div>
+      <h4>fanout — 并行扇出</h4>
+      <p>对 <code>items[]</code> 每项 spawn 一个子 Agent，<strong>并行</strong>执行（Semaphore 限流）。对标 Pi 的 <code>parallel(() => agent(...))</code>。</p>
+      <p style="margin-top:8px;">每项结果存 <code>outputs[f"{id}:{item}"]</code>，合并 preview 存 <code>outputs[id]</code></p>
+    </div>
+    <div class="step-type pipeline">
+      <div class="icon">🔗</div>
+      <h4>pipeline — 流水线</h4>
+      <p>对 <code>items[]</code> 每项按 <code>stages[]</code> <strong>串行</strong>执行多个子 Agent。上一 stage 的 preview 通过 <code>{{previous}}</code> 传给下一 stage。</p>
+      <p style="margin-top:8px;">不同 item 之间可并行（受 concurrency 限制）</p>
+    </div>
+    <div class="step-type synthesis">
+      <div class="icon">🧩</div>
+      <h4>synthesis — 扇入汇总</h4>
+      <p>用 <code>{{outputs.*}}</code> 模板把前面所有分支结果拼成 prompt，spawn 一个汇总子 Agent。通常配 <code>output_schema</code> 产出结构化 JSON。</p>
+      <p style="margin-top:8px;">最终 workflow result 优先取<strong>最后一个</strong> synthesis 的 structured</p>
+    </div>
+  </div>
+
+  <div class="diagram">
+<pre>
+Phase: inspect
+  │
+  ├─ [agent] api_review ──────────────────────► 子Agent "api reviewer"
+  │                                              ctx.outputs["api_review"]
+  │
+  └─ [fanout] parallel_checks
+       items: ["engine", "tools", "workbench"]
+       │
+       ├──► 子Agent "inspect engine"  ─┐
+       ├──► 子Agent "inspect tools"   ─┤ 并行(max concurrency=4)
+       └──► 子Agent "inspect workbench"─┘
+              ctx.outputs["parallel_checks:engine"] 等
+              ctx.outputs["parallel_checks"] = 合并preview
+
+Phase: synthesis
+  │
+  └─ [synthesis] final
+       prompt = "综合 {{outputs.api_review}} 和 {{outputs.parallel_checks}}..."
+       ──────────────────────────────────────► 子Agent "final summary"
+                                              output_schema → structured JSON
+                                              = workflow 最终 result
+</pre>
+  </div>
+
+  <details>
+    <summary>fanout 并发收集细节（gather_step_outputs）</summary>
+    <ul>
+      <li>为每个 item 创建 <code>asyncio.Task</code></li>
+      <li>用 <code>asyncio.wait(FIRST_COMPLETED)</code> 逐个收割结果（非一次性 gather）</li>
+      <li>每项执行前 <code>check_cancel()</code>，取消时 cancel 所有 pending task</li>
+      <li>单项异常：log 记录；<code>on_error=continue</code> 时跳过该项；<code>fail_fast</code> 时 cancel pending 并抛 WorkflowFailedError</li>
+      <li>返回结果按 item 原始 index 排序，保证顺序稳定</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>pipeline 串行传递细节</summary>
+    <ul>
+      <li>每个 item 独立跑 stages 循环：<code>prev = None → stage1 → prev → stage2 → ... → return prev</code></li>
+      <li>任一 stage 返回 None（失败）→ 该 item 整条 pipeline 失败</li>
+      <li>不同 item 之间用 Semaphore(policy.concurrency) 并行</li>
+      <li>step_id 格式：<code>{pipeline_id}:{item}</code>（与 fanout 相同模式）</li>
+    </ul>
+  </details>
+</div>
+
+<!-- 运行时细节 -->
+<div class="section" id="runtime">
+  <h2><span class="badge">5</span> 运行时核心数据结构</h2>
+
+  <table>
+    <tr><th>结构</th><th>作用</th><th>关键字段</th></tr>
+    <tr>
+      <td><code>WorkflowRunContext</code></td>
+      <td>执行过程中的可变状态</td>
+      <td>
+        <code>outputs: dict[str, StepOutput]</code> — 每步产出<br>
+        <code>spawned_agent_ids: list[str]</code> — 所有已 spawn 的 id（取消用）<br>
+        <code>synthesis_step_ids: list[str]</code> — 记录 synthesis 顺序
+      </td>
+    </tr>
+    <tr>
+      <td><code>StepOutput</code></td>
+      <td>单步产出</td>
+      <td>
+        <code>text</code> — 子 Agent 完整文本<br>
+        <code>structured</code> — JSON Schema 结构化结果（若有）<br>
+        <code>preview</code> — 截断后单行摘要（供模板注入）
+      </td>
+    </tr>
+    <tr>
+      <td><code>WorkflowAgentRun</code></td>
+      <td>单个 Agent 运行记录（UI 树节点）</td>
+      <td>
+        <code>step_id, label, phase_id</code><br>
+        <code>status</code>: queued → running → done / error / skipped<br>
+        <code>agent_id</code>: spawn 后回填真实 SubAgent id<br>
+        <code>result_preview, error</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>WorkflowSnapshot</code></td>
+      <td>整体进度快照（推送给 UI）</td>
+      <td>
+        <code>phases[], current_phase, agents[]</code><br>
+        <code>agent_count / running_count / done_count / error_count</code><br>
+        <code>logs[], duration_ms, result</code>
+      </td>
+    </tr>
+  </table>
+
+  <div class="card">
+    <h3>run_agent_cfg() — 所有 step 类型的公共 spawn 逻辑</h3>
+    <ol style="padding-left:20px;color:#cbd5e1;font-size:0.9rem;">
+      <li>检查 <code>max_agents</code> 上限，超限抛 WorkflowFailedError</li>
+      <li>渲染 label（固定 label 或 <code>label_template</code> + <code>{{item}}</code>）</li>
+      <li>渲染 prompt（固定 prompt 或 <code>prompt_template</code> + 模板变量）</li>
+      <li>调用 <code>runner.run(...)</code> → DeepSeekAgentRunner</li>
+      <li>通过 <code>on_agent_id</code> 回调把 agent_id 写回 snapshot 中对应 WorkflowAgentRun</li>
+      <li>成功则返回 StepOutput；失败返回 None（由 on_error 策略决定后续）</li>
+    </ol>
+  </div>
+</div>
+
+<!-- Agent Runner -->
+<div class="section" id="agent-runner">
+  <h2><span class="badge">6</span> DeepSeekAgentRunner — 怎么真正「派工人」</h2>
+
+  <div class="flow">
+    <div class="flow-node">
+      <span class="tag tag-l3">spawn</span>
+      <h4>1. 构建 SpawnRequest</h4>
+      <p>根据 policy 决定 <code>auto_approve</code> 和 <code>allowed_tools</code>，创建 SpawnRequest 含 prompt、agent_type、model、output_schema 等。</p>
+      <div class="file">workflow/agent_runner.py → manager.spawn()</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-node">
+      <span class="tag tag-l3">SubAgentManager</span>
+      <h4>2. SubAgentManager.spawn()</h4>
+      <p>创建 SubAgent 实例，<code>auto_approve</code> 通过 <code>replace(loop_runtime, auto_approve=...)</code> 按 spawn 注入（非 metadata 写法）。启动 <code>run_subagent_loop</code> 异步任务。</p>
+      <div class="file">tools/subagent/manager.py</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-node">
+      <span class="tag tag-l3">subagent loop</span>
+      <h4>3. run_subagent_loop 独立执行</h4>
+      <p>子 Agent 有自己的工具集（<code>build_subagent_registry</code> + 可选 <code>StructuredOutputTool</code>）。若配了 output_schema，子 Agent 调用 structured_output 成功后<strong>早停 break</strong>，structured 存入 AgentRunOutput。</p>
+      <div class="file">tools/subagent/manager.py: run_subagent_loop</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-node">
+      <span class="tag tag-l3">wait</span>
+      <h4>4. 轮询等待完成</h4>
+      <p>DeepSeekAgentRunner 每 100ms 调用 <code>manager.get_result(agent_id)</code>，直到 status 非 RUNNING。单 Agent 等待超时 3600s（WAIT_TIMEOUT_MS）。期间持续检查 cancel_event。</p>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-node">
+      <span class="tag tag-l3">output</span>
+      <h4>5. 转换为 StepOutput</h4>
+      <p>FAILED/CANCELLED/INTERRUPTED → 返回 None；成功 → <code>make_step_output(text, structured)</code> 生成 preview。</p>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>IR 字段</th><th>映射到 SubAgent</th></tr>
+    <tr><td><code>label / label_template</code></td><td><code>nickname</code> + <code>assignment.role</code></td></tr>
+    <tr><td><code>agent_type</code></td><td><code>SubAgentType.parse()</code>（general / explore / review 等）</td></tr>
+    <tr><td><code>model</code></td><td><code>SpawnRequest.model</code></td></tr>
+    <tr><td><code>allowed_tools</code></td><td><code>SpawnRequest.allowed_tools</code>；analysis_only 时被强制覆盖为只读集</td></tr>
+    <tr><td><code>output_schema</code></td><td><code>SpawnRequest.output_schema</code> → StructuredOutputTool → structured 早停</td></tr>
+  </table>
+
+  <div class="analogy" style="margin-top:12px;padding:14px;border-radius:10px;">
+    ⚠️ 重要：workflow 内部<strong>不再</strong>调用 <code>delegate_to_agent</code> / <code>agent_spawn</code> 工具。
+    它直接走 SubAgentManager API，在同一进程内跑子 loop，保留 Mailbox / 审批 / 取消链路。
+  </div>
+</div>
+
+<!-- 策略与容错 -->
+<div class="section" id="policy">
+  <h2><span class="badge">7</span> 策略、容错、取消、超时</h2>
+
+  <h3 style="color:var(--gold);margin:16px 0 10px;">审批三档（policy.approval_mode）</h3>
+  <table>
+    <tr><th>模式</th><th>workflow 工具本身</th><th>子 Agent auto_approve</th><th>子 Agent 工具集</th></tr>
+    <tr>
+      <td><code>trusted_workflow</code>（默认）</td>
+      <td>需用户批准一次（整段编排）</td>
+      <td>True — 子 Agent 内工具自动批准</td>
+      <td>IR 指定，未指定则用 agent 类型默认集</td>
+    </tr>
+    <tr>
+      <td><code>analysis_only</code></td>
+      <td>需用户批准一次</td>
+      <td>True</td>
+      <td><strong>强制只读 allowlist</strong>（read_file, grep, git_status 等 16 个工具），忽略 IR 写工具</td>
+    </tr>
+    <tr>
+      <td><code>strict</code></td>
+      <td>需用户批准一次</td>
+      <td>False — 写/执行工具在子 loop 返回 Error</td>
+      <td>IR 指定</td>
+    </tr>
+  </table>
+
+  <h3 style="color:var(--gold);margin:20px 0 10px;">错误处理（policy.on_error）</h3>
+  <table>
+    <tr><th>模式</th><th>单步失败时</th><th>整段 workflow</th></tr>
+    <tr>
+      <td><code>continue</code>（默认）</td>
+      <td>返回 None，记 log，snapshot 标 error，<strong>继续下一步</strong></td>
+      <td>最终 success=True，errors 列表记录失败 step</td>
+    </tr>
+    <tr>
+      <td><code>fail_fast</code></td>
+      <td>立即 cancel 所有 pending 子任务，抛 WorkflowFailedError</td>
+      <td>success=False，cancel 所有 spawned_agent_ids</td>
+    </tr>
+  </table>
+
+  <h3 style="color:var(--gold);margin:20px 0 10px;">取消与超时机制</h3>
+  <table>
+    <tr><th>触发</th><th>行为</th></tr>
+    <tr>
+      <td>用户 Esc / 父回合取消</td>
+      <td><code>engine_cancel_event.set()</code> → 各 step check_cancel → 抛 WorkflowAbortedError → cancel 所有 spawned_agent_ids → snapshot running→skipped</td>
+    </tr>
+    <tr>
+      <td><code>wall_clock_seconds</code> 超时</td>
+      <td><code>asyncio.wait_for</code> 包裹整段 _run() → cancel_event.set() → 逐个 manager.cancel(agent_id) → 返回 timed_out</td>
+    </tr>
+    <tr>
+      <td>单 Agent 等待超时（3600s）</td>
+      <td>DeepSeekAgentRunner cancel 该 agent，返回 None</td>
+    </tr>
+  </table>
+</div>
+
+<!-- 进度与 UI -->
+<div class="section" id="progress">
+  <h2><span class="badge">8</span> 进度事件与前端展示</h2>
+
+  <div class="diagram">
+<pre>
+WorkflowTool.on_progress(snapshot)
+    │
+    ▼
+WorkflowProgressEvent {
+  tool_call_id: "tc_xxx",     ← 与 ToolCallEvent 一致，UI upsert 主键
+  workflow_name: "repo_review",
+  snapshot: WorkflowSnapshot,  ← phases / agents / counts / logs
+  completed: false,            ← 终态时 true
+  status: "running"            ← running | completed | failed | cancelled | timed_out
+}
+    │
+    ▼
+Engine.handle.try_emit(ev)
+    │
+    ▼
+ThreadManager: SSE event "workflow.progress"
+  - 首次：创建 TurnItem（metadata.workflow_progress=True）
+  - 后续：按 tool_call_id upsert 同一 item
+  - 回合结束若未收到终态：_finalize_orphan_workflow_items
+    │
+    ▼
+Workbench: WorkflowBlock.tsx
+  - 按 phase 分组显示 agents 树
+  - 状态图标：● running / ✓ done / ✗ error / − skipped
+  - 完成后展示 snapshot.result（JSON 或文本）
+</pre>
+  </div>
+
+  <p style="color:var(--muted);font-size:0.9rem;margin-top:8px;">
+    同时 <code>workflow_status_cb</code> 会 emit 一行 <code>StatusEvent</code>（TUI 状态栏用 <code>render_workflow_text</code> 摘要）。
+  </p>
+</div>
+
+<!-- 端到端示例 -->
+<div class="section" id="example">
+  <h2><span class="badge">9</span> 端到端示例：仓库多视角审查</h2>
+
+  <div class="card">
+    <h3>用户说</h3>
+    <p>「用 workflow 多视角审查本仓库的 engine、tools、workbench 集成风险，并给出最终建议。」</p>
+  </div>
+
+  <div class="card">
+    <h3>主模型调用 workflow 工具，传入 spec</h3>
+    <div class="json-block">
+{
+  <span class="json-key">"spec"</span>: {
+    <span class="json-key">"version"</span>: <span class="json-num">1</span>,
+    <span class="json-key">"meta"</span>: { <span class="json-key">"name"</span>: <span class="json-str">"repo_review"</span>, <span class="json-key">"description"</span>: <span class="json-str">"multi-agent review"</span> },
+    <span class="json-key">"policy"</span>: { <span class="json-key">"approval_mode"</span>: <span class="json-str">"trusted_workflow"</span>, <span class="json-key">"concurrency"</span>: <span class="json-num">3</span> },
+    <span class="json-key">"phases"</span>: [
+      {
+        <span class="json-key">"id"</span>: <span class="json-str">"inspect"</span>, <span class="json-key">"title"</span>: <span class="json-str">"Inspect"</span>,
+        <span class="json-key">"steps"</span>: [
+          { <span class="json-key">"id"</span>: <span class="json-str">"api_review"</span>, <span class="json-key">"type"</span>: <span class="json-str">"agent"</span>, <span class="json-key">"label"</span>: <span class="json-str">"api reviewer"</span>,
+            <span class="json-key">"agent_type"</span>: <span class="json-str">"review"</span>, <span class="json-key">"prompt"</span>: <span class="json-str">"Review runtime API compatibility..."</span> },
+          { <span class="json-key">"id"</span>: <span class="json-str">"parallel_checks"</span>, <span class="json-key">"type"</span>: <span class="json-str">"fanout"</span>,
+            <span class="json-key">"items"</span>: [<span class="json-str">"engine"</span>, <span class="json-str">"tools"</span>, <span class="json-str">"workbench"</span>],
+            <span class="json-key">"agent"</span>: { <span class="json-key">"label_template"</span>: <span class="json-str">"inspect {{item}}"</span>, <span class="json-key">"agent_type"</span>: <span class="json-str">"explore"</span>,
+              <span class="json-key">"prompt_template"</span>: <span class="json-str">"Inspect {{item}} and report risks."</span> } }
+        ]
+      },
+      {
+        <span class="json-key">"id"</span>: <span class="json-str">"synthesis"</span>, <span class="json-key">"title"</span>: <span class="json-str">"Synthesis"</span>,
+        <span class="json-key">"steps"</span>: [
+          { <span class="json-key">"id"</span>: <span class="json-str">"final"</span>, <span class="json-key">"type"</span>: <span class="json-str">"synthesis"</span>, <span class="json-key">"label"</span>: <span class="json-str">"final summary"</span>,
+            <span class="json-key">"prompt_template"</span>: <span class="json-str">"Synthesize:\n{{outputs.api_review}}\n{{outputs.parallel_checks}}"</span>,
+            <span class="json-key">"output_schema"</span>: { <span class="json-key">"type"</span>: <span class="json-str">"object"</span>, <span class="json-key">"properties"</span>: { <span class="json-key">"ok"</span>: {}, <span class="json-key">"verdict"</span>: {} } } }
+        ]
+      }
+    ]
+  }
+}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>实际 spawn 的子 Agent 清单（共 5 个）</h3>
+    <table>
+      <tr><th>顺序</th><th>step_id</th><th>label</th><th>类型</th></tr>
+      <tr><td>1</td><td>api_review</td><td>api reviewer</td><td>agent</td></tr>
+      <tr><td>2a</td><td>parallel_checks:engine</td><td>inspect engine</td><td>fanout 并行</td></tr>
+      <tr><td>2b</td><td>parallel_checks:tools</td><td>inspect tools</td><td>fanout 并行</td></tr>
+      <tr><td>2c</td><td>parallel_checks:workbench</td><td>inspect workbench</td><td>fanout 并行</td></tr>
+      <tr><td>3</td><td>final</td><td>final summary</td><td>synthesis</td></tr>
+    </table>
+    <p style="margin-top:10px;color:var(--muted);">最终 result = <code>outputs["final"].structured</code> → <code>{ "ok": true, "verdict": "...", "findings": [...] }</code></p>
+  </div>
+</div>
+
+<!-- 文件索引 -->
+<div class="section" id="files">
+  <h2><span class="badge">10</span> 关键文件索引</h2>
+  <table>
+    <tr><th>层级</th><th>文件</th><th>职责</th></tr>
+    <tr><td>入口</td><td class="file-path">tools/workflow_tool.py</td><td>ToolSpec 定义、spec 解析、超时包裹、进度 emit、ToolResult 组装</td></tr>
+    <tr><td>注册</td><td class="file-path">tools/builder.py</td><td>features.subagents 开启时注册 WorkflowTool</td></tr>
+    <tr><td>L1</td><td class="file-path">workflow/runtime.py</td><td>run_workflow 主循环、四种 step 调度、并发 gather、取消 teardown</td></tr>
+    <tr><td>L1</td><td class="file-path">workflow/agent_runner.py</td><td>DeepSeekAgentRunner：spawn + poll + policy 映射</td></tr>
+    <tr><td>L2</td><td class="file-path">workflow/models.py</td><td>WorkflowSpec / Step 变体 / Snapshot / Context 数据类</td></tr>
+    <tr><td>L2</td><td class="file-path">workflow/validate.py</td><td>IR 解析校验、outputs 拓扑依赖检查</td></tr>
+    <tr><td>L2</td><td class="file-path">workflow/template.py</td><td>模板变量渲染、preview 截断</td></tr>
+    <tr><td>L2</td><td class="file-path">workflow/constants.py</td><td>并发/超时/只读工具集常量</td></tr>
+    <tr><td>L2</td><td class="file-path">workflow/serialize.py</td><td>snapshot → dict（SSE/持久化）</td></tr>
+    <tr><td>适配</td><td class="file-path">workflow/adapters/pi_js.py</td><td>Pi JS script meta 解析（body 不执行）</td></tr>
+    <tr><td>引擎</td><td class="file-path">engine/engine.py</td><td>workflow 工具执行前注入 cancel/emit 回调</td></tr>
+    <tr><td>引擎</td><td class="file-path">engine/events.py</td><td>WorkflowProgressEvent 定义</td></tr>
+    <tr><td>子Agent</td><td class="file-path">tools/subagent/manager.py</td><td>SpawnRequest、spawn、run_subagent_loop、structured 早停</td></tr>
+    <tr><td>服务端</td><td class="file-path">app_server/thread_manager.py</td><td>workflow.progress SSE upsert + orphan finalize</td></tr>
+    <tr><td>服务端</td><td class="file-path">app_server/engine_bridge.py</td><td>事件序列化为 SSE envelope</td></tr>
+    <tr><td>前端</td><td class="file-path">components/chat/WorkflowBlock.tsx</td><td>进度树 UI 渲染</td></tr>
+    <tr><td>前端</td><td class="file-path">lib/workflow-snapshot.ts</td><td>snapshot payload 解析</td></tr>
+    <tr><td>文档</td><td class="file-path">docs/DYNAMIC_WORKFLOW.md</td><td>完整实施规格（v2）</td></tr>
+    <tr><td>测试</td><td class="file-path">tests/workflow/*</td><td>validate / template / runtime / integration 单测</td></tr>
+  </table>
+</div>
+
+<!-- 总结 -->
+<div class="summary">
+  <h2>核心要点总结</h2>
+  <ul>
+    <li><strong>Workflow 不是新 Agent 系统</strong>，是普通 ToolSpec，在一次工具调用内完成全部编排</li>
+    <li><strong>IR 是核心</strong>：主模型写 JSON 计划，Python 运行时确定性执行，不靠模型临场协调</li>
+    <li><strong>四种 step</strong>覆盖所有多 Agent 模式：单人(agent)、并行(fanout)、流水线(pipeline)、汇总(synthesis)</li>
+    <li><strong>子 Agent 走 SubAgentManager</strong>：同进程 run_subagent_loop，spawn + wait，非子进程、非 handoff</li>
+    <li><strong>结构化终态</strong>靠 synthesis/agent 的 output_schema + StructuredOutputTool 早停，非解析 markdown JSON</li>
+    <li><strong>进度可观测</strong>：WorkflowSnapshot 实时推送，Workbench 显示 phase/agent 树</li>
+    <li><strong>容错可控</strong>：continue 跳过失败步 / fail_fast 立即中止；三级审批；墙钟超时 + Esc 取消</li>
+    <li><strong>模板防爆炸</strong>：outputs 默认注入 preview（2000 字符），非全文，避免 synthesis context 超限</li>
+  </ul>
+</div>
+
+<footer>
+  DeepSeek TUI — Workflow 工具实现逻辑详解 · 基于源码审阅生成<br>
+  打开方式：浏览器直接打开 <code>docs/workflow-tool-explained.html</code>
+</footer>
+
+</div>
+</body>
+</html>

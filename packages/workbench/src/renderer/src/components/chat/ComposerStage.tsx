@@ -33,13 +33,15 @@ export function ComposerStage(props: Props): ReactElement {
 
   return (
     <div className="flex w-full flex-col items-center">
-      <PetMascotDock
-        visible
-        status={pet.status}
-        stateId={pet.stateId}
-        spritesheetSrc={pet.spritesheetSrc}
-        roamOffset={pet.roamOffset}
-      />
+      <div className="ds-chat-stage flex flex-col items-end px-3 sm:px-4">
+        <PetMascotDock
+          visible
+          status={pet.status}
+          stateId={pet.stateId}
+          spritesheetSrc={pet.spritesheetSrc}
+          roamOffset={pet.roamOffset}
+        />
+      </div>
       <FloatingComposer
         {...props}
         onSend={handleSend}

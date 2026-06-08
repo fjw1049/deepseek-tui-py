@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek TUI - Workflow 全流程图解</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  color: #e0e0e0;
+  min-height: 100vh;
+  line-height: 1.8;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+h1 {
+  text-align: center;
+  font-size: 2.4em;
+  background: linear-gradient(90deg, #00d2ff, #7b2ff7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+.subtitle {
+  text-align: center;
+  color: #999;
+  font-size: 1.1em;
+  margin-bottom: 60px;
+}
+
+/* 比喻区块 */
+.metaphor {
+  background: rgba(255,255,255,0.05);
+  border-left: 4px solid #7b2ff7;
+  border-radius: 12px;
+  padding: 28px 32px;
+  margin-bottom: 48px;
+}
+.metaphor h2 { color: #7b2ff7; margin-bottom: 12px; font-size: 1.4em; }
+.metaphor p { color: #ccc; font-size: 1.05em; }
+
+/* 流程卡片 */
+.flow-section { margin-bottom: 56px; }
+.flow-section h2 {
+  font-size: 1.6em;
+  color: #00d2ff;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.flow-section h2 .num {
+  background: #00d2ff;
+  color: #0f0c29;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: bold;
+  font-size: 0.8em;
+}
+
+.step-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px;
+  padding: 24px 28px;
+  margin-bottom: 16px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.step-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(123,47,247,0.15);
+}
+.step-card h3 {
+  color: #ffd700;
+  font-size: 1.15em;
+  margin-bottom: 8px;
+}
+.step-card p { color: #bbb; }
+.step-card .analogy {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: rgba(123,47,247,0.1);
+  border-radius: 8px;
+  font-size: 0.92em;
+  color: #c9a0ff;
+}
+
+/* 连接线 */
+.connector {
+  text-align: center;
+  padding: 8px 0;
+  color: #555;
+  font-size: 1.4em;
+}
+
+/* 架构图 */
+.arch-diagram {
+  background: rgba(0,0,0,0.3);
+  border-radius: 16px;
+  padding: 32px;
+  margin: 32px 0;
+  overflow-x: auto;
+}
+.arch-diagram pre {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.85em;
+  color: #8be9fd;
+  line-height: 1.6;
+}
+
+/* 组件表格 */
+.comp-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+}
+.comp-table th {
+  background: rgba(123,47,247,0.2);
+  padding: 12px 16px;
+  text-align: left;
+  color: #c9a0ff;
+  border-bottom: 2px solid #7b2ff7;
+}
+.comp-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  color: #bbb;
+}
+.comp-table tr:hover td { background: rgba(255,255,255,0.03); }
+.file-path { color: #8be9fd; font-family: monospace; font-size: 0.9em; }
+
+/* 总结 */
+.summary-box {
+  background: linear-gradient(135deg, rgba(123,47,247,0.15), rgba(0,210,255,0.1));
+  border: 1px solid rgba(123,47,247,0.3);
+  border-radius: 16px;
+  padding: 32px;
+  margin-top: 48px;
+}
+.summary-box h2 { color: #ffd700; margin-bottom: 16px; }
+.summary-box ul { list-style: none; padding: 0; }
+.summary-box li {
+  padding: 8px 0;
+  padding-left: 24px;
+  position: relative;
+  color: #ccc;
+}
+.summary-box li::before {
+  content: "✦";
+  position: absolute;
+  left: 0;
+  color: #7b2ff7;
+}
+
+/* 交互式折叠 */
+details {
+  background: rgba(255,255,255,0.03);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+details summary {
+  cursor: pointer;
+  color: #00d2ff;
+  font-weight: 600;
+  font-size: 1.05em;
+}
+details[open] summary { margin-bottom: 12px; }
+details p, details ul { color: #bbb; margin-top: 8px; }
+details ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>DeepSeek TUI Workflow 全流程图解</h1>
+<p class="subtitle">用「餐厅」的比喻，带你彻底理解这个系统是怎么工作的</p>
+
+<!-- 比喻开场 -->
+<div class="metaphor">
+  <h2>🍽️ 一句话理解整个系统</h2>
+  <p>
+    把这个系统想象成一家<strong>高级智能餐厅</strong>：<br><br>
+    <strong>你（用户）</strong> = 顾客，坐下来点菜<br>
+    <strong>Engine（引擎）</strong> = 大堂经理，接单、协调、确保一切顺利<br>
+    <strong>TurnLoop（轮次循环）</strong> = 主厨，真正做菜（调用AI生成回复）<br>
+    <strong>Tools（工具）</strong> = 厨房里的各种设备（烤箱、搅拌机...），帮主厨完成特定任务<br>
+    <strong>Approval Gate（审批门）</strong> = 食品安全检查员，危险操作必须先过他<br>
+    <strong>PostTurn（后置流水线）</strong> = 服务员送完菜后的清理+记录工作<br>
+    <strong>Evolution（进化）</strong> = 餐厅的学习系统，记住你的口味偏好
+  </p>
+</div>
+
+<!-- 第一章：总体流程 -->
+<div class="flow-section">
+  <h2><span class="num">1</span> 一次对话的完整旅程</h2>
+  <p style="color:#999; margin-bottom:20px;">从你敲下回车，到看到AI回复，中间发生了什么？</p>
+
+  <div class="step-card">
+    <h3>📝 第一步：你发送消息</h3>
+    <p>你在界面输入文字，点发送。这时候系统创建一个 <code>SendMessageOp</code>（发送消息操作），放进队列。</p>
+    <div class="analogy">💡 比喻：你举手叫服务员，把菜单递过去</div>
+  </div>
+  <div class="connector">↓</div>
+
+  <div class="step-card">
+    <h3>🎯 第二步：Engine 接单处理</h3>
+    <p>Engine（大堂经理）从队列里取出你的请求，做准备工作：<br>
+    ① 检查沙箱安全策略<br>
+    ② 回忆历史记忆（你之前说过什么）<br>
+    ③ 组装上下文（系统提示词 + 历史消息 + 工具列表）</p>
+    <div class="analogy">💡 比喻：经理看了一眼你的VIP记录，知道你不吃辣，然后把需求转达给厨房</div>
+  </div>
+  <div class="connector">↓</div>
+
+  <div class="step-card">
+    <h3>🔥 第三步：TurnLoop 开始流式生成</h3>
+    <p>主厨开始干活了！系统通过 <strong>流式（Streaming）</strong> 方式调用 DeepSeek API：<br>
+    - 一个字一个字地返回（你能看到文字逐渐出现）<br>
+    - 同时监听：AI是不是想要「调用工具」（比如读文件、执行命令）<br>
+    - 如果超时90秒没响应，自动重试</p>
+    <div class="analogy">💡 比喻：主厨一边做菜一边上菜，你能看到盘子里的菜越来越多，而不是等全做完才端出来</div>
+  </div>
+  <div class="connector">↓</div>
+
+  <div class="step-card">
+    <h3>🔧 第四步：工具执行（如果需要的话）</h3>
+    <p>如果AI决定需要执行某些操作（读文件、搜索代码、运行命令）：<br>
+    ① <strong>检查权限</strong>：这个操作安不安全？需不需要你批准？<br>
+    ② <strong>执行工具</strong>：真正去做那个操作<br>
+    ③ <strong>收集结果</strong>：把执行结果交回给AI<br>
+    ④ <strong>继续生成</strong>：AI拿到结果后继续思考和回复</p>
+    <div class="analogy">💡 比喻：主厨做到一半发现需要用烤箱（工具），先问安全员"这个温度行不行"，确认后再烤</div>
+  </div>
+  <div class="connector">↓</div>
+
+  <div class="step-card">
+    <h3>✅ 第五步：轮次完成</h3>
+    <p>AI的回复生成完毕，系统发出 <code>TurnCompleteEvent</code>，同时：<br>
+    - 保存对话历史到数据库<br>
+    - 记录本次消耗（token数、费用）<br>
+    - 通知前端"好了，这轮结束了"</p>
+    <div class="analogy">💡 比喻：菜上齐了，服务员说"您慢用"</div>
+  </div>
+  <div class="connector">↓</div>
+
+  <div class="step-card">
+    <h3>🧠 第六步：后台学习（Post-Turn）</h3>
+    <p>你已经看到回复了，但后台还在默默工作：<br>
+    - <strong>记忆系统</strong>：把这次对话的关键信息提炼存储<br>
+    - <strong>进化系统</strong>：分析"我这次回答好不好？能不能学到什么？"<br>
+    这些都是异步的，不会让你等待。</p>
+    <div class="analogy">💡 比喻：餐后，厨师复盘"这道菜客人满意吗？下次怎么改进？"，同时记录你喜欢的口味</div>
+  </div>
+</div>
+
+<!-- 第二章：架构全景 -->
+<div class="flow-section">
+  <h2><span class="num">2</span> 系统架构全景图</h2>
+
+  <div class="arch-diagram">
+<pre>
+┌─────────────────────────────────────────────────────────────────┐
+│                        🖥️  前端 UI / TUI                        │
+│              (Web界面 或 终端界面，通过 SSE 接收事件流)            │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │ SSE (Server-Sent Events)
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    📡  AppServer (应用服务层)                     │
+│         接收请求 → 路由 → 管理线程 → 广播事件给前端               │
+│                    app_server/runtime.py                         │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    🎛️  Engine (核心引擎层)                        │
+│                                                                  │
+│  ┌──────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────┐ │
+│  │ Handle   │  │  TurnLoop    │  │  Dispatch  │  │  Seam/   │ │
+│  │ (队列)   │  │  (流式循环)   │  │  (工具派发) │  │  Cycle   │ │
+│  │          │  │              │  │            │  │  (压缩)   │ │
+│  └──────────┘  └──────────────┘  └────────────┘  └──────────┘ │
+│                    engine/engine.py                              │
+└────────┬───────────────┬──────────────────┬─────────────────────┘
+         │               │                  │
+         ▼               ▼                  ▼
+┌────────────┐  ┌──────────────┐  ┌─────────────────────────────┐
+│ 🤖 LLM    │  │ 🔧 Tools     │  │ 🧠 Post-Turn Pipelines      │
+│ Client     │  │ Registry     │  │                              │
+│            │  │              │  │  Memory → L0/L1/L2/L3        │
+│ DeepSeek   │  │ • Read File  │  │  Evolution → 技能学习         │
+│ API 调用   │  │ • Write File │  │  Signal Detection            │
+│            │  │ • Bash       │  │                              │
+│ streaming  │  │ • SubAgent   │  │  post_turn/orchestrator.py   │
+│            │  │ • Search     │  │  evolution/pipeline.py       │
+│ client/    │  │ • ...        │  │  memory/coordinator.py       │
+└────────────┘  └──────────────┘  └─────────────────────────────┘
+</pre>
+  </div>
+</div>
+
+<!-- 第三章：核心机制详解 -->
+<div class="flow-section">
+  <h2><span class="num">3</span> 核心机制详解（点击展开）</h2>
+
+  <details>
+    <summary>🔄 多轮对话是怎么实现的？</summary>
+    <p>系统用 <strong>"round"（回合）</strong> 的概念。一次用户输入可能触发多个回合：</p>
+    <ul>
+      <li>Round 0：AI回复 + 调用工具A</li>
+      <li>Round 1：拿到工具A结果 → AI继续回复 + 调用工具B</li>
+      <li>Round 2：拿到工具B结果 → AI给出最终回复</li>
+    </ul>
+    <p>最多循环100轮（防止死循环）。每轮都是：流式生成 → 发现工具调用 → 执行 → 把结果塞回去 → 继续生成。</p>
+  </details>
+
+  <details>
+    <summary>⚡ 流式输出（Streaming）是怎么做的？</summary>
+    <p>核心链路：</p>
+    <ul>
+      <li><strong>DeepSeek API</strong> 一小块一小块地返回文字</li>
+      <li><strong>TurnLoop</strong> 接收每个 chunk，立刻 emit 一个 TextDeltaEvent</li>
+      <li><strong>Handle</strong> 把事件放进 event_queue</li>
+      <li><strong>AppServer</strong> 通过 SSE 推给前端</li>
+      <li><strong>前端</strong> 实时渲染文字</li>
+    </ul>
+    <p>所以你看到文字是"一个字一个字蹦出来的"——这就是流式。</p>
+  </details>
+
+  <details>
+    <summary>🛡️ 审批机制（Approval Gate）怎么工作？</summary>
+    <p>不是所有工具都能随便执行。系统有三层判断：</p>
+    <ul>
+      <li><strong>直接通过</strong>：只读操作（读文件、搜索）→ 自动批准</li>
+      <li><strong>缓存命中</strong>：最近刚批准过同样参数 → 自动批准</li>
+      <li><strong>需要确认</strong>：危险操作（写文件、执行命令）→ 弹窗问你"可以吗？"</li>
+    </ul>
+    <p>你点"批准"后，结果会被缓存，下次同样操作就不再问了。</p>
+  </details>
+
+  <details>
+    <summary>🧠 记忆系统（Memory）有几层？</summary>
+    <p>四层分级记忆，像人的大脑：</p>
+    <ul>
+      <li><strong>L0 - 原始记录</strong>：每轮对话的完整内容（相当于"发生了什么"）</li>
+      <li><strong>L1 - 事实提取</strong>：从对话中提取关键事实（"用户喜欢Python"）</li>
+      <li><strong>L2 - 场景理解</strong>：理解项目上下文（"这是个电商项目"）</li>
+      <li><strong>L3 - 用户画像</strong>：长期偏好（"用户是高级工程师，喜欢简洁风格"）</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>📦 上下文压缩（Compaction）是怎么回事？</summary>
+    <p>AI的上下文窗口有限（比如128K tokens）。对话太长就装不下了。系统用三种策略：</p>
+    <ul>
+      <li><strong>Seam Manager（缝合管理）</strong>：对老消息做摘要，保留关键信息</li>
+      <li><strong>Cycle Manager（周期管理）</strong>：对话超长时，归档旧部分，只保留简报</li>
+      <li><strong>Emergency Compact（紧急压缩）</strong>：消息超500条时强制压缩</li>
+    </ul>
+    <p>这样即使聊了很久，系统也不会"失忆"——它用摘要代替原文。</p>
+  </details>
+
+  <details>
+    <summary>👶 子代理（Sub-Agent）是什么？</summary>
+    <p>有时候一个任务太复杂，主 Agent 会"派小弟"去做：</p>
+    <ul>
+      <li>主 Agent 创建一个 Sub-Agent（子代理）</li>
+      <li>子代理独立运行，有自己的工具和上下文</li>
+      <li>通过 Mailbox（邮箱）向主 Agent 汇报进度</li>
+      <li>完成后，主 Agent 收到完整结果，继续下一步</li>
+    </ul>
+    <p>多个子代理可以<strong>并行</strong>运行，效率翻倍。</p>
+  </details>
+
+  <details>
+    <summary>🔀 Steer（转向）机制是什么？</summary>
+    <p>AI在生成回复的<strong>过程中</strong>，你可以插一嘴！比如AI正在写代码，你突然说"别用这个库"。</p>
+    <ul>
+      <li>你的消息进入 steer_queue（转向队列）</li>
+      <li>下一轮开始时，系统会把你的指令注入进去</li>
+      <li>AI看到后会调整方向</li>
+    </ul>
+    <p>不会开新对话，而是在<strong>同一轮</strong>里修正方向。</p>
+  </details>
+
+  <details>
+    <summary>🌀 Evolution（进化）系统做什么？</summary>
+    <p>每次对话结束后，进化系统分析：</p>
+    <ul>
+      <li>这次回答质量怎样？有没有被用户纠正？</li>
+      <li>有没有值得记住的"技巧"（比如某个项目的特殊写法）？</li>
+      <li>发现信号后，提出建议："要不要把这个记住？"</li>
+    </ul>
+    <p>这样系统会越用越聪明，越来越懂你。</p>
+  </details>
+</div>
+
+<!-- 第四章：关键组件对照表 -->
+<div class="flow-section">
+  <h2><span class="num">4</span> 关键文件速查表</h2>
+
+  <table class="comp-table">
+    <tr><th>组件</th><th>文件</th><th>一句话说明</th></tr>
+    <tr>
+      <td>核心引擎</td>
+      <td><span class="file-path">engine/engine.py</span></td>
+      <td>大堂经理，协调一切</td>
+    </tr>
+    <tr>
+      <td>流式循环</td>
+      <td><span class="file-path">engine/turn_loop.py</span></td>
+      <td>主厨，负责调用AI并流式返回</td>
+    </tr>
+    <tr>
+      <td>工具派发</td>
+      <td><span class="file-path">engine/dispatch.py</span></td>
+      <td>分配哪些工具该并行、哪些该串行</td>
+    </tr>
+    <tr>
+      <td>审批策略</td>
+      <td><span class="file-path">execpolicy/engine.py</span></td>
+      <td>食品安全员，判断操作是否需要人工确认</td>
+    </tr>
+    <tr>
+      <td>事件系统</td>
+      <td><span class="file-path">engine/events.py</span></td>
+      <td>餐厅的广播系统，通知前端发生了什么</td>
+    </tr>
+    <tr>
+      <td>SSE 推送</td>
+      <td><span class="file-path">app_server/sse.py</span></td>
+      <td>把事件推给前端的管道</td>
+    </tr>
+    <tr>
+      <td>上下文压缩</td>
+      <td><span class="file-path">engine/seam_manager.py</span></td>
+      <td>对话太长时做摘要压缩</td>
+    </tr>
+    <tr>
+      <td>记忆协调</td>
+      <td><span class="file-path">memory/coordinator.py</span></td>
+      <td>四层记忆的读写协调员</td>
+    </tr>
+    <tr>
+      <td>进化流水线</td>
+      <td><span class="file-path">evolution/pipeline.py</span></td>
+      <td>对话后复盘学习</td>
+    </tr>
+    <tr>
+      <td>子代理管理</td>
+      <td><span class="file-path">tools/subagent/manager.py</span></td>
+      <td>管理"小弟"的生命周期</td>
+    </tr>
+    <tr>
+      <td>工作流编排</td>
+      <td><span class="file-path">workflow/runtime.py</span></td>
+      <td>多代理协同的高级编排</td>
+    </tr>
+  </table>
+</div>
+
+<!-- 第五章：一图流 -->
+<div class="flow-section">
+  <h2><span class="num">5</span> 极简版：一张图看懂</h2>
+
+  <div class="arch-diagram">
+<pre>
+  你输入消息
+      │
+      ▼
+  ┌─────────┐    ┌─────────────────────────────────────┐
+  │  Engine  │───▶│  准备上下文（记忆 + 历史 + 工具）   │
+  └─────────┘    └──────────────────┬──────────────────┘
+                                    │
+                                    ▼
+                          ┌─────────────────┐
+                          │   TurnLoop       │
+                          │  调用 DeepSeek   │◀──────────┐
+                          │  流式返回文字    │           │
+                          └────────┬────────┘           │
+                                   │                    │
+                            有工具调用？                 │
+                           /          \                  │
+                         Yes           No                │
+                          │             │                │
+                          ▼             ▼                │
+                   ┌────────────┐   完成！               │
+                   │  审批检查   │   输出回复             │
+                   │  执行工具   │                       │
+                   │  收集结果   │───────────────────────┘
+                   └────────────┘     (把结果喂回去，继续生成)
+
+      ── 对话结束后（后台异步） ──
+
+      ┌────────────┐    ┌──────────────┐
+      │  记忆存储   │    │  进化学习     │
+      │  L0→L3     │    │  技能提炼     │
+      └────────────┘    └──────────────┘
+</pre>
+  </div>
+</div>
+
+<!-- 总结 -->
+<div class="summary-box">
+  <h2>总结：7个关键设计理念</h2>
+  <ul>
+    <li><strong>异步优先</strong> — 整个系统跑在 asyncio 上，不会因为等待而卡死</li>
+    <li><strong>事件驱动</strong> — 所有状态变化都通过事件广播，前端实时感知</li>
+    <li><strong>流式为王</strong> — 用户体验第一，文字生成一个出一个</li>
+    <li><strong>分层记忆</strong> — 短期记忆 + 长期画像，越用越懂你</li>
+    <li><strong>安全门控</strong> — 危险操作必须经过审批，不会偷偷搞事</li>
+    <li><strong>自我进化</strong> — 每次对话后自动复盘，提炼可复用技能</li>
+    <li><strong>弹性压缩</strong> — 对话再长也不怕，多种策略保证不超限</li>
+  </ul>
+</div>
+
+<p style="text-align:center; color:#555; margin-top:48px; font-size:0.9em;">
+  Generated for DeepSeek TUI Python — Workflow 全流程理解文档
+</p>
+
+</div>
+</body>
+</html>

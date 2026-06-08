@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from deepseek_tui.app_server.runtime_threads import RuntimeEventRecord
@@ -53,6 +53,10 @@ async def stream_thread_events(
             payload = runtime_event_payload(record)
             yield sse_frame(record.event, payload)
 
+        goal_snapshot = _goal_status_snapshot(manager, thread_id)
+        if goal_snapshot is not None:
+            yield sse_frame("goal.status", goal_snapshot)
+
         while True:
             if is_disconnected is not None and await is_disconnected():
                 return
@@ -70,3 +74,36 @@ async def stream_thread_events(
             yield sse_frame(record.event, payload)
     finally:
         manager.event_bus.unsubscribe(queue)
+
+
+def _goal_status_snapshot(
+    manager: RuntimeThreadManager, thread_id: str
+) -> dict[str, Any] | None:
+    """Build an out-of-band goal.status frame from the in-memory controller.
+
+    Called once after backlog replay so the Workbench GoalChip is populated
+    even when the last persisted goal.status event predates ``since_seq``.
+    """
+    state = manager._active.get(thread_id)
+    if state is None:
+        return None
+    controller = getattr(state.engine, "goal_controller", None)
+    if controller is None:
+        return None
+    goal = controller.current
+    if goal is None:
+        return None
+    return {
+        "seq": 0,
+        "event": "goal.status",
+        "payload": {
+            "goal": {
+                "goal_id": goal.goal_id,
+                "objective": goal.objective[:120],
+                "status": goal.status.value,
+                "tokens_used": goal.usage.tokens_used,
+                "token_budget": goal.token_budget,
+                "active_seconds": round(goal.usage.active_seconds, 1),
+            },
+        },
+    }
