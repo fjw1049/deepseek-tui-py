@@ -56,6 +56,7 @@ from deepseek_tui.engine.handle import (
     AutoApprovalHandler,
     CancelRequestOp,
     EngineHandle,
+    GoalFollowUpOp,
     SendMessageOp,
 )
 from deepseek_tui.engine.input_processor import prepare_turn_for_model
@@ -361,6 +362,15 @@ class Engine:
         self._activity_coordinator = SessionActivityCoordinator(
             self, self.handle.try_emit
         )
+        from deepseek_tui.goal.controller import GoalController
+        from deepseek_tui.goal.tools import GOAL_CONTROLLER_KEY
+
+        goal_thread_id = str(self.tool_context.metadata.get("runtime_thread_id") or "default")
+        self.goal_controller = GoalController(
+            self.tool_context.working_directory,
+            goal_thread_id,
+        )
+        self.tool_context.metadata[GOAL_CONTROLLER_KEY] = self.goal_controller
 
     def sync_session(
         self,
@@ -525,6 +535,8 @@ class Engine:
                 flash_client=client, config=SeamConfig(enabled=True)
             )
         engine._cycle_session_id = uuid.uuid4().hex
+        if not engine.tool_context.metadata.get("runtime_thread_id"):
+            engine.goal_controller.rebind(thread_id=engine._cycle_session_id)
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
         from deepseek_tui.execpolicy.sandbox import sync_execution_sandbox_policy
@@ -999,6 +1011,7 @@ class Engine:
                         turn_task.result()
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("engine_turn_task_failed")
+                        self.goal_controller.on_turn_failed(f"engine_error: {exc}")
                         await self.handle.emit(
                             ErrorEvent(
                                 message=f"Internal engine error: {exc}",
@@ -1022,6 +1035,7 @@ class Engine:
                             turn_task.result()
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("engine_turn_task_failed")
+                            self.goal_controller.on_turn_failed(f"engine_error: {exc}")
                             await self.handle.emit(
                                 ErrorEvent(
                                     message=f"Internal engine error: {exc}",
@@ -1037,7 +1051,25 @@ class Engine:
                     else:
                         op = op_wait.result()
 
-                if isinstance(op, SendMessageOp):
+                if isinstance(op, GoalFollowUpOp):
+                    if not self.goal_controller.validate_follow_up(op.goal_id):
+                        logger.info("goal_follow_up_stale goal_id=%s", op.goal_id)
+                        continue
+                    if turn_task is not None:
+                        await turn_task
+                    turn_task = asyncio.create_task(
+                        self._handle_send_message(
+                            SendMessageOp(
+                                content=op.content,
+                                model=op.model,
+                                hidden=True,
+                                internal_kind="goal_follow_up",
+                                goal_id=op.goal_id,
+                            )
+                        ),
+                        name="engine-goal-follow-up",
+                    )
+                elif isinstance(op, SendMessageOp):
                     if turn_task is not None:
                         await turn_task
                     turn_task = asyncio.create_task(
@@ -1170,8 +1202,18 @@ class Engine:
                 )
             )
 
+        if op.internal_kind == "goal_follow_up" and op.goal_id:
+            if not self.goal_controller.validate_follow_up(op.goal_id):
+                logger.info(
+                    "goal_follow_up_stale_at_turn_start goal_id=%s", op.goal_id
+                )
+                return
+
         try:
-            await self.handle.emit(TurnStartedEvent(user_text=processed.display_text))
+            await self.handle.emit(
+                TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
+            )
+            self.goal_controller.on_turn_start()
             self._save_crash_checkpoint(
                 working_messages,
                 model=op.model or self.default_model,
@@ -1212,9 +1254,18 @@ class Engine:
                         reason=self.handle.cancel_reason or "user_cancelled"
                     )
                 )
+                self.goal_controller.on_turn_failed(
+                    self.handle.cancel_reason or "user_cancelled"
+                )
                 return
 
-            self.session_messages = working_messages
+            if op.hidden:
+                self.session_messages = [
+                    *self.session_messages,
+                    *working_messages[prior_count + 1 :],
+                ]
+            else:
+                self.session_messages = working_messages
             if not result.cancelled:
                 from deepseek_tui.state.checkpoint import clear_checkpoint
 
@@ -1270,6 +1321,17 @@ class Engine:
                 running_subagents = self.tool_context.subagent_manager.running_count()
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
+            from deepseek_tui.engine.turn_loop import TurnOutcomeStatus
+
+            turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
+            if turn_ok:
+                follow_up = self.goal_controller.on_turn_complete(result.usage)
+            else:
+                self.goal_controller.on_turn_failed(result.outcome.value, result.usage)
+                follow_up = None
+            steer = self.goal_controller.take_pending_steer()
+            if steer:
+                await self.handle.steer(steer)
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
@@ -1282,12 +1344,18 @@ class Engine:
                     running_tasks=running_tasks,
                 )
             )
+            if (
+                follow_up is not None
+                and not self.tool_context.metadata.get("runtime_thread_id")
+            ):
+                await self.handle.send_goal_follow_up(
+                    follow_up.goal_id,
+                    follow_up.content,
+                    model=op.model or self.default_model,
+                )
             await self._auto_persist_session()
             if not result.cancelled:
-                from deepseek_tui.engine.turn_loop import TurnOutcomeStatus
-
                 self._user_turn_index += 1
-                turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
                 self._sync_tool_turn_evidence(
                     working_messages=working_messages,
                     prior_count=prior_count,
@@ -2600,8 +2668,9 @@ class Engine:
                 "turn_counter": self.turn_counter,
                 "messages": [m.model_dump() for m in self.session_messages],
                 "metadata": {
+                    "id": self._cycle_session_id,
                     "memory_mode": self.memory_mode,
-                    "memory_thread_id": self.memory_thread_id,
+                    "memory_thread_id": self.memory_thread_id or self._cycle_session_id,
                 },
             }
             tmp = session_file.with_suffix(".tmp")

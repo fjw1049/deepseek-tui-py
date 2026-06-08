@@ -7,6 +7,7 @@ from deepseek_tui.config.models import Config
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
     from deepseek_tui.tools.registry import ToolRegistry
+from deepseek_tui.goal.tools import goal_tools
 from deepseek_tui.tools.automation_tools import (
     AutomationCreateTool,
     AutomationDeleteTool,
@@ -235,6 +236,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # Engine-intercepted special tools (always active)
     registry.register(MultiToolUseParallelTool())
     registry.register(RequestUserInputTool())
+    registry.register_all(goal_tools())
 
     if cfg.features.web_search:
         registry.register(ReviewTool(config=cfg))

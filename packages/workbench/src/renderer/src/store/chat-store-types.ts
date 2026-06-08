@@ -1,6 +1,7 @@
 import type {
   AgentProviderId,
   ChatBlock,
+  GoalStatusPayload,
   NormalizedThread,
   RuntimeConnectionStatus,
   UserInputAnswer
@@ -76,6 +77,7 @@ export type ChatState = {
   queuedMessages: QueuedUserMessage[]
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
+  goalStatus: GoalStatusPayload['goal']
   scrollToBlockId: string | null
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void

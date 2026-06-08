@@ -12,6 +12,7 @@ Split into two layers:
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from datetime import datetime, timezone
 from enum import Enum
@@ -213,6 +214,9 @@ class StartTurnRequest(BaseModel):
     auto_approve: bool | None = None
     ui_submit_at_ms: int | None = None
     main_runtime_request_start_ms: int | None = None
+    hidden: bool = False
+    internal_kind: str | None = None
+    goal_id: str | None = None
 
 
 class SteerTurnRequest(BaseModel):
@@ -266,9 +270,16 @@ class RuntimeThreadStore:
         self._turns_dir = root / "turns"
         self._items_dir = root / "items"
         self._events_dir = root / "events"
+        self._goals_dir = root / "goals"
         self._state_path = root / "state.json"
 
-        for d in (self._threads_dir, self._turns_dir, self._items_dir, self._events_dir):
+        for d in (
+            self._threads_dir,
+            self._turns_dir,
+            self._items_dir,
+            self._events_dir,
+            self._goals_dir,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
         if self._state_path.exists():
@@ -300,6 +311,17 @@ class RuntimeThreadStore:
 
     def _events_path(self, thread_id: str) -> Path:
         return self._events_dir / f"{thread_id}.jsonl"
+
+    def goal_journal_path(self, thread_id: str) -> Path:
+        return self._goals_dir / f"{thread_id}.jsonl"
+
+    def copy_goal_journal_for_fork(self, source_thread_id: str, target_thread_id: str) -> None:
+        from deepseek_tui.goal.persistence import copy_goal_journal_file
+
+        copy_goal_journal_file(
+            self.goal_journal_path(source_thread_id),
+            self.goal_journal_path(target_thread_id),
+        )
 
     # --- CRUD ----------------------------------------------------------------
 
@@ -532,7 +554,6 @@ def reconstruct_messages_from_turns(
         Message,
         Role,
         TextBlock,
-        ToolResultBlock,
         ToolUseBlock,
     )
 
@@ -658,7 +679,11 @@ def todo_tool_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
     items = _todo_items_from_arguments(args)
     if not items:
         return {"tool_name": tool_name}
-    completed = sum(1 for item in items if str(item.get("status", "")).lower() in {"completed", "done"})
+    completed = sum(
+        1
+        for item in items
+        if str(item.get("status", "")).lower() in {"completed", "done"}
+    )
     return {
         "tool_name": tool_name,
         "items": items,

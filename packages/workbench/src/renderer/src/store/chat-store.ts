@@ -802,6 +802,9 @@ function buildThreadEventSink(
         return { blocks: [...s.blocks, nextBlock] }
       })
     },
+    onGoalStatus: (ev) => {
+      set(() => ({ goalStatus: ev.goal }))
+    },
     onWorkflowProgress: (ev) => {
       set((s) => {
         const flushed = flushLiveBlocks(s)
@@ -939,6 +942,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   queuedMessages: [],
   watchTurnCompletion: {},
   unreadThreadIds: {},
+  goalStatus: null,
   scrollToBlockId: null,
 
   ...createAppActions({
@@ -1521,6 +1525,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,
         queuedMessages: [],
+        goalStatus: null,
         scrollToBlockId: synced.scrollToBlockId
       })
       syncTurnCompletionPoll(set, get)

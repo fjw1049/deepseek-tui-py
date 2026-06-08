@@ -309,6 +309,37 @@ class DeepSeekTUI(App[None]):
         finally:
             self._engine_starting = False
 
+    def _rebind_goal_for_session(
+        self, metadata: dict, *, fallback_id: str, fork: bool = False
+    ) -> None:
+        """Reattach the goal journal to the restored session id."""
+        if self._engine is None:
+            return
+        import uuid as _uuid
+
+        from deepseek_tui.goal.persistence import (
+            copy_goal_journal_for_fork,
+            resolve_goal_thread_id,
+        )
+
+        workspace = self._engine.tool_context.working_directory
+        source_id = resolve_goal_thread_id(
+            metadata,
+            fallback_id=fallback_id,
+            workspace=workspace,
+        )
+        if fork:
+            fork_id = _uuid.uuid4().hex
+            copy_goal_journal_for_fork(workspace, source_id, fork_id)
+            stable_id = fork_id
+        else:
+            stable_id = source_id
+        controller = getattr(self._engine, "goal_controller", None)
+        if controller is not None and hasattr(controller, "rebind"):
+            controller.rebind(thread_id=stable_id)
+        self._engine._cycle_session_id = stable_id
+        self._engine.memory_thread_id = stable_id
+
     def _apply_resume_or_fork(self) -> str | None:
         """Restore session messages from disk if a resume/fork id was given.
 
@@ -339,6 +370,8 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
+        is_fork = self._fork_session_id is not None and self._resume_session_id is None
+        self._rebind_goal_for_session(metadata, fallback_id=path.stem, fork=is_fork)
         mm = metadata.get("memory_mode")
         if isinstance(mm, str) and mm.strip():
             self._engine.memory_mode = mm.strip().lower()
@@ -366,6 +399,7 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
+        self._rebind_goal_for_session(metadata, fallback_id=path.stem)
         mm = metadata.get("memory_mode")
         if isinstance(mm, str) and mm.strip():
             self._engine.memory_mode = mm.strip().lower()

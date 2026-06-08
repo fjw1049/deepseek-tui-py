@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from 'electron'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { JsonSettingsStore, getRuntimeBaseUrl, devServerHintUrl } from './settings-store'
@@ -791,8 +792,21 @@ app.whenReady().then(async () => {
   store = new JsonSettingsStore(app.getPath('userData'))
   traceStartup('settings load:start')
   emitStartupPhase('settings')
-  const initial = await store.load()
+  let initial = await store.load()
   traceStartup('settings load:done')
+
+  // Backfill apiKey from config.toml so user edits to config.toml take effect.
+  // The GUI's deepseek-gui-settings.json may hold a stale key; config.toml is
+  // the source of truth for api_key.
+  try {
+    const tomlContent = await readFile(resolveDeepseekConfigPath(), 'utf8')
+    const match = tomlContent.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
+    const tomlKey = match?.[1]?.trim() ?? ''
+    if (tomlKey && tomlKey !== initial.deepseek.apiKey) {
+      initial = await store.patch({ deepseek: { apiKey: tomlKey } })
+      traceStartup('apiKey backfilled from config.toml')
+    }
+  } catch { /* config.toml missing or unreadable — use GUI value */ }
 
   logDir = resolveLogDirectory()
   configureLogger({

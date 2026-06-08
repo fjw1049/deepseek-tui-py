@@ -125,6 +125,7 @@ REGISTRY: list[CommandEntry] = [
         _D,
     ),
     CommandEntry("/undo", "Undo last file-modifying tool", _E),
+    CommandEntry("/goal", "Manage the active goal", _T),
 ]
 
 # Build lookup dicts for fast dispatch.

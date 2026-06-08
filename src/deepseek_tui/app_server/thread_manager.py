@@ -705,6 +705,7 @@ class RuntimeThreadManager:
             "thread.forked",
             {"thread": forked.model_dump(mode="json"), "source_thread_id": source.id},
         )
+        self.store.copy_goal_journal_for_fork(source.id, forked.id)
         return forked
 
     # --- turn lifecycle ------------------------------------------------------
@@ -729,6 +730,18 @@ class RuntimeThreadManager:
 
         handle, engine_task = await self._ensure_engine_loaded(thread, trace=trace)
         trace.runtime_turn_created_ms = now_ms()
+
+        if req.internal_kind == "goal_follow_up" and req.goal_id:
+            async with self._active_lock:
+                state = self._active.get(thread_id)
+                controller = (
+                    getattr(state.engine, "goal_controller", None)
+                    if state is not None
+                    else None
+                )
+                if controller is None or not controller.validate_follow_up(req.goal_id):
+                    pop_turn_latency(turn_id)
+                    raise ValueError("goal follow-up is stale")
 
         async with self._active_lock:
             state = self._active.get(thread_id)
@@ -763,22 +776,24 @@ class RuntimeThreadManager:
             started_at=now,
         )
 
-        user_item_id = f"item_{uuid.uuid4().hex[:8]}"
-        from deepseek_tui.memory.formatting import strip_relevant_memories
+        user_item_id: str | None = None
+        if not req.hidden:
+            user_item_id = f"item_{uuid.uuid4().hex[:8]}"
+            from deepseek_tui.memory.formatting import strip_relevant_memories
 
-        persisted_prompt = strip_relevant_memories(prompt)
-        user_item = TurnItemRecord(
-            id=user_item_id,
-            turn_id=turn_id,
-            kind=TurnItemKind.USER_MESSAGE,
-            status=TurnItemLifecycleStatus.COMPLETED,
-            summary=summarize_text(persisted_prompt, SUMMARY_LIMIT),
-            detail=persisted_prompt,
-            started_at=now,
-            ended_at=now,
-        )
-        turn.item_ids.append(user_item_id)
-        self.store.save_item(user_item)
+            persisted_prompt = strip_relevant_memories(prompt)
+            user_item = TurnItemRecord(
+                id=user_item_id,
+                turn_id=turn_id,
+                kind=TurnItemKind.USER_MESSAGE,
+                status=TurnItemLifecycleStatus.COMPLETED,
+                summary=summarize_text(persisted_prompt, SUMMARY_LIMIT),
+                detail=persisted_prompt,
+                started_at=now,
+                ended_at=now,
+            )
+            turn.item_ids.append(user_item_id)
+            self.store.save_item(user_item)
         self.store.save_turn(turn)
 
         thread.latest_turn_id = turn_id
@@ -788,17 +803,29 @@ class RuntimeThreadManager:
         await self._emit_event(
             thread_id, turn_id, None, "turn.started", {"turn": turn.model_dump(mode="json")}
         )
-        await self._emit_event(
-            thread_id, turn_id, user_item_id, "item.completed",
-            {"item": user_item.model_dump(mode="json")},
-        )
+        if user_item_id is not None:
+            await self._emit_event(
+                thread_id, turn_id, user_item_id, "item.completed",
+                {"item": user_item.model_dump(mode="json")},
+            )
 
         model = req.model or thread.model
         monitor_task = asyncio.create_task(
             self._monitor_turn_safe(thread_id, turn_id, handle, effective_mode),
             name=f"monitor-{turn_id}",
         )
-        await handle.send_message(content=prompt, model=model)
+
+        from deepseek_tui.engine.handle import SendMessageOp
+
+        await handle.send_op(
+            SendMessageOp(
+                content=prompt,
+                model=model,
+                hidden=req.hidden,
+                internal_kind=req.internal_kind,
+                goal_id=req.goal_id,
+            )
+        )
         # Monitor runs concurrently; ensure task is referenced until turn ends.
         del monitor_task
 
@@ -1068,6 +1095,12 @@ class RuntimeThreadManager:
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        goal_controller = getattr(engine, "goal_controller", None)
+        if goal_controller is not None and hasattr(goal_controller, "rebind"):
+            goal_controller.rebind(
+                thread_id=thread.id,
+                journal_path=self.store.goal_journal_path(thread.id),
+            )
         engine.memory_thread_id = thread.id
         engine.memory_mode = thread.memory_mode
         if self._elevation_bridge is not None:
@@ -1806,7 +1839,67 @@ class RuntimeThreadManager:
                 state.active_turn = None
             self._touch_lru(thread_id)
 
+        await self._emit_goal_status_if_needed(thread_id)
+        await self._schedule_goal_follow_up_if_needed(thread_id)
+
     # --- helpers -------------------------------------------------------------
+
+    async def _emit_goal_status_if_needed(self, thread_id: str) -> None:
+        """Emit a goal.status SSE event so Workbench can update the GoalChip."""
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is None:
+                return
+            controller = getattr(state.engine, "goal_controller", None)
+        if controller is None:
+            return
+        goal = controller.current
+        if goal is None:
+            await self._emit_event(
+                thread_id, None, None, "goal.status",
+                {"goal": None},
+            )
+            return
+        await self._emit_event(
+            thread_id, None, None, "goal.status",
+            {
+                "goal": {
+                    "goal_id": goal.goal_id,
+                    "objective": goal.objective[:120],
+                    "status": goal.status.value,
+                    "tokens_used": goal.usage.tokens_used,
+                    "token_budget": goal.token_budget,
+                    "active_seconds": round(goal.usage.active_seconds, 1),
+                },
+            },
+        )
+
+    async def _schedule_goal_follow_up_if_needed(self, thread_id: str) -> None:
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is None:
+                return
+            controller = getattr(state.engine, "goal_controller", None)
+            if controller is None or not hasattr(controller, "take_pending_follow_up"):
+                return
+            follow_up = controller.take_pending_follow_up()
+        if follow_up is None:
+            return
+        if not controller.validate_follow_up(follow_up.goal_id):
+            return
+        thread = self.store.load_thread(thread_id)
+        await self.start_turn(
+            thread_id,
+            StartTurnRequest(
+                prompt=follow_up.content,
+                input_summary="Goal continuation",
+                model=thread.model,
+                mode=thread.mode,
+                hidden=True,
+                internal_kind="goal_follow_up",
+                goal_id=follow_up.goal_id,
+            ),
+        )
 
     def _attach_item_to_turn(self, turn_id: str, item_id: str) -> None:
         turn = self.store.load_turn(turn_id)

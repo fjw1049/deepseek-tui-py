@@ -193,11 +193,27 @@ export async function syncDeepseekTuiConfig(
   }
 
   if (!prev || prev.apiKey !== current.apiKey) {
-    const apiKey = current.apiKey.trim()
-    if (apiKey) {
-      commands.push({ args: ['config', 'set', 'api_key', apiKey] })
-    } else {
-      commands.push({ args: ['config', 'unset', 'api_key'] })
+    // On initial startup (no previous), read config.toml's api_key first.
+    // If config.toml already has a non-empty key, don't overwrite it — the
+    // user may have edited config.toml directly and the GUI cache is stale.
+    let skipApiKeySync = false
+    if (!prev) {
+      try {
+        const configPath = resolveDeepseekConfigPath()
+        const tomlContent = await readFile(configPath, 'utf8')
+        const match = tomlContent.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
+        if (match && match[1].trim()) {
+          skipApiKeySync = true
+        }
+      } catch { /* file missing — proceed with sync */ }
+    }
+    if (!skipApiKeySync) {
+      const apiKey = current.apiKey.trim()
+      if (apiKey) {
+        commands.push({ args: ['config', 'set', 'api_key', apiKey] })
+      } else {
+        commands.push({ args: ['config', 'unset', 'api_key'] })
+      }
     }
   }
 
