@@ -295,7 +295,7 @@ class _WelcomeCell(Static):
         )
         hints = Text.from_markup(
             "  [bold bright_green]↵[/]      [bright_white]send[/]                "
-            "[bold bright_green]⇧⇥[/]      [bright_white]cycle agent / plan / yolo / ask[/]\n"
+            "[bold bright_green]⇧⇥[/]      [bright_white]cycle agent / plan / yolo / ask / goal / workflow[/]\n"
             "  [bold bright_green]/[/]      [bright_white]slash commands[/]      "
             "[bold bright_green]@[/]       [bright_white]mention a workspace file[/]\n"
             "  [bold bright_cyan]Ctrl+K[/]  [bright_white]command palette[/]     "

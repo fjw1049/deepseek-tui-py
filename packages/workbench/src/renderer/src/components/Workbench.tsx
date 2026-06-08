@@ -282,7 +282,7 @@ export function Workbench(): ReactElement {
     }))
   )
   const [input, setInput] = useState('')
-  const [mode, setMode] = useState<'plan' | 'agent' | 'ask'>('agent')
+  const [mode, setMode] = useState<import('./chat/FloatingComposer').ComposerMode>('agent')
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(readStoredRightPanelMode)
   const [filePreviewTarget, setFilePreviewTarget] = useState<WorkspaceFileTarget | null>(null)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
@@ -385,6 +385,12 @@ export function Workbench(): ReactElement {
     window.addEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
     return () => window.removeEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
   }, [workspaceRoot])
+
+  useEffect(() => {
+    const onOpenChanges = (): void => setRightPanelMode('changes')
+    window.addEventListener('deepseekgui:open-changes-panel', onOpenChanges)
+    return () => window.removeEventListener('deepseekgui:open-changes-panel', onOpenChanges)
+  }, [])
 
   useEffect(() => {
     if (previewThreadId.current === activeThreadId) return

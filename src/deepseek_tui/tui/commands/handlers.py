@@ -90,7 +90,7 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
 
 # ── /mode ────────────────────────────────────────────────────────────────
 
-_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask")
+_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask", "goal", "workflow")
 
 
 @_register("/mode")
@@ -484,6 +484,14 @@ def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.engine.handle import AutoApprovalHandler
     app._engine.approval_handler = AutoApprovalHandler()
     return CommandResult(output="YOLO mode enabled — all tool approvals auto-accepted.")
+
+
+# ── /workflow ─────────────────────────────────────────────────────────────
+
+@_register("/workflow")
+def cmd_workflow(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Switch to Workflow mode (shortcut for ``/mode workflow``)."""
+    return cmd_mode("workflow", app)
 
 
 # ── /logout ──────────────────────────────────────────────────────────────

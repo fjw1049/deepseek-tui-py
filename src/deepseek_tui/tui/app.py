@@ -943,8 +943,8 @@ class DeepSeekTUI(App[None]):
         self.push_screen(FilePicker(), _on_pick)
 
     def action_cycle_mode(self) -> None:
-        """Cycle agent/plan/yolo/ask modes (Tab, Rust ``Tab``)."""
-        modes = ("agent", "plan", "yolo", "ask")
+        """Cycle agent/plan/yolo/ask/goal/workflow modes (Tab, Rust ``Tab``)."""
+        modes = ("agent", "plan", "yolo", "ask", "goal", "workflow")
         current = self.query_one(StatusBar)._mode or "agent"
         try:
             idx = modes.index(current)

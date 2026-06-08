@@ -95,6 +95,7 @@ from deepseek_tui.lsp import (
     edited_paths_for_tool,
     render_blocks,
 )
+from deepseek_tui.prompts import AppMode as _AppMode
 from deepseek_tui.protocol.messages import Message, ToolUseBlock
 from deepseek_tui.protocol.requests import MessageRequest
 from deepseek_tui.protocol.responses import ToolCall
@@ -109,6 +110,15 @@ if TYPE_CHECKING:
     from deepseek_tui.tools.runtime import ToolRuntime
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_app_mode(mode: str) -> _AppMode:
+    """Convert a mode string to AppMode, falling back to AGENT."""
+    try:
+        return _AppMode(mode)
+    except ValueError:
+        return _AppMode.AGENT
+
 
 _TRIVIAL_RECALL_PROMPTS = {
     "hi",
@@ -1202,6 +1212,19 @@ class Engine:
                 )
             )
 
+        mode_hint = ""
+        if self.mode == "goal" and self.goal_controller.current is None:
+            mode_hint = (
+                "\n\n[Turn hint] No active goal exists — use create_goal "
+                "to establish an objective from the user's request, "
+                "then proceed."
+            )
+        elif self.mode == "workflow":
+            mode_hint = (
+                "\n\n[Turn hint] Use the workflow tool to decompose "
+                "the user's request into a phased workflow spec."
+            )
+
         if op.internal_kind == "goal_follow_up" and op.goal_id:
             if not self.goal_controller.validate_follow_up(op.goal_id):
                 logger.info(
@@ -1218,26 +1241,30 @@ class Engine:
                 working_messages,
                 model=op.model or self.default_model,
             )
+            sys_prompt = build_system_prompt(
+                op.system_prompt,
+                mode=_resolve_app_mode(self.mode),
+                skills_context=self._render_skills_context(),
+                working_set_summary=self.working_set.summary() or None,
+                workspace=self.tool_context.working_directory,
+                memory_enabled=self._memory_md_enabled(),
+                memory_path=self.memory_path,
+                memory_recall=memory_recall,
+                curated_snapshot=getattr(self, "_curated_snapshot", None),
+                session_evolution_lines=(
+                    self._evolution_pipeline.volatile_lines()
+                    if self._evolution_pipeline is not None
+                    else None
+                ),
+                evolution_enabled=self._evolution_pipeline is not None,
+                workflow_guidelines=self.tool_registry.contains("workflow"),
+            )
+            if mode_hint:
+                sys_prompt += mode_hint
             result = await self._run_conversation(
                 messages=working_messages,
                 model=op.model or self.default_model,
-                system_prompt=build_system_prompt(
-                    op.system_prompt,
-                    skills_context=self._render_skills_context(),
-                    working_set_summary=self.working_set.summary() or None,
-                    workspace=self.tool_context.working_directory,
-                    memory_enabled=self._memory_md_enabled(),
-                    memory_path=self.memory_path,
-                    memory_recall=memory_recall,
-                    curated_snapshot=getattr(self, "_curated_snapshot", None),
-                    session_evolution_lines=(
-                        self._evolution_pipeline.volatile_lines()
-                        if self._evolution_pipeline is not None
-                        else None
-                    ),
-                    evolution_enabled=self._evolution_pipeline is not None,
-                    workflow_guidelines=self.tool_registry.contains("workflow"),
-                ),
+                system_prompt=sys_prompt,
                 max_tokens=op.max_tokens,
             )
 

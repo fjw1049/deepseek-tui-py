@@ -136,7 +136,7 @@ def build_system_prompt(
         full_prompt += "\n\n" + memory_recall.append_system.strip()
 
     # Context Management (Agent / Yolo only)
-    if mode in (AppMode.AGENT, AppMode.YOLO):
+    if mode in (AppMode.AGENT, AppMode.YOLO, AppMode.GOAL, AppMode.WORKFLOW):
         full_prompt += (
             "\n\n## Context Management\n\n"
             "When the conversation gets long (you'll see a context usage indicator), you can:\n"

@@ -143,6 +143,8 @@ AVAILABLE_MODES: list[tuple[str, str]] = [
     ("plan", "Plan — read-only analysis, no edits"),
     ("yolo", "YOLO — auto-approve everything"),
     ("ask", "Ask — answer questions only"),
+    ("goal", "Goal — objective-driven with progress tracking"),
+    ("workflow", "Workflow — multi-phase structured execution"),
 ]
 
 

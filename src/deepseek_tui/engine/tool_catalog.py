@@ -84,11 +84,19 @@ _SHELL_TOOLS = frozenset(
 )
 
 
+_GOAL_TOOLS = frozenset({"get_goal", "create_goal", "update_goal"})
+_WORKFLOW_TOOLS = frozenset({"workflow"})
+
+
 def should_default_defer_tool(name: str, mode: str) -> bool:
     """Whether a tool should be deferred (lazy-loaded) by default."""
     if mode == "yolo":
         return False
     if mode == "agent" and name in _SHELL_TOOLS:
+        return False
+    if mode == "goal" and name in _GOAL_TOOLS:
+        return False
+    if mode == "workflow" and name in _WORKFLOW_TOOLS:
         return False
     return name not in _ALWAYS_ACTIVE_TOOLS
 

@@ -892,7 +892,10 @@ function TurnChangeSummary({
     <section className="ds-card-strong overflow-hidden rounded-[24px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {
+          setExpanded((value) => !value)
+          window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
+        }}
         aria-expanded={expanded}
         className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-ds-hover/40"
       >

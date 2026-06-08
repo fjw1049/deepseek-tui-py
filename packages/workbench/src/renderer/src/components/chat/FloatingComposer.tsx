@@ -19,6 +19,8 @@ import {
   Send,
   ShieldAlert,
   Square,
+  Target,
+  Workflow,
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -33,7 +35,7 @@ import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash
 import { ContextUsageMeter } from './ContextUsageMeter'
 import { GitBranchPicker } from './GitBranchPicker'
 
-export type ComposerMode = 'plan' | 'agent' | 'ask'
+export type ComposerMode = 'plan' | 'agent' | 'ask' | 'goal' | 'workflow'
 
 type ComposerAttachment = {
   id: string
@@ -162,10 +164,21 @@ export function FloatingComposer({
       ? t('composerModePlan')
       : mode === 'ask'
         ? t('composerModeAsk')
-        : t('composerModeAgent')
-
-  const modelChipLabel =
-    mode === 'agent' ? activeModelLabel : `${modeLabel} · ${activeModelLabel}`
+        : mode === 'goal'
+          ? t('composerModeGoal')
+          : mode === 'workflow'
+            ? t('composerModeWorkflow')
+            : t('composerModeAgent')
+  const ModeIcon =
+    mode === 'plan'
+      ? ListTodo
+      : mode === 'ask'
+        ? MessageCircleQuestion
+        : mode === 'goal'
+          ? Target
+          : mode === 'workflow'
+            ? Workflow
+            : Bot
 
   const placeholder = !runtimeReady
     ? t('runtimeActionNeedsConnection')
@@ -207,6 +220,26 @@ export function FloatingComposer({
             : t('slashCommandAskDescription'),
         keywords: ['ask', 'question', 'qa', '问答'],
         icon: <MessageCircleQuestion className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'goal',
+        title: t('slashCommandGoalTitle'),
+        description:
+          mode === 'goal'
+            ? t('slashCommandGoalActiveDescription')
+            : t('slashCommandGoalDescription'),
+        keywords: ['goal', 'objective', 'target', '目标'],
+        icon: <Target className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'workflow',
+        title: t('slashCommandWorkflowTitle'),
+        description:
+          mode === 'workflow'
+            ? t('slashCommandWorkflowActiveDescription')
+            : t('slashCommandWorkflowDescription'),
+        keywords: ['workflow', 'flow', 'pipeline', '工作流'],
+        icon: <Workflow className="h-4 w-4" strokeWidth={1.9} />
       }
     ]
     return commands
@@ -664,7 +697,9 @@ export function FloatingComposer({
                     [
                       { id: 'agent' as const, label: t('composerModeAgent'), icon: Bot },
                       { id: 'plan' as const, label: t('composerModePlan'), icon: ListTodo },
-                      { id: 'ask' as const, label: t('composerModeAsk'), icon: MessageCircleQuestion }
+                      { id: 'ask' as const, label: t('composerModeAsk'), icon: MessageCircleQuestion },
+                      { id: 'goal' as const, label: t('composerModeGoal'), icon: Target },
+                      { id: 'workflow' as const, label: t('composerModeWorkflow'), icon: Workflow }
                     ] as const
                   ).map((item) => (
                     <button
@@ -715,6 +750,24 @@ export function FloatingComposer({
               ) : null}
             </div>
 
+            <button
+              type="button"
+              disabled={!canCompose}
+              onClick={() => {
+                setModelMenuOpen(false)
+                clearAttachNotice()
+                setPlusMenuOpen((open) => !open)
+              }}
+              className="ds-no-drag inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-ds-border bg-ds-card px-3 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
+              title={t('composerModeSection')}
+            >
+              <ModeIcon className="h-4 w-4 text-ds-muted" strokeWidth={1.85} />
+              <span>{modeLabel}</span>
+              <ChevronDown className="h-3.5 w-3.5 text-ds-faint" strokeWidth={1.8} />
+            </button>
+
+            <div className="min-w-0 flex-1" />
+
             <div className="relative min-w-0 shrink-0">
               <button
                 type="button"
@@ -727,11 +780,11 @@ export function FloatingComposer({
                 className="ds-no-drag inline-flex max-w-[min(100%,280px)] items-center gap-1.5 rounded-full border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
                 title={t('composerModel')}
               >
-                <span className="truncate">{modelChipLabel}</span>
+                <span className="truncate">{activeModelLabel}</span>
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
               </button>
               {modelMenuOpen ? (
-                <div className="absolute bottom-full left-0 z-40 mb-2 min-w-[180px] overflow-hidden rounded-2xl border border-ds-border bg-ds-card p-1.5 shadow-lg">
+                <div className="absolute bottom-full right-0 z-40 mb-2 min-w-[180px] overflow-hidden rounded-2xl border border-ds-border bg-ds-card p-1.5 shadow-lg">
                   <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerModelSection')}
                   </div>
@@ -760,8 +813,6 @@ export function FloatingComposer({
                 </div>
               ) : null}
             </div>
-
-            <div className="min-w-0 flex-1" />
 
             {busy ? (
               <button

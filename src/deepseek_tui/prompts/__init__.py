@@ -53,6 +53,14 @@ def YOLO_MODE() -> str:  # noqa: N802
     return _get("modes/yolo.md")
 
 
+def GOAL_MODE() -> str:  # noqa: N802
+    return _get("modes/goal.md")
+
+
+def WORKFLOW_MODE() -> str:  # noqa: N802
+    return _get("modes/workflow.md")
+
+
 def AUTO_APPROVAL() -> str:  # noqa: N802
     return _get("approvals/auto.md")
 
@@ -100,20 +108,26 @@ class AppMode(enum.Enum):
     AGENT = "agent"
     YOLO = "yolo"
     PLAN = "plan"
+    GOAL = "goal"
+    WORKFLOW = "workflow"
 
     def mode_prompt(self) -> str:
         if self is AppMode.AGENT:
             return AGENT_MODE()
         elif self is AppMode.YOLO:
             return YOLO_MODE()
+        elif self is AppMode.GOAL:
+            return GOAL_MODE()
+        elif self is AppMode.WORKFLOW:
+            return WORKFLOW_MODE()
         return PLAN_MODE()
 
     def approval_prompt(self) -> str:
-        if self is AppMode.AGENT:
-            return SUGGEST_APPROVAL()
-        elif self is AppMode.YOLO:
+        if self is AppMode.YOLO:
             return AUTO_APPROVAL()
-        return NEVER_APPROVAL()
+        elif self is AppMode.PLAN:
+            return NEVER_APPROVAL()
+        return SUGGEST_APPROVAL()
 
 
 # ── Composition ──────────────────────────────────────────────────────────
@@ -152,6 +166,8 @@ def load_prompt(name: str) -> str:
         "agent_mode": AGENT_MODE,
         "plan_mode": PLAN_MODE,
         "yolo_mode": YOLO_MODE,
+        "goal_mode": GOAL_MODE,
+        "workflow_mode": WORKFLOW_MODE,
         "auto_approval": AUTO_APPROVAL,
         "suggest_approval": SUGGEST_APPROVAL,
         "never_approval": NEVER_APPROVAL,
