@@ -302,7 +302,7 @@ export function AutomationTaskForm({
                 <select
                   value={createPaused ? 'paused' : 'active'}
                   onChange={(event) => setCreatePaused(event.target.value === 'paused')}
-                  className="rounded-2xl border border-ds-border bg-ds-main px-4 py-3 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                  className="ds-select rounded-2xl border border-ds-border bg-ds-main py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
                 >
                   <option value="active">{t('automationStatusActive')}</option>
                   <option value="paused">{t('automationStatusPaused')}</option>
@@ -319,7 +319,7 @@ export function AutomationTaskForm({
                 <select
                   value={scheduleKind}
                   onChange={(event) => setScheduleKind(event.target.value as AutomationScheduleKind)}
-                  className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                  className="ds-select rounded-2xl border border-ds-border bg-ds-card py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
                 >
                   <option value="once">{t('automationScheduleOnce')}</option>
                   <option value="hourly">{t('automationScheduleHourly')}</option>
@@ -390,8 +390,14 @@ export function AutomationTaskForm({
                 <label className="grid gap-2">
                   <select
                     value={deliveryMode}
-                    onChange={(event) => setDeliveryMode(event.target.value as AutomationDeliveryMode)}
-                    className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                    onChange={(event) => {
+                      const next = event.target.value as AutomationDeliveryMode
+                      setDeliveryMode(next)
+                      setDeliveryTarget(
+                        next === 'feishu' ? feishuDefault : next === 'email' ? emailDefault : ''
+                      )
+                    }}
+                    className="ds-select rounded-2xl border border-ds-border bg-ds-card py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
                   >
                     <option value="none">{t('automationDeliveryNone')}</option>
                     <option value="feishu">{t('automationDeliveryFeishu')}</option>
