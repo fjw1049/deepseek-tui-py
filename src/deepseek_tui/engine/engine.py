@@ -271,7 +271,13 @@ class Engine:
         # from it so managers stay paired with the context they own.
         if tool_runtime is not None:
             self.tool_registry = tool_runtime.registry
-            self.tool_context = tool_runtime.context
+            # Shared runtimes have a fixed working_directory from process start.
+            # Each Engine must honour its own workspace (from the thread) so that
+            # the system prompt and tool execution use the correct project root.
+            if tool_context is not None:
+                self.tool_context = tool_context
+            else:
+                self.tool_context = tool_runtime.context
         else:
             self.tool_registry = tool_registry or ToolRegistry()
             self.tool_context = tool_context or ToolContext(working_directory=Path.cwd())
@@ -497,6 +503,12 @@ class Engine:
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()
+        # When reusing a shared runtime, create a per-engine ToolContext with
+        # the correct working_directory so system prompts reflect the thread's
+        # workspace rather than the process cwd.
+        per_engine_context: ToolContext | None = None
+        if isinstance(tool_runtime, ToolRuntime) and ws != runtime.context.working_directory:
+            per_engine_context = ToolContext(working_directory=ws)
         engine = cls(
             handle=handle,
             client=client,
@@ -505,6 +517,7 @@ class Engine:
             approval_handler=approval_handler,
             max_tool_round_trips=max_tool_round_trips,
             tool_runtime=runtime,
+            tool_context=per_engine_context,
             skill_registry=skill_reg,
             default_reasoning_effort=cfg.reasoning_effort,
             default_temperature=provider_cfg.temperature,

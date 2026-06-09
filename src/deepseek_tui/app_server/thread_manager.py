@@ -275,7 +275,7 @@ class RuntimeThreadManager:
             (req.model or "").strip()
             or self.config.default_text_model
         )
-        workspace = req.workspace or str(self.workspace)
+        workspace = (req.workspace or "").strip() or str(self.workspace)
         mode = (req.mode or "").strip() or "agent"
         allow_shell = req.allow_shell if req.allow_shell is not None else self.config.allow_shell
         trust_mode = req.trust_mode if req.trust_mode is not None else False
@@ -325,7 +325,7 @@ class RuntimeThreadManager:
         thread = await self.create_thread(
             CreateThreadRequest(
                 model=req.model or meta_model,
-                workspace=req.workspace or meta_workspace or str(self.workspace),
+                workspace=(req.workspace or "").strip() or meta_workspace or str(self.workspace),
                 mode=req.mode,
             )
         )
