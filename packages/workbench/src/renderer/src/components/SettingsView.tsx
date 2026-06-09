@@ -598,7 +598,7 @@ export function SettingsView(): ReactElement {
     const msg =
       loadError === 'PRELOAD_BRIDGE' ? t('preloadBridgeError') : t('loadFailed', { message: loadError })
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 bg-ds-main p-6 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
         <p className="max-w-md text-sm text-red-700 dark:text-red-300">{msg}</p>
         <button
           type="button"
@@ -613,7 +613,7 @@ export function SettingsView(): ReactElement {
 
   if (!form) {
     return (
-      <div className="flex h-full items-center justify-center bg-ds-main text-ds-faint">
+      <div className="flex h-full items-center justify-center text-ds-faint">
         {t('loading')}
       </div>
     )
@@ -655,8 +655,8 @@ export function SettingsView(): ReactElement {
         : 'text-ds-muted hover:bg-ds-hover'
     }`
   return (
-    <div className="ds-drag flex h-full min-h-0 w-full min-w-0 bg-ds-main">
-      <aside className="ds-drag flex w-[260px] shrink-0 flex-col border-r border-ds-border bg-ds-sidebar backdrop-blur-md">
+    <div className="ds-drag flex h-full min-h-0 w-full min-w-0">
+      <aside className="ds-sidebar-shell ds-drag flex w-[260px] shrink-0 flex-col">
         <div className="px-3 pb-3 pt-3">
           <div aria-hidden className="ds-titlebar-safe-block" />
           <button
@@ -707,9 +707,8 @@ export function SettingsView(): ReactElement {
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ds-subtle text-ds-muted">
               <Settings className="h-4 w-4" strokeWidth={1.75} />
             </div>
-            <div className="min-w-0 text-[12px] text-ds-muted">
-              <div className="truncate font-medium text-ds-ink">DeepSeek-GUI</div>
-              <div className="truncate">{t('settingsFooter')}</div>
+            <div className="min-w-0 truncate text-[13px] font-medium text-ds-ink">
+              {t('settingsFooter')}
             </div>
           </div>
         </div>

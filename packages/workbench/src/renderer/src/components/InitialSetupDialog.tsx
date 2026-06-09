@@ -92,8 +92,8 @@ export function InitialSetupDialog(): ReactElement {
 
   if (!form) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-md dark:bg-black/70">
-        <div className="rounded-2xl border border-ds-border bg-ds-card/95 px-5 py-4 text-sm text-ds-muted shadow-panel backdrop-blur-xl">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+        <div className="ds-glass rounded-2xl px-5 py-4 text-sm text-ds-muted">
           {t('loading')}
         </div>
       </div>
@@ -105,19 +105,19 @@ export function InitialSetupDialog(): ReactElement {
     [
       'flex h-12 items-center justify-center gap-2 rounded-[16px] border px-4 text-[15px] font-medium transition-all duration-200',
       active
-        ? 'border-[#1388ff] bg-[#1388ff]/[0.06] text-[#1388ff] shadow-[0_0_0_1px_rgba(19,136,255,0.14),0_10px_24px_rgba(19,136,255,0.08)] dark:border-[#3aa0ff] dark:bg-[#3aa0ff]/[0.12] dark:text-[#7dc1ff]'
-        : 'border-slate-300/80 bg-white/70 text-slate-600 hover:border-slate-400/80 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:border-white/16 dark:hover:bg-white/[0.045]'
+        ? 'border-accent bg-accent/10 text-accent ring-1 ring-accent/15'
+        : 'border-ds-border bg-ds-card text-ds-muted hover:border-ds-border-strong hover:text-ds-ink'
     ].join(' ')
   const fieldClass =
-    'w-full rounded-[18px] border border-slate-300/75 bg-white/88 px-4 py-3 text-[15px] text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] outline-none transition focus:border-[#1388ff]/70 focus:ring-2 focus:ring-[#1388ff]/15 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-100 dark:shadow-none dark:focus:border-[#3aa0ff]/70 dark:focus:ring-[#3aa0ff]/15 dark:placeholder:text-slate-500'
-  const labelClass = 'text-[15px] font-medium text-slate-700 dark:text-slate-200'
+    'w-full rounded-[18px] border border-ds-border bg-ds-card px-4 py-3 text-[15px] text-ds-ink outline-none transition placeholder:text-ds-faint focus:border-accent/60 focus:ring-2 focus:ring-accent/15'
+  const labelClass = 'text-[15px] font-medium text-ds-ink'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#eef2fb]/38 p-4 backdrop-blur-[18px] dark:bg-black/60 dark:backdrop-blur-[22px]">
-      <div className="w-full max-w-[592px] overflow-hidden rounded-[28px] border border-white/75 bg-[rgba(255,255,255,0.92)] text-slate-900 shadow-[0_38px_96px_rgba(119,135,172,0.22)] backdrop-blur-2xl dark:border-white/10 dark:bg-[rgba(18,21,28,0.94)] dark:text-white dark:shadow-[0_34px_110px_rgba(0,0,0,0.55)]">
-        <div className="bg-[radial-gradient(circle_at_top_right,rgba(19,136,255,0.08),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.88))] px-8 pb-7 pt-8 dark:bg-[radial-gradient(circle_at_top_right,rgba(58,160,255,0.12),transparent_28%),linear-gradient(180deg,rgba(24,28,37,0.98),rgba(18,21,28,0.96))]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+      <div className="ds-glass ds-glass-strong w-full max-w-[592px] overflow-hidden rounded-[28px] text-ds-ink">
+        <div className="bg-[radial-gradient(circle_at_top_right,var(--ds-accent-soft),transparent_42%)] px-8 pb-7 pt-8">
           <div className="flex items-center justify-between gap-3">
-            <div className="inline-flex items-center gap-2 rounded-full border border-[#1388ff]/22 bg-[#1388ff]/[0.06] px-3.5 py-1.5 text-[13px] font-semibold text-[#1388ff] dark:border-[#3aa0ff]/22 dark:bg-[#3aa0ff]/[0.12] dark:text-[#7dc1ff]">
+            <div className="inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent/10 px-3.5 py-1.5 text-[13px] font-semibold text-accent">
               <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} />
               {t(isPreview ? 'firstRunPreviewBadge' : 'firstRunBadge')}
             </div>
@@ -126,21 +126,21 @@ export function InitialSetupDialog(): ReactElement {
               onClick={handleClose}
               aria-label={t('firstRunClose')}
               title={t('firstRunClose')}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300/80 bg-white/72 text-slate-500 transition hover:border-slate-400 hover:text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400 dark:hover:border-white/18 dark:hover:text-slate-200"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
             >
               <X className="h-[18px] w-[18px]" strokeWidth={1.8} />
             </button>
           </div>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.02em] text-slate-900 dark:text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.02em] text-ds-ink">
             {t('firstRunTitle')}
           </h1>
-          <p className="mt-3 text-[15px] leading-7 text-slate-500 dark:text-slate-400">
+          <p className="mt-3 text-[15px] leading-7 text-ds-muted">
             {t('firstRunSubtitle')}
           </p>
         </div>
 
         <div className="space-y-6 px-8 py-7">
-          <div className="border-t border-slate-200/80 dark:border-white/10" />
+          <div className="border-t border-ds-border-muted" />
 
           <div className="space-y-3">
             <label className={labelClass}>
@@ -203,19 +203,19 @@ export function InitialSetupDialog(): ReactElement {
               <button
                 type="button"
                 onClick={() => setShowApiKey((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-ds-faint transition-colors hover:text-ds-muted"
               >
                 {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            <div className="flex flex-col gap-2 rounded-[18px] border border-slate-200/80 bg-slate-50/75 px-4 py-3 text-[13px] text-slate-500 dark:border-white/10 dark:bg-white/[0.035] dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="flex flex-col gap-2 rounded-[18px] border border-ds-border-muted bg-ds-subtle/50 px-4 py-3 text-[13px] text-ds-muted sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <p className="leading-6">
                 {t('firstRunBuyApiHint')}
               </p>
               <button
                 type="button"
                 onClick={handleOpenOfficialApiPage}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#1388ff]/24 bg-[#1388ff]/[0.06] px-3 py-1.5 text-[12.5px] font-semibold text-[#1388ff] transition hover:bg-[#1388ff]/[0.1] dark:border-[#3aa0ff]/22 dark:bg-[#3aa0ff]/[0.12] dark:text-[#7dc1ff] dark:hover:bg-[#3aa0ff]/[0.18]"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-accent/25 bg-accent/10 px-3 py-1.5 text-[12.5px] font-semibold text-accent transition hover:bg-accent/15"
               >
                 <span>{t('firstRunBuyApiAction')}</span>
                 <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.9} />
@@ -239,7 +239,7 @@ export function InitialSetupDialog(): ReactElement {
 
         <div className="space-y-4 px-8 pb-8 pt-1">
           {error && (
-            <div className="rounded-[18px] border border-red-500/18 bg-red-500/[0.08] px-4 py-3 text-[13px] text-red-700 dark:border-red-500/20 dark:bg-red-500/[0.12] dark:text-red-200">
+            <div className="rounded-[18px] border border-[var(--ds-danger)]/20 bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]">
               {error}
             </div>
           )}
@@ -248,7 +248,7 @@ export function InitialSetupDialog(): ReactElement {
             <button
               type="button"
               onClick={handleClose}
-              className="h-11 rounded-[16px] border border-slate-300/80 bg-white/75 px-4 text-[15px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-white dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:hover:border-white/16 dark:hover:bg-white/[0.06]"
+              className="h-11 rounded-[16px] border border-ds-border bg-ds-card px-4 text-[15px] font-semibold text-ds-ink transition hover:border-ds-border-strong hover:bg-ds-hover"
             >
               {t('firstRunClose')}
             </button>
@@ -256,13 +256,13 @@ export function InitialSetupDialog(): ReactElement {
               type="button"
               disabled={saving}
               onClick={handleSave}
-              className="h-11 rounded-[16px] bg-[linear-gradient(180deg,#2392ff_0%,#0e7df0_100%)] px-4 text-[15px] font-semibold text-white shadow-[0_16px_34px_rgba(19,136,255,0.24)] transition hover:opacity-95 disabled:opacity-50 dark:bg-[linear-gradient(180deg,#2c9dff_0%,#1584f6_100%)] dark:shadow-[0_16px_34px_rgba(21,132,246,0.22)]"
+              className="h-11 rounded-[16px] bg-accent px-4 text-[15px] font-semibold text-white shadow-[0_16px_34px_var(--ds-accent-soft)] transition hover:brightness-110 disabled:opacity-50"
             >
               {saving ? t('firstRunSaving') : t('firstRunSave')}
             </button>
           </div>
 
-          <p className="text-center text-[12.5px] leading-6 text-slate-400 dark:text-slate-500">
+          <p className="text-center text-[12.5px] leading-6 text-ds-faint">
             {t(isPreview ? 'firstRunPreviewHint' : 'firstRunChangeLater')}
           </p>
         </div>

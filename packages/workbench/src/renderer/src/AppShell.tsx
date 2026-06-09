@@ -14,7 +14,7 @@ const InitialSetupDialog = lazy(() =>
 )
 
 function RouteFallback(): React.ReactElement {
-  return <div className="h-full bg-ds-main" />
+  return <div className="h-full bg-transparent" />
 }
 
 export default function AppShell(): React.ReactElement {

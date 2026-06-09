@@ -673,7 +673,7 @@ export function Workbench(): ReactElement {
   return (
     <div
       ref={shellRef}
-      className="ds-workbench-shell ds-drag flex h-full min-h-0 w-full min-w-0 bg-ds-main"
+      className="ds-workbench-shell ds-drag flex h-full min-h-0 w-full min-w-0"
     >
       {!leftSidebarCollapsed ? (
         <>
@@ -743,12 +743,12 @@ export function Workbench(): ReactElement {
                 )}
               </button>
             </div>
-            <Suspense fallback={<div className="h-full bg-ds-main" />}>
+            <Suspense fallback={<div className="h-full bg-transparent" />}>
               <PluginMarketplaceView />
             </Suspense>
           </>
         ) : route === 'automation' ? (
-          <Suspense fallback={<div className="h-full bg-ds-main" />}>
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
             <AutomationCenter
               runtimeReady={runtimeConnection === 'ready'}
               workspaceRoot={workspaceRoot}
@@ -756,7 +756,7 @@ export function Workbench(): ReactElement {
             />
           </Suspense>
         ) : route === 'channels' ? (
-          <Suspense fallback={<div className="h-full bg-ds-main" />}>
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
             <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
           </Suspense>
         ) : (
@@ -1038,7 +1038,7 @@ function DevPreviewLaunchCard({
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
-    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[18px] border border-ds-border-muted bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(62,52,36,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
+    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[18px] border border-ds-border-muted bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-400/20 bg-sky-500/10 text-sky-500 dark:border-sky-300/20 dark:bg-sky-300/10 dark:text-sky-300">
         <Globe2 className="h-5 w-5" strokeWidth={1.9} />
       </div>

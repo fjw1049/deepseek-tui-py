@@ -368,7 +368,7 @@
   "guiUpdateDownload": "Download update",
   "guiUpdateInstall": "Restart and install",
   "guiUpdateOpenRelease": "Open download page",
-  "settingsFooter": "Preferences are stored locally.",
+  "settingsFooter": "Preferences",
   "logTitle": "Local error log",
   "logDir": "Log directory",
   "logDirDesc": "Error logs are written to daily files in this folder.",

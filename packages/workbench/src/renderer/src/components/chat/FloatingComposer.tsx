@@ -838,7 +838,7 @@ export function FloatingComposer({
                 <Plus className="h-4 w-4" strokeWidth={2} />
               </button>
               {plusMenuOpen ? (
-                <div className="absolute bottom-full left-0 z-40 mb-2 min-w-[220px] overflow-hidden rounded-2xl border border-ds-border bg-ds-card p-1.5 shadow-lg">
+                <div className="ds-glass absolute bottom-full left-0 z-40 mb-2 min-w-[220px] overflow-hidden rounded-2xl p-1.5">
                   <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerModeSection')}
                   </div>
@@ -934,7 +934,7 @@ export function FloatingComposer({
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
               </button>
               {modelMenuOpen ? (
-                <div className="absolute bottom-full right-0 z-40 mb-2 min-w-[180px] overflow-hidden rounded-2xl border border-ds-border bg-ds-card p-1.5 shadow-lg">
+                <div className="ds-glass absolute bottom-full right-0 z-40 mb-2 min-w-[180px] overflow-hidden rounded-2xl p-1.5">
                   <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerModelSection')}
                   </div>

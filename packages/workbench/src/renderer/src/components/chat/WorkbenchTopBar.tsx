@@ -118,7 +118,7 @@ export function WorkbenchTopBar({
         <button
           type="button"
           onClick={() => setEditorMenuOpen((value) => !value)}
-          className="inline-flex items-center gap-1 rounded-full border border-transparent bg-ds-elevated/45 px-2.5 py-1.5 text-ds-faint opacity-90 shadow-[inset_0_1px_0_rgba(255,252,245,0.5)] transition hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] dark:hover:bg-white/8"
+          className="inline-flex items-center gap-1 rounded-full border border-transparent bg-ds-elevated/45 px-2.5 py-1.5 text-ds-faint opacity-90 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] dark:hover:bg-white/8"
           aria-label={t('editorPickerTitle')}
           aria-expanded={editorMenuOpen}
           title={

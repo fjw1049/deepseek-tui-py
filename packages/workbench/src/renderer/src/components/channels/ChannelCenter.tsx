@@ -129,7 +129,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
     'shrink-0 rounded-lg bg-ds-ink px-4 py-1.5 text-[13px] font-medium text-ds-card hover:opacity-80'
 
   return (
-    <div className="ds-no-drag h-full overflow-auto bg-ds-main px-8 py-10">
+    <div className="ds-no-drag h-full overflow-auto px-8 py-10">
       <div className="mx-auto max-w-3xl">
         {/* ── Centered header ── */}
         <div className="mb-8 text-center">

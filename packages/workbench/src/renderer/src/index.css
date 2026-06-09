@@ -89,6 +89,20 @@
   --ds-shadow-card-soft: 0 10px 28px rgba(0, 0, 0, 0.05);
   --ds-shadow-card-strong: 0 14px 36px rgba(0, 0, 0, 0.07);
   --ds-shadow-chip: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+
+  /* ── Glass material (faux vibrancy). Light = white veil over a soft, bright wallpaper. ── */
+  --glass-blur: 22px;
+  --glass-saturate: 118%;
+  --glass-bg: rgba(249, 251, 253, 0.66);
+  --glass-bg-strong: rgba(249, 251, 253, 0.78);
+  --glass-border: rgba(15, 23, 42, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.5);
+  --glass-shadow: 0 18px 44px rgba(15, 23, 42, 0.1);
+  --glass-card: rgba(249, 251, 253, 0.55);
+  --glass-card-hover: rgba(249, 251, 253, 0.82);
+  --app-wallpaper:
+    radial-gradient(120% 80% at 50% -12%, rgba(255, 255, 255, 0.5), transparent 50%),
+    linear-gradient(180deg, #eaecf1 0%, #e3e6ec 100%);
 }
 
 :root[data-platform='darwin'] {
@@ -181,6 +195,20 @@
   --ds-shadow-card-soft: 0 16px 42px rgba(0, 0, 0, 0.22);
   --ds-shadow-card-strong: 0 22px 56px rgba(0, 0, 0, 0.3);
   --ds-shadow-chip: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+
+  /* ── Glass material. Dark = charcoal veil over a deep wallpaper (never white-on-alpha). ── */
+  --glass-blur: 30px;
+  --glass-saturate: 112%;
+  --glass-bg: rgba(24, 27, 33, 0.58);
+  --glass-bg-strong: rgba(28, 32, 39, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-highlight: rgba(255, 255, 255, 0.06);
+  --glass-shadow: 0 26px 64px rgba(0, 0, 0, 0.55);
+  --glass-card: rgba(255, 255, 255, 0.05);
+  --glass-card-hover: rgba(255, 255, 255, 0.09);
+  --app-wallpaper:
+    radial-gradient(120% 80% at 50% -12%, rgba(150, 180, 220, 0.05), transparent 50%),
+    linear-gradient(180deg, #15171c 0%, #101216 100%);
 }
 
 [data-theme='dark'] .ds-composer-shell::before {
@@ -192,14 +220,7 @@
 }
 
 [data-theme='dark'] body::before {
-  background: linear-gradient(180deg, #101010 0%, #181818 100%);
-}
-
-[data-theme='dark'] body::after {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 24%),
-    linear-gradient(120deg, rgba(255, 255, 255, 0.03), transparent 35%, rgba(255, 255, 255, 0.02) 72%, transparent);
-  opacity: 0.85;
+  background: var(--app-wallpaper);
 }
 
 html,
@@ -306,19 +327,11 @@ body::before {
   position: fixed;
   inset: 0;
   z-index: -2;
-  background: linear-gradient(180deg, #f8f8f9 0%, #f5f5f6 100%);
+  background: var(--app-wallpaper);
 }
 
 body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 22%),
-    linear-gradient(120deg, rgba(255, 255, 255, 0.2), transparent 34%, rgba(250, 250, 252, 0.14) 74%, transparent);
-  opacity: 0.75;
+  content: none;
 }
 
 button,
@@ -401,9 +414,13 @@ textarea {
 .ds-chat-composer {
   overflow: visible;
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.98);
-  border-color: rgba(0, 0, 0, 0.10);
-  box-shadow: var(--ds-shadow-composer);
+  background: var(--glass-bg-strong);
+  border-color: var(--glass-border);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .ds-chat-composer::before,
@@ -412,18 +429,16 @@ textarea {
 }
 
 .ds-chat-composer-focus {
-  border-color: rgba(0, 136, 255, 0.32);
+  border-color: color-mix(in srgb, var(--ds-accent) 42%, var(--glass-border));
   box-shadow:
-    0 0 0 3px rgba(0, 136, 255, 0.08),
-    var(--ds-shadow-composer);
+    0 0 0 3px var(--ds-accent-soft),
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-highlight);
 }
 
-/* Empty-state composer: slightly taller, lighter card under the hero. */
+/* Empty-state composer: slightly taller card under the hero. */
 .ds-composer-empty.ds-chat-composer {
   border-radius: 22px;
-  border-color: var(--ds-border);
-  background: var(--ds-card-strong);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.06);
   min-height: 112px;
   padding-top: 0.9rem;
   padding-bottom: 0.9rem;
@@ -431,28 +446,6 @@ textarea {
 
 .ds-composer-empty textarea {
   min-height: 76px;
-}
-
-[data-theme='dark'] .ds-composer-empty.ds-chat-composer {
-  background: rgba(28, 28, 28, 0.94);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
-}
-
-[data-theme='dark'] .ds-chat-composer {
-  background: rgba(24, 24, 24, 0.96);
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow:
-    0 26px 76px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-[data-theme='dark'] .ds-chat-composer-focus {
-  border-color: rgba(51, 156, 255, 0.45);
-  box-shadow:
-    0 0 0 3px rgba(51, 156, 255, 0.12),
-    0 26px 76px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 [data-theme='dark'] .ds-user-message-bubble {
@@ -695,29 +688,39 @@ textarea {
   backdrop-filter: blur(18px);
 }
 
+/* ── Glass surfaces: one material, theme-driven by tokens. Only outermost panels blur. ── */
+.ds-glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.ds-glass-strong {
+  background: var(--glass-bg-strong);
+}
+
+/* Tiles nested inside a glass panel: translucent fill, no second blur. */
+.ds-glass-card {
+  background: var(--glass-card);
+  border: 1px solid var(--glass-border);
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.ds-glass-card:hover {
+  background: var(--glass-card-hover);
+}
+
 .ds-stage-surface {
   position: relative;
-  background-color: var(--bg-canvas);
-  background-image: radial-gradient(circle, var(--ds-canvas-dot) 1px, transparent 1px);
-  background-size: var(--ds-canvas-dot-size) var(--ds-canvas-dot-size);
-}
-
-.ds-stage-surface::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 50% -8%, rgba(120, 140, 160, 0.04), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.10), transparent 28%);
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-[data-theme='dark'] .ds-stage-surface::before {
-  background:
-    radial-gradient(circle at 50% -8%, rgba(51, 156, 255, 0.06), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%);
-  opacity: 0.45;
+  background-color: transparent;
 }
 
 .ds-hero-title {
@@ -804,44 +807,21 @@ textarea {
 }
 
 .ds-topbar-surface {
-  background: var(--ds-topbar-bg);
-  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 82%, #ffffff 18%);
-  backdrop-filter: blur(24px) saturate(160%) brightness(104%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%) brightness(104%);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   box-shadow:
-    var(--ds-topbar-shadow);
-}
-
-.ds-topbar-surface::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -24px;
-  height: 44px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 78%);
-  filter: blur(12px);
-  opacity: 0.8;
-  pointer-events: none;
-}
-
-[data-theme='dark'] .ds-topbar-surface {
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme='dark'] .ds-topbar-surface::after {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 78%);
-  opacity: 0.7;
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-highlight);
 }
 
 .ds-sidebar-shell {
-  background-color: var(--bg-sidebar);
-  background-image:
-    radial-gradient(circle, var(--ds-sidebar-dot) 1px, transparent 1px),
-    var(--ds-sidebar-gradient);
-  background-size: var(--ds-canvas-dot-size) var(--ds-canvas-dot-size), auto;
-  border-right: 1px solid var(--ds-sidebar-border);
-  box-shadow: none;
+  background: var(--glass-bg);
+  border-right: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
 .ds-sidebar-brand {
@@ -1710,7 +1690,9 @@ summary,
 }
 
 .ds-composer-command-popover {
-  background: var(--ds-bg-main);
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border-bottom-color: color-mix(in srgb, var(--ds-accent) 24%, var(--ds-border));
   -webkit-font-smoothing: subpixel-antialiased;
   /* Override transform-based centering: use margin-auto instead to avoid subpixel blur */

@@ -149,7 +149,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
   return (
     <div className="ds-no-drag w-full">
-      <div className="ds-hero-panel w-full rounded-[22px] border border-ds-border bg-ds-card/95 px-5 py-7 shadow-[0_12px_36px_rgba(62,52,36,0.06)] backdrop-blur-sm dark:bg-ds-card/90 dark:shadow-[0_16px_40px_rgba(0,0,0,0.2)] sm:px-6 sm:py-8">
+      <div className="ds-hero-panel ds-glass w-full rounded-[22px] px-5 py-7 sm:px-6 sm:py-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1 text-left">
             <div className="mb-2 flex items-center gap-1.5 text-accent">

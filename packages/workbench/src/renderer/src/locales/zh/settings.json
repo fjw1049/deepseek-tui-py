@@ -368,7 +368,7 @@
   "guiUpdateDownload": "下载更新",
   "guiUpdateInstall": "重启安装",
   "guiUpdateOpenRelease": "打开下载页",
-  "settingsFooter": "偏好设置保存在本地。",
+  "settingsFooter": "偏好设置",
   "logTitle": "本地错误日志",
   "logDir": "日志目录",
   "logDirDesc": "错误日志按天写入此文件夹。",

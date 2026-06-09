@@ -452,7 +452,7 @@ export function AutomationCenter({
   }
 
   return (
-    <div className="ds-no-drag relative flex h-full min-h-0 flex-col bg-ds-main">
+    <div className="ds-no-drag relative flex h-full min-h-0 flex-col">
       {/* Header */}
       <header className="shrink-0 px-8 pt-8">
         <div className="mx-auto flex max-w-6xl items-start justify-between gap-4">
@@ -619,7 +619,7 @@ export function AutomationCenter({
                                         className="fixed inset-0 z-50"
                                         onClick={() => setMenuId(null)}
                                       />
-                                      <div className="absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg border border-ds-border bg-ds-card shadow-lg">
+                                      <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg">
                                         <button
                                           className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
                                           onClick={() => {
@@ -735,7 +735,7 @@ export function AutomationCenter({
                                       className="fixed inset-0 z-50"
                                       onClick={() => setMenuId(null)}
                                     />
-                                    <div className="absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg border border-ds-border bg-ds-card shadow-lg">
+                                    <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg">
                                       <button
                                         className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
                                         onClick={() => {
@@ -848,7 +848,7 @@ export function AutomationCenter({
 
       {/* Detail drawer */}
       {selected && (
-        <div className="absolute inset-y-0 right-0 z-40 flex w-[440px] flex-col border-l border-ds-border bg-ds-main shadow-2xl">
+        <div className="ds-glass ds-glass-strong absolute inset-y-0 right-0 z-40 flex w-[440px] flex-col">
           <div className="flex items-start justify-between border-b border-ds-border-muted px-5 py-4">
             <div className="min-w-0">
               <h2 className="truncate text-[16px] font-semibold text-ds-ink">{selected.name}</h2>
