@@ -1700,3 +1700,42 @@ summary,
     transform: none;
   }
 }
+@keyframes ds-composer-command-ribbon-flow {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 180px 0;
+  }
+}
+
+.ds-composer-command-popover {
+  border-bottom-color: color-mix(in srgb, var(--ds-accent) 24%, var(--ds-border));
+}
+
+.ds-composer-command-ribbon {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    #4f8cff 0%,
+    #8b7cf6 22%,
+    #f28cc8 44%,
+    #f2b56b 66%,
+    #52b788 82%,
+    #4f8cff 100%
+  );
+  background-size: 180px 100%;
+  animation: ds-composer-command-ribbon-flow 2.4s linear infinite;
+  opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-composer-command-ribbon {
+    animation: none;
+  }
+}

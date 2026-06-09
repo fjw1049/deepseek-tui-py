@@ -347,6 +347,15 @@ export function Workbench(): ReactElement {
     void sendMessage(v, mode)
   }
 
+  const handleComposerFork = async (): Promise<void> => {
+    if (!activeThreadId) return
+    await forkThread(activeThreadId)
+  }
+
+  const handleComposerOpenDiff = (): void => {
+    setRightPanelMode('changes')
+  }
+
   useEffect(() => {
     inputRef.current = input
   }, [input])
@@ -877,6 +886,9 @@ export function Workbench(): ReactElement {
                         setComposerModel(modelId)
                       }}
                       onSend={handleSend}
+                      onCompact={compactActiveThread}
+                      onFork={handleComposerFork}
+                      onOpenDiff={handleComposerOpenDiff}
                       queuedMessages={queuedMessages}
                       onRemoveQueuedMessage={removeQueuedMessage}
                       onInterrupt={() => void interrupt()}
@@ -920,6 +932,9 @@ export function Workbench(): ReactElement {
                         setComposerModel(modelId)
                       }}
                       onSend={handleSend}
+                      onCompact={compactActiveThread}
+                      onFork={handleComposerFork}
+                      onOpenDiff={handleComposerOpenDiff}
                       queuedMessages={queuedMessages}
                       onRemoveQueuedMessage={removeQueuedMessage}
                       onInterrupt={() => void interrupt()}

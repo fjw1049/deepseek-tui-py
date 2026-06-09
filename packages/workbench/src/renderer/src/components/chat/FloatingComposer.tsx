@@ -9,16 +9,24 @@ import {
 } from 'react'
 import {
   Bot,
+  BrainCircuit,
   ChevronDown,
   Clock3,
+  FileDiff,
   FileImage,
   FileText,
+  GitFork,
   ListTodo,
   MessageCircleQuestion,
+  Package,
   Plus,
+  Plug,
   Send,
+  Settings2,
   ShieldAlert,
+  Shrink,
   Square,
+  Gauge,
   Target,
   Workflow,
   X
@@ -32,7 +40,13 @@ import {
 } from '../../lib/composer-model-label'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash-commands'
+import {
+  isUnknownComposerSlashCommand,
+  parseComposerActionCommand,
+  type ComposerActionCommandId
+} from '../../lib/composer-slash-commands'
 import { ContextUsageMeter } from './ContextUsageMeter'
+import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { GitBranchPicker } from './GitBranchPicker'
 
 export type ComposerMode = 'plan' | 'agent' | 'ask' | 'goal' | 'workflow'
@@ -62,6 +76,9 @@ type Props = {
   onRemoveQueuedMessage: (id: string) => void
   onSend: (text: string) => void
   onInterrupt: () => void
+  onCompact: () => Promise<void>
+  onFork: () => Promise<void>
+  onOpenDiff: () => void
   stageCentered?: boolean
   useChatStageWidth?: boolean
   petSlashCommands?: Array<{
@@ -75,10 +92,11 @@ type Props = {
   filterPetSlashCommands?: (query: string) => PetSlashMenuItem[]
 }
 
-type SlashCommandId = ComposerMode
+type SlashCommandId = ComposerMode | ComposerActionCommandId
 
 type SlashCommand = {
   id: SlashCommandId
+  kind: 'mode' | 'action'
   title: string
   description: string
   keywords: string[]
@@ -114,6 +132,9 @@ export function FloatingComposer({
   onRemoveQueuedMessage,
   onSend,
   onInterrupt,
+  onCompact,
+  onFork,
+  onOpenDiff,
   stageCentered = false,
   useChatStageWidth = true,
   petSlashCommands = [],
@@ -134,6 +155,10 @@ export function FloatingComposer({
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  const [activeCommand, setActiveCommand] = useState<{
+    id: ComposerActionCommandId
+    args: string
+  } | null>(null)
   const activeThreadWorkspace = activeThreadId
     ? threads.find((thread) => thread.id === activeThreadId)?.workspace
     : ''
@@ -193,6 +218,7 @@ export function FloatingComposer({
     const commands: SlashCommand[] = [
       {
         id: 'agent',
+        kind: 'mode',
         title: t('slashCommandAgentTitle'),
         description:
           mode === 'agent'
@@ -203,6 +229,7 @@ export function FloatingComposer({
       },
       {
         id: 'plan',
+        kind: 'mode',
         title: t('slashCommandPlanTitle'),
         description:
           mode === 'plan'
@@ -213,6 +240,7 @@ export function FloatingComposer({
       },
       {
         id: 'ask',
+        kind: 'mode',
         title: t('slashCommandAskTitle'),
         description:
           mode === 'ask'
@@ -223,6 +251,7 @@ export function FloatingComposer({
       },
       {
         id: 'goal',
+        kind: 'mode',
         title: t('slashCommandGoalTitle'),
         description:
           mode === 'goal'
@@ -233,6 +262,7 @@ export function FloatingComposer({
       },
       {
         id: 'workflow',
+        kind: 'mode',
         title: t('slashCommandWorkflowTitle'),
         description:
           mode === 'workflow'
@@ -240,6 +270,78 @@ export function FloatingComposer({
             : t('slashCommandWorkflowDescription'),
         keywords: ['workflow', 'flow', 'pipeline', '工作流'],
         icon: <Workflow className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'model',
+        kind: 'action',
+        title: t('composerCommandModelTitle'),
+        description: t('composerCommandModelDescription'),
+        keywords: ['model', '模型'],
+        icon: <Bot className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'context',
+        kind: 'action',
+        title: t('composerCommandContextTitle'),
+        description: t('composerCommandContextDescription'),
+        keywords: ['context', 'tokens', '上下文'],
+        icon: <Gauge className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'compact',
+        kind: 'action',
+        title: t('composerCommandCompactTitle'),
+        description: t('composerCommandCompactDescription'),
+        keywords: ['compact', 'compress', '压缩'],
+        icon: <Shrink className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'memory',
+        kind: 'action',
+        title: t('composerCommandMemoryTitle'),
+        description: t('composerCommandMemoryDescription'),
+        keywords: ['memory', '记忆'],
+        icon: <BrainCircuit className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'mcp',
+        kind: 'action',
+        title: t('composerCommandMcpTitle'),
+        description: t('composerCommandMcpDescription'),
+        keywords: ['mcp', 'server', '服务器'],
+        icon: <Plug className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'skills',
+        kind: 'action',
+        title: t('composerCommandSkillsTitle'),
+        description: t('composerCommandSkillsDescription'),
+        keywords: ['skills', 'plugins', '技能', '插件'],
+        icon: <Package className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'diff',
+        kind: 'action',
+        title: t('composerCommandDiffTitle'),
+        description: t('composerCommandDiffDescription'),
+        keywords: ['diff', 'changes', '变更'],
+        icon: <FileDiff className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'fork',
+        kind: 'action',
+        title: t('composerCommandForkTitle'),
+        description: t('composerCommandForkDescription'),
+        keywords: ['fork', 'branch', '分支'],
+        icon: <GitFork className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'hooks',
+        kind: 'action',
+        title: t('composerCommandHooksTitle'),
+        description: t('composerCommandHooksDescription'),
+        keywords: ['hooks', '钩子'],
+        icon: <Settings2 className="h-4 w-4" strokeWidth={1.9} />
       }
     ]
     return commands
@@ -299,6 +401,10 @@ export function FloatingComposer({
   }, [attachments.length, canCompose, input, resizeTextarea])
 
   useEffect(() => {
+    setActiveCommand(null)
+  }, [activeThreadId])
+
+  useEffect(() => {
     const el = textareaRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
 
@@ -341,8 +447,14 @@ export function FloatingComposer({
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
-  const applySlashCommand = (commandId: SlashCommandId): void => {
-    setMode(commandId)
+  const applySlashCommand = (command: SlashCommand): void => {
+    if (command.kind === 'action') {
+      setPlusMenuOpen(false)
+      setModelMenuOpen(false)
+      setActiveCommand({ id: command.id as ComposerActionCommandId, args: '' })
+    } else {
+      setMode(command.id as ComposerMode)
+    }
     setInput('')
     focusComposer()
   }
@@ -420,7 +532,18 @@ export function FloatingComposer({
       return
     }
     if (highlightedSlashCommand) {
-      applySlashCommand(highlightedSlashCommand.id)
+      applySlashCommand(highlightedSlashCommand)
+      return
+    }
+    const parsedCommand = parseComposerActionCommand(input)
+    if (parsedCommand) {
+      setActiveCommand(parsedCommand)
+      setInput('')
+      focusComposer()
+      return
+    }
+    if (isUnknownComposerSlashCommand(input)) {
+      setAttachNotice(t('composerCommandUnknown'))
       return
     }
     const payload = buildOutboundMessage(attachments, input)
@@ -492,14 +615,33 @@ export function FloatingComposer({
       ) : null}
 
       <div className="relative">
-        {(slashQuery != null || petSlashQuery != null) ? (
-          <div className="ds-card-strong absolute inset-x-2 bottom-full z-30 mb-3 overflow-hidden rounded-[26px] p-2 shadow-[0_26px_70px_rgba(15,23,42,0.16)]">
-            <div className="px-3 pb-2 pt-1 text-[12px] font-medium uppercase tracking-[0.14em] text-ds-faint">
+        {activeCommand ? (
+          <ComposerCommandPanel
+            command={activeCommand.id}
+            commandArgs={activeCommand.args}
+            blocks={blocks}
+            model={activeModelId}
+            modelOptions={modelOptions}
+            runtimeReady={runtimeReady}
+            busy={busy}
+            activeThread={activeThreadId ? threads.find((thread) => thread.id === activeThreadId) ?? null : null}
+            onModelChange={onComposerModelChange}
+            onCompact={onCompact}
+            onFork={onFork}
+            onOpenDiff={() => {
+              onOpenDiff()
+              setActiveCommand(null)
+            }}
+            onClose={() => setActiveCommand(null)}
+          />
+        ) : (slashQuery != null || petSlashQuery != null) ? (
+          <div className="ds-composer-command-popover ds-card-strong absolute bottom-full left-[calc(50%-64px)] z-30 flex max-h-[min(420px,50vh)] w-[calc(100%_-_24px)] max-w-[620px] -translate-x-1/2 flex-col overflow-hidden rounded-t-[22px] rounded-b-[14px] p-1.5 shadow-[0_20px_55px_rgba(15,23,42,0.16)]">
+            <div className="shrink-0 px-3 pb-1.5 pt-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-ds-faint">
               {petSlashQuery != null ? t('petSlashCommandMenuTitle') : t('slashCommandMenuTitle')}
             </div>
             {petSlashQuery != null ? (
               filteredPetSlashCommands.length > 0 ? (
-                <div className="flex flex-col gap-1">
+                <div className="min-h-0 flex-1 overflow-y-auto">
                   {filteredPetSlashCommands.map((command) => {
                     const active = highlightedPetSlashCommand?.command === command.command
                     return (
@@ -508,28 +650,28 @@ export function FloatingComposer({
                         type="button"
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => applyPetSlashCommand(command.command)}
-                        className={`flex w-full items-center gap-3 rounded-[20px] px-3 py-3 text-left transition ${
+                        className={`flex w-full items-center gap-2.5 rounded-[15px] px-2.5 py-2 text-left transition ${
                           active
                             ? 'bg-accent/10 text-ds-ink shadow-[inset_0_0_0_1px_rgba(0,136,255,0.14)]'
                             : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                         }`}
                       >
                         <span
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${
+                          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
                             active ? 'bg-accent/12 text-accent' : 'bg-ds-hover text-ds-muted'
                           }`}
                         >
                           {command.icon}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block text-[15px] font-semibold text-inherit">
+                          <span className="block text-[13px] font-semibold text-inherit">
                             {command.title}
                           </span>
-                          <span className="mt-0.5 block text-[13px] leading-5 text-ds-faint">
+                          <span className="mt-0.5 block truncate text-[11px] leading-4 text-ds-faint">
                             {command.description}
                           </span>
                         </span>
-                        <span className="rounded-full border border-ds-border-muted px-2.5 py-1 text-[11px] font-semibold text-ds-faint">
+                        <span className="rounded-full border border-ds-border-muted px-2 py-0.5 text-[10px] font-semibold text-ds-faint">
                           {command.command}
                         </span>
                       </button>
@@ -542,7 +684,7 @@ export function FloatingComposer({
                 </div>
               )
             ) : filteredSlashCommands.length > 0 ? (
-              <div className="flex flex-col gap-1">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 {filteredSlashCommands.map((command) => {
                   const active = highlightedSlashCommand?.id === command.id
                   return (
@@ -550,34 +692,34 @@ export function FloatingComposer({
                       key={command.id}
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applySlashCommand(command.id)}
-                      className={`flex w-full items-center gap-3 rounded-[20px] px-3 py-3 text-left transition ${
+                      onClick={() => applySlashCommand(command)}
+                      className={`flex w-full items-center gap-2.5 rounded-[15px] px-2.5 py-2 text-left transition ${
                         active
                           ? 'bg-accent/10 text-ds-ink shadow-[inset_0_0_0_1px_rgba(0,136,255,0.14)]'
                           : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                       }`}
                     >
                       <span
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
                           active ? 'bg-accent/12 text-accent' : 'bg-ds-hover text-ds-muted'
                         }`}
                       >
                         {command.icon}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[15px] font-semibold text-inherit">
+                          <span className="block text-[13px] font-semibold text-inherit">
                           {command.title}
                         </span>
-                        <span className="mt-0.5 block text-[13px] leading-5 text-ds-faint">
+                          <span className="mt-0.5 block truncate text-[11px] leading-4 text-ds-faint">
                           {command.description}
                         </span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="rounded-full border border-ds-border-muted px-2.5 py-1 text-[11px] font-semibold text-ds-faint">
+                        <span className="rounded-full border border-ds-border-muted px-2 py-0.5 text-[10px] font-semibold text-ds-faint">
                           /{command.id}
                         </span>
-                        {command.id === mode ? (
-                          <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">
+                        {command.kind === 'mode' && command.id === mode ? (
+                          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
                             {t('slashCommandCurrent')}
                           </span>
                         ) : null}
@@ -591,6 +733,7 @@ export function FloatingComposer({
                 {t('slashCommandEmpty')}
               </div>
             )}
+            <div className="ds-composer-command-ribbon" aria-hidden />
           </div>
         ) : null}
 
@@ -664,6 +807,11 @@ export function FloatingComposer({
                   return
                 }
               }
+              if (!composing && e.key === 'Escape' && activeCommand) {
+                e.preventDefault()
+                setActiveCommand(null)
+                return
+              }
 
               if (!sendByEnter || composing) return
 
@@ -678,6 +826,7 @@ export function FloatingComposer({
                 type="button"
                 disabled={!canCompose}
                 onClick={() => {
+                  setActiveCommand(null)
                   setModelMenuOpen(false)
                   clearAttachNotice()
                   setPlusMenuOpen((open) => !open)
@@ -773,6 +922,7 @@ export function FloatingComposer({
                 type="button"
                 disabled={!canChangeModel}
                 onClick={() => {
+                  setActiveCommand(null)
                   setPlusMenuOpen(false)
                   clearAttachNotice()
                   setModelMenuOpen((open) => !open)
