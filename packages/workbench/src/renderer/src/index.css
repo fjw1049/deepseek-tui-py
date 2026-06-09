@@ -1710,7 +1710,14 @@ summary,
 }
 
 .ds-composer-command-popover {
+  background: var(--ds-bg-main);
   border-bottom-color: color-mix(in srgb, var(--ds-accent) 24%, var(--ds-border));
+  -webkit-font-smoothing: subpixel-antialiased;
+  /* Override transform-based centering: use margin-auto instead to avoid subpixel blur */
+  left: 12px !important;
+  right: 12px !important;
+  margin-inline: auto;
+  transform: none !important;
 }
 
 .ds-composer-command-ribbon {

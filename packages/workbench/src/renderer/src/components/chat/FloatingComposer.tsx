@@ -635,7 +635,7 @@ export function FloatingComposer({
             onClose={() => setActiveCommand(null)}
           />
         ) : (slashQuery != null || petSlashQuery != null) ? (
-          <div className="ds-composer-command-popover ds-card-strong absolute bottom-full left-[calc(50%-64px)] z-30 flex max-h-[min(420px,50vh)] w-[calc(100%_-_24px)] max-w-[620px] -translate-x-1/2 flex-col overflow-hidden rounded-t-[22px] rounded-b-[14px] p-1.5 shadow-[0_20px_55px_rgba(15,23,42,0.16)]">
+          <div className="ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-30 flex max-h-[min(420px,50vh)] w-[calc(100%_-_24px)] max-w-[620px] -translate-x-1/2 flex-col overflow-hidden rounded-t-[22px] rounded-b-[14px] p-1.5 shadow-[0_20px_55px_rgba(15,23,42,0.16)]">
             <div className="shrink-0 px-3 pb-1.5 pt-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-ds-faint">
               {petSlashQuery != null ? t('petSlashCommandMenuTitle') : t('slashCommandMenuTitle')}
             </div>

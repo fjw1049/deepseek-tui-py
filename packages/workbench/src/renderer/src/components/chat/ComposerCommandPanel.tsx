@@ -101,7 +101,7 @@ export function ComposerCommandPanel(props: Props): ReactElement {
     hooks: t('composerCommandHooksTitle')
   }
   return (
-    <div className="ds-composer-command-popover ds-card-strong absolute bottom-full left-[calc(50%-64px)] z-40 max-h-[min(500px,58vh)] w-[calc(100%_-_24px)] max-w-[680px] -translate-x-1/2 overflow-hidden rounded-t-[22px] rounded-b-[14px] shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
+    <div className="ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-40 max-h-[min(500px,58vh)] w-[calc(100%_-_24px)] max-w-[680px] -translate-x-1/2 overflow-hidden rounded-t-[22px] rounded-b-[14px] shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
       <PanelHeader title={titles[command]} subtitle={`/${command}`} onClose={onClose} />
       <div className="max-h-[min(450px,52vh)] overflow-y-auto p-4">
         {command === 'model' ? <ModelPanel {...props} /> : null}
