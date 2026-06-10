@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from abc import ABC, abstractmethod
 from typing import Any
 
 import httpx
 from httpx_sse import aconnect_sse
+
+logger = logging.getLogger(__name__)
 
 
 class McpTransportError(Exception):
@@ -68,6 +71,7 @@ class StdioTransport(McpTransport):
         self.args = list(args or [])
         self.env = dict(env or {})
         self._process: asyncio.subprocess.Process | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         if self._process is not None:
@@ -81,8 +85,37 @@ class StdioTransport(McpTransport):
             stderr=asyncio.subprocess.PIPE,
             env=merged_env,
         )
+        # Drain stderr continuously — without a reader the child blocks once
+        # the OS pipe buffer fills, deadlocking the whole transport.
+        self._stderr_task = asyncio.create_task(
+            self._drain_stderr(), name=f"mcp-stderr-{self.command}"
+        )
+
+    async def _drain_stderr(self) -> None:
+        process = self._process
+        if process is None or process.stderr is None:
+            return
+        try:
+            while True:
+                raw = await process.stderr.readline()
+                if not raw:
+                    break
+                logger.debug(
+                    "mcp_stderr command=%s line=%s",
+                    self.command,
+                    raw.decode("utf-8", errors="replace").rstrip(),
+                )
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
 
     async def stop(self) -> None:
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._stderr_task = None
         if self._process is None:
             return
         try:

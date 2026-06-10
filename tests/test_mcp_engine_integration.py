@@ -65,7 +65,7 @@ class TestDiscoverToolsMerged:
     @pytest.fixture
     def mcp_manager(self):
         mgr = McpManager([McpServerConfig(name="test_server", command="echo")])
-        mgr.discover_tools = AsyncMock(return_value=[
+        discovered = [
             {
                 "type": "function",
                 "function": {
@@ -74,7 +74,12 @@ class TestDiscoverToolsMerged:
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
-        ])
+        ]
+        mgr.discover_tools = AsyncMock(return_value=discovered)
+        # Engine reads cached_tools() and defers cold discovery to a
+        # background task — pre-populate the cache so the discovered tool
+        # is visible synchronously in this test.
+        mgr._discovered_tools_cache = discovered
         return mgr
 
     async def test_get_tools_with_mcp_includes_discovered(self, mcp_manager):

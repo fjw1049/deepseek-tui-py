@@ -19,7 +19,13 @@ async def test_list_automations_unconfigured_returns_503(client: AsyncClient) ->
 
 
 @pytest.fixture
-async def automations_client(runtime_data_dir) -> AsyncIterator[AsyncClient]:
+async def automations_client(
+    runtime_data_dir, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[AsyncClient]:
+    # Isolate from the developer's real ~/.deepseek automations store.
+    monkeypatch.setenv(
+        "DEEPSEEK_AUTOMATIONS_DIR", str(runtime_data_dir / "automations-home")
+    )
     config = Config(
         features=FeatureConfig(
             mcp=False,

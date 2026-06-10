@@ -44,6 +44,10 @@ class McpManager:
         self._configs: dict[str, McpServerConfig] = {}
         self._clients: dict[str, McpClient] = {}
         self._tool_map: dict[str, tuple[str, str]] = {}
+        # Authoritative qualified-name → (server, tool) mapping persisted
+        # alongside the tools cache. String parsing of qualified names is
+        # ambiguous when server names contain underscores.
+        self._cached_tool_map: dict[str, tuple[str, str]] = {}
         self._config_path = config_path.expanduser() if config_path else None
         self._last_mtime: float | None = None
         self._config_hash: str | None = None
@@ -286,6 +290,15 @@ class McpManager:
         tools = raw.get("tools")
         if not isinstance(tools, list):
             return
+        tool_map = raw.get("tool_map")
+        if isinstance(tool_map, dict):
+            self._cached_tool_map = {
+                qualified: (pair[0], pair[1])
+                for qualified, pair in tool_map.items()
+                if isinstance(qualified, str)
+                and isinstance(pair, list)
+                and len(pair) == 2
+            }
         if raw.get("config_hash") == self._config_hash:
             # Fresh cache — use directly.
             self._discovered_tools_cache = list(tools)
@@ -306,6 +319,10 @@ class McpManager:
             payload = {
                 "config_hash": self._config_hash,
                 "tools": self._discovered_tools_cache,
+                "tool_map": {
+                    qualified: list(pair)
+                    for qualified, pair in self._cached_tool_map.items()
+                },
             }
             path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except OSError:
@@ -470,6 +487,7 @@ class McpManager:
         self._discovered_tools_cache = sorted(
             api_tools, key=lambda t: t["function"]["name"]
         )
+        self._cached_tool_map = dict(self._tool_map)
         self._persist_discovered_tools_cache_to_disk()
 
         # Schedule background retry for servers that timed out so their tools
@@ -510,6 +528,7 @@ class McpManager:
                     continue
                 qualified = qualify_tool_name(server_name, desc.name)
                 self._tool_map[qualified] = (server_name, desc.name)
+                self._cached_tool_map[qualified] = (server_name, desc.name)
                 new_tools.append({
                     "type": "function",
                     "function": {
@@ -552,10 +571,14 @@ class McpManager:
             qualified = fn.get("name")
             if not isinstance(qualified, str):
                 continue
-            parsed = parse_qualified_tool_name(qualified)
-            if parsed is None:
+            # Prefer the persisted (server, tool) pair — string parsing is
+            # ambiguous when the server name contains underscores.
+            mapping = self._cached_tool_map.get(qualified)
+            if mapping is None:
+                mapping = parse_qualified_tool_name(qualified)
+            if mapping is None:
                 continue
-            self._tool_map[qualified] = parsed
+            self._tool_map[qualified] = mapping
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         mapping = self._tool_map.get(qualified_name)
@@ -599,6 +622,12 @@ class McpManager:
             client = self._clients[server_name]
             if client.is_running:
                 return client
+            # Stop the dead client before replacing it so its child process /
+            # reader task don't leak.
+            try:
+                await client.stop()
+            except Exception:  # noqa: BLE001
+                pass
         cfg = self._configs.get(server_name)
         if cfg is None:
             raise McpError(f"Unknown MCP server: {server_name}")

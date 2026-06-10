@@ -38,7 +38,15 @@ def qualify_tool_name(server_name: str, tool_name: str) -> str:
 
 
 def parse_qualified_tool_name(qualified: str) -> tuple[str, str] | None:
-    """Parse a qualified MCP tool name back into ``(server, tool)``."""
+    """Parse a qualified MCP tool name back into ``(server, tool)``.
+
+    Best-effort fallback only: the ``mcp_<server>_<tool>`` encoding is
+    ambiguous when the server name itself contains underscores (e.g.
+    ``mcp_my_server_do_thing`` parses as ``("my", "server_do_thing")``).
+    Callers that know the real mapping (e.g. ``McpManager``'s tool-map
+    cache, which stores the ``(server, tool)`` pair explicitly) should
+    prefer it over this parser.
+    """
     if qualified.startswith("mcp__"):
         rest = qualified[5:]
         parts = rest.split("__", 1)
@@ -161,7 +169,9 @@ class McpClient:
         self, name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         return await self._send_request(
-            "tools/call", {"name": name, "arguments": arguments}
+            "tools/call",
+            {"name": name, "arguments": arguments},
+            timeout=self.config.execute_timeout,
         )
 
     async def list_resources(self) -> list[dict[str, Any]]:
@@ -215,8 +225,15 @@ class McpClient:
                 fut = self._pending.pop(msg_id, None)
                 if fut is not None and not fut.done():
                     fut.set_result(message)
-        except (McpTransportError, asyncio.CancelledError):
+        except asyncio.CancelledError:
             pass
+        except McpTransportError as exc:
+            # Transport gone — fail in-flight requests now instead of letting
+            # them hang until their read timeout.
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.set_exception(McpError(f"MCP transport closed: {exc}"))
+            self._pending.clear()
         except Exception as exc:  # noqa: BLE001
             # Propagate to any waiters so they unblock.
             for fut in self._pending.values():
@@ -225,7 +242,11 @@ class McpClient:
             self._pending.clear()
 
     async def _send_request(
-        self, method: str, params: dict[str, Any]
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         if self._transport is None:
             raise McpError("MCP client not started")
@@ -247,12 +268,14 @@ class McpClient:
             raise McpError(str(exc)) from exc
 
         try:
-            timeout = self.config.read_timeout
-            response = await asyncio.wait_for(fut, timeout=timeout)
+            effective_timeout = (
+                timeout if timeout is not None else self.config.read_timeout
+            )
+            response = await asyncio.wait_for(fut, timeout=effective_timeout)
         except asyncio.TimeoutError as exc:
             self._pending.pop(req_id, None)
             raise McpError(
-                f"MCP request {method} timed out after {self.config.read_timeout}s"
+                f"MCP request {method} timed out after {effective_timeout}s"
             ) from exc
 
         if "error" in response:

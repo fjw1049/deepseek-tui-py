@@ -150,7 +150,7 @@ class DeepSeekClient(LLMClient):
         # client.rs::send_with_retry: only retries before the first byte
         # of the response body is consumed; once SSE chunks start flowing
         # the engine's transparent-retry layer takes over.
-        url = f"{self.base_url}/v1/chat/completions"
+        url = self._chat_completions_url()
         body_bytes = len(json.dumps(payload).encode())
         logger.info(
             "http_request method=POST url=%s model=%s msg_count=%d body_bytes=%d",
@@ -171,6 +171,17 @@ class DeepSeekClient(LLMClient):
             url,
             int((time.monotonic() - request_started) * 1000),
         )
+
+    def _chat_completions_url(self) -> str:
+        """Build the chat-completions URL without doubling ``/v1``.
+
+        Several PROVIDER_DEFAULTS base URLs (openai/openrouter/nvidia/
+        novita/fireworks/sglang) already end in ``/v1``; appending
+        ``/v1/chat/completions`` blindly yields a 404.
+        """
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/chat/completions"
+        return f"{self.base_url}/v1/chat/completions"
 
     async def _stream_with_pre_retry(
         self,
@@ -224,8 +235,14 @@ class DeepSeekClient(LLMClient):
                             )[:512]
                         except Exception:  # noqa: BLE001
                             pass
+                        message = f"HTTP {status} from {url}: {body}"
+                        if status in (401, 403):
+                            message += (
+                                " — API key invalid or unauthorized; run"
+                                " `deepseek-tui login` or check config.toml"
+                            )
                         raise httpx.HTTPStatusError(
-                            f"HTTP {status} from {url}: {body}",
+                            message,
                             request=response.request,
                             response=response,
                         )
@@ -240,7 +257,15 @@ class DeepSeekClient(LLMClient):
                             return
                         if sse.data == "[DONE]":
                             return
-                        chunk = json.loads(sse.data)
+                        try:
+                            chunk = json.loads(sse.data)
+                        except json.JSONDecodeError as exc:
+                            logger.warning(
+                                "sse_chunk_invalid_json error=%s data=%r",
+                                exc,
+                                sse.data[:200],
+                            )
+                            continue
                         for event in parser.parse_chunk(chunk):
                             yield event
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
@@ -284,7 +309,16 @@ class DeepSeekClient(LLMClient):
             payload["temperature"] = request.temperature
         if request.top_p is not None:
             payload["top_p"] = request.top_p
-        if request.reasoning_effort is not None and request.reasoning_effort != "off":
+        # ``reasoning_effort`` / ``thinking`` are DeepSeek-specific fields;
+        # standard OpenAI-compatible endpoints reject unknown keys with 400.
+        # Gate on the official DeepSeek endpoint only — the registry's
+        # ``thinking_supported`` flag is model-derived, so it would still
+        # send these fields to third-party hosts serving DeepSeek models.
+        if (
+            request.reasoning_effort is not None
+            and request.reasoning_effort != "off"
+            and "deepseek" in self.base_url.lower()
+        ):
             payload["reasoning_effort"] = request.reasoning_effort
             payload["thinking"] = {"type": "enabled"}
         payload.update(request.extra_body)

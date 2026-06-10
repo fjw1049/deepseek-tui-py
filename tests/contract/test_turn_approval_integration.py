@@ -71,7 +71,7 @@ async def test_monitor_turn_emits_approval_required_sse(
         )
         await handle.emit(TurnCompleteEvent(assistant_message=None))
 
-    await asyncio.gather(pump(), manager._monitor_turn(thread.id, turn_id, handle))
+    await asyncio.gather(pump(), manager._monitor_turn(thread.id, turn_id, handle, "agent"))
 
     approval_events = [
         e for e in manager.events_since(thread.id, 0) if e.event == "approval.required"

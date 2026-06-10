@@ -245,8 +245,11 @@ class McpStdioServer:
             raise ValueError("'uri' is required")
         if uri.startswith("session://"):
             stem = uri[len("session://"):]
-            sessions_dir = user_sessions_dir()
-            path = sessions_dir / f"{stem}.json"
+            sessions_dir = user_sessions_dir().resolve()
+            path = (sessions_dir / f"{stem}.json").resolve()
+            # Reject `../` style stems that would escape the sessions dir.
+            if not path.is_relative_to(sessions_dir):
+                raise ValueError(f"Invalid session id: {stem}")
             if not path.exists():
                 raise ValueError(f"Session not found: {stem}")
             text = path.read_text(encoding="utf-8")
@@ -260,7 +263,12 @@ class McpStdioServer:
                 ]
             }
         if uri.startswith("file://"):
-            file_path = Path(uri[len("file://"):])
+            file_path = Path(uri[len("file://"):]).resolve()
+            # Only expose files inside the served workspace; without this the
+            # MCP server would hand out arbitrary filesystem reads.
+            workspace = self.workspace.resolve()
+            if not file_path.is_relative_to(workspace):
+                raise ValueError(f"File outside workspace: {file_path}")
             if not file_path.exists() or file_path.is_dir():
                 raise ValueError(f"File not readable: {file_path}")
             text = file_path.read_text(encoding="utf-8")

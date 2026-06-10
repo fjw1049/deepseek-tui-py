@@ -48,6 +48,10 @@ async def test_ensure_engine_applies_thread_trust_mode(
         assert state is not None
         assert state.engine.tool_context.trust_mode is True
         state.engine_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
+        # The mocked engine.run() (AsyncMock) may already have completed,
+        # in which case cancel() is a no-op and no CancelledError is raised.
+        import contextlib
+
+        with contextlib.suppress(asyncio.CancelledError):
             await state.engine_task
         mgr._active.pop(thread.id, None)

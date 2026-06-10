@@ -115,15 +115,16 @@ class RuntimeAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path == "/health" or path == "/healthz":
             return await call_next(request)
-        if not path.startswith("/v1/"):
-            return await call_next(request)
+        # Default-deny: every other route (including /legacy/*) requires the
+        # bearer token. A /v1-only allowlist previously left the legacy
+        # prompt/tool routes callable by any local process.
         token = self._extract_token(request)
         if token != self._token:
             return JSONResponse(
                 status_code=401,
                 content={
                     "error": "runtime_auth_required",
-                    "message": "Bearer token required for /v1/* routes.",
+                    "message": "Bearer token required for runtime API routes.",
                 },
             )
         return await call_next(request)

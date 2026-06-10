@@ -14,7 +14,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.engine.context import context_input_budget, estimated_input_tokens
+from deepseek_tui.engine.context import (
+    context_input_budget,
+    estimated_input_tokens,
+    is_context_length_error_message,
+)
 from deepseek_tui.engine.events import (
     EngineEvent,
     ErrorEvent,
@@ -167,6 +171,10 @@ class TurnLoop:
         buffer = AssistantResponseBuffer()
         usage: Usage | None = None
         tool_calls: list[ToolCall] = []
+        # Persist across stream attempts. A reset-per-attempt counter would
+        # never advance the outer retry loop when the provider fails before
+        # any content is received, spinning forever.
+        transparent_retries = 0
         trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
         round_trace = trace.current_round() if trace is not None else None
         if round_trace is not None and round_trace.round_idx != round_idx:
@@ -210,11 +218,33 @@ class TurnLoop:
                     outcome=TurnOutcomeStatus.INTERRUPTED,
                 )
 
+            # Build the active-tool view first so the budget precheck can
+            # account for tool schema overhead.
+            # 重建 stream 请求 — 只发「当前激活」的工具
+            active_tools = None
+            if tool_catalog:
+                active_tools = active_tools_for_step(
+                    tool_catalog,
+                    state.active_tool_names,
+                    force_update_plan_first=False,
+                )
+
             # Check context budget before requesting
             if request.messages:
                 input_budget = context_input_budget(request.model, TURN_MAX_OUTPUT_TOKENS)
                 if input_budget is not None:
+                    # Estimate the full payload, not just messages: the
+                    # system prompt (rules/skills/handoff) and tool schemas
+                    # also consume input tokens.
                     estimated_input = estimated_input_tokens(request.messages)
+                    if request.system_prompt:
+                        estimated_input += len(request.system_prompt) // 4
+                    if active_tools:
+                        import json as _json
+
+                        estimated_input += (
+                            len(_json.dumps(active_tools, ensure_ascii=False)) // 4
+                        )
                     if estimated_input > input_budget:
                         logger.warning(
                             "context_overflow estimated=%d budget=%d attempts=%d",
@@ -244,16 +274,6 @@ class TurnLoop:
                             )
                         continue
 
-            # Build request with active tools
-            # 重建 stream 请求 — 只发「当前激活」的工具
-            active_tools = None
-            if tool_catalog:
-                active_tools = active_tools_for_step(
-                    tool_catalog,
-                    state.active_tool_names,
-                    force_update_plan_first=False,
-                )
-
             stream_request = MessageRequest(
                 model=request.model,
                 messages=request.messages,
@@ -281,7 +301,6 @@ class TurnLoop:
             # Attempt to stream response with timeout guards
             try:
                 any_content_received = False
-                transparent_retries = 0
                 stream_start = time.monotonic()
                 content_bytes = 0
                 fake_filter = FakeWrapperFilter()
@@ -368,6 +387,25 @@ class TurnLoop:
                         )
                         await emit(ToolCallEvent(tool_call=stream_event.tool_call))
                     elif isinstance(stream_event, StreamError):
+                        # Provider context-length errors: compact and retry
+                        # instead of surfacing a raw API error.
+                        if (
+                            not any_content_received
+                            and self._compact_fn is not None
+                            and state.context_recovery_attempts
+                            < MAX_CONTEXT_RECOVERY_ATTEMPTS
+                            and is_context_length_error_message(stream_event.message)
+                        ):
+                            state.context_recovery_attempts += 1
+                            logger.warning(
+                                "context_length_error_recovery attempt=%d/%d",
+                                state.context_recovery_attempts,
+                                MAX_CONTEXT_RECOVERY_ATTEMPTS,
+                            )
+                            request.messages[:] = await self._compact_fn(
+                                request.messages
+                            )
+                            break  # retry with compacted history
                         # Transparent retry: only if no content received yet
                         if _should_transparently_retry(
                             any_content_received, transparent_retries, cancel_event.is_set()
@@ -390,6 +428,18 @@ class TurnLoop:
                                 message=stream_event.message,
                                 retryable=stream_event.retryable,
                             )
+                        )
+                        # Fail the turn now. Continuing to consume would let
+                        # the client-level retry replay the whole stream and
+                        # append duplicate deltas onto the existing buffer,
+                        # then surface the partial turn as SUCCESS.
+                        return TurnResult(
+                            assistant_message=buffer.build_message(),
+                            usage=usage,
+                            tool_calls=tool_calls,
+                            cancelled=False,
+                            outcome=TurnOutcomeStatus.FAILED,
+                            error_message=stream_event.message,
                         )
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage

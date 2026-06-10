@@ -62,7 +62,7 @@ async def test_monitor_turn_user_input_required_event_log(
 
     pump_task = asyncio.create_task(pump())
     try:
-        await manager._monitor_turn(thread.id, turn_id, handle)
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
     finally:
         await pump_task
         engine_task.cancel()

@@ -293,6 +293,11 @@ class Engine:
         self.compaction_config = compaction_config or CompactionConfig()
         self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
+        # Compaction summary carried across turns. Without this the
+        # <archived_context> summary only lived in _run_conversation's
+        # local system_prompt and was lost on the next turn — compaction
+        # silently became "delete history".
+        self._compaction_summary_prompt: str | None = None
         self.turn_loop = TurnLoop(client, compact_fn=self._emergency_compact)
         # Cumulative session cost (USD / CNY), accumulated per turn from
         # the DeepSeek usage payload via the pricing module. Mirrors
@@ -745,14 +750,18 @@ class Engine:
         turn_id: str,
         success: bool,
         tool_rounds: int = 0,
+        final: bool = True,
     ) -> None:
         """Publish turn evidence for post-turn pipelines and optional evolution tools.
 
-        Called twice per turn: once before the tool loop (success=False) and
-        once after (with the real outcome).  On the first call we install a
-        *factory* so that mid-turn tool calls always build evidence from the
-        live ``working_messages`` list.  On the second call we freeze a
-        static ``TURN_EVIDENCE_KEY`` with the final state.
+        Called twice per turn: once before the tool loop (``final=False``)
+        and once after with the real outcome (``final=True``).  On the first
+        call we install a *factory* so that mid-turn tool calls always build
+        evidence from the live ``working_messages`` list.  On the second call
+        we freeze a static ``TURN_EVIDENCE_KEY`` with the final state — even
+        for failed turns with zero tool rounds, which the previous
+        ``success or tool_rounds > 0`` heuristic could not distinguish from
+        the pre-loop call.
         """
         from deepseek_tui.evolution.constants import (
             EVOLUTION_LEDGER_KEY,
@@ -772,7 +781,7 @@ class Engine:
         )
         self._current_turn_evidence = evidence
         if EVOLUTION_LEDGER_KEY in self.tool_context.metadata:
-            if success or tool_rounds > 0:
+            if final:
                 self.tool_context.metadata[TURN_EVIDENCE_KEY] = evidence
                 self.tool_context.metadata.pop(TURN_EVIDENCE_FACTORY_KEY, None)
             else:
@@ -1032,6 +1041,10 @@ class Engine:
                 if turn_task is not None and turn_task.done():
                     try:
                         turn_task.result()
+                    except asyncio.CancelledError:
+                        # Turn-scoped cancellation; TurnCancelledEvent already
+                        # emitted by _handle_send_message. Not an engine error.
+                        logger.info("engine_turn_task_cancelled")
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("engine_turn_task_failed")
                         self.goal_controller.on_turn_failed(f"engine_error: {exc}")
@@ -1056,6 +1069,8 @@ class Engine:
                     if turn_task in done:
                         try:
                             turn_task.result()
+                        except asyncio.CancelledError:
+                            logger.info("engine_turn_task_cancelled")
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("engine_turn_task_failed")
                             self.goal_controller.on_turn_failed(f"engine_error: {exc}")
@@ -1070,7 +1085,12 @@ class Engine:
                             op = op_wait.result()
                         else:
                             op_wait.cancel()
-                            continue
+                            try:
+                                # Await so the task is reaped; it may still
+                                # deliver an op that won the race vs cancel().
+                                op = await op_wait
+                            except asyncio.CancelledError:
+                                continue
                     else:
                         op = op_wait.result()
 
@@ -1128,6 +1148,16 @@ class Engine:
             self.handle._mark_turn_active()
             try:
                 await self._handle_send_message_inner(op, turn_id)
+            except asyncio.CancelledError:
+                # Hard cancellation (turn_task.cancel()) can interrupt the
+                # turn at any await point, racing ahead of the cooperative
+                # cancel_event path and skipping its TurnCancelledEvent.
+                # Emit it here and swallow the error: the cancellation is
+                # scoped to this turn, not to the engine run loop.
+                reason = self.handle.cancel_reason or "user_cancelled"
+                logger.info("turn_hard_cancelled reason=%s", reason)
+                self.goal_controller.on_turn_failed(reason)
+                await self.handle.emit(TurnCancelledEvent(reason=reason))
             finally:
                 self.handle._mark_turn_idle()
 
@@ -1198,6 +1228,7 @@ class Engine:
             user_text=processed.model_text or op.content or "",
             turn_id=turn_id,
             success=False,
+            final=False,
         )
         self.working_set.observe_user_message(processed.display_text or "")
         self.working_set.observe_references(processed.references)
@@ -1274,6 +1305,11 @@ class Engine:
             )
             if mode_hint:
                 sys_prompt += mode_hint
+            if self._compaction_summary_prompt:
+                # Re-inject archived-context summaries from earlier
+                # compactions; build_system_prompt regenerates from scratch
+                # every turn and would otherwise drop them.
+                sys_prompt = f"{sys_prompt}\n\n{self._compaction_summary_prompt}"
             result = await self._run_conversation(
                 messages=working_messages,
                 model=op.model or self.default_model,
@@ -1299,13 +1335,22 @@ class Engine:
                 )
                 return
 
-            if op.hidden:
-                self.session_messages = [
-                    *self.session_messages,
-                    *working_messages[prior_count + 1 :],
-                ]
-            else:
-                self.session_messages = working_messages
+            from deepseek_tui.engine.turn_loop import TurnOutcomeStatus
+
+            turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
+            # Only persist the turn's messages on success. Failed turns
+            # (stream timeout, content overflow, ...) can leave a partial
+            # assistant message in working_messages; persisting it would
+            # corrupt the context for every later turn. Mirrors the
+            # cancelled path above, which also discards working state.
+            if turn_ok:
+                if op.hidden:
+                    self.session_messages = [
+                        *self.session_messages,
+                        *working_messages[prior_count + 1 :],
+                    ]
+                else:
+                    self.session_messages = working_messages
             if not result.cancelled:
                 from deepseek_tui.state.checkpoint import clear_checkpoint
 
@@ -1361,9 +1406,6 @@ class Engine:
                 running_subagents = self.tool_context.subagent_manager.running_count()
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
-            from deepseek_tui.engine.turn_loop import TurnOutcomeStatus
-
-            turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
             if turn_ok:
                 follow_up = self.goal_controller.on_turn_complete(result.usage)
             else:
@@ -1430,7 +1472,11 @@ class Engine:
         try:
             self._subagent_completions.put_nowait(completion)
         except asyncio.QueueFull:
-            pass
+            logger.error(
+                "subagent_completion_dropped agent_id=%s queue_full=64 — "
+                "handoff waiters may stall until timeout",
+                completion.agent_id,
+            )
 
     def _drain_subagent_completions(self) -> list[SubAgentCompletion]:
         out: list[SubAgentCompletion] = []
@@ -1632,6 +1678,9 @@ class Engine:
                 )
                 if compact_result.summary_prompt:
                     system_prompt = f"{system_prompt}\n\n{compact_result.summary_prompt}"
+                    # Also persist for future turns — the local system_prompt
+                    # var above only lives until this turn ends.
+                    self._record_compaction_summary(compact_result.summary_prompt)
 
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
@@ -2288,6 +2337,23 @@ class Engine:
             )
 
         if tool_name == CODE_EXECUTION_TOOL_NAME:
+            # Arbitrary local Python execution must go through the same
+            # approval gate as registry tools with EXECUTES_CODE.
+            from deepseek_tui.tools.approval_gate import (
+                approval_request_for_capabilities,
+            )
+            from deepseek_tui.tools.base import ToolCapability
+
+            approval_request = approval_request_for_capabilities(
+                tool_name,
+                [ToolCapability.EXECUTES_CODE],
+                self.exec_policy.approval_policy,
+                reason="Execute model-provided Python code in a local subprocess",
+            )
+            if approval_request is not None:
+                denied = await self._handle_approval_flow(tool_call, approval_request)
+                if denied:
+                    return None
             return await execute_code_execution_tool(
                 tool_call.arguments, self.tool_context.working_directory
             )
@@ -2707,6 +2773,7 @@ class Engine:
                 "model": self.default_model,
                 "turn_counter": self.turn_counter,
                 "messages": [m.model_dump() for m in self.session_messages],
+                "compaction_summary_prompt": self._compaction_summary_prompt,
                 "metadata": {
                     "id": self._cycle_session_id,
                     "memory_mode": self.memory_mode,
@@ -2719,6 +2786,24 @@ class Engine:
         except Exception:  # noqa: BLE001
             pass
 
+    _COMPACTION_SUMMARY_MAX_CHARS = 20_000
+
+    def _record_compaction_summary(self, summary_prompt: str | None) -> None:
+        """Accumulate a compaction summary so later turns retain it.
+
+        Keeps the tail when the accumulated text exceeds the cap (newer
+        summaries are more relevant than older ones).
+        """
+        if not summary_prompt:
+            return
+        if self._compaction_summary_prompt:
+            combined = f"{self._compaction_summary_prompt}\n\n{summary_prompt}"
+        else:
+            combined = summary_prompt
+        if len(combined) > self._COMPACTION_SUMMARY_MAX_CHARS:
+            combined = combined[-self._COMPACTION_SUMMARY_MAX_CHARS :]
+        self._compaction_summary_prompt = combined
+
     async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
         """Emergency compaction callback for TurnLoop context overflow recovery."""
         result = await compact_messages_safe(
@@ -2728,6 +2813,9 @@ class Engine:
             workspace=self.tool_context.working_directory,
             model_override=self.default_model,
         )
+        # Persist the summary — previously discarded, so emergency/manual
+        # compaction lost the archived history entirely.
+        self._record_compaction_summary(result.summary_prompt)
         return result.messages
 
     async def _maybe_advance_cycle(
@@ -2795,6 +2883,11 @@ class Engine:
         Recursive self-calls are rejected (tool_execution.rs:63).
         """
         calls = parse_parallel_tool_calls(input_data)
+        if not calls:
+            raise ToolError(
+                "multi_tool_use.parallel: no valid tool_uses entries — each "
+                "entry must be an object with recipient_name and parameters"
+            )
 
         async def _run_one(name: str, params: dict[str, Any]) -> dict[str, str]:
             if name == MULTI_TOOL_PARALLEL_NAME:
@@ -2827,7 +2920,11 @@ class Engine:
         import json as _json
 
         results = await asyncio.gather(*[_run_one(n, p) for n, p in calls])
-        return ToolResult(content=_json.dumps(results, ensure_ascii=False), success=True)
+        all_failed = all(r.get("success") == "false" for r in results)
+        return ToolResult(
+            content=_json.dumps(results, ensure_ascii=False),
+            success=not all_failed,
+        )
 
     async def _await_user_input(
         self, tool_call_id: str, input_data: dict[str, Any]
@@ -2860,9 +2957,23 @@ class Engine:
             )
         )
 
+        cancel_wait = asyncio.create_task(
+            self.handle.cancel_event.wait(), name="user-input-cancel-wait"
+        )
         try:
-            response = await future
+            done, _ = await asyncio.wait(
+                {future, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if future not in done:
+                # Turn was cancelled while waiting for user input.
+                future.cancel()
+                return ToolResult(
+                    content="User input request cancelled (turn cancelled)",
+                    success=False,
+                )
+            response = future.result()
         finally:
+            cancel_wait.cancel()
             self.handle.pending_user_inputs.pop(tool_call_id, None)
 
         import json as _json

@@ -273,7 +273,11 @@ class EngineHandle:
         await self.send_op(CancelRequestOp(reason=reason))
 
     def reset_cancel(self) -> None:
-        self.cancel_event = asyncio.Event()
+        # Clear in place instead of replacing the Event object: subagents and
+        # other long-lived tasks snapshot a reference to this Event at spawn
+        # time. Replacing it would leave them listening on a discarded Event,
+        # making them un-cancellable from later turns.
+        self.cancel_event.clear()
         self._cancel_reason = None
 
     @property

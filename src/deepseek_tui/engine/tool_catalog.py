@@ -171,8 +171,9 @@ def ensure_advanced_tooling(
                 "function": {
                     "name": CODE_EXECUTION_TOOL_NAME,
                     "description": (
-                        "Execute Python code in a local sandboxed runtime "
-                        "and return stdout/stderr/return_code as JSON."
+                        "Execute Python code in a local subprocess (workspace "
+                        "cwd, no sandbox) and return stdout/stderr/return_code "
+                        "as JSON. Requires user approval."
                     ),
                     "parameters": {
                         "type": "object",
@@ -488,6 +489,7 @@ async def execute_code_execution_tool(
     if not isinstance(code, str) or not code.strip():
         raise ToolError("Missing required field 'code'")
 
+    proc = None
     try:
         proc = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
@@ -504,6 +506,17 @@ async def execute_code_execution_tool(
             proc.communicate(), timeout=120
         )
     except asyncio.TimeoutError as exc:
+        # Reap the subprocess on timeout; otherwise it keeps running and
+        # accumulates as an orphan across repeated timeouts.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
         raise ToolError("code_execution timed out after 120s") from exc
 
     stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""

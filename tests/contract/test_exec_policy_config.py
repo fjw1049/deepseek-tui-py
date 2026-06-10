@@ -66,6 +66,10 @@ async def test_runtime_engine_uses_config_approval_policy(
         state = mgr._active.get(thread.id)
         assert state is not None
         state.engine_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
+        # The mocked engine.run() (AsyncMock) may already have completed,
+        # in which case cancel() is a no-op and no CancelledError is raised.
+        import contextlib
+
+        with contextlib.suppress(asyncio.CancelledError):
             await state.engine_task
         mgr._active.pop(thread.id, None)

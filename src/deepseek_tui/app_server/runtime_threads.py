@@ -12,6 +12,7 @@ Split into two layers:
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from deepseek_tui.utils import write_json_atomic
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CURRENT_RUNTIME_SCHEMA_VERSION",
@@ -292,6 +295,9 @@ class RuntimeThreadStore:
         import asyncio
 
         self._seq_lock = asyncio.Lock()
+        # Per-thread locks so seq allocation + JSONL append happen atomically
+        # for a given events file (concurrent writers would interleave lines).
+        self._event_write_locks: dict[str, asyncio.Lock] = {}
         self._events_since_checkpoint = 0
         self._last_checkpoint_at = time.monotonic()
 
@@ -446,38 +452,44 @@ class RuntimeThreadStore:
         *,
         force_checkpoint: bool = False,
     ) -> RuntimeEventRecord:
-        async with self._seq_lock:
-            seq = self._state.next_seq
-            self._state.next_seq += 1
-            self._events_since_checkpoint += 1
-            now = time.monotonic()
-            checkpoint_due = force_checkpoint or (
-                self._events_since_checkpoint >= self.CHECKPOINT_EVENT_INTERVAL
-                or (now - self._last_checkpoint_at) >= self.CHECKPOINT_MAX_INTERVAL_S
+        import asyncio
+
+        write_lock = self._event_write_locks.setdefault(thread_id, asyncio.Lock())
+        # Hold the per-thread lock across seq allocation AND the JSONL append
+        # so concurrent writers cannot interleave lines in the events file.
+        async with write_lock:
+            async with self._seq_lock:
+                seq = self._state.next_seq
+                self._state.next_seq += 1
+                self._events_since_checkpoint += 1
+                now = time.monotonic()
+                checkpoint_due = force_checkpoint or (
+                    self._events_since_checkpoint >= self.CHECKPOINT_EVENT_INTERVAL
+                    or (now - self._last_checkpoint_at) >= self.CHECKPOINT_MAX_INTERVAL_S
+                )
+                if checkpoint_due:
+                    write_json_atomic(self._state_path, self._state.model_dump())
+                    self._events_since_checkpoint = 0
+                    self._last_checkpoint_at = now
+
+            record = RuntimeEventRecord(
+                schema_version=CURRENT_RUNTIME_SCHEMA_VERSION,
+                seq=seq,
+                timestamp=datetime.now(timezone.utc),
+                thread_id=thread_id,
+                turn_id=turn_id,
+                item_id=item_id,
+                event=event,
+                payload=payload,
             )
-            if checkpoint_due:
-                write_json_atomic(self._state_path, self._state.model_dump())
-                self._events_since_checkpoint = 0
-                self._last_checkpoint_at = now
 
-        record = RuntimeEventRecord(
-            schema_version=CURRENT_RUNTIME_SCHEMA_VERSION,
-            seq=seq,
-            timestamp=datetime.now(timezone.utc),
-            thread_id=thread_id,
-            turn_id=turn_id,
-            item_id=item_id,
-            event=event,
-            payload=payload,
-        )
-
-        path = self._events_path(thread_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = record.model_dump_json()
-        with path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-            if checkpoint_due:
-                f.flush()
+            path = self._events_path(thread_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            line = record.model_dump_json()
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+                if checkpoint_due:
+                    f.flush()
 
         return record
 
@@ -500,7 +512,15 @@ class RuntimeThreadStore:
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            record = RuntimeEventRecord.model_validate_json(line)
+            try:
+                record = RuntimeEventRecord.model_validate_json(line)
+            except Exception:  # noqa: BLE001 — skip corrupt lines, keep the rest
+                logger.warning(
+                    "events_since_skip_corrupt_line thread_id=%s line=%.120s",
+                    thread_id,
+                    line,
+                )
+                continue
             if since_seq is not None and record.seq <= since_seq:
                 continue
             out.append(record)

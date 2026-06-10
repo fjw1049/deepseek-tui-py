@@ -189,7 +189,9 @@ class WebSearchTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         query = _require_string(input_data, "query")
         max_results = _optional_int(input_data, "max_results") or 8
-        timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else 30.0
+        # getattr: tests (and embedders) may pass duck-typed contexts.
+        timeout_ms = getattr(context, "timeout_ms", None)
+        timeout = timeout_ms / 1000 if timeout_ms is not None else 30.0
 
         _check_network_policy("https://api.anysearch.com", "web_search", context)
         use_tavily = bool(self._tavily_api_key)
@@ -397,11 +399,13 @@ def _merge_hits(hits: list[_SearchHit], max_results: int) -> list[_SearchHit]:
 
 def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> None:
     """Enforce network policy if configured. Raises ToolError on DENY."""
-    if context.network_policy is None:
+    # getattr: tests (and embedders) may pass duck-typed contexts.
+    policy = getattr(context, "network_policy", None)
+    if policy is None:
         return
     from deepseek_tui.network.policy import Decision
 
-    decision = context.network_policy.evaluate(url, tool_name)
+    decision = policy.evaluate(url, tool_name)
     if decision == Decision.DENY:
         raise ToolError(
             f"Network access denied for {url} by policy. "

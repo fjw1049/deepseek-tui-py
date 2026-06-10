@@ -414,7 +414,10 @@ def _pop_process(context: ToolContext, process_id: str) -> Process:
 
 
 def _decode_stream(stream: bytes | None) -> str:
-    return stream.decode("utf-8") if stream else ""
+    # errors="replace": binary output (e.g. `cat image.png`) must surface as
+    # a tool result, not an engine-level UnicodeDecodeError. Matches the PTY
+    # path, which already decodes with replacement.
+    return stream.decode("utf-8", errors="replace") if stream else ""
 
 
 def _decode_output(stdout: bytes | None, stderr: bytes | None) -> str:
@@ -651,8 +654,37 @@ async def _run_pty(
             },
         )
 
-    await proc.wait()
+    # Foreground PTY commands get the same timeout as the non-PTY path;
+    # an `await proc.wait()` with no bound could hang the tool round forever.
+    timed_out = False
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=timeout_ms / 1000)
+    except asyncio.TimeoutError:
+        timed_out = True
+        proc.kill()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            try:
+                os.kill(proc.pid, 9)
+            except ProcessLookupError:
+                pass
     text = proc.output.decode("utf-8", errors="replace")
+    if timed_out:
+        return ToolResult(
+            success=False,
+            content=(
+                f"Command timed out after {timeout_ms}ms (pty)."
+                + (f"\nPartial output:\n{text.strip()}" if text.strip() else "")
+            ),
+            metadata={
+                "returncode": proc.exit_code,
+                "stdout": text,
+                "stderr": "",
+                "status": "timeout",
+                "pty": True,
+            },
+        )
     metadata: dict[str, Any] = {
         "returncode": proc.exit_code,
         "stdout": text,

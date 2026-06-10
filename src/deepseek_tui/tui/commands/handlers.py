@@ -67,6 +67,22 @@ def cmd_exit(args: str, app: DeepSeekTUI) -> CommandResult:
 
 # ── /model ───────────────────────────────────────────────────────────────
 
+def _apply_model_to_app(app: DeepSeekTUI, model: str) -> None:
+    """Mirror the ModelPicker callback: config + engine + bottom chrome."""
+    cfg = getattr(app, "config", None)
+    if cfg is not None:
+        cfg.model = model
+    if app._engine is not None:
+        app._engine.default_model = model
+    try:
+        from deepseek_tui.tui.widgets.composer import ComposerHint
+
+        app.query_one(StatusBar).set_model(model)
+        app.query_one(ComposerHint).set_model(model)
+    except Exception:  # noqa: BLE001 — best-effort UI refresh
+        pass
+
+
 @_register("/model")
 def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
@@ -78,6 +94,7 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output="Current model: (unknown — config not attached)")
 
     requested = args.strip()
+    _apply_model_to_app(app, requested)
     for prov_name, defaults in PROVIDER_DEFAULTS.items():
         known = {defaults.model}
         if defaults.flash_model:
@@ -150,10 +167,69 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"Current provider: {current}")
 
     requested = args.strip().lower()
-    if requested in PROVIDER_DEFAULTS:
-        return CommandResult(output=f"Provider switched to: {requested}")
-    available = ", ".join(PROVIDER_DEFAULTS.keys())
-    return CommandResult(error=f"Unknown provider: {requested}. Available: {available}")
+    if requested not in PROVIDER_DEFAULTS:
+        available = ", ".join(PROVIDER_DEFAULTS.keys())
+        return CommandResult(error=f"Unknown provider: {requested}. Available: {available}")
+
+    cfg = getattr(app, "config", None)
+    if cfg is None:
+        return CommandResult(error="config not attached — cannot switch provider")
+
+    previous_provider = cfg.provider
+    previous_model = cfg.model
+    cfg.provider = requested
+    # Pick the provider-appropriate model: explicit [providers.X] model
+    # first, then the registry default — keeping the old provider's model
+    # would send e.g. ``deepseek-v4-pro`` to OpenAI.
+    provider_cfg = cfg.providers.get(requested)
+    new_model = (
+        provider_cfg.model
+        if provider_cfg is not None and provider_cfg.model
+        else PROVIDER_DEFAULTS[requested].model
+    )
+
+    if app._engine is None:
+        cfg.model = new_model
+        return CommandResult(
+            output=(
+                f"Provider set to: {requested} (model: {new_model}). "
+                "Engine not started yet — it will be used at startup."
+            )
+        )
+
+    new_client = app._build_client()
+    if new_client is None:
+        # No API key resolvable for the new provider — roll back so the
+        # session keeps a working client.
+        cfg.provider = previous_provider
+        cfg.model = previous_model
+        return CommandResult(
+            error=(
+                f"No API key found for {requested} — run `deepseek-tui login`, "
+                f"set the provider env var, or add [providers.{requested}] "
+                "api_key to config.toml, then retry."
+            )
+        )
+
+    old_client = app._engine.client
+    app._engine.client = new_client
+    app._engine.turn_loop.client = new_client
+    _apply_model_to_app(app, new_model)
+    close = getattr(old_client, "close", None)
+    if close is not None:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+            asyncio.ensure_future(close())
+        except RuntimeError:
+            pass
+    return CommandResult(
+        output=(
+            f"Provider switched to: {requested} (model: {new_model}). "
+            "Note: running subagents keep the previous client until restart."
+        )
+    )
 
 
 # ── /save ────────────────────────────────────────────────────────────────

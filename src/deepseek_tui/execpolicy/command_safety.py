@@ -6,8 +6,14 @@ Detects potentially dangerous shell command patterns and assigns safety levels.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
+
+# Matches output redirection (``>`` / ``>>``), optionally with a leading fd
+# digit, capturing the redirect target. ``2>&1`` style fd-duplication and
+# redirects to ``/dev/null`` are filtered out in :func:`_has_file_redirection`.
+_REDIRECT_RE = re.compile(r"[0-9]*>>?\s*(&?[^\s|;&]+)")
 
 
 class SafetyLevel(Enum):
@@ -277,19 +283,28 @@ COMMAND_ARITY: dict[str, int] = {
     "npx": 2,
 }
 
-# Known safe commands that only read data
+# Known safe commands that only read data.
+#
+# Interpreters / code runners (python, node, perl, ruby, sed, awk, ...) and
+# command wrappers (env) are intentionally EXCLUDED: they can execute
+# arbitrary code (e.g. ``python -c "import os; os.system('rm -rf ~')"``) and
+# must not be auto-allowed. System-state controls (mount, systemctl, service)
+# are excluded too — they are not read-only.
 SAFE_COMMANDS = {
     "ls", "dir", "pwd", "cat", "head", "tail", "less", "more", "grep", "rg", "ag",
     "find", "fd", "which", "whereis", "type", "echo", "printf", "date", "cal",
-    "uptime", "whoami", "id", "hostname", "uname", "env", "printenv", "set", "ps",
+    "uptime", "whoami", "id", "hostname", "uname", "printenv", "set", "ps",
     "top", "htop", "df", "du", "free", "vmstat", "wc", "sort", "uniq", "cut", "tr",
-    "sed", "awk", "gawk", "perl", "ruby", "python", "python3", "node", "deno",
-    "stat", "file", "tree", "lsof", "lsblk", "blkid", "mount", "systemctl", "service",
+    "stat", "file", "tree", "lsof", "lsblk", "blkid",
 }
 
-# Commands that are safe within the workspace but may modify files
+# Commands that are safe within the workspace but may modify files.
+#
+# Interpreters (python, node, ruby) are EXCLUDED here as well — running a
+# script executes arbitrary code and must go through approval rather than
+# being treated as a benign workspace file modification.
 WORKSPACE_SAFE_COMMANDS = {
-    "cargo", "npm", "python", "python3", "node", "ruby", "go", "rustc", "javac",
+    "cargo", "npm", "go", "rustc", "javac",
     "make", "cmake", "ninja", "gcc", "clang", "cc", "chmod", "chown", "mkdir",
     "touch", "rm", "cp", "mv", "ln", "tar", "zip", "unzip", "gzip", "bzip2",
 }
@@ -356,6 +371,14 @@ def analyze_command(command: str) -> SafetyAnalysis:
         return SafetyAnalysis.requires_approval(
             command,
             ["Command substitution detected"],
+        )
+
+    # Check for output redirection to a file — even an otherwise read-only
+    # command (``echo evil > ~/.zshrc``) writes when it redirects.
+    if _has_file_redirection(command):
+        return SafetyAnalysis.requires_approval(
+            command,
+            ["Command redirects output to a file"],
         )
 
     # Check for privileged commands
@@ -436,6 +459,21 @@ def _is_safe_command(command: str) -> bool:
         if prefix in read_only_prefixes:
             return True
 
+    return False
+
+
+def _has_file_redirection(command: str) -> bool:
+    """True when the command redirects output to a file.
+
+    Ignores fd-duplication (``2>&1``) and redirects to ``/dev/null`` since
+    neither writes a real file. Conservative by design: a quoted ``>`` may
+    trigger a false positive, which only costs one extra approval prompt.
+    """
+    for match in _REDIRECT_RE.finditer(command):
+        target = match.group(1)
+        if target.startswith("&") or target == "/dev/null":
+            continue
+        return True
     return False
 
 

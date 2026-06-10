@@ -242,8 +242,15 @@ def compact_tool_result_for_context(
 
 
 def extract_compaction_summary_prompt(prompt: str | None) -> str | None:
-    """Extract compaction summary block from a system prompt string."""
-    if not prompt or COMPACTION_SUMMARY_MARKER not in prompt:
+    """Extract compaction summary block from a system prompt string.
+
+    Recognizes both the legacy marker and the ``<archived_context>`` tag
+    actually emitted by ``compaction._build_summary_system_prompt`` — the
+    two had drifted apart, making this function never match real output.
+    """
+    if not prompt:
+        return None
+    if COMPACTION_SUMMARY_MARKER not in prompt and "<archived_context>" not in prompt:
         return None
     return prompt
 
@@ -308,10 +315,15 @@ def estimate_input_tokens_conservative(
 def context_input_budget(model: str, requested_output_tokens: int) -> int | None:
     """Calculate usable input token budget after reserving output + headroom.
 
-    Mirrors Rust ``context_input_budget`` (context.rs:368-374).
+    Mirrors Rust ``context_input_budget`` (context.rs:368-374), with one
+    fix: the output reservation is clamped to a quarter of the window.
+    Without the clamp, models whose window is smaller than the requested
+    output reservation (e.g. 128K window vs 262K reservation) computed a
+    negative budget and silently skipped overflow prechecks entirely.
     """
     window = context_window_for_model(model)
-    budget = window - requested_output_tokens - CONTEXT_HEADROOM_TOKENS
+    reserve = min(requested_output_tokens, window // 4)
+    budget = window - reserve - CONTEXT_HEADROOM_TOKENS
     return budget if budget > 0 else None
 
 

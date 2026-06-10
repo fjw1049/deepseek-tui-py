@@ -30,3 +30,26 @@ async def test_v1_requires_token_when_configured(
         # are accepted.
         query_only = await client.get(f"/v1/threads?token={token}")
         assert query_only.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_legacy_routes_require_token_when_configured(
+    authed_runtime_app: tuple[object, str],
+) -> None:
+    """Auth is default-deny: /legacy/* must be guarded, not just /v1/*."""
+    app, token = authed_runtime_app
+    from httpx import ASGITransport
+
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        denied_get = await client.get("/legacy/jobs")
+        assert denied_get.status_code == 401
+
+        denied_post = await client.post("/legacy/prompt", json={"prompt": "hi"})
+        assert denied_post.status_code == 401
+
+        allowed = await client.get(
+            "/legacy/jobs",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert allowed.status_code == 200

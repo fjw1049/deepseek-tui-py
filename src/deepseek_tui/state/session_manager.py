@@ -180,13 +180,17 @@ class SessionIndex:
         for line in self._path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            data = json.loads(line)
-            latest[data["thread_id"]] = SessionIndexEntry(
-                thread_id=data["thread_id"],
-                thread_name=data.get("thread_name"),
-                updated_at=data.get("updated_at", 0),
-                rollout_path=data.get("rollout_path"),
-            )
+            # A single corrupt line must not take down the whole index.
+            try:
+                data = json.loads(line)
+                latest[data["thread_id"]] = SessionIndexEntry(
+                    thread_id=data["thread_id"],
+                    thread_name=data.get("thread_name"),
+                    updated_at=data.get("updated_at", 0),
+                    rollout_path=data.get("rollout_path"),
+                )
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
         return latest
 
     def find_name(self, thread_id: str) -> str | None:
@@ -322,11 +326,11 @@ class SessionManager:
         await conn.commit()
 
     async def unarchive(self, thread_id: str) -> None:
-        """Unarchive a session."""
+        """Unarchive a session — restore status (archive() set it to 'archived')."""
         conn = await self._db.connect()
         await conn.execute(
-            "UPDATE threads SET archived = 0, archived_at = NULL WHERE id = ?",
-            (thread_id,),
+            "UPDATE threads SET archived = 0, archived_at = NULL, status = ? WHERE id = ?",
+            (ThreadStatus.IDLE.value, thread_id),
         )
         await conn.commit()
 

@@ -58,6 +58,9 @@ async def test_schedule_preload_runs_discover(monkeypatch: pytest.MonkeyPatch) -
         return mgr._discovered_tools_cache
 
     monkeypatch.setattr(mgr, "discover_tools", fake_discover)
+    # The fake discover never starts real clients, so pretend the one
+    # enabled server connected — otherwise the phase is "partial".
+    monkeypatch.setattr(mgr, "_connected_server_count", lambda: 1)
     mgr.schedule_startup_preload(timeout_s=5.0)
     await asyncio.wait_for(called.wait(), timeout=2.0)
     await asyncio.sleep(0.05)

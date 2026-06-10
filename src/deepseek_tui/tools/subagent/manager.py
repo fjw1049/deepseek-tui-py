@@ -865,7 +865,10 @@ class SubAgentRuntime:
     config: Config
     workspace: Path
     allow_shell: bool = True
-    auto_approve: bool = True
+    # Secure default: children do NOT auto-approve unless the parent session
+    # explicitly opts in (mirrors the task system's GHSA default). The engine
+    # always passes the resolved value from ``approval_handler``.
+    auto_approve: bool = False
     task_manager: Any = None
     cancel_token: asyncio.Event = field(default_factory=asyncio.Event)
     mailbox: Mailbox | None = None

@@ -108,7 +108,7 @@ class DeepSeekTUI(App[None]):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+c", "interrupt_or_quit", "Quit"),
         Binding("ctrl+n", "new_session", "New Session"),
         Binding("ctrl+k", "command_palette", "Command Palette"),
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
@@ -854,6 +854,20 @@ class DeepSeekTUI(App[None]):
                     self._engine._evolution_pipeline.curated_stable_block()
                 )
 
+    def _cancel_active_turn(self) -> bool:
+        """Request cancellation of the in-flight turn. Returns True if one was active."""
+        if not self.handle.is_turn_active():
+            return False
+        self.run_worker(self.handle.cancel(), name="turn-cancel")
+        self.query_one(StatusBar).set_status("cancelling turn...")
+        return True
+
+    async def action_interrupt_or_quit(self) -> None:
+        """Ctrl+C: cancel the running turn first; quit when idle."""
+        if self._cancel_active_turn():
+            return
+        await self.action_quit()
+
     async def action_quit(self) -> None:
         logger.info("tui_quit")
         if self._engine is not None:
@@ -1025,7 +1039,11 @@ class DeepSeekTUI(App[None]):
         as a status-bar toast rather than a full overlay (which is logged
         as a known simplification in HANDOVER) — keeps the transcript
         clean of chord priming hints.
+
+        While a turn is in flight, Esc cancels it instead of backtracking.
         """
+        if self._cancel_active_turn():
+            return
         engine = self._engine
         total = (
             len([m for m in engine.session_messages if getattr(m, "role", None) == "user"])

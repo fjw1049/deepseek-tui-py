@@ -531,6 +531,8 @@ class Config(BaseModel):
         return self.memory.smart.enabled
 
     def effective_provider_config(self) -> ProviderConfig:
+        from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
+
         configured = self.providers.get(self.provider, ProviderConfig())
         overrides: dict[str, Any] = {}
         if self.api_key is not None and self.provider == "deepseek":
@@ -540,7 +542,19 @@ class Config(BaseModel):
         model = self.model or self.default_text_model
         if model is not None:
             overrides["model"] = model
-        return ProviderConfig.model_validate(_deep_merge(configured.model_dump(), overrides))
+        merged = ProviderConfig.model_validate(
+            _deep_merge(configured.model_dump(), overrides)
+        )
+        # Fill gaps from the provider registry so switching provider without
+        # a ``[providers.X]`` table doesn't silently fall back to the
+        # DeepSeek endpoint.
+        defaults = PROVIDER_DEFAULTS.get(self.provider)
+        if defaults is not None:
+            if merged.base_url is None:
+                merged.base_url = defaults.base_url
+            if merged.model is None:
+                merged.model = defaults.model
+        return merged
 
     @classmethod
     def merge_dict(cls, base: Config, override: dict[str, Any]) -> Config:

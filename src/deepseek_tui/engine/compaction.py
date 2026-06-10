@@ -215,8 +215,17 @@ def plan_compaction(
     plan = CompactionPlan()
     pinned_indices = pinned_indices or set()
 
-    # Always pin last KEEP_RECENT_MESSAGES messages
-    for i in range(max(0, len(messages) - KEEP_RECENT_MESSAGES), len(messages)):
+    # Always pin last KEEP_RECENT_MESSAGES messages. Extend the window
+    # backwards while it would start on a tool-result message: the API
+    # requires every tool message to directly follow the assistant message
+    # carrying the matching tool_calls, so summarizing that parent away
+    # would produce an illegal (orphaned) sequence.
+    start = max(0, len(messages) - KEEP_RECENT_MESSAGES)
+    from deepseek_tui.protocol.messages import Role
+
+    while start > 0 and messages[start].role == Role.TOOL:
+        start -= 1
+    for i in range(start, len(messages)):
         plan.pinned_indices.add(i)
 
     # Always pin explicitly pinned indices
@@ -343,6 +352,11 @@ async def compact_messages_safe(
     for attempt in range(max_retries):
         try:
             summary = await _create_summary(client, messages_to_summarize, effective_model)
+            if not summary:
+                # Replacing history with an empty summary would silently
+                # delete it. Treat as a failed attempt (retried, then the
+                # original messages are returned unchanged).
+                raise ValueError("compaction summary came back empty")
 
             # Build result with pinned + summary
             pinned_messages = [
