@@ -323,7 +323,6 @@ class Engine:
         # Stage 3.next.1 approval cache — fingerprints repeat tool calls
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
-        self._tool_write_lock = asyncio.Lock()
         # Skills integration — renders available skills into system prompt
         self.skill_registry = skill_registry
         # Per-tool snapshots for /undo (mirrors Rust pre_tool_snapshot, #384).

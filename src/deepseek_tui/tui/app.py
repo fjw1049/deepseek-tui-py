@@ -42,7 +42,7 @@ from deepseek_tui.tools.subagent.mailbox import MailboxMessageKind
 from deepseek_tui.tui.backtrack import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
 from deepseek_tui.tui.widgets.command_palette import CommandPalette
-from deepseek_tui.tui.widgets.composer import Composer, ComposerHint
+from deepseek_tui.tui.widgets.composer import Composer, ComposerHint, PASTE_ENTER_SUPPRESS_WINDOW_SECS
 from deepseek_tui.tui.widgets.file_mention import FileMention
 from deepseek_tui.tui.widgets.help_panel import HelpPanel
 from deepseek_tui.tui.widgets.info_sidebar import (
@@ -59,6 +59,7 @@ from deepseek_tui.tui.session_restore import (
     parse_session_messages,
     session_metadata,
     session_started_at_iso,
+    try_restore_crash_checkpoint,
 )
 from deepseek_tui.tui.widgets.sidebar import Sidebar, SidebarEntry
 from deepseek_tui.tui.widgets.slash_menu import SlashMenu
@@ -286,6 +287,8 @@ class DeepSeekTUI(App[None]):
             # are non-fatal: status bar surfaces them and the user can keep
             # going with an empty session.
             applied = self._apply_resume_or_fork()
+            if applied is None and not session_tid:
+                applied = self._apply_crash_checkpoint()
             if applied is None:
                 status.set_status("ready")
             else:
@@ -409,6 +412,21 @@ class DeepSeekTUI(App[None]):
             self._session_started_at_iso = started
         session_id = str(metadata.get("id", path.stem))[:8]
         return f"loaded session {session_id} ({len(restored)} messages)"
+
+    def _apply_crash_checkpoint(self) -> str | None:
+        """Restore from ``~/.deepseek/checkpoints/latest.json`` after a crash."""
+        if self._engine is None:
+            return None
+        restored = try_restore_crash_checkpoint(self._engine)
+        if restored is None:
+            return None
+        messages, metadata = restored
+        self.query_one(Transcript).hydrate_from_messages(messages)
+        started = session_started_at_iso(metadata)
+        if started:
+            self._session_started_at_iso = started
+        session_id = str(metadata.get("id", "checkpoint"))[:8]
+        return f"recovered crash checkpoint {session_id} ({len(messages)} messages)"
 
     def _refresh_sidebar_sessions(self) -> None:
         """Populate the left sidebar from ``~/.deepseek/sessions/*.json``."""
@@ -602,6 +620,15 @@ class DeepSeekTUI(App[None]):
         else:
             slash_menu.hide()
             file_mention.hide()
+
+    def on_composer_paste_enter_suppressed(
+        self, event: Composer.PasteEnterSuppressed
+    ) -> None:
+        """Brief status hint while Enter is treated as newline after paste."""
+        ms = int(PASTE_ENTER_SUPPRESS_WINDOW_SECS * 1000)
+        self.query_one(StatusBar).set_status(
+            f"Paste active — Enter inserts newline for {ms}ms"
+        )
 
     def on_slash_menu_selected(self, event: SlashMenu.Selected) -> None:
         """Fill composer with selected slash command."""
@@ -878,6 +905,10 @@ class DeepSeekTUI(App[None]):
             await self._engine.shutdown()
         if self._engine_task is not None:
             self._engine_task.cancel()
+            try:
+                await self._engine_task
+            except asyncio.CancelledError:
+                pass
         self.exit()
 
     def action_toggle_sidebar(self) -> None:

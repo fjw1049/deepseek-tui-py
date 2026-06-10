@@ -26,6 +26,27 @@ from deepseek_tui.tools.patch_engine import (
 
 logger = logging.getLogger(__name__)
 
+_FileBackup = tuple[Path, bytes | None]
+
+
+def _backup_file(path: Path) -> _FileBackup:
+    if path.exists():
+        return (path, path.read_bytes())
+    return (path, None)
+
+
+def _restore_file_backups(backups: list[_FileBackup]) -> None:
+    for path, content in reversed(backups):
+        try:
+            if content is None:
+                if path.exists():
+                    path.unlink()
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        except OSError:
+            logger.warning("apply_patch rollback failed path=%s", path, exc_info=True)
+
 
 class ApplyPatchTool(ToolSpec):
     def name(self) -> str:
@@ -137,31 +158,37 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
 
     touched: list[str] = []
     summaries: list[FileSummary] = []
-    for idx, change in enumerate(raw):
-        if not isinstance(change, dict):
-            raise ToolError(f"changes[{idx}] must be an object")
-        path = change.get("path")
-        content = change.get("content")
-        if not isinstance(path, str) or not path.strip():
-            raise ToolError(f"changes[{idx}].path must be a non-empty string")
-        if not isinstance(content, str):
-            raise ToolError(f"changes[{idx}].content must be a string")
-        target = context.resolve_path(path)
-        created = not target.exists()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        touched.append(path)
-        summaries.append(
-            FileSummary(
-                path=path,
-                hunks=0,
-                hunks_applied=0,
-                fuzz_used=0,
-                hunks_with_fuzz=0,
-                created=created,
-                deleted=False,
+    backups: list[_FileBackup] = []
+    try:
+        for idx, change in enumerate(raw):
+            if not isinstance(change, dict):
+                raise ToolError(f"changes[{idx}] must be an object")
+            path = change.get("path")
+            content = change.get("content")
+            if not isinstance(path, str) or not path.strip():
+                raise ToolError(f"changes[{idx}].path must be a non-empty string")
+            if not isinstance(content, str):
+                raise ToolError(f"changes[{idx}].content must be a string")
+            target = context.resolve_path(path)
+            created = not target.exists()
+            backups.append(_backup_file(target))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            touched.append(path)
+            summaries.append(
+                FileSummary(
+                    path=path,
+                    hunks=0,
+                    hunks_applied=0,
+                    fuzz_used=0,
+                    hunks_with_fuzz=0,
+                    created=created,
+                    deleted=False,
+                )
             )
-        )
+    except Exception:
+        _restore_file_backups(backups)
+        raise
 
     return _build_result(
         files_applied=len(touched),
@@ -179,69 +206,79 @@ def _apply_file_patches(
     touched: list[str] = []
     summaries: list[FileSummary] = []
     files_applied = 0
+    backups: list[_FileBackup] = []
 
-    for patch in file_patches:
-        target = context.resolve_path(patch.path)
-        file_stats = HunkApplyStats()
+    try:
+        for patch in file_patches:
+            target = context.resolve_path(patch.path)
+            file_stats = HunkApplyStats()
 
-        if patch.delete_after:
-            if target.exists():
-                target.unlink()
-                summaries.append(
-                    FileSummary(
-                        path=patch.path,
-                        hunks=len(patch.hunks),
-                        hunks_applied=0,
-                        fuzz_used=0,
-                        hunks_with_fuzz=0,
-                        created=False,
-                        deleted=True,
+            if patch.delete_after:
+                if target.exists():
+                    backups.append(_backup_file(target))
+                    target.unlink()
+                    summaries.append(
+                        FileSummary(
+                            path=patch.path,
+                            hunks=len(patch.hunks),
+                            hunks_applied=0,
+                            fuzz_used=0,
+                            hunks_with_fuzz=0,
+                            created=False,
+                            deleted=True,
+                        )
                     )
+                    files_applied += 1
+                    touched.append(patch.path)
+                continue
+
+            created = False
+            if not target.exists():
+                if not patch.create_if_missing:
+                    raise ToolError(
+                        f"File not found: {patch.path}. Set create_if_missing=true"
+                        " to create new files."
+                    )
+                created = True
+                backups.append(_backup_file(target))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("", encoding="utf-8")
+
+            if not created:
+                backups.append(_backup_file(target))
+
+            original = target.read_text(encoding="utf-8")
+            trailing_newline = original.endswith("\n")
+            lines = original.splitlines()
+            try:
+                file_stats = apply_hunks_to_lines(lines, patch.hunks, fuzz=fuzz)
+            except ApplyPatchError as exc:
+                raise ToolError(f"{patch.path}: {exc}") from exc
+
+            out = "\n".join(lines)
+            if trailing_newline or (out and not out.endswith("\n")):
+                out += "\n"
+            target.write_text(out, encoding="utf-8")
+
+            agg.hunks_applied += file_stats.hunks_applied
+            agg.fuzz_used += file_stats.fuzz_used
+            agg.hunks_with_fuzz += file_stats.hunks_with_fuzz
+            summaries.append(
+                FileSummary(
+                    path=patch.path,
+                    hunks=len(patch.hunks),
+                    hunks_applied=file_stats.hunks_applied,
+                    fuzz_used=file_stats.fuzz_used,
+                    hunks_with_fuzz=file_stats.hunks_with_fuzz,
+                    created=created,
+                    deleted=False,
                 )
-                files_applied += 1
-                touched.append(patch.path)
-            continue
-
-        created = False
-        if not target.exists():
-            if not patch.create_if_missing:
-                raise ToolError(
-                    f"File not found: {patch.path}. Set create_if_missing=true"
-                    " to create new files."
-                )
-            created = True
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("", encoding="utf-8")
-
-        original = target.read_text(encoding="utf-8")
-        trailing_newline = original.endswith("\n")
-        lines = original.splitlines()
-        try:
-            file_stats = apply_hunks_to_lines(lines, patch.hunks, fuzz=fuzz)
-        except ApplyPatchError as exc:
-            raise ToolError(f"{patch.path}: {exc}") from exc
-
-        out = "\n".join(lines)
-        if trailing_newline or (out and not out.endswith("\n")):
-            out += "\n"
-        target.write_text(out, encoding="utf-8")
-
-        agg.hunks_applied += file_stats.hunks_applied
-        agg.fuzz_used += file_stats.fuzz_used
-        agg.hunks_with_fuzz += file_stats.hunks_with_fuzz
-        summaries.append(
-            FileSummary(
-                path=patch.path,
-                hunks=len(patch.hunks),
-                hunks_applied=file_stats.hunks_applied,
-                fuzz_used=file_stats.fuzz_used,
-                hunks_with_fuzz=file_stats.hunks_with_fuzz,
-                created=created,
-                deleted=False,
             )
-        )
-        files_applied += 1
-        touched.append(patch.path)
+            files_applied += 1
+            touched.append(patch.path)
+    except Exception:
+        _restore_file_backups(backups)
+        raise
 
     return _build_result(
         files_applied=files_applied,

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from deepseek_tui.protocol.messages import Message
+
+logger = logging.getLogger(__name__)
 
 
 def parse_session_messages(session_data: dict[str, Any], *, path: Path | None = None) -> list[Message]:
@@ -29,8 +32,45 @@ def session_metadata(
 
 
 def apply_messages_to_engine(engine: Any, messages: list[Message]) -> None:
-    engine.session_messages.clear()
-    engine.session_messages.extend(messages)
+    engine.session_messages = list(messages)
+
+
+def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, Any]] | None:
+    """Restore engine state from ``latest.json`` if a crash checkpoint exists."""
+    from deepseek_tui.state.checkpoint import load_checkpoint
+
+    try:
+        raw = load_checkpoint()
+    except (OSError, ValueError) as exc:
+        logger.warning("crash checkpoint load failed: %s", exc)
+        return None
+    if raw is None:
+        return None
+
+    messages_raw = raw.get("messages")
+    if not isinstance(messages_raw, list) or not messages_raw:
+        return None
+
+    try:
+        messages = [Message.model_validate(msg) for msg in messages_raw]
+    except Exception:  # noqa: BLE001 — pydantic validation errors
+        logger.warning("crash checkpoint messages invalid", exc_info=True)
+        return None
+
+    apply_messages_to_engine(engine, messages)
+
+    metadata = raw.get("metadata")
+    meta: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
+
+    turn_counter = raw.get("turn_counter")
+    if isinstance(turn_counter, int) and turn_counter >= 0:
+        engine.turn_counter = turn_counter
+
+    model = raw.get("model")
+    if isinstance(model, str) and model.strip():
+        engine.default_model = model.strip()
+
+    return messages, meta
 
 
 def session_started_at_iso(metadata: dict[str, Any], *, path: Path | None = None) -> str | None:

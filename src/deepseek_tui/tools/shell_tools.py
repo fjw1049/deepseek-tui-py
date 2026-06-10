@@ -316,7 +316,12 @@ class ExecShellInteractTool(ToolSpec):
             raise ToolError(f"Process stdin is not available for process_id: {process_id}")
 
         stdin.write(data.encode("utf-8"))
-        await stdin.drain()
+        try:
+            await stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as exc:
+            raise ToolError(
+                f"Process stdin closed for process_id: {process_id}"
+            ) from exc
         if close_stdin:
             stdin.close()
             await stdin.wait_closed()

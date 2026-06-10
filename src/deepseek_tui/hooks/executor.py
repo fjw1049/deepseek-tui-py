@@ -257,17 +257,32 @@ class HookExecutor:
     async def _execute_background(
         self, hook: LifecycleHookEntry, env_vars: dict[str, str]
     ) -> HookResult:
-        cwd = str(self._working_dir())
         asyncio.create_task(
-            asyncio.create_subprocess_shell(
+            self._run_background_hook(hook, env_vars),
+            name=f"hook-bg-{hook.name or hook.event}",
+        )
+        return HookResult(name=hook.name, success=True)
+
+    async def _run_background_hook(
+        self, hook: LifecycleHookEntry, env_vars: dict[str, str]
+    ) -> None:
+        cwd = str(self._working_dir())
+        try:
+            proc = await asyncio.create_subprocess_shell(
                 hook.command,
                 cwd=cwd,
                 env={**_base_env(), **env_vars},
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-        )
-        return HookResult(name=hook.name, success=True)
+            await proc.wait()
+        except Exception:
+            logger.warning(
+                "background lifecycle hook failed hook=%s event=%s",
+                hook.name or "(unnamed)",
+                hook.event,
+                exc_info=True,
+            )
 
     def _matches_condition(self, hook: LifecycleHookEntry, ctx: HookContext) -> bool:
         cond = hook.condition

@@ -27,6 +27,7 @@ visible rendering changes.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Literal
 
@@ -44,6 +45,8 @@ from deepseek_tui.tui.frame_rate_limiter import FrameRateLimiter
 from deepseek_tui.tui.widgets.tool_cell import ToolCell
 from deepseek_tui.tools.subagent.mailbox import MailboxMessage, MailboxMessageKind
 from deepseek_tui.tui.sanitize import strip_subagent_sentinels
+
+logger = logging.getLogger(__name__)
 
 _USER_GLYPH = "▎"
 _ASSISTANT_GLYPH = "●"
@@ -395,6 +398,7 @@ class Transcript(VerticalScroll):
         try:
             self.mount(self._welcome_cell)
         except Exception:
+            logger.warning("transcript welcome mount failed", exc_info=True)
             self._welcome_cell = None
 
     def _hide_welcome(self) -> None:
@@ -403,29 +407,48 @@ class Transcript(VerticalScroll):
         try:
             self._welcome_cell.remove()
         except Exception:
-            pass
+            logger.debug("transcript welcome remove failed", exc_info=True)
         self._welcome_cell = None
+
+    def _mount_and_scroll(self, widget: Static) -> None:
+        try:
+            self.mount(widget)
+            self.scroll_end(animate=False)
+        except Exception:
+            logger.warning(
+                "transcript mount failed widget=%s",
+                type(widget).__name__,
+                exc_info=True,
+            )
+
+    def _mount_cell(self, widget: Static) -> None:
+        try:
+            self.mount(widget)
+        except Exception:
+            logger.warning(
+                "transcript mount failed widget=%s",
+                type(widget).__name__,
+                exc_info=True,
+            )
+
+    def _scroll_end_safe(self) -> None:
+        try:
+            self.scroll_end(animate=False)
+        except Exception:
+            logger.debug("transcript scroll_end failed", exc_info=True)
 
     def add_user_message(self, text: str, *, queued: bool = False) -> None:
         self._hide_welcome()
         label = "You (queued)" if queued else "You"
         prefix = "[bold yellow]" if queued else "[bold cyan]"
         self._messages.append(f"{prefix}{label}:[/] {text}")
-        try:
-            cell_text = f"⏳ {text}" if queued else text
-            self.mount(_UserCell(cell_text))
-            self.scroll_end(animate=False)
-        except Exception:
-            pass
+        cell_text = f"⏳ {text}" if queued else text
+        self._mount_and_scroll(_UserCell(cell_text))
 
     def add_system_message(self, text: str) -> None:
         self._hide_welcome()
         self._messages.append(f"[bold yellow]System:[/] {text}")
-        try:
-            self.mount(_NoticeCell(text, severity="info"))
-            self.scroll_end(animate=False)
-        except Exception:
-            pass
+        self._mount_and_scroll(_NoticeCell(text, severity="info"))
 
     def add_notice(
         self, text: str, severity: NoticeSeverity = "info"
@@ -436,11 +459,7 @@ class Transcript(VerticalScroll):
         self._hide_welcome()
         prefix = severity.title()
         self._messages.append(f"[bold]{prefix}:[/] {text}")
-        try:
-            self.mount(_NoticeCell(text, severity=severity))
-            self.scroll_end(animate=False)
-        except Exception:
-            pass
+        self._mount_and_scroll(_NoticeCell(text, severity=severity))
 
     def start_assistant_message(self) -> None:
         """Reset per-turn streaming state.
@@ -489,15 +508,9 @@ class Transcript(VerticalScroll):
         if self._current_assistant is None:
             self._close_open_segments_other_than("assistant")
             self._current_assistant = _AssistantCell()
-            try:
-                self.mount(self._current_assistant)
-            except Exception:
-                pass
+            self._mount_cell(self._current_assistant)
         self._current_assistant.append(visible)
-        try:
-            self.scroll_end(animate=False)
-        except Exception:
-            pass
+        self._scroll_end_safe()
 
     def append_thinking(self, content: str) -> None:
         self._hide_welcome()
@@ -506,15 +519,9 @@ class Transcript(VerticalScroll):
             self._close_open_segments_other_than("thinking")
             self._thinking_cell = _ThinkingCell()
             self._turn_thinking_cells.append(self._thinking_cell)
-            try:
-                self.mount(self._thinking_cell)
-            except Exception:
-                pass
+            self._mount_cell(self._thinking_cell)
         self._thinking_cell.append(content)
-        try:
-            self.scroll_end(animate=False)
-        except Exception:
-            pass
+        self._scroll_end_safe()
 
     def add_tool_call(
         self,
@@ -535,11 +542,7 @@ class Transcript(VerticalScroll):
         self._messages.append(entry)
         cell = ToolCell(tool_name, tool_call_id, arguments=arguments)
         self._tool_cells[tool_call_id] = cell
-        try:
-            self.mount(cell)
-            self.scroll_end(animate=False)
-        except Exception:
-            pass
+        self._mount_and_scroll(cell)
 
     def update_tool_result(
         self, tool_call_id: str, content: str, success: bool

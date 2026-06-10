@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from deepseek_tui.hooks.events import HookEvent
 from deepseek_tui.hooks.sinks import HookSink
+
+logger = logging.getLogger(__name__)
 
 
 class HookDispatcher:
@@ -22,4 +26,9 @@ class HookDispatcher:
             try:
                 await sink.emit(event)
             except Exception:
-                pass  # best-effort, do not block on sink failure
+                logger.warning(
+                    "hook sink emit failed sink=%s event=%s",
+                    type(sink).__name__,
+                    type(event).__name__,
+                    exc_info=True,
+                )

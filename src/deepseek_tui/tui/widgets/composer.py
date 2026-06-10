@@ -69,6 +69,11 @@ class Composer(TextArea):
             super().__init__()
             self.text = text
 
+    class PasteEnterSuppressed(Message):
+        """Posted when Enter is temporarily treated as newline after paste."""
+
+        pass
+
     def __init__(self) -> None:
         super().__init__(language=None)
         self.show_line_numbers = False
@@ -92,6 +97,7 @@ class Composer(TextArea):
             self._paste_suppress_until = (
                 time.monotonic() + PASTE_ENTER_SUPPRESS_WINDOW_SECS
             )
+            self.post_message(self.PasteEnterSuppressed())
         self.post_message(self.TextChanged(self.text))
 
     async def _on_key(self, event: events.Key) -> None:
@@ -130,14 +136,18 @@ class Composer(TextArea):
 
         if event.key == "escape":
             event.prevent_default()
-            self.post_message(self.TextChanged(""))
+            if self.text:
+                self.clear()
+                self.post_message(self.TextChanged(""))
             return
 
-        # Shift+Tab cycles agent/plan/yolo/ask modes. ``Tab`` itself is
-        # consumed by the underlying TextArea for indentation, so we
-        # route mode-switching through Shift+Tab — Codex / Claude Code
-        # use the same chord for the same reason.
+        # Shift+Tab cycles agent/plan/yolo/ask modes when the composer is
+        # empty; otherwise defer to TextArea dedent in multi-line input.
         if event.key == "shift+tab":
+            if self.text.strip():
+                await super()._on_key(event)
+                self.post_message(self.TextChanged(self.text))
+                return
             event.stop()
             event.prevent_default()
             action = getattr(self.app, "action_cycle_mode", None)
