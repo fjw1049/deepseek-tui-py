@@ -452,7 +452,7 @@ export function AutomationCenter({
   }
 
   return (
-    <div className="ds-no-drag relative flex h-full min-h-0 flex-col">
+    <div className="ds-feature-page ds-automation-page ds-no-drag relative flex h-full min-h-0 flex-col">
       {/* Header */}
       <header className="shrink-0 px-8 pt-8">
         <div className="mx-auto flex max-w-6xl items-start justify-between gap-4">
@@ -588,7 +588,7 @@ export function AutomationCenter({
                     return (
                       <div
                         key={tpl.id}
-                        className="group relative rounded-xl border border-ds-border bg-ds-card p-5 transition hover:shadow-sm"
+                        className="ds-content-card ds-content-card--interactive group relative rounded-xl p-5"
                       >
                         <div className="flex items-start gap-3">
                           <span className="text-[22px]">{tpl.icon}</span>
@@ -701,7 +701,7 @@ export function AutomationCenter({
                     return (
                       <div
                         key={row.id}
-                        className="group relative rounded-xl border border-ds-border bg-ds-card p-5 transition hover:shadow-sm"
+                        className="ds-content-card ds-content-card--interactive group relative rounded-xl p-5"
                       >
                         <div className="flex items-start gap-3">
                           <Toggle
@@ -813,7 +813,7 @@ export function AutomationCenter({
                   {t('automationAllRunsEmpty')}
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-xl border border-ds-border bg-ds-card">
+                <div className="ds-content-card overflow-x-auto rounded-xl">
                   <div className="grid min-w-[700px] grid-cols-[minmax(140px,1.5fr)_80px_150px_150px_80px] gap-3 border-b border-ds-border-muted bg-ds-subtle/40 px-4 py-2 text-[11px] font-semibold text-ds-faint">
                     <span>{t('automationColTask')}</span>
                     <span>{t('automationColStatus')}</span>

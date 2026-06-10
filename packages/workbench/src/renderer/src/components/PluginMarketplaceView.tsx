@@ -463,7 +463,7 @@ export function PluginMarketplaceView(): ReactElement {
   }
 
   return (
-    <div className="ds-no-drag h-full min-h-0 overflow-y-auto px-6 py-7 md:px-10 lg:px-14">
+    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-6 py-7 md:px-10 lg:px-14">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex rounded-xl bg-ds-subtle p-1">
@@ -495,7 +495,7 @@ export function PluginMarketplaceView(): ReactElement {
         </div>
 
         {activeKind === 'mcp' ? (
-          <div className="mt-8 rounded-2xl border border-ds-border bg-ds-card/80 p-5 shadow-sm">
+          <div className="ds-content-card mt-8 rounded-2xl p-5">
             <h2 className="mb-4 text-[18px] font-semibold text-ds-ink">{tSettings('mcpInstalled')}</h2>
             <McpServersPanel
               configPath={mcpConfigPath}
@@ -511,7 +511,7 @@ export function PluginMarketplaceView(): ReactElement {
             />
           </div>
         ) : (
-          <div className="mt-8 overflow-hidden rounded-2xl border border-ds-border bg-ds-card/80 shadow-sm">
+          <div className="ds-content-card mt-8 overflow-hidden rounded-2xl">
             <div className="border-b border-ds-border-muted px-5 py-4">
               <h2 className="text-[16px] font-semibold text-ds-ink">{tSettings('pluginsInstalled')}</h2>
               <PluginsPanelHeader />
@@ -674,7 +674,7 @@ function PluginSection({
             return (
               <div
                 key={itemKey}
-                className="flex min-h-[92px] items-center gap-5 border-b border-ds-border-muted py-5"
+                className="ds-content-card ds-content-card--interactive my-2 flex min-h-[92px] items-center gap-5 rounded-2xl px-4 py-4"
               >
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[17px] font-semibold text-ds-ink">
@@ -747,7 +747,7 @@ function CustomPluginPanel({
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
-    <section className="mt-6 rounded-2xl border border-ds-border bg-ds-card/95 p-4 shadow-sm">
+    <section className="ds-content-card mt-6 rounded-2xl p-4">
       <div className="grid gap-3 md:grid-cols-2">
         <input
           value={customName}

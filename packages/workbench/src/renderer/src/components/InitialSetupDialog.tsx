@@ -92,7 +92,7 @@ export function InitialSetupDialog(): ReactElement {
 
   if (!form) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+      <div className="ds-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="ds-glass rounded-2xl px-5 py-4 text-sm text-ds-muted">
           {t('loading')}
         </div>
@@ -113,7 +113,7 @@ export function InitialSetupDialog(): ReactElement {
   const labelClass = 'text-[15px] font-medium text-ds-ink'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+    <div className="ds-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="ds-glass ds-glass-strong w-full max-w-[592px] overflow-hidden rounded-[28px] text-ds-ink">
         <div className="bg-[radial-gradient(circle_at_top_right,var(--ds-accent-soft),transparent_42%)] px-8 pb-7 pt-8">
           <div className="flex items-center justify-between gap-3">

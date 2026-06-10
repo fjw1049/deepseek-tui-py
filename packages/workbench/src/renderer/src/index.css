@@ -1744,3 +1744,333 @@ summary,
     animation: none;
   }
 }
+
+/* ── Workbench glass design system ──────────────────────────────────────────
+   Outer surfaces own the blur. Nested cards stay translucent and lightweight
+   so dense tools and settings remain readable without stacking blur layers. */
+:root {
+  --ds-window-inset: 14px;
+  --ds-window-gap: 12px;
+  --ds-radius-shell: 28px;
+  --ds-radius-panel: 22px;
+  --ds-radius-control: 14px;
+  --ds-page-max: 1180px;
+  --ds-material-page: rgba(249, 251, 253, 0.54);
+  --ds-material-panel: rgba(249, 251, 253, 0.72);
+  --ds-material-card: rgba(255, 255, 255, 0.46);
+  --ds-material-card-hover: rgba(255, 255, 255, 0.72);
+  --ds-material-control: rgba(255, 255, 255, 0.52);
+  --ds-material-overlay: rgba(31, 41, 55, 0.22);
+  --ds-material-stroke: rgba(255, 255, 255, 0.72);
+  --ds-material-shadow:
+    0 28px 70px rgba(45, 58, 78, 0.13),
+    0 8px 24px rgba(45, 58, 78, 0.07);
+  --ds-card-shadow:
+    0 12px 32px rgba(45, 58, 78, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
+[data-theme='dark'] {
+  --ds-material-page: rgba(19, 22, 28, 0.55);
+  --ds-material-panel: rgba(24, 28, 35, 0.7);
+  --ds-material-card: rgba(255, 255, 255, 0.045);
+  --ds-material-card-hover: rgba(255, 255, 255, 0.075);
+  --ds-material-control: rgba(255, 255, 255, 0.055);
+  --ds-material-overlay: rgba(0, 0, 0, 0.5);
+  --ds-material-stroke: rgba(255, 255, 255, 0.075);
+  --ds-material-shadow:
+    0 34px 86px rgba(0, 0, 0, 0.48),
+    0 10px 28px rgba(0, 0, 0, 0.3);
+  --ds-card-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ds-accent) 62%, transparent);
+  outline-offset: 2px;
+}
+
+.ds-workbench-shell {
+  gap: var(--ds-window-gap);
+  padding: var(--ds-window-inset);
+}
+
+.ds-workbench-sidebar-wrap,
+.ds-workbench-right-panel,
+.ds-workbench-terminal-wrap {
+  filter: drop-shadow(0 20px 42px rgba(42, 55, 76, 0.1));
+}
+
+.ds-sidebar-shell {
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-shell);
+  background: var(--ds-material-panel);
+  box-shadow:
+    var(--ds-material-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.ds-workbench-main {
+  border-radius: var(--ds-radius-shell);
+}
+
+.ds-workbench-right-panel {
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-panel);
+  background: var(--ds-material-panel);
+  box-shadow:
+    var(--ds-material-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.ds-workbench-terminal-wrap {
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-panel);
+  background: var(--ds-material-panel);
+  box-shadow:
+    var(--ds-material-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.ds-tool-panel {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.ds-terminal-panel,
+.ds-terminal-panel__tabs,
+.ds-terminal-host {
+  background: transparent;
+}
+
+.ds-feature-page,
+.ds-page-scroll {
+  position: relative;
+}
+
+.ds-feature-page {
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-shell);
+  background: var(--ds-material-page);
+  box-shadow:
+    var(--ds-material-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.ds-feature-page.ds-page-scroll,
+.ds-plugin-page,
+.ds-channel-page,
+.ds-automation-form {
+  overflow-y: auto;
+}
+
+.ds-settings-page {
+  gap: var(--ds-window-gap);
+  padding: var(--ds-window-inset);
+}
+
+.ds-settings-sidebar {
+  border-radius: var(--ds-radius-shell);
+}
+
+.ds-settings-page > .ds-page-scroll {
+  overflow: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-shell);
+  background: var(--ds-material-page);
+  box-shadow:
+    var(--ds-material-shadow),
+    inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.ds-content-card {
+  border: 1px solid var(--glass-border);
+  background: var(--ds-material-card);
+  box-shadow: var(--ds-card-shadow);
+}
+
+.ds-content-card--interactive {
+  transition:
+    transform 0.18s ease,
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.ds-content-card--interactive:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--ds-accent) 20%, var(--glass-border));
+  background: var(--ds-material-card-hover);
+  box-shadow:
+    0 20px 44px rgba(45, 58, 78, 0.11),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.ds-feature-page input:not([type='checkbox']):not([type='radio']),
+.ds-feature-page textarea,
+.ds-feature-page select,
+.ds-settings-page input:not([type='checkbox']):not([type='radio']),
+.ds-settings-page textarea,
+.ds-settings-page select,
+.ds-modal-surface input:not([type='checkbox']):not([type='radio']),
+.ds-modal-surface textarea,
+.ds-modal-surface select {
+  border-color: var(--glass-border);
+  background-color: var(--ds-material-control);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.ds-feature-page input:not([type='checkbox']):not([type='radio']):focus,
+.ds-feature-page textarea:focus,
+.ds-feature-page select:focus,
+.ds-settings-page input:not([type='checkbox']):not([type='radio']):focus,
+.ds-settings-page textarea:focus,
+.ds-settings-page select:focus,
+.ds-modal-surface input:not([type='checkbox']):not([type='radio']):focus,
+.ds-modal-surface textarea:focus,
+.ds-modal-surface select:focus {
+  border-color: color-mix(in srgb, var(--ds-accent) 48%, var(--glass-border));
+  box-shadow:
+    0 0 0 3px var(--ds-accent-soft),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.ds-modal-backdrop {
+  background:
+    radial-gradient(circle at 50% 12%, rgba(255, 255, 255, 0.12), transparent 34%),
+    var(--ds-material-overlay);
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+}
+
+.ds-modal-surface {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-strong);
+  box-shadow:
+    0 34px 100px rgba(15, 23, 42, 0.24),
+    inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(calc(var(--glass-blur) + 8px)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 8px)) saturate(var(--glass-saturate));
+}
+
+[data-theme='dark'] .ds-modal-surface {
+  box-shadow:
+    0 38px 110px rgba(0, 0, 0, 0.68),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.ds-channel-page > div,
+.ds-plugin-page > div {
+  width: 100%;
+}
+
+.ds-plugin-page section > .grid {
+  gap: 0.25rem 0.75rem;
+}
+
+.ds-channel-page .ds-content-card,
+.ds-settings-page .ds-content-card {
+  border-radius: 20px;
+}
+
+.ds-channel-page .ds-content-card > div:first-child {
+  min-height: 76px;
+}
+
+.ds-automation-page > header,
+.ds-automation-page > header + div,
+.ds-automation-page > header + div + div,
+.ds-automation-page > div:last-of-type {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 1180px) {
+  :root {
+    --ds-window-inset: 10px;
+    --ds-window-gap: 9px;
+  }
+
+  .ds-feature-page,
+  .ds-settings-page > .ds-page-scroll {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    --ds-window-inset: 7px;
+    --ds-window-gap: 7px;
+    --ds-radius-shell: 22px;
+    --ds-radius-panel: 18px;
+  }
+
+  .ds-settings-page {
+    gap: 7px;
+    padding: 7px;
+  }
+
+  .ds-settings-sidebar {
+    width: 224px;
+  }
+
+  .ds-feature-page,
+  .ds-settings-page > .ds-page-scroll {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .ds-channel-page > div {
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ds-glass,
+  .ds-chat-composer,
+  .ds-topbar-surface,
+  .ds-sidebar-shell,
+  .ds-feature-page,
+  .ds-settings-page > .ds-page-scroll,
+  .ds-workbench-right-panel,
+  .ds-modal-surface {
+    background: var(--ds-surface-elevated);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-content-card--interactive,
+  .ds-card-interactive,
+  .ds-transition,
+  .ds-sidebar-toggle-button {
+    transition: none;
+  }
+
+  .ds-content-card--interactive:hover,
+  .ds-card-interactive:hover,
+  .ds-sidebar-toggle-button:hover {
+    transform: none;
+  }
+}

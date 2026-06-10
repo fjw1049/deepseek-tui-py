@@ -202,7 +202,7 @@ export function AutomationTaskForm({
   }
 
   return (
-    <div className="ds-no-drag flex min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-10 lg:px-16">
+    <div className="ds-feature-page ds-automation-form ds-page-scroll ds-no-drag flex min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-10 lg:px-16">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -275,7 +275,7 @@ export function AutomationTaskForm({
           </div>
         ) : null}
 
-        <div className="rounded-[30px] border border-ds-border bg-ds-card/95 p-5 shadow-sm">
+        <div className="ds-content-card rounded-[30px] p-5">
           <div className="grid gap-5">
             <label className="grid gap-2">
               <span className="text-[13px] font-semibold text-ds-ink">{t('automationPromptLabel')}</span>

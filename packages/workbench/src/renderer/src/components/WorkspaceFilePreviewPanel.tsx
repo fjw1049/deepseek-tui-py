@@ -126,7 +126,7 @@ export function WorkspaceFilePreviewPanel({
 
   return (
     <aside
-      className={`ds-no-drag ds-panel-ghost flex min-h-0 flex-col border-l border-ds-border-muted backdrop-blur-xl ${className ?? ''}`}
+      className={`ds-tool-panel ds-no-drag flex min-h-0 flex-col ${className ?? ''}`}
     >
       <div className="flex min-h-[58px] shrink-0 items-center gap-3 border-b border-ds-border-muted px-4 py-3">
         <button

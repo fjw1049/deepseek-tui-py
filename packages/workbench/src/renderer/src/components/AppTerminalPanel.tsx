@@ -253,7 +253,7 @@ export function AppTerminalPanel({
   }
 
   return (
-    <section className={`ds-no-drag ds-terminal-panel flex min-h-0 flex-col overflow-hidden ${className ?? ''}`}>
+    <section className={`ds-tool-panel ds-no-drag ds-terminal-panel flex min-h-0 flex-col overflow-hidden ${className ?? ''}`}>
       <div className="ds-terminal-panel__tabs flex shrink-0 items-center justify-between gap-2 border-b border-ds-border-muted px-2.5 py-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {sessions.map((session, index) => {

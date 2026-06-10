@@ -131,12 +131,12 @@ export function ImportSessionDialog({ open, onClose }: Props): ReactElement | nu
   }
 
   return (
-    <div className="ds-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+    <div className="ds-modal-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-session-title"
-        className="flex max-h-[min(80vh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-[24px] border border-ds-border-muted/50 bg-ds-card shadow-[0_24px_80px_rgba(15,23,42,0.18)]"
+        className="ds-modal-surface flex max-h-[min(80vh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-[24px]"
       >
         <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted/40 px-5 py-4">
           <div>

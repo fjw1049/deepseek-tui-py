@@ -129,7 +129,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
     'shrink-0 rounded-lg bg-ds-ink px-4 py-1.5 text-[13px] font-medium text-ds-card hover:opacity-80'
 
   return (
-    <div className="ds-no-drag h-full overflow-auto px-8 py-10">
+    <div className="ds-feature-page ds-channel-page ds-page-scroll ds-no-drag h-full overflow-auto px-8 py-10">
       <div className="mx-auto max-w-3xl">
         {/* ── Centered header ── */}
         <div className="mb-8 text-center">
@@ -163,7 +163,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
         ) : (
           <div className="flex flex-col gap-4">
             {/* ── Feishu row ── */}
-            <div className="rounded-xl border border-ds-border bg-ds-card">
+            <div className="ds-content-card rounded-xl">
               <div className="flex items-center gap-4 px-5 py-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
                   <MessageSquare className="h-5 w-5" />
@@ -200,7 +200,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
             </div>
 
             {/* ── Email row ── */}
-            <div className="rounded-xl border border-ds-border bg-ds-card">
+            <div className="ds-content-card rounded-xl">
               <div className="flex items-center gap-4 px-5 py-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
                   <Mail className="h-5 w-5" />

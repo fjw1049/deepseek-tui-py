@@ -655,8 +655,8 @@ export function SettingsView(): ReactElement {
         : 'text-ds-muted hover:bg-ds-hover'
     }`
   return (
-    <div className="ds-drag flex h-full min-h-0 w-full min-w-0">
-      <aside className="ds-sidebar-shell ds-drag flex w-[260px] shrink-0 flex-col">
+    <div className="ds-settings-page ds-drag flex h-full min-h-0 w-full min-w-0">
+      <aside className="ds-sidebar-shell ds-settings-sidebar ds-drag flex w-[260px] shrink-0 flex-col">
         <div className="px-3 pb-3 pt-3">
           <div aria-hidden className="ds-titlebar-safe-block" />
           <button
@@ -714,7 +714,7 @@ export function SettingsView(): ReactElement {
         </div>
       </aside>
 
-      <div className="ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-10">
+      <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-10">
         <div className="mx-auto max-w-3xl">
           {!form.deepseek.apiKey.trim() ? (
             <div className="mb-6 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-5 py-4 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/35 dark:text-amber-100">
@@ -1385,7 +1385,7 @@ function SettingsCard({
 }): ReactElement {
   return (
     <section
-      className={`rounded-2xl border border-ds-border bg-ds-card/95 shadow-sm shadow-black/5 dark:shadow-black/25 ${className}`}
+      className={`ds-content-card rounded-2xl ${className}`}
     >
       <div className="border-b border-ds-border-muted px-5 py-3">
         <h2 className="text-[16px] font-semibold text-ds-ink">{title}</h2>

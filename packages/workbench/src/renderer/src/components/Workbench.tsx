@@ -678,7 +678,7 @@ export function Workbench(): ReactElement {
       {!leftSidebarCollapsed ? (
         <>
           <div
-            className="relative min-h-0 shrink-0"
+            className="ds-workbench-sidebar-wrap relative min-h-0 shrink-0"
             style={{ width: leftSidebarWidth }}
           >
             <Sidebar
@@ -722,7 +722,7 @@ export function Workbench(): ReactElement {
       ) : null}
 
       <main
-        className={`ds-drag ds-stage-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
+        className={`ds-workbench-main ds-drag ds-stage-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
           WORKBENCH_FEATURES.pluginMarketplace && route === 'plugins' ? 'px-0' : ''
         }`}
       >
@@ -948,7 +948,7 @@ export function Workbench(): ReactElement {
 
           {rightPanelMode ? (
               <div
-                className="relative h-full min-h-0 shrink-0 border-l border-ds-border bg-ds-sidebar"
+                className="ds-workbench-right-panel relative h-full min-h-0 shrink-0"
                 style={{ width: rightSidebarWidth }}
               >
                 <div
@@ -997,7 +997,7 @@ export function Workbench(): ReactElement {
             >
               <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-ds-border-muted/70 transition group-hover:bg-ds-border-strong" />
             </div>
-            <div className="min-h-0 shrink-0" style={{ height: terminalPanelHeight }}>
+            <div className="ds-workbench-terminal-wrap min-h-0 shrink-0" style={{ height: terminalPanelHeight }}>
               <Suspense fallback={<div className="h-full w-full bg-ds-sidebar" />}>
                 <AppTerminalPanel
                   workspaceRoot={workspaceRoot}
