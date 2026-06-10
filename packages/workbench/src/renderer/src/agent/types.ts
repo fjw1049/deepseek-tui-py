@@ -254,7 +254,7 @@ export type ThreadEventSink = {
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
   /** Optional: workflow orchestration progress (upsert by toolCallId). */
   onWorkflowProgress?(ev: WorkflowProgressPayload): void
-  /** Optional: goal lifecycle status updates for GoalChip UI. */
+  /** Optional: goal lifecycle status updates for the process tracker UI. */
   onGoalStatus?(ev: GoalStatusPayload): void
 }
 

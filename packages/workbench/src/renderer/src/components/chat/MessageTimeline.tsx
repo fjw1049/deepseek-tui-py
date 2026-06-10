@@ -14,7 +14,8 @@ import {
   Loader2,
   PencilLine,
   Terminal,
-  Wrench
+  Wrench,
+  X
 } from 'lucide-react'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import type {
@@ -46,6 +47,7 @@ import {
   type TodoTurnEvent,
   type TodoTurnSession
 } from '../../lib/extract-todos-from-blocks'
+import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -455,10 +457,10 @@ const THINK_TAG_RE = /<think(?:ing)?>([\s\S]*?)(?:<\/(?:think(?:ing)?|redacted_t
 
 export function splitThink(text: string): { think: string; content: string } {
   const tagged = text.match(THINK_TAG_RE)
-  if (!tagged) return { think: '', content: text }
+  if (!tagged) return { think: '', content: sanitizeReasoningPlaceholders(text) }
   return {
-    think: tagged[1].trim(),
-    content: text.replace(THINK_TAG_RE, '').trim()
+    think: sanitizeReasoningPlaceholders(tagged[1]),
+    content: sanitizeReasoningPlaceholders(text.replace(THINK_TAG_RE, ''))
   }
 }
 
@@ -470,6 +472,17 @@ function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'subagent') {
     return block.status === 'pending' || block.status === 'running'
   }
+  if (block.kind === 'workflow') return block.status === 'running'
+  return false
+}
+
+function blockNeedsAttention(block: ChatBlock): boolean {
+  if (blockHasPendingRuntimeWork(block)) return true
+  if (block.kind === 'tool') return block.status === 'error'
+  if (block.kind === 'approval') return block.status === 'error'
+  if (block.kind === 'user_input') return block.status === 'error'
+  if (block.kind === 'subagent') return block.status === 'failed' || block.status === 'cancelled'
+  if (block.kind === 'workflow') return block.status === 'failed' || block.status === 'cancelled'
   return false
 }
 
@@ -494,12 +507,18 @@ function turnHasPendingRuntimeWork(turn: Turn): boolean {
 }
 
 const TURN_EPILOGUE_TOOL_RE = /(?:todo|checklist)_(?:update|write|add|list)$/i
+const SUBAGENT_ORCHESTRATION_TOOL_RE =
+  /^(?:agent_spawn|spawn_agent|delegate_to_agent|agent_wait|wait|agent_result|agent_list)$/i
 
 function toolNameFromProcessBlock(block: Extract<ChatBlock, { kind: 'tool' }>): string {
   const metaName = typeof block.meta?.tool_name === 'string' ? block.meta.tool_name : undefined
   if (metaName) return metaName
   const summary = block.summary.trim()
   return summary.split(/[:(]/, 1)[0]?.trim() ?? ''
+}
+
+export function isSubagentOrchestrationToolName(name: string | undefined): boolean {
+  return !!name && SUBAGENT_ORCHESTRATION_TOOL_RE.test(name.trim())
 }
 
 function isTurnEpilogueBlock(block: ChatBlock): boolean {
@@ -648,6 +667,15 @@ function isProcessSectionActive(
   )
 }
 
+export function shouldDefaultExpandProcessSection(args: {
+  kind: ProcessSection['kind']
+  active: boolean
+  hasAttention: boolean
+}): boolean {
+  if (args.kind === 'reasoning') return args.active
+  return args.active || args.hasAttention
+}
+
 function MessageTurn({
   turn,
   isProcessing,
@@ -682,6 +710,10 @@ function MessageTurn({
   const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
   const subagentSummary = useMemo(() => buildSubagentSummaryForTurn(turn.blocks), [turn.blocks])
+  const subagentInfrastructureToolIds = useMemo(
+    () => buildSubagentInfrastructureToolIds(turn.blocks, subagentSummary),
+    [turn.blocks, subagentSummary]
+  )
 
   const { processBlocks, assistantContentBlocks, turnFileChanges } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
@@ -766,7 +798,6 @@ function MessageTurn({
     () => processSections.filter((section) => section.kind === 'reasoning').length,
     [processSections]
   )
-  const hasAssistantContent = assistantContentBlocks.length > 0
   const showLiveAssistant = !isProcessing && !!liveContent.trim()
 
   // The work process keeps the full chronological trace, including assistant
@@ -800,13 +831,13 @@ function MessageTurn({
                   section={section}
                   processing={isProcessing}
                   hasLiveAssistantStream={hasLiveAssistantStream}
-                  hasAssistantContent={hasAssistantContent}
                   reasoningDurationMs={reasoningDurationMs}
                   singleReasoningSection={reasoningSectionCount === 1}
                   viewportRef={viewportRef}
                   todoSession={todoSession}
                   todoEvents={todoEvents}
                   subagentSummary={subagentSummary}
+                  subagentInfrastructureToolIds={subagentInfrastructureToolIds}
                 />
               ))}
             </div>
@@ -1218,9 +1249,62 @@ function shouldHideSubagentBlock(block: ChatBlock, summary: SubagentTurnSummary 
   return !!summary && block.kind === 'subagent' && summary.blockIds.includes(block.id)
 }
 
+function isSubagentSummaryAnchor(block: ChatBlock, summary: SubagentTurnSummary | null): boolean {
+  return !!summary && block.kind === 'subagent' && block.id === summary.anchorBlockId
+}
+
+function shouldHideSubagentToolBlock(block: ChatBlock, summary: SubagentTurnSummary | null): boolean {
+  if (!summary || block.kind !== 'tool' || block.status === 'error') return false
+  return isSubagentOrchestrationToolName(toolNameFromProcessBlock(block))
+}
+
+export function buildSubagentInfrastructureToolIds(
+  blocks: ChatBlock[],
+  summary: SubagentTurnSummary | null
+): Set<string> {
+  if (!summary) return new Set()
+  const ids = new Set<string>()
+  const firstSubagentIndex = blocks.findIndex(
+    (block) => block.kind === 'subagent' && block.id === summary.anchorBlockId
+  )
+  if (firstSubagentIndex < 0) return ids
+
+  for (let index = 0; index < firstSubagentIndex; index += 1) {
+    const block = blocks[index]
+    if (block?.kind === 'tool' && block.status === 'success') {
+      ids.add(block.id)
+    }
+  }
+  return ids
+}
+
+function shouldHideSubagentInfrastructureToolBlock(
+  block: ChatBlock,
+  infrastructureToolIds: Set<string>
+): boolean {
+  return block.kind === 'tool' && infrastructureToolIds.has(block.id)
+}
+
+function visibleExecutionBlocks(
+  blocks: ChatBlock[],
+  todoSession: TodoTurnSession | null,
+  subagentSummary: SubagentTurnSummary | null,
+  subagentInfrastructureToolIds: Set<string>
+): ChatBlock[] {
+  return blocks.filter(
+    (block) =>
+      !shouldHideTodoToolBlock(block, todoSession) &&
+      (!shouldHideSubagentBlock(block, subagentSummary) ||
+        isSubagentSummaryAnchor(block, subagentSummary)) &&
+      !shouldHideSubagentToolBlock(block, subagentSummary) &&
+      !shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)
+  )
+}
+
 function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(true)
+  const [detailBlock, setDetailBlock] = useState<SubagentBlock | null>(null)
   const active = summary.running > 0 || summary.pending > 0
   const hasFailure = summary.failed > 0 || summary.toolFailed > 0
   const countParts = [
@@ -1283,16 +1367,25 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         <div className="border-t border-ds-border-muted/60 px-4 py-3">
           <div className="flex flex-col gap-2">
             {summary.blocks.map((block) => (
-              <SubagentSummaryRow key={block.id} block={block} />
+              <SubagentSummaryRow key={block.id} block={block} onOpen={() => setDetailBlock(block)} />
             ))}
           </div>
         </div>
+      ) : null}
+      {detailBlock ? (
+        <SubagentDetailDialog block={detailBlock} onClose={() => setDetailBlock(null)} />
       ) : null}
     </section>
   )
 }
 
-function SubagentSummaryRow({ block }: { block: SubagentBlock }): ReactElement {
+function SubagentSummaryRow({
+  block,
+  onOpen
+}: {
+  block: SubagentBlock
+  onOpen: () => void
+}): ReactElement {
   const { t } = useTranslation('common')
   const toolFailed = subagentBlockHasToolFailure(block)
   const statusLabel = toolFailed
@@ -1310,22 +1403,26 @@ function SubagentSummaryRow({ block }: { block: SubagentBlock }): ReactElement {
           : 'text-ds-muted'
 
   return (
-    <div className="rounded-xl border border-ds-border-muted/70 bg-ds-card/65 px-3 py-2 text-[12.5px] leading-5">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group w-full rounded-xl border border-ds-border-muted/70 bg-ds-card/65 px-3 py-2 text-left text-[12.5px] leading-5 transition hover:border-violet-300/70 hover:bg-ds-hover/55"
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-semibold text-ds-ink">
           {block.cardKind === 'fanout'
             ? t('subagentFanoutTitle', { kind: block.agentType })
             : t('subagentDelegateTitle', { type: block.agentType })}
         </span>
+        {block.status === 'running' || block.status === 'pending' ? (
+          <Loader2 className="h-3 w-3 animate-spin text-amber-700 dark:text-amber-200" strokeWidth={2} />
+        ) : null}
         <span className={`font-medium ${statusTone}`}>{statusLabel}</span>
         <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
+        <span className="ml-auto text-[11px] text-ds-faint opacity-0 transition group-hover:opacity-100">
+          {t('subagentDetails')}
+        </span>
       </div>
-      {block.cardKind === 'delegate' && block.actions && block.actions.length > 0 ? (
-        <div className="mt-1 text-ds-muted">
-          {block.truncated ? <span className="mr-1 text-ds-faint">…</span> : null}
-          {block.actions.at(-1)}
-        </div>
-      ) : null}
       {block.cardKind === 'fanout' && block.workers && block.workers.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {block.workers.map((worker) => (
@@ -1347,9 +1444,76 @@ function SubagentSummaryRow({ block }: { block: SubagentBlock }): ReactElement {
           ))}
         </div>
       ) : null}
-      {block.summary ? (
-        <p className="mt-1 whitespace-pre-wrap text-ds-muted">{block.summary}</p>
-      ) : null}
+    </button>
+  )
+}
+
+function SubagentDetailDialog({
+  block,
+  onClose
+}: {
+  block: SubagentBlock
+  onClose: () => void
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const title =
+    block.cardKind === 'fanout'
+      ? t('subagentFanoutTitle', { kind: block.agentType })
+      : t('subagentDelegateTitle', { type: block.agentType })
+  const toolFailed = subagentBlockHasToolFailure(block)
+  const statusLabel = toolFailed ? t('subagentStatusToolFailed') : subagentStatusLabel(block.status, t)
+  const resultTitle =
+    toolFailed || block.status === 'failed'
+      ? t('subagentFailureReason')
+      : t('subagentFinalResult')
+  const finalText =
+    block.summary?.trim() ||
+    (block.status === 'running' || block.status === 'pending'
+      ? t('subagentDetailNoResultRunning')
+      : t('subagentDetailNoResult'))
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6 backdrop-blur-[2px]"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-[22px] border border-ds-border bg-ds-panel shadow-[0_24px_80px_rgba(15,23,42,0.22)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 border-b border-ds-border-muted/70 px-5 py-4">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300">
+            <Bot className="h-4 w-4" strokeWidth={1.8} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <h3 className="text-[15px] font-semibold text-ds-ink">{title}</h3>
+              <span className="text-[12px] font-medium text-ds-muted">{statusLabel}</span>
+            </div>
+            <div className="mt-0.5 font-mono text-[11px] text-ds-faint">{block.agentId}</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+            aria-label={t('close')}
+          >
+            <X className="h-4 w-4" strokeWidth={1.8} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ds-faint">
+            {resultTitle}
+          </div>
+          <div className="ds-markdown mt-2 text-[13.5px] leading-6 text-ds-ink">
+            <AssistantMarkdown text={finalText} streaming={false} />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1358,27 +1522,36 @@ function ProcessSectionRow({
   section,
   processing,
   hasLiveAssistantStream,
-  hasAssistantContent,
   reasoningDurationMs,
   singleReasoningSection,
   viewportRef,
   todoSession = null,
   todoEvents = [],
-  subagentSummary = null
+  subagentSummary = null,
+  subagentInfrastructureToolIds = new Set()
 }: {
   section: ProcessSection
   processing: boolean
   hasLiveAssistantStream: boolean
-  hasAssistantContent: boolean
   reasoningDurationMs?: number
   singleReasoningSection: boolean
   viewportRef: RefObject<HTMLDivElement | null>
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
-}): ReactElement {
+  subagentInfrastructureToolIds?: Set<string>
+}): ReactElement | null {
   const { t } = useTranslation('common')
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null)
+  const visibleBlocks =
+    section.kind === 'execution'
+      ? visibleExecutionBlocks(
+          section.blocks,
+          todoSession,
+          subagentSummary,
+          subagentInfrastructureToolIds
+        )
+      : section.blocks
   const assistantBlocks =
     section.kind === 'output'
       ? section.blocks.filter(
@@ -1386,21 +1559,35 @@ function ProcessSectionRow({
         )
       : []
   const hasDetails = sectionHasDetails(section, t)
-  const active = isProcessSectionActive(section, processing, hasLiveAssistantStream)
-  const hasError = section.blocks.some(
+  const active =
+    section.kind === 'execution'
+      ? visibleBlocks.some(
+          (block) => block.id === 'live-assistant' || blockHasPendingRuntimeWork(block)
+        )
+      : isProcessSectionActive(section, processing, hasLiveAssistantStream)
+  const hasError = visibleBlocks.some(
     (block) =>
       (block.kind === 'tool' && block.status === 'error') ||
       (block.kind === 'approval' && block.status === 'error') ||
-      (block.kind === 'user_input' && block.status === 'error')
+      (block.kind === 'user_input' && block.status === 'error') ||
+      (block.kind === 'subagent' && (block.status === 'failed' || block.status === 'cancelled')) ||
+      (block.kind === 'workflow' && (block.status === 'failed' || block.status === 'cancelled'))
   )
-  const defaultExpanded = section.kind === 'reasoning' ? active : active || !hasAssistantContent
+  const hasAttention = visibleBlocks.some(blockNeedsAttention)
+  const defaultExpanded = shouldDefaultExpandProcessSection({
+    kind: section.kind,
+    active,
+    hasAttention
+  })
   const expanded = hasDetails && (userExpanded ?? defaultExpanded)
   const title = describeProcessSection(section, t, {
     processing,
     hasLiveAssistantStream,
     reasoningDurationMs,
     singleReasoningSection,
-    todoSession
+    todoSession,
+    subagentSummary,
+    subagentInfrastructureToolIds
   })
   const reasoningText = section.kind === 'reasoning' ? getReasoningSectionText(section) : ''
   const canToggleSection = hasDetails
@@ -1410,8 +1597,12 @@ function ProcessSectionRow({
     root: viewportRef
   })
 
-  if (section.kind === 'execution' && section.blocks.length === 1) {
-    const [block] = section.blocks
+  if (section.kind === 'execution' && visibleBlocks.length === 0) {
+    return null
+  }
+
+  if (section.kind === 'execution' && visibleBlocks.length === 1) {
+    const [block] = visibleBlocks
     if (block) {
       const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
       if (inlineTodo) return inlineTodo
@@ -1421,6 +1612,8 @@ function ProcessSectionRow({
       const subagentSummaryNode = renderSubagentSummaryAtBlock(block, subagentSummary)
       if (subagentSummaryNode) return subagentSummaryNode
       if (shouldHideSubagentBlock(block, subagentSummary)) return <></>
+      if (shouldHideSubagentToolBlock(block, subagentSummary)) return <></>
+      if (shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)) return <></>
       return <ProcessEntryRow block={block} processing={processing} />
     }
   }
@@ -1504,7 +1697,7 @@ function ProcessSectionRow({
             </div>
           ) : (
             <div className="flex flex-col gap-1">
-              {section.blocks.map((block) => {
+              {visibleBlocks.map((block) => {
                 const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
                 if (inlineTodo) {
                   return <div key={`todo-${block.id}`}>{inlineTodo}</div>
@@ -1519,6 +1712,10 @@ function ProcessSectionRow({
                   return <div key={`subagent-summary-${block.id}`}>{subagentSummaryNode}</div>
                 }
                 if (shouldHideSubagentBlock(block, subagentSummary)) return null
+                if (shouldHideSubagentToolBlock(block, subagentSummary)) return null
+                if (shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)) {
+                  return null
+                }
                 return <ProcessEntryRow key={block.id} block={block} processing={processing} />
               })}
             </div>
@@ -1626,6 +1823,8 @@ function describeProcessSection(
     reasoningDurationMs?: number
     singleReasoningSection: boolean
     todoSession?: TodoTurnSession | null
+    subagentSummary?: SubagentTurnSummary | null
+    subagentInfrastructureToolIds?: Set<string>
   }
 ): string {
   if (section.kind === 'reasoning') {
@@ -1651,13 +1850,12 @@ function describeProcessSection(
     return t('processTextLabel')
   }
 
-  if (section.blocks.length === 1) {
-    return describeProcessBlock(section.blocks[0], t)
-  }
-
-  const summaryBlocks = opts.todoSession
-    ? section.blocks.filter((block) => !shouldHideTodoToolBlock(block, opts.todoSession ?? null))
-    : section.blocks
+  const summaryBlocks = visibleExecutionBlocks(
+    section.blocks,
+    opts.todoSession ?? null,
+    opts.subagentSummary ?? null,
+    opts.subagentInfrastructureToolIds ?? new Set()
+  )
   if (summaryBlocks.length === 0) {
     return t('processSteps', { count: section.blocks.length })
   }
@@ -1744,6 +1942,17 @@ function summarizeProcessText(text: string, max = 96): string {
   return `${oneLine.slice(0, max - 1).trimEnd()}…`
 }
 
+// Tool summaries sometimes carry their raw JSON args/result inline, e.g.
+// "list_dir: [ { \"name\": ... } ]". Drop the JSON payload so the row shows a
+// clean human-readable label instead of a truncated blob of JSON.
+function stripInlineJsonPayload(text: string): string {
+  const match = text.match(/\s*[[{]\s*["{[]/)
+  if (match && match.index !== undefined) {
+    return text.slice(0, match.index).trim()
+  }
+  return text.trim()
+}
+
 function humanizeToolName(name: string): string {
   const trimmed = name.trim().replace(/[_-]+/g, ' ')
   if (!trimmed) return ''
@@ -1805,7 +2014,8 @@ function summarizeToolBlock(
     return `${label} ${pattern}`
   }
   if (rawSummary) {
-    const compact = toolName ? rawSummary.replace(/^([a-z0-9_-]+)\s*:\s*/i, '') : rawSummary
+    const withoutPrefix = toolName ? rawSummary.replace(/^([a-z0-9_-]+)\s*:\s*/i, '') : rawSummary
+    const compact = stripInlineJsonPayload(withoutPrefix)
     const summary = summarizeProcessText(compact, 72)
     return summary ? `${label} ${summary}` : label
   }

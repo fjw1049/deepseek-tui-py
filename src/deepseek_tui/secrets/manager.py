@@ -63,12 +63,16 @@ class SecretsManager:
 
         # Layer 1: OS keyring (where `login` / `auth set` write keys).
         # Best-effort — any backend failure falls through silently.
-        try:
-            stored = self._ensure_secrets().get(provider)
-        except Exception:  # noqa: BLE001 — keyring unavailable/locked
-            stored = None
-        if stored is not None and stored.strip():
-            return stored
+        # Honour DEEPSEEK_SKIP_KEYRING (set by workbench-managed runtime).
+        import os
+
+        if not os.environ.get("DEEPSEEK_SKIP_KEYRING"):
+            try:
+                stored = self._ensure_secrets().get(provider)
+            except Exception:  # noqa: BLE001 — keyring unavailable/locked
+                stored = None
+            if stored is not None and stored.strip():
+                return stored
 
         env_val = env_for(provider)
         if env_val is not None and env_val.strip():

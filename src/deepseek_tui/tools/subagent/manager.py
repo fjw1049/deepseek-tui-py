@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import tempfile
 import time
@@ -40,12 +41,14 @@ from deepseek_tui.tools.subagent.completion import (
 from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
 from deepseek_tui.tools.subagent.output import AgentRunOutput
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_MAX_STEPS = 100
 DEFAULT_MAX_AGENTS = 10
 DEFAULT_MAX_SPAWN_DEPTH = 3
 _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
-DEFAULT_RESULT_TIMEOUT_MS = 30_000
-MIN_WAIT_TIMEOUT_MS = 10_000
+DEFAULT_RESULT_TIMEOUT_MS = 180_000
+MIN_WAIT_TIMEOUT_MS = 30_000
 MAX_RESULT_TIMEOUT_MS = 3_600_000
 SUBAGENT_STATE_SCHEMA_VERSION = 1
 SUBAGENT_STATE_FILE = "subagents.v1.json"
@@ -710,11 +713,13 @@ class SubAgentManager:
             pass
 
     async def _drive_agent(self, agent: SubAgent) -> None:
+        logger.info("subagent_drive_start id=%s type=%s depth=%d", agent.id, agent.agent_type.value, agent.spawn_depth)
         if self._parent_cancel is not None and self._parent_cancel.is_set():
             agent.cancel_token.set()
         try:
             result = await self._executor(agent, agent.cancel_token)
         except asyncio.CancelledError:
+            logger.info("subagent_drive_cancelled id=%s", agent.id)
             async with self._lock:
                 if agent.status.kind is SubAgentStatusKind.RUNNING:
                     agent.status = SubAgentStatus.cancelled()
@@ -724,6 +729,7 @@ class SubAgentManager:
             self._notify_parent_completion(agent)
             return
         except Exception as exc:  # noqa: BLE001 — translate to Failed status
+            logger.error("subagent_drive_failed id=%s error=%s", agent.id, exc)
             async with self._lock:
                 agent.status = SubAgentStatus.failed(str(exc))
                 self._persist_best_effort()
@@ -746,6 +752,10 @@ class SubAgentManager:
                     agent.structured_result = None
             self._persist_best_effort()
 
+        logger.info(
+            "subagent_drive_done id=%s status=%s steps=%d",
+            agent.id, agent.status.kind.value, agent.steps_taken,
+        )
         if self._mailbox is not None:
             if agent.status.kind is SubAgentStatusKind.CANCELLED:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))

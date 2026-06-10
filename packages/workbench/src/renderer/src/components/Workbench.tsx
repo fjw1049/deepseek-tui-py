@@ -16,7 +16,6 @@ import {
   type WorkspaceFilePreviewDetail
 } from '../lib/workspace-file-preview'
 import { Sidebar } from './chat/Sidebar'
-import { GoalChip } from './chat/GoalChip'
 import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
@@ -824,7 +823,6 @@ export function Workbench(): ReactElement {
                   <SessionHeader compact className="min-w-0 flex-1" />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <GoalChip />
                   <ConnectionStatusBar compact />
                   {busy ? (
                     <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-2.5 py-1 text-[11.5px] font-semibold text-amber-950 dark:text-amber-100">

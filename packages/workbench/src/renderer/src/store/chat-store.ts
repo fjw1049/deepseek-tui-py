@@ -15,6 +15,7 @@ import {
   type MailboxMessageJson
 } from '../lib/subagent-mailbox'
 import { workflowSnapshotFromToolMeta } from '../lib/workflow-snapshot'
+import { sanitizeReasoningPlaceholders } from '../lib/reasoning-text'
 import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
@@ -165,7 +166,8 @@ function finalizeTurnTiming(state: ChatState): Partial<ChatState> {
 }
 
 function appendLiveReasoningBlock(blocks: ChatBlock[], text: string): ChatBlock[] {
-  if (!text.trim()) return blocks
+  const sanitized = sanitizeReasoningPlaceholders(text)
+  if (!sanitized) return blocks
   const now = Date.now()
   return [
     ...blocks,
@@ -173,7 +175,7 @@ function appendLiveReasoningBlock(blocks: ChatBlock[], text: string): ChatBlock[
       kind: 'reasoning' as const,
       id: `r-${now}`,
       createdAt: new Date(now).toISOString(),
-      text
+      text: sanitized
     }
   ]
 }
@@ -239,17 +241,19 @@ function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Parti
   const nextBlocks = [...state.blocks]
   const now = Date.now()
   const createdAt = new Date(now).toISOString()
-  if (state.liveReasoning.trim()) {
-    nextBlocks.push({ kind: 'reasoning', id: `r-${now}`, createdAt, text: state.liveReasoning })
+  const sanitizedReasoning = sanitizeReasoningPlaceholders(state.liveReasoning)
+  const shouldClearReasoning = state.liveReasoning.trim().length > 0
+  if (sanitizedReasoning) {
+    nextBlocks.push({ kind: 'reasoning', id: `r-${now}`, createdAt, text: sanitizedReasoning })
   }
   if (state.liveAssistant.trim()) {
     nextBlocks.push({ kind: 'assistant', id: `a-${now}`, createdAt, text: state.liveAssistant })
   }
-  if (nextBlocks.length === state.blocks.length) return base
+  if (nextBlocks.length === state.blocks.length && !shouldClearReasoning) return base
   return {
     ...base,
     blocks: nextBlocks,
-    liveReasoning: '',
+    ...(shouldClearReasoning ? { liveReasoning: '' } : {}),
     liveAssistant: ''
   }
 }
@@ -2363,12 +2367,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('interrupt', 'Failed to interrupt turn', { message: msg })
-      set({
-        error: msg,
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
-          : {})
-      })
+      // If the turn is already gone (409 turn_not_active), clear busy state
+      // so the UI doesn't stay stuck in "processing" forever.
+      const isTurnGone = msg.includes('not active') || msg.includes('not loaded')
+      if (isTurnGone) {
+        clearBusyWatchdog()
+        set((s) =>
+          flushLiveBlocks(s, {
+            ...finalizeTurnTiming(s),
+            busy: false,
+            currentTurnId: null
+          })
+        )
+      } else {
+        set({
+          error: msg,
+          ...(shouldOpenSettingsForError(e)
+            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+            : {})
+        })
+      }
     }
   }
 }))

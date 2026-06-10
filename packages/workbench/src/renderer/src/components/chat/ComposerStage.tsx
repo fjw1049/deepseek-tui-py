@@ -7,6 +7,7 @@ import { usePetController } from '../../hooks/use-pet-controller'
 import { filterPetSlashMenu, PET_SLASH_MENU } from '../../lib/pet/pet-slash-commands'
 import { PetMascotDock } from '../pet/PetMascotDock'
 import { FloatingComposer } from './FloatingComposer'
+import { ProcessTray } from './ProcessTray'
 
 type Props = ComponentProps<typeof FloatingComposer>
 
@@ -33,7 +34,10 @@ export function ComposerStage(props: Props): ReactElement {
 
   return (
     <div className="flex w-full flex-col items-center">
-      <div className="ds-chat-stage flex flex-col items-end px-3 sm:px-4">
+      <div className="ds-chat-stage flex items-end gap-3 px-3 sm:px-4">
+        <div className="ds-no-drag min-w-0 flex-1 self-end pb-1">
+          <ProcessTray />
+        </div>
         <PetMascotDock
           visible
           status={pet.status}
