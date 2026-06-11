@@ -45,9 +45,8 @@ class WorkingSet:
                     self.recent_paths.add(normalized)
         if len(self.recent_paths) > self._MAX_RECENT_PATHS:
             excess = len(self.recent_paths) - self._MAX_RECENT_PATHS
-            it = iter(self.recent_paths)
-            for _ in range(excess):
-                self.recent_paths.discard(next(it))
+            for path in list(self.recent_paths)[:excess]:
+                self.recent_paths.discard(path)
 
     def observe_tool_call(
         self,
@@ -138,9 +137,8 @@ class WorkingSet:
                     self.recent_paths.add(normalized)
         if len(self.recent_paths) > self._MAX_RECENT_PATHS:
             excess = len(self.recent_paths) - self._MAX_RECENT_PATHS
-            it = iter(self.recent_paths)
-            for _ in range(excess):
-                self.recent_paths.discard(next(it))
+            for path in list(self.recent_paths)[:excess]:
+                self.recent_paths.discard(path)
 
     def _extract_paths_from_dict(
         self, obj: dict[str, Any], workspace: Path | None = None

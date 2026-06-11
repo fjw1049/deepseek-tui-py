@@ -1235,9 +1235,96 @@ class RuntimeThreadManager:
         try:
             await self._monitor_turn(thread_id, turn_id, handle, mode)
         except Exception as exc:
-            logger.error("Turn monitor failed for %s: %s", turn_id, exc)
+            logger.exception("Turn monitor failed for %s: %s", turn_id, exc)
+            try:
+                await self._finalize_turn_after_monitor_crash(
+                    thread_id, turn_id, handle
+                )
+            except Exception:
+                logger.exception(
+                    "Turn monitor recovery failed for %s", turn_id
+                )
         finally:
             pop_turn_latency(turn_id)
+
+    async def _finalize_turn_after_monitor_crash(
+        self,
+        thread_id: str,
+        turn_id: str,
+        handle: EngineHandle,
+    ) -> None:
+        """Drain engine events until terminal so UI is not stuck in_progress."""
+        turn_status = RuntimeTurnStatus.FAILED
+        turn_error = "Turn monitor crashed"
+        turn_usage: dict[str, Any] | None = None
+
+        async for event in handle.events():
+            if isinstance(event, TurnCompleteEvent):
+                turn_status = RuntimeTurnStatus.COMPLETED
+                turn_error = None
+                if event.usage is not None:
+                    u = event.usage
+                    turn_usage = {
+                        "prompt_tokens": u.input_tokens,
+                        "completion_tokens": u.output_tokens,
+                        "total_tokens": u.input_tokens + u.output_tokens,
+                    }
+                break
+            if isinstance(event, TurnCancelledEvent):
+                turn_status = RuntimeTurnStatus.INTERRUPTED
+                turn_error = None
+                break
+            if isinstance(event, ErrorEvent):
+                turn_status = RuntimeTurnStatus.FAILED
+                turn_error = event.message
+                break
+
+        ended_at = datetime.now(timezone.utc)
+        turn = self.store.load_turn(turn_id)
+        if turn.status not in (
+            RuntimeTurnStatus.QUEUED,
+            RuntimeTurnStatus.IN_PROGRESS,
+        ):
+            return
+
+        turn.status = turn_status
+        turn.ended_at = ended_at
+        if turn.started_at:
+            turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        turn.usage = turn_usage
+        turn.error = turn_error
+        self.store.save_turn(turn)
+
+        thread = self.store.load_thread(thread_id)
+        thread.latest_turn_id = turn_id
+        thread.updated_at = ended_at
+        self.store.save_thread(thread)
+
+        await self._emit_event(
+            thread_id,
+            turn_id,
+            None,
+            "turn.completed",
+            {
+                "turn": turn.model_dump(mode="json"),
+                **(
+                    {"latency_trace": latency_payload}
+                    if (latency_payload := self._finalize_turn_latency(turn_id))
+                    else {}
+                ),
+            },
+            force_checkpoint=True,
+        )
+
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if (
+                state
+                and state.active_turn
+                and state.active_turn.turn_id == turn_id
+            ):
+                state.active_turn = None
+            self._touch_lru(thread_id)
 
     async def _emit_item_delta(
         self,

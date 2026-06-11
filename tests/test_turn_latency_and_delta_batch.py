@@ -113,3 +113,29 @@ async def test_turn_delta_batcher_delayed_flush() -> None:
     await batcher.append("item_1", "agent_message", "b")
     await asyncio.sleep(0.06)
     assert emitted == ["ab"]
+
+
+@pytest.mark.asyncio
+async def test_turn_delta_batcher_concurrent_flush_during_emit() -> None:
+    """Regression: overlapping flush calls must not crash the turn monitor."""
+    emitted: list[str] = []
+    emit_started = asyncio.Event()
+
+    async def emit(
+        thread_id: str,
+        turn_id: str,
+        item_id: str,
+        kind: str,
+        payload: dict,
+    ) -> None:
+        emit_started.set()
+        await asyncio.sleep(0.01)
+        emitted.append(payload["delta"])
+
+    batcher = TurnDeltaBatcher("thread_a", "turn_a", emit)
+    await batcher.append("item_1", "agent_reasoning", "chunk")
+    flush_a = asyncio.create_task(batcher.flush())
+    await emit_started.wait()
+    flush_b = asyncio.create_task(batcher.flush())
+    await asyncio.gather(flush_a, flush_b)
+    assert emitted == ["chunk"]
