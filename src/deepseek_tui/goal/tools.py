@@ -11,7 +11,12 @@ GOAL_CONTROLLER_KEY = "goal_controller"
 
 
 def goal_controller_from_context(context: ToolContext) -> GoalController:
-    controller = context.metadata.get(GOAL_CONTROLLER_KEY)
+    controller = context.services.optional(GoalController)
+    if controller is None:
+        raw = context.services.optional_named(GOAL_CONTROLLER_KEY)
+        controller = raw if isinstance(raw, GoalController) else None
+    if controller is None:
+        controller = context.metadata.get(GOAL_CONTROLLER_KEY)
     if not isinstance(controller, GoalController):
         raise RuntimeError("goal runtime is not attached")
     return controller

@@ -11,18 +11,19 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from deepseek_tui.app_server.runtime_api.runtime_delegate import runtime_from_request
+from deepseek_tui.capabilities.mcp import (
+    mcp_preload_status_response,
+    mcp_startup_response,
+)
 
 router = APIRouter(prefix="/v1")
 
 
 @router.post("/mcp/startup")
 async def mcp_startup(request: Request) -> dict[str, Any]:
-    runtime = runtime_from_request(request)
-    return await runtime.mcp_startup()
+    return await mcp_startup_response(request)
 
 
 @router.get("/mcp/preload-status")
 async def mcp_preload_status(request: Request) -> dict[str, Any]:
-    runtime = runtime_from_request(request)
-    return runtime.mcp_preload_status()
+    return mcp_preload_status_response(request)

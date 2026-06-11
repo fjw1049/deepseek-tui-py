@@ -13,7 +13,9 @@ HARD_MAX_SEARCH_LIMIT = 10
 
 
 def _require_provider(context: ToolContext) -> NativeMemoryProvider:
-    raw = context.metadata.get(MEMORY_PROVIDER_KEY)
+    raw = context.services.optional_named(MEMORY_PROVIDER_KEY)
+    if raw is None:
+        raw = context.metadata.get(MEMORY_PROVIDER_KEY)
     if not isinstance(raw, NativeMemoryProvider):
         raise ToolError(
             "Smart memory is not active. Set [memory.smart] enabled = true in config."

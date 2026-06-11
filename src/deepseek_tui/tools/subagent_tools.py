@@ -34,6 +34,12 @@ from deepseek_tui.tools.subagent import (
 def _require_manager(context: ToolContext) -> SubAgentManager:
     manager = context.subagent_manager
     if manager is None:
+        manager = context.services.optional(SubAgentManager)
+    if manager is None:
+        raw = context.services.optional_named("subagent_manager")
+        if isinstance(raw, SubAgentManager):
+            manager = raw
+    if manager is None:
         raise ToolError("SubAgentManager is not attached to this context")
     return manager
 
@@ -143,17 +149,39 @@ class AgentSpawnTool(ToolSpec):
                 },
                 "type": {
                     "type": "string",
-                    "description": "Agent type: general, explore, plan, review, implementer, verifier, custom",
-                    "enum": ["general", "explore", "plan", "review", "implementer", "verifier", "custom"]
+                    "description": (
+                        "Agent type: general, explore, plan, review, "
+                        "implementer, verifier, custom"
+                    ),
+                    "enum": [
+                        "general",
+                        "explore",
+                        "plan",
+                        "review",
+                        "implementer",
+                        "verifier",
+                        "custom",
+                    ],
                 },
                 "agent_type": {
                     "type": "string",
                     "description": "Alias for type",
-                    "enum": ["general", "explore", "plan", "review", "implementer", "verifier", "custom"]
+                    "enum": [
+                        "general",
+                        "explore",
+                        "plan",
+                        "review",
+                        "implementer",
+                        "verifier",
+                        "custom",
+                    ],
                 },
                 "agent_name": {
                     "type": "string",
-                    "description": "DEPRECATED: Use 'type' instead. This parameter is for backward compatibility only."
+                    "description": (
+                        "DEPRECATED: Use 'type' instead. This parameter is "
+                        "for backward compatibility only."
+                    ),
                 },
                 "role": {
                     "type": "string",
@@ -166,11 +194,17 @@ class AgentSpawnTool(ToolSpec):
                 },
                 "model": {
                     "type": "string",
-                    "description": "Optional model override (e.g., 'deepseek-chat', 'deepseek-v4-pro')"
+                    "description": (
+                        "Optional model override "
+                        "(e.g., 'deepseek-chat', 'deepseek-v4-pro')"
+                    ),
                 },
                 "nickname": {
                     "type": "string",
-                    "description": "Optional display name for the agent (does not affect agent type)"
+                    "description": (
+                        "Optional display name for the agent "
+                        "(does not affect agent type)"
+                    ),
                 },
                 "fork_context": {
                     "type": "boolean",
@@ -560,7 +594,10 @@ class AgentWaitTool(ToolSpec):
                 "ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Agent IDs to wait on. When omitted, waits on all running sub-agents.",
+                    "description": (
+                        "Agent IDs to wait on. When omitted, waits on all "
+                        "running sub-agents."
+                    ),
                 },
                 "agent_ids": {
                     "type": "array",

@@ -936,7 +936,7 @@ def _optional_task_id_from_input(
 def _forward_to_task_manager(context: ToolContext, metadata: dict[str, Any]) -> None:
     """Persist ``task_updates`` from tool metadata onto the active task."""
     task_id = context.active_task_id or context.metadata.get("task_id")
-    manager = context.task_manager or context.metadata.get("task_manager")
+    manager = _task_manager_from_context(context)
     if not isinstance(task_id, str) or manager is None:
         return
     if not hasattr(manager, "record_tool_metadata"):
@@ -963,8 +963,23 @@ def _task_id_from_input(
     return value
 
 
-def _require_manager(context: ToolContext) -> TaskManager:
+def _task_manager_from_context(context: ToolContext) -> TaskManager | None:
     manager = context.task_manager
+    if manager is None:
+        manager = context.services.optional(TaskManager)
+    if manager is None:
+        raw = context.services.optional_named("task_manager")
+        if isinstance(raw, TaskManager):
+            manager = raw
+    if manager is None:
+        raw = context.metadata.get("task_manager")
+        if isinstance(raw, TaskManager):
+            manager = raw
+    return manager
+
+
+def _require_manager(context: ToolContext) -> TaskManager:
+    manager = _task_manager_from_context(context)
     if manager is None:
         raise ToolError("TaskManager is not attached to this context")
     return manager

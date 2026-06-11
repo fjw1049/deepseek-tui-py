@@ -13,10 +13,10 @@ from typing import Any
 from deepseek_tui.execpolicy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.execpolicy.decision import Decision
 from deepseek_tui.execpolicy.sandbox import (
+    SANDBOX_MANAGER,
     CommandSpec,
     ExecEnv,
     ExecutionSandboxPolicy,
-    SANDBOX_MANAGER,
     apply_sandbox_metadata,
 )
 from deepseek_tui.tools._validators import require_string as _require_string
@@ -716,7 +716,13 @@ async def _shell_env_from_hooks(context: ToolContext, command: str) -> dict[str,
 
     from deepseek_tui.hooks.executor import HookContext, HookExecutor
 
-    executor = context.metadata.get("hook_executor")
+    executor = context.services.optional(HookExecutor)
+    if executor is None:
+        raw = context.services.optional_named("hook_executor")
+        if isinstance(raw, HookExecutor):
+            executor = raw
+    if executor is None:
+        executor = context.metadata.get("hook_executor")
     if not isinstance(executor, HookExecutor) or not executor.has_hooks_for_event("shell_env"):
         return None
     hook_ctx = HookContext(

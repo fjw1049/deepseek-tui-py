@@ -112,7 +112,12 @@ class McpGetPromptTool(ToolSpec):
 
 
 def _manager(context: ToolContext) -> McpManager:
-    manager = context.metadata.get(MCP_MANAGER_KEY)
+    manager = context.services.optional(McpManager)
+    if manager is None:
+        raw = context.services.optional_named(MCP_MANAGER_KEY)
+        manager = raw if isinstance(raw, McpManager) else None
+    if manager is None:
+        manager = context.metadata.get(MCP_MANAGER_KEY)
     if not isinstance(manager, McpManager):
         raise ToolError("MCP manager is not configured")
     return manager

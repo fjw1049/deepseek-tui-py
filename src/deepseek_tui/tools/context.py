@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from deepseek_tui.host.services import ServiceRegistry
+
 if TYPE_CHECKING:
     from deepseek_tui.execpolicy.policy import Policy
     from deepseek_tui.execpolicy.sandbox import ExecutionSandboxPolicy
@@ -18,6 +20,7 @@ class ToolContext:
     timeout_ms: int | None = None
     trust_mode: bool = False
     active_task_id: str | None = None
+    services: ServiceRegistry = field(default_factory=ServiceRegistry)
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Policy | None = None
     task_manager: TaskManager | None = None

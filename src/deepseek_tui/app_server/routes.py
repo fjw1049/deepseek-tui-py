@@ -26,6 +26,11 @@ from fastapi.responses import StreamingResponse
 
 from deepseek_tui.app_server.runtime import AppRuntime
 from deepseek_tui.app_server.sse import iter_sse
+from deepseek_tui.capabilities.mcp import (
+    mcp_servers_runtime_response,
+    mcp_startup_runtime_response,
+    mcp_tools_runtime_response,
+)
 
 
 def build_router() -> APIRouter:
@@ -76,7 +81,7 @@ def build_router() -> APIRouter:
     @router.post("/mcp/startup")
     async def mcp_startup(request: Request) -> dict[str, Any]:
         runtime = _get_runtime(request)
-        return await runtime.mcp_startup()
+        return await mcp_startup_runtime_response(runtime)
 
     # --- Runtime Thread lifecycle routes ------------------------------------
 
@@ -308,12 +313,12 @@ def build_router() -> APIRouter:
     @router.get("/apps/mcp/servers")
     async def list_mcp_servers_route(request: Request) -> dict[str, Any]:
         runtime = _get_runtime(request)
-        return await runtime.list_mcp_servers()
+        return await mcp_servers_runtime_response(runtime)
 
     @router.get("/apps/mcp/tools")
     async def list_mcp_tools_route(request: Request) -> dict[str, Any]:
         runtime = _get_runtime(request)
-        return await runtime.list_mcp_tools()
+        return await mcp_tools_runtime_response(runtime)
 
     @router.get("/workspace/status")
     async def workspace_status_route(request: Request) -> dict[str, Any]:
@@ -379,4 +384,4 @@ async def stdio_jobs(runtime: AppRuntime, _payload: dict[str, Any]) -> dict[str,
 async def stdio_mcp_startup(
     runtime: AppRuntime, _payload: dict[str, Any]
 ) -> dict[str, Any]:
-    return await runtime.mcp_startup()
+    return await mcp_startup_runtime_response(runtime)

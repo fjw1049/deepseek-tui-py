@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from deepseek_tui.capabilities.evolution import (
+    build_main_tool_evolution_response,
+    evolution_decision_from_record_status,
+)
 from deepseek_tui.evolution.backends.procedural_skill import ProceduralSkillBackend
 from deepseek_tui.evolution.constants import EVOLUTION_LEDGER_KEY, resolve_turn_evidence
-from deepseek_tui.evolution.tool_response import (
-    build_evolution_tool_response,
-    decision_from_record_status,
-)
 from deepseek_tui.tools.base import ToolCapability, ToolResult, ToolSpec
 from deepseek_tui.tools.context import ToolContext
 
@@ -73,7 +73,9 @@ class SkillManageTool(ToolSpec):
                 content=json.dumps({"ok": True, "review_only": True, "kind": mutation.kind}),
             )
 
-        ledger = context.metadata.get(EVOLUTION_LEDGER_KEY)
+        ledger = context.services.optional_named(EVOLUTION_LEDGER_KEY)
+        if ledger is None:
+            ledger = context.metadata.get(EVOLUTION_LEDGER_KEY)
         evidence = resolve_turn_evidence(context.metadata)
         if ledger is None or evidence is None:
             return ToolResult(success=False, content="evolution ledger not available")
@@ -85,8 +87,8 @@ class SkillManageTool(ToolSpec):
             return ToolResult(success=False, content="invalid skill_manage args")
 
         record = await ledger.submit(mutation, source="main_tool", evidence=evidence)
-        decision = decision_from_record_status(record.status)
-        payload = build_evolution_tool_response(
+        decision = evolution_decision_from_record_status(record.status)
+        payload = build_main_tool_evolution_response(
             record=record,
             decision=decision,
             mutation=mutation,
@@ -103,7 +105,9 @@ class SkillManageTool(ToolSpec):
 def _store_from_context(context: ToolContext):
     from deepseek_tui.evolution.constants import SKILL_STORE_KEY
 
-    store = context.metadata.get(SKILL_STORE_KEY)
+    store = context.services.optional_named(SKILL_STORE_KEY)
+    if store is None:
+        store = context.metadata.get(SKILL_STORE_KEY)
     if store is None:
         raise RuntimeError("skill store not configured")
     return store

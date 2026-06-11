@@ -739,7 +739,13 @@ class RuntimeThreadManager:
                     if state is not None
                     else None
                 )
-                if controller is None or not controller.validate_follow_up(req.goal_id):
+                from deepseek_tui.capabilities.goal import goal_follow_up_is_stale
+
+                if goal_follow_up_is_stale(
+                    controller,
+                    internal_kind=req.internal_kind,
+                    goal_id=req.goal_id,
+                ):
                     pop_turn_latency(turn_id)
                     raise ValueError("goal follow-up is stale")
 
@@ -1097,16 +1103,19 @@ class RuntimeThreadManager:
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
         goal_controller = getattr(engine, "goal_controller", None)
         if goal_controller is not None and hasattr(goal_controller, "rebind"):
-            goal_controller.rebind(
-                thread_id=thread.id,
-                journal_path=self.store.goal_journal_path(thread.id),
-            )
+            from deepseek_tui.capabilities.goal import bind_goal_runtime_thread
+
             tid = thread.id
 
             def _goal_changed() -> None:
                 asyncio.ensure_future(self._emit_goal_status_if_needed(tid))
 
-            goal_controller._on_change = _goal_changed
+            bind_goal_runtime_thread(
+                goal_controller,
+                thread_id=thread.id,
+                journal_path=self.store.goal_journal_path(thread.id),
+                on_change=_goal_changed,
+            )
         engine.memory_thread_id = thread.id
         engine.memory_mode = thread.memory_mode
         if self._elevation_bridge is not None:
@@ -1946,25 +1955,14 @@ class RuntimeThreadManager:
             controller = getattr(state.engine, "goal_controller", None)
         if controller is None:
             return
-        goal = controller.current
-        if goal is None:
-            await self._emit_event(
-                thread_id, None, None, "goal.status",
-                {"goal": None},
-            )
-            return
+        from deepseek_tui.capabilities.goal import goal_status_payload
+
         await self._emit_event(
-            thread_id, None, None, "goal.status",
-            {
-                "goal": {
-                    "goal_id": goal.goal_id,
-                    "objective": goal.objective[:120],
-                    "status": goal.status.value,
-                    "tokens_used": goal.usage.tokens_used,
-                    "token_budget": goal.token_budget,
-                    "active_seconds": round(goal.usage.active_seconds, 1),
-                },
-            },
+            thread_id,
+            None,
+            None,
+            "goal.status",
+            goal_status_payload(controller),
         )
 
     async def _schedule_goal_follow_up_if_needed(self, thread_id: str) -> None:
@@ -1975,23 +1973,22 @@ class RuntimeThreadManager:
             controller = getattr(state.engine, "goal_controller", None)
             if controller is None or not hasattr(controller, "take_pending_follow_up"):
                 return
-            follow_up = controller.take_pending_follow_up()
+            from deepseek_tui.capabilities.goal import take_valid_goal_follow_up
+
+            follow_up = take_valid_goal_follow_up(controller)
         if follow_up is None:
             return
-        if not controller.validate_follow_up(follow_up.goal_id):
-            return
         thread = self.store.load_thread(thread_id)
+        from deepseek_tui.capabilities.goal import build_goal_follow_up_start_payload
+
+        payload = build_goal_follow_up_start_payload(
+            follow_up,
+            model=thread.model,
+            mode=thread.mode,
+        )
         await self.start_turn(
             thread_id,
-            StartTurnRequest(
-                prompt=follow_up.content,
-                input_summary="Goal continuation",
-                model=thread.model,
-                mode=thread.mode,
-                hidden=True,
-                internal_kind="goal_follow_up",
-                goal_id=follow_up.goal_id,
-            ),
+            StartTurnRequest(**payload.as_dict()),
         )
 
     def _attach_item_to_turn(self, turn_id: str, item_id: str) -> None:

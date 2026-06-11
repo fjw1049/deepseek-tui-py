@@ -1,29 +1,21 @@
-"""``rlm`` tool adapter.
-
-Mirror Rust ``crates/tui/src/tools/rlm.rs`` (406 LOC). Validates input,
-loads ``file_path`` (preferred) or ``content`` into ``context``, then
-dispatches to :func:`run_rlm_turn`. Returns the synthesized answer +
-trace summary as the tool result.
-"""
+"""``rlm`` tool declaration."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from deepseek_tui.capabilities.rlm import (
+    DEFAULT_CHILD_MODEL,
+    DEFAULT_MAX_DEPTH,
+)
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.tools.base import (
     ApprovalRequirement,
     ToolCapability,
-    ToolError,
     ToolResult,
     ToolSpec,
 )
 from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.rlm.turn import RlmTermination, RlmUsage, run_rlm_turn
-
-DEFAULT_CHILD_MODEL: str = "deepseek-v4-flash"
-DEFAULT_MAX_DEPTH: int = 1
-MAX_INLINE_CONTENT_CHARS: int = 200_000
 
 
 class RlmTool(ToolSpec):
@@ -117,142 +109,14 @@ class RlmTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        if self._client is None:
-            raise ToolError("rlm_process requires an active DeepSeek client")
+        from deepseek_tui.capabilities.rlm import execute_rlm_tool
 
-        task = (input_data.get("task") or "").strip()
-        if not task:
-            raise ToolError("rlm: `task` is empty")
-
-        file_path = input_data.get("file_path")
-        content = input_data.get("content")
-        if file_path and content:
-            raise ToolError("rlm: pass `file_path` OR `content`, not both")
-        if not file_path and not content:
-            raise ToolError("rlm: requires `file_path` (preferred) or `content`")
-
-        if file_path:
-            resolved = context.resolve_path(str(file_path))
-            try:
-                body = resolved.read_text(encoding="utf-8")
-            except OSError as exc:
-                raise ToolError(f"rlm: read {resolved}: {exc}") from exc
-        else:
-            body_str = str(content)
-            char_count = sum(1 for _ in body_str)
-            if char_count > MAX_INLINE_CONTENT_CHARS:
-                raise ToolError(
-                    f"rlm: inline `content` is {char_count} chars "
-                    f"(cap {MAX_INLINE_CONTENT_CHARS}). Pass `file_path` "
-                    "for larger inputs."
-                )
-            body = body_str
-
-        if not body.strip():
-            raise ToolError("rlm: input is empty after loading")
-
-        input_chars = sum(1 for _ in body)
-        input_lines = len(body.splitlines()) if body else 0
-
-        # Pin child calls to Flash — model-generated args must not escalate cost.
-        child_model = DEFAULT_CHILD_MODEL
-        max_depth = int(input_data.get("max_depth", DEFAULT_MAX_DEPTH))
-
-        progress_cb = context.metadata.get("rlm_progress_cb")
-        result = await run_rlm_turn(
+        return await execute_rlm_tool(
             client=self._client,
-            model=self._root_model,
-            prompt=body,
-            root_prompt=task,
-            child_model=child_model,
-            max_depth=max_depth,
-            on_progress=progress_cb if callable(progress_cb) else None,
+            root_model=self._root_model,
+            input_data=input_data,
+            context=context,
         )
-
-        if result.error:
-            raise ToolError(
-                f"rlm: {result.error} (iterations={result.iterations}, "
-                f"termination={result.termination.value})"
-            )
-        if not result.answer.strip():
-            raise ToolError(
-                f"rlm: empty answer (termination={result.termination.value}, "
-                f"iterations={result.iterations})"
-            )
-
-        footer = _termination_footer(result.termination, result.iterations)
-        trace_summary = _trace_summary(result.trace)
-        report = (
-            "RLM report:\n"
-            f"- input: {input_lines} line(s), {input_chars} char(s)\n"
-            f"- iterations: {result.iterations}\n"
-            f"- duration: {int(result.duration_secs * 1000)}ms\n"
-            f"- sub-LLM RPCs: {result.total_rpcs}\n"
-            f"- termination: {result.termination.value}\n\n"
-            "Answer:\n"
-        )
-        text = f"{report}{result.answer}{footer}{trace_summary}"
-
-        usage = result.usage
-        metadata = {
-            "iterations": result.iterations,
-            "duration_ms": int(result.duration_secs * 1000),
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "child_input_tokens": usage.input_tokens,
-            "child_output_tokens": usage.output_tokens,
-            "child_prompt_cache_hit_tokens": usage.cache_read_input_tokens,
-            "child_prompt_cache_miss_tokens": usage.cache_creation_input_tokens,
-            "child_model": child_model,
-            "termination": result.termination.value,
-            "max_depth": max_depth,
-            "context_chars": input_chars,
-            "context_lines": input_lines,
-            "total_rpcs": result.total_rpcs,
-            "trace": [
-                {
-                    "round": t.round,
-                    "rpc_count": t.rpc_count,
-                    "elapsed_ms": t.elapsed_ms,
-                    "had_error": t.had_error,
-                    "code_summary": t.code_summary,
-                    "stdout_preview": t.stdout_preview,
-                }
-                for t in result.trace
-            ],
-        }
-        return ToolResult(success=True, content=text, metadata=metadata)
-
-
-def _termination_footer(termination: RlmTermination, iterations: int) -> str:
-    if termination == RlmTermination.FINAL:
-        return ""
-    if termination == RlmTermination.NO_CODE:
-        return (
-            f"\n\n[warning: sub-agent failed to engage the REPL after "
-            f"{iterations} iterations — answer is the model's last raw response]"
-        )
-    if termination == RlmTermination.EXHAUSTED:
-        return (
-            f"\n\n[warning: sub-agent hit the {iterations}-iteration cap "
-            "without FINAL()]"
-        )
-    return ""
-
-
-def _trace_summary(trace: list[Any]) -> str:
-    if not trace:
-        return "\n\n[trace: no REPL rounds executed]"
-    lines = ["\n\n[RLM trace]"]
-    for r in trace:
-        head = r.code_summary.splitlines()[0] if r.code_summary else ""
-        head = head[:80]
-        err_marker = " (error)" if r.had_error else ""
-        lines.append(
-            f"\n  round {r.round}: {r.rpc_count} sub-LLM call(s), "
-            f"{r.elapsed_ms}ms{err_marker} — {head}"
-        )
-    return "".join(lines)
 
 
 __all__ = ["DEFAULT_CHILD_MODEL", "DEFAULT_MAX_DEPTH", "RlmTool"]

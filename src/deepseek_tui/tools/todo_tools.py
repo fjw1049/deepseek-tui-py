@@ -197,7 +197,7 @@ def _forward_to_task_manager(
     skipped.
     """
     task_id = context.metadata.get(_TASK_ID_KEY)
-    manager = context.metadata.get(_TASK_MANAGER_KEY)
+    manager = _task_manager_from_context(context)
     if not isinstance(task_id, str) or manager is None:
         return
     if not hasattr(manager, "record_tool_metadata"):
@@ -207,6 +207,23 @@ def _forward_to_task_manager(
     except RuntimeError:
         return
     loop.create_task(manager.record_tool_metadata(task_id, metadata))
+
+
+def _task_manager_from_context(context: ToolContext) -> object | None:
+    from deepseek_tui.tools.task_manager import TaskManager
+
+    manager = context.task_manager
+    if manager is None:
+        manager = context.services.optional(TaskManager)
+    if manager is None:
+        raw = context.services.optional_named(_TASK_MANAGER_KEY)
+        if isinstance(raw, TaskManager):
+            manager = raw
+    if manager is None:
+        raw = context.metadata.get(_TASK_MANAGER_KEY)
+        if isinstance(raw, TaskManager):
+            manager = raw
+    return manager
 
 
 # ---------------------------------------------------------------------------

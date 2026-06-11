@@ -26,26 +26,15 @@ from typing import Any
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.execpolicy.policy import Policy
-from deepseek_tui.lsp import LSP_MANAGER_KEY, LspConfig, LspManager
-from deepseek_tui.mcp.manager import McpManager
-from deepseek_tui.tools.automation_manager import (
-    AutomationManager,
-    default_automations_dir,
-)
-from deepseek_tui.tools.automation_scheduler import (
-    AutomationSchedulerConfig,
-    run_scheduler_loop,
-)
-from deepseek_tui.tools.automation_tools import AUTOMATION_MANAGER_KEY
 from deepseek_tui.execpolicy.sandbox import sandbox_policy_for_mode
+from deepseek_tui.host.services import ServiceRegistry
+from deepseek_tui.lsp import LspManager
+from deepseek_tui.mcp.manager import McpManager
+from deepseek_tui.tools.automation_manager import AutomationManager
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
-from deepseek_tui.tools.task_manager import (
-    TaskManager,
-    TaskManagerConfig,
-    default_tasks_dir,
-)
+from deepseek_tui.tools.task_manager import TaskManager
 
 
 @dataclass(slots=True)
@@ -77,30 +66,67 @@ class ToolRuntime:
         await self.shutdown()
 
     async def shutdown(self) -> None:
-        if self._automation_cancel is not None:
-            self._automation_cancel.set()
-        if self._automation_scheduler_task is not None:
-            try:
-                await asyncio.wait_for(
-                    self._automation_scheduler_task, timeout=5.0
-                )
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                self._automation_scheduler_task.cancel()
-            except Exception:  # noqa: BLE001
-                pass
-        if self.mailbox is not None:
-            self.mailbox.close()
-        if self._owns_subagent_manager and self.subagent_manager is not None:
-            await self.subagent_manager.shutdown()
-        if self._owns_task_manager and self.task_manager is not None:
-            await self.task_manager.shutdown()
-        if self._owns_mcp_manager and self.mcp_manager is not None:
-            await self.mcp_manager.stop_all()
-        if self.lsp_manager is not None:
-            await self.lsp_manager.close_all()
+        from deepseek_tui.capabilities.automation import stop_automation_runtime
+        from deepseek_tui.capabilities.lsp import shutdown_lsp_manager
+        from deepseek_tui.capabilities.mcp import shutdown_mcp_manager
+        from deepseek_tui.capabilities.subagents import shutdown_subagent_runtime
+        from deepseek_tui.capabilities.tasks import shutdown_task_manager
+
+        await stop_automation_runtime(
+            self._automation_cancel,
+            self._automation_scheduler_task,
+        )
+        await shutdown_subagent_runtime(
+            self.subagent_manager,
+            self.mailbox,
+            owns_manager=self._owns_subagent_manager,
+        )
+        await shutdown_task_manager(
+            self.task_manager,
+            owns_manager=self._owns_task_manager,
+        )
+        await shutdown_mcp_manager(
+            self.mcp_manager,
+            owns_manager=self._owns_mcp_manager,
+        )
+        await shutdown_lsp_manager(self.lsp_manager)
 
 
 async def create_tool_runtime(
+    *,
+    config: Config | None = None,
+    working_directory: Path | None = None,
+    mode: str = "agent",
+    policy: Policy | None = None,
+    task_data_dir: Path | None = None,
+    subagent_state_path: Path | None = None,
+    mcp_manager: McpManager | None = None,
+    start_mcp: bool = False,
+    automation_data_dir: Path | None = None,
+    automation_tick_interval_secs: float = 15.0,
+    shared_task_manager: TaskManager | None = None,
+) -> ToolRuntime:
+    """Build a fully-wired :class:`ToolRuntime` through host assembly."""
+    from deepseek_tui.host.assembler import AssemblyRequest, assemble_tool_runtime
+
+    return await assemble_tool_runtime(
+        AssemblyRequest(
+            config=config,
+            working_directory=working_directory,
+            mode=mode,
+            policy=policy,
+            task_data_dir=task_data_dir,
+            subagent_state_path=subagent_state_path,
+            mcp_manager=mcp_manager,
+            start_mcp=start_mcp,
+            automation_data_dir=automation_data_dir,
+            automation_tick_interval_secs=automation_tick_interval_secs,
+            shared_task_manager=shared_task_manager,
+        )
+    )
+
+
+async def _create_tool_runtime_legacy(
     *,
     config: Config | None = None,
     working_directory: Path | None = None,
@@ -128,121 +154,79 @@ async def create_tool_runtime(
 
     cfg = config or Config()
     workspace = (working_directory or Path.cwd()).resolve()
+    services = ServiceRegistry()
 
-    task_manager: TaskManager | None = None
     subagent_manager: SubAgentManager | None = None
     mailbox: Mailbox | None = None
-    owns_task_manager = True
 
-    if shared_task_manager is not None:
-        task_manager = shared_task_manager
-        owns_task_manager = False
-    elif cfg.features.tasks:
-        data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
-        task_cfg = TaskManagerConfig(
-            data_dir=data_dir,
-            default_workspace=workspace,
-            allow_shell=cfg.allow_shell,
-            trust_mode=getattr(cfg, "trust_mode", False),
-            worker_count=1,
-        )
-        task_exec = _safe_task_executor()
-        task_manager = TaskManager(task_cfg, executor=task_exec)
-        await task_manager.start()
+    from deepseek_tui.capabilities.tasks import (
+        attach_task_legacy_bindings,
+        attach_task_mcp_bridge,
+        create_task_manager,
+    )
 
-    if cfg.features.subagents:
-        mailbox = Mailbox()
-        state_path = subagent_state_path or (workspace / ".deepseek" / "subagents.v1.json")
-        subagent_exec = _safe_subagent_executor()
-        max_agents = min(
-            20,
-            cfg.max_subagents or cfg.subagents.max_concurrent or 10,
-        )
-        subagent_manager = SubAgentManager(
-            workspace=workspace,
-            max_agents=max_agents,
-            state_path=state_path,
-            mailbox=mailbox,
-            executor=subagent_exec,
-            default_model=cfg.subagents.default_model or cfg.default_text_model or "deepseek-chat",
-        )
+    task_manager, owns_task_manager = await create_task_manager(
+        cfg,
+        services,
+        workspace=workspace,
+        task_data_dir=task_data_dir,
+        shared_task_manager=shared_task_manager,
+        executor_factory=_safe_task_executor,
+    )
 
-    mcp: McpManager | None = None
-    owns_mcp_manager = True
-    if mcp_manager is not None:
-        mcp = mcp_manager
-        owns_mcp_manager = False
-    elif cfg.features.mcp:
-        mcp = await _build_mcp_manager(cfg)
-    if mcp is not None and start_mcp:
-        await mcp.start_all(fail_on_required=True)
-    if task_manager is not None and mcp is not None:
-        task_manager._shared_mcp_manager = mcp  # noqa: SLF001 — executor reuse
+    from deepseek_tui.capabilities.subagents import create_subagent_manager
 
-    lsp: LspManager | None = None
-    if cfg.lsp.enabled:
-        lsp = LspManager(
-            LspConfig(
-                enabled=True,
-                poll_after_edit_ms=cfg.lsp.poll_after_edit_ms,
-                max_diagnostics_per_file=cfg.lsp.max_diagnostics_per_file,
-                include_warnings=cfg.lsp.include_warnings,
-                servers=dict(cfg.lsp.servers),
-            )
-        )
+    subagent_manager, mailbox = create_subagent_manager(
+        cfg,
+        services,
+        workspace=workspace,
+        state_path=subagent_state_path,
+        executor_factory=_safe_subagent_executor,
+    )
+
+    from deepseek_tui.capabilities.mcp import (
+        attach_mcp_legacy_bindings,
+        create_mcp_manager,
+    )
+
+    mcp, owns_mcp_manager = await create_mcp_manager(
+        cfg,
+        services,
+        provided_manager=mcp_manager,
+        start_mcp=start_mcp,
+    )
+    attach_task_mcp_bridge(task_manager, mcp)
+
+    from deepseek_tui.capabilities.lsp import (
+        attach_lsp_legacy_bindings,
+        create_lsp_manager,
+    )
+
+    lsp = create_lsp_manager(cfg, services)
 
     registry = build_default_registry(cfg, mode=mode)
     metadata: dict[str, Any] = {}
-    if mcp is not None:
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
+    attach_task_legacy_bindings(task_manager, metadata=metadata, services=services)
+    attach_mcp_legacy_bindings(mcp, metadata=metadata, services=services)
+    attach_lsp_legacy_bindings(lsp, metadata=metadata, services=services)
 
-        metadata[MCP_MANAGER_KEY] = mcp
-    if lsp is not None:
-        metadata[LSP_MANAGER_KEY] = lsp
+    from deepseek_tui.capabilities.automation import (
+        attach_automation_legacy_bindings,
+        create_automation_runtime,
+    )
 
-    automation_manager: AutomationManager | None = None
-    automation_cancel: asyncio.Event | None = None
-    automation_task: asyncio.Task[None] | None = None
-    if cfg.features.automations:
-        # Hard dependency: automations have no executor of their own —
-        # every fire ends up calling ``TaskManager.add_task``. Fail
-        # fast at construction time rather than letting the LLM call
-        # ``automation_run`` and discover the missing dependency at
-        # runtime. Mirrors Rust ``registry.rs::with_runtime_task_tools``
-        # which registers task + automation tools together.
-        if not cfg.features.tasks:
-            raise ValueError(
-                "features.automations requires features.tasks=True "
-                "(automations fire by enqueueing tasks)"
-            )
-        automation_root = (
-            automation_data_dir
-            if automation_data_dir is not None
-            else default_automations_dir()
-        )
-        automation_manager = AutomationManager.open(automation_root)
-        metadata[AUTOMATION_MANAGER_KEY] = automation_manager
-        # AutomationRunTool reaches the TaskManager through the same
-        # context.metadata bag — Rust does this through ``runtime``.
-        # The ``features.tasks`` guard above guarantees task_manager is
-        # not None here.
-        assert task_manager is not None
-        metadata["task_manager"] = task_manager
-        automation_cancel = asyncio.Event()
-        automation_task = asyncio.create_task(
-            run_scheduler_loop(
-                automation_manager,
-                task_manager,
-                automation_cancel,
-                AutomationSchedulerConfig(
-                    tick_interval_secs=automation_tick_interval_secs,
-                ),
-            ),
-            name="automation-scheduler",
-        )
-
-    if task_manager is not None:
-        metadata["task_manager"] = task_manager
+    automation_manager, automation_cancel, automation_task = await create_automation_runtime(
+        cfg,
+        services,
+        task_manager=task_manager,
+        automation_data_dir=automation_data_dir,
+        automation_tick_interval_secs=automation_tick_interval_secs,
+    )
+    attach_automation_legacy_bindings(
+        automation_manager,
+        metadata=metadata,
+        services=services,
+    )
 
     # Network policy — domain-level allow/deny for outbound HTTP
     network_decider = None
@@ -260,6 +244,7 @@ async def create_tool_runtime(
     context = ToolContext(
         working_directory=workspace,
         trust_mode=getattr(cfg, "trust_mode", False),
+        services=services,
         metadata=metadata,
         policy=policy,
         task_manager=task_manager,
@@ -325,19 +310,3 @@ def _safe_subagent_executor() -> Any:
     from deepseek_tui.tools.subagent.manager import _stub_executor
 
     return _stub_executor
-
-
-async def _build_mcp_manager(cfg: Config) -> McpManager:
-    """Load ``mcp_config_path`` and return an :class:`McpManager`.
-
-    Missing / malformed config → empty manager (best-effort, matching
-    Rust ``McpManager::default`` behavior when config is absent).
-    """
-    from deepseek_tui.mcp.config import load_mcp_config
-
-    try:
-        path = cfg.mcp_config_path.expanduser()
-        servers = load_mcp_config(path)
-    except (OSError, ValueError):
-        servers = []
-    return McpManager(servers, config_path=path)
