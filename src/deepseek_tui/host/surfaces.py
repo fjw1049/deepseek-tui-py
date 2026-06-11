@@ -102,3 +102,23 @@ class RuntimeSurfaceRegistry:
 
     def presenter_for(self, event_kind: str) -> EventPresenterContribution | None:
         return self._presenters.get(event_kind)
+
+
+def mount_surface_routes(router: object, registry: RuntimeSurfaceRegistry) -> None:
+    """Mount contributed runtime routes onto an isolated FastAPI router."""
+    for contribution in registry.routes():
+        router.add_api_route(  # type: ignore[attr-defined]
+            contribution.path,
+            contribution.handler,
+            methods=[contribution.method],
+            name=contribution.id,
+        )
+
+
+def build_surface_router(registry: RuntimeSurfaceRegistry) -> object:
+    """Build a router containing only contributed runtime surfaces."""
+    from fastapi import APIRouter
+
+    router = APIRouter()
+    mount_surface_routes(router, registry)
+    return router

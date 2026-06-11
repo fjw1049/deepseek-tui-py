@@ -24,6 +24,14 @@ class BeforeUserTurnContext:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnStartedContext:
+    thread_id: str
+    turn_id: str
+    metadata: dict[str, object]
+    services: object
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCompletionContext:
     thread_id: str
     turn_id: str
@@ -31,6 +39,7 @@ class TurnCompletionContext:
     usage: object | None
     metadata: dict[str, object]
     services: object
+    decorations: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +50,7 @@ class TurnFailureContext:
     usage: object | None
     metadata: dict[str, object]
     services: object
+    decorations: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +75,10 @@ class AfterToolContext:
 
 class BeforeUserTurnObserver(Protocol):
     async def before_user_turn(self, context: BeforeUserTurnContext) -> None: ...
+
+
+class TurnStartedObserver(Protocol):
+    async def on_turn_started(self, context: TurnStartedContext) -> None: ...
 
 
 class TurnCompletionObserver(Protocol):
@@ -127,6 +141,9 @@ class LifecycleRegistry:
     async def before_user_turn(self, context: BeforeUserTurnContext) -> None:
         await self._dispatch("before_user_turn", context)
 
+    async def on_turn_started(self, context: TurnStartedContext) -> None:
+        await self._dispatch("on_turn_started", context)
+
     async def on_turn_completed(self, context: TurnCompletionContext) -> None:
         await self._dispatch("on_turn_completed", context)
 
@@ -152,6 +169,7 @@ class FunctionLifecycleObserver:
     """Small adapter for tests and simple capability glue."""
 
     on_before_user_turn: Callable[[BeforeUserTurnContext], Awaitable[None]] | None = None
+    on_turn_started_cb: Callable[[TurnStartedContext], Awaitable[None]] | None = None
     on_turn_completed_cb: Callable[[TurnCompletionContext], Awaitable[None]] | None = None
     on_turn_failed_cb: Callable[[TurnFailureContext], Awaitable[None]] | None = None
     before_tool_cb: Callable[[BeforeToolContext], Awaitable[None]] | None = None
@@ -160,6 +178,10 @@ class FunctionLifecycleObserver:
     async def before_user_turn(self, context: BeforeUserTurnContext) -> None:
         if self.on_before_user_turn is not None:
             await self.on_before_user_turn(context)
+
+    async def on_turn_started(self, context: TurnStartedContext) -> None:
+        if self.on_turn_started_cb is not None:
+            await self.on_turn_started_cb(context)
 
     async def on_turn_completed(self, context: TurnCompletionContext) -> None:
         if self.on_turn_completed_cb is not None:

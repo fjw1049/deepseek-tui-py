@@ -14,6 +14,7 @@ from deepseek_tui.app_server.runtime_threads import (
 from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
 from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.goal.controller import GoalController
+from deepseek_tui.host.services import ServiceScope
 from deepseek_tui.tools.context import ToolContext
 
 
@@ -28,6 +29,7 @@ async def test_start_turn_rejects_stale_goal_follow_up(
         controller.current = None
         ctx = ToolContext(working_directory=workspace)
         ctx.metadata["runtime_thread_id"] = "thr_test"
+        ctx.services.add(GoalController, controller, owner="goal", scope=ServiceScope.ENGINE)
         return SimpleNamespace(
             goal_controller=controller,
             tool_context=ctx,

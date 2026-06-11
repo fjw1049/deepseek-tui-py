@@ -80,11 +80,16 @@ from deepseek_tui.execpolicy.approval_cache import (
 )
 from deepseek_tui.execpolicy.engine import ExecPolicyEngine
 from deepseek_tui.execpolicy.models import ApprovalDecision
+from deepseek_tui.host.lifecycle import (
+    AfterToolContext,
+    BeforeUserTurnContext,
+    LifecycleRegistry,
+    TurnCompletionContext,
+    TurnFailureContext,
+    TurnStartedContext,
+)
 from deepseek_tui.lsp import (
-    LSP_MANAGER_KEY,
     DiagnosticBlock,
-    LspManager,
-    edited_paths_for_tool,
     render_blocks,
 )
 from deepseek_tui.prompts import AppMode as _AppMode
@@ -314,21 +319,14 @@ class Engine:
         self.memory_thread_id: str | None = None
         self.memory_mode: str | None = None
         self.post_turn: object | None = None
+        self.lifecycle_registry = LifecycleRegistry()
         self._user_turn_index: int = 0
         self._curated_snapshot: str | None = None
         self._evolution_pipeline: object | None = None
         self._current_turn_evidence: object | None = None
-        from deepseek_tui.capabilities.hooks import (
-            attach_hook_legacy_bindings,
-            normalize_hook_executor,
-        )
+        from deepseek_tui.capabilities.hooks import normalize_hook_executor
 
         self.hook_executor = normalize_hook_executor(hook_executor)
-        attach_hook_legacy_bindings(
-            self.hook_executor,
-            self.tool_context.metadata,
-            self.tool_context.services,
-        )
         # Cycle / seam managers — instantiated but disabled by default. The
         # full Rust archive-and-replan logic lives in cycle_manager.py /
         # seam_manager.py; ``Engine`` keeps surface integration minimal:
@@ -355,24 +353,6 @@ class Engine:
         self._activity_coordinator = SessionActivityCoordinator(
             self, self.handle.try_emit
         )
-        from deepseek_tui.capabilities.goal import (
-            attach_goal_legacy_bindings,
-            create_goal_runtime,
-        )
-
-        goal_thread_id = str(self.tool_context.metadata.get("runtime_thread_id") or "default")
-        goal_runtime = create_goal_runtime(
-            self.tool_context.services,
-            workspace=self.tool_context.working_directory,
-            thread_id=goal_thread_id,
-        )
-        self.goal_controller = goal_runtime.controller
-        attach_goal_legacy_bindings(
-            goal_runtime,
-            metadata=self.tool_context.metadata,
-            services=self.tool_context.services,
-        )
-
     def sync_session(
         self,
         messages: list[Message],
@@ -389,9 +369,7 @@ class Engine:
         """Drop cached MCP tool descriptors so the next turn re-discovers."""
         self._mcp_tools_cache = None
 
-    @property
-    def mcp_manager(self):
-        """Access the McpManager from the tool runtime (if configured)."""
+    def _mcp_manager(self):
         from deepseek_tui.capabilities.mcp import mcp_manager_from_runtime_or_context
 
         return mcp_manager_from_runtime_or_context(
@@ -413,7 +391,7 @@ class Engine:
         profile = self.tool_profile or TOOL_PROFILE_FULL
         result, mcp_cache = build_mcp_augmented_tool_catalog(
             native_tools=list(native_tools),
-            mcp_manager=self.mcp_manager,
+            mcp_manager=self._mcp_manager(),
             cached_tools=self._mcp_tools_cache,
             mode=self.mode,
             profile=profile,
@@ -466,7 +444,7 @@ class Engine:
         )
 
     @classmethod
-    async def _create_legacy(
+    async def _materialize(
         cls,
         handle: EngineHandle,
         client: LLMClient,
@@ -482,6 +460,7 @@ class Engine:
         tool_runtime: object | None = None,
         start_mcp: bool | None = None,
         mcp_manager: object | None = None,
+        contributions: object | None = None,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
 
@@ -490,10 +469,19 @@ class Engine:
         tools can actually reach the managers at dispatch time.
         """
         from deepseek_tui.config.models import Config
+        from deepseek_tui.host.assembler import (
+            AssembledContributions,
+            collect_builtin_contributions,
+        )
         from deepseek_tui.skills import discover_in_workspace
         from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
 
         cfg = config if isinstance(config, Config) else Config()
+        assembled = (
+            contributions
+            if isinstance(contributions, AssembledContributions)
+            else collect_builtin_contributions(cfg)
+        )
         ws = working_directory or Path.cwd()
         from deepseek_tui.capabilities.hooks import create_hook_runtime
 
@@ -509,6 +497,7 @@ class Engine:
                 task_data_dir=task_data_dir,
                 start_mcp=mcp_flag,
                 mcp_manager=mcp_manager,  # type: ignore[arg-type]
+                contributions=assembled,
             )
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
@@ -542,108 +531,21 @@ class Engine:
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
-        # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
-        # and ``Config.seam_enabled`` once those fields exist; today they
-        # default to False so behavior is unchanged from the pre-batch state.
-        from deepseek_tui.capabilities.memory import (
-            attach_memory_legacy_bindings,
-            create_memory_runtime,
-        )
+        from deepseek_tui.host.engine_attach import EngineAttachRequest, attach_engine_capabilities
 
-        memory_runtime = await create_memory_runtime(
-            cfg,
-            client,
-            engine.tool_context.services,
-        )
-        engine.memory_enabled = memory_runtime.enabled
-        engine.memory_path = memory_runtime.path
-        engine.memory_mode = memory_runtime.mode
-        engine.memory_coordinator = memory_runtime.coordinator
-        attach_memory_legacy_bindings(
-            memory_runtime,
-            metadata=engine.tool_context.metadata,
-            services=engine.tool_context.services,
-        )
-        from deepseek_tui.capabilities.cycle import create_cycle_runtime
-
-        cycle_runtime = create_cycle_runtime(cfg, client=client)
-        engine.cycle_config = cycle_runtime.config
-        engine.seam_manager = cycle_runtime.seam_manager
-        engine._cycle_session_id = cycle_runtime.session_id
-        from deepseek_tui.capabilities.goal import rebind_goal_thread_if_local
-
-        rebind_goal_thread_if_local(
-            engine.goal_controller,
-            metadata=engine.tool_context.metadata,
-            thread_id=engine._cycle_session_id,
-        )
-        engine._cycle_started_at = cycle_runtime.started_at
-        engine.mode = mode
-        from deepseek_tui.execpolicy.sandbox import sync_execution_sandbox_policy
-
-        sync_execution_sandbox_policy(
-            engine.tool_context,
-            mode,
-            engine.tool_context.working_directory,
-        )
-        from deepseek_tui.tools.builder import wire_registry_client
-
-        wire_registry_client(
-            engine.tool_registry,
-            client,
-            root_model=engine.default_model,
-        )
-        if runtime.subagent_manager is not None:
-            from deepseek_tui.capabilities.subagents import (
-                attach_subagent_engine_bindings,
-            )
-
-            auto_approve = await engine.approval_handler.auto_approve_enabled()
-            attach_subagent_engine_bindings(
-                runtime.subagent_manager,
+        await attach_engine_capabilities(
+            EngineAttachRequest(
+                engine=engine,
                 config=cfg,
                 client=client,
-                model=default_model,
                 workspace=ws,
-                allow_shell=getattr(cfg, "allow_shell", True),
-                auto_approve=auto_approve,
-                task_manager=runtime.task_manager,
-                cancel_token=handle.cancel_event,
-                mailbox=runtime.mailbox,
-                completion_sink=engine._enqueue_subagent_completion,
+                mode=mode,
+                default_model=default_model,
+                handle=handle,
+                tool_runtime=runtime,
+                assembled=assembled,
             )
-
-        from deepseek_tui.capabilities.evolution import (
-            attach_evolution_legacy_bindings,
-            create_evolution_runtime,
         )
-
-        evolution_runtime = create_evolution_runtime(
-            cfg,
-            client,
-            engine.tool_context.services,
-            workspace=ws,
-            emit_event=engine.handle.emit,
-        )
-        engine._curated_snapshot = evolution_runtime.curated_snapshot
-        engine._evolution_pipeline = evolution_runtime.pipeline
-        attach_evolution_legacy_bindings(
-            evolution_runtime,
-            metadata=engine.tool_context.metadata,
-            services=engine.tool_context.services,
-        )
-
-        from deepseek_tui.capabilities.post_turn import (
-            build_post_turn_pipelines,
-            start_post_turn_orchestrator,
-        )
-
-        pipelines = build_post_turn_pipelines(
-            cfg,
-            memory_coordinator=engine.memory_coordinator,
-            evolution_pipeline=evolution_runtime.pipeline,
-        )
-        engine.post_turn = await start_post_turn_orchestrator(cfg, pipelines)
 
         return engine
 
@@ -664,6 +566,55 @@ class Engine:
             self.memory_coordinator = None
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
+
+    async def _notify_goal_turn_completed(
+        self,
+        *,
+        turn_id: str,
+        usage: object | None,
+    ) -> object:
+        from deepseek_tui.capabilities.goal import GOAL_TURN_RESULT_DECORATION
+
+        context = TurnCompletionContext(
+            thread_id=self._resolve_memory_thread_id(),
+            turn_id=turn_id,
+            success=True,
+            usage=usage,
+            metadata=self.tool_context.metadata,
+            services=self.tool_context.services,
+        )
+        await self.lifecycle_registry.on_turn_completed(context)
+        return context.decorations[GOAL_TURN_RESULT_DECORATION]
+
+    async def _notify_goal_turn_started(self, *, turn_id: str) -> None:
+        await self.lifecycle_registry.on_turn_started(
+            TurnStartedContext(
+                thread_id=self._resolve_memory_thread_id(),
+                turn_id=turn_id,
+                metadata=self.tool_context.metadata,
+                services=self.tool_context.services,
+            )
+        )
+
+    async def _notify_goal_turn_failed(
+        self,
+        *,
+        turn_id: str,
+        reason: str,
+        usage: object | None = None,
+    ) -> object:
+        from deepseek_tui.capabilities.goal import GOAL_TURN_RESULT_DECORATION
+
+        context = TurnFailureContext(
+            thread_id=self._resolve_memory_thread_id(),
+            turn_id=turn_id,
+            reason=reason,
+            usage=usage,
+            metadata=self.tool_context.metadata,
+            services=self.tool_context.services,
+        )
+        await self.lifecycle_registry.on_turn_failed(context)
+        return context.decorations[GOAL_TURN_RESULT_DECORATION]
 
     def _resolve_memory_thread_id(self) -> str:
         from deepseek_tui.capabilities.memory import resolve_memory_thread_id
@@ -778,6 +729,7 @@ class Engine:
             live_evidence_factory = _live_evidence_factory
         publish_turn_evidence(
             metadata=self.tool_context.metadata,
+            services=self.tool_context.services,
             pipeline=self._evolution_pipeline,
             evidence=evidence,
             live_evidence_factory=live_evidence_factory,
@@ -1017,11 +969,9 @@ class Engine:
                         logger.info("engine_turn_task_cancelled")
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("engine_turn_task_failed")
-                        from deepseek_tui.capabilities.goal import fail_goal_turn
-
-                        fail_goal_turn(
-                            self.goal_controller,
-                            f"engine_error: {exc}",
+                        await self._notify_goal_turn_failed(
+                            turn_id="engine",
+                            reason=f"engine_error: {exc}",
                         )
                         await self.handle.emit(
                             ErrorEvent(
@@ -1048,11 +998,9 @@ class Engine:
                             logger.info("engine_turn_task_cancelled")
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("engine_turn_task_failed")
-                            from deepseek_tui.capabilities.goal import fail_goal_turn
-
-                            fail_goal_turn(
-                                self.goal_controller,
-                                f"engine_error: {exc}",
+                            await self._notify_goal_turn_failed(
+                                turn_id="engine",
+                                reason=f"engine_error: {exc}",
                             )
                             await self.handle.emit(
                                 ErrorEvent(
@@ -1143,9 +1091,7 @@ class Engine:
                 # scoped to this turn, not to the engine run loop.
                 reason = self.handle.cancel_reason or "user_cancelled"
                 logger.info("turn_hard_cancelled reason=%s", reason)
-                from deepseek_tui.capabilities.goal import fail_goal_turn
-
-                fail_goal_turn(self.goal_controller, reason)
+                await self._notify_goal_turn_failed(turn_id=turn_id, reason=reason)
                 await self.handle.emit(TurnCancelledEvent(reason=reason))
             finally:
                 self.handle._mark_turn_idle()
@@ -1176,13 +1122,10 @@ class Engine:
         )
         if self.tool_profile == TOOL_PROFILE_FULL:
             self.tool_profile = None
-        coordinator = self.memory_coordinator
         from deepseek_tui.capabilities.memory import (
             MEMORY_TURN_CONTEXT_DECORATION,
             MemoryTurnContext,
-            memory_before_turn_observer,
         )
-        from deepseek_tui.host.lifecycle import BeforeUserTurnContext, LifecycleRegistry
 
         before_turn = BeforeUserTurnContext(
             thread_id=self._resolve_memory_thread_id(),
@@ -1192,19 +1135,7 @@ class Engine:
             metadata=self.tool_context.metadata,
             services=self.tool_context.services,
         )
-        lifecycle = LifecycleRegistry()
-        lifecycle.add(
-            id="memory.before_turn",
-            owner="memory",
-            order=100,
-            observer=memory_before_turn_observer(
-                coordinator=coordinator,
-                memory_thread_id=self.memory_thread_id,
-                cycle_session_id=self._cycle_session_id,
-                memory_mode=self.memory_mode,
-            ),
-        )
-        await lifecycle.before_user_turn(before_turn)
+        await self.lifecycle_registry.before_user_turn(before_turn)
         memory_turn = cast(
             MemoryTurnContext,
             before_turn.decorations[MEMORY_TURN_CONTEXT_DECORATION],
@@ -1269,9 +1200,7 @@ class Engine:
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
-            from deepseek_tui.capabilities.goal import start_goal_turn
-
-            start_goal_turn(self.goal_controller)
+            await self._notify_goal_turn_started(turn_id=turn_id)
             self._save_crash_checkpoint(
                 working_messages,
                 model=op.model or self.default_model,
@@ -1321,11 +1250,9 @@ class Engine:
                         reason=self.handle.cancel_reason or "user_cancelled"
                     )
                 )
-                from deepseek_tui.capabilities.goal import fail_goal_turn
-
-                fail_goal_turn(
-                    self.goal_controller,
-                    self.handle.cancel_reason or "user_cancelled"
+                await self._notify_goal_turn_failed(
+                    turn_id=turn_id,
+                    reason=self.handle.cancel_reason or "user_cancelled",
                 )
                 return
 
@@ -1400,17 +1327,19 @@ class Engine:
                 running_subagents = self.tool_context.subagent_manager.running_count()
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
-            from deepseek_tui.capabilities.goal import (
-                finish_goal_turn,
-                should_dispatch_goal_follow_up,
-            )
+            from deepseek_tui.capabilities.goal import should_dispatch_goal_follow_up
 
-            goal_result = finish_goal_turn(
-                self.goal_controller,
-                turn_ok=turn_ok,
-                usage=result.usage,
-                failure_reason=result.outcome.value,
-            )
+            if turn_ok:
+                goal_result = await self._notify_goal_turn_completed(
+                    turn_id=turn_id,
+                    usage=result.usage,
+                )
+            else:
+                goal_result = await self._notify_goal_turn_failed(
+                    turn_id=turn_id,
+                    reason=result.outcome.value,
+                    usage=result.usage,
+                )
             if goal_result.steer:
                 await self.handle.steer(goal_result.steer)
             await self.handle.emit(
@@ -1453,7 +1382,7 @@ class Engine:
                 await run_post_turn_after_turn(
                     post_turn=self.post_turn,
                     evidence=self._current_turn_evidence,
-                    memory_coordinator=coordinator,
+                    memory_coordinator=self.memory_coordinator,
                 )
         finally:
             self.handle.clear_response_id()
@@ -1954,10 +1883,6 @@ class Engine:
                             ),
                         )
                     )
-                    if result.success:
-                        await self._run_post_edit_lsp_hook(
-                            tool_call.name, tool_call.arguments
-                        )
                     from deepseek_tui.tools.spillover import apply_spillover
 
                     result = apply_spillover(result, tool_call.id)
@@ -2008,18 +1933,8 @@ class Engine:
         tool_call: ToolCall,
         result: ToolResult,
     ) -> None:
-        from deepseek_tui.capabilities.post_turn import post_turn_tool_observer
-        from deepseek_tui.host.lifecycle import AfterToolContext, LifecycleRegistry
-
         arguments = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        lifecycle = LifecycleRegistry()
-        lifecycle.add(
-            id="post_turn.after_tool",
-            owner="post_turn",
-            order=100,
-            observer=post_turn_tool_observer(self.post_turn),
-        )
-        await lifecycle.after_tool(
+        await self.lifecycle_registry.after_tool(
             AfterToolContext(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
@@ -2168,10 +2083,6 @@ class Engine:
                         ),
                     )
                 )
-                if result.success:
-                    await self._run_post_edit_lsp_hook(
-                        tool_call.name, tool_call.arguments
-                    )
                 from deepseek_tui.tools.spillover import apply_spillover
 
                 result = apply_spillover(result, tool_call.id)
@@ -2412,7 +2323,7 @@ class Engine:
                 if denied:
                     return None
             return await execute_mcp_tool(
-                self.mcp_manager,
+                self._mcp_manager(),
                 tool_name,
                 tool_call.arguments,
             )
@@ -2469,7 +2380,7 @@ class Engine:
         """Dispatch a tool call to an external MCP server."""
         from deepseek_tui.capabilities.mcp import execute_mcp_tool
 
-        return await execute_mcp_tool(self.mcp_manager, name, arguments)
+        return await execute_mcp_tool(self._mcp_manager(), name, arguments)
 
     async def _handle_approval_flow(
         self,
@@ -2936,53 +2847,6 @@ class Engine:
         import json as _json
 
         return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
-
-    # --- Stage 4.4 post-edit LSP hooks --------------------------------
-
-    def _get_lsp_manager(self) -> LspManager | None:
-        """Pull LspManager from ToolContext.metadata (set by ToolRuntime).
-
-        Duck-typed for testability — the engine only needs ``config``
-        and ``diagnostics_for``, so any object exposing that shape works.
-        """
-        manager = self.tool_context.metadata.get(LSP_MANAGER_KEY)
-        if manager is None:
-            return None
-        if not hasattr(manager, "diagnostics_for") or not hasattr(manager, "config"):
-            return None
-        return manager  # type: ignore[no-any-return]
-
-    async def _run_post_edit_lsp_hook(
-        self, tool_name: str, tool_input: dict[str, object]
-    ) -> None:
-        """Queue diagnostics for files the tool just edited.
-
-        Mirrors Rust ``Engine::run_post_edit_lsp_hook`` (lsp_hooks.rs:80-103).
-        Silent failure — a dead LSP server must never block the agent.
-        """
-        manager = self._get_lsp_manager()
-        if manager is None or not manager.config.enabled:
-            return
-        paths = edited_paths_for_tool(tool_name, tool_input)
-        if not paths:
-            return
-        logger.debug(
-            "lsp_post_edit_hook tool=%s paths=%d", tool_name, len(paths)
-        )
-        workspace = self.tool_context.working_directory
-        for path in paths:
-            absolute = path if path.is_absolute() else workspace / path
-            try:
-                content = absolute.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            try:
-                blocks = await manager.diagnostics_for(
-                    absolute, content, self.turn_counter
-                )
-            except Exception:  # noqa: BLE001 — LSP failure is silent
-                continue
-            self.pending_lsp_blocks.extend(blocks)
 
     def _flush_pending_lsp_diagnostics(self, messages: list[Message]) -> None:
         """Render pending blocks into a synthetic user message.

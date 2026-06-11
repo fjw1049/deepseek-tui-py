@@ -18,20 +18,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     return assemble_registry_only(config or Config(), mode=mode)
 
 
-def _build_default_registry_legacy(
-    config: Config | None = None, *, mode: str = "agent"
-) -> ToolRegistry:
-    from deepseek_tui.capabilities.toolpacks import default_tool_packs
-
-    cfg = config or Config()
-    registry = ToolRegistry()
-    for pack in default_tool_packs():
-        for tool in pack.tools(cfg, mode=mode):
-            registry.register(tool)
-
-    return registry
-
-
 def build_subagent_registry(
     config: Config | None = None,
     *,

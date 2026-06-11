@@ -8,6 +8,7 @@ import pytest
 from deepseek_tui.memory.native.provider import NativeMemoryProvider
 from deepseek_tui.tools.base import ToolError
 from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.host.services import ServiceScope
 from deepseek_tui.tools.memory_tools import (
     MEMORY_PROVIDER_KEY,
     MEMORY_SEARCH_CALLS_KEY,
@@ -44,7 +45,12 @@ async def test_memory_search_tool_uses_provider(tmp_path: Path) -> None:
             confidence=1.0,
         )
         ctx = ToolContext(working_directory=Path("/proj"))
-        ctx.metadata[MEMORY_PROVIDER_KEY] = provider
+        ctx.services.add_named(
+            MEMORY_PROVIDER_KEY,
+            provider,
+            owner="test",
+            scope=ServiceScope.ENGINE,
+        )
         ctx.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
 
         result = await MemorySearchTool().execute({"query": "pytest"}, ctx)
@@ -61,7 +67,12 @@ async def test_combined_search_call_limit(tmp_path: Path) -> None:
     await provider.start()
     try:
         ctx = ToolContext(working_directory=Path("/proj"))
-        ctx.metadata[MEMORY_PROVIDER_KEY] = provider
+        ctx.services.add_named(
+            MEMORY_PROVIDER_KEY,
+            provider,
+            owner="test",
+            scope=ServiceScope.ENGINE,
+        )
         ctx.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
         tool_m = MemorySearchTool()
         tool_c = ConversationSearchTool()
@@ -93,7 +104,12 @@ async def test_conversation_search_defaults_to_workspace_scope(tmp_path: Path) -
             workspace="/proj",
         )
         ctx = ToolContext(working_directory=Path("/proj"))
-        ctx.metadata[MEMORY_PROVIDER_KEY] = provider
+        ctx.services.add_named(
+            MEMORY_PROVIDER_KEY,
+            provider,
+            owner="test",
+            scope=ServiceScope.ENGINE,
+        )
         ctx.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
         ctx.metadata["runtime_thread_id"] = "thread_a"
 

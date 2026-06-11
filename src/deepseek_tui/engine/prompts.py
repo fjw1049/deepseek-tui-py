@@ -11,7 +11,6 @@ from deepseek_tui.capabilities.core_prompt import (
     render_environment_block as _render_environment_block,
 )
 from deepseek_tui.host.prompts import (
-    PromptContributor,
     PromptContributorContext,
     append_prompt_contributions,
 )
@@ -85,24 +84,10 @@ def build_system_prompt(
         evolution_enabled=evolution_enabled,
         workflow_guidelines=workflow_guidelines,
     )
+    from deepseek_tui.host.assembler import resolve_assembly_prompt_contributors
+
     return append_prompt_contributions(
         compose_prompt(mode, personality),
         context,
-        _default_prompt_contributors(),
+        resolve_assembly_prompt_contributors(),
     )
-
-
-def _default_prompt_contributors() -> list[PromptContributor]:
-    from deepseek_tui.capabilities.core_prompt import core_prompt_contributors
-    from deepseek_tui.capabilities.evolution import evolution_prompt_contributors
-    from deepseek_tui.capabilities.memory import memory_prompt_contributors
-    from deepseek_tui.capabilities.skills import skills_prompt_contributors
-    from deepseek_tui.capabilities.workflow import workflow_prompt_contributors
-
-    return [
-        *core_prompt_contributors(),
-        *evolution_prompt_contributors(),
-        *memory_prompt_contributors(),
-        *skills_prompt_contributors(),
-        *workflow_prompt_contributors(),
-    ]

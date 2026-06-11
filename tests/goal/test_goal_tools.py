@@ -5,7 +5,8 @@ import json
 import pytest
 
 from deepseek_tui.goal.controller import GoalController
-from deepseek_tui.goal.tools import GOAL_CONTROLLER_KEY, CreateGoalTool, GetGoalTool, UpdateGoalTool
+from deepseek_tui.goal.tools import CreateGoalTool, GetGoalTool, UpdateGoalTool
+from deepseek_tui.host.services import ServiceScope
 from deepseek_tui.tools.builder import build_default_registry
 from deepseek_tui.tools.context import ToolContext
 
@@ -13,9 +14,12 @@ from deepseek_tui.tools.context import ToolContext
 @pytest.mark.asyncio
 async def test_goal_tools_share_attached_controller(tmp_path) -> None:
     controller = GoalController(tmp_path, "thread-a")
-    context = ToolContext(
-        working_directory=tmp_path,
-        metadata={GOAL_CONTROLLER_KEY: controller},
+    context = ToolContext(working_directory=tmp_path)
+    context.services.add(
+        GoalController,
+        controller,
+        owner="test",
+        scope=ServiceScope.ENGINE,
     )
 
     create = await CreateGoalTool().execute({"objective": "finish tests"}, context)

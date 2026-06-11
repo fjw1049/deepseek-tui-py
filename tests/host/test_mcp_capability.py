@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from deepseek_tui.capabilities.mcp import (
-    attach_mcp_legacy_bindings,
+    attach_mcp_bindings,
     build_mcp_augmented_tool_catalog,
     create_mcp_manager,
     execute_mcp_tool,
@@ -61,14 +61,12 @@ async def test_mcp_capability_uses_provided_manager_without_ownership() -> None:
     assert services.require(McpManager) is provided
 
 
-def test_mcp_capability_registers_legacy_bindings() -> None:
+def test_mcp_capability_registers_service_bindings() -> None:
     services = ServiceRegistry()
-    metadata: dict[str, object] = {}
     manager = McpManager([])
 
-    attach_mcp_legacy_bindings(manager, metadata=metadata, services=services)
+    attach_mcp_bindings(manager, services=services)
 
-    assert metadata[MCP_MANAGER_KEY] is manager
     assert services.require_named(MCP_MANAGER_KEY) is manager
 
 

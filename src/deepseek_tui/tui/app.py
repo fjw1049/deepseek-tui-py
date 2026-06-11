@@ -337,7 +337,9 @@ class DeepSeekTUI(App[None]):
             stable_id = fork_id
         else:
             stable_id = source_id
-        controller = getattr(self._engine, "goal_controller", None)
+        from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+        controller = goal_controller_from_engine(self._engine)
         if controller is not None and hasattr(controller, "rebind"):
             controller.rebind(thread_id=stable_id)
         self._engine._cycle_session_id = stable_id

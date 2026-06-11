@@ -168,14 +168,13 @@ def test_workflow_tool_bindings_are_scoped(tmp_path: Path) -> None:
         tool_call_id="tool-1",
         emit=lambda event: not emitted.append(event),
     ):
-        assert context.metadata["workflow_tool_call_id"] == "tool-1"
-        assert callable(context.metadata["workflow_emit"])
-        assert callable(context.metadata["workflow_status_cb"])
+        assert context.tool_execution is not None
+        assert context.tool_execution.workflow is not None
+        assert context.tool_execution.workflow.tool_call_id == "tool-1"
+        assert callable(context.tool_execution.workflow.emit_progress)
+        assert callable(context.tool_execution.workflow.emit_status)
 
-    assert "engine_cancel_event" not in context.metadata
-    assert "workflow_tool_call_id" not in context.metadata
-    assert "workflow_emit" not in context.metadata
-    assert "workflow_status_cb" not in context.metadata
+    assert context.tool_execution is None
 
 
 def test_rlm_tool_bindings_are_scoped(tmp_path: Path) -> None:
@@ -183,11 +182,13 @@ def test_rlm_tool_bindings_are_scoped(tmp_path: Path) -> None:
     emitted: list[object] = []
 
     with rlm_tool_bindings(context, emit=lambda event: not emitted.append(event)):
-        callback = context.metadata["rlm_progress_cb"]
+        assert context.tool_execution is not None
+        assert context.tool_execution.rlm is not None
+        callback = context.tool_execution.rlm.on_progress
         assert callable(callback)
         callback(1, "summary", 2)
 
-    assert "rlm_progress_cb" not in context.metadata
+    assert context.tool_execution is None
     assert len(emitted) == 1
     assert emitted[0].iteration == 1
     assert emitted[0].summary == "summary"

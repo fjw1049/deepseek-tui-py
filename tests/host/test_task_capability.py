@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.capabilities.tasks import (
-    attach_task_legacy_bindings,
+    attach_task_bindings,
     attach_task_mcp_bridge,
     create_task_manager,
     shutdown_task_manager,
@@ -110,15 +110,13 @@ async def test_task_capability_creates_and_starts_owned_manager(tmp_path: Path) 
             await manager.shutdown()
 
 
-def test_task_capability_registers_legacy_bindings(tmp_path: Path) -> None:
+def test_task_capability_registers_named_service(tmp_path: Path) -> None:
     services = ServiceRegistry()
-    metadata: dict[str, object] = {}
     manager = _task_manager(tmp_path)
     services.add(TaskManager, manager, owner="tasks", scope=ServiceScope.PROCESS)
 
-    attach_task_legacy_bindings(manager, metadata=metadata, services=services)
+    attach_task_bindings(manager, services=services)
 
-    assert metadata["task_manager"] is manager
     assert services.require_named("task_manager") is manager
 
 

@@ -69,10 +69,34 @@ def create_evolution_runtime(
     )
 
 
-def attach_evolution_legacy_bindings(
+def attach_engine_evolution(
+    engine: object,
+    config: Config,
+    client: LLMClient,
+    *,
+    workspace: Path,
+    emit_event: EmitEvent | None,
+) -> EvolutionRuntime:
+    """Wire evolution runtime onto a materialized engine."""
+    evolution_runtime = create_evolution_runtime(
+        config,
+        client,
+        engine.tool_context.services,  # type: ignore[attr-defined]
+        workspace=workspace,
+        emit_event=emit_event,
+    )
+    engine._curated_snapshot = evolution_runtime.curated_snapshot  # type: ignore[attr-defined]
+    engine._evolution_pipeline = evolution_runtime.pipeline  # type: ignore[attr-defined]
+    attach_evolution_bindings(
+        evolution_runtime,
+        services=engine.tool_context.services,  # type: ignore[attr-defined]
+    )
+    return evolution_runtime
+
+
+def attach_evolution_bindings(
     runtime: EvolutionRuntime,
     *,
-    metadata: dict[str, object],
     services: ServiceRegistry,
 ) -> None:
     pipeline = runtime.pipeline
@@ -85,21 +109,19 @@ def attach_evolution_legacy_bindings(
     )
     _add_named_if_missing(services, SKILL_STORE_KEY, pipeline.skill_store)
     _add_named_if_missing(services, EVOLUTION_LEDGER_KEY, pipeline.ledger)
-    metadata[CURATED_MEMORY_STORE_KEY] = pipeline.curated_store
-    metadata[SKILL_STORE_KEY] = pipeline.skill_store
-    metadata[EVOLUTION_LEDGER_KEY] = pipeline.ledger
 
 
 def publish_turn_evidence(
     *,
     metadata: dict[str, Any],
+    services: ServiceRegistry | None = None,
     pipeline: object | None,
     evidence: object,
     live_evidence_factory: TurnEvidenceFactory | None,
     final: bool,
     thread_id: str,
 ) -> None:
-    if EVOLUTION_LEDGER_KEY not in metadata:
+    if services is None or services.optional_named(EVOLUTION_LEDGER_KEY) is None:
         return
     if final:
         metadata[TURN_EVIDENCE_KEY] = evidence
@@ -118,6 +140,10 @@ def evolution_record_to_dict(record: object) -> dict[str, object]:
     if is_dataclass(record) and not isinstance(record, type):
         return asdict(record)
     return {"repr": repr(record)}
+
+
+def evolution_action_response(record: object) -> dict[str, object]:
+    return {"ok": True, "record": evolution_record_to_dict(record)}
 
 
 def evolution_decision_from_record_status(status: str) -> str:
@@ -182,6 +208,36 @@ def _add_named_if_missing(
         value,
         owner="evolution",
         scope=ServiceScope.ENGINE,
+    )
+
+
+def contribute_runtime_surfaces(registry: object) -> None:
+    from deepseek_tui.app_server.runtime_api.routes.evolution import (
+        approve_evolution,
+        list_pending_evolution,
+        reject_evolution,
+    )
+
+    registry.add_route(  # type: ignore[attr-defined]
+        id="evolution.list_pending",
+        owner="evolution",
+        method="GET",
+        path="/v1/evolution/pending",
+        handler=list_pending_evolution,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="evolution.approve",
+        owner="evolution",
+        method="POST",
+        path="/v1/evolution/{record_id}/approve",
+        handler=approve_evolution,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="evolution.reject",
+        owner="evolution",
+        method="POST",
+        path="/v1/evolution/{record_id}/reject",
+        handler=reject_evolution,
     )
 
 

@@ -11,7 +11,7 @@ from deepseek_tui.capabilities.cycle import (
     create_cycle_runtime,
 )
 from deepseek_tui.capabilities.hooks import (
-    attach_hook_legacy_bindings,
+    attach_hook_bindings,
     create_hook_runtime,
 )
 from deepseek_tui.capabilities.post_turn import (
@@ -87,11 +87,11 @@ def test_hook_capability_attaches_dispatcher_and_legacy_binding(tmp_path: Path) 
     metadata: dict[str, object] = {}
     services = ServiceRegistry()
 
-    attach_hook_legacy_bindings(runtime, metadata, services)
+    attach_hook_bindings(runtime, services)
 
     assert handle.hooks is not None
     assert isinstance(runtime.executor, HookExecutor)
-    assert metadata["hook_executor"] is runtime.executor
+    assert "hook_executor" not in metadata
     assert services.require(HookExecutor) is runtime.executor
     assert services.optional_named("hook_executor") is runtime.executor
 

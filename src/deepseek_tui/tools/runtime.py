@@ -6,7 +6,7 @@ fully-operational ToolContext with:
 
 - TaskManager (Stage 3.1) started and attached
 - SubAgentManager (Stage 3.2) attached with its Mailbox
-- McpManager (Stage 4.3) attached via ``ToolContext.metadata`` so the
+- McpManager (Stage 4.3) registered on ``ToolContext.services`` so the
   mcp_tools dispatchers can reach it
 - AutomationManager + scheduler loop (2026-05-15) attached when
   ``features.automations`` is enabled
@@ -66,6 +66,7 @@ class ToolRuntime:
         await self.shutdown()
 
     async def shutdown(self) -> None:
+        """Host shutdown coordinator for process-scoped tool runtime managers."""
         from deepseek_tui.capabilities.automation import stop_automation_runtime
         from deepseek_tui.capabilities.lsp import shutdown_lsp_manager
         from deepseek_tui.capabilities.mcp import shutdown_mcp_manager
@@ -105,6 +106,7 @@ async def create_tool_runtime(
     automation_data_dir: Path | None = None,
     automation_tick_interval_secs: float = 15.0,
     shared_task_manager: TaskManager | None = None,
+    contributions: object | None = None,
 ) -> ToolRuntime:
     """Build a fully-wired :class:`ToolRuntime` through host assembly."""
     from deepseek_tui.host.assembler import AssemblyRequest, assemble_tool_runtime
@@ -122,11 +124,12 @@ async def create_tool_runtime(
             automation_data_dir=automation_data_dir,
             automation_tick_interval_secs=automation_tick_interval_secs,
             shared_task_manager=shared_task_manager,
+            contributions=contributions,  # type: ignore[arg-type]
         )
     )
 
 
-async def _create_tool_runtime_legacy(
+async def materialize_tool_runtime(
     *,
     config: Config | None = None,
     working_directory: Path | None = None,
@@ -139,8 +142,9 @@ async def _create_tool_runtime_legacy(
     automation_data_dir: Path | None = None,
     automation_tick_interval_secs: float = 15.0,
     shared_task_manager: TaskManager | None = None,
+    contributions: object | None = None,
 ) -> ToolRuntime:
-    """Build a fully-wired :class:`ToolRuntime`.
+    """Build a fully-wired :class:`ToolRuntime` from assembled contributions.
 
     - ``config.features.tasks`` gates TaskManager construction + startup
     - ``config.features.subagents`` gates SubAgentManager construction
@@ -150,17 +154,26 @@ async def _create_tool_runtime_legacy(
     - policy is attached verbatim (caller may build one via
       ``execpolicy.Policy.default()``)
     """
-    from deepseek_tui.tools.builder import build_default_registry
+    from deepseek_tui.host.assembler import (
+        AssembledContributions,
+        build_tool_registry_from_contributions,
+        collect_builtin_contributions,
+    )
 
     cfg = config or Config()
     workspace = (working_directory or Path.cwd()).resolve()
     services = ServiceRegistry()
+    assembled = (
+        contributions
+        if isinstance(contributions, AssembledContributions)
+        else collect_builtin_contributions(cfg)
+    )
 
     subagent_manager: SubAgentManager | None = None
     mailbox: Mailbox | None = None
 
     from deepseek_tui.capabilities.tasks import (
-        attach_task_legacy_bindings,
+        attach_task_bindings,
         attach_task_mcp_bridge,
         create_task_manager,
     )
@@ -185,7 +198,7 @@ async def _create_tool_runtime_legacy(
     )
 
     from deepseek_tui.capabilities.mcp import (
-        attach_mcp_legacy_bindings,
+        attach_mcp_bindings,
         create_mcp_manager,
     )
 
@@ -198,20 +211,19 @@ async def _create_tool_runtime_legacy(
     attach_task_mcp_bridge(task_manager, mcp)
 
     from deepseek_tui.capabilities.lsp import (
-        attach_lsp_legacy_bindings,
+        attach_lsp_bindings,
         create_lsp_manager,
     )
 
     lsp = create_lsp_manager(cfg, services)
 
-    registry = build_default_registry(cfg, mode=mode)
-    metadata: dict[str, Any] = {}
-    attach_task_legacy_bindings(task_manager, metadata=metadata, services=services)
-    attach_mcp_legacy_bindings(mcp, metadata=metadata, services=services)
-    attach_lsp_legacy_bindings(lsp, metadata=metadata, services=services)
+    registry = build_tool_registry_from_contributions(assembled, cfg, mode=mode)
+    attach_task_bindings(task_manager, services=services)
+    attach_mcp_bindings(mcp, services=services)
+    attach_lsp_bindings(lsp, services=services)
 
     from deepseek_tui.capabilities.automation import (
-        attach_automation_legacy_bindings,
+        attach_automation_bindings,
         create_automation_runtime,
     )
 
@@ -222,11 +234,7 @@ async def _create_tool_runtime_legacy(
         automation_data_dir=automation_data_dir,
         automation_tick_interval_secs=automation_tick_interval_secs,
     )
-    attach_automation_legacy_bindings(
-        automation_manager,
-        metadata=metadata,
-        services=services,
-    )
+    attach_automation_bindings(automation_manager, services=services)
 
     # Network policy — domain-level allow/deny for outbound HTTP
     network_decider = None
@@ -245,7 +253,6 @@ async def _create_tool_runtime_legacy(
         working_directory=workspace,
         trust_mode=getattr(cfg, "trust_mode", False),
         services=services,
-        metadata=metadata,
         policy=policy,
         task_manager=task_manager,
         subagent_manager=subagent_manager,

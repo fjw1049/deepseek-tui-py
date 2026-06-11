@@ -14,7 +14,9 @@ from deepseek_tui.evolution.constants import (
 )
 from deepseek_tui.evolution.pipeline import build_evolution_pipeline
 from deepseek_tui.post_turn.evidence import TurnEvidence
+from deepseek_tui.evolution.constants import SKILL_STORE_KEY
 from deepseek_tui.tools.context import ToolContext
+from .service_context import add_named_service
 from deepseek_tui.tools.memory_curate_tool import MemoryCurateTool
 from deepseek_tui.tools.skill_manage_tool import SkillManageTool
 
@@ -44,8 +46,8 @@ async def test_memory_curate_end_to_end_via_tool(tmp_path: Path) -> None:
         turn_id="turn-1",
     )
     ctx = ToolContext(working_directory=tmp_path)
-    ctx.metadata[CURATED_MEMORY_STORE_KEY] = store
-    ctx.metadata[EVOLUTION_LEDGER_KEY] = ledger
+    add_named_service(ctx, CURATED_MEMORY_STORE_KEY, store)
+    add_named_service(ctx, EVOLUTION_LEDGER_KEY, ledger)
     ctx.metadata[TURN_EVIDENCE_KEY] = evidence
 
     tool = MemoryCurateTool()
@@ -83,12 +85,10 @@ async def test_skill_manage_patch_supporting_file_via_tool(tmp_path: Path) -> No
         turn_id="turn-2",
     )
     ctx = ToolContext(working_directory=tmp_path)
-    ctx.metadata[CURATED_MEMORY_STORE_KEY] = pipeline.curated_store
-    ctx.metadata[EVOLUTION_LEDGER_KEY] = ledger
+    add_named_service(ctx, CURATED_MEMORY_STORE_KEY, pipeline.curated_store)
+    add_named_service(ctx, EVOLUTION_LEDGER_KEY, ledger)
+    add_named_service(ctx, SKILL_STORE_KEY, store)
     ctx.metadata[TURN_EVIDENCE_KEY] = evidence
-    from deepseek_tui.evolution.constants import SKILL_STORE_KEY
-
-    ctx.metadata[SKILL_STORE_KEY] = store
 
     created = store.create("flow-skill", _SKILL)
     assert created.ok

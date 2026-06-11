@@ -971,10 +971,6 @@ def _task_manager_from_context(context: ToolContext) -> TaskManager | None:
         raw = context.services.optional_named("task_manager")
         if isinstance(raw, TaskManager):
             manager = raw
-    if manager is None:
-        raw = context.metadata.get("task_manager")
-        if isinstance(raw, TaskManager):
-            manager = raw
     return manager
 
 

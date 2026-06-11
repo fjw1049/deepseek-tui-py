@@ -15,6 +15,19 @@ from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
 
 logger = logging.getLogger(__name__)
 
+MCP_PRELOAD_DISABLED_STATUS: dict[str, Any] = {
+    "phase": "disabled",
+    "warming": False,
+    "ready": True,
+    "enabled_servers": 0,
+    "connected_servers": 0,
+    "tools_count": 0,
+    "from_disk_cache": False,
+    "started_at_ms": None,
+    "completed_at_ms": None,
+    "error": None,
+}
+
 
 async def create_mcp_manager(
     config: Config,
@@ -39,16 +52,15 @@ async def create_mcp_manager(
     return manager, owns_manager
 
 
-def attach_mcp_legacy_bindings(
+def attach_mcp_bindings(
     manager: McpManager | None,
     *,
-    metadata: dict[str, Any],
     services: ServiceRegistry,
 ) -> None:
     if manager is None:
         return
-    metadata[MCP_MANAGER_KEY] = manager
-    services.add_named(MCP_MANAGER_KEY, manager, owner="mcp", scope=ServiceScope.PROCESS)
+    if services.optional_named(MCP_MANAGER_KEY) is None:
+        services.add_named(MCP_MANAGER_KEY, manager, owner="mcp", scope=ServiceScope.PROCESS)
 
 
 def mcp_manager_from_runtime_or_context(
@@ -64,9 +76,6 @@ def mcp_manager_from_runtime_or_context(
     if manager is not None:
         return manager
     raw = context.services.optional_named(MCP_MANAGER_KEY)
-    if isinstance(raw, McpManager):
-        return raw
-    raw = context.metadata.get(MCP_MANAGER_KEY)
     if isinstance(raw, McpManager):
         return raw
     return None
@@ -118,6 +127,75 @@ async def execute_mcp_tool(
     from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
     return await execute_external_mcp_tool(manager, tool_name, arguments)
+
+
+def normalize_mcp_tool_name(tool_name: str) -> str:
+    from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
+
+    return normalize_mcp_bridge_tool_name(tool_name)
+
+
+async def try_execute_external_mcp_tool(
+    *,
+    manager: McpManager | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+    registry_contains: bool,
+) -> ToolResult | None:
+    normalized = normalize_mcp_tool_name(tool_name)
+    if not is_external_mcp_tool_call(normalized, registry_contains=registry_contains):
+        return None
+    return await execute_mcp_tool(manager, normalized, arguments)
+
+
+def schedule_mcp_preload_for_tool_runtime(
+    *,
+    mcp_enabled: bool,
+    tool_runtime: object | None,
+) -> None:
+    if not mcp_enabled or tool_runtime is None:
+        return
+    manager = getattr(tool_runtime, "mcp_manager", None)
+    if manager is None:
+        return
+    manager.schedule_startup_preload()
+
+
+def mcp_preload_status_for_tool_runtime(
+    *,
+    mcp_enabled: bool,
+    tool_runtime: object | None,
+) -> dict[str, Any]:
+    if not mcp_enabled:
+        return dict(MCP_PRELOAD_DISABLED_STATUS)
+    if tool_runtime is None:
+        return {"phase": "idle", "warming": False, "ready": False}
+    manager = getattr(tool_runtime, "mcp_manager", None)
+    if manager is None:
+        return {"phase": "disabled", "warming": False, "ready": True}
+    return manager.preload_status()
+
+
+def contribute_runtime_surfaces(registry: object) -> None:
+    from deepseek_tui.app_server.runtime_api.routes.mcp import (
+        mcp_preload_status,
+        mcp_startup,
+    )
+
+    registry.add_route(  # type: ignore[attr-defined]
+        id="mcp.startup",
+        owner="mcp",
+        method="POST",
+        path="/v1/mcp/startup",
+        handler=mcp_startup,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="mcp.preload_status",
+        owner="mcp",
+        method="GET",
+        path="/v1/mcp/preload-status",
+        handler=mcp_preload_status,
+    )
 
 
 async def mcp_startup_response(request: object) -> dict[str, Any]:

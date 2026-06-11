@@ -74,6 +74,36 @@ def attach_subagent_parent_cancel(
     manager.attach_parent_cancel(cancel_token)
 
 
+async def attach_engine_subagents(
+    engine: object,
+    *,
+    config: Config,
+    client: LLMClient,
+    workspace: Path,
+    default_model: str,
+    cancel_token: asyncio.Event,
+    tool_runtime: object,
+) -> None:
+    """Wire subagent loop runtime onto a materialized engine."""
+    manager = getattr(tool_runtime, "subagent_manager", None)
+    if manager is None:
+        return
+    auto_approve = await engine.approval_handler.auto_approve_enabled()  # type: ignore[attr-defined]
+    attach_subagent_engine_bindings(
+        manager,
+        config=config,
+        client=client,
+        model=default_model,
+        workspace=workspace,
+        allow_shell=getattr(config, "allow_shell", True),
+        auto_approve=auto_approve,
+        task_manager=getattr(tool_runtime, "task_manager", None),
+        cancel_token=cancel_token,
+        mailbox=getattr(tool_runtime, "mailbox", None),
+        completion_sink=engine._enqueue_subagent_completion,  # type: ignore[attr-defined]
+    )
+
+
 def attach_subagent_engine_bindings(
     manager: SubAgentManager | None,
     *,

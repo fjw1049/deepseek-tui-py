@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -78,6 +79,26 @@ class MemoryBeforeTurnObserver:
         context.decorations[MEMORY_TURN_CONTEXT_DECORATION] = prepared  # type: ignore[attr-defined]
 
 
+@dataclass(slots=True)
+class DynamicMemoryBeforeTurnObserver:
+    coordinator: Callable[[], object | None]
+    memory_thread_id: Callable[[], str | None]
+    cycle_session_id: Callable[[], str | None]
+    memory_mode: Callable[[], str | None]
+
+    async def before_user_turn(self, context: object) -> None:
+        prepared = await prepare_memory_turn_context(
+            coordinator=self.coordinator(),
+            metadata=context.metadata,  # type: ignore[attr-defined]
+            memory_thread_id=self.memory_thread_id(),
+            cycle_session_id=self.cycle_session_id(),
+            user_text=context.user_text,  # type: ignore[attr-defined]
+            workspace=context.workspace,  # type: ignore[attr-defined]
+            memory_mode=self.memory_mode(),
+        )
+        context.decorations[MEMORY_TURN_CONTEXT_DECORATION] = prepared  # type: ignore[attr-defined]
+
+
 def memory_before_turn_observer(
     *,
     coordinator: object | None,
@@ -86,6 +107,21 @@ def memory_before_turn_observer(
     memory_mode: str | None,
 ) -> MemoryBeforeTurnObserver:
     return MemoryBeforeTurnObserver(
+        coordinator=coordinator,
+        memory_thread_id=memory_thread_id,
+        cycle_session_id=cycle_session_id,
+        memory_mode=memory_mode,
+    )
+
+
+def dynamic_memory_before_turn_observer(
+    *,
+    coordinator: Callable[[], object | None],
+    memory_thread_id: Callable[[], str | None],
+    cycle_session_id: Callable[[], str | None],
+    memory_mode: Callable[[], str | None],
+) -> DynamicMemoryBeforeTurnObserver:
+    return DynamicMemoryBeforeTurnObserver(
         coordinator=coordinator,
         memory_thread_id=memory_thread_id,
         cycle_session_id=cycle_session_id,
@@ -130,7 +166,30 @@ async def create_memory_runtime(
     return runtime
 
 
-def attach_memory_legacy_bindings(
+async def attach_engine_memory(
+    engine: object,
+    config: Config,
+    client: LLMClient,
+) -> MemoryRuntime:
+    """Wire memory runtime onto a materialized engine."""
+    memory_runtime = await create_memory_runtime(
+        config,
+        client,
+        engine.tool_context.services,  # type: ignore[attr-defined]
+    )
+    engine.memory_enabled = memory_runtime.enabled  # type: ignore[attr-defined]
+    engine.memory_path = memory_runtime.path  # type: ignore[attr-defined]
+    engine.memory_mode = memory_runtime.mode  # type: ignore[attr-defined]
+    engine.memory_coordinator = memory_runtime.coordinator  # type: ignore[attr-defined]
+    attach_memory_bindings(
+        memory_runtime,
+        metadata=engine.tool_context.metadata,  # type: ignore[attr-defined]
+        services=engine.tool_context.services,  # type: ignore[attr-defined]
+    )
+    return memory_runtime
+
+
+def attach_memory_bindings(
     runtime: MemoryRuntime,
     *,
     metadata: dict[str, object],
@@ -139,7 +198,6 @@ def attach_memory_legacy_bindings(
     metadata[MEMORY_SEARCH_CALLS_KEY] = 0
     if runtime.provider is None:
         return
-    metadata[MEMORY_PROVIDER_KEY] = runtime.provider
     if services.optional_named(MEMORY_PROVIDER_KEY) is None:
         services.add_named(
             MEMORY_PROVIDER_KEY,

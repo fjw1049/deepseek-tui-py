@@ -118,9 +118,9 @@ class ServiceRegistry:
     async def shutdown(self) -> None:
         """Best-effort reverse shutdown for host-owned services.
 
-        ToolRuntime still owns shutdown for the currently migrated managers.
-        This method exists for the host layer and tests; callers should avoid
-        invoking both paths for the same service object.
+        ``ToolRuntime.shutdown()`` remains the host shutdown coordinator for
+        process-scoped managers. Callers should avoid invoking both paths for
+        the same service object.
         """
         seen: set[int] = set()
         for registration in reversed(self._start_order):

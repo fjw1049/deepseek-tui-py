@@ -11,6 +11,8 @@ from deepseek_tui.goal.controller import GoalController
 from deepseek_tui.goal.tools import GOAL_CONTROLLER_KEY
 from deepseek_tui.host.services import ServiceRegistry, ServiceScope
 
+GOAL_TURN_RESULT_DECORATION = "goal.turn_result"
+
 
 @dataclass(slots=True)
 class GoalRuntime:
@@ -21,6 +23,35 @@ class GoalRuntime:
 class GoalTurnResult:
     follow_up: object | None
     steer: str | None
+
+
+@dataclass(slots=True)
+class GoalLifecycleObserver:
+    controller: Callable[[], GoalController]
+
+    async def on_turn_started(self, _context: object) -> None:
+        self.controller().on_turn_start()
+
+    async def on_turn_completed(self, context: object) -> None:
+        controller = self.controller()
+        follow_up = controller.on_turn_complete(
+            context.usage,  # type: ignore[attr-defined]
+        )
+        context.decorations[GOAL_TURN_RESULT_DECORATION] = GoalTurnResult(  # type: ignore[attr-defined]
+            follow_up=follow_up,
+            steer=controller.take_pending_steer(),
+        )
+
+    async def on_turn_failed(self, context: object) -> None:
+        controller = self.controller()
+        controller.on_turn_failed(
+            context.reason,  # type: ignore[attr-defined]
+            context.usage,  # type: ignore[attr-defined]
+        )
+        context.decorations[GOAL_TURN_RESULT_DECORATION] = GoalTurnResult(  # type: ignore[attr-defined]
+            follow_up=None,
+            steer=controller.take_pending_steer(),
+        )
 
 
 @dataclass(slots=True)
@@ -65,13 +96,25 @@ def create_goal_runtime(
     return GoalRuntime(controller=controller)
 
 
-def attach_goal_legacy_bindings(
+def attach_engine_goal(engine: object) -> GoalController:
+    """Create goal runtime and bind it on an Engine shell."""
+    tool_context = engine.tool_context  # type: ignore[attr-defined]
+    goal_thread_id = str(tool_context.metadata.get("runtime_thread_id") or "default")
+    goal_runtime = create_goal_runtime(
+        tool_context.services,
+        workspace=tool_context.working_directory,
+        thread_id=goal_thread_id,
+    )
+    engine.goal_controller = goal_runtime.controller  # type: ignore[attr-defined]
+    attach_goal_bindings(goal_runtime, services=tool_context.services)
+    return goal_runtime.controller
+
+
+def attach_goal_bindings(
     runtime: GoalRuntime,
     *,
-    metadata: dict[str, object],
     services: ServiceRegistry,
 ) -> None:
-    metadata[GOAL_CONTROLLER_KEY] = runtime.controller
     if services.optional_named(GOAL_CONTROLLER_KEY) is None:
         services.add_named(
             GOAL_CONTROLLER_KEY,
@@ -79,6 +122,19 @@ def attach_goal_legacy_bindings(
             owner="goal",
             scope=ServiceScope.ENGINE,
         )
+    if services.optional(GoalController) is None:
+        services.add(
+            GoalController,
+            runtime.controller,
+            owner="goal",
+            scope=ServiceScope.ENGINE,
+        )
+
+
+def goal_lifecycle_observer(
+    controller: Callable[[], GoalController],
+) -> GoalLifecycleObserver:
+    return GoalLifecycleObserver(controller=controller)
 
 
 def rebind_goal_thread_if_local(
@@ -100,6 +156,19 @@ def bind_goal_runtime_thread(
 ) -> None:
     controller.rebind(thread_id=thread_id, journal_path=journal_path)
     controller._on_change = on_change
+
+
+def goal_controller_from_engine(engine: object) -> GoalController | None:
+    tool_context = getattr(engine, "tool_context", None)
+    services = getattr(tool_context, "services", None)
+    if services is not None:
+        typed = services.optional(GoalController)
+        if typed is not None:
+            return typed
+        named = services.optional_named(GOAL_CONTROLLER_KEY)
+        if isinstance(named, GoalController):
+            return named
+    return None
 
 
 def goal_mode_hint(mode: str, controller: GoalController) -> str:

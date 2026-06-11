@@ -14,6 +14,7 @@ from deepseek_tui.evolution.constants import (
 from deepseek_tui.evolution.curated.store import CuratedMemoryStore
 from deepseek_tui.post_turn.evidence import TurnEvidence
 from deepseek_tui.tools.context import ToolContext
+from .service_context import add_named_service
 from deepseek_tui.tools.memory_curate_tool import MemoryCurateTool
 
 
@@ -47,8 +48,8 @@ class _StubLedger:
 async def test_memory_curate_fails_without_turn_evidence(tmp_path: Path) -> None:
     store = CuratedMemoryStore(tmp_path)
     ctx = ToolContext(working_directory=tmp_path)
-    ctx.metadata[CURATED_MEMORY_STORE_KEY] = store
-    ctx.metadata[EVOLUTION_LEDGER_KEY] = _StubLedger()
+    add_named_service(ctx, CURATED_MEMORY_STORE_KEY, store)
+    add_named_service(ctx, EVOLUTION_LEDGER_KEY, _StubLedger())
 
     result = await MemoryCurateTool().execute(
         {"action": "add", "target": "memory", "content": "note"},
@@ -64,8 +65,8 @@ async def test_memory_curate_uses_current_turn_evidence(tmp_path: Path) -> None:
     ledger = _StubLedger()
     evidence = _evidence(turn_id="turn-current")
     ctx = ToolContext(working_directory=tmp_path)
-    ctx.metadata[CURATED_MEMORY_STORE_KEY] = store
-    ctx.metadata[EVOLUTION_LEDGER_KEY] = ledger
+    add_named_service(ctx, CURATED_MEMORY_STORE_KEY, store)
+    add_named_service(ctx, EVOLUTION_LEDGER_KEY, ledger)
     ctx.metadata[TURN_EVIDENCE_KEY] = evidence
 
     result = await MemoryCurateTool().execute(
@@ -96,7 +97,7 @@ async def test_memory_curate_review_mode_with_store(tmp_path: Path) -> None:
     store = CuratedMemoryStore(tmp_path)
     ctx = ToolContext(working_directory=tmp_path)
     ctx.metadata["evolution_review_mode"] = True
-    ctx.metadata[CURATED_MEMORY_STORE_KEY] = store
+    add_named_service(ctx, CURATED_MEMORY_STORE_KEY, store)
 
     result = await MemoryCurateTool().execute(
         {"action": "add", "target": "memory", "content": "note"},

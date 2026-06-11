@@ -42,7 +42,7 @@ async def test_create_tool_runtime_registers_task_services(tmp_path: Path) -> No
     try:
         assert runtime.task_manager is not None
         assert runtime.context.task_manager is runtime.task_manager
-        assert runtime.context.metadata["task_manager"] is runtime.task_manager
+        assert "task_manager" not in runtime.context.metadata
         assert runtime.context.services.require(TaskManager) is runtime.task_manager
         assert runtime.context.services.require_named("task_manager") is runtime.task_manager
     finally:
@@ -61,7 +61,7 @@ async def test_create_tool_runtime_registers_lsp_service(tmp_path: Path) -> None
     )
     try:
         assert runtime.lsp_manager is not None
-        assert runtime.context.metadata[LSP_MANAGER_KEY] is runtime.lsp_manager
+        assert LSP_MANAGER_KEY not in runtime.context.metadata
         assert runtime.context.services.require(LspManager) is runtime.lsp_manager
         assert runtime.context.services.require_named(LSP_MANAGER_KEY) is runtime.lsp_manager
     finally:
@@ -106,7 +106,7 @@ async def test_create_tool_runtime_registers_automation_services(tmp_path: Path)
     )
     try:
         assert runtime.automation_manager is not None
-        assert runtime.context.metadata[AUTOMATION_MANAGER_KEY] is runtime.automation_manager
+        assert AUTOMATION_MANAGER_KEY not in runtime.context.metadata
         assert runtime.context.services.require(AutomationManager) is runtime.automation_manager
         assert (
             runtime.context.services.require_named(AUTOMATION_MANAGER_KEY)
@@ -160,6 +160,6 @@ async def test_assemble_tool_runtime_delegates_to_compatible_runtime(tmp_path: P
     try:
         assert runtime.task_manager is not None
         assert runtime.context.services.require(TaskManager) is runtime.task_manager
-        assert runtime.context.metadata["task_manager"] is runtime.task_manager
+        assert "task_manager" not in runtime.context.metadata
     finally:
         await runtime.shutdown()

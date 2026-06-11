@@ -131,38 +131,21 @@ class AppRuntime:
 
     def schedule_mcp_preload(self) -> None:
         """Background MCP tool discovery — does not block HTTP serve."""
-        if not getattr(self.config.features, "mcp", False):
-            return
-        tr = self._tool_runtime
-        if tr is None:
-            return
-        mcp = getattr(tr, "mcp_manager", None)
-        if mcp is None:
-            return
-        mcp.schedule_startup_preload()
+        from deepseek_tui.capabilities.mcp import schedule_mcp_preload_for_tool_runtime
+
+        schedule_mcp_preload_for_tool_runtime(
+            mcp_enabled=bool(getattr(self.config.features, "mcp", False)),
+            tool_runtime=self._tool_runtime,
+        )
 
     def mcp_preload_status(self) -> dict[str, Any]:
         """Current MCP warmup state for Workbench / readiness probes."""
-        if not getattr(self.config.features, "mcp", False):
-            return {
-                "phase": "disabled",
-                "warming": False,
-                "ready": True,
-                "enabled_servers": 0,
-                "connected_servers": 0,
-                "tools_count": 0,
-                "from_disk_cache": False,
-                "started_at_ms": None,
-                "completed_at_ms": None,
-                "error": None,
-            }
-        tr = self._tool_runtime
-        if tr is None:
-            return {"phase": "idle", "warming": False, "ready": False}
-        mcp = getattr(tr, "mcp_manager", None)
-        if mcp is None:
-            return {"phase": "disabled", "warming": False, "ready": True}
-        return mcp.preload_status()
+        from deepseek_tui.capabilities.mcp import mcp_preload_status_for_tool_runtime
+
+        return mcp_preload_status_for_tool_runtime(
+            mcp_enabled=bool(getattr(self.config.features, "mcp", False)),
+            tool_runtime=self._tool_runtime,
+        )
 
     @classmethod
     async def create(
@@ -427,13 +410,13 @@ class AppRuntime:
         tool_name = call.get("name")
         if not isinstance(tool_name, str) or not tool_name:
             return {"ok": False, "error": "call.name required"}
-        from deepseek_tui.mcp.execute import (
-            execute_external_mcp_tool,
-            is_external_mcp_tool,
-            normalize_mcp_bridge_tool_name,
+        from deepseek_tui.capabilities.mcp import (
+            normalize_mcp_tool_name,
+            try_execute_external_mcp_tool,
         )
+        from deepseek_tui.tools.base import ToolError
 
-        tool_name = normalize_mcp_bridge_tool_name(tool_name)
+        tool_name = normalize_mcp_tool_name(tool_name)
         arguments = call.get("arguments") or call.get("input") or {}
         if not isinstance(arguments, dict):
             return {"ok": False, "error": "call.arguments must be an object"}
@@ -452,23 +435,24 @@ class AppRuntime:
         registry = self._tool_runtime.registry
         mcp_manager = self._tool_runtime.mcp_manager
 
-        if mcp_manager is not None and is_external_mcp_tool(
-            tool_name, registry.contains(tool_name)
-        ):
-            try:
-                result = await execute_external_mcp_tool(
-                    mcp_manager, tool_name, arguments
+        try:
+            result = await try_execute_external_mcp_tool(
+                manager=mcp_manager,
+                tool_name=tool_name,
+                arguments=arguments,
+                registry_contains=registry.contains(tool_name),
+            )
+        except ToolError as exc:
+            await self.hooks.emit(
+                ToolLifecycleEvent(
+                    response_id=response_id,
+                    tool_name=tool_name,
+                    phase="error",
+                    payload={"error": str(exc)},
                 )
-            except Exception as exc:  # noqa: BLE001
-                await self.hooks.emit(
-                    ToolLifecycleEvent(
-                        response_id=response_id,
-                        tool_name=tool_name,
-                        phase="error",
-                        payload={"error": str(exc)},
-                    )
-                )
-                return {"ok": False, "error": str(exc)}
+            )
+            return {"ok": False, "error": str(exc)}
+        if result is not None:
             await self.hooks.emit(
                 ToolLifecycleEvent(
                     response_id=response_id,

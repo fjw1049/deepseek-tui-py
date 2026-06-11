@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.capabilities.automation import (
-    attach_automation_legacy_bindings,
+    attach_automation_bindings,
     create_automation_runtime,
     stop_automation_runtime,
 )
@@ -95,9 +95,9 @@ async def test_automation_capability_starts_scheduler_and_binds_legacy(
         assert task.get_name() == "automation-scheduler"
         assert services.require(AutomationManager) is manager
 
-        attach_automation_legacy_bindings(manager, metadata=metadata, services=services)
+        attach_automation_bindings(manager, services=services)
 
-        assert metadata[AUTOMATION_MANAGER_KEY] is manager
+        assert AUTOMATION_MANAGER_KEY not in metadata
         assert services.require_named(AUTOMATION_MANAGER_KEY) is manager
     finally:
         await stop_automation_runtime(cancel, task, timeout_s=2.0)

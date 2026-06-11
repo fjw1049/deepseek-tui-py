@@ -219,10 +219,6 @@ def _task_manager_from_context(context: ToolContext) -> object | None:
         raw = context.services.optional_named(_TASK_MANAGER_KEY)
         if isinstance(raw, TaskManager):
             manager = raw
-    if manager is None:
-        raw = context.metadata.get(_TASK_MANAGER_KEY)
-        if isinstance(raw, TaskManager):
-            manager = raw
     return manager
 
 

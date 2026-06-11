@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from deepseek_tui.config.models import Config
@@ -21,6 +22,21 @@ def build_post_turn_pipelines(
     if evolution_pipeline is not None:
         pipelines.append(evolution_pipeline)
     return pipelines
+
+
+async def attach_engine_post_turn(
+    engine: object,
+    config: Config,
+    *,
+    evolution_pipeline: object | None,
+) -> None:
+    """Start the post-turn orchestrator on a materialized engine."""
+    pipelines = build_post_turn_pipelines(
+        config,
+        memory_coordinator=engine.memory_coordinator,  # type: ignore[attr-defined]
+        evolution_pipeline=evolution_pipeline,
+    )
+    engine.post_turn = await start_post_turn_orchestrator(config, pipelines)  # type: ignore[attr-defined]
 
 
 async def start_post_turn_orchestrator(
@@ -85,8 +101,25 @@ class PostTurnToolObserver:
         )
 
 
+@dataclass(slots=True)
+class DynamicPostTurnToolObserver:
+    post_turn: Callable[[], object | None]
+
+    async def after_tool(self, context: object) -> None:
+        notify_post_turn_main_tool_called(
+            self.post_turn(),
+            context.tool_name,  # type: ignore[attr-defined]
+        )
+
+
 def post_turn_tool_observer(post_turn: object | None) -> PostTurnToolObserver:
     return PostTurnToolObserver(post_turn=post_turn)
+
+
+def dynamic_post_turn_tool_observer(
+    post_turn: Callable[[], object | None],
+) -> DynamicPostTurnToolObserver:
+    return DynamicPostTurnToolObserver(post_turn=post_turn)
 
 
 def notify_post_turn_main_tool_called(

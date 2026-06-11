@@ -734,12 +734,16 @@ class RuntimeThreadManager:
         if req.internal_kind == "goal_follow_up" and req.goal_id:
             async with self._active_lock:
                 state = self._active.get(thread_id)
+                from deepseek_tui.capabilities.goal import (
+                    goal_controller_from_engine,
+                    goal_follow_up_is_stale,
+                )
+
                 controller = (
-                    getattr(state.engine, "goal_controller", None)
+                    goal_controller_from_engine(state.engine)
                     if state is not None
                     else None
                 )
-                from deepseek_tui.capabilities.goal import goal_follow_up_is_stale
 
                 if goal_follow_up_is_stale(
                     controller,
@@ -1101,7 +1105,9 @@ class RuntimeThreadManager:
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
-        goal_controller = getattr(engine, "goal_controller", None)
+        from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+        goal_controller = goal_controller_from_engine(engine)
         if goal_controller is not None and hasattr(goal_controller, "rebind"):
             from deepseek_tui.capabilities.goal import bind_goal_runtime_thread
 
@@ -1952,7 +1958,9 @@ class RuntimeThreadManager:
             state = self._active.get(thread_id)
             if state is None:
                 return
-            controller = getattr(state.engine, "goal_controller", None)
+            from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+            controller = goal_controller_from_engine(state.engine)
         if controller is None:
             return
         from deepseek_tui.capabilities.goal import goal_status_payload
@@ -1970,7 +1978,9 @@ class RuntimeThreadManager:
             state = self._active.get(thread_id)
             if state is None:
                 return
-            controller = getattr(state.engine, "goal_controller", None)
+            from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+            controller = goal_controller_from_engine(state.engine)
             if controller is None or not hasattr(controller, "take_pending_follow_up"):
                 return
             from deepseek_tui.capabilities.goal import take_valid_goal_follow_up

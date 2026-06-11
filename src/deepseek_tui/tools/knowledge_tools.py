@@ -72,8 +72,6 @@ class RememberTool(ToolSpec):
         from deepseek_tui.tools.memory_tools import MEMORY_PROVIDER_KEY
 
         provider = context.services.optional_named(MEMORY_PROVIDER_KEY)
-        if provider is None:
-            provider = context.metadata.get(MEMORY_PROVIDER_KEY)
         if provider is not None and hasattr(provider, "remember_instruction"):
             tid = context.metadata.get("runtime_thread_id")
             thread_id = tid if isinstance(tid, str) and tid else None

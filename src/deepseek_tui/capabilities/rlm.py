@@ -8,6 +8,12 @@ from typing import Any
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.events import RlmProgressEvent
+from deepseek_tui.host.tool_execution import (
+    RlmToolExecution,
+    clear_tool_execution_if_empty,
+    ensure_tool_execution,
+    resolve_rlm_progress_cb,
+)
 from deepseek_tui.tools.base import ToolError, ToolResult
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.rlm.turn import RlmTermination, run_rlm_turn
@@ -32,11 +38,14 @@ def rlm_tool_bindings(
             )
         )
 
-    context.metadata["rlm_progress_cb"] = _rlm_progress
+    exec_ctx = ensure_tool_execution(context)
+    prior_rlm = exec_ctx.rlm
+    exec_ctx.rlm = RlmToolExecution(on_progress=_rlm_progress)
     try:
         yield
     finally:
-        context.metadata.pop("rlm_progress_cb", None)
+        exec_ctx.rlm = prior_rlm
+        clear_tool_execution_if_empty(context)
 
 
 async def execute_rlm_tool(
@@ -87,7 +96,7 @@ async def execute_rlm_tool(
     child_model = DEFAULT_CHILD_MODEL
     max_depth = int(input_data.get("max_depth", DEFAULT_MAX_DEPTH))
 
-    progress_cb = context.metadata.get("rlm_progress_cb")
+    progress_cb = resolve_rlm_progress_cb(context)
     result = await run_rlm_turn(
         client=client,
         model=root_model,
@@ -95,7 +104,7 @@ async def execute_rlm_tool(
         root_prompt=task,
         child_model=child_model,
         max_depth=max_depth,
-        on_progress=progress_cb if callable(progress_cb) else None,
+        on_progress=progress_cb,
     )
 
     if result.error:

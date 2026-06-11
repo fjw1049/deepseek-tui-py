@@ -8,9 +8,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.capabilities.evolution import (
-    attach_evolution_legacy_bindings,
+    attach_evolution_bindings,
     build_main_tool_evolution_response,
     create_evolution_runtime,
+    evolution_action_response,
     evolution_decision_from_record_status,
     evolution_record_to_dict,
     publish_turn_evidence,
@@ -26,7 +27,7 @@ from deepseek_tui.evolution.constants import (
     TURN_EVIDENCE_KEY,
 )
 from deepseek_tui.evolution.pipeline import EvolutionPipeline
-from deepseek_tui.host.services import ServiceRegistry
+from deepseek_tui.host.services import ServiceRegistry, ServiceScope
 
 
 class _PipelineNoteRecorder:
@@ -58,7 +59,7 @@ def test_evolution_capability_skips_when_disabled(tmp_path: Path) -> None:
         emit_event=None,
     )
     metadata: dict[str, object] = {}
-    attach_evolution_legacy_bindings(runtime, metadata=metadata, services=services)
+    attach_evolution_bindings(runtime, services=services)
 
     assert runtime.pipeline is None
     assert runtime.curated_snapshot is None
@@ -79,13 +80,13 @@ def test_evolution_capability_creates_pipeline_and_legacy_bindings(
         emit_event=None,
     )
     metadata: dict[str, object] = {}
-    attach_evolution_legacy_bindings(runtime, metadata=metadata, services=services)
+    attach_evolution_bindings(runtime, services=services)
 
     assert isinstance(runtime.pipeline, EvolutionPipeline)
     assert services.require(EvolutionPipeline) is runtime.pipeline
-    assert metadata[CURATED_MEMORY_STORE_KEY] is runtime.pipeline.curated_store
-    assert metadata[SKILL_STORE_KEY] is runtime.pipeline.skill_store
-    assert metadata[EVOLUTION_LEDGER_KEY] is runtime.pipeline.ledger
+    assert metadata == {}
+    assert services.require_named(CURATED_MEMORY_STORE_KEY) is runtime.pipeline.curated_store
+    assert services.require_named(SKILL_STORE_KEY) is runtime.pipeline.skill_store
     assert services.require_named(EVOLUTION_LEDGER_KEY) is runtime.pipeline.ledger
 
 
@@ -100,7 +101,8 @@ async def test_engine_create_evolution_uses_capability_bindings(tmp_path: Path) 
     )
     try:
         assert isinstance(engine._evolution_pipeline, EvolutionPipeline)
-        assert engine.tool_context.metadata[EVOLUTION_LEDGER_KEY] is (
+        assert EVOLUTION_LEDGER_KEY not in engine.tool_context.metadata
+        assert engine.tool_context.services.require_named(EVOLUTION_LEDGER_KEY) is (
             engine._evolution_pipeline.ledger
         )
         assert engine.tool_context.services.require(EvolutionPipeline) is (
@@ -111,13 +113,21 @@ async def test_engine_create_evolution_uses_capability_bindings(tmp_path: Path) 
 
 
 def test_evolution_capability_publish_turn_evidence_live_and_final() -> None:
-    metadata: dict[str, object] = {EVOLUTION_LEDGER_KEY: object()}
+    metadata: dict[str, object] = {}
+    services = ServiceRegistry()
+    services.add_named(
+        EVOLUTION_LEDGER_KEY,
+        object(),
+        owner="test",
+        scope=ServiceScope.ENGINE,
+    )
     pipeline = _PipelineNoteRecorder()
     live_evidence = object()
     final_evidence = object()
 
     publish_turn_evidence(
         metadata=metadata,
+        services=services,
         pipeline=pipeline,
         evidence=live_evidence,
         live_evidence_factory=lambda: live_evidence,
@@ -131,6 +141,7 @@ def test_evolution_capability_publish_turn_evidence_live_and_final() -> None:
 
     publish_turn_evidence(
         metadata=metadata,
+        services=services,
         pipeline=pipeline,
         evidence=final_evidence,
         live_evidence_factory=None,
@@ -158,6 +169,19 @@ def test_evolution_capability_publish_turn_evidence_noops_without_ledger() -> No
 
     assert metadata == {}
     assert pipeline.thread_ids == []
+
+
+def test_evolution_capability_builds_action_response() -> None:
+    @dataclass
+    class _Record:
+        id: str
+        status: str
+
+    record = _Record(id="r1", status="applied")
+    assert evolution_action_response(record) == {
+        "ok": True,
+        "record": {"id": "r1", "status": "applied"},
+    }
 
 
 def test_evolution_capability_serializes_records() -> None:

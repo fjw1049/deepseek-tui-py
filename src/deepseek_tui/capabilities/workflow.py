@@ -15,6 +15,15 @@ from deepseek_tui.host.prompts import (
     PromptContributor,
     PromptContributorContext,
 )
+from deepseek_tui.host.tool_execution import (
+    WorkflowToolExecution,
+    clear_tool_execution_if_empty,
+    ensure_tool_execution,
+    resolve_workflow_cancel_event,
+    resolve_workflow_emit,
+    resolve_workflow_status_cb,
+    resolve_workflow_tool_call_id,
+)
 from deepseek_tui.tools.context import ToolContext
 
 logger = logging.getLogger(__name__)
@@ -55,27 +64,27 @@ def workflow_tool_bindings(
     tool_call_id: str,
     emit: Callable[[object], bool],
 ) -> Iterator[None]:
-    context.metadata["engine_cancel_event"] = cancel_event
-    context.metadata["workflow_tool_call_id"] = tool_call_id
-
     def _workflow_emit(ev: WorkflowProgressEvent) -> None:
         if not emit(ev):
             if getattr(ev, "completed", False):
                 logger.warning("workflow_completed_event_dropped queue_full")
 
-    context.metadata["workflow_emit"] = _workflow_emit
-
     def _workflow_status(message: str) -> None:
         emit(StatusEvent(message))
 
-    context.metadata["workflow_status_cb"] = _workflow_status
+    exec_ctx = ensure_tool_execution(context)
+    prior_workflow = exec_ctx.workflow
+    exec_ctx.workflow = WorkflowToolExecution(
+        cancel_event=cancel_event,
+        tool_call_id=tool_call_id,
+        emit_progress=_workflow_emit,
+        emit_status=_workflow_status,
+    )
     try:
         yield
     finally:
-        context.metadata.pop("engine_cancel_event", None)
-        context.metadata.pop("workflow_tool_call_id", None)
-        context.metadata.pop("workflow_emit", None)
-        context.metadata.pop("workflow_status_cb", None)
+        exec_ctx.workflow = prior_workflow
+        clear_tool_execution_if_empty(context)
 
 
 def resolve_workflow_spec(input_data: dict[str, Any]) -> Any:
@@ -139,15 +148,9 @@ async def execute_workflow_tool(
     if loop_runtime is None:
         raise ToolError("workflow: sub-agent loop runtime is not configured")
 
-    cancel_event = context.metadata.get("engine_cancel_event")
-    if not isinstance(cancel_event, asyncio.Event):
-        cancel_event = asyncio.Event()
-
-    tool_call_id = context.metadata.get("workflow_tool_call_id")
-    if not isinstance(tool_call_id, str):
-        tool_call_id = ""
-
-    emit = context.metadata.get("workflow_emit")
+    cancel_event = resolve_workflow_cancel_event(context)
+    tool_call_id = resolve_workflow_tool_call_id(context)
+    emit = resolve_workflow_emit(context)
     spawned_ids: list[str] = []
     runner = DeepSeekAgentRunner(
         manager,
@@ -192,8 +195,8 @@ async def execute_workflow_tool(
         nonlocal last_snapshot
         last_snapshot = snapshot
         emit_progress(snapshot)
-        status_cb = context.metadata.get("workflow_status_cb")
-        if callable(status_cb):
+        status_cb = resolve_workflow_status_cb(context)
+        if status_cb is not None:
             status_cb(render_workflow_text(snapshot, completed=False))
 
     async def _run() -> ToolResult:

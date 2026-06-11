@@ -49,15 +49,13 @@ async def create_task_manager(
     return manager, owns_manager
 
 
-def attach_task_legacy_bindings(
+def attach_task_bindings(
     manager: TaskManager | None,
     *,
-    metadata: dict[str, object],
     services: ServiceRegistry,
 ) -> None:
     if manager is None:
         return
-    metadata["task_manager"] = manager
     if services.optional_named("task_manager") is None:
         services.add_named(
             "task_manager",

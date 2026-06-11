@@ -42,13 +42,20 @@ def normalize_hook_executor(raw: object | None) -> HookExecutor:
     return HookExecutor.disabled()
 
 
-def attach_hook_legacy_bindings(
+def attach_engine_hooks(engine: object) -> None:
+    """Register hook executor on ToolContext.services for an Engine shell."""
+    hook_executor = getattr(engine, "hook_executor", None)
+    tool_context = getattr(engine, "tool_context", None)
+    if hook_executor is None or tool_context is None:
+        return
+    attach_hook_bindings(hook_executor, tool_context.services)
+
+
+def attach_hook_bindings(
     runtime: HookRuntime | HookExecutor,
-    metadata: dict[str, object],
     services: ServiceRegistry | None = None,
 ) -> None:
     executor = runtime.executor if isinstance(runtime, HookRuntime) else runtime
-    metadata["hook_executor"] = executor
     if services is None:
         return
     if services.optional(HookExecutor) is None:

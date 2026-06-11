@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from deepseek_tui.app_server.runtime_api.errors import api_error
 from deepseek_tui.app_server.runtime_api.routes._deps import body, manager
 from deepseek_tui.capabilities.evolution import (
+    evolution_action_response,
     evolution_ledger_for_thread,
     evolution_record_to_dict,
 )
@@ -47,7 +48,7 @@ async def approve_evolution(
     record = await ledger.approve(record_id)
     if record is None:
         raise api_error(404, f"evolution record not found: {record_id}", error="not_found")
-    return {"ok": True, "record": evolution_record_to_dict(record)}
+    return evolution_action_response(record)
 
 
 @router.post("/evolution/{record_id}/reject")
@@ -62,4 +63,4 @@ async def reject_evolution(
     record = await ledger.reject(record_id, reason=payload.reason.strip() or "user rejected")
     if record is None:
         raise api_error(404, f"evolution record not found: {record_id}", error="not_found")
-    return {"ok": True, "record": evolution_record_to_dict(record)}
+    return evolution_action_response(record)

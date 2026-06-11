@@ -27,3 +27,10 @@ class BuiltinModuleCatalog:
 
 
 EMPTY_BUILTIN_CATALOG = BuiltinModuleCatalog()
+
+
+def default_builtin_catalog() -> BuiltinModuleCatalog:
+    """Return the first-party builtin module catalog."""
+    from deepseek_tui.host.builtin_modules import DEFAULT_BUILTIN_CATALOG
+
+    return DEFAULT_BUILTIN_CATALOG

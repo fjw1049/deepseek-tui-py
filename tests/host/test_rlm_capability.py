@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.capabilities import rlm as rlm_capability
-from deepseek_tui.capabilities.rlm import execute_rlm_tool
+from deepseek_tui.capabilities.rlm import execute_rlm_tool, rlm_tool_bindings
+from deepseek_tui.host.tool_execution import resolve_rlm_progress_cb
 from deepseek_tui.tools.base import ToolError
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.rlm.turn import (
@@ -76,17 +77,24 @@ async def test_rlm_capability_executes_and_formats_result(
 
     monkeypatch.setattr(rlm_capability, "run_rlm_turn", _fake_run_rlm_turn)
     progress: list[tuple[int, str, int]] = []
-    context = ToolContext(
-        working_directory=tmp_path,
-        metadata={"rlm_progress_cb": lambda *args: progress.append(args)},
-    )
+    context = ToolContext(working_directory=tmp_path)
 
-    result = await execute_rlm_tool(
-        client=object(),  # type: ignore[arg-type]
-        root_model="deepseek-chat",
-        input_data={"task": "summarize", "content": "hello\nworld", "max_depth": 0},
-        context=context,
-    )
+    with rlm_tool_bindings(
+        context,
+        emit=lambda _event: True,
+    ):
+        callback = resolve_rlm_progress_cb(context)
+        assert callback is not None
+        exec_ctx = context.tool_execution
+        assert exec_ctx is not None and exec_ctx.rlm is not None
+        exec_ctx.rlm.on_progress = lambda *args: progress.append(args)
+
+        result = await execute_rlm_tool(
+            client=object(),  # type: ignore[arg-type]
+            root_model="deepseek-chat",
+            input_data={"task": "summarize", "content": "hello\nworld", "max_depth": 0},
+            context=context,
+        )
 
     assert result.success is True
     assert "RLM report:" in result.content

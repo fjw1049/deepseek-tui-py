@@ -64,9 +64,14 @@ class TestMcpStdioE2E:
 
     async def test_engine_execute_mcp_tool_e2e(self, mcp_manager: McpManager) -> None:
         await mcp_manager.discover_tools()
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mcp_manager},
+        from deepseek_tui.host.services import ServiceScope
+
+        ctx = ToolContext(working_directory=Path("/tmp"))
+        ctx.services.add_named(
+            MCP_MANAGER_KEY,
+            mcp_manager,
+            owner="test",
+            scope=ServiceScope.PROCESS,
         )
         engine = Engine(
             handle=EngineHandle(),

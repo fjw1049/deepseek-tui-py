@@ -8,7 +8,7 @@ import pytest
 from deepseek_tui.capabilities.memory import (
     MEMORY_TURN_CONTEXT_DECORATION,
     MemoryTurnContext,
-    attach_memory_legacy_bindings,
+    attach_memory_bindings,
     build_flush_evidence,
     build_turn_evidence,
     capture_memory_after_turn,
@@ -37,7 +37,7 @@ async def test_memory_capability_skips_smart_memory_when_disabled() -> None:
 
     runtime = await create_memory_runtime(cfg, AsyncMock(), services)
     metadata: dict[str, object] = {}
-    attach_memory_legacy_bindings(runtime, metadata=metadata, services=services)
+    attach_memory_bindings(runtime, metadata=metadata, services=services)
 
     assert runtime.enabled is False
     assert runtime.coordinator is None
@@ -64,7 +64,7 @@ async def test_memory_capability_creates_smart_runtime(tmp_path: Path) -> None:
 
     runtime = await create_memory_runtime(cfg, AsyncMock(), services)
     metadata: dict[str, object] = {}
-    attach_memory_legacy_bindings(runtime, metadata=metadata, services=services)
+    attach_memory_bindings(runtime, metadata=metadata, services=services)
     try:
         assert runtime.enabled is True
         assert runtime.mode == "hybrid"
@@ -73,7 +73,7 @@ async def test_memory_capability_creates_smart_runtime(tmp_path: Path) -> None:
         assert services.require(MemoryCoordinator) is runtime.coordinator
         assert services.require(MemoryProvider) is runtime.provider
         assert metadata[MEMORY_SEARCH_CALLS_KEY] == 0
-        assert metadata[MEMORY_PROVIDER_KEY] is runtime.provider
+        assert MEMORY_PROVIDER_KEY not in metadata
         assert services.require_named(MEMORY_PROVIDER_KEY) is runtime.provider
     finally:
         if runtime.coordinator is not None:

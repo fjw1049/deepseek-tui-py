@@ -6,13 +6,15 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.capabilities.goal import (
-    attach_goal_legacy_bindings,
+    GOAL_TURN_RESULT_DECORATION,
+    attach_goal_bindings,
     bind_goal_runtime_thread,
     build_goal_follow_up_start_payload,
     create_goal_runtime,
     fail_goal_turn,
     finish_goal_turn,
     goal_follow_up_is_stale,
+    goal_lifecycle_observer,
     goal_mode_hint,
     goal_status_payload,
     rebind_goal_thread_if_local,
@@ -26,7 +28,13 @@ from deepseek_tui.engine.engine import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.goal.controller import GoalController
 from deepseek_tui.goal.tools import GOAL_CONTROLLER_KEY
+from deepseek_tui.host.lifecycle import (
+    TurnCompletionContext,
+    TurnFailureContext,
+    TurnStartedContext,
+)
 from deepseek_tui.host.services import ServiceRegistry
+from deepseek_tui.protocol.responses import Usage
 
 
 def test_goal_capability_creates_controller_and_legacy_bindings(
@@ -39,12 +47,10 @@ def test_goal_capability_creates_controller_and_legacy_bindings(
         workspace=tmp_path,
         thread_id="thread-1",
     )
-    metadata: dict[str, object] = {}
-    attach_goal_legacy_bindings(runtime, metadata=metadata, services=services)
+    attach_goal_bindings(runtime, services=services)
 
     assert runtime.controller.thread_id == "thread-1"
     assert runtime.controller.workspace == tmp_path.resolve()
-    assert metadata[GOAL_CONTROLLER_KEY] is runtime.controller
     assert services.require(GoalController) is runtime.controller
     assert services.require_named(GOAL_CONTROLLER_KEY) is runtime.controller
 
@@ -123,6 +129,63 @@ def test_goal_capability_lifecycle_helpers(tmp_path: Path) -> None:
     fail_goal_turn(controller, "failed")
 
 
+@pytest.mark.asyncio
+async def test_goal_lifecycle_observer_records_completion_result(tmp_path: Path) -> None:
+    controller = GoalController(tmp_path, "thread-1")
+    goal = controller.create("ship goal")
+    controller.take_pending_follow_up()
+    observer = goal_lifecycle_observer(lambda: controller)
+    services = ServiceRegistry()
+
+    await observer.on_turn_started(
+        TurnStartedContext(
+            thread_id="thread-1",
+            turn_id="turn-1",
+            metadata={},
+            services=services,
+        )
+    )
+    context = TurnCompletionContext(
+        thread_id="thread-1",
+        turn_id="turn-1",
+        success=True,
+        usage=Usage(input_tokens=3, output_tokens=2),
+        metadata={},
+        services=services,
+    )
+
+    await observer.on_turn_completed(context)
+
+    result = context.decorations[GOAL_TURN_RESULT_DECORATION]
+    assert result.follow_up is not None
+    assert result.follow_up.goal_id == goal.goal_id
+    assert result.steer is None
+
+
+@pytest.mark.asyncio
+async def test_goal_lifecycle_observer_records_failure_result(tmp_path: Path) -> None:
+    controller = GoalController(tmp_path, "thread-1")
+    controller.create("ship goal")
+    observer = goal_lifecycle_observer(lambda: controller)
+    services = ServiceRegistry()
+    context = TurnFailureContext(
+        thread_id="thread-1",
+        turn_id="turn-1",
+        reason="user_cancelled",
+        usage=None,
+        metadata={},
+        services=services,
+    )
+
+    await observer.on_turn_failed(context)
+
+    result = context.decorations[GOAL_TURN_RESULT_DECORATION]
+    assert result.follow_up is None
+    assert result.steer is None
+    assert controller.current is not None
+    assert controller.current.reason == "user cancelled"
+
+
 def test_goal_capability_status_payload_and_follow_up(tmp_path: Path) -> None:
     controller = GoalController(tmp_path, "thread-1")
     assert goal_status_payload(controller) == {"goal": None}
@@ -194,7 +257,7 @@ async def test_engine_create_goal_uses_capability_bindings(tmp_path: Path) -> No
     )
     try:
         assert isinstance(engine.goal_controller, GoalController)
-        assert engine.tool_context.metadata[GOAL_CONTROLLER_KEY] is engine.goal_controller
+        assert GOAL_CONTROLLER_KEY not in engine.tool_context.metadata
         assert engine.tool_context.services.require(GoalController) is engine.goal_controller
         assert engine.tool_context.services.require_named(GOAL_CONTROLLER_KEY) is (
             engine.goal_controller

@@ -9,6 +9,7 @@ from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
 from deepseek_tui.memory.native.provider import NativeMemoryProvider
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.knowledge_tools import RememberTool
+from deepseek_tui.host.services import ServiceScope
 from deepseek_tui.tools.memory_tools import MEMORY_PROVIDER_KEY
 
 
@@ -25,7 +26,12 @@ async def test_remember_dual_writes_l1_when_provider_present(tmp_path: Path) -> 
     mem_file = tmp_path / "memory.md"
     try:
         ctx = ToolContext(working_directory=tmp_path)
-        ctx.metadata[MEMORY_PROVIDER_KEY] = provider
+        ctx.services.add_named(
+            MEMORY_PROVIDER_KEY,
+            provider,
+            owner="test",
+            scope=ServiceScope.ENGINE,
+        )
         ctx.metadata["runtime_thread_id"] = "thr_remember"
 
         import os

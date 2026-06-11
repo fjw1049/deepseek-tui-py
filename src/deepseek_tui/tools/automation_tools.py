@@ -71,8 +71,6 @@ def _get_manager(context: ToolContext) -> AutomationManager:
     if raw is None:
         raw = context.services.optional_named(AUTOMATION_MANAGER_KEY)
     if raw is None:
-        raw = context.metadata.get(AUTOMATION_MANAGER_KEY)
-    if raw is None:
         raise ToolError(
             "AutomationManager is not attached "
             "(set features.automations=true in config)"
@@ -573,8 +571,6 @@ class AutomationRunTool(ToolSpec):
             task_manager_raw = context.services.optional(TaskManager)
         if task_manager_raw is None:
             task_manager_raw = context.services.optional_named("task_manager")
-        if task_manager_raw is None:
-            task_manager_raw = context.metadata.get("task_manager")
         if not isinstance(task_manager_raw, TaskManager):
             raise ToolError(
                 "TaskManager is not attached "

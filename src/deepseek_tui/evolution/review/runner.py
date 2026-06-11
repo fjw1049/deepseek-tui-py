@@ -80,12 +80,29 @@ async def run_evolution_review(
         TURN_EVIDENCE_KEY,
     )
 
+    from deepseek_tui.host.services import ServiceScope
+
     if curated_store is not None:
-        context.metadata[CURATED_MEMORY_STORE_KEY] = curated_store
+        context.services.add_named(
+            CURATED_MEMORY_STORE_KEY,
+            curated_store,
+            owner="evolution",
+            scope=ServiceScope.ENGINE,
+        )
     if skill_store is not None:
-        context.metadata[SKILL_STORE_KEY] = skill_store
+        context.services.add_named(
+            SKILL_STORE_KEY,
+            skill_store,
+            owner="evolution",
+            scope=ServiceScope.ENGINE,
+        )
     if ledger is not None:
-        context.metadata[EVOLUTION_LEDGER_KEY] = ledger
+        context.services.add_named(
+            EVOLUTION_LEDGER_KEY,
+            ledger,
+            owner="evolution",
+            scope=ServiceScope.ENGINE,
+        )
         context.metadata[TURN_EVIDENCE_KEY] = evidence
 
     user_prompt = build_review_user_prompt(

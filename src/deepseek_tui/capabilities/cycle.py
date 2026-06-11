@@ -53,6 +53,21 @@ def create_cycle_runtime(
     )
 
 
+def attach_engine_cycle(
+    engine: object,
+    config: Config,
+    *,
+    client: LLMClient,
+) -> CycleRuntime:
+    """Wire cycle/seam runtime onto a materialized engine."""
+    cycle_runtime = create_cycle_runtime(config, client=client)
+    engine.cycle_config = cycle_runtime.config  # type: ignore[attr-defined]
+    engine.seam_manager = cycle_runtime.seam_manager  # type: ignore[attr-defined]
+    engine._cycle_session_id = cycle_runtime.session_id  # type: ignore[attr-defined]
+    engine._cycle_started_at = cycle_runtime.started_at  # type: ignore[attr-defined]
+    return cycle_runtime
+
+
 async def apply_layered_context_checkpoint(
     *,
     seam_manager: object | None,

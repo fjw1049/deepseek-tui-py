@@ -618,7 +618,9 @@ def cmd_tokens(args: str, app: DeepSeekTUI) -> CommandResult:
 def _schedule_goal_follow_up(app: "DeepSeekTUI") -> None:
     if app._engine is None:
         return
-    controller = getattr(app._engine, "goal_controller", None)
+    from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+    controller = goal_controller_from_engine(app._engine)
     if controller is None or not hasattr(controller, "take_pending_follow_up"):
         return
     follow_up = controller.take_pending_follow_up()
@@ -644,7 +646,9 @@ def _schedule_goal_follow_up(app: "DeepSeekTUI") -> None:
 def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
     if app._engine is None:
         return CommandResult(error="Engine not started — no goal runtime available")
-    controller = getattr(app._engine, "goal_controller", None)
+    from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+    controller = goal_controller_from_engine(app._engine)
     if controller is None:
         return CommandResult(error="Goal runtime is not attached")
 
@@ -931,7 +935,12 @@ async def _mcp_discover_worker(app: DeepSeekTUI, path, *, reload_engine: bool) -
     transcript = app.query_one(Transcript)
     try:
         if reload_engine and app._engine is not None:
-            mgr = app._engine.mcp_manager
+            from deepseek_tui.capabilities.mcp import mcp_manager_from_runtime_or_context
+
+            mgr = mcp_manager_from_runtime_or_context(
+                tool_runtime=app._engine.tool_runtime,
+                context=app._engine.tool_context,
+            )
             if mgr is not None:
                 await mgr.reconnect_all()
             app._engine.invalidate_mcp_tools_cache()

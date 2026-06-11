@@ -74,8 +74,6 @@ class SkillManageTool(ToolSpec):
             )
 
         ledger = context.services.optional_named(EVOLUTION_LEDGER_KEY)
-        if ledger is None:
-            ledger = context.metadata.get(EVOLUTION_LEDGER_KEY)
         evidence = resolve_turn_evidence(context.metadata)
         if ledger is None or evidence is None:
             return ToolResult(success=False, content="evolution ledger not available")
@@ -106,8 +104,6 @@ def _store_from_context(context: ToolContext):
     from deepseek_tui.evolution.constants import SKILL_STORE_KEY
 
     store = context.services.optional_named(SKILL_STORE_KEY)
-    if store is None:
-        store = context.metadata.get(SKILL_STORE_KEY)
     if store is None:
         raise RuntimeError("skill store not configured")
     return store

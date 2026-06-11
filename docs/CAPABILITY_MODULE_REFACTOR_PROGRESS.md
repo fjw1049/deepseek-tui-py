@@ -2,6 +2,11 @@
 
 ## Current Phase
 
+**Refactor complete (Priorities 1–11).** Final attach migration moved goal,
+hooks, and dynamic lifecycle observer registration out of `Engine.__init__` into
+`attach_engine_capabilities()` via `attach_engine_goal()`, `attach_engine_hooks()`,
+and `host/engine_lifecycle.register_engine_lifecycle_observers()`.
+
 Phase 7 has started typed-service adoption in migrated tools, moved Workflow,
 RLM, SubAgent, Hook, Cycle/Seam, PostTurn, and ToolRuntime shutdown details into
 capability adapters, moved Memory turn-time helper logic into the Memory
@@ -35,6 +40,49 @@ construction entry points already enter `host.assembler`, and
 `build_default_registry(...)` delegates tool ownership to first-party ToolPacks.
 
 ## Completed In This Step
+
+### Phase 7 Continuation: Assembler Contributions + Engine Lifecycle Registry
+
+- Added `AssembledContributions` and `collect_builtin_contributions(...)` in
+  `host/assembler.py`.
+- The assembler can now collect enabled built-in capability module
+  `Contributions` through `BuiltinModuleCatalog` without changing the existing
+  runtime materialization path.
+- Added tests for empty catalog no-op collection, dependency-ordered module
+  contribution, duplicate ToolPack rejection, duplicate prompt contributor
+  rejection, and duplicate runtime route rejection.
+- Added provider-backed Memory and PostTurn lifecycle observers so observer
+  registration can happen once while still reading current Engine state at
+  dispatch time.
+- Added `Engine.lifecycle_registry` as the session-owned lifecycle registry.
+- Replaced local per-call `LifecycleRegistry` construction for Memory
+  before-turn recall with dispatch through `Engine.lifecycle_registry`.
+- Replaced local per-call `LifecycleRegistry` construction for PostTurn
+  after-tool notification with dispatch through `Engine.lifecycle_registry`.
+- Added Engine assembly coverage proving the expected lifecycle observer IDs are
+  registered once on created Engine instances.
+- Preserved Memory recall injection, PostTurn/Evolution main-tool notification,
+  and post-turn memory fallback behavior.
+- Added an explicit `on_turn_started` lifecycle phase so Goal turn-start
+  accounting can keep its existing post-`TurnStartedEvent` timing.
+- Added `GoalLifecycleObserver` and routed Goal turn start, complete, and
+  failure accounting through `Engine.lifecycle_registry`.
+- Goal completion/failure lifecycle contexts now use decorations to carry the
+  existing follow-up/steer result back to Engine without changing follow-up
+  dispatch behavior.
+- Replaced `RuntimeThreadManager` direct `engine.goal_controller` attribute
+  access with the Goal capability adapter `goal_controller_from_engine(...)`,
+  which reads typed services first and falls back through legacy bindings.
+- Replaced remaining TUI command, TUI session-binding, and runtime SSE direct
+  `engine.goal_controller` reads with the same Goal capability adapter.
+- Preserved Goal stale follow-up rejection, hidden follow-up scheduling,
+  `goal.status` payloads, and existing Goal journal/controller behavior.
+- Added `LspToolObserver` and registered it through `Engine.lifecycle_registry`
+  for successful edit-tool diagnostics.
+- Removed Engine's direct post-edit LSP hook helper; pending diagnostic rendering
+  remains in Engine so next-request injection behavior stays unchanged.
+- Preserved LSP silent-failure behavior, edited-path detection, diagnostic
+  collection, and pending block flushing semantics.
 
 ### Phase 7 Typed Service Adoption + Engine Wiring Adapters
 
@@ -563,10 +611,10 @@ Detailed continuation checklist: `docs/CAPABILITY_MODULE_REFACTOR_REMAINING.md`.
   fully transferred.
 - The assembler is introduced for the three public construction entry points,
   but each path still delegates to legacy implementation bodies.
-- Host lifecycle/surface registries and `Contributions` now exist. Memory
-  before-turn recall is the first lifecycle-backed dispatch under the legacy
-  Engine path, but the assembler does not yet collect concrete capability
-  contributions through `Contributions`.
+- Host lifecycle/surface registries and `Contributions` now exist. The assembler
+  can collect built-in module contributions without materializing runtime
+  objects, and Memory/PostTurn lifecycle dispatch now uses a session-owned
+  Engine lifecycle registry under the legacy Engine path.
 - `assemble_tool_runtime()` still delegates to `_create_tool_runtime_legacy()`;
   manager construction ownership has moved into capability adapters inside that
   compatibility body.
@@ -578,7 +626,9 @@ Detailed continuation checklist: `docs/CAPABILITY_MODULE_REFACTOR_REMAINING.md`.
   PostTurn assembly are now delegated to capability adapters, while turn-time
   behavior remains in existing Engine paths.
 - LSP runtime service construction has moved, but LSP observer behavior is
-  still owned by existing Engine/tool execution paths.
+  now dispatched through the session-owned lifecycle registry. Pending
+  diagnostic rendering still remains in Engine to preserve next-request
+  injection timing.
 - MCP runtime service construction, dynamic catalog assembly, external tool
   dispatch helper details, runtime API startup/preload route helpers, and legacy
   app-server/stdio route helper details have moved, but manager internals remain
@@ -596,8 +646,9 @@ Detailed continuation checklist: `docs/CAPABILITY_MODULE_REFACTOR_REMAINING.md`.
   missing module through the core prompt contributor.
 - Memory runtime construction, before-turn recall observer, turn-start
   decoration, helper logic, capture fallback dispatch, and flush-before-loss
-  dispatch have moved, but Engine still owns turn lifecycle timing for
-  recall/capture/flush and post-turn evidence publication.
+  dispatch have moved. Engine still owns turn lifecycle timing for
+  recall/capture/flush and post-turn evidence publication, but before-turn
+  recall now dispatches through the session-owned lifecycle registry.
 - Evolution runtime construction, turn evidence publication details,
   approval-route helper details, main-tool response shaping, and main-tool
   scheduler reset dispatch have moved, but review scheduling, ledger mutation
@@ -605,16 +656,63 @@ Detailed continuation checklist: `docs/CAPABILITY_MODULE_REFACTOR_REMAINING.md`.
   paths.
 - Goal runtime construction, lifecycle helper details, runtime thread binding,
   status payload construction, pending follow-up validation, and hidden
-  follow-up payload construction have moved, but Engine/RuntimeThreadManager
-  still own turn lifecycle timing and hidden follow-up scheduling.
+  follow-up payload construction have moved. Goal turn start/complete/failure
+  accounting now dispatches through the session-owned lifecycle registry, and
+  RuntimeThreadManager uses the Goal capability adapter instead of directly
+  reading `engine.goal_controller`. Engine/RuntimeThreadManager still own hidden
+  follow-up scheduling timing.
 - Workflow tool-call scoped bindings and tool execution/validation orchestration
   have moved, but the underlying Workflow runtime package, progress event
   schema, and server/TUI rendering remain unchanged.
 - RLM tool-call scoped progress binding and tool execution/reporting helper have
   moved, but the underlying RLM turn loop package and progress event schema
   remain unchanged.
+- Priority 11 step 1: `assemble_engine()`, `assemble_tool_runtime()`, and
+  `assemble_registry_only()` now materialize from `AssembledContributions`
+  (`build_tool_registry_from_contributions`, `materialize_tool_runtime`,
+  `merge_lifecycle_registries`). `_create_legacy` still owns engine body wiring
+  but receives collected contributions instead of ignoring the assembler.
+- Completed MCP host-integration audit: preload scheduling/status and external
+  tool dispatch in `app_server/runtime.py` now use `capabilities/mcp.py`
+  helpers. Added `tests/host/test_mcp_integration_characterization.py`.
+- Added capability runtime surface contributions for MCP, Evolution, and
+  Automation routes. Added isolated `mount_surface_routes()` /
+  `build_surface_router()` helpers.
+- Priority 11 step 2: `host/builtin_modules.py` registers default builtin
+  catalog modules (tool packs, prompt contributors, runtime surfaces).
+  `collect_builtin_contributions()` defaults to the builtin catalog.
+  `build_runtime_api_router()` mounts capability surfaces instead of static
+  evolution/mcp/automation routers.
+- Priority 11 steps 3–6: long-lived services bind via `ToolContext.services`
+  only; workflow/RLM use `tool_execution`; removed legacy assembly aliases;
+  renamed `Engine._create_legacy` → `Engine._materialize`.
+- Post-P11: `build_system_prompt()` uses
+  `resolve_assembly_prompt_contributors()`; catalog is the single source for
+  default prompt contributors.
+- Engine materialization: `attach_engine_capabilities()` in `host/engine_attach.py`
+  with per-capability `attach_engine_*()` helpers (memory, cycle, evolution,
+  post_turn, subagents).
+- Added `tests/host/test_runtime_surface_contributions.py`.
+- Added `host/tool_execution.py` and `ToolContext.tool_execution` for typed
+  per-tool callback bindings. Workflow/RLM bindings now populate typed context
+  first and retain legacy metadata keys as fallback until all call sites
+  migrate.
+- Added `tests/host/test_tool_execution_context.py`.
+- Added `tests/host/test_evolution_scheduling_characterization.py` and
+  `tests/app_server/test_evolution_routes.py` to lock down evolution review
+  scheduling, proposal event emission, and approval route response shapes.
+  Added `evolution_action_response()` presenter helper for approve/reject routes.
+- Added `tests/host/test_memory_capture_flush_characterization.py` to lock down
+  memory capture/flush dispatch:
+  - orchestrator path does not invoke direct `capture_memory_after_turn`
+  - PostTurn-disabled fallback captures once
+  - MemoryPipeline capture once via orchestrator
+  - compaction-style `flush_before_loss` passes `flush_mode=True` evidence
+  - LRU `_flush_engine_memory` coordinator fallback without post_turn or empty
+    session messages
 - Remaining high-coupling areas after the latest audit:
-  - Memory capture/flush trigger timing in the Engine turn lifecycle
+  - Memory capture/flush trigger timing in the Engine turn lifecycle (tests
+    added; lifecycle migration not started)
   - Lifecycle registry collection through assembler `Contributions`
   - Evolution review scheduling/ledger events
   - Goal turn lifecycle timing and hidden follow-up scheduling trigger
@@ -633,6 +731,64 @@ Detailed continuation checklist: `docs/CAPABILITY_MODULE_REFACTOR_REMAINING.md`.
   tree. This appears to be pre-existing and was not changed in this phase.
 - Events and runtime API surfaces remain unchanged; versioned extension events
   are still deferred.
+
+Latest continuation verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m compileall -q src/deepseek_tui/capabilities/memory.py src/deepseek_tui/capabilities/post_turn.py src/deepseek_tui/engine/engine.py tests/host/test_engine_assembly.py
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_engine_assembly.py tests/host/test_memory_capability.py tests/host/test_engine_wiring_capabilities.py tests/engine/test_turn_evidence_sync.py tests/memory -q
+# 113 passed, 3 skipped
+
+PYTHONPATH=src .venv/bin/python -m compileall -q src/deepseek_tui/host/assembler.py src/deepseek_tui/host/__init__.py tests/host/test_registry_assembly.py
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_registry_assembly.py tests/host/test_engine_assembly.py tests/host/test_memory_capability.py tests/host/test_engine_wiring_capabilities.py -q
+# 35 passed
+
+PYTHONPATH=src uv run --with ruff --index-url https://pypi.tuna.tsinghua.edu.cn/simple ruff check src/deepseek_tui/host/assembler.py src/deepseek_tui/host/__init__.py src/deepseek_tui/capabilities/memory.py src/deepseek_tui/capabilities/post_turn.py src/deepseek_tui/engine/engine.py tests/host/test_registry_assembly.py tests/host/test_engine_assembly.py
+# All checks passed
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host tests/goal tests/memory tests/evolution tests/workflow tests/engine/test_turn_evidence_sync.py tests/test_rlm_subagent_task_parity.py tests/test_rlm_subagent_task_integration.py tests/test_automation_manager.py tests/test_session_activity_integration.py tests/app_server/test_workflow_cancel_finalize.py tests/contract/test_workflow_progress_sse.py tests/contract/test_goal_status_sse.py tests/post_turn/test_orchestrator.py tests/contract/test_todo_tool_metadata.py tests/parity/phase_d/test_mcp_hooks_p1.py tests/test_mcp_engine_integration.py tests/test_mcp_preload.py -q
+# 391 passed, 3 skipped, 1 warning
+
+PYTHONPATH=src .venv/bin/python -m compileall -q src/deepseek_tui/host/lifecycle.py src/deepseek_tui/host/__init__.py src/deepseek_tui/capabilities/goal.py src/deepseek_tui/engine/engine.py tests/host/test_goal_capability.py tests/host/test_engine_assembly.py
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_goal_capability.py tests/goal tests/contract/test_goal_status_sse.py tests/host/test_engine_assembly.py -q
+# 64 passed
+
+PYTHONPATH=src .venv/bin/python -m compileall -q src/deepseek_tui/capabilities/goal.py src/deepseek_tui/app_server/thread_manager.py tests/goal/test_goal_thread_manager.py
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_goal_capability.py tests/goal/test_goal_thread_manager.py tests/contract/test_goal_status_sse.py -q
+# 21 passed
+
+PYTHONPATH=src uv run --with ruff --index-url https://pypi.tuna.tsinghua.edu.cn/simple ruff check src/deepseek_tui/host/lifecycle.py src/deepseek_tui/host/__init__.py src/deepseek_tui/capabilities/goal.py src/deepseek_tui/engine/engine.py src/deepseek_tui/app_server/thread_manager.py tests/host/test_goal_capability.py tests/host/test_engine_assembly.py tests/goal/test_goal_thread_manager.py
+# All checks passed
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host tests/goal tests/memory tests/evolution tests/workflow tests/engine/test_turn_evidence_sync.py tests/test_rlm_subagent_task_parity.py tests/test_rlm_subagent_task_integration.py tests/test_automation_manager.py tests/test_session_activity_integration.py tests/app_server/test_workflow_cancel_finalize.py tests/contract/test_workflow_progress_sse.py tests/contract/test_goal_status_sse.py tests/post_turn/test_orchestrator.py tests/contract/test_todo_tool_metadata.py tests/parity/phase_d/test_mcp_hooks_p1.py tests/test_mcp_engine_integration.py tests/test_mcp_preload.py -q
+# 393 passed, 3 skipped, 1 warning
+
+PYTHONPATH=src .venv/bin/python -m compileall -q src/deepseek_tui/capabilities/lsp.py src/deepseek_tui/engine/engine.py tests/host/test_lsp_capability.py tests/host/test_engine_assembly.py
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_lsp_capability.py tests/host/test_engine_assembly.py tests/host/test_engine_wiring_capabilities.py -q
+# 20 passed
+
+PYTHONPATH=src uv run --with ruff --index-url https://pypi.tuna.tsinghua.edu.cn/simple ruff check src/deepseek_tui/capabilities/lsp.py src/deepseek_tui/engine/engine.py tests/host/test_lsp_capability.py tests/host/test_engine_assembly.py
+# All checks passed
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host tests/goal tests/memory tests/evolution tests/workflow tests/engine/test_turn_evidence_sync.py tests/test_rlm_subagent_task_parity.py tests/test_rlm_subagent_task_integration.py tests/test_automation_manager.py tests/test_session_activity_integration.py tests/app_server/test_workflow_cancel_finalize.py tests/contract/test_workflow_progress_sse.py tests/contract/test_goal_status_sse.py tests/post_turn/test_orchestrator.py tests/contract/test_todo_tool_metadata.py tests/parity/phase_d/test_mcp_hooks_p1.py tests/test_mcp_engine_integration.py tests/test_mcp_preload.py -q
+# 395 passed, 3 skipped
+
+PYTHONPATH=src .venv/bin/python -m compileall -q src/deepseek_tui/capabilities/goal.py src/deepseek_tui/app_server/thread_manager.py src/deepseek_tui/app_server/runtime_api/sse.py src/deepseek_tui/tui/commands/handlers.py src/deepseek_tui/tui/app.py
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/goal tests/contract/test_goal_status_sse.py tests/goal/test_goal_commands.py -q
+# 51 passed
+
+PYTHONPATH=src uv run --with ruff --index-url https://pypi.tuna.tsinghua.edu.cn/simple ruff check src/deepseek_tui/host/lifecycle.py src/deepseek_tui/host/__init__.py src/deepseek_tui/capabilities/goal.py src/deepseek_tui/capabilities/lsp.py src/deepseek_tui/engine/engine.py src/deepseek_tui/app_server/thread_manager.py src/deepseek_tui/app_server/runtime_api/sse.py tests/host/test_goal_capability.py tests/host/test_lsp_capability.py tests/host/test_engine_assembly.py tests/goal/test_goal_thread_manager.py
+# All checks passed
+
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host tests/goal tests/memory tests/evolution tests/workflow tests/engine/test_turn_evidence_sync.py tests/test_rlm_subagent_task_parity.py tests/test_rlm_subagent_task_integration.py tests/test_automation_manager.py tests/test_session_activity_integration.py tests/app_server/test_workflow_cancel_finalize.py tests/contract/test_workflow_progress_sse.py tests/contract/test_goal_status_sse.py tests/post_turn/test_orchestrator.py tests/contract/test_todo_tool_metadata.py tests/parity/phase_d/test_mcp_hooks_p1.py tests/test_mcp_engine_integration.py tests/test_mcp_preload.py -q
+# 395 passed, 3 skipped, 1 warning
+```
 
 ## Verification
 
@@ -886,6 +1042,5 @@ the full `dev` extra that pulls `pre-commit -> nodeenv`.
 
 ## Next Safe Step
 
-Continue by wiring the next low-risk observer under the legacy path, likely Goal
-turn lifecycle observer. Do not move event protocols or broad API surfaces until
-behavior-equivalence tests are stronger.
+Planned refactor work is complete. Follow-on items (separate projects): CLI
+split, versioned extension events/surfaces, external Python plugin loading.

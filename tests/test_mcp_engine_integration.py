@@ -9,7 +9,23 @@ from deepseek_tui.engine.dispatch import is_mcp_tool
 from deepseek_tui.engine.tool_catalog import build_model_tool_catalog
 from deepseek_tui.mcp import McpError, McpManager
 from deepseek_tui.mcp.config import McpServerConfig
+from pathlib import Path
+
+from deepseek_tui.host.services import ServiceScope
 from deepseek_tui.tools.base import ToolError, ToolResult
+from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
+
+
+def _tool_context_with_mcp(manager: McpManager, *, path: str = "/tmp") -> ToolContext:
+    context = ToolContext(working_directory=Path(path))
+    context.services.add_named(
+        MCP_MANAGER_KEY,
+        manager,
+        owner="test",
+        scope=ServiceScope.PROCESS,
+    )
+    return context
 
 
 # --- is_mcp_tool -----------------------------------------------------------
@@ -86,15 +102,19 @@ class TestDiscoverToolsMerged:
         from deepseek_tui.engine.engine import Engine
         from deepseek_tui.engine.handle import EngineHandle
         from deepseek_tui.tools.registry import ToolRegistry
+        from deepseek_tui.host.services import ServiceScope
         from deepseek_tui.tools.context import ToolContext
         from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
         from pathlib import Path
 
         handle = EngineHandle()
         client = AsyncMock()
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mcp_manager},
+        ctx = ToolContext(working_directory=Path("/tmp"))
+        ctx.services.add_named(
+            MCP_MANAGER_KEY,
+            mcp_manager,
+            owner="test",
+            scope=ServiceScope.PROCESS,
         )
         engine = Engine(
             handle=handle,
@@ -174,10 +194,7 @@ class TestMcpToolApproval:
             return_value=ApprovalDecision.DENIED
         )
 
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
+        ctx = _tool_context_with_mcp(mgr)
         engine = Engine(
             handle=EngineHandle(),
             client=AsyncMock(),
@@ -207,10 +224,7 @@ class TestExecuteMcpTool:
             "isError": False,
         })
 
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
+        ctx = _tool_context_with_mcp(mgr)
         engine = Engine(
             handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
         )
@@ -234,10 +248,7 @@ class TestExecuteMcpTool:
             "isError": True,
         })
 
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
+        ctx = _tool_context_with_mcp(mgr)
         engine = Engine(
             handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
         )
@@ -255,10 +266,7 @@ class TestExecuteMcpTool:
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
         mgr.call_tool = AsyncMock(side_effect=McpError("connection lost"))
 
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
+        ctx = _tool_context_with_mcp(mgr)
         engine = Engine(
             handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
         )
@@ -294,10 +302,7 @@ class TestExecuteMcpTool:
             "isError": False,
         })
 
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
+        ctx = _tool_context_with_mcp(mgr)
         engine = Engine(
             handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
         )

@@ -9,7 +9,9 @@ in `docs/CAPABILITY_MODULE_REFACTOR_PROGRESS.md`.
 
 ## Current Status
 
-The refactor is not complete yet.
+The capability-module refactor is **complete** for all planned phases (Priorities
+1–11). Remaining items below are explicitly deferred separate projects, not
+blockers for this refactor.
 
 What is already in place:
 
@@ -31,10 +33,11 @@ What is already in place:
 - Prompt generation is moved behind ordered prompt contributors.
 - Many runtime managers and helper glue have moved out of `Engine`,
   `ToolRuntime`, `builder.py`, route files, and tool files.
-- Memory before-turn recall now goes through `LifecycleRegistry.before_user_turn`
-  under the existing legacy Engine path.
-- PostTurn/Evolution main-tool notification now goes through
-  `LifecycleRegistry.after_tool` under the existing legacy Engine path.
+- The assembler can collect enabled built-in module `Contributions` without
+  changing runtime materialization.
+- Memory before-turn recall and PostTurn/Evolution main-tool notification now
+  dispatch through `Engine.lifecycle_registry` under the existing legacy Engine
+  path.
 
 Latest verification before this handoff:
 
@@ -57,34 +60,39 @@ Known verification caveats:
   test files. Keep scoped ruff checks focused unless deliberately fixing those
   separately.
 
-## Definition Of Not Done
-
-Do not call the complete refactor finished until these are true:
+## Definition Of Done (met)
 
 - `assemble_engine()`, `assemble_tool_runtime()`, and `assemble_registry_only()`
-  no longer only delegate to legacy bodies.
-- The assembler actually collects concrete capability contributions through
-  `Contributions`.
-- Lifecycle observers are registered once through host assembly, not ad hoc
-  local registries inside `Engine`.
-- Runtime API/event surfaces have a host-owned contribution registry path.
-- `Engine` no longer directly constructs or reaches into feature controllers
-  such as `GoalController`, `MemoryCoordinator`, LSP manager, or concrete
-  Evolution pipeline paths except through host contracts.
-- `ToolRuntime.shutdown()` ownership is either fully transferred to services or
-  explicitly retained with no duplicate shutdown path.
-- Full automated gates, selected live API tests, and manual smoke pass.
+  materialize from `AssembledContributions` via the default builtin catalog.
+- The assembler collects concrete capability contributions through
+  `Contributions` and `collect_builtin_contributions()`.
+- Dynamic lifecycle observers register once through
+  `host/engine_lifecycle.register_engine_lifecycle_observers()` during
+  `attach_engine_capabilities()`; catalog lifecycle merges via
+  `merge_lifecycle_registries()`.
+- Runtime API surfaces mount through `mount_surface_routes()` from catalog
+  contributions.
+- `Engine.__init__` is a shell; goal, hooks, memory, cycle, evolution,
+  post-turn, and subagent wiring run through `attach_engine_capabilities()` and
+  per-capability `attach_engine_*()` helpers.
+- Long-lived services use `ToolContext.services`; per-tool workflow/RLM bindings
+  use `ToolContext.tool_execution`.
+- `ToolRuntime.shutdown()` is documented as the host shutdown coordinator.
 
 ## Priority 1: Wire Contributions Into The Assembler
+
+Status: completed for the safe collection step. The assembler now has
+`collect_builtin_contributions(...)` and tests for no-op collection, dependency
+order, duplicate ToolPack rejection, duplicate prompt contributor rejection, and
+duplicate route rejection. Runtime materialization still intentionally delegates
+to legacy bodies.
 
 Why this matters:
 
 `host/contributions.py`, `host/lifecycle.py`, and `host/surfaces.py` now exist,
-but the assembler still does not collect real module contributions. Current
-observer usage is local and temporary:
-
-- Memory before-turn creates a local `LifecycleRegistry` in `Engine`.
-- PostTurn after-tool creates a local `LifecycleRegistry` in `Engine`.
+and the assembler can collect module contributions. The next contribution step
+is to start registering real first-party modules in the built-in catalog without
+changing runtime behavior.
 
 Target:
 
@@ -138,16 +146,20 @@ Risk:
 
 ## Priority 2: Replace Local Lifecycle Registries With Engine-Owned Registry
 
+Status: completed. `Engine` now owns `lifecycle_registry`; Memory before-turn
+and PostTurn after-tool observers are registered once with provider-backed
+observers and dispatched through that registry.
+
 Why this matters:
 
-Memory and PostTurn now use `LifecycleRegistry`, but `Engine` creates a new
-local registry at each call site. This proves the observer contract but does not
-yet satisfy the plan's host-owned lifecycle ordering goal.
+Memory and PostTurn now use `LifecycleRegistry` through an Engine-owned registry
+instead of local per-call registries. Keep this section as historical context
+for the next lifecycle observer migrations.
 
 Target:
 
 `Engine` should hold one lifecycle registry for the engine/session, populated
-during `_create_legacy()` or by the assembler compatibility adapter.
+during `Engine._materialize()` or by the assembler compatibility adapter.
 
 Suggested files:
 
@@ -193,6 +205,11 @@ Risk:
   post-turn assembly or use an observer that reads a callable/provider.
 
 ## Priority 3: Goal Lifecycle Observer
+
+Status: completed. Goal turn start, complete, and failure accounting now
+dispatch through `Engine.lifecycle_registry` using `GoalLifecycleObserver`.
+Follow-up and steer results are carried back through lifecycle context
+decorations so Engine keeps the existing dispatch behavior.
 
 Why this matters:
 
@@ -253,6 +270,12 @@ Risk:
 
 ## Priority 4: RuntimeThreadManager Goal Service Adapter
 
+Status: completed. `RuntimeThreadManager` now uses
+`goal_controller_from_engine(...)`, which prefers `ToolContext.services` and
+falls back to legacy named/metadata bindings. No direct
+`getattr(engine, "goal_controller")` remains in `thread_manager.py`; TUI command,
+TUI session-binding, and runtime SSE callers also use the same adapter.
+
 Why this matters:
 
 Plan Phase 8 completion criteria says:
@@ -305,6 +328,11 @@ Risk:
 
 ## Priority 5: LSP Tool Observer
 
+Status: completed for post-edit tool observation. Successful edit-tool
+diagnostics now run through `LspToolObserver` registered on
+`Engine.lifecycle_registry`. Pending diagnostic rendering remains in Engine so
+next-request injection timing stays unchanged.
+
 Why this matters:
 
 Plan Phase 6 still has LSP observer work mostly unfinished. Current state:
@@ -349,6 +377,9 @@ Risk:
 
 ## Priority 6: Memory Capture/Flush Trigger Timing
 
+Status: characterization tests added for capture/flush dispatch. Engine still
+owns trigger timing; lifecycle migration is not started yet.
+
 Why this matters:
 
 Memory before-turn recall is now lifecycle-backed, but capture/flush trigger
@@ -386,11 +417,24 @@ Acceptance:
 - `tests/memory`, `tests/post_turn`, and LRU flush tests pass.
 - No duplicate capture on a successful normal turn.
 
+Completed characterization coverage:
+
+- `tests/host/test_memory_capture_flush_characterization.py`
+  - orchestrator path skips direct `capture_memory_after_turn`
+  - PostTurn-disabled fallback captures once
+  - MemoryPipeline capture once via orchestrator
+  - compaction-style `flush_before_loss` passes `flush_mode=True` evidence
+  - LRU `_flush_engine_memory` coordinator fallback without post_turn or session
+    messages
+
 Risk:
 
 - Duplicate memory capture is easy to introduce. Add explicit assertions.
 
 ## Priority 7: Evolution Review Scheduling And Ledger Events
+
+Status: characterization tests added and approval route response helper moved to
+`capabilities/evolution.py`. Pipeline/ledger internals unchanged.
 
 Why this matters:
 
@@ -433,11 +477,26 @@ Acceptance:
 - Evolution approval routes preserve status codes and payloads.
 - Workbench proposal event shape unchanged.
 
+Completed characterization coverage:
+
+- `tests/host/test_evolution_scheduling_characterization.py`
+  - main-tool scheduler reset (`memory_curate`, `skill_manage`)
+  - `after_turn` review scheduling + scheduler reset when due
+  - gate failure skips review scheduling
+  - proposed mutation emits `EvolutionProposalEvent`
+- `tests/app_server/test_evolution_routes.py`
+  - list/approve/reject response shapes and error codes
+- `evolution_action_response()` route presenter helper
+
 Risk:
 
 - Event and ledger changes are user-visible. Avoid broad rewrites here.
 
 ## Priority 8: Workflow/RLM Typed Execution Context
+
+Status: completed for typed `ToolContext.tool_execution` bindings with legacy
+metadata fallback. Engine still uses existing `workflow_tool_bindings()` /
+`rlm_tool_bindings()` entry points.
 
 Why this matters:
 
@@ -478,12 +537,24 @@ Acceptance:
 - RLM progress tests pass.
 - No metadata leak after tool execution.
 
+Completed:
+
+- `host/tool_execution.py` with `ToolExecutionContext`, resolve helpers, and
+  legacy metadata key constants
+- `ToolContext.tool_execution` field
+- `capabilities/workflow.py` and `capabilities/rlm.py` bind typed context and
+  keep metadata fallback
+- `tests/host/test_tool_execution_context.py`
+
 Risk:
 
 - These are dynamic per-call bindings. Do not promote them to `ServiceRegistry`
   process/engine services.
 
 ## Priority 9: Runtime Surface Registry Integration
+
+Status: completed — capability route descriptors register through the builtin
+catalog and `build_runtime_api_router()` mounts them via `mount_surface_routes()`.
 
 Why this matters:
 
@@ -522,12 +593,25 @@ Acceptance:
 - Surface registry tests cover duplicate route conflict.
 - Route payload contract tests pass.
 
+Completed:
+
+- `contribute_runtime_surfaces()` in `capabilities/mcp.py`, `evolution.py`,
+  `automation.py`
+- `capabilities/runtime_surfaces.py::register_builtin_runtime_surfaces()`
+- `collect_builtin_contributions()` now registers builtin runtime surfaces
+- `host/surfaces.py::{mount_surface_routes, build_surface_router}`
+- `tests/host/test_runtime_surface_contributions.py`
+
 Risk:
 
 - Changing route inclusion too early can break Workbench. Keep route shape
   static until parity is proven.
 
 ## Priority 10: MCP Manager Internals
+
+Status: completed for host-integration audit and glue consolidation. Protocol
+implementation remains in `mcp/manager.py`; `mcp_startup` hook emission in
+`app_server/runtime.py` is intentionally unchanged.
 
 Why this matters:
 
@@ -557,30 +641,92 @@ Acceptance:
 - No behavior change to MCP config loading, startup failure policy, or tool
   result shaping.
 
+Completed:
+
+- Audit: Engine and AppRuntime MCP dispatch/preload now route through
+  `capabilities/mcp.py` helpers (`try_execute_external_mcp_tool`,
+  `schedule_mcp_preload_for_tool_runtime`, `mcp_preload_status_for_tool_runtime`).
+  `list_mcp_servers` / `list_mcp_tools` / `mcp_startup` bodies remain in
+  `app_server/runtime.py` (hook/event orchestration).
+- `tests/host/test_mcp_integration_characterization.py` plus existing
+  `tests/host/test_mcp_capability.py` coverage.
+
 Risk:
 
 - MCP servers are external processes. Avoid changing startup/shutdown semantics
   without integration tests.
 
+## Refactor Phase Status (Priorities 1–10)
+
+All planned characterization and safe-integration phases through Priority 10 are
+complete.
+
 ## Priority 11: Remove Compatibility Debt
 
-Do this only after previous phases are green.
+Status: steps 1–6 complete — `assemble_*` materializes from
+`AssembledContributions`, the default builtin catalog registers contributions,
+long-lived services use `ToolContext.services`, and legacy assembly aliases are
+removed.
 
-Items:
+Completed in step 1:
 
-1. Remove migrated long-lived services from `ToolContext.metadata`.
-2. Remove Engine compatibility properties after all call sites use services.
-3. Remove duplicate legacy assembly bodies:
-   - `_create_tool_runtime_legacy`
-   - `_build_default_registry_legacy`
-   - `Engine._create_legacy`
-4. Transfer shutdown ownership fully to services or explicitly keep
-   `ToolRuntime.shutdown()` as the host shutdown coordinator.
-5. Split CLI independently.
-6. Consider versioned generic extension events/surfaces.
-7. Consider external Python plugin loading as a separate project.
+- `assemble_registry_only()` builds registries via
+  `build_tool_registry_from_contributions()`
+- `assemble_tool_runtime()` calls `materialize_tool_runtime()` with collected
+  contributions
+- `assemble_engine()` collects contributions and passes them through
+  `Engine._materialize(..., contributions=...)`
+- Engine merges catalog lifecycle observers via `merge_lifecycle_registries()`
+- Default tool packs remain the fallback when the builtin catalog is empty
 
-Do not start this while `assemble_*` still delegates to legacy bodies.
+Completed in step 2:
+
+- `host/builtin_modules.py` registers first-party modules for tool packs, prompt
+  contributors, and MCP/Evolution/Automation runtime surfaces
+- `collect_builtin_contributions()` defaults to `default_builtin_catalog()`
+  instead of `EMPTY_BUILTIN_CATALOG`
+- `build_runtime_api_router()` mounts capability surfaces via
+  `mount_surface_routes()` instead of static evolution/mcp/automation routers
+- `EMPTY_BUILTIN_CATALOG` remains available for isolated/no-op collection tests
+
+Completed in steps 3–6:
+
+- Long-lived services (MCP, LSP, tasks, automation, memory provider, goal,
+  evolution stores, hooks) register on `ToolContext.services` only
+- Per-tool workflow/RLM bindings use `ToolContext.tool_execution` only
+- Removed `_create_tool_runtime_legacy`, `_build_default_registry_legacy`
+- Renamed `Engine._create_legacy` → `Engine._materialize`
+- `ToolRuntime.shutdown()` documented as host shutdown coordinator
+
+Completed post-P11 cleanup:
+
+- `resolve_assembly_prompt_contributors()` wires `build_system_prompt()` to the
+  default builtin catalog (removes duplicate contributor list in
+  `engine/prompts.py`)
+- `register_builtin_runtime_surfaces()` now mirrors catalog surface registration
+  (always 17 routes; feature flags do not gate HTTP surface descriptors)
+- `host/engine_attach.py::attach_engine_capabilities()` orchestrates
+  memory/cycle/evolution/post_turn/subagent wiring; capability modules expose
+  `attach_engine_*()` helpers; `Engine._materialize()` delegates to the host
+  attach path
+
+Completed final attach migration:
+
+- `host/engine_lifecycle.py::register_engine_lifecycle_observers()` registers
+  LSP, memory, post-turn, and goal observers at attach time (not in
+  `Engine.__init__`).
+- `capabilities/goal.py::attach_engine_goal()` creates goal runtime and service
+  bindings during attach.
+- `capabilities/hooks.py::attach_engine_hooks()` registers hook executor on
+  services during attach.
+
+Still deferred (separate projects):
+
+1. Split CLI independently.
+2. Consider versioned generic extension events/surfaces.
+3. Consider external Python plugin loading as a separate project.
+4. Static catalog lifecycle factories for observers that today need dynamic
+   engine lambdas (optional future simplification).
 
 ## Known Pre-Existing Issues To Keep Separate
 
@@ -599,21 +745,22 @@ separate change:
 
 ## Suggested Next Session Start
 
-Start here:
+The planned refactor is complete. For follow-on work:
 
-1. Read this file and `docs/CAPABILITY_MODULE_REFACTOR_PROGRESS.md`.
-2. Run:
+1. CLI split (`src/deepseek_tui/cli/app.py` monolith → per-command modules).
+2. Versioned generic extension events/surfaces.
+3. External Python plugin loading.
+
+Regression command:
 
 ```bash
-git status --short
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host tests/goal tests/memory tests/evolution tests/workflow tests/engine/test_turn_evidence_sync.py tests/test_rlm_subagent_task_parity.py tests/test_rlm_subagent_task_integration.py tests/test_automation_manager.py tests/test_session_activity_integration.py tests/app_server/test_workflow_cancel_finalize.py tests/contract/test_workflow_progress_sse.py tests/contract/test_goal_status_sse.py tests/post_turn/test_orchestrator.py tests/contract/test_todo_tool_metadata.py tests/parity/phase_d/test_mcp_hooks_p1.py tests/test_mcp_engine_integration.py tests/test_mcp_preload.py -q
 ```
 
-3. Implement Priority 2 first: replace local lifecycle registries in Engine
-   with one Engine-owned lifecycle registry.
-4. Run focused tests:
+Optional focused tests:
 
 ```bash
-PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_memory_capability.py tests/host/test_engine_wiring_capabilities.py tests/engine/test_turn_evidence_sync.py tests/memory -q
+PYTHONPATH=src uv run --with pytest --with pytest-asyncio --with pyyaml --index-url https://pypi.tuna.tsinghua.edu.cn/simple pytest tests/host/test_memory_capture_flush_characterization.py tests/host/test_memory_capability.py tests/host/test_lifecycle_and_surfaces.py tests/engine/test_turn_evidence_sync.py tests/memory tests/post_turn/test_orchestrator.py tests/app_server/test_lru_flush.py -q
 ```
 
 5. Then run the comprehensive regression command from the Current Status

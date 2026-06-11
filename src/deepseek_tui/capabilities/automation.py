@@ -77,18 +77,106 @@ async def stop_automation_runtime(
         pass
 
 
-def attach_automation_legacy_bindings(
+def contribute_runtime_surfaces(registry: object) -> None:
+    from deepseek_tui.app_server.runtime_api.routes import automation as routes
+
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.trigger",
+        owner="automation",
+        method="POST",
+        path="/v1/triggers",
+        handler=routes.post_trigger,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.feishu_inbound",
+        owner="automation",
+        method="POST",
+        path="/v1/automation/feishu/inbound",
+        handler=routes.feishu_inbound,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.feishu_test_send",
+        owner="automation",
+        method="POST",
+        path="/v1/automation/feishu/test-send",
+        handler=routes.feishu_test_send,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.list",
+        owner="automation",
+        method="GET",
+        path="/v1/automations",
+        handler=routes.list_automations,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.create",
+        owner="automation",
+        method="POST",
+        path="/v1/automations",
+        handler=routes.create_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.get",
+        owner="automation",
+        method="GET",
+        path="/v1/automations/{automation_id}",
+        handler=routes.get_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.update",
+        owner="automation",
+        method="PATCH",
+        path="/v1/automations/{automation_id}",
+        handler=routes.update_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.delete",
+        owner="automation",
+        method="DELETE",
+        path="/v1/automations/{automation_id}",
+        handler=routes.delete_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.run",
+        owner="automation",
+        method="POST",
+        path="/v1/automations/{automation_id}/run",
+        handler=routes.run_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.pause",
+        owner="automation",
+        method="POST",
+        path="/v1/automations/{automation_id}/pause",
+        handler=routes.pause_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.resume",
+        owner="automation",
+        method="POST",
+        path="/v1/automations/{automation_id}/resume",
+        handler=routes.resume_automation,
+    )
+    registry.add_route(  # type: ignore[attr-defined]
+        id="automation.list_runs",
+        owner="automation",
+        method="GET",
+        path="/v1/automations/{automation_id}/runs",
+        handler=routes.list_automation_runs,
+    )
+
+
+def attach_automation_bindings(
     manager: AutomationManager | None,
     *,
-    metadata: dict[str, object],
     services: ServiceRegistry,
 ) -> None:
     if manager is None:
         return
-    metadata[AUTOMATION_MANAGER_KEY] = manager
-    services.add_named(
-        AUTOMATION_MANAGER_KEY,
-        manager,
-        owner="automation",
-        scope=ServiceScope.PROCESS,
-    )
+    if services.optional_named(AUTOMATION_MANAGER_KEY) is None:
+        services.add_named(
+            AUTOMATION_MANAGER_KEY,
+            manager,
+            owner="automation",
+            scope=ServiceScope.PROCESS,
+        )

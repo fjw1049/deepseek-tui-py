@@ -7,6 +7,7 @@ from pathlib import Path
 from deepseek_tui.engine.engine import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.evolution.constants import EVOLUTION_LEDGER_KEY, TURN_EVIDENCE_KEY
+from deepseek_tui.host.services import ServiceScope
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.tools.context import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
@@ -37,14 +38,19 @@ def test_sync_turn_evidence_without_ledger_sets_current_only(tmp_path: Path) -> 
     assert inp.user_text == "hello"
 
 
-def test_sync_turn_evidence_with_ledger_sets_tool_metadata(tmp_path: Path) -> None:
+def test_sync_turn_evidence_with_ledger_sets_turn_evidence_metadata(tmp_path: Path) -> None:
     engine = Engine(
         handle=EngineHandle(),
         client=object(),  # type: ignore[arg-type]
         tool_registry=ToolRegistry(),
         tool_context=ToolContext(working_directory=tmp_path),
     )
-    engine.tool_context.metadata[EVOLUTION_LEDGER_KEY] = object()
+    engine.tool_context.services.add_named(
+        EVOLUTION_LEDGER_KEY,
+        object(),
+        owner="test",
+        scope=ServiceScope.ENGINE,
+    )
     working = [Message.user("hi")]
 
     engine._sync_tool_turn_evidence(

@@ -721,8 +721,6 @@ async def _shell_env_from_hooks(context: ToolContext, command: str) -> dict[str,
         raw = context.services.optional_named("hook_executor")
         if isinstance(raw, HookExecutor):
             executor = raw
-    if executor is None:
-        executor = context.metadata.get("hook_executor")
     if not isinstance(executor, HookExecutor) or not executor.has_hooks_for_event("shell_env"):
         return None
     hook_ctx = HookContext(

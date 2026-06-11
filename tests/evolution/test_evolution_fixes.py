@@ -219,8 +219,10 @@ async def test_memory_curate_uses_factory_when_no_static_evidence(tmp_path: Path
         turn_id="turn-factory",
     )
     ctx = ToolContext(working_directory=tmp_path)
-    ctx.metadata[CURATED_MEMORY_STORE_KEY] = store
-    ctx.metadata[EVOLUTION_LEDGER_KEY] = ledger_stub
+    from .service_context import add_named_service
+
+    add_named_service(ctx, CURATED_MEMORY_STORE_KEY, store)
+    add_named_service(ctx, EVOLUTION_LEDGER_KEY, ledger_stub)
     ctx.metadata[TURN_EVIDENCE_FACTORY_KEY] = lambda: live_evidence
 
     result = await MemoryCurateTool().execute(

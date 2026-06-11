@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from deepseek_tui.app_server.runtime_threads import RuntimeEventRecord
@@ -87,7 +87,9 @@ def _goal_status_snapshot(
     state = manager._active.get(thread_id)
     if state is None:
         return None
-    controller = getattr(state.engine, "goal_controller", None)
+    from deepseek_tui.capabilities.goal import goal_controller_from_engine
+
+    controller = goal_controller_from_engine(state.engine)
     if controller is None:
         return None
     goal = controller.current

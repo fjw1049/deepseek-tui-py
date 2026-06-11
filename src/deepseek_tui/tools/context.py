@@ -9,6 +9,7 @@ from deepseek_tui.host.services import ServiceRegistry
 if TYPE_CHECKING:
     from deepseek_tui.execpolicy.policy import Policy
     from deepseek_tui.execpolicy.sandbox import ExecutionSandboxPolicy
+    from deepseek_tui.host.tool_execution import ToolExecutionContext
     from deepseek_tui.network.policy import NetworkPolicyDecider
     from deepseek_tui.tools.subagent import SubAgentManager
     from deepseek_tui.tools.task_manager import TaskManager
@@ -28,6 +29,7 @@ class ToolContext:
     network_policy: NetworkPolicyDecider | None = None
     execution_sandbox_policy: ExecutionSandboxPolicy | None = None
     elevated_sandbox_policy: ExecutionSandboxPolicy | None = None
+    tool_execution: ToolExecutionContext | None = None
 
     def resolve_path(self, path: str) -> Path:
         """Resolve ``path`` against the workspace, refusing escapes.
