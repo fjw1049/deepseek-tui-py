@@ -15,7 +15,6 @@ from deepseek_tui.app_server.runtime_api.routes import (
     automation,
     elevations,
     events,
-    evolution,
     health,
     jobs,
     mcp,
@@ -38,7 +37,6 @@ def build_runtime_api_router() -> APIRouter:
     router.include_router(turns.router)
     router.include_router(events.router)
     router.include_router(approvals.router)
-    router.include_router(evolution.router)
     router.include_router(elevations.router)
     router.include_router(jobs.router)
     router.include_router(mcp.router)

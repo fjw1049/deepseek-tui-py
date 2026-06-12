@@ -254,14 +254,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         registry.register(MemorySearchTool())
         registry.register(ConversationSearchTool())
 
-    if cfg.evolution.enabled and cfg.evolution.curated.enabled:
-        from deepseek_tui.tools.memory_curate_tool import MemoryCurateTool
-
-        registry.register(MemoryCurateTool())
-    if cfg.evolution.enabled and cfg.evolution.procedural.enabled:
-        from deepseek_tui.tools.skill_manage_tool import SkillManageTool
-
-        registry.register(SkillManageTool())
 
     registry.register(ValidateDataTool())
     registry.register(RunTestsTool())

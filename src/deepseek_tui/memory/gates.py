@@ -1,9 +1,8 @@
-"""Turn capture quality gates — re-export from post_turn."""
+"""Turn capture quality gates for memory."""
 
 from __future__ import annotations
 
-from deepseek_tui.post_turn.evidence import TurnEvidence
-from deepseek_tui.post_turn.gates import GateConfig, passes_base_gate, should_capture
+_CONFIRMATION_PATTERNS = frozenset({"y", "yes", "ok", "sure", "go ahead", "do it", "proceed"})
 
 
 def should_capture_turn(
@@ -15,24 +14,19 @@ def should_capture_turn(
     skip_slash: bool = True,
     skip_confirmations: bool = True,
 ) -> bool:
-    evidence = TurnEvidence(
-        thread_id="",
-        user_text=user_text,
-        workspace="",
-        messages=[],
-        had_tool_calls=had_tool_calls,
-        success=success,
-    )
-    cfg = GateConfig(
-        min_chars=min_chars,
-        skip_slash=skip_slash,
-        skip_confirmations=skip_confirmations,
-    )
-    return should_capture(evidence, cfg)
+    """Decide whether a turn is worth capturing to memory."""
+    if not success:
+        return False
+    text = user_text.strip()
+    if not text:
+        return False
+    if skip_slash and text.startswith("/"):
+        return False
+    if skip_confirmations and text.lower() in _CONFIRMATION_PATTERNS:
+        return False
+    if len(text) < min_chars and not had_tool_calls:
+        return False
+    return True
 
 
-__all__ = [
-    "GateConfig",
-    "passes_base_gate",
-    "should_capture_turn",
-]
+__all__ = ["should_capture_turn"]

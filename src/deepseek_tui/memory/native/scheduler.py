@@ -8,7 +8,6 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
-from deepseek_tui.post_turn.scheduler import PeriodicTurnScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +38,7 @@ class L1Scheduler:
         self._run_extraction = run_extraction
         self._states: dict[str, _ThreadScheduleState] = {}
         self._tasks: set[asyncio.Task[None]] = set()
-        self._periodic = PeriodicTurnScheduler(
-            every_n=self._every_n,
-            idle_timeout_s=self._idle_timeout_s,
-            warmup_enabled=False,
-        )
+        self._periodic_counts: dict[str, int] = {}
 
     def _state(self, thread_id: str) -> _ThreadScheduleState:
         if thread_id not in self._states:
@@ -71,9 +66,10 @@ class L1Scheduler:
 
     def _count_due(self, thread_id: str, state: _ThreadScheduleState) -> bool:
         if not self._warmup_enabled:
-            self._periodic.notify(thread_id, None)
-            if self._periodic.is_due(thread_id):
-                self._periodic.reset(thread_id)
+            count = self._periodic_counts.get(thread_id, 0) + 1
+            self._periodic_counts[thread_id] = count
+            if count >= self._every_n:
+                self._periodic_counts[thread_id] = 0
                 return True
             return False
         state.conversation_count += 1
@@ -84,7 +80,7 @@ class L1Scheduler:
             state.conversation_count = 0
             self._advance_warmup(state)
         else:
-            self._periodic.reset(thread_id)
+            self._periodic_counts[thread_id] = 0
 
     def notify_messages(self, thread_id: str, messages: list[dict[str, Any]]) -> None:
         if not messages:

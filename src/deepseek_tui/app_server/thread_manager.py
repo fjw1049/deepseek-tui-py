@@ -58,7 +58,6 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ElevationRequiredEvent,
     ErrorEvent,
-    EvolutionProposalEvent,
     StatusEvent,
     SubAgentMailboxEvent,
     TextDeltaEvent,
@@ -447,10 +446,6 @@ class RuntimeThreadManager:
         )
 
     async def _flush_engine_memory(self, engine: Engine, thread_id: str) -> None:
-        if engine.post_turn is not None and engine.session_messages:
-            evidence = engine._build_flush_evidence(engine.session_messages)
-            await engine.post_turn.flush_before_loss(evidence)
-            return
         coordinator = engine.memory_coordinator
         if coordinator is not None:
             from deepseek_tui.memory.coordinator import MemoryCoordinator
@@ -1690,19 +1685,6 @@ class RuntimeThreadManager:
                     {"item": item.model_dump(mode="json")},
                 )
 
-            elif isinstance(event, EvolutionProposalEvent):
-                await self._emit_event(
-                    thread_id,
-                    turn_id,
-                    None,
-                    "evolution.suggested",
-                    {
-                        "record_id": event.record_id,
-                        "kind": event.kind,
-                        "summary": event.summary,
-                        "asset_path": event.asset_path,
-                    },
-                )
 
             elif isinstance(event, UserInputRequiredEvent):
                 self._pending_user_inputs[event.tool_call_id] = _PendingUserInputRecord(

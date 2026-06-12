@@ -20,7 +20,6 @@ from deepseek_tui.engine.events import (
     ElevationRequiredEvent,
     EngineEvent,
     ErrorEvent,
-    EvolutionProposalEvent,
     SandboxDeniedEvent,
     StatusEvent,
     TextDeltaEvent,
@@ -126,14 +125,6 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
             "snapshot": snapshot_payload,
             "completed": event.completed,
             "status": event.status,
-        }
-    if isinstance(event, EvolutionProposalEvent):
-        return {
-            "event": "evolution.suggested",
-            "record_id": event.record_id,
-            "kind": event.kind,
-            "summary": event.summary,
-            "asset_path": event.asset_path,
         }
     # EngineEvent is a closed Union; this is only reached if a new variant
     # lands without a branch above. Raise instead of silent pass-through.

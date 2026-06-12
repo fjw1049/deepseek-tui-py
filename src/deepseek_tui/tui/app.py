@@ -868,18 +868,11 @@ class DeepSeekTUI(App[None]):
 
     async def action_new_session(self) -> None:
         if self._engine is not None and self._engine.session_messages:
-            if self._engine.post_turn is not None:
-                evidence = self._engine._build_flush_evidence(self._engine.session_messages)
-                await self._engine.post_turn.flush_before_loss(evidence)
             self._engine._user_turn_index = 0
         transcript = self.query_one(Transcript)
         transcript.clear_messages()
         if self._engine is not None:
             self._engine.session_messages.clear()
-            if self._engine._evolution_pipeline is not None:
-                self._engine._curated_snapshot = (
-                    self._engine._evolution_pipeline.curated_stable_block()
-                )
 
     def _cancel_active_turn(self) -> bool:
         """Request cancellation of the in-flight turn. Returns True if one was active."""
@@ -898,9 +891,6 @@ class DeepSeekTUI(App[None]):
     async def action_quit(self) -> None:
         logger.info("tui_quit")
         if self._engine is not None:
-            if self._engine.session_messages and self._engine.post_turn is not None:
-                evidence = self._engine._build_flush_evidence(self._engine.session_messages)
-                await self._engine.post_turn.flush_before_loss(evidence)
             await self._engine.run_lifecycle_hook("session_end")
             await self._engine.shutdown()
         if self._engine_task is not None:

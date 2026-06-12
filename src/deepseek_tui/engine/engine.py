@@ -345,11 +345,7 @@ class Engine:
         self.memory_coordinator: object | None = None
         self.memory_thread_id: str | None = None
         self.memory_mode: str | None = None
-        self.post_turn: object | None = None
         self._user_turn_index: int = 0
-        self._curated_snapshot: str | None = None
-        self._evolution_pipeline: object | None = None
-        self._current_turn_evidence: object | None = None
         from deepseek_tui.hooks.executor import HookExecutor
 
         self.hook_executor: HookExecutor = (
@@ -602,57 +598,12 @@ class Engine:
             )
             runtime.subagent_manager.attach_loop_runtime(loop_runtime)
 
-        pipelines: list[object] = []
-        if engine.memory_coordinator is not None:
-            from deepseek_tui.post_turn.pipelines.memory_pipeline import MemoryPipeline
-
-            pipelines.append(MemoryPipeline(engine.memory_coordinator, cfg))
-
-        engine._curated_snapshot = None
-        engine._evolution_pipeline = None
-        if cfg.evolution.enabled:
-            from deepseek_tui.evolution.constants import (
-                CURATED_MEMORY_STORE_KEY,
-                EVOLUTION_LEDGER_KEY,
-                SKILL_STORE_KEY,
-            )
-            from deepseek_tui.evolution.pipeline import build_evolution_pipeline
-
-            evo = build_evolution_pipeline(
-                cfg,
-                client,
-                ws.resolve(),  # noqa: ASYNC240
-                emit_event=engine.handle.emit,
-            )
-            pipelines.append(evo)
-            engine._curated_snapshot = evo.curated_stable_block()
-            engine._evolution_pipeline = evo
-            engine.tool_context.metadata[CURATED_MEMORY_STORE_KEY] = evo.curated_store
-            engine.tool_context.metadata[SKILL_STORE_KEY] = evo.skill_store
-            engine.tool_context.metadata[EVOLUTION_LEDGER_KEY] = evo.ledger
-
-        if cfg.post_turn.enabled and pipelines:
-            from deepseek_tui.post_turn.orchestrator import PostTurnOrchestrator
-
-            engine.post_turn = PostTurnOrchestrator(
-                pipelines,  # type: ignore[arg-type]
-                flush_timeout_s=cfg.evolution.flush_timeout_s,
-            )
-            await engine.post_turn.start()
-        else:
-            engine.post_turn = None
 
         return engine
 
     async def shutdown_session(self) -> None:
         """Stop background coordinators and tool runtime (tests / teardown)."""
         await self._activity_coordinator.stop()
-        if self.post_turn is not None:
-            from deepseek_tui.post_turn.orchestrator import PostTurnOrchestrator
-
-            if isinstance(self.post_turn, PostTurnOrchestrator):
-                await self.post_turn.stop()
-            self.post_turn = None
         coordinator = self.memory_coordinator
         if coordinator is not None:
             from deepseek_tui.memory.coordinator import MemoryCoordinator
@@ -713,123 +664,7 @@ class Engine:
                         return True
         return False
 
-    def _build_turn_evidence(
-        self,
-        *,
-        thread_id: str,
-        user_text: str,
-        turn_slice: list[Message],
-        success: bool,
-        tool_rounds: int,
-        turn_id: str,
-        flush_mode: bool = False,
-    ) -> object:
-        from deepseek_tui.post_turn.evidence import TurnEvidence
 
-        workspace_str = str(self.tool_context.working_directory.resolve())
-        return TurnEvidence(
-            thread_id=thread_id,
-            user_text=user_text,
-            workspace=workspace_str,
-            messages=self._messages_for_capture(turn_slice),
-            had_tool_calls=self._turn_had_tool_calls(turn_slice),
-            success=success,
-            tool_rounds=tool_rounds,
-            user_turn_index=self._user_turn_index,
-            turn_id=turn_id,
-            flush_mode=flush_mode,
-        )
-
-    def _sync_tool_turn_evidence(
-        self,
-        *,
-        working_messages: list[Message],
-        prior_count: int,
-        user_text: str,
-        turn_id: str,
-        success: bool,
-        tool_rounds: int = 0,
-        final: bool = True,
-    ) -> None:
-        """Publish turn evidence for post-turn pipelines and optional evolution tools.
-
-        Called twice per turn: once before the tool loop (``final=False``)
-        and once after with the real outcome (``final=True``).  On the first
-        call we install a *factory* so that mid-turn tool calls always build
-        evidence from the live ``working_messages`` list.  On the second call
-        we freeze a static ``TURN_EVIDENCE_KEY`` with the final state — even
-        for failed turns with zero tool rounds, which the previous
-        ``success or tool_rounds > 0`` heuristic could not distinguish from
-        the pre-loop call.
-        """
-        from deepseek_tui.evolution.constants import (
-            EVOLUTION_LEDGER_KEY,
-            TURN_EVIDENCE_FACTORY_KEY,
-            TURN_EVIDENCE_KEY,
-        )
-
-        thread_id = self._resolve_memory_thread_id()
-        turn_slice = working_messages[prior_count:]
-        evidence = self._build_turn_evidence(
-            thread_id=thread_id,
-            user_text=user_text,
-            turn_slice=turn_slice,
-            success=success,
-            tool_rounds=tool_rounds,
-            turn_id=turn_id,
-        )
-        self._current_turn_evidence = evidence
-        if EVOLUTION_LEDGER_KEY in self.tool_context.metadata:
-            if final:
-                self.tool_context.metadata[TURN_EVIDENCE_KEY] = evidence
-                self.tool_context.metadata.pop(TURN_EVIDENCE_FACTORY_KEY, None)
-            else:
-                self.tool_context.metadata.pop(TURN_EVIDENCE_KEY, None)
-
-                def _live_evidence_factory(
-                    _msgs: list[Message] = working_messages,
-                    _pc: int = prior_count,
-                    _ut: str = user_text,
-                    _tid: str = turn_id,
-                    _thid: str = thread_id,
-                ) -> object:
-                    return self._build_turn_evidence(
-                        thread_id=_thid,
-                        user_text=_ut,
-                        turn_slice=_msgs[_pc:],
-                        success=True,
-                        tool_rounds=0,
-                        turn_id=_tid,
-                    )
-
-                self.tool_context.metadata[TURN_EVIDENCE_FACTORY_KEY] = _live_evidence_factory
-            pipeline = self._evolution_pipeline
-            if pipeline is not None and hasattr(pipeline, "note_active_turn"):
-                pipeline.note_active_turn(thread_id)
-
-    def _build_flush_evidence(self, messages: list[Message]) -> object:
-        thread_id = self._resolve_memory_thread_id()
-        turn_slice = messages[-20:] if len(messages) > 20 else messages
-        user_text = ""
-        for msg in reversed(messages):
-            if msg.role.value == "user":
-                from deepseek_tui.protocol.messages import TextBlock
-
-                parts = [
-                    b.text for b in msg.content if isinstance(b, TextBlock)
-                ]
-                user_text = "\n".join(parts).strip()
-                if user_text:
-                    break
-        return self._build_turn_evidence(
-            thread_id=thread_id,
-            user_text=user_text,
-            turn_slice=turn_slice,
-            success=True,
-            tool_rounds=0,
-            turn_id=str(self.tool_context.metadata.get("turn_latency_turn_id") or ""),
-            flush_mode=True,
-        )
 
     def _render_skills_context(self) -> str | None:
         """Render skills context for system prompt injection."""
@@ -1221,14 +1056,6 @@ class Engine:
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
-        self._sync_tool_turn_evidence(
-            working_messages=working_messages,
-            prior_count=prior_count,
-            user_text=processed.model_text or op.content or "",
-            turn_id=turn_id,
-            success=False,
-            final=False,
-        )
         self.working_set.observe_user_message(processed.display_text or "")
         self.working_set.observe_references(processed.references)
         preview = (processed.display_text or "")[:200].replace("\n", " ")
@@ -1293,13 +1120,6 @@ class Engine:
                 memory_enabled=self._memory_md_enabled(),
                 memory_path=self.memory_path,
                 memory_recall=memory_recall,
-                curated_snapshot=getattr(self, "_curated_snapshot", None),
-                session_evolution_lines=(
-                    self._evolution_pipeline.volatile_lines()
-                    if self._evolution_pipeline is not None
-                    else None
-                ),
-                evolution_enabled=self._evolution_pipeline is not None,
                 workflow_guidelines=self.tool_registry.contains("workflow"),
             )
             if mode_hint:
@@ -1437,29 +1257,19 @@ class Engine:
             await self._auto_persist_session()
             if not result.cancelled:
                 self._user_turn_index += 1
-                self._sync_tool_turn_evidence(
-                    working_messages=working_messages,
-                    prior_count=prior_count,
-                    user_text=processed.model_text or op.content or "",
-                    turn_id=turn_id,
-                    success=turn_ok,
-                    tool_rounds=result.tool_round_count,
-                )
-                evidence = self._current_turn_evidence
-                if self.post_turn is not None and evidence is not None:
-                    await self.post_turn.after_turn(evidence)
-                elif coordinator is not None and evidence is not None:
+                if coordinator is not None:
                     from deepseek_tui.memory.coordinator import MemoryCoordinator
 
                     if isinstance(coordinator, MemoryCoordinator):
-                        inp = evidence.to_capture_input()  # type: ignore[attr-defined]
+                        thread_id_for_mem = self._resolve_memory_thread_id()
+                        turn_slice = working_messages[prior_count:]
                         await coordinator.capture_after_turn(
-                            thread_id=inp.thread_id,
-                            user_text=inp.user_text,
-                            workspace=inp.workspace,
-                            messages=inp.messages,
-                            had_tool_calls=inp.had_tool_calls,
-                            success=inp.success,
+                            thread_id=thread_id_for_mem,
+                            user_text=processed.model_text or op.content or "",
+                            workspace=str(self.tool_context.working_directory.resolve()),
+                            messages=self._messages_for_capture(turn_slice),
+                            had_tool_calls=self._turn_had_tool_calls(turn_slice),
+                            success=turn_ok,
                         )
         finally:
             self.handle.clear_response_id()
@@ -1656,9 +1466,6 @@ class Engine:
             # handles normal compaction; this catches pathological cases where
             # many small messages accumulate without hitting the token floor.
             if len(messages) > 500 or should_compact(messages, self.compaction_config):
-                if self.post_turn is not None and messages:
-                    flush_evidence = self._build_flush_evidence(messages)
-                    await self.post_turn.flush_before_loss(flush_evidence)
                 logger.info(
                     "compact_triggered before_count=%d", len(messages)
                 )
@@ -1939,8 +1746,6 @@ class Engine:
                         else None,
                         result.content,
                     )
-                    if self.post_turn is not None:
-                        self.post_turn.on_main_tool_called(tool_call.name)
                     await self.handle.emit(
                         ToolResultEvent(
                             tool_call_id=tool_call.id,
@@ -2126,8 +1931,6 @@ class Engine:
                     else None,
                     result.content,
                 )
-                if self.post_turn is not None:
-                    self.post_turn.on_main_tool_called(tool_call.name)
                 await self.handle.emit(
                     ToolResultEvent(
                         tool_call_id=tool_call.id,

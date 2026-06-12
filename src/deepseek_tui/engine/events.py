@@ -151,15 +151,6 @@ class UserInputRequiredEvent:
     questions: list[dict[str, object]]
 
 
-@dataclass(frozen=True, slots=True)
-class EvolutionProposalEvent:
-    """Workbench: evolution mutation awaiting user approval."""
-
-    record_id: str
-    kind: str
-    summary: str
-    asset_path: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class SessionStartedEvent:
@@ -191,7 +182,6 @@ EngineEvent = (
     | WorkflowProgressEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
-    | EvolutionProposalEvent
     | SessionStartedEvent
     | SessionEndedEvent
 )

@@ -124,7 +124,7 @@ class ConversationSearchTool(ToolSpec):
         return (
             "Search raw conversation archives when structured memory_search results "
             "are insufficient. Workspace scope excludes the current thread by default. "
-            "Use for past session progress — not for durable preferences (memory_curate). "
+            "Use for past session progress — not for durable preferences. "
             f"Limit: memory_search and conversation_search share {MAX_COMBINED_SEARCH_CALLS} "
             "calls per turn combined."
         )

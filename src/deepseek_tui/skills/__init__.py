@@ -28,7 +28,7 @@ _skills_prompt_cache_token = 0
 
 
 def invalidate_skills_prompt_cache() -> None:
-    """Bump skills prompt cache generation after evolution skill writes."""
+    """Bump skills prompt cache generation after skill writes."""
     global _skills_prompt_cache_token
     _skills_prompt_cache_token += 1
 
