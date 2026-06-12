@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.protocol.messages import Message, TextBlock
 
 

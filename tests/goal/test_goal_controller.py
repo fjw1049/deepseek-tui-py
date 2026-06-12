@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from deepseek_tui.goal.controller import GoalController
-from deepseek_tui.goal.models import GoalStatus
+from deepseek_tui.integrations.goal import GoalController
+from deepseek_tui.integrations.goal import GoalStatus
 from deepseek_tui.protocol.responses import Usage
 
 

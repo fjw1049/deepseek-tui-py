@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.workflow.adapters.pi_js import PiJsParseError, parse_workflow_script
+from deepseek_tui.workflow.adapters import PiJsParseError, parse_workflow_script
 
 
 def test_parse_meta_literal() -> None:

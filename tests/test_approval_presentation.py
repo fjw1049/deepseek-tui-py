@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from deepseek_tui.execpolicy.models import (
+from deepseek_tui.policy.approval import (
     ApprovalRequest,
     RiskLevel,
     ToolCategory,
 )
-from deepseek_tui.tools.approval_present import (
+from deepseek_tui.tools.approval import (
     approval_request_to_sse_payload,
     build_impacts,
     build_primary_preview,
@@ -95,7 +95,7 @@ def test_pr05_agent_spawn_prompt() -> None:
 
 
 def test_pr07_approval_key_matches_cache() -> None:
-    from deepseek_tui.execpolicy.approval_cache import build_approval_key
+    from deepseek_tui.policy.approval import build_approval_key
 
     args = {"command": "echo hi"}
     req = _req("exec_shell")

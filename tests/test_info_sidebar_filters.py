@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deepseek_tui.tui.widgets.info_sidebar import (
+from deepseek_tui.tui.sidebar import (
     filter_sidebar_agents,
     filter_sidebar_tasks,
     filter_sidebar_todos,

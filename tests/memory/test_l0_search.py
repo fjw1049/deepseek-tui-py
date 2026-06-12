@@ -1,6 +1,6 @@
 import json
 
-from deepseek_tui.memory.native.l0_search import format_l0_hits, search_l0_jsonl
+from deepseek_tui.memory.l0 import format_l0_hits, search_l0_jsonl
 
 
 def test_l0_search_finds_matching_line(tmp_path) -> None:

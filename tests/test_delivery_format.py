@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from deepseek_tui.automation.delivery_format import (
+from deepseek_tui.automation.delivery import (
     assistant_message_text,
     classify_task_error_for_user,
     format_delivery_body,
     sanitize_delivery_text,
     should_skip_delivery_for_error,
 )
-from deepseek_tui.tools.task_manager import STALE_RESTART_ERROR
+from deepseek_tui.tools.task import STALE_RESTART_ERROR
 from deepseek_tui.protocol.messages import Message, TextBlock, ThinkingBlock
 
 

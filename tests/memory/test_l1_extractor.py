@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.memory.native.l1_extractor import L1Extractor, should_extract_l1
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.l1 import L1Extractor, should_extract_l1
+from deepseek_tui.memory.store import MemoryStore
 from deepseek_tui.protocol.responses import StreamTextDelta
 
 

@@ -6,12 +6,12 @@ from types import SimpleNamespace
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.thread_manager import (
+from deepseek_tui.server.threads import (
     _ActiveThreadState,
     _PendingUserInputRecord,
 )
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 
 
 @pytest.mark.asyncio

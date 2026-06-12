@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deepseek_tui.workflow.template import make_step_output, render_template
+from deepseek_tui.workflow.models import make_step_output, render_template
 
 
 def test_item_and_previous_substitution() -> None:

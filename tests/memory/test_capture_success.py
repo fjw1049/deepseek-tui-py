@@ -6,7 +6,7 @@ import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
 from deepseek_tui.memory.coordinator import MemoryCoordinator
-from deepseek_tui.memory.provider import CaptureInput
+from deepseek_tui.memory.coordinator import CaptureInput
 
 
 class _CaptureSpy:
@@ -20,7 +20,7 @@ class _CaptureSpy:
         pass
 
     async def recall(self, thread_id: str, query: str, *, workspace: str | None = None):
-        from deepseek_tui.memory.provider import RecallResult
+        from deepseek_tui.memory.coordinator import RecallResult
 
         return RecallResult()
 

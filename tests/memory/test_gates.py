@@ -1,4 +1,4 @@
-from deepseek_tui.memory.gates import should_capture_turn
+from deepseek_tui.memory.coordinator import should_capture_turn
 
 
 def test_capture_skips_short_confirmation_without_tools() -> None:

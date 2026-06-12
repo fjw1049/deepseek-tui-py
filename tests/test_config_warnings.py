@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.config.loader import ConfigLoader
-from deepseek_tui.config.warnings import warn_unconsumed_config_fields
+from deepseek_tui.config.loader import warn_unconsumed_config_fields
 
 
 def test_warn_tools_file(caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:

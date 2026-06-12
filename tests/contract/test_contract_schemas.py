@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_api.sse import runtime_event_payload
-from deepseek_tui.app_server.runtime_threads import RuntimeEventRecord
+from deepseek_tui.server.routes import runtime_event_payload
+from deepseek_tui.server.threads import RuntimeEventRecord
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
 

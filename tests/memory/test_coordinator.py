@@ -4,7 +4,7 @@ import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
 from deepseek_tui.memory.coordinator import MemoryCoordinator
-from deepseek_tui.memory.provider import CaptureInput, RecallResult
+from deepseek_tui.memory.coordinator import CaptureInput, RecallResult
 
 
 class _StubProvider:

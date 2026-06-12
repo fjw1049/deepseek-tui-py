@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.tools.web_tools import WebSearchTool, _merge_hits, _normalize_url, _SearchHit
+from deepseek_tui.tools.web import WebSearchTool, _merge_hits, _normalize_url, _SearchHit
 
 
 def test_normalize_url_strips_www_and_trailing_slash() -> None:
@@ -58,10 +58,10 @@ async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.Monkey
         )
 
     monkeypatch.setattr(
-        "deepseek_tui.tools.web_tools._search_anysearch",
+        "deepseek_tui.tools.web._search_anysearch",
         fake_anysearch,
     )
-    monkeypatch.setattr("deepseek_tui.tools.web_tools._search_tavily", fake_tavily)
+    monkeypatch.setattr("deepseek_tui.tools.web._search_tavily", fake_tavily)
 
     class _FakeClient:
         async def __aenter__(self) -> _FakeClient:
@@ -71,7 +71,7 @@ async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.Monkey
             return None
 
     monkeypatch.setattr(
-        "deepseek_tui.tools.web_tools.httpx.AsyncClient",
+        "deepseek_tui.tools.web.httpx.AsyncClient",
         lambda **_kwargs: _FakeClient(),
     )
 

@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.rlm.tool import RlmTool
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.runtime import create_tool_runtime
 from deepseek_tui.tools.subagent import (
     Mailbox,
@@ -21,13 +21,13 @@ from deepseek_tui.tools.subagent import (
     SubAgentManager,
     SubAgentType,
 )
-from deepseek_tui.tools.subagent.mailbox import MailboxMessageKind
-from deepseek_tui.tools.task_manager import (
+from deepseek_tui.tools.subagent import MailboxMessageKind
+from deepseek_tui.tools.task import (
     NewTaskRequest,
     TaskManager,
     TaskManagerConfig,
 )
-from deepseek_tui.tools.task_tools import TaskGateRunTool
+from deepseek_tui.tools.task import TaskGateRunTool
 
 
 class TestEngineRlmWiring:
@@ -58,7 +58,7 @@ class TestTaskGateRunIntegration:
     @pytest.mark.asyncio
     async def test_gate_run_persists_via_record_tool_metadata(self, tmp_path: Path):
         async def _stub(task, cancel):  # noqa: ANN001
-            from deepseek_tui.tools.task_manager import TaskExecutionResult
+            from deepseek_tui.tools.task import TaskExecutionResult
 
             return TaskExecutionResult(summary="ok")
 
@@ -91,7 +91,7 @@ class TestTaskGateRunIntegration:
     @pytest.mark.asyncio
     async def test_gate_run_without_task_id_still_executes(self, tmp_path: Path):
         async def _stub(task, cancel):  # noqa: ANN001
-            from deepseek_tui.tools.task_manager import TaskExecutionResult
+            from deepseek_tui.tools.task import TaskExecutionResult
 
             return TaskExecutionResult(summary="ok")
 

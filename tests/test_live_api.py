@@ -17,7 +17,7 @@ from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.mcp.config import load_mcp_config
 from deepseek_tui.mcp.manager import McpManager
 from deepseek_tui.protocol.messages import Message
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamTextDelta
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import (
     file_change_completion_detail,
     tool_item_metadata,
 )

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import (
     CreateThreadRequest,
     TurnItemKind,
 )
@@ -25,7 +25,7 @@ async def test_compact_thread_emits_context_compaction_item(
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
 
     async def fake_create(**kwargs: object) -> SimpleNamespace:
-        from deepseek_tui.tools.context import ToolContext
+        from deepseek_tui.tools.registry import ToolContext
 
         engine = SimpleNamespace(
             tool_context=ToolContext(working_directory=kwargs["working_directory"]),
@@ -42,7 +42,7 @@ async def test_compact_thread_emits_context_compaction_item(
         )
         return engine
 
-    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+    monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
 
     thread = await manager.create_thread(
         CreateThreadRequest(workspace=str(manager.workspace))

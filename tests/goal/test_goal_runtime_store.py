@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from deepseek_tui.app_server.runtime_threads import RuntimeThreadStore
-from deepseek_tui.goal.models import GoalStatus
-from deepseek_tui.goal.persistence import GoalJournal
-from deepseek_tui.goal.state import create_goal, set_entry
+from deepseek_tui.server.threads import RuntimeThreadStore
+from deepseek_tui.integrations.goal import GoalStatus
+from deepseek_tui.integrations.goal import GoalJournal
+from deepseek_tui.integrations.goal import create_goal, set_entry
 
 
 def test_runtime_store_copies_goal_journal_for_fork_and_pauses_active_goal(tmp_path) -> None:

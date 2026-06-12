@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
+from deepseek_tui.memory.seed import NativeMemoryProvider
 
 
 def _config(tmp_path: Path) -> Config:

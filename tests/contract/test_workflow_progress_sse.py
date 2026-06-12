@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deepseek_tui.app_server.engine_bridge import engine_event_to_sse
+from deepseek_tui.server.runtime import engine_event_to_sse
 from deepseek_tui.engine.events import WorkflowProgressEvent
 from deepseek_tui.workflow.models import WorkflowSnapshot
 

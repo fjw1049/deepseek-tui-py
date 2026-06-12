@@ -20,7 +20,7 @@ from deepseek_tui.workflow.models import (
     WorkflowSpec,
 )
 from deepseek_tui.workflow.runtime import WorkflowFailedError, run_workflow
-from deepseek_tui.workflow.template import make_step_output
+from deepseek_tui.workflow.models import make_step_output
 
 
 class FakeRunner:

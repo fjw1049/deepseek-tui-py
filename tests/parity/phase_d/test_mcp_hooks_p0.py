@@ -12,12 +12,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from deepseek_tui.config.models import Config, HooksConfig, LifecycleHookEntry
-from deepseek_tui.hooks.executor import HookContext, HookExecutor, parse_env_lines
+from deepseek_tui.integrations.hooks import HookContext, HookExecutor, parse_env_lines
 from deepseek_tui.mcp.client import McpError
 from deepseek_tui.mcp.config import McpServerConfig
 from deepseek_tui.mcp.manager import McpManager
-from deepseek_tui.mcp.startup import raise_if_required_mcp_failed
-from deepseek_tui.protocol.mcp_lifecycle import (
+from deepseek_tui.mcp.manager import raise_if_required_mcp_failed
+from deepseek_tui.protocol.events import (
     McpStartupCompleteEvent,
     McpStartupFailure,
     McpStartupStatus,
@@ -115,7 +115,7 @@ class TestHookExecutor:
 
 class TestAppServerMcpToolRoute:
     async def test_handle_tool_routes_external_mcp(self) -> None:
-        from deepseek_tui.app_server.runtime import AppRuntime
+        from deepseek_tui.server.runtime import AppRuntime
 
         cfg = Config()
         runtime = await AppRuntime.create(config=cfg)
@@ -164,9 +164,9 @@ class TestEngineLifecycleHooks:
     async def test_run_lifecycle_hook_delegates_to_executor(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.orchestrator import Engine
         from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.hooks.executor import HookExecutor
+        from deepseek_tui.integrations.hooks import HookExecutor
 
         cfg = HooksConfig(
             enabled=True,
@@ -194,7 +194,7 @@ class TestEngineLifecycleHooks:
         assert execute_mock.await_args[0][0] == "message_submit"
         assert execute_mock.await_args[0][1].message == "hello"
     async def test_mcp_startup_emits_generic_event_frames(self, tmp_path: Path) -> None:
-        from deepseek_tui.app_server.runtime import AppRuntime
+        from deepseek_tui.server.runtime import AppRuntime
 
         cfg = Config()
         cfg.hooks.jsonl_path = tmp_path / "hooks.jsonl"

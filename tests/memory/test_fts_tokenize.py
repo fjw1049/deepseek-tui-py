@@ -1,5 +1,5 @@
-from deepseek_tui.memory.native.fts_tokenize import build_fts_query, collect_query_tokens
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.search import build_fts_query, collect_query_tokens
+from deepseek_tui.memory.store import MemoryStore
 
 
 def test_cjk_simple_tokenizer_finds_chinese_memory(tmp_path) -> None:

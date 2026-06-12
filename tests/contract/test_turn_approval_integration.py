@@ -10,22 +10,22 @@ from types import SimpleNamespace
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_api.approval_bridge import HttpApprovalHandler
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.approval import HttpApprovalHandler
+from deepseek_tui.server.threads import (
     CreateThreadRequest,
     RuntimeTurnStatus,
     TurnRecord,
 )
-from deepseek_tui.app_server.thread_manager import _ActiveThreadState, _ActiveTurnState
+from deepseek_tui.server.threads import _ActiveThreadState, _ActiveTurnState
 from deepseek_tui.engine.events import ApprovalRequiredEvent, TurnCompleteEvent
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.execpolicy.models import (
+from deepseek_tui.policy.approval import (
     ApprovalDecision,
     ApprovalRequest,
     RiskLevel,
     ToolCategory,
 )
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 
 
 @pytest.mark.asyncio

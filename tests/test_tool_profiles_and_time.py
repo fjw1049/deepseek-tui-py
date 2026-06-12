@@ -7,14 +7,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from deepseek_tui.engine.tool_profiles import (
+from deepseek_tui.engine.prompts import (
     AUTOMATION_COMPOSER_HEADING,
     TOOL_PROFILE_AUTOMATION_COMPOSER,
     TOOL_PROFILE_CRON,
     detect_tool_profile_from_prompt,
     filter_tools_for_profile,
 )
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.time_tools import CurrentTimeTool
 
 
@@ -65,7 +65,7 @@ async def test_current_time_accepts_scalar_offset_minutes() -> None:
 
 
 def test_stale_running_task_detection() -> None:
-    from deepseek_tui.tools.task_manager import (
+    from deepseek_tui.tools.task import (
         TaskRecord,
         TaskStatus,
         _is_stale_running_task,

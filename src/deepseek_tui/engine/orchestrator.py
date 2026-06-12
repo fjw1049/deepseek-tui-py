@@ -2169,10 +2169,15 @@ class Engine:
             return await self._await_user_input(tool_call.id, tool_call.arguments)
 
         # --- External MCP tools (mcp_<server>_<tool>) ---
-        if is_mcp_tool(tool_name) and not self.tool_registry.contains(tool_name):
-            from deepseek_tui.mcp.execute import execute_external_mcp_tool
-            from deepseek_tui.tools.approval import approval_request_for_mcp
+        from deepseek_tui.mcp.execute import (
+            execute_external_mcp_tool,
+            is_external_mcp_tool,
+        )
+        from deepseek_tui.tools.approval import approval_request_for_mcp
 
+        if is_external_mcp_tool(tool_name, self.tool_registry.contains(tool_name)):
+            if self.mcp_manager is None:
+                raise ToolError(f"MCP tool '{tool_name}' called but no MCP manager configured")
             approval_request = approval_request_for_mcp(
                 tool_name, self.exec_policy.approval_policy
             )
@@ -2183,7 +2188,7 @@ class Engine:
                 if denied:
                     return None
             return await execute_external_mcp_tool(
-                self.mcp_manager,  # type: ignore[arg-type]
+                self.mcp_manager,
                 tool_name,
                 tool_call.arguments,
             )
@@ -2244,17 +2249,6 @@ class Engine:
                 self.tool_context.metadata.pop("workflow_tool_call_id", None)
                 self.tool_context.metadata.pop("workflow_emit", None)
                 self.tool_context.metadata.pop("workflow_status_cb", None)
-
-    async def _execute_mcp_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> ToolResult:
-        """Dispatch a tool call to an external MCP server."""
-        from deepseek_tui.mcp.execute import execute_external_mcp_tool
-
-        mcp = self.mcp_manager
-        if mcp is None:
-            raise ToolError(f"MCP tool '{name}' called but no MCP manager configured")
-        return await execute_external_mcp_tool(mcp, name, arguments)
 
     async def _handle_approval_flow(
         self,

@@ -19,12 +19,12 @@ import pytest
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.execpolicy.engine import ExecPolicyEngine
+from deepseek_tui.policy.approval import ExecPolicyEngine
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.rlm.tool import RlmTool
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.subagent import (
     Mailbox,
     SpawnRequest,
@@ -32,16 +32,16 @@ from deepseek_tui.tools.subagent import (
     SubAgentManager,
     SubAgentType,
 )
-from deepseek_tui.tools.subagent.mailbox import MailboxMessageKind
-from deepseek_tui.tools.subagent.manager import get_real_subagent_executor
-from deepseek_tui.tools.task_manager import (
+from deepseek_tui.tools.subagent import MailboxMessageKind
+from deepseek_tui.tools.subagent import get_real_subagent_executor
+from deepseek_tui.tools.task import (
     NewTaskRequest,
     TaskManager,
     TaskManagerConfig,
     TaskStatus,
     get_real_task_executor,
 )
-from deepseek_tui.tools.task_tools import TaskCreateTool, TaskGateRunTool
+from deepseek_tui.tools.task import TaskCreateTool, TaskGateRunTool
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -95,7 +95,7 @@ class TestLiveRlmSubagentTask:
     async def test_01_api_smoke(self, project_config: Config, live_model: str) -> None:
         client = DeepSeekClient.from_config(project_config)
         from deepseek_tui.protocol.messages import Message
-        from deepseek_tui.protocol.requests import MessageRequest
+        from deepseek_tui.protocol.messages import MessageRequest
         from deepseek_tui.protocol.responses import StreamTextDelta
 
         req = MessageRequest(
@@ -244,7 +244,7 @@ class TestLiveRlmSubagentTask:
         self, project_config: Config, tmp_path: Path
     ) -> None:
         async def _stub(task, cancel):  # noqa: ANN001
-            from deepseek_tui.tools.task_manager import TaskExecutionResult
+            from deepseek_tui.tools.task import TaskExecutionResult
 
             return TaskExecutionResult(summary="ok")
 
@@ -283,7 +283,7 @@ class TestLiveRlmSubagentTask:
         self, project_config: Config, tmp_path: Path
     ) -> None:
         async def _stub(task, cancel):  # noqa: ANN001
-            from deepseek_tui.tools.task_manager import TaskExecutionResult
+            from deepseek_tui.tools.task import TaskExecutionResult
 
             return TaskExecutionResult(summary="ok")
 
@@ -319,7 +319,7 @@ class TestLiveRlmSubagentTask:
                 executor=get_real_subagent_executor(),
                 default_model=live_model,
             )
-            from deepseek_tui.tools.subagent.manager import SubAgentRuntime
+            from deepseek_tui.tools.subagent import SubAgentRuntime
 
             manager.attach_loop_runtime(
                 SubAgentRuntime(

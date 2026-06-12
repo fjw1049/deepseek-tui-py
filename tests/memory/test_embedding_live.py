@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.config.models import Config, MemorySmartConfig
-from deepseek_tui.memory.native.embedding import EmbeddingClient
+from deepseek_tui.memory.search import EmbeddingClient
 
 pytestmark = pytest.mark.live
 

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import uuid
 
-from deepseek_tui.goal.controller import GoalController
-from deepseek_tui.goal.models import GoalStatus
-from deepseek_tui.goal.persistence import (
+from deepseek_tui.integrations.goal import GoalController
+from deepseek_tui.integrations.goal import GoalStatus
+from deepseek_tui.integrations.goal import (
     GoalJournal,
     copy_goal_journal_for_fork,
     goal_journal_path,
     resolve_goal_thread_id,
 )
-from deepseek_tui.goal.state import create_goal, set_entry
+from deepseek_tui.integrations.goal import create_goal, set_entry
 
 
 def test_resolve_goal_thread_id_prefers_memory_thread_id(tmp_path) -> None:

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from deepseek_tui.tui.widgets.agent_card import (
+from deepseek_tui.tui.cards import (
     AgentLifecycle,
     DelegateCard,
     _summary_for_display,
 )
-from deepseek_tui.tui.widgets.tool_cell import ToolCell, _extract_agent_id
+from deepseek_tui.tui.tool_cell import ToolCell, _extract_agent_id
 
 
 def test_extract_agent_id_from_spawn_text() -> None:

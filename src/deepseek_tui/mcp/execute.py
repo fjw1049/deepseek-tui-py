@@ -41,7 +41,7 @@ async def execute_external_mcp_tool(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> ToolResult:
-    """Call a qualified ``mcp__*`` tool via :class:`McpManager`."""
+    """Call a qualified ``mcp_<server>_<tool>`` tool via :class:`McpManager`."""
     if not is_mcp_tool(tool_name):
         raise ToolError(f"Not an MCP tool: {tool_name}")
     try:

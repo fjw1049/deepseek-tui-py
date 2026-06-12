@@ -17,17 +17,17 @@ from deepseek_tui.engine.events import (
     SessionActivityEvent,
     SubAgentMailboxEvent,
 )
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.subagent import (
     SpawnRequest,
     SubAgentAssignment,
     SubAgentRuntime,
     SubAgentType,
 )
-from deepseek_tui.tools.subagent.completion import SubAgentCompletion
-from deepseek_tui.tools.subagent.mailbox import MailboxMessage, MailboxMessageKind
-from deepseek_tui.tools.subagent_tools import AgentSpawnTool
-from deepseek_tui.tools.task_manager import NewTaskRequest
+from deepseek_tui.tools.subagent import SubAgentCompletion
+from deepseek_tui.tools.subagent import MailboxMessage, MailboxMessageKind
+from deepseek_tui.tools.subagent import AgentSpawnTool
+from deepseek_tui.tools.task import NewTaskRequest
 
 
 def test_subagent_tool_round_trip_chat_messages() -> None:
@@ -192,7 +192,7 @@ async def test_task_running_count_in_session_activity(engine_ctx: tuple) -> None
     assert mgr is not None
 
     async def _stub(task, cancel):  # noqa: ANN001
-        from deepseek_tui.tools.task_manager import TaskExecutionResult
+        from deepseek_tui.tools.task import TaskExecutionResult
 
         await asyncio.sleep(0.1)
         return TaskExecutionResult(summary="ok")
@@ -249,7 +249,7 @@ async def test_spawn_depth_rejected_at_tool_entry(
         metadata={"subagent_depth": 3, "subagent_runtime": at_max},
     )
     tool = AgentSpawnTool()
-    from deepseek_tui.tools.base import ToolError
+    from deepseek_tui.tools.registry import ToolError
 
     with pytest.raises(ToolError, match="depth limit"):
         await tool.execute({"prompt": "nested", "type": "explore"}, ctx)

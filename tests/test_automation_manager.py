@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.tools.automation_manager import (
+from deepseek_tui.tools.automation import (
     AutomationManager,
     AutomationSchedule,
     AutomationStatus,

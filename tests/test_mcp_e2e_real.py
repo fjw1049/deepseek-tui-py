@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.engine.dispatch import is_mcp_tool
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.execpolicy.engine import ExecPolicyEngine
+from deepseek_tui.policy.approval import ExecPolicyEngine
 from deepseek_tui.mcp.config import McpServerConfig
 from deepseek_tui.mcp.manager import McpManager
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
 from unittest.mock import AsyncMock
 
 FIXTURE_SERVER = Path(__file__).resolve().parent / "fixtures" / "minimal_mcp_server.py"

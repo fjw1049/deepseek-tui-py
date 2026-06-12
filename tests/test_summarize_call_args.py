@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deepseek_tui.engine.engine import _summarize_call_args
+from deepseek_tui.engine.orchestrator import _summarize_call_args
 
 
 def test_checklist_update_shows_item_and_status() -> None:

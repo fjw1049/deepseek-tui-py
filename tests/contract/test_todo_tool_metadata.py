@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deepseek_tui.app_server.runtime_threads import todo_tool_metadata_from_result
+from deepseek_tui.server.threads import todo_tool_metadata_from_result
 
 
 def test_todo_metadata_prefers_task_updates_snapshot() -> None:

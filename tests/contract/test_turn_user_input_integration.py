@@ -10,15 +10,15 @@ import pytest
 
 from datetime import datetime, timezone
 
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import (
     CreateThreadRequest,
     RuntimeTurnStatus,
     TurnRecord,
 )
-from deepseek_tui.app_server.thread_manager import _ActiveThreadState
+from deepseek_tui.server.threads import _ActiveThreadState
 from deepseek_tui.engine.events import TurnCompleteEvent, UserInputRequiredEvent
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 
 
 @pytest.mark.asyncio

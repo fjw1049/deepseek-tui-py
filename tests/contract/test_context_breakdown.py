@@ -1,7 +1,7 @@
 from deepseek_tui.engine.context import estimate_context_breakdown
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 
 

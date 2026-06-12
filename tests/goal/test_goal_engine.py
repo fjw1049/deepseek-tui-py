@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle, GoalFollowUpOp
 from deepseek_tui.protocol.responses import StreamDone, StreamTextDelta, Usage
 

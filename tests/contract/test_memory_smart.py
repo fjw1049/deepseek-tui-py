@@ -6,8 +6,8 @@ import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
 from deepseek_tui.memory.coordinator import MemoryCoordinator
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
-from deepseek_tui.memory.provider import CaptureInput
+from deepseek_tui.memory.seed import NativeMemoryProvider
+from deepseek_tui.memory.coordinator import CaptureInput
 
 
 class _FakeClient:

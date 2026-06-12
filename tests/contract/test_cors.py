@@ -5,8 +5,8 @@ from collections.abc import AsyncIterator
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from deepseek_tui.app_server.runtime import AppRuntime
-from deepseek_tui.app_server.server import build_fastapi_app
+from deepseek_tui.server.runtime import AppRuntime
+from deepseek_tui.server.app import build_fastapi_app
 from deepseek_tui.config.models import Config, FeatureConfig
 
 

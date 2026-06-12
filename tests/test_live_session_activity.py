@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config, FeatureConfig, HooksConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.events import (
     SessionActivityEvent,
     StatusEvent,
@@ -34,8 +34,8 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
 )
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.hooks.build import build_hook_dispatcher
-from deepseek_tui.tools.subagent.mailbox import MailboxMessageKind
+from deepseek_tui.integrations.hooks import build_hook_dispatcher
+from deepseek_tui.tools.subagent import MailboxMessageKind
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _TIMEOUT_SUBAGENT = 120
@@ -202,8 +202,8 @@ class TestLiveSessionActivity:
     ) -> None:
         """RLM progress via ToolContext callback (avoids hung full-engine turn)."""
         from deepseek_tui.engine.events import RlmProgressEvent as RlmEv
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.rlm.tool import RlmTool
+        from deepseek_tui.tools.registry import ToolContext
+        from deepseek_tui.tools.rlm import RlmTool
 
         (tmp_path / "tiny.txt").write_text("alpha\nbeta\nalpha\n", encoding="utf-8")
         client = DeepSeekClient.from_config(project_config)

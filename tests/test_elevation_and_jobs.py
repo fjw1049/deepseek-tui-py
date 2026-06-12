@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.app_server.runtime_api.elevation_bridge import (
+from deepseek_tui.server.approval import (
     ElevationBridge,
     PendingElevationRecord,
 )
-from deepseek_tui.execpolicy.sandbox import (
+from deepseek_tui.policy.sandbox import (
     ExecutionSandboxPolicy,
     elevation_kind_label,
     suggest_elevation_policy,
 )
 from deepseek_tui.engine.events import ElevationRequiredEvent
-from deepseek_tui.engine.engine import Engine
-from deepseek_tui.tools.base import ToolResult
+from deepseek_tui.engine.orchestrator import Engine
+from deepseek_tui.tools.registry import ToolResult
 
 
 class TestSuggestElevationPolicy:

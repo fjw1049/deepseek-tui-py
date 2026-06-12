@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.memory.coordinator import MemoryCoordinator
-from deepseek_tui.memory.formatting import strip_relevant_memories, wrap_relevant_memories
+from deepseek_tui.memory.coordinator import strip_relevant_memories, wrap_relevant_memories
 from deepseek_tui.protocol.messages import Message
 
 
@@ -65,7 +65,7 @@ def test_memory_thread_id_resolution_fallback() -> None:
     engine = Engine.__new__(Engine)
     engine.memory_thread_id = None
     engine._cycle_session_id = "cycle-abc"
-    from deepseek_tui.tools.context import ToolContext
+    from deepseek_tui.tools.registry import ToolContext
 
     engine.tool_context = ToolContext(working_directory=Path.cwd())
     assert engine._resolve_memory_thread_id() == "cycle-abc"

@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.knowledge_tools import RememberTool
-from deepseek_tui.tools.memory_tools import MEMORY_PROVIDER_KEY
+from deepseek_tui.memory.seed import NativeMemoryProvider
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.knowledge import RememberTool
+from deepseek_tui.tools.memory import MEMORY_PROVIDER_KEY
 
 
 @pytest.mark.asyncio

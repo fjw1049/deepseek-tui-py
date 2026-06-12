@@ -1,7 +1,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.store import MemoryStore
 
 
 def test_fts_search_and_time_decay_ordering(tmp_path) -> None:

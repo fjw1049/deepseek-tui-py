@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.execpolicy.sandbox import (
+from deepseek_tui.policy.sandbox import (
     CommandSpec,
     ExecutionSandboxPolicy,
     SANDBOX_MANAGER,
@@ -16,8 +16,8 @@ from deepseek_tui.execpolicy.sandbox import (
     sandbox_policy_for_mode,
     sync_execution_sandbox_policy,
 )
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.shell_tools import ExecShellTool
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.shell import ExecShellTool
 
 
 class TestExecutionSandboxPolicy:
@@ -63,7 +63,7 @@ class TestSandboxManager:
 
     @pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
     def test_prepare_seatbelt_wraps_command(self) -> None:
-        from deepseek_tui.execpolicy import seatbelt
+        from deepseek_tui.policy import sandbox as seatbelt
 
         if not seatbelt.is_available():
             pytest.skip("sandbox-exec unavailable")
@@ -101,7 +101,7 @@ class TestSeatbeltIntegration:
 
     @pytest.mark.asyncio
     async def test_workspace_write_succeeds(self, workspace: Path) -> None:
-        from deepseek_tui.execpolicy import seatbelt
+        from deepseek_tui.policy import sandbox as seatbelt
 
         if not seatbelt.is_available():
             pytest.skip("sandbox-exec unavailable")
@@ -113,7 +113,7 @@ class TestSeatbeltIntegration:
 
     @pytest.mark.asyncio
     async def test_write_outside_workspace_denied(self, workspace: Path) -> None:
-        from deepseek_tui.execpolicy import seatbelt
+        from deepseek_tui.policy import sandbox as seatbelt
 
         if not seatbelt.is_available():
             pytest.skip("sandbox-exec unavailable")
@@ -124,7 +124,7 @@ class TestSeatbeltIntegration:
 
     @pytest.mark.asyncio
     async def test_deepseek_subpath_read_only(self, workspace: Path) -> None:
-        from deepseek_tui.execpolicy import seatbelt
+        from deepseek_tui.policy import sandbox as seatbelt
 
         if not seatbelt.is_available():
             pytest.skip("sandbox-exec unavailable")
@@ -149,7 +149,7 @@ class TestSeatbeltIntegration:
 
     @pytest.mark.asyncio
     async def test_pty_path(self, workspace: Path) -> None:
-        from deepseek_tui.execpolicy import seatbelt
+        from deepseek_tui.policy import sandbox as seatbelt
 
         if not seatbelt.is_available():
             pytest.skip("sandbox-exec unavailable")
@@ -169,7 +169,7 @@ class TestSeatbeltIntegration:
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
 class TestSeatbeltModule:
     def test_detect_denial(self) -> None:
-        from deepseek_tui.execpolicy.seatbelt import detect_denial
+        from deepseek_tui.policy.sandbox import detect_denial
 
         assert detect_denial(1, "Operation not permitted")
         assert detect_denial(1, "Sandbox: touch denied file-write*")
@@ -177,7 +177,7 @@ class TestSeatbeltModule:
         assert not detect_denial(1, "File not found")
 
     def test_generate_policy_contains_base_rules(self) -> None:
-        from deepseek_tui.execpolicy.seatbelt import generate_policy
+        from deepseek_tui.policy.sandbox import generate_policy
 
         policy = ExecutionSandboxPolicy.workspace_write(
             writable_roots=(Path("/tmp"),),
@@ -190,7 +190,7 @@ class TestSeatbeltModule:
         assert "network-outbound" in text
 
     def test_read_only_has_no_writable_roots(self) -> None:
-        from deepseek_tui.execpolicy.seatbelt import generate_policy
+        from deepseek_tui.policy.sandbox import generate_policy
 
         text = generate_policy(ExecutionSandboxPolicy.read_only(), Path("/tmp/test"))
         assert "WRITABLE_ROOT" not in text

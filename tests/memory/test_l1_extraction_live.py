@@ -17,9 +17,9 @@ import pytest
 
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.models import Config
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
+from deepseek_tui.memory.seed import NativeMemoryProvider
 from deepseek_tui.protocol.messages import Message
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamDone, StreamTextDelta
 
 pytestmark = pytest.mark.live
@@ -167,7 +167,7 @@ async def test_capture_and_flush_triggers_l1_pipeline(
 
     await provider.start()
     try:
-        from deepseek_tui.memory.provider import CaptureInput
+        from deepseek_tui.memory.coordinator import CaptureInput
 
         await provider.capture(
             CaptureInput(

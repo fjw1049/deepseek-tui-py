@@ -1,4 +1,4 @@
-"""MCP config CRUD + manager snapshots — mirrors ``crates/tui/src/mcp.rs`` store helpers."""
+"""``mcp.json`` CRUD and human-readable status snapshots for CLI / TUI / GUI."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.config.models import Config
-from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
+from deepseek_tui.mcp.config import DEFAULT_TIMEOUTS, McpServerConfig, load_mcp_config
 from deepseek_tui.utils import write_json_atomic
 
 
@@ -20,13 +20,6 @@ class McpWriteStatus(str, Enum):
     CREATED = "created"
     OVERWRITTEN = "overwritten"
     SKIPPED_EXISTS = "skipped_exists"
-
-
-DEFAULT_TIMEOUTS: dict[str, float] = {
-    "connect_timeout": 10.0,
-    "execute_timeout": 60.0,
-    "read_timeout": 120.0,
-}
 
 
 def validate_mcp_config_path(path: Path) -> None:
@@ -254,34 +247,28 @@ async def discover_manager_snapshot(
     restart_required: bool = False,
 ) -> McpManagerSnapshot:
     """Connect to enabled servers and build a live discovery snapshot."""
-    from deepseek_tui.mcp.client import qualify_tool_name
     from deepseek_tui.mcp.manager import McpManager
 
     configs = load_mcp_config(path) if path.exists() else []
     manager = McpManager(configs, config_path=path)
-    summary = await manager.start_all()
-    errors = {item.server_name: item.error for item in summary.failed}
+    errors: dict[str, str] = {}
     discovered: dict[str, list[McpDiscoveredItem]] = {}
-    for cfg in configs:
-        if not cfg.enabled:
-            continue
-        if cfg.name in errors:
-            continue
-        try:
-            client = await manager._ensure_client(cfg.name)  # noqa: SLF001
-            descriptors = await client.list_tools()
-        except Exception as exc:  # noqa: BLE001
-            errors[cfg.name] = str(exc)
-            continue
-        discovered[cfg.name] = [
-            McpDiscoveredItem(
-                name=desc.name,
-                model_name=qualify_tool_name(cfg.name, desc.name),
-                description=desc.description,
-            )
-            for desc in descriptors
-        ]
-    await manager.stop_all()
+    try:
+        await manager.discover_tools()
+        errors = manager.discover_errors
+        discovered = {
+            server: [
+                McpDiscoveredItem(
+                    name=item["name"],
+                    model_name=item["model_name"],
+                    description=item["description"],
+                )
+                for item in tools
+            ]
+            for server, tools in manager.grouped_discovered_tools().items()
+        }
+    finally:
+        await manager.stop_all()
     return snapshot_from_configs(
         path,
         configs,

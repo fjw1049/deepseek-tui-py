@@ -1,7 +1,7 @@
 import json
 
-from deepseek_tui.memory.native.l0_recorder import L0Recorder
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.l0 import L0Recorder
+from deepseek_tui.memory.store import MemoryStore
 
 
 def test_l0_appends_jsonl_and_updates_cursor(tmp_path) -> None:

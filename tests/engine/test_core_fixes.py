@@ -8,16 +8,16 @@ from collections.abc import AsyncIterator
 import pytest
 
 from deepseek_tui.client.base import LLMClient, RetryConfig
-from deepseek_tui.engine.compaction import KEEP_RECENT_MESSAGES, plan_compaction
+from deepseek_tui.engine.capacity import KEEP_RECENT_MESSAGES, plan_compaction
 from deepseek_tui.engine.context import context_input_budget
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.engine.turn_loop import (
+from deepseek_tui.engine.turn import (
     TURN_MAX_OUTPUT_TOKENS,
     TurnLoop,
     TurnOutcomeStatus,
 )
 from deepseek_tui.protocol.messages import Message, Role, ToolUseBlock
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (
     StreamDone,
     StreamError,

@@ -6,10 +6,10 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from deepseek_tui.engine.dispatch import is_mcp_tool
-from deepseek_tui.engine.tool_catalog import build_model_tool_catalog
+from deepseek_tui.engine.tools import build_model_tool_catalog
 from deepseek_tui.mcp import McpError, McpManager
 from deepseek_tui.mcp.config import McpServerConfig
-from deepseek_tui.tools.base import ToolError, ToolResult
+from deepseek_tui.tools.registry import ToolError, ToolResult
 
 
 # --- is_mcp_tool -----------------------------------------------------------
@@ -83,11 +83,11 @@ class TestDiscoverToolsMerged:
         return mgr
 
     async def test_get_tools_with_mcp_includes_discovered(self, mcp_manager):
-        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.orchestrator import Engine
         from deepseek_tui.engine.handle import EngineHandle
         from deepseek_tui.tools.registry import ToolRegistry
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
+        from deepseek_tui.tools.registry import ToolContext
+        from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
         from pathlib import Path
 
         handle = EngineHandle()
@@ -106,9 +106,9 @@ class TestDiscoverToolsMerged:
         assert "mcp_test_server_hello" in names
 
     async def test_no_mcp_manager_returns_native_only(self):
-        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.orchestrator import Engine
         from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.tools.context import ToolContext
+        from deepseek_tui.tools.registry import ToolContext
         from pathlib import Path
 
         handle = EngineHandle()
@@ -154,13 +154,13 @@ class TestDiscoverToolsConnects:
 
 class TestMcpToolApproval:
     async def test_external_mcp_tool_requires_approval_on_request_policy(self):
-        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.orchestrator import Engine
         from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.execpolicy.engine import ExecPolicyEngine
-        from deepseek_tui.execpolicy.models import ApprovalDecision
+        from deepseek_tui.policy.approval import ExecPolicyEngine
+        from deepseek_tui.policy.approval import ApprovalDecision
         from deepseek_tui.protocol.responses import ToolCall
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
+        from deepseek_tui.tools.registry import ToolContext
+        from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
         from pathlib import Path
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
@@ -195,95 +195,42 @@ class TestMcpToolApproval:
 
 class TestExecuteMcpTool:
     async def test_successful_call(self):
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
-        from pathlib import Path
+        from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
         mgr.call_tool = AsyncMock(return_value={
             "content": [{"type": "text", "text": "hello world"}],
             "isError": False,
         })
-
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
-        engine = Engine(
-            handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
-        )
-        result = await engine._execute_mcp_tool(
-            "mcp_srv_greet", {"name": "test"}
+        result = await execute_external_mcp_tool(
+            mgr, "mcp_srv_greet", {"name": "test"}
         )
         assert result.success is True
         assert result.content == "hello world"
         mgr.call_tool.assert_awaited_once_with("mcp_srv_greet", {"name": "test"})
 
     async def test_error_result(self):
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
-        from pathlib import Path
+        from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
         mgr.call_tool = AsyncMock(return_value={
             "content": [{"type": "text", "text": "not found"}],
             "isError": True,
         })
-
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
-        engine = Engine(
-            handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
-        )
-        result = await engine._execute_mcp_tool("mcp_srv_find", {})
+        result = await execute_external_mcp_tool(mgr, "mcp_srv_find", {})
         assert result.success is False
         assert "not found" in result.content
 
     async def test_mcp_error_raises_tool_error(self):
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
-        from pathlib import Path
+        from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
         mgr.call_tool = AsyncMock(side_effect=McpError("connection lost"))
-
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
-        engine = Engine(
-            handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
-        )
         with pytest.raises(ToolError, match="connection lost"):
-            await engine._execute_mcp_tool("mcp_srv_broken", {})
-
-    async def test_no_manager_raises_tool_error(self):
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.tools.context import ToolContext
-        from pathlib import Path
-
-        ctx = ToolContext(working_directory=Path("/tmp"))
-        engine = Engine(
-            handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
-        )
-        with pytest.raises(ToolError, match="no MCP manager configured"):
-            await engine._execute_mcp_tool("mcp_srv_nope", {})
+            await execute_external_mcp_tool(mgr, "mcp_srv_broken", {})
 
     async def test_multi_content_blocks_joined(self):
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.tools.context import ToolContext
-        from deepseek_tui.tools.mcp_tools import MCP_MANAGER_KEY
-        from pathlib import Path
+        from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
         mgr.call_tool = AsyncMock(return_value={
@@ -293,14 +240,6 @@ class TestExecuteMcpTool:
             ],
             "isError": False,
         })
-
-        ctx = ToolContext(
-            working_directory=Path("/tmp"),
-            metadata={MCP_MANAGER_KEY: mgr},
-        )
-        engine = Engine(
-            handle=EngineHandle(), client=AsyncMock(), tool_context=ctx
-        )
-        result = await engine._execute_mcp_tool("mcp_srv_multi", {})
+        result = await execute_external_mcp_tool(mgr, "mcp_srv_multi", {})
         assert result.success is True
         assert result.content == "line 1\nline 2"

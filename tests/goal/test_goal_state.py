@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from deepseek_tui.goal.models import GoalStatus
-from deepseek_tui.goal.persistence import GoalJournal
-from deepseek_tui.goal.state import (
+from deepseek_tui.integrations.goal import GoalStatus
+from deepseek_tui.integrations.goal import GoalJournal
+from deepseek_tui.integrations.goal import (
     apply_usage,
     clear_entry,
     create_goal,

@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.memory.native.l2_scenes import SceneExtractionResult
-from deepseek_tui.memory.native.pipeline import MemoryPipelineConfig, MemoryPipelineManager
+from deepseek_tui.memory.l2 import SceneExtractionResult
+from deepseek_tui.memory.pipeline import MemoryPipelineConfig, MemoryPipelineManager
 
 
 @pytest.mark.asyncio

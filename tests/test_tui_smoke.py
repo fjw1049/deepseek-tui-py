@@ -31,6 +31,6 @@ def test_user_input_handler_uses_contract_answer_shape() -> None:
 
 
 def test_transcript_hydrate_from_messages_exists() -> None:
-    from deepseek_tui.tui.widgets.transcript import Transcript
+    from deepseek_tui.tui.transcript import Transcript
 
     assert hasattr(Transcript, "hydrate_from_messages")

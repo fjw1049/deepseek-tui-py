@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.state.database import Database
-from deepseek_tui.state.session_manager import (
+from deepseek_tui.state.session import Database
+from deepseek_tui.state.session import (
     SessionIndex,
     SessionIndexEntry,
     SessionManager,

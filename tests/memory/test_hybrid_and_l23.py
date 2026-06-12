@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.memory.native.l2_scenes import SceneStore
-from deepseek_tui.memory.native.l3_persona import (
+from deepseek_tui.memory.l2 import SceneStore
+from deepseek_tui.memory.l3 import (
     persona_path_for_workspace,
     refresh_persona_from_store,
     refresh_persona_with_llm,
 )
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.store import MemoryStore
 from deepseek_tui.protocol.responses import StreamTextDelta, StreamToolCallComplete, ToolCall
 
 

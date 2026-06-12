@@ -23,7 +23,7 @@ import pytest
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config, FeatureConfig, HooksConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.events import (
     TextDeltaEvent,
     ToolCallEvent,
@@ -32,12 +32,12 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
 )
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.execpolicy.engine import ExecPolicyEngine
-from deepseek_tui.hooks.build import build_hook_dispatcher, build_lifecycle_hook_executor
-from deepseek_tui.skills import discover_in_workspace
-from deepseek_tui.tools.builder import wire_registry_client
+from deepseek_tui.policy.approval import ExecPolicyEngine
+from deepseek_tui.integrations.hooks import build_hook_dispatcher, build_lifecycle_hook_executor
+from deepseek_tui.integrations.skills import discover_in_workspace
+from deepseek_tui.tools.registry import wire_registry_client
 from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
-from deepseek_tui.tools.task_manager import TaskStatus
+from deepseek_tui.tools.task import TaskStatus
 
 _TASK_ID_RE = re.compile(r"task_[a-f0-9]{8}")
 

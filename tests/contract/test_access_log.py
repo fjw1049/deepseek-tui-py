@@ -18,7 +18,7 @@ from httpx import AsyncClient
 async def test_access_log_strips_query(
     client: AsyncClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    caplog.set_level(logging.INFO, logger="deepseek_tui.app_server.server")
+    caplog.set_level(logging.INFO, logger="deepseek_tui.server.app")
     r = await client.get("/health?token=should-not-leak")
     assert r.status_code == 200
 

@@ -6,19 +6,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.events import ToolResultEvent
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.tools.base import ToolError
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolError
+from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.subagent import (
     SubAgentAssignment,
     SubAgentResult,
     SubAgentStatus,
     SubAgentType,
 )
-from deepseek_tui.tools.subagent_tools import AgentWaitTool
+from deepseek_tui.tools.subagent import AgentWaitTool
 
 
 def _snapshot(agent_id: str, *, running: bool) -> SubAgentResult:
@@ -50,7 +50,7 @@ async def test_agent_wait_without_ids_waits_running_agents() -> None:
 
     assert result.success is True
     manager.wait.assert_awaited_once_with(
-        ["agent_running"], mode="all", timeout_ms=10000
+        ["agent_running"], mode="all", timeout_ms=30000
     )
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.app_server.runtime_api.auth import (
+from deepseek_tui.server.auth import (
     resolve_runtime_auth,
     write_runtime_token_file,
 )

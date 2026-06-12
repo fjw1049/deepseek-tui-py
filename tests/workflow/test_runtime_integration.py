@@ -9,16 +9,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.subagent.manager import (
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.subagent import (
     SubAgentManager,
     SubAgentRuntime,
 )
-from deepseek_tui.tools.subagent.output import AgentRunOutput
-from deepseek_tui.tools.workflow_tool import WorkflowTool
-from deepseek_tui.workflow.agent_runner import DeepSeekAgentRunner
+from deepseek_tui.tools.subagent import AgentRunOutput
+from deepseek_tui.tools.workflow import WorkflowTool
+from deepseek_tui.workflow.runtime import DeepSeekAgentRunner
 from deepseek_tui.workflow.models import StepOutput, WorkflowAbortedError, WorkflowPolicy
-from deepseek_tui.workflow.template import make_step_output
+from deepseek_tui.workflow.models import make_step_output
 
 
 async def _workflow_stub_executor(agent, cancel: asyncio.Event) -> AgentRunOutput:

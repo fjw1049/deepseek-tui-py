@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import (
     TurnItemKind,
     reconstruct_messages_from_turns,
 )

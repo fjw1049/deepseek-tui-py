@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from deepseek_tui.engine.prompts import build_system_prompt
-from deepseek_tui.memory.provider import RecallResult
+from deepseek_tui.memory.coordinator import RecallResult
 from deepseek_tui.prompts import AppMode
 
 

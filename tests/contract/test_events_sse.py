@@ -7,8 +7,8 @@ import pytest
 
 from httpx import AsyncClient
 
-from deepseek_tui.app_server.runtime_api.sse import runtime_event_payload, stream_thread_events
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.routes import runtime_event_payload, stream_thread_events
+from deepseek_tui.server.threads import (
     CreateThreadRequest,
     RuntimeEventRecord,
 )

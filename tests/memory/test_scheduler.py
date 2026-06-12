@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.memory.native.scheduler import L1Scheduler
+from deepseek_tui.memory.pipeline import L1Scheduler
 
 
 @pytest.mark.asyncio

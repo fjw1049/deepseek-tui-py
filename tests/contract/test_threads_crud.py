@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import AsyncClient
 
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolContext
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_thread_warmup_endpoint_loads_engine(
         ctx = ToolContext(working_directory=Path(wd))  # type: ignore[arg-type]
         return SimpleNamespace(tool_context=ctx, run=AsyncMock())
 
-    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+    monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
 
     create = await client.post("/v1/threads", json={"model": "deepseek-chat"})
     assert create.status_code == 201

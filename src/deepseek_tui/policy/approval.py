@@ -304,6 +304,8 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 
+from deepseek_tui.policy.command_safety import classify_command
+
 
 _SHELL_TOOLS = {
     "exec_shell",
@@ -639,7 +641,7 @@ class ExecPolicyEngine:
         Engine tool execution uses ``approval_request_for_tool`` instead.
         Kept for ``PolicyRule`` overrides and contract tests.
         """
-        from deepseek_tui.tools.approval_gate import approval_request_for_capabilities
+        from deepseek_tui.tools.approval import approval_request_for_capabilities
 
         cached = self._session_cache.get(tool_name)
         if cached == ApprovalDecision.APPROVED_SESSION:

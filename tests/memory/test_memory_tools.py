@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
-from deepseek_tui.tools.base import ToolError
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.memory_tools import (
+from deepseek_tui.memory.seed import NativeMemoryProvider
+from deepseek_tui.tools.registry import ToolError
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.memory import (
     MEMORY_PROVIDER_KEY,
     MEMORY_SEARCH_CALLS_KEY,
     ConversationSearchTool,

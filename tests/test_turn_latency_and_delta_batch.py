@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from deepseek_tui.app_server.turn_delta_batcher import TurnDeltaBatcher
-from deepseek_tui.app_server.turn_latency import (
+from deepseek_tui.server.metrics import TurnDeltaBatcher
+from deepseek_tui.server.metrics import (
     TurnLatencyTrace,
     first_response_timeout_message,
     first_response_timeout_s,

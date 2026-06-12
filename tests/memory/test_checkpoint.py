@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deepseek_tui.memory.native.checkpoint import CheckpointManager
+from deepseek_tui.memory.store import CheckpointManager
 
 
 def test_checkpoint_keeps_runner_and_pipeline_state_separate(tmp_path) -> None:

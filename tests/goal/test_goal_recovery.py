@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from deepseek_tui.goal.controller import GoalController
-from deepseek_tui.goal.models import GoalStatus
-from deepseek_tui.goal.recovery import FailureAction, FailureKind, GoalRecovery, classify_failure
+from deepseek_tui.integrations.goal import GoalController
+from deepseek_tui.integrations.goal import GoalStatus
+from deepseek_tui.integrations.goal import FailureAction, FailureKind, GoalRecovery, classify_failure
 
 
 def test_classify_user_cancel_and_interrupt() -> None:

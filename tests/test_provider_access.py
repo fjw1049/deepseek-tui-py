@@ -15,11 +15,11 @@ import pytest
 
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.models import Config, ProviderConfig
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamTextDelta
-from deepseek_tui.secrets import InMemoryKeyringStore, SecretsError
-from deepseek_tui.secrets.facade import Secrets
-from deepseek_tui.secrets.manager import SecretsManager
+from deepseek_tui.state.secrets import InMemoryKeyringStore, SecretsError
+from deepseek_tui.state.secrets import Secrets
+from deepseek_tui.state.secrets import SecretsManager
 
 # ── SecretsManager.resolve_api_key ────────────────────────────────────────
 

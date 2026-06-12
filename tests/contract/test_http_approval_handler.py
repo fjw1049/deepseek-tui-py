@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from deepseek_tui.app_server.runtime_api.approval_bridge import (
+from deepseek_tui.server.approval import (
     ApprovalBridge,
     HttpApprovalHandler,
 )
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.execpolicy.models import (
+from deepseek_tui.policy.approval import (
     ApprovalDecision,
     ApprovalRequest,
     RiskLevel,

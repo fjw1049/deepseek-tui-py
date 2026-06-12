@@ -1,4 +1,4 @@
-from deepseek_tui.memory.formatting import (
+from deepseek_tui.memory.coordinator import (
     escape_memory_xml_tags,
     sanitize_memory_text,
     strip_relevant_memories,

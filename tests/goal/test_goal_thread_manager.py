@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import (
     CreateThreadRequest,
     RuntimeThreadManagerConfig,
     StartTurnRequest,
 )
-from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
+from deepseek_tui.server.threads import RuntimeThreadManager
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.goal.controller import GoalController
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.integrations.goal import GoalController
+from deepseek_tui.tools.registry import ToolContext
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_start_turn_rejects_stale_goal_follow_up(
             run=AsyncMock(),
         )
 
-    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+    monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
 
     tasks_dir = tmp_path / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)

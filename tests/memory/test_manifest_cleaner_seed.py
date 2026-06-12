@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
-from deepseek_tui.memory.native.cleaner import MemoryCleaner
-from deepseek_tui.memory.native.manifest import ManifestMismatchError, MemoryManifest
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
-from deepseek_tui.memory.native.seed import seed_memory_from_file
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.store import MemoryCleaner
+from deepseek_tui.memory.seed import ManifestMismatchError, MemoryManifest
+from deepseek_tui.memory.seed import NativeMemoryProvider
+from deepseek_tui.memory.seed import seed_memory_from_file
+from deepseek_tui.memory.store import MemoryStore
 
 
 def test_manifest_records_and_rejects_different_store_binding(tmp_path: Path) -> None:
@@ -138,8 +138,8 @@ def test_manifest_config_change_does_not_break(tmp_path: Path) -> None:
 
 
 def test_l0_recorder_excludes_tool_from_l1_eligible(tmp_path: Path) -> None:
-    from deepseek_tui.memory.native.l0_recorder import L0Recorder
-    from deepseek_tui.memory.native.store import MemoryStore
+    from deepseek_tui.memory.l0 import L0Recorder
+    from deepseek_tui.memory.store import MemoryStore
 
     store = MemoryStore(tmp_path / "store.db")
     store.open()
@@ -164,8 +164,8 @@ def test_l0_recorder_excludes_tool_from_l1_eligible(tmp_path: Path) -> None:
 
 
 def test_l0_cursor_skips_already_recorded_messages(tmp_path: Path) -> None:
-    from deepseek_tui.memory.native.l0_recorder import L0Recorder
-    from deepseek_tui.memory.native.store import MemoryStore
+    from deepseek_tui.memory.l0 import L0Recorder
+    from deepseek_tui.memory.store import MemoryStore
 
     now = int(time.time() * 1000)
     store = MemoryStore(tmp_path / "store.db")
@@ -196,7 +196,7 @@ def test_l0_cursor_skips_already_recorded_messages(tmp_path: Path) -> None:
 
 
 def test_scene_index_workspace_isolation(tmp_path: Path) -> None:
-    from deepseek_tui.memory.native.l2_scenes import SceneStore
+    from deepseek_tui.memory.l2 import SceneStore
 
     scenes = SceneStore(tmp_path / "data")
     blocks = tmp_path / "data" / "scene_blocks"

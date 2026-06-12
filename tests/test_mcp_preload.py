@@ -8,7 +8,7 @@ import pytest
 
 from deepseek_tui.mcp.config import McpServerConfig
 from deepseek_tui.mcp.manager import McpManager
-from deepseek_tui.mcp.preload import McpPreloadSnapshot
+from deepseek_tui.mcp.manager import McpPreloadSnapshot
 
 
 def test_preload_snapshot_ready_flags() -> None:

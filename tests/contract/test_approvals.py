@@ -10,8 +10,8 @@ from httpx import AsyncClient
 async def test_approval_remember_returns_session_decision(
     client: AsyncClient, runtime_app: object
 ) -> None:
-    from deepseek_tui.app_server.runtime_api.approval_bridge import HttpApprovalHandler
-    from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
+    from deepseek_tui.server.approval import HttpApprovalHandler
+    from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
 
     bridge = runtime_app.state.approval_bridge  # type: ignore[attr-defined]
     approval_id = "appr_contract_remember"
@@ -78,7 +78,7 @@ async def test_approval_invalid_decision(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_approval_list_pending(client: AsyncClient, runtime_app: object) -> None:
-    from deepseek_tui.app_server.runtime_api.approval_bridge import PendingApprovalRecord
+    from deepseek_tui.server.approval import PendingApprovalRecord
 
     bridge = runtime_app.state.approval_bridge  # type: ignore[attr-defined]
     bridge.register(

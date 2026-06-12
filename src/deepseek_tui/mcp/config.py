@@ -1,4 +1,4 @@
-
+"""MCP server configuration models and ``mcp.json`` loading."""
 
 from __future__ import annotations
 
@@ -6,6 +6,12 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+DEFAULT_TIMEOUTS: dict[str, float] = {
+    "connect_timeout": 10.0,
+    "execute_timeout": 60.0,
+    "read_timeout": 120.0,
+}
 
 
 @dataclass(slots=True)
@@ -79,9 +85,24 @@ def _server_from_raw(
         url=url if isinstance(url, str) else None,
         enabled=bool(raw.get("enabled", not bool(raw.get("disabled", False)))),
         required=bool(raw.get("required", False)),
-        connect_timeout=float(raw.get("connect_timeout", defaults.get("connect_timeout", 10.0))),
-        execute_timeout=float(raw.get("execute_timeout", defaults.get("execute_timeout", 60.0))),
-        read_timeout=float(raw.get("read_timeout", defaults.get("read_timeout", 120.0))),
+        connect_timeout=float(
+            raw.get(
+                "connect_timeout",
+                defaults.get("connect_timeout", DEFAULT_TIMEOUTS["connect_timeout"]),
+            )
+        ),
+        execute_timeout=float(
+            raw.get(
+                "execute_timeout",
+                defaults.get("execute_timeout", DEFAULT_TIMEOUTS["execute_timeout"]),
+            )
+        ),
+        read_timeout=float(
+            raw.get(
+                "read_timeout",
+                defaults.get("read_timeout", DEFAULT_TIMEOUTS["read_timeout"]),
+            )
+        ),
         tool_filter=ToolFilter(allow=enabled_tools, deny=disabled_tools)
         if enabled_tools or disabled_tools
         else None,

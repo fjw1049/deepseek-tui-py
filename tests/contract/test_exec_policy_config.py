@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from deepseek_tui.app_server.runtime_threads import CreateThreadRequest, RuntimeThreadManagerConfig
-from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
+from deepseek_tui.server.threads import CreateThreadRequest, RuntimeThreadManagerConfig
+from deepseek_tui.server.threads import RuntimeThreadManager
 from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.execpolicy.engine import ExecPolicyEngine, exec_policy_for_config
-from deepseek_tui.tools.base import ToolCapability
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.policy.approval import ExecPolicyEngine, exec_policy_for_config
+from deepseek_tui.tools.registry import ToolCapability
+from deepseek_tui.tools.registry import ToolContext
 
 
 def test_exec_policy_for_config_reads_approval_policy() -> None:
@@ -44,7 +44,7 @@ async def test_runtime_engine_uses_config_approval_policy(
         ctx = ToolContext(working_directory=Path(wd))  # type: ignore[arg-type]
         return SimpleNamespace(tool_context=ctx, run=AsyncMock())
 
-    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+    monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
 
     tasks_dir = runtime_data_dir / "tasks"
     tasks_dir.mkdir(exist_ok=True)

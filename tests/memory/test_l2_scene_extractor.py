@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.memory.native.l2_scenes import SceneStore
+from deepseek_tui.memory.l2 import SceneStore
 from deepseek_tui.protocol.responses import StreamTextDelta, StreamToolCallComplete, ToolCall
 
 

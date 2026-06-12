@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.memory.native.agent_loop import run_memory_subagent_loop
+from deepseek_tui.memory.pipeline import run_memory_subagent_loop
 from deepseek_tui.protocol.responses import StreamTextDelta, StreamToolCallComplete, ToolCall
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.file_tools import WriteFileTool
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.file import WriteFileTool
 from deepseek_tui.tools.registry import ToolRegistry
 
 

@@ -6,22 +6,22 @@ import asyncio
 
 import pytest
 
-from deepseek_tui.app_server.runtime_api.approval_bridge import (
+from deepseek_tui.server.approval import (
     ApprovalBridge,
     HttpApprovalHandler,
     PendingApprovalRecord,
 )
-from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
-from deepseek_tui.tools.approval_gate import (
+from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
+from deepseek_tui.tools.approval import (
     approval_request_for_tool,
     needs_tool_approval_prompt,
 )
-from deepseek_tui.tools.approval_present import (
+from deepseek_tui.tools.approval import (
     approval_request_to_sse_payload,
     enrich_approval_request,
 )
-from deepseek_tui.tools.file_tools import WriteFileTool
-from deepseek_tui.tools.web_tools import FetchUrlTool
+from deepseek_tui.tools.file import WriteFileTool
+from deepseek_tui.tools.web import FetchUrlTool
 
 
 def test_unified_write_file_gate_prompt_and_sse() -> None:
@@ -89,7 +89,7 @@ async def test_unified_bridge_pending_carries_impacts() -> None:
 
 
 def test_tui_dialog_destructive_stages_before_dismiss() -> None:
-    from deepseek_tui.tui.widgets.approval import ApprovalDialog
+    from deepseek_tui.tui.dialogs import ApprovalDialog
 
     dialog = ApprovalDialog(
         "write_file",

@@ -16,7 +16,7 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.hooks.build import build_hook_dispatcher
+from deepseek_tui.integrations.hooks import build_hook_dispatcher
 from deepseek_tui.protocol.responses import ToolCall
 
 

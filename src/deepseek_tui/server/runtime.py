@@ -862,25 +862,12 @@ class AppRuntime:
         if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
             return {"ok": False, "error": "mcp manager not configured"}
         manager = self._tool_runtime.mcp_manager
-        tools: list[dict[str, Any]] = []
-        for name in manager.server_names:
+        if manager.cached_tools() is None:
             try:
-                client = await manager._ensure_client(name)  # noqa: SLF001
-            except Exception:  # noqa: BLE001
-                continue
-            try:
-                listed = await client.list_tools()
-            except Exception:  # noqa: BLE001
-                continue
-            for tool in listed:
-                tools.append(
-                    {
-                        "server": name,
-                        "name": tool.name,
-                        "description": tool.description,
-                    }
-                )
-        return {"ok": True, "tools": tools}
+                await manager.discover_tools()
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": str(exc)}
+        return {"ok": True, "tools": manager.tools_http_payload()}
 
     async def workspace_status(self) -> dict[str, Any]:
         """Mirror Rust ``workspace_status`` (runtime_api.rs:?).

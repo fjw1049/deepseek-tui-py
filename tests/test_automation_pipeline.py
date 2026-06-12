@@ -13,8 +13,8 @@ from deepseek_tui.automation.inbox import (
     list_feishu_messages,
 )
 from deepseek_tui.automation.pipeline import build_final_prompt
-from deepseek_tui.automation.types import DeliveryConfig, DigestConfig, cron_prompt_prefix
-from deepseek_tui.tools.automation_manager import (
+from deepseek_tui.automation.delivery import DeliveryConfig, DigestConfig, cron_prompt_prefix
+from deepseek_tui.tools.automation import (
     AutomationManager,
     AutomationRecord,
     AutomationRunRecord,
@@ -102,14 +102,14 @@ def test_format_blocks_empty() -> None:
 
 
 def test_triage_skip_runs_by_default() -> None:
-    from deepseek_tui.automation.triage import TRIAGE_RUN, apply_triage
+    from deepseek_tui.automation.pipeline import TRIAGE_RUN, apply_triage
 
     decision = apply_triage(policy=None, prompt="hello")
     assert decision.action is TRIAGE_RUN
 
 
 def test_triage_keyword_blocks() -> None:
-    from deepseek_tui.automation.triage import TRIAGE_DEFER, apply_triage
+    from deepseek_tui.automation.pipeline import TRIAGE_DEFER, apply_triage
 
     decision = apply_triage(
         policy="keyword",
@@ -166,7 +166,7 @@ async def test_try_deliver_skips_stale_restart_failure() -> None:
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from deepseek_tui.automation.pipeline import try_deliver_completed_run
-    from deepseek_tui.tools.task_manager import STALE_RESTART_ERROR, TaskStatus
+    from deepseek_tui.tools.task import STALE_RESTART_ERROR, TaskStatus
 
     automation = _sample_automation(
         delivery={"mode": "feishu", "to": "oc_test", "best_effort": True}
@@ -202,7 +202,7 @@ async def test_try_deliver_failed_run_notifies() -> None:
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from deepseek_tui.automation.pipeline import try_deliver_completed_run
-    from deepseek_tui.tools.task_manager import TaskStatus
+    from deepseek_tui.tools.task import TaskStatus
 
     automation = _sample_automation(
         delivery={"mode": "feishu", "to": "oc_test", "best_effort": True}

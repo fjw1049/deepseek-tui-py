@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.workflow.validate import WorkflowValidationError, parse_workflow_spec
+from deepseek_tui.workflow.models import WorkflowValidationError, parse_workflow_spec
 
 
 def _minimal_spec(**overrides: object) -> dict:

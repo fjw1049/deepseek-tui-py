@@ -5,16 +5,16 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.engine.dispatch import should_parallelize_tool_batch, ToolExecutionPlan
-from deepseek_tui.tools.approval_gate import (
+from deepseek_tui.tools.approval import (
     needs_mcp_approval_prompt,
     needs_tool_approval_prompt,
     plan_requires_approval,
     should_block_tool_on_never,
 )
-from deepseek_tui.tools.file_tools import ReadFileTool, WriteFileTool
-from deepseek_tui.tools.shell_tools import ExecShellTool
-from deepseek_tui.tools.subagent_tools import AgentSpawnTool
-from deepseek_tui.tools.web_tools import FetchUrlTool, WebSearchTool
+from deepseek_tui.tools.file import ReadFileTool, WriteFileTool
+from deepseek_tui.tools.shell import ExecShellTool
+from deepseek_tui.tools.subagent import AgentSpawnTool
+from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
 
 @pytest.mark.parametrize(

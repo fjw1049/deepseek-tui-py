@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from deepseek_tui.memory.native.checkpoint import CheckpointManager, MemoryCheckpoint
-from deepseek_tui.memory.native.persona_trigger import PersonaTrigger
+from deepseek_tui.memory.store import CheckpointManager, MemoryCheckpoint
+from deepseek_tui.memory.l3 import PersonaTrigger
 
 
 def _scene_file(tmp_path) -> None:  # noqa: ANN001

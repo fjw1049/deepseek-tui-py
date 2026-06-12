@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.file_tools import ReadFileTool
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.file import ReadFileTool
 
 
 @pytest.mark.asyncio

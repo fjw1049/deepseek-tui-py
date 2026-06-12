@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import (
     CreateThreadRequest,
     RuntimeThreadManagerConfig,
     RuntimeThreadStore,
@@ -85,7 +85,7 @@ async def test_ensure_engine_loaded_syncs_session(
     captured: dict[str, object] = {}
 
     async def fake_create(**kwargs: object) -> SimpleNamespace:
-        from deepseek_tui.tools.context import ToolContext
+        from deepseek_tui.tools.registry import ToolContext
 
         engine = SimpleNamespace(
             tool_context=ToolContext(working_directory=kwargs["working_directory"]),
@@ -98,7 +98,7 @@ async def test_ensure_engine_loaded_syncs_session(
         )
         return engine
 
-    monkeypatch.setattr("deepseek_tui.engine.engine.Engine.create", fake_create)
+    monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
 
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
     thread = await manager.create_thread(

@@ -175,8 +175,7 @@ def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
             error=f"unknown command: {cmd_name}. Type /help",
         )
 
-    from . import handlers
-    handler_fn = handlers.get_handler(entry.name)
+    handler_fn = get_handler(entry.name)
     if handler_fn is None:
         return CommandResult(error=f"{entry.name} has no handler")
 
@@ -1142,112 +1141,83 @@ async def _mcp_discover_worker(app: DeepSeekTUI, path, *, reload_engine: bool) -
 
 @_register("/mcp")
 def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.mcp.store import (
-        McpWriteStatus,
-        add_server_config,
-        format_manager_snapshot,
-        init_config,
-        manager_snapshot_from_config,
-        remove_server_config,
-        resolve_mcp_config_path,
-        set_server_enabled,
+    from deepseek_tui.mcp.actions import (
+        format_status,
+        run_add,
+        run_disable,
+        run_enable,
+        run_init,
+        run_remove,
     )
+    from deepseek_tui.mcp.store import resolve_mcp_config_path
 
     path = resolve_mcp_config_path(app.config)
     raw = (args or "").strip()
     if not raw or raw.lower() in {"status", "list", "show"}:
-        snapshot = manager_snapshot_from_config(
-            path, restart_required=_mcp_restart_required(app)
+        return CommandResult(
+            output=format_status(path, restart_required=_mcp_restart_required(app))
         )
-        return CommandResult(output=format_manager_snapshot(snapshot))
 
     parts = raw.split()
     action = parts[0].lower()
     rest = parts[1:]
+    restart_required = _mcp_restart_required(app)
 
     try:
         if action == "init":
             force = any(part in {"--force", "-f"} for part in rest)
-            status = init_config(path, force=force)
-            if status == McpWriteStatus.CREATED:
-                msg = f"Created MCP config at {path}"
-            elif status == McpWriteStatus.OVERWRITTEN:
-                msg = f"Overwrote MCP config at {path}"
-            else:
-                msg = f"MCP config already exists at {path} (use /mcp init --force to overwrite)"
-            snapshot = manager_snapshot_from_config(path, restart_required=False)
-            return CommandResult(output=f"{msg}\n\n{format_manager_snapshot(snapshot)}")
+            result = run_init(path, force=force)
+            return CommandResult(output=result.output)
 
         if action == "add":
-            if len(rest) < 3:
-                return CommandResult(
-                    error=(
-                        "Usage: /mcp add stdio <name> <command> [args...] "
-                        "OR /mcp add http <name> <url>"
-                    )
+            try:
+                result = run_add(
+                    path, rest[0], rest, restart_required=restart_required
                 )
-            transport = rest[0].lower()
-            if transport == "stdio":
-                name, command, *cmd_args = rest[1], rest[2], rest[3:]
-                add_server_config(path, name, command=command, args=cmd_args)
-                _set_mcp_restart_required(app, True)
-                msg = f"Added MCP stdio server '{name}'"
-            elif transport in {"http", "sse"}:
-                name, url = rest[1], rest[2]
-                add_server_config(path, name, url=url)
-                _set_mcp_restart_required(app, True)
-                msg = f"Added MCP HTTP/SSE server '{name}'"
-            else:
-                return CommandResult(
-                    error=(
-                        "Usage: /mcp add stdio <name> <command> [args...] "
-                        "OR /mcp add http <name> <url>"
-                    )
-                )
-            snapshot = manager_snapshot_from_config(
-                path, restart_required=_mcp_restart_required(app)
-            )
-            return CommandResult(output=f"{msg}\n\n{format_manager_snapshot(snapshot)}")
+            except ValueError as exc:
+                return CommandResult(error=str(exc))
+            _set_mcp_restart_required(app, True)
+            return CommandResult(output=result.output)
 
         if action == "enable":
             if not rest:
                 return CommandResult(error="Usage: /mcp enable <name>")
-            set_server_enabled(path, rest[0], True)
+            result = run_enable(path, rest[0], restart_required=restart_required)
             _set_mcp_restart_required(app, True)
-            msg = f"Enabled MCP server '{rest[0]}'"
-        elif action == "disable":
+            return CommandResult(output=result.output)
+
+        if action == "disable":
             if not rest:
                 return CommandResult(error="Usage: /mcp disable <name>")
-            set_server_enabled(path, rest[0], False)
+            result = run_disable(path, rest[0], restart_required=restart_required)
             _set_mcp_restart_required(app, True)
-            msg = f"Disabled MCP server '{rest[0]}'"
-        elif action in {"remove", "rm"}:
+            return CommandResult(output=result.output)
+
+        if action in {"remove", "rm"}:
             if not rest:
                 return CommandResult(error="Usage: /mcp remove <name>")
-            remove_server_config(path, rest[0])
+            result = run_remove(path, rest[0], restart_required=restart_required)
             _set_mcp_restart_required(app, True)
-            msg = f"Removed MCP server '{rest[0]}'"
-        elif action in {"validate", "reload", "reconnect"}:
+            return CommandResult(output=result.output)
+
+        if action in {"validate", "reload", "reconnect"}:
             app.run_worker(
-                _mcp_discover_worker(app, path, reload_engine=action in {"reload", "reconnect"}),
+                _mcp_discover_worker(
+                    app, path, reload_engine=action in {"reload", "reconnect"}
+                ),
                 name="mcp-discover",
             )
             return CommandResult(output="Refreshing MCP discovery...")
-        else:
-            return CommandResult(
-                error=(
-                    "Usage: /mcp [init|add stdio <name> <command> [args...]|"
-                    "add http <name> <url>|enable <name>|disable <name>|"
-                    "remove <name>|validate|reload]"
-                )
+
+        return CommandResult(
+            error=(
+                "Usage: /mcp [init|add stdio <name> <command> [args...]|"
+                "add http <name> <url>|enable <name>|disable <name>|"
+                "remove <name>|validate|reload]"
             )
+        )
     except (KeyError, ValueError, OSError, json.JSONDecodeError) as exc:
         return CommandResult(error=f"MCP action failed: {exc}")
-
-    snapshot = manager_snapshot_from_config(
-        path, restart_required=_mcp_restart_required(app)
-    )
-    return CommandResult(output=f"{msg}\n\n{format_manager_snapshot(snapshot)}")
 
 
 # ── /compact ─────────────────────────────────────────────────────────────

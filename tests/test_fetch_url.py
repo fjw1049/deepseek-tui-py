@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.tools.web_tools import (
+from deepseek_tui.tools.web import (
     FetchUrlTool,
     _is_direct_resource_url,
     _truncate_text,
@@ -27,7 +27,7 @@ async def test_fetch_url_extract_go_dev(monkeypatch: pytest.MonkeyPatch) -> None
     from pathlib import Path
 
     from deepseek_tui.config.loader import ConfigLoader
-    from deepseek_tui.tools.context import ToolContext
+    from deepseek_tui.tools.registry import ToolContext
 
     cfg = ConfigLoader().load(workspace=Path.cwd())
     if not cfg.anysearch_api_key:

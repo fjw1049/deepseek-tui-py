@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 
 from deepseek_tui.engine.context import compact_tool_result_for_context
-from deepseek_tui.engine.tool_catalog import should_default_defer_tool
-from deepseek_tui.tools.base import ToolResult
+from deepseek_tui.engine.tools import should_default_defer_tool
+from deepseek_tui.tools.registry import ToolResult
 from deepseek_tui.tui.sanitize import strip_subagent_sentinels
 
 

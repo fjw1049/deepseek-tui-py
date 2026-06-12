@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from deepseek_tui.goal.controller import GoalController
-from deepseek_tui.goal.tools import GOAL_CONTROLLER_KEY, CreateGoalTool, GetGoalTool, UpdateGoalTool
-from deepseek_tui.tools.builder import build_default_registry
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.integrations.goal import GoalController
+from deepseek_tui.integrations.goal import GOAL_CONTROLLER_KEY, CreateGoalTool, GetGoalTool, UpdateGoalTool
+from deepseek_tui.tools.registry import build_default_registry
+from deepseek_tui.tools.registry import ToolContext
 
 
 @pytest.mark.asyncio

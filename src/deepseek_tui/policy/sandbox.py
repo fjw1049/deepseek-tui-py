@@ -260,9 +260,7 @@ class ExecEnv:
 def get_platform_sandbox() -> SandboxType | None:
     if sys.platform != "darwin":
         return None
-    from deepseek_tui.execpolicy import seatbelt
-
-    if seatbelt.is_available():
+    if is_available():
         return SandboxType.MACOS_SEATBELT
     return None
 
@@ -374,15 +372,13 @@ class SandboxManager:
 
     @staticmethod
     def _prepare_seatbelt(spec: CommandSpec) -> ExecEnv:
-        from deepseek_tui.execpolicy import seatbelt
-
         original_command = [spec.program, *spec.args]
-        seatbelt_args = seatbelt.create_seatbelt_args(
+        seatbelt_args = create_seatbelt_args(
             original_command,
             spec.sandbox_policy,
             spec.cwd,
         )
-        command = [seatbelt.SANDBOX_EXEC_PATH, *seatbelt_args]
+        command = [SANDBOX_EXEC_PATH, *seatbelt_args]
         env = dict(spec.env)
         env["DEEPSEEK_SANDBOX"] = "seatbelt"
         return ExecEnv(
@@ -399,9 +395,7 @@ class SandboxManager:
         if sandbox_type == SandboxType.NONE:
             return False
         if sandbox_type == SandboxType.MACOS_SEATBELT:
-            from deepseek_tui.execpolicy import seatbelt
-
-            return seatbelt.detect_denial(exit_code, stderr)
+            return detect_denial(exit_code, stderr)
         return False
 
     @staticmethod

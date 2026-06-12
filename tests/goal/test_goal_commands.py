@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle, GoalFollowUpOp
-from deepseek_tui.tui.commands.handlers import _schedule_goal_follow_up
+from deepseek_tui.tui.commands import _schedule_goal_follow_up
 
 
 @pytest.mark.asyncio

@@ -9,23 +9,23 @@ import pytest
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.prompts import _load_user_memory
-from deepseek_tui.memory.user_memory import append_entry, compose_block
-from deepseek_tui.state.checkpoint import (
+from deepseek_tui.memory.coordinator import append_entry, compose_block
+from deepseek_tui.state.session import (
     clear_checkpoint,
     load_checkpoint,
     save_checkpoint,
 )
-from deepseek_tui.tools.base import ToolResult
-from deepseek_tui.tools.deprecation import DeprecatingAliasTool, attach_deprecation
-from deepseek_tui.tools.retrieve_tool_result import resolve_spillover_reference
-from deepseek_tui.tools.spillover import (
+from deepseek_tui.tools.registry import ToolResult
+from deepseek_tui.tools.encoding import DeprecatingAliasTool, attach_deprecation
+from deepseek_tui.tools.user_input import resolve_spillover_reference
+from deepseek_tui.tools.runtime import (
     apply_spillover,
     prune_older_than,
     sanitise_id,
     set_test_spillover_root,
     write_spillover,
 )
-from deepseek_tui.tools.subagent_tools import AgentSpawnTool
+from deepseek_tui.tools.subagent import AgentSpawnTool
 
 
 def test_sanitise_id_strips_unsafe_chars() -> None:

@@ -124,7 +124,7 @@ class TestEngineMcpCache:
     async def test_invalidate_mcp_tools_cache_forces_rediscover(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.orchestrator import Engine
 
         engine = Engine.__new__(Engine)
         engine._mcp_tools_cache = [{"function": {"name": "stale"}}]
@@ -140,7 +140,7 @@ class TestAppServerLifecycleHooks:
     def test_stream_engine_events_wires_hook_executor(self) -> None:
         import inspect
 
-        from deepseek_tui.app_server.runtime import AppRuntime
+        from deepseek_tui.server.runtime import AppRuntime
 
         source = inspect.getsource(AppRuntime._stream_engine_events)
         assert "build_lifecycle_hook_executor" in source
@@ -157,8 +157,8 @@ class TestSlashHooksCommand:
         assert "session_start" in result.output
 
     def test_hooks_list_grouped(self) -> None:
-        from deepseek_tui.engine.engine import Engine
-        from deepseek_tui.hooks.executor import HookExecutor
+        from deepseek_tui.engine.orchestrator import Engine
+        from deepseek_tui.integrations.hooks import HookExecutor
         from deepseek_tui.tui.app import DeepSeekTUI
 
         cfg = HooksConfig(

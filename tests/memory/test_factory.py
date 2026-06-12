@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.config.models import Config, MemoryConfig, MemorySmartConfig
-from deepseek_tui.memory.factory import create_smart_memory_provider
-from deepseek_tui.memory.native.provider import NativeMemoryProvider
+from deepseek_tui.memory.coordinator import create_smart_memory_provider
+from deepseek_tui.memory.seed import NativeMemoryProvider
 
 
 class _FakeClient:

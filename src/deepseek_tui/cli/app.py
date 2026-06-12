@@ -933,7 +933,7 @@ def init() -> None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Subcommands that are stubs (require later stages)
 # Mirrors Rust: exec, review, apply, eval, sessions, resume, fork,
-#               setup, mcp, completions, mcp-server, app-server,
+#               setup, mcp, completions, app-server,
 #               metrics, update
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1137,16 +1137,16 @@ def _mcp_path(config: Path | None) -> Path:
 
 
 def _mcp_list(config: Path | None) -> None:
-    from deepseek_tui.mcp.store import format_manager_snapshot, manager_snapshot_from_config
+    from deepseek_tui.mcp.actions import format_status
 
     path = _mcp_path(config)
-    snapshot = manager_snapshot_from_config(path)
-    if not snapshot.servers:
+    text = format_status(path)
+    if "No MCP servers configured." in text:
         typer.echo("No MCP servers configured.")
         typer.echo(f"Config: {path}")
         typer.echo("Run `deepseek-tui mcp init` to create a template.")
         return
-    typer.echo(format_manager_snapshot(snapshot))
+    typer.echo(text)
 
 
 @mcp_app.callback(invoke_without_command=True)
@@ -1185,21 +1185,18 @@ def mcp_add_cmd(
     config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Add an MCP server entry."""
-    from deepseek_tui.mcp.store import add_server_config
+    from deepseek_tui.mcp.actions import run_add
 
     path = _mcp_path(config)
-    transport = transport.lower()
-    if transport == "stdio":
-        add_server_config(
-            path, name, command=command_or_url, args=list(extra_args or [])
-        )
-        typer.echo(f"Added MCP stdio server '{name}'")
-    elif transport in {"http", "sse"}:
-        add_server_config(path, name, url=command_or_url)
-        typer.echo(f"Added MCP HTTP/SSE server '{name}'")
-    else:
-        typer.echo("Transport must be stdio or http", err=True)
-        raise typer.Exit(1)
+    args = [transport.lower(), name, command_or_url]
+    if extra_args:
+        args.extend(extra_args)
+    try:
+        result = run_add(path, transport.lower(), args, restart_required=False)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(result.message)
 
 
 @mcp_app.command("enable")
@@ -1207,9 +1204,9 @@ def mcp_enable_cmd(
     name: str = typer.Argument(..., help="Server name."),
     config: Path | None = CONFIG_OPTION,
 ) -> None:
-    from deepseek_tui.mcp.store import set_server_enabled
+    from deepseek_tui.mcp.actions import run_enable
 
-    set_server_enabled(_mcp_path(config), name, True)
+    run_enable(_mcp_path(config), name, restart_required=False)
     typer.echo(f"Enabled MCP server '{name}'")
 
 
@@ -1218,9 +1215,9 @@ def mcp_disable_cmd(
     name: str = typer.Argument(..., help="Server name."),
     config: Path | None = CONFIG_OPTION,
 ) -> None:
-    from deepseek_tui.mcp.store import set_server_enabled
+    from deepseek_tui.mcp.actions import run_disable
 
-    set_server_enabled(_mcp_path(config), name, False)
+    run_disable(_mcp_path(config), name, restart_required=False)
     typer.echo(f"Disabled MCP server '{name}'")
 
 
@@ -1229,9 +1226,9 @@ def mcp_remove_cmd(
     name: str = typer.Argument(..., help="Server name."),
     config: Path | None = CONFIG_OPTION,
 ) -> None:
-    from deepseek_tui.mcp.store import remove_server_config
+    from deepseek_tui.mcp.actions import run_remove
 
-    remove_server_config(_mcp_path(config), name)
+    run_remove(_mcp_path(config), name, restart_required=False)
     typer.echo(f"Removed MCP server '{name}'")
 
 
@@ -1304,38 +1301,6 @@ def mcp_tools_cmd(
     asyncio.run(_run())
 
 
-@mcp_app.command("add-self")
-def mcp_add_self_cmd(
-    name: str = typer.Option("deepseek", "--name", help="Server name in mcp.json."),
-    workspace: Path | None = typer.Option(None, "--workspace", help="Workspace root."),
-    config: Path | None = CONFIG_OPTION,
-) -> None:
-    """Register this binary as a local MCP stdio server."""
-    import shutil
-    import sys
-
-    from deepseek_tui.mcp.config import load_mcp_config
-    from deepseek_tui.mcp.store import add_server_config
-
-    path = _mcp_path(config)
-    if path.exists():
-        existing = {cfg.name for cfg in load_mcp_config(path)}
-        if name in existing:
-            typer.echo(
-                f"MCP server '{name}' already exists in {path}. "
-                f"Use `deepseek-tui mcp remove {name}` first.",
-                err=True,
-            )
-            raise typer.Exit(1)
-
-    exe = shutil.which("deepseek-tui") or sys.argv[0]
-    args = ["mcp-server"]
-    if workspace is not None:
-        args.extend(["--workspace", str(workspace.resolve())])
-    add_server_config(path, name, command=exe, args=args)
-    typer.echo(f"Registered MCP server '{name}' using {exe}")
-
-
 @app.command()
 def completions(
     shell: str = typer.Argument("bash", help="Shell type (bash/zsh/fish)."),
@@ -1351,21 +1316,6 @@ def completions(
         typer.echo("deepseek-tui --show-completion fish | source")
     else:
         typer.echo(f"Unknown shell: {shell}", err=True)
-
-
-_MCP_WORKSPACE_OPTION = typer.Option(
-    None, "--workspace", help="Workspace root (defaults to cwd)."
-)
-
-
-@app.command(name="mcp-server")
-def mcp_server(workspace: Path | None = _MCP_WORKSPACE_OPTION) -> None:
-    """Run as MCP server mode over stdio JSON-RPC."""
-    from deepseek_tui.mcp.server import run_mcp_server
-
-    ws = (workspace or Path.cwd()).resolve()
-    typer.echo(f"mcp-server: starting on stdio (workspace={ws})", err=True)
-    asyncio.run(run_mcp_server(ws))
 
 
 @app.command(name="app-server")

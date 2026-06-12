@@ -19,15 +19,15 @@ from deepseek_tui.engine.events import (
     ToolResultEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.hooks.dispatcher import HookDispatcher
-from deepseek_tui.hooks.events import (
+from deepseek_tui.integrations.hooks import HookDispatcher
+from deepseek_tui.integrations.hooks import (
     ApprovalLifecycleEvent,
     ResponseDeltaEvent,
     SessionLifecycleEvent,
     ToolLifecycleEvent,
     event_to_dict,
 )
-from deepseek_tui.hooks.sinks import (
+from deepseek_tui.integrations.hooks import (
     HookSink,
     JsonlHookSink,
     ShellHookSink,
@@ -162,7 +162,7 @@ class TestEngineHandleBridge:
         await handle.emit(TextDeltaEvent(text="hello"))
 
         assert len(collector.events) == 1
-        from deepseek_tui.hooks.events import ResponseDeltaEvent
+        from deepseek_tui.integrations.hooks import ResponseDeltaEvent
 
         evt = collector.events[0]
         assert isinstance(evt, ResponseDeltaEvent)
@@ -171,7 +171,7 @@ class TestEngineHandleBridge:
 
     async def test_approval_required_bridges(self):
         from deepseek_tui.engine.events import ApprovalRequiredEvent
-        from deepseek_tui.execpolicy.models import ApprovalRequest, RiskLevel, ToolCategory
+        from deepseek_tui.policy.approval import ApprovalRequest, RiskLevel, ToolCategory
 
         collector = CollectorSink()
         dispatcher = HookDispatcher()

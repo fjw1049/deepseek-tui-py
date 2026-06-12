@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from deepseek_tui.config.models import MemoryConfig, MemorySmartConfig
-from deepseek_tui.memory.native.embedding import (
+from deepseek_tui.memory.search import (
     EmbeddingClient,
     cosine_similarity,
     pack_embedding,
     unpack_embedding,
 )
-from deepseek_tui.memory.native.store import MemoryStore
+from deepseek_tui.memory.store import MemoryStore
 
 
 def test_cosine_identical_vectors() -> None:
@@ -50,7 +50,7 @@ async def test_semantic_dedup_blocks_near_duplicate(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_provider_indexes_embedding_on_insert(tmp_path) -> None:
     from deepseek_tui.config.models import Config
-    from deepseek_tui.memory.native.provider import NativeMemoryProvider
+    from deepseek_tui.memory.seed import NativeMemoryProvider
 
     cfg = Config(
         memory=MemoryConfig(
@@ -96,7 +96,7 @@ async def test_provider_indexes_embedding_on_insert(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_backfill_indexes_missing_rows(tmp_path) -> None:
     from deepseek_tui.config.models import Config
-    from deepseek_tui.memory.native.provider import NativeMemoryProvider
+    from deepseek_tui.memory.seed import NativeMemoryProvider
 
     cfg = Config(
         memory=MemoryConfig(

@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from deepseek_tui.app_server.broadcast import AsyncBroadcast
-from deepseek_tui.app_server.runtime_threads import (
+from deepseek_tui.server.threads import AsyncBroadcast
+from deepseek_tui.server.threads import (
     EVENT_CHANNEL_CAPACITY,
     RuntimeThreadStore,
     RuntimeTurnStatus,
@@ -16,7 +16,7 @@ from deepseek_tui.app_server.runtime_threads import (
     TurnItemLifecycleStatus,
     TurnItemRecord,
 )
-from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
+from deepseek_tui.server.threads import RuntimeThreadManager
 
 
 @pytest.mark.asyncio

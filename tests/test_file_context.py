@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.context import ContextConfig, UserTurnInput, process_turn_input
+from deepseek_tui.state.context import ContextConfig, UserTurnInput, process_turn_input
 
 
 @pytest.fixture

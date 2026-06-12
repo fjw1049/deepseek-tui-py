@@ -26,17 +26,17 @@ from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config, HooksConfig, LifecycleHookEntry
 from deepseek_tui.engine.dispatch import is_mcp_tool
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.execpolicy.engine import ExecPolicyEngine
-from deepseek_tui.hooks.build import build_hook_dispatcher
+from deepseek_tui.policy.approval import ExecPolicyEngine
+from deepseek_tui.integrations.hooks import build_hook_dispatcher
 from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
 from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
 from deepseek_tui.mcp.manager import McpManager
 from deepseek_tui.protocol.messages import Message
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamTextDelta, ToolCall
-from deepseek_tui.tools.builder import build_default_registry
+from deepseek_tui.tools.registry import build_default_registry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_SERVER = Path(__file__).resolve().parent / "fixtures" / "minimal_mcp_server.py"
@@ -214,7 +214,7 @@ class TestLiveTodayIntegration:
     async def test_04_app_server_mcp_startup_fetch(
         self, project_config: Config, fetch_only_mcp_path: Path, tmp_path: Path
     ) -> None:
-        from deepseek_tui.app_server.runtime import AppRuntime
+        from deepseek_tui.server.runtime import AppRuntime
         from deepseek_tui.tools.runtime import create_tool_runtime
 
         cfg = project_config.model_copy(deep=True)
@@ -328,7 +328,7 @@ class TestLiveTodayIntegration:
         handle = EngineHandle(hooks=build_hook_dispatcher(cfg))
 
         async def _run() -> None:
-            from deepseek_tui.hooks.build import build_lifecycle_hook_executor
+            from deepseek_tui.integrations.hooks import build_lifecycle_hook_executor
             from deepseek_tui.tools.runtime import create_tool_runtime
 
             runtime_cfg = cfg.model_copy(deep=True)

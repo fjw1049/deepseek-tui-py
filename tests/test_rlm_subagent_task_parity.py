@@ -9,15 +9,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deepseek_tui.engine.engine import Engine
+from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.protocol.responses import Usage
-from deepseek_tui.tools.builder import build_default_registry, wire_registry_client
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.rlm.repl import ReplRuntime, chunk_coverage
-from deepseek_tui.tools.rlm.tool import RlmTool
-from deepseek_tui.tools.rlm.turn import RlmUsage
-from deepseek_tui.tools.subagent.manager import (
+from deepseek_tui.tools.registry import build_default_registry, wire_registry_client
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.rlm import ReplRuntime, chunk_coverage
+from deepseek_tui.tools.rlm import RlmTool
+from deepseek_tui.tools.rlm import RlmUsage
+from deepseek_tui.tools.subagent import (
     SpawnRequest,
     SubAgentAssignment,
     SubAgentManager,
@@ -25,10 +25,10 @@ from deepseek_tui.tools.subagent.manager import (
     build_subagent_system_prompt,
     whale_nickname_for_index,
 )
-from deepseek_tui.tools.task_manager import (
+from deepseek_tui.tools.task import (
     NewTaskRequest as TaskNewTaskRequest,
 )
-from deepseek_tui.tools.task_manager import (
+from deepseek_tui.tools.task import (
     TaskManager,
     TaskManagerConfig,
 )
@@ -161,7 +161,7 @@ class TestSubagentParity:
 
 
 async def _immediate_stub(task, cancel):  # noqa: ANN001
-    from deepseek_tui.tools.task_manager import TaskExecutionResult
+    from deepseek_tui.tools.task import TaskExecutionResult
 
     return TaskExecutionResult(summary="ok")
 

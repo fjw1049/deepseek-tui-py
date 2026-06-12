@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def test_item_started_emits_tool_input() -> None:
-    src = Path("src/deepseek_tui/app_server/thread_manager.py").read_text(
+    src = Path("src/deepseek_tui/server/threads.py").read_text(
         encoding="utf-8"
     )
     # Find the item.started emit for ToolCallEvent and assert it carries input.

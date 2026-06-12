@@ -10,16 +10,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deepseek_tui.protocol.messages import Message, TextBlock
-from deepseek_tui.state.checkpoint import clear_checkpoint, save_checkpoint
-from deepseek_tui.tools.base import ToolError
-from deepseek_tui.tools.context import ToolContext
-from deepseek_tui.tools.patch_engine import (
+from deepseek_tui.state.session import clear_checkpoint, save_checkpoint
+from deepseek_tui.tools.registry import ToolError
+from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.patch import (
     FilePatch,
     Hunk,
     HunkLine,
     HunkLineKind,
 )
-from deepseek_tui.tools.utility_tools import (
+from deepseek_tui.tools.patch import (
     ApplyPatchTool,
     _apply_changes,
     _apply_file_patches,

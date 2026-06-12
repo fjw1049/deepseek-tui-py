@@ -1,4 +1,4 @@
-from deepseek_tui.memory.native.l0_search import format_l0_hits
+from deepseek_tui.memory.l0 import format_l0_hits
 
 
 def test_format_l0_hits_summarize_groups_by_thread() -> None:

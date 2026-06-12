@@ -1,4 +1,14 @@
+"""Multi-server MCP orchestration — connection pool, discovery, cache, routing.
 
+Other modules in this package (outbound MCP client):
+
+- ``config.py`` — ``McpServerConfig`` and ``mcp.json`` parsing
+- ``transport.py`` — stdio / SSE byte channels
+- ``client.py`` — JSON-RPC client for one external server
+- ``store.py`` — config file CRUD and CLI/TUI/GUI snapshots
+- ``execute.py`` — Engine / AppRuntime tool-call adapter
+- ``tools/mcp.py`` — built-in ToolSpec bridge (resources, prompts)
+"""
 
 from __future__ import annotations
 
@@ -6,19 +16,20 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
 
 from deepseek_tui.mcp.client import (
     McpClient,
     McpError,
+    McpToolDescriptor,
     parse_qualified_tool_name,
     qualify_tool_name,
 )
-from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
-from deepseek_tui.mcp.preload import DEFAULT_PRELOAD_TIMEOUT_S, McpPreloadTracker
-from deepseek_tui.mcp.startup import raise_if_required_mcp_failed
+from deepseek_tui.mcp.config import DEFAULT_TIMEOUTS, McpServerConfig, load_mcp_config
 from deepseek_tui.mcp.store import hash_mcp_document, load_raw_document
 from deepseek_tui.protocol.events import (
     McpStartupCompleteEvent,
@@ -32,6 +43,152 @@ StartupUpdateCallback = Callable[
 ]
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PRELOAD_TIMEOUT_S = 30.0
+
+
+# --- Required-server startup policy -----------------------------------------
+
+
+def required_startup_failures(
+    configs: dict[str, McpServerConfig],
+    summary: McpStartupCompleteEvent,
+) -> list[McpStartupFailure]:
+    """Return failures for enabled ``required`` servers that did not become ready."""
+    ready = set(summary.ready)
+    out: list[McpStartupFailure] = []
+    seen = {f.server_name for f in summary.failed}
+    for name, cfg in configs.items():
+        if not cfg.enabled or not cfg.required:
+            continue
+        if name in ready:
+            continue
+        existing = next((f for f in summary.failed if f.server_name == name), None)
+        if existing is not None:
+            out.append(existing)
+        elif name not in seen:
+            out.append(
+                McpStartupFailure(
+                    server_name=name,
+                    error="required MCP server failed to initialize",
+                )
+            )
+    return out
+
+
+def raise_if_required_mcp_failed(
+    configs: dict[str, McpServerConfig],
+    summary: McpStartupCompleteEvent,
+) -> None:
+    """Raise :class:`McpError` when any required server failed startup."""
+    failures = required_startup_failures(configs, summary)
+    if not failures:
+        return
+    detail = "; ".join(f"{f.server_name}: {f.error}" for f in failures)
+    raise McpError(f"Required MCP server(s) failed to start: {detail}")
+
+
+# --- Background preload status (HTTP / diagnostics) -------------------------
+
+
+def _preload_now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+@dataclass
+class McpPreloadSnapshot:
+    """Point-in-time preload status for HTTP / diagnostics."""
+
+    phase: str = "idle"
+    enabled_servers: int = 0
+    connected_servers: int = 0
+    tools_count: int = 0
+    from_disk_cache: bool = False
+    started_at_ms: int | None = None
+    completed_at_ms: int | None = None
+    error: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        warming = self.phase == "warming"
+        ready = self.phase in ("ready", "partial") or (
+            self.tools_count > 0 and self.phase != "failed"
+        )
+        return {
+            "phase": self.phase,
+            "warming": warming,
+            "ready": ready,
+            "enabled_servers": self.enabled_servers,
+            "connected_servers": self.connected_servers,
+            "tools_count": self.tools_count,
+            "from_disk_cache": self.from_disk_cache,
+            "started_at_ms": self.started_at_ms,
+            "completed_at_ms": self.completed_at_ms,
+            "error": self.error,
+        }
+
+
+@dataclass
+class McpPreloadTracker:
+    phase: str = "idle"
+    from_disk_cache: bool = False
+    started_at_ms: int | None = None
+    completed_at_ms: int | None = None
+    error: str | None = None
+    _task: Any = field(default=None, repr=False)
+
+    def mark_ready_from_disk(self, *, tools_count: int, enabled_servers: int) -> None:
+        self.phase = "ready"
+        self.from_disk_cache = True
+        self.completed_at_ms = _preload_now_ms()
+        self.error = None
+
+    def snapshot(
+        self,
+        *,
+        enabled_servers: int,
+        connected_servers: int,
+        tools_count: int,
+    ) -> McpPreloadSnapshot:
+        return McpPreloadSnapshot(
+            phase=self.phase,
+            enabled_servers=enabled_servers,
+            connected_servers=connected_servers,
+            tools_count=tools_count,
+            from_disk_cache=self.from_disk_cache,
+            started_at_ms=self.started_at_ms,
+            completed_at_ms=self.completed_at_ms,
+            error=self.error,
+        )
+
+
+# --- Multi-server manager -----------------------------------------------------
+
+
+def _tools_from_descriptors(
+    server_name: str,
+    cfg: McpServerConfig,
+    descriptors: list[McpToolDescriptor],
+) -> list[tuple[str, str, str, dict[str, Any]]]:
+    """Map MCP tool descriptors to qualified API tool entries."""
+    results: list[tuple[str, str, str, dict[str, Any]]] = []
+    for desc in descriptors:
+        if cfg.tool_filter and not cfg.tool_filter.accepts(desc.name):
+            continue
+        qualified = qualify_tool_name(server_name, desc.name)
+        results.append((
+            qualified,
+            server_name,
+            desc.name,
+            {
+                "type": "function",
+                "function": {
+                    "name": qualified,
+                    "description": desc.description,
+                    "parameters": desc.input_schema,
+                },
+            },
+        ))
+    return results
 
 
 class McpManager:
@@ -60,6 +217,7 @@ class McpManager:
         self._discover_lock = asyncio.Lock()
         self._discovered_tools_cache_path: Path | None = None
         self._preload = McpPreloadTracker()
+        self._discover_errors: dict[str, str] = {}
         if self._config_path is not None:
             from deepseek_tui.mcp.store import validate_mcp_config_path
 
@@ -374,6 +532,63 @@ class McpManager:
             return list(self._stale_cache)
         return None
 
+    @property
+    def discover_errors(self) -> dict[str, str]:
+        """Per-server errors from the most recent fresh discovery pass."""
+        return dict(self._discover_errors)
+
+    def grouped_discovered_tools(self) -> dict[str, list[dict[str, str]]]:
+        """Group cached tools by server for CLI/TUI snapshots."""
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for entry in self.cached_tools() or []:
+            fn = entry.get("function", entry)
+            if not isinstance(fn, dict):
+                continue
+            qualified = fn.get("name")
+            if not isinstance(qualified, str):
+                continue
+            mapping = self._cached_tool_map.get(qualified)
+            if mapping is None:
+                mapping = parse_qualified_tool_name(qualified)
+            if mapping is None:
+                continue
+            server_name, raw_name = mapping
+            description = fn.get("description", "")
+            grouped.setdefault(server_name, []).append(
+                {
+                    "name": raw_name,
+                    "model_name": qualified,
+                    "description": description if isinstance(description, str) else "",
+                }
+            )
+        return grouped
+
+    def tools_http_payload(self) -> list[dict[str, Any]]:
+        """Build App Server ``list_mcp_tools`` payload from the warm cache."""
+        tools: list[dict[str, Any]] = []
+        for entry in self.cached_tools() or []:
+            fn = entry.get("function", entry)
+            if not isinstance(fn, dict):
+                continue
+            qualified = fn.get("name")
+            if not isinstance(qualified, str):
+                continue
+            mapping = self._cached_tool_map.get(qualified)
+            if mapping is None:
+                mapping = parse_qualified_tool_name(qualified)
+            if mapping is None:
+                continue
+            server_name, raw_name = mapping
+            description = fn.get("description", "")
+            tools.append(
+                {
+                    "server": server_name,
+                    "name": raw_name,
+                    "description": description if isinstance(description, str) else "",
+                }
+            )
+        return tools
+
     def schedule_background_discover(self) -> None:
         """Kick off tool discovery without blocking the caller."""
         if self.cached_tools() is not None or self._discover_inflight is not None:
@@ -434,12 +649,13 @@ class McpManager:
 
     async def _discover_tools_fresh(self) -> list[dict[str, Any]]:
         timed_out_servers: list[tuple[str, McpServerConfig]] = []
+        self._discover_errors = {}
 
         async def _discover_one(
             server_name: str, cfg: McpServerConfig
         ) -> list[tuple[str, str, str, dict[str, Any]]]:
             """Returns [(qualified, server_name, raw_name, api_dict), ...]."""
-            timeout = cfg.connect_timeout or 10.0
+            timeout = cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]
             try:
                 client = await asyncio.wait_for(
                     self._ensure_client(server_name), timeout=timeout
@@ -449,28 +665,15 @@ class McpManager:
                 )
             except asyncio.TimeoutError:
                 timed_out_servers.append((server_name, cfg))
+                self._discover_errors[server_name] = f"timed out after {timeout}s"
                 return []
-            except (McpError, Exception):  # noqa: BLE001
+            except McpError as exc:
+                self._discover_errors[server_name] = str(exc)
                 return []
-            results: list[tuple[str, str, str, dict[str, Any]]] = []
-            for desc in descriptors:
-                if cfg.tool_filter and not cfg.tool_filter.accepts(desc.name):
-                    continue
-                qualified = qualify_tool_name(server_name, desc.name)
-                results.append((
-                    qualified,
-                    server_name,
-                    desc.name,
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": qualified,
-                            "description": desc.description,
-                            "parameters": desc.input_schema,
-                        },
-                    },
-                ))
-            return results
+            except Exception as exc:  # noqa: BLE001
+                self._discover_errors[server_name] = str(exc)
+                return []
+            return _tools_from_descriptors(server_name, cfg, descriptors)
 
         enabled = [
             (name, cfg) for name, cfg in self._configs.items() if cfg.enabled
@@ -515,7 +718,7 @@ class McpManager:
         await asyncio.sleep(5)
         new_tools: list[dict[str, Any]] = []
         for server_name, cfg in servers:
-            timeout = (cfg.connect_timeout or 10.0) * 3
+            timeout = (cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]) * 3
             try:
                 client = await asyncio.wait_for(
                     self._ensure_client(server_name), timeout=timeout
@@ -525,20 +728,12 @@ class McpManager:
                 )
             except (McpError, asyncio.TimeoutError, Exception):  # noqa: BLE001
                 continue
-            for desc in descriptors:
-                if cfg.tool_filter and not cfg.tool_filter.accepts(desc.name):
-                    continue
-                qualified = qualify_tool_name(server_name, desc.name)
-                self._tool_map[qualified] = (server_name, desc.name)
-                self._cached_tool_map[qualified] = (server_name, desc.name)
-                new_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": qualified,
-                        "description": desc.description,
-                        "parameters": desc.input_schema,
-                    },
-                })
+            for qualified, srv, raw_name, api_dict in _tools_from_descriptors(
+                server_name, cfg, descriptors
+            ):
+                self._tool_map[qualified] = (srv, raw_name)
+                self._cached_tool_map[qualified] = (srv, raw_name)
+                new_tools.append(api_dict)
         if new_tools and self._discovered_tools_cache is not None:
             self._discovered_tools_cache.extend(new_tools)
             self._discovered_tools_cache.sort(key=lambda t: t["function"]["name"])
@@ -614,9 +809,6 @@ class McpManager:
     ) -> dict[str, Any]:
         client = await self._ensure_client(server)
         return await client.get_prompt(name, arguments)
-
-    def is_mcp_tool(self, name: str) -> bool:
-        return name in self._tool_map or parse_qualified_tool_name(name) is not None
 
     async def _ensure_client(self, server_name: str) -> McpClient:
         await self.reload_if_config_changed()
