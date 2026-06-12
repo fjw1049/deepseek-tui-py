@@ -1,6 +1,16 @@
-"""Dispatch + post-run delivery for automations (OpenHuman ``deliver_if_configured``)."""
+"""Automation pipeline and triage.
+"""
 
 from __future__ import annotations
+
+
+
+# ======================================================================
+# From pipeline.py
+# ======================================================================
+
+"""Dispatch + post-run delivery for automations (OpenHuman ``deliver_if_configured``)."""
+
 
 import asyncio
 import logging
@@ -8,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from deepseek_tui.automation.delivery_format import (
+from deepseek_tui.automation.delivery import (
     format_delivery_body,
     should_skip_delivery_for_error,
 )
@@ -18,17 +28,16 @@ from deepseek_tui.automation.inbox import (
     email_send_text,
     feishu_send_text,
 )
-from deepseek_tui.automation.triage import TRIAGE_DEFER, TRIAGE_RUN, apply_triage
-from deepseek_tui.automation.types import (
+from deepseek_tui.automation.delivery import (
     DeliveryConfig,
     DigestConfig,
     cron_execution_prefix,
 )
 
 if TYPE_CHECKING:
-    from deepseek_tui.app_server.thread_manager import RuntimeThreadManager
-    from deepseek_tui.tools.automation_manager import AutomationRecord, AutomationRunRecord
-    from deepseek_tui.tools.task_manager import TaskManager
+    from deepseek_tui.server.threads import RuntimeThreadManager
+    from deepseek_tui.tools.automation import AutomationRecord, AutomationRunRecord
+    from deepseek_tui.tools.task import TaskManager
 
 logger = logging.getLogger(__name__)
 
@@ -172,8 +181,8 @@ async def enqueue_automation_task(
     task_manager: TaskManager,
 ) -> None:
     """Enqueue task — same defaults as legacy ``_enqueue_run_task``."""
-    from deepseek_tui.tools.automation_manager import AutomationRunStatus
-    from deepseek_tui.tools.task_manager import NewTaskRequest, TaskStatus
+    from deepseek_tui.tools.automation import AutomationRunStatus
+    from deepseek_tui.tools.task import NewTaskRequest, TaskStatus
 
     if run.task_id is not None:
         try:
@@ -196,7 +205,7 @@ async def enqueue_automation_task(
     try:
         task = await task_manager.add_task(new_task)
         run.status = AutomationRunStatus.RUNNING
-        from deepseek_tui.tools.automation_manager import _utc_now_iso
+        from deepseek_tui.tools.automation import _utc_now_iso
 
         run.started_at = _utc_now_iso()
         run.task_id = task.id
@@ -205,7 +214,7 @@ async def enqueue_automation_task(
         run.error = None
     except Exception as exc:  # noqa: BLE001
         run.status = AutomationRunStatus.FAILED
-        from deepseek_tui.tools.automation_manager import _utc_now_iso
+        from deepseek_tui.tools.automation import _utc_now_iso
 
         run.ended_at = _utc_now_iso()
         run.error = f"Failed to enqueue task: {exc}"
@@ -219,8 +228,8 @@ async def try_deliver_completed_run(
     thread_manager: RuntimeThreadManager | None = None,
 ) -> bool:
     """Deliver once when a run reaches a terminal state (completed or failed)."""
-    from deepseek_tui.tools.automation_manager import AutomationRunStatus
-    from deepseek_tui.tools.task_manager import TaskStatus
+    from deepseek_tui.tools.automation import AutomationRunStatus
+    from deepseek_tui.tools.task import TaskStatus
 
     if run.delivery_done:
         return False
@@ -322,7 +331,7 @@ async def deliver_when_task_completes(
     timeout_s: float = 600.0,
 ) -> None:
     """Poll task until COMPLETED/FAILED, then run ``DeliverySink`` once."""
-    from deepseek_tui.tools.task_manager import TaskStatus
+    from deepseek_tui.tools.task import TaskStatus
 
     delivery_cfg = DeliveryConfig.from_mapping(delivery)
     if not delivery_cfg.is_active():
@@ -387,7 +396,7 @@ async def fire_http_trigger(
     triage_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Enqueue a one-shot background task from ``POST /v1/triggers``."""
-    from deepseek_tui.tools.task_manager import NewTaskRequest
+    from deepseek_tui.tools.task import NewTaskRequest
 
     decision = apply_triage(
         policy=triage_policy,
@@ -460,7 +469,7 @@ async def _extract_turn_assistant_text(
     thread_id: str,
     turn_id: str,
 ) -> str:
-    from deepseek_tui.app_server.runtime_threads import TurnItemKind
+    from deepseek_tui.server.threads import TurnItemKind
 
     parts: list[str] = []
     for item in mgr.store.list_items_for_turn(turn_id):
@@ -477,7 +486,7 @@ async def wait_thread_turn_text(
     poll_s: float = 1.0,
 ) -> str:
     """Poll until the active turn finishes; return last agent message text."""
-    from deepseek_tui.app_server.runtime_threads import RuntimeTurnStatus
+    from deepseek_tui.server.threads import RuntimeTurnStatus
 
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:
@@ -519,7 +528,7 @@ async def run_feishu_inbound_agent(
     timeout_s: float = 300.0,
 ) -> dict[str, Any]:
     """Run a full agent turn on a stable ``claw:feishu:…`` thread and reply."""
-    from deepseek_tui.app_server.runtime_threads import CreateThreadRequest, StartTurnRequest
+    from deepseek_tui.server.threads import CreateThreadRequest, StartTurnRequest
 
     title = _claw_thread_title(chat_id, sender_id)
     thread = await _find_claw_thread(thread_manager, chat_id=chat_id, sender_id=sender_id)
@@ -568,3 +577,66 @@ async def run_feishu_inbound_agent(
         "turn_id": turn.id,
         "summary": summary,
     }
+
+
+# ======================================================================
+# From triage.py
+# ======================================================================
+
+"""Optional webhook triage (OpenHuman ``run_triage`` subset; cron always skips)."""
+
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+TRIAGE_SKIP = "skip"
+TRIAGE_RUN = "run"
+TRIAGE_DEFER = "defer"
+
+
+@dataclass(frozen=True, slots=True)
+class TriageDecision:
+    action: str
+    reason: str = ""
+
+
+def apply_triage(
+    *,
+    policy: str | None,
+    prompt: str,
+    metadata: dict[str, Any] | None = None,
+) -> TriageDecision:
+    """Decide whether an HTTP trigger should enqueue work.
+
+    Cron / RRULE jobs never call this — only ``POST /v1/triggers`` and similar.
+    Default policy is ``skip`` (always run).
+    """
+    key = (policy or TRIAGE_SKIP).strip().lower()
+    meta = metadata or {}
+
+    if key in ("", TRIAGE_SKIP, "none", "off"):
+        return TriageDecision(TRIAGE_RUN, "policy=skip")
+
+    if key in ("run", "always", "allow"):
+        return TriageDecision(TRIAGE_RUN, f"policy={key}")
+
+    if key in ("defer", "hold", "queue"):
+        return TriageDecision(TRIAGE_DEFER, f"policy={key}")
+
+    if key in ("deny", "block", "drop"):
+        return TriageDecision(TRIAGE_DEFER, f"policy={key}")
+
+    if key == "keyword":
+        blocked = tuple(str(x).lower() for x in meta.get("block_keywords", ()))
+        lowered = prompt.lower()
+        for token in blocked:
+            if token and token in lowered:
+                logger.info("[automation][triage] blocked keyword=%s", token)
+                return TriageDecision(TRIAGE_DEFER, f"blocked keyword: {token}")
+        return TriageDecision(TRIAGE_RUN, "keyword pass")
+
+    logger.warning("[automation][triage] unknown policy=%s — treating as skip", key)
+    return TriageDecision(TRIAGE_RUN, "unknown policy fallback")

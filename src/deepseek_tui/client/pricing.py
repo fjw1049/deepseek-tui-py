@@ -12,7 +12,9 @@ Cost source-of-truth for the TUI footer comes from
 returns alongside ``prompt_tokens`` (already plumbed through
 :class:`deepseek_tui.protocol.responses.Usage`).
 """
+
 from __future__ import annotations
+
 
 from dataclasses import dataclass
 from datetime import datetime, timezone

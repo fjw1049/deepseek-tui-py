@@ -1,9 +1,11 @@
+
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from deepseek_tui.config.provider_registry import normalize_model
+from deepseek_tui.config.providers import normalize_model
 from deepseek_tui.protocol.messages import (
     Message,
     Role,

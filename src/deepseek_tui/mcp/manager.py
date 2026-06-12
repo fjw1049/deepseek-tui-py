@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +20,7 @@ from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
 from deepseek_tui.mcp.preload import DEFAULT_PRELOAD_TIMEOUT_S, McpPreloadTracker
 from deepseek_tui.mcp.startup import raise_if_required_mcp_failed
 from deepseek_tui.mcp.store import hash_mcp_document, load_raw_document
-from deepseek_tui.protocol.mcp_lifecycle import (
+from deepseek_tui.protocol.events import (
     McpStartupCompleteEvent,
     McpStartupFailure,
     McpStartupStatus,

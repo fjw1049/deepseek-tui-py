@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +25,7 @@ class RetryConfig:
 
     def error_delay(self, attempt: int) -> float:
         return float(min(self.base_delay * (2**attempt), self.max_delay))
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (
     StreamError,
     StreamEvent,

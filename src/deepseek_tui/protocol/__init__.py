@@ -1,34 +1,10 @@
 """Protocol types for DeepSeek-TUI.
 
-The package splits into two layers:
-
-* **LLM client layer** — :class:`Message`, :class:`ContentBlock`,
-  :class:`MessageRequest`, :class:`StreamEvent`, :class:`Usage`,
-  :class:`ToolCall`, :class:`ErrorEnvelope`. These describe the
-  conversation history and the streaming events the LLM client emits.
-* **IPC layer** — Rust-parity types from
-  ``crates/protocol/src/lib.rs`` for stdio JSON-RPC and SSE traffic
-  between app-server, TUI, hooks, MCP, etc. Includes
-  :class:`Envelope`, :class:`Thread`, :class:`ThreadRequest`,
-  :class:`PromptRequest`, :class:`EventFrame` (21
-  variants), :class:`ToolPayload`, :class:`ToolOutput`,
-  :class:`ReviewDecision`, :class:`AskForApproval`, MCP lifecycle.
+Two layers:
+* LLM client layer — Message, ContentBlock, MessageRequest, StreamEvent, Usage, ToolCall
+* IPC layer — Envelope, Thread, EventFrame (21 variants), ToolPayload, ReviewDecision, etc.
 """
 
-from .approval import (
-    AskForApproval,
-    ExecApprovalRequestEvent,
-    NetworkApprovalContext,
-    NetworkPolicyAmendment,
-    NetworkPolicyRuleAction,
-    ReviewDecision,
-    ReviewDecisionAbort,
-    ReviewDecisionApproved,
-    ReviewDecisionApprovedExecpolicyAmendment,
-    ReviewDecisionApprovedForSession,
-    ReviewDecisionDenied,
-    ReviewDecisionNetworkPolicyAmendment,
-)
 from enum import Enum as _Enum
 from typing import Any as _Any
 
@@ -50,6 +26,32 @@ class ErrorEnvelope(_BaseModel):
     message: str
     retryable: bool = False
     metadata: dict[str, _Any] = _Field(default_factory=dict)
+
+
+from .approval import (
+    AskForApproval,
+    ExecApprovalRequestEvent,
+    LocalShellParams,
+    NetworkApprovalContext,
+    NetworkPolicyAmendment,
+    NetworkPolicyRuleAction,
+    ReviewDecision,
+    ReviewDecisionAbort,
+    ReviewDecisionApproved,
+    ReviewDecisionApprovedExecpolicyAmendment,
+    ReviewDecisionApprovedForSession,
+    ReviewDecisionDenied,
+    ReviewDecisionNetworkPolicyAmendment,
+    ToolKind,
+    ToolOutput,
+    ToolOutputFunction,
+    ToolOutputMcp,
+    ToolPayload,
+    ToolPayloadCustom,
+    ToolPayloadFunction,
+    ToolPayloadLocalShell,
+    ToolPayloadMcp,
+)
 from .events import (
     ApplyPatchApprovalRequestEvent,
     ElicitationRequestEvent,
@@ -59,7 +61,11 @@ from .events import (
     ExecCommandBeginEvent,
     ExecCommandEndEvent,
     ExecCommandOutputDeltaEvent,
+    McpStartupCompleteEvent,
     McpStartupCompleteEventFrame,
+    McpStartupFailure,
+    McpStartupStatus,
+    McpStartupUpdateEvent,
     McpStartupUpdateEventFrame,
     McpToolCallBeginEvent,
     McpToolCallEndEvent,
@@ -74,23 +80,19 @@ from .events import (
     TurnCompleteEvent,
     TurnStartedEvent,
 )
-from .ipc import Envelope
-from .mcp_lifecycle import (
-    McpStartupCompleteEvent,
-    McpStartupFailure,
-    McpStartupStatus,
-    McpStartupUpdateEvent,
-)
 from .messages import (
+    ContentBlock,
+    Envelope,
     Message,
+    MessageRequest,
+    PromptRequest,
+    PromptResponse,
     Role,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
-from .prompt import PromptRequest, PromptResponse
-from .requests import MessageRequest
 from .responses import (
     StreamDone,
     StreamError,
@@ -126,21 +128,10 @@ from .threads import (
     ThreadStatus,
     ThreadUnarchiveRequest,
 )
-from .tool_payload import (
-    LocalShellParams,
-    ToolKind,
-    ToolOutput,
-    ToolOutputFunction,
-    ToolOutputMcp,
-    ToolPayload,
-    ToolPayloadCustom,
-    ToolPayloadFunction,
-    ToolPayloadLocalShell,
-    ToolPayloadMcp,
-)
 
 __all__ = [
     # LLM client layer
+    "ContentBlock",
     "ErrorEnvelope",
     "ErrorKind",
     "Message",
@@ -175,11 +166,6 @@ __all__ = [
     "ReviewDecisionApprovedForSession",
     "ReviewDecisionDenied",
     "ReviewDecisionNetworkPolicyAmendment",
-    # MCP lifecycle
-    "McpStartupCompleteEvent",
-    "McpStartupFailure",
-    "McpStartupStatus",
-    "McpStartupUpdateEvent",
     # Tool payload + output
     "LocalShellParams",
     "ToolKind",
@@ -191,7 +177,12 @@ __all__ = [
     "ToolPayloadFunction",
     "ToolPayloadLocalShell",
     "ToolPayloadMcp",
-    # Event frames (21 variants)
+    # MCP lifecycle
+    "McpStartupCompleteEvent",
+    "McpStartupFailure",
+    "McpStartupStatus",
+    "McpStartupUpdateEvent",
+    # Event frames
     "ApplyPatchApprovalRequestEvent",
     "ElicitationRequestEvent",
     "ErrorEventFrame",

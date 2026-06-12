@@ -1,5 +1,6 @@
-from .database import Database
-from .session_manager import (
+from .session import (
+    Database,
+    OfflineQueueState,
     Session,
     SessionIndex,
     SessionManager,
@@ -7,10 +8,19 @@ from .session_manager import (
     SessionUsage,
     ThreadMetadata,
     ThreadStatus,
+    checkpoint_path,
+    clear_checkpoint,
+    clear_offline_queue,
+    load_checkpoint,
+    load_offline_queue,
+    offline_queue_path,
+    save_checkpoint,
+    save_offline_queue,
 )
 
 __all__ = [
     "Database",
+    "OfflineQueueState",
     "Session",
     "SessionIndex",
     "SessionManager",
@@ -18,4 +28,12 @@ __all__ = [
     "SessionUsage",
     "ThreadMetadata",
     "ThreadStatus",
+    "checkpoint_path",
+    "clear_checkpoint",
+    "clear_offline_queue",
+    "load_checkpoint",
+    "load_offline_queue",
+    "offline_queue_path",
+    "save_checkpoint",
+    "save_offline_queue",
 ]

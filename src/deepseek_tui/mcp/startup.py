@@ -6,11 +6,13 @@ Mirrors ``crates/mcp/src/lib.rs`` ``McpManager::start_all`` and
 
 from __future__ import annotations
 
+
+
 from collections.abc import Callable
 
 from deepseek_tui.mcp.client import McpError
 from deepseek_tui.mcp.config import McpServerConfig
-from deepseek_tui.protocol.mcp_lifecycle import (
+from deepseek_tui.protocol.events import (
     McpStartupCompleteEvent,
     McpStartupFailure,
     McpStartupStatus,

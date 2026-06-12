@@ -36,6 +36,8 @@ JSON is byte-identical to Rust's ``serde`` output.
 
 from __future__ import annotations
 
+
+
 from enum import Enum
 from typing import Annotated, Any, Literal
 

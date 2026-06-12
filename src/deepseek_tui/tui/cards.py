@@ -1,0 +1,742 @@
+"""Agent card and pager widgets.
+"""
+
+from __future__ import annotations
+
+
+
+# ======================================================================
+# From agent_card.py
+# ======================================================================
+
+"""Sub-agent activity cards (delegate + fanout).
+
+Mirrors ``crates/tui/src/tui/widgets/agent_card.rs`` (671 LOC).
+
+Two cards consume :class:`MailboxMessage` envelopes and surface a live
+status line in the transcript:
+
+- :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
+  status glyph + role + agent id, plus the last
+  :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
+  from the head and an ellipsis row signals truncation.
+- :class:`FanoutCard` — multi-child dispatch (``rlm`` etc.). Dot-grid
+  with one glyph per worker plus an aggregate counts line.
+
+The state-machine half of each card is plain Python so unit tests can
+drive it without a Textual runtime. The :class:`AgentCardWidget` is a
+thin :class:`textual.widgets.Static` adapter that renders a card's
+current state using Rich markup.
+"""
+
+
+import enum
+from dataclasses import dataclass, field
+
+from textual.widgets import Static
+
+from deepseek_tui.tools.subagent import MailboxMessage, MailboxMessageKind
+
+DELEGATE_MAX_ACTIONS: int = 3
+
+
+class AgentLifecycle(str, enum.Enum):
+    """Mirror Rust ``AgentLifecycle`` (agent_card.rs:30)."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    def is_terminal(self) -> bool:
+        return self in (
+            AgentLifecycle.COMPLETED,
+            AgentLifecycle.FAILED,
+            AgentLifecycle.CANCELLED,
+        )
+
+    def label(self) -> str:
+        return {
+            AgentLifecycle.PENDING: "pending",
+            AgentLifecycle.RUNNING: "running",
+            AgentLifecycle.COMPLETED: "done",
+            AgentLifecycle.FAILED: "failed",
+            AgentLifecycle.CANCELLED: "cancelled",
+        }[self]
+
+    def color(self) -> str:
+        """Rich color name for header / summary spans."""
+        return {
+            AgentLifecycle.PENDING: "dim",
+            AgentLifecycle.RUNNING: "yellow",
+            AgentLifecycle.COMPLETED: "green",
+            AgentLifecycle.FAILED: "red",
+            AgentLifecycle.CANCELLED: "dim",
+        }[self]
+
+
+# ---------------------------------------------------------------------------
+# Delegate card
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class DelegateCard:
+    """Single ``agent_spawn`` invocation card.
+
+    Mirror Rust ``DelegateCard`` (agent_card.rs:69).
+    """
+
+    agent_id: str
+    agent_type: str
+    status: AgentLifecycle = AgentLifecycle.PENDING
+    summary: str | None = None
+    actions: list[str] = field(default_factory=list)
+    truncated: bool = False
+
+    def push_action(self, action: str) -> None:
+        """Append ``action``; drop the head past :data:`DELEGATE_MAX_ACTIONS`.
+
+        Mirror Rust ``push_action`` (agent_card.rs:91).
+        """
+        self.actions.append(action)
+        if len(self.actions) > DELEGATE_MAX_ACTIONS:
+            self.actions.pop(0)
+            self.truncated = True
+
+    def render_lines(self) -> list[str]:
+        """Render the card as a list of Rich-markup lines.
+
+        Mirror Rust ``render_lines`` (agent_card.rs:102). Returns one
+        string per visual line; the caller joins with ``\\n``.
+        """
+        lines: list[str] = [
+            _card_header(
+                "delegate",
+                self.status,
+                self.agent_type,
+                _display_agent_id(self.agent_id),
+            )
+        ]
+        if self.truncated:
+            lines.append("  [dim]…[/]")
+        for action in self.actions:
+            lines.append(f"  [dim]│[/] {_truncate(action, 200)}")
+        if self.status.is_terminal() and self.summary:
+            display = _summary_for_display(self.summary) or self.summary
+            lines.append(
+                f"  [dim]╰[/] [{self.status.color()}]"
+                f"{_truncate(display, 200)}[/]"
+            )
+        return lines
+
+    def render_text(self) -> str:
+        return "\n".join(self.render_lines())
+
+
+# ---------------------------------------------------------------------------
+# Fanout card
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class WorkerSlot:
+    """Mirror Rust ``WorkerSlot`` (agent_card.rs:157)."""
+
+    worker_id: str
+    agent_id: str
+    status: AgentLifecycle
+
+    @classmethod
+    def new(cls, worker_id: str, status: AgentLifecycle) -> WorkerSlot:
+        return cls(worker_id=worker_id, agent_id=worker_id, status=status)
+
+
+_DOT_GLYPH = {
+    AgentLifecycle.COMPLETED: "●",
+    AgentLifecycle.RUNNING: "◐",
+    AgentLifecycle.FAILED: "×",
+    AgentLifecycle.CANCELLED: "⊘",
+    AgentLifecycle.PENDING: "○",
+}
+
+
+@dataclass(slots=True)
+class FanoutCard:
+    """Multi-child dispatch card (one slot per worker).
+
+    Mirror Rust ``FanoutCard`` (agent_card.rs:186).
+    """
+
+    kind: str
+    workers: list[WorkerSlot] = field(default_factory=list)
+
+    def with_workers(self, ids: list[str]) -> FanoutCard:
+        for worker_id in ids:
+            self.workers.append(WorkerSlot.new(worker_id, AgentLifecycle.PENDING))
+        return self
+
+    def upsert_worker(self, agent_id: str, status: AgentLifecycle) -> None:
+        """Mirror Rust ``upsert_worker`` (agent_card.rs:215)."""
+        for slot in self.workers:
+            if slot.agent_id == agent_id or slot.worker_id == agent_id:
+                slot.agent_id = agent_id
+                slot.status = status
+                return
+        self.workers.append(WorkerSlot.new(agent_id, status))
+
+    def claim_pending_worker(self, agent_id: str, status: AgentLifecycle) -> None:
+        """Bind a real agent id to the first pending placeholder slot.
+
+        Mirror Rust ``claim_pending_worker`` (agent_card.rs:232). Keeps
+        the dot count stable when the engine pre-seeds workers and
+        children attach later.
+        """
+        for slot in self.workers:
+            if slot.agent_id == agent_id:
+                slot.status = status
+                return
+        for slot in self.workers:
+            if slot.status == AgentLifecycle.PENDING:
+                slot.agent_id = agent_id
+                slot.status = status
+                return
+        self.upsert_worker(agent_id, status)
+
+    def counts(self) -> tuple[int, int, int, int]:
+        done = running = failed = pending = 0
+        for slot in self.workers:
+            if slot.status == AgentLifecycle.COMPLETED:
+                done += 1
+            elif slot.status == AgentLifecycle.RUNNING:
+                running += 1
+            elif slot.status in (AgentLifecycle.FAILED, AgentLifecycle.CANCELLED):
+                failed += 1
+            else:
+                pending += 1
+        return done, running, failed, pending
+
+    def dot_grid(self) -> str:
+        return "".join(_DOT_GLYPH[slot.status] for slot in self.workers)
+
+    def aggregate_status(self) -> AgentLifecycle:
+        done, running, failed, pending = self.counts()
+        if running > 0 or pending > 0:
+            return AgentLifecycle.RUNNING
+        if failed > 0 and done == 0:
+            return AgentLifecycle.FAILED
+        if done > 0:
+            return AgentLifecycle.COMPLETED
+        return AgentLifecycle.PENDING
+
+    def render_lines(self) -> list[str]:
+        title = f"{self.kind} ({len(self.workers)} workers)"
+        lines: list[str] = [
+            _card_header("fanout", self.aggregate_status(), self.kind, title),
+            f"  [bold cyan]{self.dot_grid()}[/]",
+        ]
+        done, running, failed, pending = self.counts()
+        lines.append(
+            f"  [dim]{done} done · {running} running · "
+            f"{failed} failed · {pending} pending[/]"
+        )
+        return lines
+
+    def render_text(self) -> str:
+        return "\n".join(self.render_lines())
+
+
+# ---------------------------------------------------------------------------
+# Mailbox dispatch
+# ---------------------------------------------------------------------------
+
+
+def apply_to_delegate(card: DelegateCard, msg: MailboxMessage) -> bool:
+    """Apply a mailbox envelope to ``card``.
+
+    Mirror Rust ``apply_to_delegate`` (agent_card.rs:382). Returns True
+    if the card state changed.
+    """
+    if msg.agent_id != card.agent_id:
+        return False
+    kind = msg.kind
+    if kind == MailboxMessageKind.STARTED:
+        card.status = AgentLifecycle.RUNNING
+    elif kind == MailboxMessageKind.PROGRESS:
+        card.status = AgentLifecycle.RUNNING
+        if msg.status:
+            card.push_action(msg.status)
+    elif kind == MailboxMessageKind.TOOL_CALL_STARTED:
+        card.push_action(f"[{msg.step}] {msg.tool_name} started")
+    elif kind == MailboxMessageKind.TOOL_CALL_COMPLETED:
+        outcome = "ok" if msg.ok else "failed"
+        card.push_action(f"[{msg.step}] {msg.tool_name} {outcome}")
+    elif kind == MailboxMessageKind.COMPLETED:
+        card.status = AgentLifecycle.COMPLETED
+        card.summary = msg.summary
+    elif kind == MailboxMessageKind.FAILED:
+        card.status = AgentLifecycle.FAILED
+        card.summary = msg.error
+    elif kind == MailboxMessageKind.CANCELLED:
+        card.status = AgentLifecycle.CANCELLED
+    elif kind == MailboxMessageKind.CHILD_SPAWNED:
+        return False
+    elif kind == MailboxMessageKind.TOKEN_USAGE:
+        return False
+    return True
+
+
+def apply_to_fanout(card: FanoutCard, msg: MailboxMessage) -> bool:
+    """Mirror Rust ``apply_to_fanout`` (agent_card.rs:438)."""
+    agent_id = msg.agent_id
+    kind = msg.kind
+    if kind == MailboxMessageKind.STARTED:
+        card.claim_pending_worker(agent_id, AgentLifecycle.RUNNING)
+    elif kind in (
+        MailboxMessageKind.PROGRESS,
+        MailboxMessageKind.TOOL_CALL_STARTED,
+    ):
+        card.claim_pending_worker(agent_id, AgentLifecycle.RUNNING)
+    elif kind == MailboxMessageKind.TOOL_CALL_COMPLETED:
+        return True
+    elif kind == MailboxMessageKind.COMPLETED:
+        card.upsert_worker(agent_id, AgentLifecycle.COMPLETED)
+    elif kind == MailboxMessageKind.FAILED:
+        card.upsert_worker(agent_id, AgentLifecycle.FAILED)
+    elif kind == MailboxMessageKind.CANCELLED:
+        card.upsert_worker(agent_id, AgentLifecycle.CANCELLED)
+    elif kind == MailboxMessageKind.CHILD_SPAWNED:
+        # ``agent_id`` here carries the *child* id (see Mailbox.child_spawned).
+        card.upsert_worker(agent_id, AgentLifecycle.PENDING)
+    elif kind == MailboxMessageKind.TOKEN_USAGE:
+        return True
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Helpers + Textual widget
+# ---------------------------------------------------------------------------
+
+
+_FAMILY_GLYPH = {"delegate": "↳", "fanout": "⫶", "rlm": "Σ"}
+
+
+def _card_header(family: str, status: AgentLifecycle, role: str, detail: str) -> str:
+    glyph = _FAMILY_GLYPH.get(family, "•")
+    color = status.color()
+    return (
+        f"[{color} bold]{glyph}  {family}[/] "
+        f"[white]{role}[/] "
+        f"[{color}][{status.label()}][/] "
+        f"[dim]{detail}[/]"
+    )
+
+
+def _truncate(text: str, max_len: int) -> str:
+    trimmed = text.strip()
+    if len(trimmed) <= max_len:
+        return trimmed
+    return trimmed[: max_len - 1] + "…"
+
+
+def _summary_for_display(raw: str | None) -> str | None:
+    """Show the sub-agent conclusion, not the full structured report."""
+    if not raw or not raw.strip():
+        return None
+    text = raw.strip()
+    if "### SUMMARY" in text:
+        section = text.split("### SUMMARY", 1)[1]
+        lines: list[str] = []
+        for line in section.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("### "):
+                break
+            if stripped:
+                lines.append(stripped)
+        if lines:
+            return _truncate(" ".join(lines), 200)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return _truncate(stripped, 200)
+    return _truncate(text, 200)
+
+
+def _display_agent_id(agent_id: str) -> str:
+    return agent_id if len(agent_id) <= 12 else agent_id[:12]
+
+
+class AgentCardWidget(Static):
+    """Textual adapter that renders a :class:`DelegateCard` or :class:`FanoutCard`.
+
+    The widget owns no card state — pass the current card on construction
+    and call :meth:`update_card` whenever the state changes.
+    """
+
+    DEFAULT_CSS = "AgentCardWidget { margin: 0 0 1 0; }"
+
+    def __init__(self, card: DelegateCard | FanoutCard) -> None:
+        super().__init__("")
+        self._card = card
+        self.update(card.render_text())
+
+    def update_card(self, card: DelegateCard | FanoutCard) -> None:
+        self._card = card
+        self.update(card.render_text())
+
+
+# ======================================================================
+# From pager.py
+# ======================================================================
+
+"""Long-output pager overlay.
+
+Mirrors ``crates/tui/src/tui/pager.rs`` (809 LOC).
+
+Vim-style key bindings:
+
+- ``j`` / Down       — scroll down one line
+- ``k`` / Up         — scroll up one line
+- ``g g`` / Home     — jump to top (the chord state lives on
+  :class:`PagerState.pending_g`)
+- ``G`` / End        — jump to bottom
+- ``Ctrl+D`` / ``Ctrl+U``  — half-page down / up
+- ``Ctrl+F`` / ``Ctrl+B`` / Space / Shift+Space / PageDown / PageUp
+  — full page down / up
+- ``/`` — start search; ``Enter`` commits, ``Esc`` cancels.
+- ``n`` / ``N`` — next / previous match.
+- ``q`` / ``Esc`` — close.
+
+Layered the same way as :class:`PlanPromptState`: a pure-state class so
+unit tests can drive the keymap without spinning up Textual, plus a thin
+:class:`PagerScreen` adapter that wires Textual bindings to the state
+machine.
+"""
+
+
+import enum
+from dataclasses import dataclass, field
+
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Input, Label, Static
+
+
+class PagerAction(str, enum.Enum):
+    """What the host should do after :meth:`PagerState.handle_key`."""
+
+    NONE = "none"
+    CLOSE = "close"
+    REDRAW = "redraw"
+
+
+@dataclass(slots=True)
+class PagerState:
+    """Pure state machine for the pager.
+
+    Mirror Rust ``PagerView`` (pager.rs:35).
+    """
+
+    title: str
+    lines: list[str]
+    scroll: int = 0
+    search_input: str = ""
+    search_matches: list[int] = field(default_factory=list)
+    search_index: int = 0
+    search_mode: bool = False
+    pending_g: bool = False
+    visible_height: int = 10
+
+    def max_scroll(self) -> int:
+        return max(0, len(self.lines) - 1)
+
+    def page_height(self) -> int:
+        return self.visible_height if self.visible_height > 0 else 10
+
+    def half_page_height(self) -> int:
+        # ceil(page / 2), at least 1.
+        page = self.page_height()
+        return max(1, -(-page // 2))
+
+    # -- scroll primitives ---------------------------------------------
+
+    def scroll_up(self, amount: int) -> None:
+        self.scroll = max(0, self.scroll - max(0, amount))
+
+    def scroll_down(self, amount: int) -> None:
+        self.scroll = min(self.max_scroll(), self.scroll + max(0, amount))
+
+    def scroll_to_top(self) -> None:
+        self.scroll = 0
+
+    def scroll_to_bottom(self) -> None:
+        self.scroll = self.max_scroll()
+
+    # -- search --------------------------------------------------------
+
+    def start_search(self) -> None:
+        self.search_mode = True
+        self.search_input = ""
+        self.search_matches = []
+        self.search_index = 0
+
+    def update_search_matches(self) -> None:
+        query = self.search_input.strip().lower()
+        if not query:
+            self.search_matches = []
+            self.search_index = 0
+            return
+        self.search_matches = [
+            i for i, line in enumerate(self.lines) if query in line.lower()
+        ]
+        self.search_index = 0
+
+    def jump_to_match(self) -> None:
+        if 0 <= self.search_index < len(self.search_matches):
+            self.scroll = self.search_matches[self.search_index]
+
+    def next_match(self) -> None:
+        if not self.search_matches:
+            return
+        self.search_index = (self.search_index + 1) % len(self.search_matches)
+        self.jump_to_match()
+
+    def prev_match(self) -> None:
+        if not self.search_matches:
+            return
+        if self.search_index == 0:
+            self.search_index = len(self.search_matches) - 1
+        else:
+            self.search_index -= 1
+        self.jump_to_match()
+
+    # -- key dispatch (host-agnostic) ----------------------------------
+
+    def handle_key(self, key: str, *, ctrl: bool = False, shift: bool = False) -> PagerAction:
+        """Apply a key press; returns whether the host should redraw / close.
+
+        Mirror Rust ``handle_key`` (pager.rs:187). ``key`` follows Textual
+        conventions: lowercase letters, ``escape``/``enter``/``space``,
+        arrow / paging key names. Ctrl + Shift modifiers are explicit
+        flags rather than embedded in the key string.
+        """
+        if self.search_mode:
+            return self._handle_search_key(key)
+
+        if ctrl and key in ("d",):
+            self.scroll_down(self.half_page_height())
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if ctrl and key == "u":
+            self.scroll_up(self.half_page_height())
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if ctrl and key == "f":
+            self.scroll_down(self.page_height())
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if ctrl and key == "b":
+            self.scroll_up(self.page_height())
+            self.pending_g = False
+            return PagerAction.REDRAW
+
+        if key in ("escape", "q"):
+            return PagerAction.CLOSE
+        if key in ("up", "k"):
+            self.scroll_up(1)
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key in ("down", "j"):
+            self.scroll_down(1)
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "pageup" or (key == "space" and shift):
+            self.scroll_up(self.page_height())
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key in ("pagedown", "space"):
+            self.scroll_down(self.page_height())
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "home":
+            self.scroll_to_top()
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "end":
+            self.scroll_to_bottom()
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "g":
+            if self.pending_g:
+                self.scroll_to_top()
+                self.pending_g = False
+            else:
+                self.pending_g = True
+            return PagerAction.REDRAW
+        if key == "G":
+            self.scroll_to_bottom()
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "/":
+            self.start_search()
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "n":
+            self.next_match()
+            self.pending_g = False
+            return PagerAction.REDRAW
+        if key == "N":
+            self.prev_match()
+            self.pending_g = False
+            return PagerAction.REDRAW
+        return PagerAction.NONE
+
+    def _handle_search_key(self, key: str) -> PagerAction:
+        if key == "enter":
+            self.search_mode = False
+            self.update_search_matches()
+            self.jump_to_match()
+            return PagerAction.REDRAW
+        if key == "escape":
+            self.search_mode = False
+            self.search_input = ""
+            self.search_matches = []
+            self.search_index = 0
+            return PagerAction.REDRAW
+        if key == "backspace":
+            self.search_input = self.search_input[:-1]
+            return PagerAction.REDRAW
+        if len(key) == 1 and key.isprintable():
+            self.search_input += key
+            return PagerAction.REDRAW
+        return PagerAction.NONE
+
+    # -- view helpers --------------------------------------------------
+
+    def visible_lines(self) -> list[str]:
+        end = min(len(self.lines), self.scroll + self.visible_height)
+        return list(self.lines[self.scroll : end])
+
+    def status_line(self) -> str:
+        if self.search_mode:
+            return f"/{self.search_input}"
+        if self.search_matches:
+            return (
+                f"match {self.search_index + 1}/{len(self.search_matches)} "
+                "(n/N navigate)"
+            )
+        if self.lines:
+            pct = int(100 * (self.scroll / max(1, self.max_scroll())))
+            return f"{pct}%"
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Textual screen
+# ---------------------------------------------------------------------------
+
+
+_FOOTER_HINT = (
+    " j/k scroll  Space/b page  Ctrl+D/U half  g/G top/bottom  / search  q quit "
+)
+
+
+class PagerScreen(ModalScreen[None]):
+    """Modal pager overlay backed by :class:`PagerState`."""
+
+    BINDINGS = [
+        Binding("up,k", "key('up')", show=False),
+        Binding("down,j", "key('down')", show=False),
+        Binding("pageup", "key('pageup')", show=False),
+        Binding("pagedown", "key('pagedown')", show=False),
+        Binding("home", "key('home')", show=False),
+        Binding("end", "key('end')", show=False),
+        Binding("space", "key('space')", show=False),
+        Binding("g", "key('g')", show=False),
+        Binding("G", "key('G')", show=False),
+        Binding("slash", "key('/')", show=False),
+        Binding("n", "key('n')", show=False),
+        Binding("N", "key('N')", show=False),
+        Binding("q,escape", "key('q')", show=False),
+        Binding("ctrl+d", "key_ctrl('d')", show=False),
+        Binding("ctrl+u", "key_ctrl('u')", show=False),
+        Binding("ctrl+f", "key_ctrl('f')", show=False),
+        Binding("ctrl+b", "key_ctrl('b')", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    PagerScreen {
+        align: center middle;
+    }
+    #pager-modal {
+        width: 90%;
+        height: 90%;
+        border: round $accent;
+        background: $surface;
+        padding: 0 1;
+    }
+    #pager-body {
+        height: 1fr;
+    }
+    #pager-search {
+        height: auto;
+        margin-top: 1;
+        display: none;
+    }
+    #pager-search.visible {
+        display: block;
+    }
+    #pager-status {
+        height: 1;
+        color: $accent;
+    }
+    #pager-footer {
+        height: 1;
+        color: $accent-darken-2;
+    }
+    """
+
+    def __init__(self, title: str, lines: list[str]) -> None:
+        super().__init__()
+        self._state = PagerState(title=title, lines=list(lines))
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="pager-modal"):
+            yield Label(f"[bold]{self._state.title}[/]", id="pager-title")
+            yield Static("", id="pager-body")
+            yield Input(placeholder="search…", id="pager-search")
+            yield Label("", id="pager-status")
+            yield Label(_FOOTER_HINT, id="pager-footer")
+
+    def on_mount(self) -> None:
+        self._refresh()
+
+    def action_key(self, key: str) -> None:
+        action = self._state.handle_key(key)
+        if action == PagerAction.CLOSE:
+            self.dismiss(None)
+            return
+        self._refresh()
+
+    def action_key_ctrl(self, key: str) -> None:
+        action = self._state.handle_key(key, ctrl=True)
+        if action == PagerAction.CLOSE:
+            self.dismiss(None)
+            return
+        self._refresh()
+
+    def _refresh(self) -> None:
+        body = self.query_one("#pager-body", Static)
+        body.update("\n".join(self._state.visible_lines()))
+        status = self.query_one("#pager-status", Label)
+        status.update(self._state.status_line())
+        search = self.query_one("#pager-search", Input)
+        if self._state.search_mode:
+            search.add_class("visible")
+            search.value = self._state.search_input
+            search.focus()
+        else:
+            search.remove_class("visible")

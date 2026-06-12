@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +15,7 @@ from httpx_sse import aconnect_sse
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.chat_messages import build_chat_messages
 from deepseek_tui.client.streaming import OpenAIStreamParser
-from deepseek_tui.protocol.requests import MessageRequest
+from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamEvent
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,7 @@ class DeepSeekClient(LLMClient):
         """Build a client from a Config instance (or use env fallback)."""
         import os
 
-        from deepseek_tui.secrets.manager import SecretsManager
+        from deepseek_tui.state.secrets import SecretsManager
 
         mgr = SecretsManager()
         api_key = mgr.resolve_api_key(config)

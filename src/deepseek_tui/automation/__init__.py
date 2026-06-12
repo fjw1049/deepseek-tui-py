@@ -13,8 +13,8 @@ from deepseek_tui.automation.pipeline import (
     run_feishu_inbound_agent,
     try_deliver_completed_run,
 )
-from deepseek_tui.automation.triage import apply_triage
-from deepseek_tui.automation.types import DeliveryConfig, DigestConfig
+from deepseek_tui.automation.pipeline import apply_triage
+from deepseek_tui.automation.delivery import DeliveryConfig, DigestConfig
 
 __all__ = [
     "DeliveryConfig",

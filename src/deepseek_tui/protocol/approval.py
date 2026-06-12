@@ -26,14 +26,17 @@ Rust JSON shapes::
 
 from __future__ import annotations
 
+
+
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, RootModel, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_serializer, model_validator
 
 __all__ = [
     "AskForApproval",
     "ExecApprovalRequestEvent",
+    "LocalShellParams",
     "NetworkApprovalContext",
     "NetworkPolicyAmendment",
     "NetworkPolicyRuleAction",
@@ -44,6 +47,15 @@ __all__ = [
     "ReviewDecisionApprovedForSession",
     "ReviewDecisionDenied",
     "ReviewDecisionNetworkPolicyAmendment",
+    "ToolKind",
+    "ToolOutput",
+    "ToolOutputFunction",
+    "ToolOutputMcp",
+    "ToolPayload",
+    "ToolPayloadCustom",
+    "ToolPayloadFunction",
+    "ToolPayloadLocalShell",
+    "ToolPayloadMcp",
 ]
 
 
@@ -240,3 +252,67 @@ class ExecApprovalRequestEvent(BaseModel):
     )
     additional_permissions: list[str] = Field(default_factory=list)
     available_decisions: list[ReviewDecision] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Tool payload + output types (formerly tool_payload.py)
+# ---------------------------------------------------------------------------
+
+
+class ToolKind(str, Enum):
+    FUNCTION = "function"
+    MCP = "mcp"
+
+
+class LocalShellParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str
+    cwd: str | None = None
+    timeout_ms: int | None = None
+
+
+class ToolPayloadFunction(BaseModel):
+    type: Literal["function"] = "function"
+    arguments: str
+
+
+class ToolPayloadCustom(BaseModel):
+    type: Literal["custom"] = "custom"
+    input: str
+
+
+class ToolPayloadLocalShell(BaseModel):
+    type: Literal["local_shell"] = "local_shell"
+    params: LocalShellParams
+
+
+class ToolPayloadMcp(BaseModel):
+    type: Literal["mcp"] = "mcp"
+    server: str
+    tool: str
+    raw_arguments: Any
+    raw_tool_call_id: str | None = None
+
+
+ToolPayload = Annotated[
+    ToolPayloadFunction | ToolPayloadCustom | ToolPayloadLocalShell | ToolPayloadMcp,
+    Field(discriminator="type"),
+]
+
+
+class ToolOutputFunction(BaseModel):
+    type: Literal["function"] = "function"
+    body: Any | None = None
+    success: bool
+
+
+class ToolOutputMcp(BaseModel):
+    type: Literal["mcp"] = "mcp"
+    result: Any
+
+
+ToolOutput = Annotated[
+    ToolOutputFunction | ToolOutputMcp,
+    Field(discriminator="type"),
+]

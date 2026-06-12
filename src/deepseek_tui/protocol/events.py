@@ -1,30 +1,26 @@
-"""IPC event frames.
+"""IPC event frames + MCP lifecycle types.
 
-Mirrors Rust ``EventFrame`` (protocol/src/lib.rs:369-451).
-
-Rust uses ``#[serde(tag = "event", rename_all = "snake_case")]`` so each
-variant serialises to a flat object whose ``event`` field doubles as the
-discriminator. Example::
-
-    {"event": "turn_complete", "turn_id": "..."}
-    {"event": "response_delta", "response_id": "...", "delta": "..."}
-    {"event": "exec_approval_request", "request": {...}}
-
-There are 21 variants; the order below mirrors the Rust file.
+Consolidates the former events.py and mcp_lifecycle.py.
 """
 
 from __future__ import annotations
 
+
+
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_serializer, model_validator
 
 from .approval import ExecApprovalRequestEvent
-from .mcp_lifecycle import McpStartupCompleteEvent, McpStartupUpdateEvent
 
 __all__ = [
     "EventFrame",
-    # variants — exported for callers that want to construct directly
+    # MCP lifecycle
+    "McpStartupCompleteEvent",
+    "McpStartupFailure",
+    "McpStartupStatus",
+    "McpStartupUpdateEvent",
+    # Event frame variants
     "ApplyPatchApprovalRequestEvent",
     "ElicitationRequestEvent",
     "ErrorEventFrame",
@@ -49,13 +45,96 @@ __all__ = [
 ]
 
 
-# A common config: every variant forbids extras and keeps field-name
-# casing exactly as Rust emits.
+# ============================================================================
+# MCP startup lifecycle (formerly mcp_lifecycle.py)
+# ============================================================================
+
+
+class _StatusStarting(BaseModel):
+    type: Literal["starting"] = "starting"
+
+
+class _StatusReady(BaseModel):
+    type: Literal["ready"] = "ready"
+
+
+class _StatusCancelled(BaseModel):
+    type: Literal["cancelled"] = "cancelled"
+
+
+class _StatusFailed(BaseModel):
+    type: Literal["failed"] = "failed"
+    error: str
+
+
+_StatusVariants = (
+    Annotated[
+        _StatusStarting | _StatusReady | _StatusCancelled | _StatusFailed,
+        Field(discriminator="type"),
+    ]
+)
+
+
+class McpStartupStatus(RootModel[_StatusVariants]):
+    @classmethod
+    def starting(cls) -> McpStartupStatus:
+        return cls(_StatusStarting())
+
+    @classmethod
+    def ready(cls) -> McpStartupStatus:
+        return cls(_StatusReady())
+
+    @classmethod
+    def cancelled(cls) -> McpStartupStatus:
+        return cls(_StatusCancelled())
+
+    @classmethod
+    def failed(cls, error: str) -> McpStartupStatus:
+        return cls(_StatusFailed(error=error))
+
+    @model_serializer(mode="plain")
+    def _serialise(self) -> Any:
+        inner = self.root
+        if isinstance(inner, _StatusFailed):
+            return {"failed": {"error": inner.error}}
+        return inner.type
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            return {"type": data}
+        if isinstance(data, dict) and "failed" in data and "type" not in data:
+            payload = data["failed"]
+            if isinstance(payload, dict):
+                return {"type": "failed", **payload}
+        return data
+
+
+class McpStartupUpdateEvent(BaseModel):
+    server_name: str
+    status: McpStartupStatus
+
+
+class McpStartupFailure(BaseModel):
+    server_name: str
+    error: str
+
+
+class McpStartupCompleteEvent(BaseModel):
+    ready: list[str] = Field(default_factory=list)
+    failed: list[McpStartupFailure] = Field(default_factory=list)
+    cancelled: list[str] = Field(default_factory=list)
+
+
+# ============================================================================
+# Event frame variants
+# ============================================================================
+
 _BASE = ConfigDict(extra="forbid")
 
 
 # ---- Response lifecycle ----
-
 
 class ResponseStartEvent(BaseModel):
     model_config = _BASE
@@ -78,7 +157,6 @@ class ResponseEndEvent(BaseModel):
 
 # ---- Tool calls ----
 
-
 class ToolCallStartEvent(BaseModel):
     model_config = _BASE
     event: Literal["tool_call_start"] = "tool_call_start"
@@ -96,7 +174,6 @@ class ToolCallResultEvent(BaseModel):
 
 
 # ---- MCP startup + tool ----
-
 
 class McpStartupUpdateEventFrame(BaseModel):
     model_config = _BASE
@@ -127,7 +204,6 @@ class McpToolCallEndEvent(BaseModel):
 
 # ---- Approval / elicitation ----
 
-
 class ExecApprovalRequestEventFrame(BaseModel):
     model_config = _BASE
     event: Literal["exec_approval_request"] = "exec_approval_request"
@@ -149,7 +225,6 @@ class ElicitationRequestEvent(BaseModel):
 
 
 # ---- Exec / patch ----
-
 
 class ExecCommandBeginEvent(BaseModel):
     model_config = _BASE
@@ -187,7 +262,6 @@ class PatchApplyEndEvent(BaseModel):
 
 # ---- Turn lifecycle + error ----
 
-
 class TurnStartedEvent(BaseModel):
     model_config = _BASE
     event: Literal["turn_started"] = "turn_started"
@@ -215,7 +289,6 @@ class ErrorEventFrame(BaseModel):
 
 
 # ---- Discriminated union ----
-
 
 EventFrame = Annotated[
     ResponseStartEvent

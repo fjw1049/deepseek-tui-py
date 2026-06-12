@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+
+
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from deepseek_tui.tools.base import ToolCapability, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.context import ToolContext
+from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
+from deepseek_tui.tools.registry import ToolContext
 
 __all__ = ["CurrentTimeTool"]
 

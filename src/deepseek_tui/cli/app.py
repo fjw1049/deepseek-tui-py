@@ -5,7 +5,9 @@ Rust passthroughs (doctor/models/sessions/resume/fork/init/setup/exec/
 review/apply/eval/mcp/features/completions) become direct calls into the
 corresponding Python modules rather than spawning a sibling binary.
 """
+
 from __future__ import annotations
+
 
 import asyncio
 import json
@@ -93,7 +95,7 @@ def main_callback(
 
     # Wire the rotating log handlers up before any subsystem runs so the
     # very first INFO event ("engine starting") lands in the file.
-    from deepseek_tui.logging_setup import setup_logging
+    from deepseek_tui.utils import setup_logging
 
     setup_logging(
         loaded,
@@ -102,7 +104,7 @@ def main_callback(
         console_override=log_console if log_console else None,
     )
 
-    from deepseek_tui.tools.spillover import prune_older_than
+    from deepseek_tui.tools.runtime import prune_older_than
 
     prune_older_than()
 
@@ -132,7 +134,7 @@ def _run_one_shot(config: Config, prompt: str) -> None:
 async def _run_one_shot_async(config: Config, prompt: str) -> None:
     """Async implementation of one-shot mode."""
     from deepseek_tui.client.deepseek import DeepSeekClient
-    from deepseek_tui.engine.engine import Engine
+    from deepseek_tui.engine.orchestrator import Engine
     from deepseek_tui.engine.events import (
         ErrorEvent,
         TextDeltaEvent,
@@ -141,7 +143,7 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
         TurnCompleteEvent,
     )
     from deepseek_tui.engine.handle import EngineHandle
-    from deepseek_tui.secrets.manager import SecretsManager
+    from deepseek_tui.state.secrets import SecretsManager
 
     mgr = SecretsManager()
     api_key = mgr.resolve_api_key(config)
@@ -247,7 +249,7 @@ def models(
     provider: str | None = PROVIDER_OPTION,
 ) -> None:
     """List available models from the provider registry."""
-    from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
+    from deepseek_tui.config.providers import PROVIDER_DEFAULTS
 
     for prov_name, defaults in PROVIDER_DEFAULTS.items():
         if provider and prov_name != provider:
@@ -296,7 +298,7 @@ def serve(
     model: str | None = MODEL_OPTION,
 ) -> None:
     """Start the app-server (HTTP by default; --stdio for JSON-RPC pipe)."""
-    from deepseek_tui.app_server import AppServerOptions, run_http, run_stdio
+    from deepseek_tui.server import AppServerOptions, run_http, run_stdio
 
     loaded = _load_config(config, profile, provider, model)
     if stdio:
@@ -347,7 +349,7 @@ def _provider_config_has_key(config: Config, provider_name: str) -> bool:
 
 
 def _get_secrets() -> Any:
-    from deepseek_tui.secrets.facade import Secrets
+    from deepseek_tui.state.secrets import Secrets
     return Secrets.auto_detect()
 
 
@@ -357,7 +359,7 @@ def auth_status(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Show current provider and auth state for all providers."""
-    from deepseek_tui.secrets.env_map import env_for
+    from deepseek_tui.state.secrets import env_for
 
     loaded = _load_config(config, profile)
     secrets = _get_secrets()
@@ -404,7 +406,7 @@ def auth_get(
     secrets = _get_secrets()
     slot = _keyring_slot(provider)
     in_keyring = bool(secrets.get(slot))
-    from deepseek_tui.secrets.env_map import env_for as _env_for
+    from deepseek_tui.state.secrets import env_for as _env_for
     in_env = _env_for(slot) is not None
     in_file = _provider_config_has_key(loaded, provider)
     resolved = in_keyring or in_env or in_file
@@ -434,7 +436,7 @@ def auth_list(
     """List all known providers with their auth state."""
     loaded = _load_config(config, profile)
     secrets = _get_secrets()
-    from deepseek_tui.secrets.env_map import env_for as _env_for
+    from deepseek_tui.state.secrets import env_for as _env_for
 
     typer.echo(f"keyring backend: {secrets.backend_name}")
     typer.echo("provider     keyring  env  config")
@@ -653,7 +655,7 @@ def model_list(
     provider: str | None = typer.Option(None, "--provider", help="Filter by provider."),
 ) -> None:
     """List all models in the provider registry."""
-    from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
+    from deepseek_tui.config.providers import PROVIDER_DEFAULTS
 
     for prov_name, defaults in PROVIDER_DEFAULTS.items():
         if provider and prov_name != provider:
@@ -669,7 +671,7 @@ def model_resolve(
     provider: str | None = typer.Option(None, "--provider", help="Provider name."),
 ) -> None:
     """Resolve a model name to its canonical provider + model."""
-    from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
+    from deepseek_tui.config.providers import PROVIDER_DEFAULTS
 
     requested = model_name or ""
     resolved_model = requested
@@ -877,7 +879,7 @@ def sandbox_check(
     ask: str = typer.Option("on-request", "--ask", help="Approval mode."),
 ) -> None:
     """Check a command against the exec policy."""
-    from deepseek_tui.execpolicy.command_safety import analyze_command
+    from deepseek_tui.policy.command_safety import analyze_command
 
     result = analyze_command(command)
     typer.echo(json.dumps({
@@ -1374,7 +1376,7 @@ def app_server(
     config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Run the app-server transport (alias for serve)."""
-    from deepseek_tui.app_server import AppServerOptions, run_http, run_stdio
+    from deepseek_tui.server import AppServerOptions, run_http, run_stdio
 
     loaded = _load_config(config)
     if stdio:

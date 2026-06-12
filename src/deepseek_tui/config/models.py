@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import os
@@ -341,7 +343,7 @@ class LoggingConfig(BaseModel):
     console: bool = False
     keep_hours: int = 24
     # Optional per-logger level overrides — useful when the user wants
-    # ``deepseek_tui.engine.turn_loop = "DEBUG"`` while leaving the rest
+    # ``deepseek_tui.engine.turn = "DEBUG"`` while leaving the rest
     # at INFO. Keys are full logger names; values are level strings.
     per_logger: dict[str, str] = Field(default_factory=dict)
 
@@ -468,7 +470,7 @@ class Config(BaseModel):
 
     def memory_enabled(self) -> bool:
         """Whether user-memory injection is active (Rust ``Config::memory_enabled``)."""
-        from deepseek_tui.memory.user_memory import memory_enabled_from_env
+        from deepseek_tui.memory.coordinator import memory_enabled_from_env
 
         env = memory_enabled_from_env()
         if env is not None:
@@ -480,7 +482,7 @@ class Config(BaseModel):
         return self.memory.smart.enabled
 
     def effective_provider_config(self) -> ProviderConfig:
-        from deepseek_tui.config.provider_registry import PROVIDER_DEFAULTS
+        from deepseek_tui.config.providers import PROVIDER_DEFAULTS
 
         configured = self.providers.get(self.provider, ProviderConfig())
         overrides: dict[str, Any] = {}

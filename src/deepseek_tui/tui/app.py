@@ -4,7 +4,9 @@ Stage 6.1: Wire Engine ↔ TUI so the app can actually send/receive messages.
 Stage 6.5: Slash command activation — SlashMenu in compose tree,
            dispatch on ``/command`` input.
 """
+
 from __future__ import annotations
+
 
 import asyncio
 import logging
@@ -38,14 +40,14 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
 )
-from deepseek_tui.tools.subagent.mailbox import MailboxMessageKind
-from deepseek_tui.tui.backtrack import BacktrackState, EscEffect
+from deepseek_tui.tools.subagent import MailboxMessageKind
+from deepseek_tui.tui.plan import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
-from deepseek_tui.tui.widgets.command_palette import CommandPalette
-from deepseek_tui.tui.widgets.composer import Composer, ComposerHint, PASTE_ENTER_SUPPRESS_WINDOW_SECS
-from deepseek_tui.tui.widgets.file_mention import FileMention
-from deepseek_tui.tui.widgets.help_panel import HelpPanel
-from deepseek_tui.tui.widgets.info_sidebar import (
+from deepseek_tui.tui.input import CommandPalette
+from deepseek_tui.tui.input import Composer, ComposerHint, PASTE_ENTER_SUPPRESS_WINDOW_SECS
+from deepseek_tui.tui.dialogs import FileMention
+from deepseek_tui.tui.dialogs import HelpPanel
+from deepseek_tui.tui.sidebar import (
     InfoSidebar,
     InfoSidebarData,
     filter_sidebar_agents,
@@ -61,13 +63,13 @@ from deepseek_tui.tui.session_restore import (
     session_started_at_iso,
     try_restore_crash_checkpoint,
 )
-from deepseek_tui.tui.widgets.sidebar import Sidebar, SidebarEntry
-from deepseek_tui.tui.widgets.slash_menu import SlashMenu
-from deepseek_tui.tui.widgets.status_bar import StatusBar
-from deepseek_tui.tui.widgets.transcript import Transcript
+from deepseek_tui.tui.sidebar import Sidebar, SidebarEntry
+from deepseek_tui.tui.input import SlashMenu
+from deepseek_tui.tui.status import StatusBar
+from deepseek_tui.tui.transcript import Transcript
 
 if TYPE_CHECKING:
-    from deepseek_tui.engine.engine import Engine
+    from deepseek_tui.engine.orchestrator import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +82,7 @@ def _json_decode_error() -> type[Exception]:
 
 
 def _agent_id_from_spawn_result(content: str) -> str | None:
-    from deepseek_tui.tui.widgets.tool_cell import _extract_agent_id
+    from deepseek_tui.tui.tool_cell import _extract_agent_id
 
     return _extract_agent_id(content)
 
@@ -138,7 +140,7 @@ class DeepSeekTUI(App[None]):
     ) -> None:
         super().__init__()
         self.config = config or Config()
-        from deepseek_tui.hooks.build import build_hook_dispatcher
+        from deepseek_tui.integrations.hooks import build_hook_dispatcher
 
         self.handle = handle or EngineHandle(hooks=build_hook_dispatcher(self.config))
         self._engine: Engine | None = None
@@ -183,7 +185,7 @@ class DeepSeekTUI(App[None]):
         # ``discover_in_workspace``). Mirrors Rust ``main.rs:3974`` which
         # calls ``crate::skills::install_system_skills`` at startup.
         try:
-            from deepseek_tui.skills.system import install_system_skills
+            from deepseek_tui.integrations.skills.system import install_system_skills
 
             install_system_skills()
         except Exception:  # noqa: BLE001 — bundled-skill failure must
@@ -222,9 +224,9 @@ class DeepSeekTUI(App[None]):
         """
         from datetime import datetime, timezone
 
-        from deepseek_tui.engine.engine import Engine
+        from deepseek_tui.engine.orchestrator import Engine
         from deepseek_tui.tui.approval_handler import TUIApprovalHandler
-        from deepseek_tui.tui.screens.onboarding import (
+        from deepseek_tui.tui.onboarding import (
             OnboardingScreen,
             is_onboarded,
             mark_onboarded,
@@ -260,7 +262,7 @@ class DeepSeekTUI(App[None]):
             model = self.config.model or self.config.default_text_model
             approval_handler = TUIApprovalHandler(self)
             logger.info("tui_engine_create model=%s", model)
-            from deepseek_tui.execpolicy.engine import exec_policy_for_config
+            from deepseek_tui.policy.approval import exec_policy_for_config
 
             self._engine = await Engine.create(
                 self.handle,
@@ -320,7 +322,7 @@ class DeepSeekTUI(App[None]):
             return
         import uuid as _uuid
 
-        from deepseek_tui.goal.persistence import (
+        from deepseek_tui.integrations.goal import (
             copy_goal_journal_for_fork,
             resolve_goal_thread_id,
         )
@@ -432,7 +434,7 @@ class DeepSeekTUI(App[None]):
         """Populate the left sidebar from ``~/.deepseek/sessions/*.json``."""
         from datetime import datetime
 
-        from deepseek_tui.app_server.session_catalog import scan_tui_session_files
+        from deepseek_tui.server.sessions import scan_tui_session_files
 
         rows = scan_tui_session_files(limit=50)
         entries: list[SidebarEntry] = []
@@ -481,7 +483,7 @@ class DeepSeekTUI(App[None]):
     def _build_client(self) -> LLMClient | None:
         """Construct an LLM client from config + secrets."""
         from deepseek_tui.client.deepseek import DeepSeekClient
-        from deepseek_tui.secrets.manager import SecretsManager
+        from deepseek_tui.state.secrets import SecretsManager
 
         mgr = SecretsManager()
         api_key = mgr.resolve_api_key(self.config)
@@ -580,7 +582,7 @@ class DeepSeekTUI(App[None]):
         entry = text[1:].strip()
         if not entry:
             return False
-        from deepseek_tui.memory.user_memory import append_entry
+        from deepseek_tui.memory.coordinator import append_entry
 
         append_entry(cfg.resolved_memory_path(), entry)
         transcript = self.query_one(Transcript)
@@ -926,7 +928,7 @@ class DeepSeekTUI(App[None]):
         triggers the same restore path used by ``--resume``. Empty list
         falls back to the auto-saved ``current.json`` when present.
         """
-        from deepseek_tui.tui.widgets.pickers import SessionPicker
+        from deepseek_tui.tui.dialogs import SessionPicker
 
         sessions = self._discover_session_picks()
         if not sessions:
@@ -947,7 +949,7 @@ class DeepSeekTUI(App[None]):
 
     def action_open_model_picker(self) -> None:
         """Open the model picker (Ctrl+M, Rust ``Ctrl+M``)."""
-        from deepseek_tui.tui.widgets.pickers import ModelPicker
+        from deepseek_tui.tui.dialogs import ModelPicker
 
         def _on_pick(picked: str | None) -> None:
             if not picked or self._engine is None:
@@ -964,7 +966,7 @@ class DeepSeekTUI(App[None]):
 
         On selection, prepends the path to the composer as ``@path``.
         """
-        from deepseek_tui.tui.widgets.pickers import FilePicker
+        from deepseek_tui.tui.dialogs import FilePicker
 
         def _on_pick(picked: str | None) -> None:
             if not picked:

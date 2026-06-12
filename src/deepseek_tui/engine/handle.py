@@ -1,3 +1,5 @@
+
+
 from __future__ import annotations
 
 import asyncio
@@ -6,10 +8,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.engine.events import EngineEvent
-from deepseek_tui.execpolicy.models import ApprovalDecision, ApprovalRequest
+from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest
 
 if TYPE_CHECKING:
-    from deepseek_tui.hooks.dispatcher import HookDispatcher
+    from deepseek_tui.integrations.hooks import HookDispatcher
 
 
 # --- Ops (formerly engine/ops.py) -------------------------------------------
@@ -202,7 +204,7 @@ class EngineHandle:
             TurnCompleteEvent,
             TurnStartedEvent,
         )
-        from deepseek_tui.hooks.events import (
+        from deepseek_tui.integrations.hooks import (
             ApprovalLifecycleEvent,
             ResponseDeltaEvent,
             ResponseEndEvent,

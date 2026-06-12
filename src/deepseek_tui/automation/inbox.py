@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+
+
 import asyncio
 import email
 import imaplib
@@ -21,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from deepseek_tui.automation.types import DigestConfig
+from deepseek_tui.automation.delivery import DigestConfig
 from deepseek_tui.config.paths import user_deepseek_dir
 
 logger = logging.getLogger(__name__)

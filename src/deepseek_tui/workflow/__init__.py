@@ -7,7 +7,7 @@ from deepseek_tui.workflow.models import (
     WorkflowSnapshot,
     WorkflowSpec,
 )
-from deepseek_tui.workflow.prompts import workflow_guidelines_snippet
+from deepseek_tui.workflow.adapters import workflow_guidelines_snippet
 from deepseek_tui.workflow.runtime import run_workflow
 
 __all__ = [

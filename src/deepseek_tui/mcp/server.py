@@ -6,7 +6,9 @@ Mirrors a trimmed-down version of ``crates/tui/src/mcp_server.rs``. Implements
 ``Engine`` turn (the ``deepseek-reply`` continuation variant is still
 deferred — see HANDOVER pre-realapi-batch-2 for the gap).
 """
+
 from __future__ import annotations
+
 
 import asyncio
 import json
@@ -182,7 +184,7 @@ class McpStdioServer:
             from deepseek_tui.client.deepseek import DeepSeekClient
             from deepseek_tui.config.models import Config
             from deepseek_tui.protocol.messages import Message
-            from deepseek_tui.protocol.requests import MessageRequest
+            from deepseek_tui.protocol.messages import MessageRequest
             from deepseek_tui.protocol.responses import StreamTextDelta
 
             cfg = Config()

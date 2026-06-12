@@ -5,13 +5,15 @@ Mirrors ``crates/tui/src/core/engine/tool_execution.rs::execute_mcp_tool_with_po
 
 from __future__ import annotations
 
+
+
 import json
 from typing import Any
 
 from deepseek_tui.engine.dispatch import is_mcp_tool
 from deepseek_tui.mcp.client import McpError
 from deepseek_tui.mcp.manager import McpManager
-from deepseek_tui.tools.base import ToolError, ToolResult
+from deepseek_tui.tools.registry import ToolError, ToolResult
 
 _MCP_READ_ALIASES = frozenset({"mcp_read_resource", "read_mcp_resource"})
 
