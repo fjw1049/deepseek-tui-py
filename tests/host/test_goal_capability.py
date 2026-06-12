@@ -11,15 +11,12 @@ from deepseek_tui.capabilities.goal import (
     bind_goal_runtime_thread,
     build_goal_follow_up_start_payload,
     create_goal_runtime,
-    fail_goal_turn,
-    finish_goal_turn,
     goal_follow_up_is_stale,
     goal_lifecycle_observer,
     goal_mode_hint,
     goal_status_payload,
     rebind_goal_thread_if_local,
     should_dispatch_goal_follow_up,
-    start_goal_turn,
     take_valid_goal_follow_up,
     validate_goal_follow_up,
 )
@@ -118,15 +115,11 @@ def test_goal_capability_lifecycle_helpers(tmp_path: Path) -> None:
         is False
     )
 
-    start_goal_turn(controller)
-    result = finish_goal_turn(
-        controller,
-        turn_ok=True,
-        usage=None,
-        failure_reason="failed",
-    )
-    assert result.steer is None
-    fail_goal_turn(controller, "failed")
+    controller.on_turn_start()
+    follow_up = controller.on_turn_complete(None)
+    assert follow_up is None
+    assert controller.take_pending_steer() is None
+    controller.on_turn_failed("failed")
 
 
 @pytest.mark.asyncio

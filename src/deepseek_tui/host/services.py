@@ -41,6 +41,8 @@ class ServiceRegistry:
         self._typed: dict[type[Any], ServiceRegistration] = {}
         self._named: dict[str, ServiceRegistration] = {}
         self._start_order: list[ServiceRegistration] = []
+        self._externally_owned_values: set[int] = set()
+        self._shutdown_values: set[int] = set()
 
     def add(
         self,
@@ -115,24 +117,56 @@ class ServiceRegistry:
     def named_keys(self) -> tuple[str, ...]:
         return tuple(self._named.keys())
 
-    async def shutdown(self) -> None:
-        """Best-effort reverse shutdown for host-owned services.
+    def mark_externally_owned(self, value: object) -> None:
+        """Exclude a caller-owned service from registry-coordinated shutdown."""
+        self._externally_owned_values.add(id(value))
 
-        ``ToolRuntime.shutdown()`` remains the host shutdown coordinator for
-        process-scoped managers. Callers should avoid invoking both paths for
-        the same service object.
-        """
+    def merge_from(self, other: ServiceRegistry) -> None:
+        """Copy registrations from *other* into this registry."""
+        for registration in other._start_order:
+            if isinstance(registration.key, str):
+                if registration.key in self._named:
+                    existing = self._named[registration.key]
+                    raise ServiceRegistryError(
+                        f"named service {registration.key!r} already registered "
+                        f"by {existing.owner}"
+                    )
+                self._named[registration.key] = registration
+            else:
+                key = cast(type[Any], registration.key)
+                if key in self._typed:
+                    existing = self._typed[key]
+                    raise ServiceRegistryError(
+                        f"service {key.__module__}.{key.__qualname__} already registered "
+                        f"by {existing.owner}"
+                    )
+                self._typed[key] = registration
+            self._start_order.append(registration)
+
+    async def shutdown(self) -> None:
+        """Best-effort reverse shutdown for host-owned services."""
+        await self.shutdown_scope()
+
+    async def shutdown_scope(self, scope: ServiceScope | None = None) -> None:
+        """Shutdown services, optionally limited to one scope."""
         seen: set[int] = set()
         for registration in reversed(self._start_order):
+            if scope is not None and registration.scope != scope:
+                continue
             value = registration.value
             identity = id(value)
-            if identity in seen:
+            if (
+                identity in seen
+                or identity in self._shutdown_values
+                or identity in self._externally_owned_values
+            ):
                 continue
             seen.add(identity)
             await self._shutdown_value(value)
+            self._shutdown_values.add(identity)
 
     async def _shutdown_value(self, value: object) -> None:
-        for method_name in ("shutdown", "stop", "close"):
+        for method_name in ("shutdown", "stop", "stop_all", "close", "close_all"):
             method = getattr(value, method_name, None)
             if not callable(method):
                 continue
@@ -140,3 +174,32 @@ class ServiceRegistry:
             if inspect.isawaitable(result):
                 await result
             return
+
+
+def copy_process_scoped_services(
+    source: ServiceRegistry,
+    target: ServiceRegistry,
+) -> None:
+    """Copy PROCESS-scoped registrations from *source* into *target*."""
+    for registration in source._start_order:
+        if registration.scope != ServiceScope.PROCESS:
+            continue
+        if isinstance(registration.key, str):
+            if target.optional_named(registration.key) is not None:
+                continue
+            target.add_named(
+                registration.key,
+                registration.value,
+                owner=registration.owner,
+                scope=registration.scope,
+            )
+            continue
+        key = cast(type[Any], registration.key)
+        if target.optional(key) is not None:
+            continue
+        target.add(
+            key,
+            registration.value,
+            owner=registration.owner,
+            scope=registration.scope,
+        )

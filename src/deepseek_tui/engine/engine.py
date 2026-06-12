@@ -5,7 +5,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.capacity import CapacityController, CapacityControllerConfig
@@ -80,13 +80,14 @@ from deepseek_tui.execpolicy.approval_cache import (
 )
 from deepseek_tui.execpolicy.engine import ExecPolicyEngine
 from deepseek_tui.execpolicy.models import ApprovalDecision
-from deepseek_tui.host.lifecycle import (
-    AfterToolContext,
-    BeforeUserTurnContext,
-    LifecycleRegistry,
-    TurnCompletionContext,
-    TurnFailureContext,
-    TurnStartedContext,
+from deepseek_tui.host.lifecycle import LifecycleRegistry
+from deepseek_tui.host.turn_lifecycle import (
+    dispatch_after_tool,
+    dispatch_before_user_turn,
+    dispatch_turn_completed,
+    dispatch_turn_failed,
+    dispatch_turn_started,
+    memory_thread_id_for,
 )
 from deepseek_tui.lsp import (
     DiagnosticBlock,
@@ -504,12 +505,27 @@ class Engine:
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()
-        # When reusing a shared runtime, create a per-engine ToolContext with
-        # the correct working_directory so system prompts reflect the thread's
-        # workspace rather than the process cwd.
+        # When reusing a shared runtime, give each Engine its own ToolContext and
+        # ServiceRegistry so ENGINE-scoped services do not leak across threads.
         per_engine_context: ToolContext | None = None
-        if isinstance(tool_runtime, ToolRuntime) and ws != runtime.context.working_directory:
-            per_engine_context = ToolContext(working_directory=ws)
+        if isinstance(tool_runtime, ToolRuntime):
+            from deepseek_tui.execpolicy.sandbox import sandbox_policy_for_mode
+            from deepseek_tui.host.services import ServiceRegistry, copy_process_scoped_services
+
+            shared_ctx = runtime.context
+            engine_services = ServiceRegistry()
+            copy_process_scoped_services(shared_ctx.services, engine_services)
+            per_engine_context = ToolContext(
+                working_directory=ws,
+                trust_mode=shared_ctx.trust_mode,
+                services=engine_services,
+                policy=shared_ctx.policy,
+                task_manager=shared_ctx.task_manager,
+                subagent_manager=shared_ctx.subagent_manager,
+                network_policy=shared_ctx.network_policy,
+                execution_sandbox_policy=sandbox_policy_for_mode(mode, ws),
+                elevated_sandbox_policy=shared_ctx.elevated_sandbox_policy,
+            )
         engine = cls(
             handle=handle,
             client=client,
@@ -528,23 +544,19 @@ class Engine:
         )
         if isinstance(tool_runtime, ToolRuntime):
             engine._owns_tool_runtime = False
-        engine.capacity_controller = CapacityController(
-            config=CapacityControllerConfig.from_app_config(cfg.capacity)
-        )
-        from deepseek_tui.host.engine_attach import EngineAttachRequest, attach_engine_capabilities
+        engine._assembled_contributions = assembled
+        from deepseek_tui.host.engine_attach import attach_engine_shell
 
-        await attach_engine_capabilities(
-            EngineAttachRequest(
-                engine=engine,
-                config=cfg,
-                client=client,
-                workspace=ws,
-                mode=mode,
-                default_model=default_model,
-                handle=handle,
-                tool_runtime=runtime,
-                assembled=assembled,
-            )
+        await attach_engine_shell(
+            engine,
+            config=cfg,
+            client=client,
+            workspace=ws,
+            mode=mode,
+            default_model=default_model,
+            handle=handle,
+            tool_runtime=runtime,
+            contributions=assembled,
         )
 
         return engine
@@ -557,73 +569,12 @@ class Engine:
 
             await stop_post_turn_orchestrator(self.post_turn)
             self.post_turn = None
-        coordinator = self.memory_coordinator
-        if coordinator is not None:
-            from deepseek_tui.memory.coordinator import MemoryCoordinator
+        from deepseek_tui.host.services import ServiceScope
 
-            if isinstance(coordinator, MemoryCoordinator):
-                await coordinator.stop()
-            self.memory_coordinator = None
+        await self.tool_context.services.shutdown_scope(ServiceScope.ENGINE)
+        self.memory_coordinator = None
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
-
-    async def _notify_goal_turn_completed(
-        self,
-        *,
-        turn_id: str,
-        usage: object | None,
-    ) -> object:
-        from deepseek_tui.capabilities.goal import GOAL_TURN_RESULT_DECORATION
-
-        context = TurnCompletionContext(
-            thread_id=self._resolve_memory_thread_id(),
-            turn_id=turn_id,
-            success=True,
-            usage=usage,
-            metadata=self.tool_context.metadata,
-            services=self.tool_context.services,
-        )
-        await self.lifecycle_registry.on_turn_completed(context)
-        return context.decorations[GOAL_TURN_RESULT_DECORATION]
-
-    async def _notify_goal_turn_started(self, *, turn_id: str) -> None:
-        await self.lifecycle_registry.on_turn_started(
-            TurnStartedContext(
-                thread_id=self._resolve_memory_thread_id(),
-                turn_id=turn_id,
-                metadata=self.tool_context.metadata,
-                services=self.tool_context.services,
-            )
-        )
-
-    async def _notify_goal_turn_failed(
-        self,
-        *,
-        turn_id: str,
-        reason: str,
-        usage: object | None = None,
-    ) -> object:
-        from deepseek_tui.capabilities.goal import GOAL_TURN_RESULT_DECORATION
-
-        context = TurnFailureContext(
-            thread_id=self._resolve_memory_thread_id(),
-            turn_id=turn_id,
-            reason=reason,
-            usage=usage,
-            metadata=self.tool_context.metadata,
-            services=self.tool_context.services,
-        )
-        await self.lifecycle_registry.on_turn_failed(context)
-        return context.decorations[GOAL_TURN_RESULT_DECORATION]
-
-    def _resolve_memory_thread_id(self) -> str:
-        from deepseek_tui.capabilities.memory import resolve_memory_thread_id
-
-        return resolve_memory_thread_id(
-            memory_thread_id=self.memory_thread_id,
-            metadata=self.tool_context.metadata,
-            cycle_session_id=self._cycle_session_id,
-        )
 
     def _memory_md_enabled(self) -> bool:
         from deepseek_tui.capabilities.memory import memory_md_enabled
@@ -695,7 +646,7 @@ class Engine:
         """
         from deepseek_tui.capabilities.evolution import publish_turn_evidence
 
-        thread_id = self._resolve_memory_thread_id()
+        thread_id = memory_thread_id_for(self)
         turn_slice = working_messages[prior_count:]
         evidence = self._build_turn_evidence(
             thread_id=thread_id,
@@ -740,7 +691,7 @@ class Engine:
     def _build_flush_evidence(self, messages: list[Message]) -> object:
         from deepseek_tui.capabilities.memory import build_flush_evidence
 
-        thread_id = self._resolve_memory_thread_id()
+        thread_id = memory_thread_id_for(self)
         return build_flush_evidence(
             messages=messages,
             thread_id=thread_id,
@@ -969,7 +920,8 @@ class Engine:
                         logger.info("engine_turn_task_cancelled")
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("engine_turn_task_failed")
-                        await self._notify_goal_turn_failed(
+                        await dispatch_turn_failed(
+                            self,
                             turn_id="engine",
                             reason=f"engine_error: {exc}",
                         )
@@ -998,7 +950,8 @@ class Engine:
                             logger.info("engine_turn_task_cancelled")
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("engine_turn_task_failed")
-                            await self._notify_goal_turn_failed(
+                            await dispatch_turn_failed(
+                                self,
                                 turn_id="engine",
                                 reason=f"engine_error: {exc}",
                             )
@@ -1091,7 +1044,7 @@ class Engine:
                 # scoped to this turn, not to the engine run loop.
                 reason = self.handle.cancel_reason or "user_cancelled"
                 logger.info("turn_hard_cancelled reason=%s", reason)
-                await self._notify_goal_turn_failed(turn_id=turn_id, reason=reason)
+                await dispatch_turn_failed(self, turn_id=turn_id, reason=reason)
                 await self.handle.emit(TurnCancelledEvent(reason=reason))
             finally:
                 self.handle._mark_turn_idle()
@@ -1122,23 +1075,10 @@ class Engine:
         )
         if self.tool_profile == TOOL_PROFILE_FULL:
             self.tool_profile = None
-        from deepseek_tui.capabilities.memory import (
-            MEMORY_TURN_CONTEXT_DECORATION,
-            MemoryTurnContext,
-        )
-
-        before_turn = BeforeUserTurnContext(
-            thread_id=self._resolve_memory_thread_id(),
+        memory_turn = await dispatch_before_user_turn(
+            self,
             turn_id=turn_id,
             user_text=processed.model_text or "",
-            workspace=self.tool_context.working_directory,
-            metadata=self.tool_context.metadata,
-            services=self.tool_context.services,
-        )
-        await self.lifecycle_registry.before_user_turn(before_turn)
-        memory_turn = cast(
-            MemoryTurnContext,
-            before_turn.decorations[MEMORY_TURN_CONTEXT_DECORATION],
         )
         memory_recall = memory_turn.recall
         user_message = memory_turn.user_message
@@ -1200,7 +1140,7 @@ class Engine:
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
-            await self._notify_goal_turn_started(turn_id=turn_id)
+            await dispatch_turn_started(self, turn_id=turn_id)
             self._save_crash_checkpoint(
                 working_messages,
                 model=op.model or self.default_model,
@@ -1222,6 +1162,7 @@ class Engine:
                 ),
                 evolution_enabled=self._evolution_pipeline is not None,
                 workflow_guidelines=self.tool_registry.contains("workflow"),
+                prompt_contributions=getattr(self, "_assembled_contributions", None),
             )
             if mode_hint:
                 sys_prompt += mode_hint
@@ -1250,7 +1191,8 @@ class Engine:
                         reason=self.handle.cancel_reason or "user_cancelled"
                     )
                 )
-                await self._notify_goal_turn_failed(
+                await dispatch_turn_failed(
+                    self,
                     turn_id=turn_id,
                     reason=self.handle.cancel_reason or "user_cancelled",
                 )
@@ -1330,12 +1272,14 @@ class Engine:
             from deepseek_tui.capabilities.goal import should_dispatch_goal_follow_up
 
             if turn_ok:
-                goal_result = await self._notify_goal_turn_completed(
+                goal_result = await dispatch_turn_completed(
+                    self,
                     turn_id=turn_id,
                     usage=result.usage,
                 )
             else:
-                goal_result = await self._notify_goal_turn_failed(
+                goal_result = await dispatch_turn_failed(
+                    self,
                     turn_id=turn_id,
                     reason=result.outcome.value,
                     usage=result.usage,
@@ -1869,7 +1813,7 @@ class Engine:
                         else None,
                         result.content,
                     )
-                    await self._notify_after_tool_lifecycle(tool_call, result)
+                    await dispatch_after_tool(self, tool_call, result)
                     await self.handle.emit(
                         ToolResultEvent(
                             tool_call_id=tool_call.id,
@@ -1927,24 +1871,6 @@ class Engine:
                         )
                     )
         return results
-
-    async def _notify_after_tool_lifecycle(
-        self,
-        tool_call: ToolCall,
-        result: ToolResult,
-    ) -> None:
-        arguments = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        await self.lifecycle_registry.after_tool(
-            AfterToolContext(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                arguments=arguments,
-                success=result.success,
-                result=result,
-                metadata=self.tool_context.metadata,
-                services=self.tool_context.services,
-            )
-        )
 
     async def _execute_tools_parallel(
         self,
@@ -2069,7 +1995,7 @@ class Engine:
                     else None,
                     result.content,
                 )
-                await self._notify_after_tool_lifecycle(tool_call, result)
+                await dispatch_after_tool(self, tool_call, result)
                 await self.handle.emit(
                     ToolResultEvent(
                         tool_call_id=tool_call.id,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 from deepseek_tui.host.prompts import (
     FunctionPromptContributor,
@@ -22,13 +23,11 @@ def core_prompt_contributors() -> list[PromptContributor]:
             "project-context",
             100,
             _project_context_contribution,
-            cache_scope="workspace_static",
         ),
         FunctionPromptContributor(
             "environment",
             200,
             _environment_contribution,
-            cache_scope="session_static",
         ),
         FunctionPromptContributor("context-management", 500, _context_management),
         FunctionPromptContributor("compaction-template", 800, lambda _ctx: COMPACT_TEMPLATE()),
@@ -131,4 +130,4 @@ def _subagent_mandate(ctx: PromptContributorContext) -> str | None:
         return None
     from deepseek_tui.engine.subagent_intent import SUBAGENT_MANDATE_BLOCK
 
-    return SUBAGENT_MANDATE_BLOCK
+    return cast(str, SUBAGENT_MANDATE_BLOCK)

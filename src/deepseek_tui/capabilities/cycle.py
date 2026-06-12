@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.cycle_manager import CycleConfig, archive_cycle, should_advance_cycle
 from deepseek_tui.engine.seam_manager import SeamConfig, SeamManager
+from deepseek_tui.host.engine_shell import EngineShell
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -54,17 +55,17 @@ def create_cycle_runtime(
 
 
 def attach_engine_cycle(
-    engine: object,
+    shell: EngineShell,
     config: Config,
     *,
     client: LLMClient,
 ) -> CycleRuntime:
     """Wire cycle/seam runtime onto a materialized engine."""
     cycle_runtime = create_cycle_runtime(config, client=client)
-    engine.cycle_config = cycle_runtime.config  # type: ignore[attr-defined]
-    engine.seam_manager = cycle_runtime.seam_manager  # type: ignore[attr-defined]
-    engine._cycle_session_id = cycle_runtime.session_id  # type: ignore[attr-defined]
-    engine._cycle_started_at = cycle_runtime.started_at  # type: ignore[attr-defined]
+    shell.cycle_config = cycle_runtime.config
+    shell.seam_manager = cycle_runtime.seam_manager
+    shell.cycle_session_id = cycle_runtime.session_id
+    shell.cycle_started_at = cycle_runtime.started_at
     return cycle_runtime
 
 
@@ -92,7 +93,10 @@ async def apply_layered_context_checkpoint(
     verbatim_start = seam_manager.verbatim_window_start(msg_count)
     if verbatim_start <= 0:
         return
-    pinned = working_set.pinned_message_indices(messages, workspace)
+    pinned_fn = getattr(working_set, "pinned_message_indices", None)
+    if not callable(pinned_fn):
+        return
+    pinned = pinned_fn(messages, workspace)
     try:
         existing = await seam_manager.collect_seam_texts(messages)
         if existing:

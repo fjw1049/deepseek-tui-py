@@ -143,8 +143,8 @@ class TestAppServerLifecycleHooks:
         from deepseek_tui.app_server.runtime import AppRuntime
 
         source = inspect.getsource(AppRuntime._stream_engine_events)
-        assert "build_lifecycle_hook_executor" in source
-        assert "hook_executor=hook_executor" in source
+        assert "Engine.create" in source
+        assert "build_lifecycle_hook_executor" not in source
 
 
 class TestSlashHooksCommand:

@@ -5,14 +5,16 @@ from __future__ import annotations
 from typing import Any
 
 from deepseek_tui.app_server.runtime_api.approval_bridge import ApprovalBridge
-from deepseek_tui.app_server.runtime_api.elevation_bridge import ElevationBridge
 from deepseek_tui.app_server.runtime_api.auth import RuntimeAuthMiddleware
+from deepseek_tui.app_server.runtime_api.elevation_bridge import ElevationBridge
 from deepseek_tui.app_server.runtime_api.routes import build_runtime_api_router
+from deepseek_tui.config.models import Config
 
 
 def attach_runtime_api(
     app: Any,
     *,
+    config: Config | None = None,
     auth_token: str | None = None,
     cors_origins: list[str] | None = None,
 ) -> tuple[ApprovalBridge, ElevationBridge]:
@@ -40,7 +42,7 @@ def attach_runtime_api(
             "threads": "/v1/threads",
         }
 
-    app.include_router(build_runtime_api_router())
+    app.include_router(build_runtime_api_router(config))
     app.add_middleware(RuntimeAuthMiddleware, auth_token=auth_token)
     if cors_origins:
         attach_cors(app, cors_origins)

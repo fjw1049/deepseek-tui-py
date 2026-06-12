@@ -52,6 +52,17 @@ def test_service_registry_missing_require_has_clear_error() -> None:
         registry.require_named("missing")
 
 
+def test_service_registry_merge_from_copies_registrations() -> None:
+    source = ServiceRegistry()
+    target = ServiceRegistry()
+    service = FakeService([], "catalog")
+
+    source.add(FakeService, service, owner="catalog", scope=ServiceScope.PROCESS)
+    target.merge_from(source)
+
+    assert target.require(FakeService) is service
+
+
 @pytest.mark.asyncio
 async def test_service_registry_shutdown_reverse_order_once_per_object() -> None:
     events: list[str] = []
@@ -64,5 +75,19 @@ async def test_service_registry_shutdown_reverse_order_once_per_object() -> None
     registry.add_named("second", second, owner="second", scope=ServiceScope.PROCESS)
 
     await registry.shutdown()
+    await registry.shutdown()
 
     assert events == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_service_registry_does_not_shutdown_externally_owned_service() -> None:
+    events: list[str] = []
+    service = FakeService(events, "external")
+    registry = ServiceRegistry()
+    registry.add(FakeService, service, owner="test", scope=ServiceScope.PROCESS)
+    registry.mark_externally_owned(service)
+
+    await registry.shutdown()
+
+    assert events == []

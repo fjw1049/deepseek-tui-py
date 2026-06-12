@@ -40,35 +40,6 @@ def test_contributions_orders_prompt_contributors() -> None:
         )
 
 
-def test_contributions_orders_post_turn_pipelines() -> None:
-    contributions = Contributions()
-    first = object()
-    second = object()
-
-    contributions.add_post_turn_pipeline(
-        id="second",
-        owner="test",
-        pipeline=second,
-        order=200,
-    )
-    contributions.add_post_turn_pipeline(
-        id="first",
-        owner="test",
-        pipeline=first,
-        order=100,
-    )
-
-    pipelines = contributions.post_turn_pipelines()
-    assert [entry.id for entry in pipelines] == ["first", "second"]
-    assert [entry.pipeline for entry in pipelines] == [first, second]
-    with pytest.raises(ContributionRegistryError, match="post-turn pipeline"):
-        contributions.add_post_turn_pipeline(
-            id="first",
-            owner="test",
-            pipeline=object(),
-        )
-
-
 def test_contributions_exposes_nested_registries() -> None:
     contributions = Contributions()
 

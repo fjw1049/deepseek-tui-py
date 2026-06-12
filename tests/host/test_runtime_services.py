@@ -163,3 +163,34 @@ async def test_assemble_tool_runtime_delegates_to_compatible_runtime(tmp_path: P
         assert "task_manager" not in runtime.context.metadata
     finally:
         await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runtime_shutdown_closes_owned_manager_once(tmp_path: Path) -> None:
+    cfg = Config(
+        features=FeatureConfig(
+            tasks=True,
+            subagents=False,
+            mcp=False,
+            automations=False,
+        )
+    )
+    runtime = await create_tool_runtime(
+        config=cfg,
+        working_directory=tmp_path,
+        task_data_dir=tmp_path / "tasks",
+    )
+    assert runtime.task_manager is not None
+    calls = 0
+    original_shutdown = runtime.task_manager.shutdown
+
+    async def counted_shutdown() -> None:
+        nonlocal calls
+        calls += 1
+        await original_shutdown()
+
+    runtime.task_manager.shutdown = counted_shutdown  # type: ignore[method-assign]
+    await runtime.shutdown()
+    await runtime.shutdown()
+
+    assert calls == 1

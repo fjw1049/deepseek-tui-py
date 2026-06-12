@@ -311,7 +311,7 @@ def _validation_tools(_cfg: Config, mode: str) -> list[ToolSpec]:
     return tools
 
 
-def default_tool_packs() -> tuple[ToolPack, ...]:
+def head_tool_packs() -> tuple[ToolPack, ...]:
     return (
         FunctionToolPack("core_read", _core_read_tools),
         FunctionToolPack("core_write", _core_write_tools),
@@ -319,16 +319,82 @@ def default_tool_packs() -> tuple[ToolPack, ...]:
         FunctionToolPack("web", _web_tools),
         FunctionToolPack("shell", _shell_tools),
         FunctionToolPack("github", _github_tools),
-        FunctionToolPack("mcp_bridge", _mcp_bridge_tools),
-        FunctionToolPack("tasks", _task_tools),
-        FunctionToolPack("subagents", _subagent_tools),
-        FunctionToolPack("automation", _automation_tools),
+    )
+
+
+def tail_tool_packs() -> tuple[ToolPack, ...]:
+    return (
         FunctionToolPack("knowledge", _knowledge_tools),
         FunctionToolPack("engine_intercepted", _engine_intercepted_tools),
         FunctionToolPack("review", _review_tools),
         FunctionToolPack("memory", _memory_tools),
-        FunctionToolPack("smart_memory", _smart_memory_tools),
-        FunctionToolPack("evolution_curated", _evolution_curated_tools),
-        FunctionToolPack("evolution_procedural", _evolution_procedural_tools),
-        FunctionToolPack("validation", _validation_tools),
+    )
+
+
+def validation_tool_pack() -> ToolPack:
+    return FunctionToolPack("validation", _validation_tools)
+
+
+def optional_tool_pack_specs() -> tuple[
+    tuple[str, Callable[..., list[ToolSpec]], Callable[[Config], bool]],
+    ...,
+]:
+    return (
+        ("mcp_bridge", _mcp_bridge_tools, lambda cfg: cfg.features.mcp),
+        ("tasks", _task_tools, lambda cfg: cfg.features.tasks),
+        ("subagents", _subagent_tools, lambda cfg: cfg.features.subagents),
+        ("automation", _automation_tools, lambda cfg: cfg.features.automations),
+    )
+
+
+def late_optional_tool_pack_specs() -> tuple[
+    tuple[str, Callable[..., list[ToolSpec]], Callable[[Config], bool]],
+    ...,
+]:
+    return (
+        (
+            "smart_memory",
+            _smart_memory_tools,
+            lambda cfg: cfg.smart_memory_enabled(),
+        ),
+        (
+            "evolution_curated",
+            _evolution_curated_tools,
+            lambda cfg: cfg.evolution.enabled and cfg.evolution.curated.enabled,
+        ),
+        (
+            "evolution_procedural",
+            _evolution_procedural_tools,
+            lambda cfg: cfg.evolution.enabled and cfg.evolution.procedural.enabled,
+        ),
+    )
+
+
+def catalog_enabled_tool_packs(config: Config) -> tuple[ToolPack, ...]:
+    """Tool packs registered by the split builtin catalog for *config*."""
+    packs: list[ToolPack] = list(head_tool_packs())
+    for pack_id, factory, enabled in optional_tool_pack_specs():
+        if enabled(config):
+            packs.append(FunctionToolPack(pack_id, factory))
+    packs.extend(tail_tool_packs())
+    for pack_id, factory, enabled in late_optional_tool_pack_specs():
+        if enabled(config):
+            packs.append(FunctionToolPack(pack_id, factory))
+    packs.append(validation_tool_pack())
+    return tuple(packs)
+
+
+def default_tool_packs() -> tuple[ToolPack, ...]:
+    return (
+        *head_tool_packs(),
+        *(
+            FunctionToolPack(pack_id, factory)
+            for pack_id, factory, _enabled in optional_tool_pack_specs()
+        ),
+        *tail_tool_packs(),
+        *(
+            FunctionToolPack(pack_id, factory)
+            for pack_id, factory, _enabled in late_optional_tool_pack_specs()
+        ),
+        validation_tool_pack(),
     )

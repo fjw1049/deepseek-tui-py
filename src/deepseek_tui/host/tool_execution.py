@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.context import ToolContext
@@ -51,7 +51,7 @@ def ensure_tool_execution(context: ToolContext) -> ToolExecutionContext:
     if exec_ctx is None:
         exec_ctx = ToolExecutionContext()
         context.tool_execution = exec_ctx
-    return exec_ctx
+    return cast(ToolExecutionContext, exec_ctx)
 
 
 def resolve_workflow_cancel_event(context: ToolContext) -> asyncio.Event:
@@ -77,7 +77,7 @@ def resolve_workflow_emit(context: ToolContext) -> WorkflowProgressFn | None:
     if exec_ctx is not None and exec_ctx.workflow is not None:
         emit = exec_ctx.workflow.emit_progress
         if callable(emit):
-            return emit
+            return cast(WorkflowProgressFn, emit)
     return None
 
 
@@ -86,7 +86,7 @@ def resolve_workflow_status_cb(context: ToolContext) -> WorkflowStatusFn | None:
     if exec_ctx is not None and exec_ctx.workflow is not None:
         status_cb = exec_ctx.workflow.emit_status
         if callable(status_cb):
-            return status_cb
+            return cast(WorkflowStatusFn, status_cb)
     return None
 
 
@@ -95,5 +95,5 @@ def resolve_rlm_progress_cb(context: ToolContext) -> RlmProgressFn | None:
     if exec_ctx is not None and exec_ctx.rlm is not None:
         on_progress = exec_ctx.rlm.on_progress
         if callable(on_progress):
-            return on_progress
+            return cast(RlmProgressFn, on_progress)
     return None

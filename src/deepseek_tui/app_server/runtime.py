@@ -21,10 +21,10 @@ sinks configured via ``config.hooks`` (stdout / JSONL file / webhooks).
 from __future__ import annotations
 
 import json
+import platform
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-import platform
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -355,16 +355,16 @@ class AppRuntime:
 
         assert self._llm_client is not None  # checked by caller
 
-        from deepseek_tui.hooks.build import build_lifecycle_hook_executor
-
         handle = EngineHandle(hooks=self.hooks)
-        hook_executor = build_lifecycle_hook_executor(self.config, self.working_directory)
-        engine = Engine(
+        assert self._tool_runtime is not None
+        engine = await Engine.create(
             handle=handle,
             client=self._llm_client,
+            config=self.config,
+            working_directory=self.working_directory,
+            mode="agent",
             default_model=model,
             tool_runtime=self._tool_runtime,
-            hook_executor=hook_executor,
         )
 
         # Run the engine loop in the background; it exits when the
@@ -384,6 +384,7 @@ class AppRuntime:
                 await engine_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            await engine.shutdown_session()
 
     async def _emit_prompt_hooks(self, response_id: str) -> None:
         """Fan-out the 3 response-lifecycle hook events (Rust parity).
@@ -443,6 +444,16 @@ class AppRuntime:
                 registry_contains=registry.contains(tool_name),
             )
         except ToolError as exc:
+            await self.hooks.emit(
+                ToolLifecycleEvent(
+                    response_id=response_id,
+                    tool_name=tool_name,
+                    phase="error",
+                    payload={"error": str(exc)},
+                )
+            )
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001 — preserve legacy MCP error envelope
             await self.hooks.emit(
                 ToolLifecycleEvent(
                     response_id=response_id,

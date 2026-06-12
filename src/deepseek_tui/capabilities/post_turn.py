@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.host.engine_shell import EngineShell
 
 
 def build_post_turn_pipelines(
@@ -25,18 +27,18 @@ def build_post_turn_pipelines(
 
 
 async def attach_engine_post_turn(
-    engine: object,
+    shell: EngineShell,
     config: Config,
     *,
     evolution_pipeline: object | None,
 ) -> None:
     """Start the post-turn orchestrator on a materialized engine."""
-    pipelines = build_post_turn_pipelines(
+    builtin_pipelines = build_post_turn_pipelines(
         config,
-        memory_coordinator=engine.memory_coordinator,  # type: ignore[attr-defined]
+        memory_coordinator=shell.memory_coordinator,
         evolution_pipeline=evolution_pipeline,
     )
-    engine.post_turn = await start_post_turn_orchestrator(config, pipelines)  # type: ignore[attr-defined]
+    shell.post_turn = await start_post_turn_orchestrator(config, builtin_pipelines)
 
 
 async def start_post_turn_orchestrator(
@@ -48,11 +50,11 @@ async def start_post_turn_orchestrator(
     from deepseek_tui.post_turn.orchestrator import PostTurnOrchestrator
 
     orchestrator = PostTurnOrchestrator(
-        pipelines,  # type: ignore[arg-type]
+        pipelines,
         flush_timeout_s=config.evolution.flush_timeout_s,
     )
     await orchestrator.start()
-    return orchestrator
+    return cast(object | None, orchestrator)
 
 
 async def stop_post_turn_orchestrator(orchestrator: object | None) -> None:
@@ -91,17 +93,6 @@ async def flush_post_turn_before_loss(
 
 
 @dataclass(slots=True)
-class PostTurnToolObserver:
-    post_turn: object | None
-
-    async def after_tool(self, context: object) -> None:
-        notify_post_turn_main_tool_called(
-            self.post_turn,
-            context.tool_name,  # type: ignore[attr-defined]
-        )
-
-
-@dataclass(slots=True)
 class DynamicPostTurnToolObserver:
     post_turn: Callable[[], object | None]
 
@@ -112,14 +103,25 @@ class DynamicPostTurnToolObserver:
         )
 
 
-def post_turn_tool_observer(post_turn: object | None) -> PostTurnToolObserver:
-    return PostTurnToolObserver(post_turn=post_turn)
-
-
 def dynamic_post_turn_tool_observer(
     post_turn: Callable[[], object | None],
 ) -> DynamicPostTurnToolObserver:
     return DynamicPostTurnToolObserver(post_turn=post_turn)
+
+
+def register_engine_lifecycle_observer(access: object, registry: object) -> None:
+    """Register the post-turn after-tool lifecycle observer once."""
+    from deepseek_tui.host.lifecycle import lifecycle_observer_registered
+
+    if lifecycle_observer_registered(registry, "post_turn.after_tool"):  # type: ignore[arg-type]
+        return
+
+    registry.add(  # type: ignore[attr-defined]
+        id="post_turn.after_tool",
+        owner="post_turn",
+        order=100,
+        observer=dynamic_post_turn_tool_observer(access.post_turn),  # type: ignore[attr-defined]
+    )
 
 
 def notify_post_turn_main_tool_called(
@@ -128,4 +130,4 @@ def notify_post_turn_main_tool_called(
 ) -> None:
     if post_turn is None or not hasattr(post_turn, "on_main_tool_called"):
         return
-    post_turn.on_main_tool_called(tool_name)  # type: ignore[attr-defined]
+    post_turn.on_main_tool_called(tool_name)

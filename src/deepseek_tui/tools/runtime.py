@@ -68,29 +68,16 @@ class ToolRuntime:
     async def shutdown(self) -> None:
         """Host shutdown coordinator for process-scoped tool runtime managers."""
         from deepseek_tui.capabilities.automation import stop_automation_runtime
-        from deepseek_tui.capabilities.lsp import shutdown_lsp_manager
-        from deepseek_tui.capabilities.mcp import shutdown_mcp_manager
-        from deepseek_tui.capabilities.subagents import shutdown_subagent_runtime
-        from deepseek_tui.capabilities.tasks import shutdown_task_manager
 
         await stop_automation_runtime(
             self._automation_cancel,
             self._automation_scheduler_task,
         )
-        await shutdown_subagent_runtime(
-            self.subagent_manager,
-            self.mailbox,
-            owns_manager=self._owns_subagent_manager,
-        )
-        await shutdown_task_manager(
-            self.task_manager,
-            owns_manager=self._owns_task_manager,
-        )
-        await shutdown_mcp_manager(
-            self.mcp_manager,
-            owns_manager=self._owns_mcp_manager,
-        )
-        await shutdown_lsp_manager(self.lsp_manager)
+        if self.mailbox is not None:
+            self.mailbox.close()
+        from deepseek_tui.host.services import ServiceScope
+
+        await self.context.services.shutdown_scope(ServiceScope.PROCESS)
 
 
 async def create_tool_runtime(
@@ -162,12 +149,14 @@ async def materialize_tool_runtime(
 
     cfg = config or Config()
     workspace = (working_directory or Path.cwd()).resolve()
-    services = ServiceRegistry()
     assembled = (
         contributions
         if isinstance(contributions, AssembledContributions)
         else collect_builtin_contributions(cfg)
     )
+    services = ServiceRegistry()
+    if assembled.services.typed_keys() or assembled.services.named_keys():
+        services.merge_from(assembled.services)
 
     subagent_manager: SubAgentManager | None = None
     mailbox: Mailbox | None = None
@@ -186,6 +175,8 @@ async def materialize_tool_runtime(
         shared_task_manager=shared_task_manager,
         executor_factory=_safe_task_executor,
     )
+    if task_manager is not None and not owns_task_manager:
+        services.mark_externally_owned(task_manager)
 
     from deepseek_tui.capabilities.subagents import create_subagent_manager
 
@@ -208,6 +199,8 @@ async def materialize_tool_runtime(
         provided_manager=mcp_manager,
         start_mcp=start_mcp,
     )
+    if mcp is not None and not owns_mcp_manager:
+        services.mark_externally_owned(mcp)
     attach_task_mcp_bridge(task_manager, mcp)
 
     from deepseek_tui.capabilities.lsp import (
@@ -217,7 +210,11 @@ async def materialize_tool_runtime(
 
     lsp = create_lsp_manager(cfg, services)
 
-    registry = build_tool_registry_from_contributions(assembled, cfg, mode=mode)
+    registry = build_tool_registry_from_contributions(
+        assembled,
+        cfg,
+        mode=mode,
+    )
     attach_task_bindings(task_manager, services=services)
     attach_mcp_bindings(mcp, services=services)
     attach_lsp_bindings(lsp, services=services)

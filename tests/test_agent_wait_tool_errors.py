@@ -50,7 +50,7 @@ async def test_agent_wait_without_ids_waits_running_agents() -> None:
 
     assert result.success is True
     manager.wait.assert_awaited_once_with(
-        ["agent_running"], mode="all", timeout_ms=10000
+        ["agent_running"], mode="all", timeout_ms=30000
     )
 
 

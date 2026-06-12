@@ -16,8 +16,8 @@ from deepseek_tui.capabilities.hooks import (
 )
 from deepseek_tui.capabilities.post_turn import (
     build_post_turn_pipelines,
+    dynamic_post_turn_tool_observer,
     flush_post_turn_before_loss,
-    post_turn_tool_observer,
     run_post_turn_after_turn,
     start_post_turn_orchestrator,
     stop_post_turn_orchestrator,
@@ -218,7 +218,7 @@ async def test_post_turn_capability_after_tool_observer_notifies_main_tool() -> 
     registry.add(
         id="post_turn.after_tool",
         owner="post_turn",
-        observer=post_turn_tool_observer(post_turn),
+        observer=dynamic_post_turn_tool_observer(lambda: post_turn),
     )
 
     await registry.after_tool(

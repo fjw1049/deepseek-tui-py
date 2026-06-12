@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.host.engine_shell import EngineShell
+from deepseek_tui.host.lifecycle import PREPARED_USER_TURN_DECORATION, PreparedUserTurn
 from deepseek_tui.host.prompts import (
     FunctionPromptContributor,
     PromptContributor,
@@ -40,7 +42,7 @@ _TRIVIAL_RECALL_PROMPTS = {
     "谢谢",
 }
 
-MEMORY_TURN_CONTEXT_DECORATION = "memory.turn_context"
+MEMORY_TURN_CONTEXT_DECORATION = PREPARED_USER_TURN_DECORATION
 
 
 @dataclass(slots=True)
@@ -52,31 +54,7 @@ class MemoryRuntime:
     provider: MemoryProvider | None = None
 
 
-@dataclass(slots=True)
-class MemoryTurnContext:
-    thread_id: str
-    recall: object | None
-    user_message: Message
-
-
-@dataclass(slots=True)
-class MemoryBeforeTurnObserver:
-    coordinator: object | None
-    memory_thread_id: str | None
-    cycle_session_id: str | None
-    memory_mode: str | None
-
-    async def before_user_turn(self, context: object) -> None:
-        prepared = await prepare_memory_turn_context(
-            coordinator=self.coordinator,
-            metadata=context.metadata,  # type: ignore[attr-defined]
-            memory_thread_id=self.memory_thread_id,
-            cycle_session_id=self.cycle_session_id,
-            user_text=context.user_text,  # type: ignore[attr-defined]
-            workspace=context.workspace,  # type: ignore[attr-defined]
-            memory_mode=self.memory_mode,
-        )
-        context.decorations[MEMORY_TURN_CONTEXT_DECORATION] = prepared  # type: ignore[attr-defined]
+MemoryTurnContext = PreparedUserTurn
 
 
 @dataclass(slots=True)
@@ -99,21 +77,6 @@ class DynamicMemoryBeforeTurnObserver:
         context.decorations[MEMORY_TURN_CONTEXT_DECORATION] = prepared  # type: ignore[attr-defined]
 
 
-def memory_before_turn_observer(
-    *,
-    coordinator: object | None,
-    memory_thread_id: str | None,
-    cycle_session_id: str | None,
-    memory_mode: str | None,
-) -> MemoryBeforeTurnObserver:
-    return MemoryBeforeTurnObserver(
-        coordinator=coordinator,
-        memory_thread_id=memory_thread_id,
-        cycle_session_id=cycle_session_id,
-        memory_mode=memory_mode,
-    )
-
-
 def dynamic_memory_before_turn_observer(
     *,
     coordinator: Callable[[], object | None],
@@ -126,6 +89,26 @@ def dynamic_memory_before_turn_observer(
         memory_thread_id=memory_thread_id,
         cycle_session_id=cycle_session_id,
         memory_mode=memory_mode,
+    )
+
+
+def register_engine_lifecycle_observer(access: object, registry: object) -> None:
+    """Register the memory before-turn lifecycle observer once."""
+    from deepseek_tui.host.lifecycle import lifecycle_observer_registered
+
+    if lifecycle_observer_registered(registry, "memory.before_turn"):  # type: ignore[arg-type]
+        return
+
+    registry.add(  # type: ignore[attr-defined]
+        id="memory.before_turn",
+        owner="memory",
+        order=100,
+        observer=dynamic_memory_before_turn_observer(
+            coordinator=access.memory_coordinator,  # type: ignore[attr-defined]
+            memory_thread_id=access.memory_thread_id,  # type: ignore[attr-defined]
+            cycle_session_id=access.cycle_session_id,  # type: ignore[attr-defined]
+            memory_mode=access.memory_mode,  # type: ignore[attr-defined]
+        ),
     )
 
 
@@ -167,7 +150,7 @@ async def create_memory_runtime(
 
 
 async def attach_engine_memory(
-    engine: object,
+    shell: EngineShell,
     config: Config,
     client: LLMClient,
 ) -> MemoryRuntime:
@@ -175,16 +158,16 @@ async def attach_engine_memory(
     memory_runtime = await create_memory_runtime(
         config,
         client,
-        engine.tool_context.services,  # type: ignore[attr-defined]
+        shell.tool_context.services,
     )
-    engine.memory_enabled = memory_runtime.enabled  # type: ignore[attr-defined]
-    engine.memory_path = memory_runtime.path  # type: ignore[attr-defined]
-    engine.memory_mode = memory_runtime.mode  # type: ignore[attr-defined]
-    engine.memory_coordinator = memory_runtime.coordinator  # type: ignore[attr-defined]
+    shell.memory_enabled = memory_runtime.enabled
+    shell.memory_path = memory_runtime.path
+    shell.memory_mode = memory_runtime.mode
+    shell.memory_coordinator = memory_runtime.coordinator
     attach_memory_bindings(
         memory_runtime,
-        metadata=engine.tool_context.metadata,  # type: ignore[attr-defined]
-        services=engine.tool_context.services,  # type: ignore[attr-defined]
+        metadata=shell.tool_context.metadata,
+        services=shell.tool_context.services,
     )
     return memory_runtime
 
@@ -226,11 +209,14 @@ async def recall_memory_for_turn(
         return None
     if not isinstance(coordinator, MemoryCoordinator):
         return None
-    return await coordinator.recall_for_turn(
-        thread_id,
-        user_text,
-        workspace=str(workspace.resolve()),  # noqa: ASYNC240
-        thread_memory_mode=memory_mode,
+    return cast(
+        object | None,
+        await coordinator.recall_for_turn(
+            thread_id,
+            user_text,
+            workspace=str(workspace.resolve()),  # noqa: ASYNC240
+            thread_memory_mode=memory_mode,
+        ),
     )
 
 
@@ -243,7 +229,7 @@ async def prepare_memory_turn_context(
     user_text: str,
     workspace: Path,
     memory_mode: str | None,
-) -> MemoryTurnContext:
+) -> PreparedUserTurn:
     from deepseek_tui.memory.formatting import wrap_relevant_memories
     from deepseek_tui.protocol.messages import Message
 
@@ -262,13 +248,13 @@ async def prepare_memory_turn_context(
     )
     user_message = Message.user(user_text)
     if (
-        recall
-        and getattr(recall, "l1_context", "").strip()
-        and getattr(recall, "inject_position", None) == "user"
+        isinstance(recall, RecallResult)
+        and recall.l1_context.strip()
+        and recall.inject_position == "user"
     ):
         wrapped = wrap_relevant_memories(user_text, recall.l1_context)
         user_message = Message.user(wrapped)
-    return MemoryTurnContext(
+    return PreparedUserTurn(
         thread_id=thread_id,
         recall=recall,
         user_message=user_message,
@@ -318,7 +304,7 @@ def memory_md_enabled(
 ) -> bool:
     if coordinator is not None:
         if isinstance(coordinator, MemoryCoordinator):
-            return coordinator.memory_md_enabled(memory_mode)
+            return bool(coordinator.memory_md_enabled(memory_mode))
     return fallback_enabled
 
 
@@ -423,7 +409,7 @@ def memory_prompt_contributors() -> list[PromptContributor]:
 def _memory_stable(ctx: PromptContributorContext) -> str | None:
     recall = ctx.memory_recall
     if isinstance(recall, RecallResult) and recall.append_system.strip():
-        return recall.append_system.strip()
+        return str(recall.append_system.strip())
     return None
 
 
@@ -433,7 +419,7 @@ def _memory_volatile(ctx: PromptContributorContext) -> str | None:
         return None
     if not recall.l1_context.strip() or recall.inject_position != "system_volatile":
         return None
-    return wrap_relevant_memories_system_block(recall.l1_context)
+    return str(wrap_relevant_memories_system_block(recall.l1_context))
 
 
 def _user_memory(ctx: PromptContributorContext) -> str | None:
@@ -444,4 +430,4 @@ def _user_memory(ctx: PromptContributorContext) -> str | None:
         memory_path = user_memory_path()
     from deepseek_tui.memory.user_memory import compose_block
 
-    return compose_block(ctx.memory_enabled, memory_path)
+    return cast(str | None, compose_block(ctx.memory_enabled, memory_path))

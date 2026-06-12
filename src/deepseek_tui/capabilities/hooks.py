@@ -9,6 +9,7 @@ from typing import Protocol
 from deepseek_tui.config.models import Config
 from deepseek_tui.hooks.build import build_hook_dispatcher, build_lifecycle_hook_executor
 from deepseek_tui.hooks.executor import HookExecutor
+from deepseek_tui.host.engine_shell import EngineShell
 from deepseek_tui.host.services import ServiceRegistry, ServiceScope
 
 
@@ -42,13 +43,9 @@ def normalize_hook_executor(raw: object | None) -> HookExecutor:
     return HookExecutor.disabled()
 
 
-def attach_engine_hooks(engine: object) -> None:
+def attach_engine_hooks(shell: EngineShell) -> None:
     """Register hook executor on ToolContext.services for an Engine shell."""
-    hook_executor = getattr(engine, "hook_executor", None)
-    tool_context = getattr(engine, "tool_context", None)
-    if hook_executor is None or tool_context is None:
-        return
-    attach_hook_bindings(hook_executor, tool_context.services)
+    attach_hook_bindings(shell.hook_executor, shell.tool_context.services)
 
 
 def attach_hook_bindings(

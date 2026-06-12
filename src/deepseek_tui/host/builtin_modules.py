@@ -15,6 +15,38 @@ def _always_enabled(_config: Config) -> bool:
     return True
 
 
+def _mcp_enabled(config: Config) -> bool:
+    return bool(config.features.mcp)
+
+
+def _tasks_enabled(config: Config) -> bool:
+    return bool(config.features.tasks)
+
+
+def _subagents_enabled(config: Config) -> bool:
+    return bool(config.features.subagents)
+
+
+def _automations_enabled(config: Config) -> bool:
+    return bool(config.features.automations and config.features.tasks)
+
+
+def _smart_memory_enabled(config: Config) -> bool:
+    return bool(config.smart_memory_enabled())
+
+
+def _evolution_curated_enabled(config: Config) -> bool:
+    return bool(config.evolution.enabled and config.evolution.curated.enabled)
+
+
+def _evolution_procedural_enabled(config: Config) -> bool:
+    return bool(config.evolution.enabled and config.evolution.procedural.enabled)
+
+
+def _evolution_surfaces_enabled(config: Config) -> bool:
+    return bool(config.evolution.enabled)
+
+
 @dataclass(slots=True)
 class _FunctionalModule:
     descriptor: ModuleDescriptor
@@ -24,11 +56,85 @@ class _FunctionalModule:
         self._contribute_fn(contributions)
 
 
-def _contrib_tool_packs(contributions: Contributions) -> None:
-    from deepseek_tui.capabilities.toolpacks import default_tool_packs
+_EARLY_OPTIONAL_TOOLPACK_MODULE_IDS: tuple[str, ...] = (
+    "builtin.toolpack.mcp",
+    "builtin.toolpack.tasks",
+    "builtin.toolpack.subagents",
+    "builtin.toolpack.automation",
+)
 
-    for pack in default_tool_packs():
+_LATE_OPTIONAL_TOOLPACK_MODULE_IDS: tuple[str, ...] = (
+    "builtin.toolpack.smart_memory",
+    "builtin.toolpack.evolution_curated",
+    "builtin.toolpack.evolution_procedural",
+)
+
+
+def _contrib_head_tool_packs(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import head_tool_packs
+
+    for pack in head_tool_packs():
         contributions.add_tool_pack(pack)
+
+
+def _contrib_mcp_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import FunctionToolPack, _mcp_bridge_tools
+
+    contributions.add_tool_pack(FunctionToolPack("mcp_bridge", _mcp_bridge_tools))
+
+
+def _contrib_tasks_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import FunctionToolPack, _task_tools
+
+    contributions.add_tool_pack(FunctionToolPack("tasks", _task_tools))
+
+
+def _contrib_subagents_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import FunctionToolPack, _subagent_tools
+
+    contributions.add_tool_pack(FunctionToolPack("subagents", _subagent_tools))
+
+
+def _contrib_automation_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import FunctionToolPack, _automation_tools
+
+    contributions.add_tool_pack(FunctionToolPack("automation", _automation_tools))
+
+
+def _contrib_mid_tool_packs(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import tail_tool_packs
+
+    for pack in tail_tool_packs():
+        contributions.add_tool_pack(pack)
+
+
+def _contrib_smart_memory_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import FunctionToolPack, _smart_memory_tools
+
+    contributions.add_tool_pack(FunctionToolPack("smart_memory", _smart_memory_tools))
+
+
+def _contrib_evolution_curated_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import FunctionToolPack, _evolution_curated_tools
+
+    contributions.add_tool_pack(FunctionToolPack("evolution_curated", _evolution_curated_tools))
+
+
+def _contrib_evolution_procedural_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import (
+        FunctionToolPack,
+        _evolution_procedural_tools,
+    )
+
+    contributions.add_tool_pack(
+        FunctionToolPack("evolution_procedural", _evolution_procedural_tools)
+    )
+
+
+def _contrib_validation_tool_pack(contributions: Contributions) -> None:
+    from deepseek_tui.capabilities.toolpacks import validation_tool_pack
+
+    contributions.add_tool_pack(validation_tool_pack())
 
 
 def _contrib_core_prompts(contributions: Contributions) -> None:
@@ -87,24 +193,99 @@ def _contrib_automation_surfaces(contributions: Contributions) -> None:
 def _module(
     module_id: str,
     contribute_fn: Callable[[Contributions], None],
+    *,
+    enabled: Callable[[Config], bool] | None = None,
+    requires: tuple[str, ...] = (),
+    after: tuple[str, ...] = (),
 ) -> _FunctionalModule:
     return _FunctionalModule(
-        descriptor=ModuleDescriptor(id=module_id, enabled=_always_enabled),
+        descriptor=ModuleDescriptor(
+            id=module_id,
+            enabled=enabled or _always_enabled,
+            requires=requires,
+            after=after,
+        ),
         _contribute_fn=contribute_fn,
     )
 
 
 def builtin_modules() -> tuple[_FunctionalModule, ...]:
     return (
-        _module("builtin.tools", _contrib_tool_packs),
+        _module("builtin.toolpack.core", _contrib_head_tool_packs),
+        _module(
+            "builtin.toolpack.mcp",
+            _contrib_mcp_tool_pack,
+            enabled=_mcp_enabled,
+            after=("builtin.toolpack.core",),
+        ),
+        _module(
+            "builtin.toolpack.tasks",
+            _contrib_tasks_tool_pack,
+            enabled=_tasks_enabled,
+            after=("builtin.toolpack.core",),
+        ),
+        _module(
+            "builtin.toolpack.subagents",
+            _contrib_subagents_tool_pack,
+            enabled=_subagents_enabled,
+            after=("builtin.toolpack.core",),
+        ),
+        _module(
+            "builtin.toolpack.automation",
+            _contrib_automation_tool_pack,
+            enabled=_automations_enabled,
+            requires=("builtin.toolpack.tasks",),
+            after=("builtin.toolpack.core",),
+        ),
+        _module(
+            "builtin.toolpack.mid",
+            _contrib_mid_tool_packs,
+            after=_EARLY_OPTIONAL_TOOLPACK_MODULE_IDS,
+        ),
+        _module(
+            "builtin.toolpack.smart_memory",
+            _contrib_smart_memory_tool_pack,
+            enabled=_smart_memory_enabled,
+            after=("builtin.toolpack.mid",),
+        ),
+        _module(
+            "builtin.toolpack.evolution_curated",
+            _contrib_evolution_curated_tool_pack,
+            enabled=_evolution_curated_enabled,
+            after=("builtin.toolpack.mid",),
+        ),
+        _module(
+            "builtin.toolpack.evolution_procedural",
+            _contrib_evolution_procedural_tool_pack,
+            enabled=_evolution_procedural_enabled,
+            after=("builtin.toolpack.mid",),
+        ),
+        _module(
+            "builtin.toolpack.validation",
+            _contrib_validation_tool_pack,
+            after=_LATE_OPTIONAL_TOOLPACK_MODULE_IDS,
+        ),
         _module("builtin.core_prompt", _contrib_core_prompts),
-        _module("builtin.memory_prompt", _contrib_memory_prompts),
-        _module("builtin.skills_prompt", _contrib_skills_prompts),
-        _module("builtin.workflow_prompt", _contrib_workflow_prompts),
-        _module("builtin.evolution_prompt", _contrib_evolution_prompts),
-        _module("builtin.mcp_surfaces", _contrib_mcp_surfaces),
-        _module("builtin.evolution_surfaces", _contrib_evolution_surfaces),
-        _module("builtin.automation_surfaces", _contrib_automation_surfaces),
+        _module("builtin.memory", _contrib_memory_prompts),
+        _module("builtin.skills", _contrib_skills_prompts),
+        _module("builtin.workflow", _contrib_workflow_prompts),
+        _module("builtin.evolution", _contrib_evolution_prompts),
+        _module(
+            "builtin.mcp_surfaces",
+            _contrib_mcp_surfaces,
+            enabled=_mcp_enabled,
+        ),
+        _module(
+            "builtin.evolution_surfaces",
+            _contrib_evolution_surfaces,
+            enabled=_evolution_surfaces_enabled,
+        ),
+        _module(
+            "builtin.automation_surfaces",
+            _contrib_automation_surfaces,
+            enabled=_automations_enabled,
+            requires=("builtin.toolpack.tasks",),
+        ),
     )
 
 

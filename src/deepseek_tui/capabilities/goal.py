@@ -5,13 +5,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from deepseek_tui.goal.controller import GoalController
 from deepseek_tui.goal.tools import GOAL_CONTROLLER_KEY
+from deepseek_tui.host.engine_shell import EngineShell
+from deepseek_tui.host.lifecycle import (
+    TURN_LIFECYCLE_RESULT_DECORATION,
+    TurnLifecycleResult,
+)
 from deepseek_tui.host.services import ServiceRegistry, ServiceScope
 
-GOAL_TURN_RESULT_DECORATION = "goal.turn_result"
+GOAL_TURN_RESULT_DECORATION = TURN_LIFECYCLE_RESULT_DECORATION
 
 
 @dataclass(slots=True)
@@ -19,10 +24,7 @@ class GoalRuntime:
     controller: GoalController
 
 
-@dataclass(slots=True)
-class GoalTurnResult:
-    follow_up: object | None
-    steer: str | None
+GoalTurnResult = TurnLifecycleResult
 
 
 @dataclass(slots=True)
@@ -96,17 +98,16 @@ def create_goal_runtime(
     return GoalRuntime(controller=controller)
 
 
-def attach_engine_goal(engine: object) -> GoalController:
+def attach_engine_goal(shell: EngineShell) -> GoalController:
     """Create goal runtime and bind it on an Engine shell."""
-    tool_context = engine.tool_context  # type: ignore[attr-defined]
-    goal_thread_id = str(tool_context.metadata.get("runtime_thread_id") or "default")
+    goal_thread_id = str(shell.tool_context.metadata.get("runtime_thread_id") or "default")
     goal_runtime = create_goal_runtime(
-        tool_context.services,
-        workspace=tool_context.working_directory,
+        shell.tool_context.services,
+        workspace=shell.tool_context.working_directory,
         thread_id=goal_thread_id,
     )
-    engine.goal_controller = goal_runtime.controller  # type: ignore[attr-defined]
-    attach_goal_bindings(goal_runtime, services=tool_context.services)
+    shell.goal_controller = goal_runtime.controller
+    attach_goal_bindings(goal_runtime, services=shell.tool_context.services)
     return goal_runtime.controller
 
 
@@ -137,6 +138,23 @@ def goal_lifecycle_observer(
     return GoalLifecycleObserver(controller=controller)
 
 
+def register_engine_lifecycle_observer(access: object, registry: object) -> None:
+    """Register the goal lifecycle observer once."""
+    from deepseek_tui.host.lifecycle import lifecycle_observer_registered
+
+    if lifecycle_observer_registered(registry, "goal.lifecycle"):  # type: ignore[arg-type]
+        return
+
+    registry.add(  # type: ignore[attr-defined]
+        id="goal.lifecycle",
+        owner="goal",
+        order=200,
+        observer=goal_lifecycle_observer(
+            access.goal_controller,  # type: ignore[attr-defined,arg-type]
+        ),
+    )
+
+
 def rebind_goal_thread_if_local(
     controller: GoalController,
     *,
@@ -159,6 +177,9 @@ def bind_goal_runtime_thread(
 
 
 def goal_controller_from_engine(engine: object) -> GoalController | None:
+    controller = getattr(engine, "goal_controller", None)
+    if isinstance(controller, GoalController):
+        return controller
     tool_context = getattr(engine, "tool_context", None)
     services = getattr(tool_context, "services", None)
     if services is not None:
@@ -184,37 +205,7 @@ def goal_mode_hint(mode: str, controller: GoalController) -> str:
 def validate_goal_follow_up(controller: GoalController, goal_id: str | None) -> bool:
     if not goal_id:
         return True
-    return controller.validate_follow_up(goal_id)
-
-
-def start_goal_turn(controller: GoalController) -> None:
-    controller.on_turn_start()
-
-
-def fail_goal_turn(
-    controller: GoalController,
-    reason: str,
-    usage: Any | None = None,
-) -> None:
-    controller.on_turn_failed(reason, usage)
-
-
-def finish_goal_turn(
-    controller: GoalController,
-    *,
-    turn_ok: bool,
-    usage: Any | None,
-    failure_reason: str,
-) -> GoalTurnResult:
-    follow_up = None
-    if turn_ok:
-        follow_up = controller.on_turn_complete(usage)
-    else:
-        controller.on_turn_failed(failure_reason, usage)
-    return GoalTurnResult(
-        follow_up=follow_up,
-        steer=controller.take_pending_steer(),
-    )
+    return bool(controller.validate_follow_up(goal_id))
 
 
 def should_dispatch_goal_follow_up(
@@ -247,7 +238,7 @@ def take_valid_goal_follow_up(controller: GoalController) -> object | None:
         return None
     if not controller.validate_follow_up(follow_up.goal_id):
         return None
-    return follow_up
+    return cast(object | None, follow_up)
 
 
 def goal_follow_up_is_stale(
@@ -260,7 +251,7 @@ def goal_follow_up_is_stale(
         return False
     if controller is None or not hasattr(controller, "validate_follow_up"):
         return True
-    return not bool(controller.validate_follow_up(goal_id))  # type: ignore[attr-defined]
+    return not bool(controller.validate_follow_up(goal_id))
 
 
 def build_goal_follow_up_start_payload(

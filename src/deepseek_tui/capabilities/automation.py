@@ -114,6 +114,7 @@ def contribute_runtime_surfaces(registry: object) -> None:
         method="POST",
         path="/v1/automations",
         handler=routes.create_automation,
+        status_code=201,
     )
     registry.add_route(  # type: ignore[attr-defined]
         id="automation.get",

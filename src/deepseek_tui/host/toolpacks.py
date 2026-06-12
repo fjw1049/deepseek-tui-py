@@ -9,6 +9,7 @@ from deepseek_tui.tools.base import ToolSpec
 
 
 class ToolPack(Protocol):
-    id: str
+    @property
+    def id(self) -> str: ...
 
     def tools(self, config: Config, *, mode: str) -> list[ToolSpec]: ...

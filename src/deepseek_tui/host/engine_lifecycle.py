@@ -2,70 +2,51 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-def _lifecycle_observer_registered(registry: object, observer_id: str) -> bool:
-    return any(
-        registration.id == observer_id
-        for registration in registry.registrations()  # type: ignore[attr-defined]
-    )
+if TYPE_CHECKING:
+    from deepseek_tui.engine.engine import Engine
+    from deepseek_tui.tools.context import ToolContext
 
 
-def register_engine_lifecycle_observers(engine: object) -> None:
+@dataclass(frozen=True, slots=True)
+class EngineLifecycleAccess:
+    """Narrow live view exposed to engine lifecycle capability adapters."""
+
+    tool_context: ToolContext
+    turn_counter: Callable[[], int]
+    pending_lsp_blocks: list[object]
+    memory_coordinator: Callable[[], object | None]
+    memory_thread_id: Callable[[], str | None]
+    cycle_session_id: Callable[[], str | None]
+    memory_mode: Callable[[], str | None]
+    post_turn: Callable[[], object | None]
+    goal_controller: Callable[[], object | None]
+
+    @classmethod
+    def from_engine(cls, engine: Engine) -> EngineLifecycleAccess:
+        return cls(
+            tool_context=engine.tool_context,
+            turn_counter=lambda: engine.turn_counter,
+            pending_lsp_blocks=engine.pending_lsp_blocks,
+            memory_coordinator=lambda: engine.memory_coordinator,
+            memory_thread_id=lambda: engine.memory_thread_id,
+            cycle_session_id=lambda: engine._cycle_session_id,
+            memory_mode=lambda: engine.memory_mode,
+            post_turn=lambda: engine.post_turn,
+            goal_controller=lambda: engine.goal_controller,
+        )
+
+
+def register_engine_lifecycle_observers(engine: Engine) -> None:
     """Register dynamic engine-owned lifecycle observers once after attach."""
-    registry = engine.lifecycle_registry  # type: ignore[attr-defined]
-    tool_context = engine.tool_context  # type: ignore[attr-defined]
+    from deepseek_tui.capabilities import goal, lsp, memory, post_turn
 
-    if not _lifecycle_observer_registered(registry, "lsp.after_tool"):
-        from deepseek_tui.capabilities.lsp import (
-            lsp_manager_from_context,
-            lsp_tool_observer,
-        )
-
-        registry.add(
-            id="lsp.after_tool",
-            owner="lsp",
-            order=50,
-            observer=lsp_tool_observer(
-                manager=lambda: lsp_manager_from_context(
-                    services=tool_context.services,
-                ),
-                workspace=lambda: tool_context.working_directory,
-                turn_counter=lambda: engine.turn_counter,  # type: ignore[attr-defined]
-                add_pending_blocks=engine.pending_lsp_blocks.extend,  # type: ignore[attr-defined]
-            ),
-        )
-
-    if not _lifecycle_observer_registered(registry, "memory.before_turn"):
-        from deepseek_tui.capabilities.memory import dynamic_memory_before_turn_observer
-
-        registry.add(
-            id="memory.before_turn",
-            owner="memory",
-            order=100,
-            observer=dynamic_memory_before_turn_observer(
-                coordinator=lambda: engine.memory_coordinator,  # type: ignore[attr-defined]
-                memory_thread_id=lambda: engine.memory_thread_id,  # type: ignore[attr-defined]
-                cycle_session_id=lambda: engine._cycle_session_id,  # type: ignore[attr-defined]
-                memory_mode=lambda: engine.memory_mode,  # type: ignore[attr-defined]
-            ),
-        )
-
-    if not _lifecycle_observer_registered(registry, "post_turn.after_tool"):
-        from deepseek_tui.capabilities.post_turn import dynamic_post_turn_tool_observer
-
-        registry.add(
-            id="post_turn.after_tool",
-            owner="post_turn",
-            order=100,
-            observer=dynamic_post_turn_tool_observer(lambda: engine.post_turn),  # type: ignore[attr-defined]
-        )
-
-    if not _lifecycle_observer_registered(registry, "goal.lifecycle"):
-        from deepseek_tui.capabilities.goal import goal_lifecycle_observer
-
-        registry.add(
-            id="goal.lifecycle",
-            owner="goal",
-            order=200,
-            observer=goal_lifecycle_observer(lambda: engine.goal_controller),  # type: ignore[attr-defined]
-        )
+    registry = engine.lifecycle_registry
+    access = EngineLifecycleAccess.from_engine(engine)
+    lsp.register_engine_lifecycle_observer(access, registry)
+    memory.register_engine_lifecycle_observer(access, registry)
+    post_turn.register_engine_lifecycle_observer(access, registry)
+    goal.register_engine_lifecycle_observer(access, registry)

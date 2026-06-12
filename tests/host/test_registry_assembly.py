@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from deepseek_tui.capabilities.toolpacks import default_tool_packs
+from deepseek_tui.capabilities.toolpacks import catalog_enabled_tool_packs, default_tool_packs
 from deepseek_tui.config.models import Config, EvolutionConfig, FeatureConfig
 from deepseek_tui.host.assembler import (
     assemble_registry_only,
@@ -137,10 +137,11 @@ def test_collect_builtin_contributions_empty_catalog_is_noop() -> None:
 
 
 def test_collect_builtin_contributions_default_catalog_registers_tool_packs() -> None:
-    assembled = collect_builtin_contributions(Config())
+    cfg = Config()
+    assembled = collect_builtin_contributions(cfg)
 
     assert [pack.id for pack in assembled.tool_packs] == [
-        pack.id for pack in default_tool_packs()
+        pack.id for pack in catalog_enabled_tool_packs(cfg)
     ]
 
 
@@ -272,10 +273,27 @@ def test_build_tool_registry_from_contributions_uses_default_packs_when_empty() 
         catalog=BuiltinModuleCatalog([]),
     )
 
-    registry = build_tool_registry_from_contributions(assembled, cfg, mode="agent")
+    registry = build_tool_registry_from_contributions(
+        assembled,
+        cfg,
+        mode="agent",
+        allow_tool_pack_fallback=True,
+    )
 
     assert registry.contains("read_file")
     assert registry.contains("edit_file")
+
+
+def test_build_tool_registry_from_contributions_empty_without_fallback() -> None:
+    cfg = Config(features=FeatureConfig(tasks=False, subagents=False, mcp=False))
+    assembled = collect_builtin_contributions(
+        cfg,
+        catalog=BuiltinModuleCatalog([]),
+    )
+
+    registry = build_tool_registry_from_contributions(assembled, cfg, mode="agent")
+
+    assert not registry.names()
 
 
 def test_merge_lifecycle_registries_skips_engine_owned_ids() -> None:

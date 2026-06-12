@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.host.services import ServiceRegistry, ServiceScope
@@ -114,7 +114,7 @@ def build_mcp_augmented_tool_catalog(
 def is_external_mcp_tool_call(tool_name: str, *, registry_contains: bool) -> bool:
     from deepseek_tui.mcp.execute import is_external_mcp_tool
 
-    return is_external_mcp_tool(tool_name, registry_contains)
+    return bool(is_external_mcp_tool(tool_name, registry_contains))
 
 
 async def execute_mcp_tool(
@@ -132,7 +132,7 @@ async def execute_mcp_tool(
 def normalize_mcp_tool_name(tool_name: str) -> str:
     from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
 
-    return normalize_mcp_bridge_tool_name(tool_name)
+    return str(normalize_mcp_bridge_tool_name(tool_name))
 
 
 async def try_execute_external_mcp_tool(
@@ -173,7 +173,7 @@ def mcp_preload_status_for_tool_runtime(
     manager = getattr(tool_runtime, "mcp_manager", None)
     if manager is None:
         return {"phase": "disabled", "warming": False, "ready": True}
-    return manager.preload_status()
+    return cast(dict[str, Any], manager.preload_status())
 
 
 def contribute_runtime_surfaces(registry: object) -> None:
@@ -211,19 +211,19 @@ def mcp_preload_status_response(request: object) -> dict[str, Any]:
 
 
 async def mcp_startup_runtime_response(runtime: object) -> dict[str, Any]:
-    return await runtime.mcp_startup()  # type: ignore[attr-defined]
+    return cast(dict[str, Any], await runtime.mcp_startup())  # type: ignore[attr-defined]
 
 
 def mcp_preload_status_runtime_response(runtime: object) -> dict[str, Any]:
-    return runtime.mcp_preload_status()  # type: ignore[attr-defined]
+    return cast(dict[str, Any], runtime.mcp_preload_status())  # type: ignore[attr-defined]
 
 
 async def mcp_servers_runtime_response(runtime: object) -> dict[str, Any]:
-    return await runtime.list_mcp_servers()  # type: ignore[attr-defined]
+    return cast(dict[str, Any], await runtime.list_mcp_servers())  # type: ignore[attr-defined]
 
 
 async def mcp_tools_runtime_response(runtime: object) -> dict[str, Any]:
-    return await runtime.list_mcp_tools()  # type: ignore[attr-defined]
+    return cast(dict[str, Any], await runtime.list_mcp_tools())  # type: ignore[attr-defined]
 
 
 async def shutdown_mcp_manager(

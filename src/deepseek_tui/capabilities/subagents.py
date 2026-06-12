@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.host.engine_shell import EngineShell
 from deepseek_tui.host.services import ServiceRegistry, ServiceScope
 from deepseek_tui.tools.subagent import Mailbox, SubAgentExecutor, SubAgentManager
 from deepseek_tui.tools.subagent.completion import SubAgentCompletion
@@ -75,20 +76,19 @@ def attach_subagent_parent_cancel(
 
 
 async def attach_engine_subagents(
-    engine: object,
+    shell: EngineShell,
     *,
     config: Config,
     client: LLMClient,
     workspace: Path,
     default_model: str,
-    cancel_token: asyncio.Event,
     tool_runtime: object,
 ) -> None:
     """Wire subagent loop runtime onto a materialized engine."""
     manager = getattr(tool_runtime, "subagent_manager", None)
     if manager is None:
         return
-    auto_approve = await engine.approval_handler.auto_approve_enabled()  # type: ignore[attr-defined]
+    auto_approve = await shell.approval_handler.auto_approve_enabled()
     attach_subagent_engine_bindings(
         manager,
         config=config,
@@ -98,9 +98,9 @@ async def attach_engine_subagents(
         allow_shell=getattr(config, "allow_shell", True),
         auto_approve=auto_approve,
         task_manager=getattr(tool_runtime, "task_manager", None),
-        cancel_token=cancel_token,
+        cancel_token=shell.cancel_token,
         mailbox=getattr(tool_runtime, "mailbox", None),
-        completion_sink=engine._enqueue_subagent_completion,  # type: ignore[attr-defined]
+        completion_sink=shell.enqueue_subagent_completion,
     )
 
 

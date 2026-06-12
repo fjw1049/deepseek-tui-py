@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.host.catalog import BuiltinModuleCatalog, default_builtin_catalog
-from deepseek_tui.host.contributions import Contributions, PostTurnPipelineContribution
+from deepseek_tui.host.contributions import Contributions
 from deepseek_tui.host.lifecycle import LifecycleRegistry
 from deepseek_tui.host.prompts import PromptContributor
 from deepseek_tui.host.services import ServiceRegistry
@@ -71,7 +71,6 @@ class AssembledContributions:
     surfaces: RuntimeSurfaceRegistry
     tool_packs: tuple[ToolPack, ...]
     prompt_contributors: tuple[PromptContributor, ...]
-    post_turn_pipelines: tuple[PostTurnPipelineContribution, ...]
 
 
 def collect_builtin_contributions(
@@ -92,18 +91,21 @@ def collect_builtin_contributions(
         surfaces=contributions.surfaces,
         tool_packs=contributions.tool_packs(),
         prompt_contributors=contributions.prompt_contributors(),
-        post_turn_pipelines=contributions.post_turn_pipelines(),
     )
 
 
 def resolve_assembly_tool_packs(
     contributions: AssembledContributions,
+    *,
+    allow_fallback: bool = False,
 ) -> tuple[ToolPack, ...]:
     if contributions.tool_packs:
         return contributions.tool_packs
-    from deepseek_tui.capabilities.toolpacks import default_tool_packs
+    if allow_fallback:
+        from deepseek_tui.capabilities.toolpacks import default_tool_packs
 
-    return default_tool_packs()
+        return default_tool_packs()
+    return ()
 
 
 def resolve_assembly_prompt_contributors(
@@ -116,7 +118,7 @@ def resolve_assembly_prompt_contributors(
     assembled = contributions or collect_builtin_contributions(cfg)
     if assembled.prompt_contributors:
         return assembled.prompt_contributors
-    return collect_builtin_contributions(cfg, catalog=default_builtin_catalog()).prompt_contributors
+    return collect_builtin_contributions(cfg).prompt_contributors
 
 
 def build_tool_registry_from_contributions(
@@ -124,11 +126,15 @@ def build_tool_registry_from_contributions(
     config: Config,
     *,
     mode: str = "agent",
+    allow_tool_pack_fallback: bool = False,
 ) -> ToolRegistry:
     from deepseek_tui.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
-    for pack in resolve_assembly_tool_packs(contributions):
+    for pack in resolve_assembly_tool_packs(
+        contributions,
+        allow_fallback=allow_tool_pack_fallback,
+    ):
         for tool in pack.tools(config, mode=mode):
             registry.register(tool)
     return registry
@@ -204,4 +210,8 @@ def assemble_registry_only(
     """Build ToolRegistry from collected capability contributions."""
     cfg = config or Config()
     assembled = contributions or collect_builtin_contributions(cfg)
-    return build_tool_registry_from_contributions(assembled, cfg, mode=mode)
+    return build_tool_registry_from_contributions(
+        assembled,
+        cfg,
+        mode=mode,
+    )

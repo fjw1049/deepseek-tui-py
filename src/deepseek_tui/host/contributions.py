@@ -18,14 +18,6 @@ class ContributionRegistryError(RuntimeError):
     """Raised when capability contributions conflict."""
 
 
-@dataclass(frozen=True, slots=True)
-class PostTurnPipelineContribution:
-    id: str
-    owner: str
-    pipeline: object
-    order: int = 1000
-
-
 @dataclass(slots=True)
 class Contributions:
     """Host-owned collection point for module contributions.
@@ -39,9 +31,6 @@ class Contributions:
     surfaces: RuntimeSurfaceRegistry = field(default_factory=RuntimeSurfaceRegistry)
     _tool_packs: dict[str, ToolPack] = field(default_factory=dict)
     _prompt_contributors: dict[str, PromptContributor] = field(default_factory=dict)
-    _post_turn_pipelines: dict[str, PostTurnPipelineContribution] = field(
-        default_factory=dict
-    )
 
     def add_tool_pack(self, pack: ToolPack) -> None:
         if pack.id in self._tool_packs:
@@ -63,28 +52,4 @@ class Contributions:
     def prompt_contributors(self) -> tuple[PromptContributor, ...]:
         return tuple(
             sorted(self._prompt_contributors.values(), key=lambda item: item.order)
-        )
-
-    def add_post_turn_pipeline(
-        self,
-        *,
-        id: str,
-        owner: str,
-        pipeline: object,
-        order: int = 1000,
-    ) -> None:
-        if id in self._post_turn_pipelines:
-            raise ContributionRegistryError(
-                f"post-turn pipeline {id!r} already contributed"
-            )
-        self._post_turn_pipelines[id] = PostTurnPipelineContribution(
-            id=id,
-            owner=owner,
-            pipeline=pipeline,
-            order=order,
-        )
-
-    def post_turn_pipelines(self) -> tuple[PostTurnPipelineContribution, ...]:
-        return tuple(
-            sorted(self._post_turn_pipelines.values(), key=lambda item: (item.order, item.id))
         )

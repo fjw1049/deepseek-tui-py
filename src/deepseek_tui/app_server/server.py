@@ -89,6 +89,7 @@ def build_fastapi_app(
         )
         approval_bridge, elevation_bridge = attach_runtime_api(
             app,
+            config=runtime.config,
             auth_token=resolved.token,
             cors_origins=cors_origins,
         )

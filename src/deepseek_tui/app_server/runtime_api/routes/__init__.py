@@ -8,6 +8,8 @@ unchanged.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import APIRouter
 
 from deepseek_tui.app_server.runtime_api.routes import (
@@ -25,14 +27,18 @@ from deepseek_tui.app_server.runtime_api.routes import (
     workspace,
 )
 
+if TYPE_CHECKING:
+    from deepseek_tui.config.models import Config
+
 __all__ = ["build_runtime_api_router"]
 
 
-def build_runtime_api_router() -> APIRouter:
-    from deepseek_tui.config.models import Config
+def build_runtime_api_router(config: "Config | None" = None) -> APIRouter:
+    from deepseek_tui.config.models import Config as AppConfig
     from deepseek_tui.host.assembler import collect_builtin_contributions
     from deepseek_tui.host.surfaces import mount_surface_routes
 
+    cfg = config or AppConfig()
     router = APIRouter()
     router.include_router(health.router)
     router.include_router(threads.router)
@@ -46,5 +52,5 @@ def build_runtime_api_router() -> APIRouter:
     router.include_router(skills.router)
     router.include_router(tasks.router)
     router.include_router(workspace.router)
-    mount_surface_routes(router, collect_builtin_contributions(Config()).surfaces)
+    mount_surface_routes(router, collect_builtin_contributions(cfg).surfaces)
     return router

@@ -20,6 +20,13 @@ from deepseek_tui.prompts import AppMode, Personality, compose_prompt
 INSTRUCTIONS_FILE_MAX_BYTES = 100 * 1024
 
 
+def _load_user_memory(enabled: bool, path: Path) -> str | None:
+    """Compatibility wrapper for legacy callers and tests."""
+    from deepseek_tui.memory.user_memory import compose_block
+
+    return compose_block(enabled, path)
+
+
 def render_environment_block(
     workspace: Path,
     locale_tag: str = "en",
@@ -45,6 +52,7 @@ def build_system_prompt(
     session_evolution_lines: list[str] | None = None,
     evolution_enabled: bool = False,
     workflow_guidelines: bool = False,
+    prompt_contributions: object | None = None,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -89,5 +97,5 @@ def build_system_prompt(
     return append_prompt_contributions(
         compose_prompt(mode, personality),
         context,
-        resolve_assembly_prompt_contributors(),
+        resolve_assembly_prompt_contributors(prompt_contributions),  # type: ignore[arg-type]
     )

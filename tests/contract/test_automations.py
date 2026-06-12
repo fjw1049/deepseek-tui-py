@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -13,9 +14,27 @@ from deepseek_tui.config.models import Config, FeatureConfig
 
 
 @pytest.mark.asyncio
-async def test_list_automations_unconfigured_returns_503(client: AsyncClient) -> None:
-    r = await client.get("/v1/automations")
-    assert r.status_code == 503, r.text
+async def test_list_automations_unconfigured_returns_503(
+    runtime_data_dir: Path,
+) -> None:
+    config = Config(
+        features=FeatureConfig(
+            mcp=False,
+            tasks=True,
+            subagents=False,
+            automations=True,
+        ),
+    )
+    runtime = AppRuntime(config=config, working_directory=runtime_data_dir)
+    app = build_fastapi_app(
+        runtime,
+        http_mode=True,
+        insecure_no_auth=True,
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/v1/automations")
+        assert response.status_code == 503, response.text
 
 
 @pytest.fixture

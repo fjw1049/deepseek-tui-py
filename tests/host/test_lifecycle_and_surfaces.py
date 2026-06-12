@@ -6,7 +6,6 @@ import pytest
 
 from deepseek_tui.host.lifecycle import (
     AfterToolContext,
-    BeforeToolContext,
     BeforeUserTurnContext,
     FunctionLifecycleObserver,
     LifecycleRegistry,
@@ -78,7 +77,6 @@ async def test_lifecycle_registry_dispatches_all_supported_phases(
             on_before_user_turn=lambda _ctx: _record("before-turn"),
             on_turn_completed_cb=lambda _ctx: _record("completed"),
             on_turn_failed_cb=lambda _ctx: _record("failed"),
-            before_tool_cb=lambda _ctx: _record("before-tool"),
             after_tool_cb=lambda _ctx: _record("after-tool"),
         ),
     )
@@ -106,15 +104,6 @@ async def test_lifecycle_registry_dispatches_all_supported_phases(
             services=services,
         )
     )
-    await registry.before_tool(
-        BeforeToolContext(
-            tool_call_id="call-1",
-            tool_name="read_file",
-            arguments={},
-            metadata=metadata,
-            services=services,
-        )
-    )
     await registry.after_tool(
         AfterToolContext(
             tool_call_id="call-1",
@@ -131,7 +120,6 @@ async def test_lifecycle_registry_dispatches_all_supported_phases(
         "before-turn",
         "completed",
         "failed",
-        "before-tool",
         "after-tool",
     ]
 
@@ -145,7 +133,7 @@ def test_lifecycle_registry_rejects_duplicate_ids() -> None:
         registry.add(id="observer", owner="second", observer=observer)
 
 
-def test_runtime_surface_registry_routes_and_presenters() -> None:
+def test_runtime_surface_registry_routes() -> None:
     registry = RuntimeSurfaceRegistry()
 
     async def _handler() -> dict[str, bool]:
@@ -158,22 +146,10 @@ def test_runtime_surface_registry_routes_and_presenters() -> None:
         path="/v1/mcp/startup",
         handler=_handler,
     )
-    registry.add_event_presenter(
-        id="workflow-progress",
-        owner="workflow",
-        event_kind="workflow.progress",
-        presenter=lambda _event: {"ok": True},
-        version=1,
-    )
-
     route = registry.routes()[0]
     assert route.id == "mcp-startup"
     assert route.method == "POST"
     assert route.path == "/v1/mcp/startup"
-    presenter = registry.presenter_for("workflow.progress")
-    assert presenter is not None
-    assert presenter.version == 1
-    assert registry.event_presenters() == (presenter,)
 
 
 def test_runtime_surface_registry_rejects_conflicts() -> None:
@@ -185,13 +161,6 @@ def test_runtime_surface_registry_rejects_conflicts() -> None:
         path="/v1/demo",
         handler=lambda: {"ok": True},
     )
-    registry.add_event_presenter(
-        id="first-event",
-        owner="first",
-        event_kind="demo.event",
-        presenter=lambda _event: {"ok": True},
-    )
-
     with pytest.raises(RuntimeSurfaceRegistryError, match="already registered"):
         registry.add_route(
             id="second",
@@ -199,11 +168,4 @@ def test_runtime_surface_registry_rejects_conflicts() -> None:
             method="GET",
             path="/v1/demo",
             handler=lambda: {"ok": True},
-        )
-    with pytest.raises(RuntimeSurfaceRegistryError, match="already registered"):
-        registry.add_event_presenter(
-            id="second-event",
-            owner="second",
-            event_kind="demo.event",
-            presenter=lambda _event: {"ok": True},
         )

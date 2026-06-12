@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.host.services import ServiceRegistry, ServiceScope
@@ -48,7 +48,7 @@ def lsp_manager_from_context(
 ) -> object | None:
     manager = services.optional(LspManager)
     if manager is not None:
-        return manager
+        return cast(object | None, manager)
     return services.optional_named(LSP_MANAGER_KEY)
 
 
@@ -118,3 +118,27 @@ def lsp_tool_observer(
 async def shutdown_lsp_manager(manager: LspManager | None) -> None:
     if manager is not None:
         await manager.close_all()
+
+
+def register_engine_lifecycle_observer(access: object, registry: object) -> None:
+    """Register the LSP after-tool lifecycle observer once."""
+    from deepseek_tui.host.lifecycle import lifecycle_observer_registered
+
+    if lifecycle_observer_registered(registry, "lsp.after_tool"):  # type: ignore[arg-type]
+        return
+
+    tool_context = access.tool_context  # type: ignore[attr-defined]
+
+    registry.add(  # type: ignore[attr-defined]
+        id="lsp.after_tool",
+        owner="lsp",
+        order=50,
+        observer=lsp_tool_observer(
+            manager=lambda: lsp_manager_from_context(
+                services=tool_context.services,
+            ),
+            workspace=lambda: tool_context.working_directory,
+            turn_counter=access.turn_counter,  # type: ignore[attr-defined]
+            add_pending_blocks=access.pending_lsp_blocks.extend,  # type: ignore[attr-defined]
+        ),
+    )

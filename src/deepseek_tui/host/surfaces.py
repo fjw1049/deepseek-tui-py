@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 HttpMethod = Literal["GET", "POST", "PATCH", "PUT", "DELETE"]
 SurfaceHandler = Callable[..., Awaitable[object] | object]
-EventPresenter = Callable[[object], dict[str, Any] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,15 +17,7 @@ class RuntimeRouteContribution:
     method: HttpMethod
     path: str
     handler: SurfaceHandler
-
-
-@dataclass(frozen=True, slots=True)
-class EventPresenterContribution:
-    id: str
-    owner: str
-    event_kind: str
-    presenter: EventPresenter
-    version: int = 1
+    status_code: int | None = None
 
 
 class RuntimeSurfaceRegistryError(RuntimeError):
@@ -42,7 +33,6 @@ class RuntimeSurfaceRegistry:
 
     def __init__(self) -> None:
         self._routes: dict[tuple[str, str], RuntimeRouteContribution] = {}
-        self._presenters: dict[str, EventPresenterContribution] = {}
 
     def add_route(
         self,
@@ -52,6 +42,7 @@ class RuntimeSurfaceRegistry:
         method: HttpMethod,
         path: str,
         handler: SurfaceHandler,
+        status_code: int | None = None,
     ) -> None:
         normalized_method = method.upper()
         route_key = (normalized_method, path)
@@ -67,29 +58,7 @@ class RuntimeSurfaceRegistry:
             method=normalized_method,  # type: ignore[arg-type]
             path=path,
             handler=handler,
-        )
-
-    def add_event_presenter(
-        self,
-        *,
-        id: str,
-        owner: str,
-        event_kind: str,
-        presenter: EventPresenter,
-        version: int = 1,
-    ) -> None:
-        if event_kind in self._presenters:
-            existing = self._presenters[event_kind]
-            raise RuntimeSurfaceRegistryError(
-                f"event presenter {event_kind!r} already registered by "
-                f"{existing.owner}"
-            )
-        self._presenters[event_kind] = EventPresenterContribution(
-            id=id,
-            owner=owner,
-            event_kind=event_kind,
-            presenter=presenter,
-            version=version,
+            status_code=status_code,
         )
 
     def routes(self) -> tuple[RuntimeRouteContribution, ...]:
@@ -97,21 +66,32 @@ class RuntimeSurfaceRegistry:
             sorted(self._routes.values(), key=lambda item: (item.path, item.method))
         )
 
-    def event_presenters(self) -> tuple[EventPresenterContribution, ...]:
-        return tuple(sorted(self._presenters.values(), key=lambda item: item.event_kind))
-
-    def presenter_for(self, event_kind: str) -> EventPresenterContribution | None:
-        return self._presenters.get(event_kind)
+    def merge_routes_from(self, source: RuntimeSurfaceRegistry) -> None:
+        """Copy route contributions from *source* into this registry."""
+        for route in source.routes():
+            self.add_route(
+                id=route.id,
+                owner=route.owner,
+                method=route.method,
+                path=route.path,
+                handler=route.handler,
+                status_code=route.status_code,
+            )
 
 
 def mount_surface_routes(router: object, registry: RuntimeSurfaceRegistry) -> None:
     """Mount contributed runtime routes onto an isolated FastAPI router."""
     for contribution in registry.routes():
+        route_kwargs: dict[str, object] = {
+            "methods": [contribution.method],
+            "name": contribution.id,
+        }
+        if contribution.status_code is not None:
+            route_kwargs["status_code"] = contribution.status_code
         router.add_api_route(  # type: ignore[attr-defined]
             contribution.path,
             contribution.handler,
-            methods=[contribution.method],
-            name=contribution.id,
+            **route_kwargs,
         )
 
 

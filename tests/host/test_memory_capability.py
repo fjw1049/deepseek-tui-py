@@ -13,7 +13,7 @@ from deepseek_tui.capabilities.memory import (
     build_turn_evidence,
     capture_memory_after_turn,
     create_memory_runtime,
-    memory_before_turn_observer,
+    dynamic_memory_before_turn_observer,
     messages_for_capture,
     prepare_memory_turn_context,
     recall_memory_for_turn,
@@ -213,11 +213,11 @@ async def test_memory_capability_before_turn_observer_decorates_context(
     registry.add(
         id="memory.before_turn",
         owner="memory",
-        observer=memory_before_turn_observer(
-            coordinator=coordinator,
-            memory_thread_id=None,
-            cycle_session_id="cycle-thread",
-            memory_mode="hybrid",
+        observer=dynamic_memory_before_turn_observer(
+            coordinator=lambda: coordinator,
+            memory_thread_id=lambda: None,
+            cycle_session_id=lambda: "cycle-thread",
+            memory_mode=lambda: "hybrid",
         ),
     )
     context = BeforeUserTurnContext(

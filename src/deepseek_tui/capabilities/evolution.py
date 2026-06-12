@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.evolution.constants import (
@@ -15,6 +15,7 @@ from deepseek_tui.evolution.constants import (
     TURN_EVIDENCE_FACTORY_KEY,
     TURN_EVIDENCE_KEY,
 )
+from deepseek_tui.host.engine_shell import EngineShell
 from deepseek_tui.host.prompts import (
     FunctionPromptContributor,
     PromptContributor,
@@ -70,7 +71,7 @@ def create_evolution_runtime(
 
 
 def attach_engine_evolution(
-    engine: object,
+    shell: EngineShell,
     config: Config,
     client: LLMClient,
     *,
@@ -81,15 +82,15 @@ def attach_engine_evolution(
     evolution_runtime = create_evolution_runtime(
         config,
         client,
-        engine.tool_context.services,  # type: ignore[attr-defined]
+        shell.tool_context.services,
         workspace=workspace,
         emit_event=emit_event,
     )
-    engine._curated_snapshot = evolution_runtime.curated_snapshot  # type: ignore[attr-defined]
-    engine._evolution_pipeline = evolution_runtime.pipeline  # type: ignore[attr-defined]
+    shell.curated_snapshot = evolution_runtime.curated_snapshot
+    shell.evolution_pipeline = evolution_runtime.pipeline
     attach_evolution_bindings(
         evolution_runtime,
-        services=engine.tool_context.services,  # type: ignore[attr-defined]
+        services=shell.tool_context.services,
     )
     return evolution_runtime
 
@@ -143,13 +144,13 @@ def evolution_record_to_dict(record: object) -> dict[str, object]:
 
 
 def evolution_action_response(record: object) -> dict[str, object]:
-    return {"ok": True, "record": evolution_record_to_dict(record)}
+    return cast(dict[str, object], {"ok": True, "record": evolution_record_to_dict(record)})
 
 
 def evolution_decision_from_record_status(status: str) -> str:
     from deepseek_tui.evolution.tool_response import decision_from_record_status
 
-    return decision_from_record_status(status)
+    return str(decision_from_record_status(status))
 
 
 def build_main_tool_evolution_response(
@@ -163,13 +164,16 @@ def build_main_tool_evolution_response(
 ) -> dict[str, Any]:
     from deepseek_tui.evolution.tool_response import build_evolution_tool_response
 
-    return build_evolution_tool_response(
-        record=record,  # type: ignore[arg-type]
-        decision=decision,
-        apply_result=apply_result,  # type: ignore[arg-type]
-        mutation=mutation,  # type: ignore[arg-type]
-        store=store,
-        error=error,
+    return cast(
+        dict[str, Any],
+        build_evolution_tool_response(
+            record=record,
+            decision=decision,
+            apply_result=apply_result,
+            mutation=mutation,
+            store=store,
+            error=error,
+        ),
     )
 
 
@@ -263,7 +267,7 @@ def _evolution_guidance(ctx: PromptContributorContext) -> str | None:
         SKILLS_EVOLUTION_GUIDANCE,
     )
 
-    return EVOLUTION_GUIDANCE + "\n\n" + SKILLS_EVOLUTION_GUIDANCE
+    return cast(str, EVOLUTION_GUIDANCE + "\n\n" + SKILLS_EVOLUTION_GUIDANCE)
 
 
 def _session_evolution(ctx: PromptContributorContext) -> str | None:

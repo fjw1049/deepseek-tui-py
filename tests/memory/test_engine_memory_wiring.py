@@ -12,6 +12,7 @@ from deepseek_tui.engine.engine import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.memory.coordinator import MemoryCoordinator
 from deepseek_tui.memory.formatting import strip_relevant_memories, wrap_relevant_memories
+from deepseek_tui.host.turn_lifecycle import memory_thread_id_for
 from deepseek_tui.protocol.messages import Message
 
 
@@ -68,9 +69,9 @@ def test_memory_thread_id_resolution_fallback() -> None:
     from deepseek_tui.tools.context import ToolContext
 
     engine.tool_context = ToolContext(working_directory=Path.cwd())
-    assert engine._resolve_memory_thread_id() == "cycle-abc"
+    assert memory_thread_id_for(engine) == "cycle-abc"
     engine.tool_context.metadata["runtime_thread_id"] = "thr_wb"
-    assert engine._resolve_memory_thread_id() == "thr_wb"
+    assert memory_thread_id_for(engine) == "thr_wb"
 
 
 def test_wrap_strip_relevant_memories_roundtrip() -> None:

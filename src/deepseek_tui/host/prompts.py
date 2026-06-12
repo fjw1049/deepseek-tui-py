@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
-
-PromptCacheScope = Literal["workspace_static", "session_static", "turn_volatile"]
+from typing import Protocol
 
 
 @dataclass(slots=True)
@@ -31,12 +29,14 @@ class PromptContributorContext:
 @dataclass(frozen=True, slots=True)
 class PromptContribution:
     text: str
-    cache_scope: PromptCacheScope = "turn_volatile"
 
 
 class PromptContributor(Protocol):
-    id: str
-    order: int
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def order(self) -> int: ...
 
     def contribute(
         self,
@@ -49,7 +49,6 @@ class FunctionPromptContributor:
     id: str
     order: int
     render: Callable[[PromptContributorContext], str | None]
-    cache_scope: PromptCacheScope = "turn_volatile"
 
     def contribute(
         self,
@@ -58,7 +57,7 @@ class FunctionPromptContributor:
         text = self.render(context)
         if not text:
             return None
-        return PromptContribution(text=text, cache_scope=self.cache_scope)
+        return PromptContribution(text=text)
 
 
 def append_prompt_contributions(
