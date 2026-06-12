@@ -38,12 +38,12 @@ ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 
 ## 常用脚本（仓库根）
 
-| 脚本 | 作用 |
-|------|------|
+| 脚本 / 命令 | 作用 |
+|-------------|------|
 | `./scripts/dev-workbench.sh` | 启动 GUI + 自动起 Runtime |
 | `./scripts/smoke-workbench-chat.sh` | SSE 聊天冒烟（需 7878 已就绪） |
-| `./scripts/verify-workbench.sh` | 类型检查 + 测试 + 可选冒烟 |
-| `./scripts/contract-check.sh` | `pytest tests/contract` |
+| `uv run pytest tests/contract -q` | Runtime API 契约测试（仓库根执行） |
+| `npm run typecheck && npm test` | 本目录 GUI 类型检查 + Vitest |
 
 ## 排错
 
@@ -66,4 +66,4 @@ rm -rf node_modules && npm ci
 
 ## API 契约
 
-`contracts/runtime-api.openapi.yaml` · 实现：`src/deepseek_tui/app_server/runtime_api/`
+`contracts/runtime-api.openapi.yaml` · 实现：`src/deepseek_tui/server/`

@@ -16,7 +16,7 @@ cd deepseek-tui-py
 
 # 1. Python 运行时
 uv venv .venv --python 3.12
-uv pip install -e ".[dev]"
+uv sync --extra dev
 
 # 2. 配置 Key（任选其一）
 export DEEPSEEK_API_KEY=sk-your-key-here
@@ -41,6 +41,7 @@ unset ELECTRON_RUN_AS_NODE   # 在 Cursor 里开发时建议执行
 - **联网搜索**：内置 Web 搜索（AnySearch + Tavily，结果合并）与网页抓取
 - **智能记忆**：可选的 L0→L3 分层记忆，跨会话记住用户偏好、项目习惯与踩坑（默认关闭，见「配置说明」）
 - **自动化任务**：定时 / 触发式 Agent 任务，结果可投递到飞书或邮件
+- **MCP**：通过 `.deepseek/mcp.json` 连接外部 MCP 服务（outbound client；不把 DeepSeek 暴露为 MCP Server）
 - **桌面宠物**：输入框旁的小挂件（可在设置里关闭）
 - **设置**：模型、审批策略（`on-request` / `auto` 等）、Runtime 连接、记忆、自动化、宠物
 
@@ -57,13 +58,13 @@ unset ELECTRON_RUN_AS_NODE   # 在 Cursor 里开发时建议执行
 | 首次启动很慢 | 第一次 `npm ci` 要下 Electron（~150MB），之后会快很多 |
 | 连不上 Runtime | 设置里检查 API Key；确认 `.deepseek/config.toml` 或环境变量已配置 |
 
-更细的排错、环境变量、契约测试见 [`packages/workbench/README.md`](packages/workbench/README.md)。
+更细的排错见 [`packages/workbench/README.md`](packages/workbench/README.md)。
 
 ---
 
 ## 配置说明
 
-运行时数据默认在项目下的 `.deepseek/`（已 gitignore，每个 clone 独立）：
+运行时数据默认在 `~/.deepseek/`（也可用仓库内 `.deepseek/` 作项目覆盖）。每个 clone 可独立配置：
 
 ```toml
 # .deepseek/config.toml
@@ -80,14 +81,23 @@ api_key = "sk-your-key-here"
 [features]
 tasks = true
 automations = true
+mcp = true
+
+[memory.smart]
+enabled = false   # 置 true 开启 L0→L3 智能记忆
+
+# 可选：自动化投递（飞书 / 邮件）
+# [automation.feishu]
+# app_id = "..."
+# app_secret = "..."
+# chat_id = "..."
 ```
 
 也可用环境变量 `DEEPSEEK_API_KEY`。跨项目共享配置可设 `DEEPSEEK_HOME=~/.deepseek-shared`。
 
-完整可配项见 [`config.example.toml`](config.example.toml)，含：
+完整可配项见 [`config.example.toml`](config.example.toml)。飞书入站 / 测试发送由 Runtime HTTP 路由提供（`/feishu/inbound`、`/feishu/test-send`），在 GUI 设置或 `config.toml` 的 `[automation.feishu]` 中配置即可。
 
-- **`[memory.smart]`** — 智能分层记忆（L0→L3）。默认关闭，置 `enabled = true` 开启；召回阈值、L1/L2/L3 节奏、混合检索与可选向量召回均可调。设计细节见 [`docs/MEMORY_INTEGRATION.md`](docs/MEMORY_INTEGRATION.md)。
-- **`[automation]` / `[automation.email]`** — 自动化任务的投递配置（SMTP 邮件等）。飞书投递见 [`scripts/start-feishu-bridge.sh`](scripts/start-feishu-bridge.sh)，热搜示例见 [`scripts/run-baidu-hotsearch-once.sh`](scripts/run-baidu-hotsearch-once.sh)。
+MCP 配置文件默认路径：`~/.deepseek/mcp.json`（可用 `mcp_config_path` 覆盖）。CLI/TUI 均支持 `deepseek-tui mcp list|add|enable|…`。
 
 ---
 
@@ -96,16 +106,16 @@ automations = true
 喜欢终端的用户：
 
 ```bash
-source .venv/bin/activate
-deepseek-tui                    # 交互 TUI
-deepseek-tui -p "你好"          # 单次问答
-deepseek-tui doctor             # 健康检查
+uv run deepseek-tui                    # 交互 TUI
+uv run deepseek-tui -p "你好"          # 单次问答
+uv run deepseek-tui doctor             # 健康检查
 ```
 
 手动只起 API（给 GUI 或其它客户端用）：
 
 ```bash
-deepseek-tui serve --http --port 7878 --config .deepseek/config.toml
+uv run deepseek-tui serve --http --host 127.0.0.1 --port 7878 \
+  --config .deepseek/config.toml --insecure
 ```
 
 ---
@@ -113,30 +123,55 @@ deepseek-tui serve --http --port 7878 --config .deepseek/config.toml
 ## 开发与测试
 
 ```bash
-# GUI 契约（Runtime /v1 API）
-pytest tests/contract -q
+# 安装 Python 开发依赖
+uv sync --extra dev
 
-# 日常单元测试（不含真实 API）
-pytest tests -q -m "not live and not live_mcp"
+# Runtime / Workbench 契约（/v1 API）
+uv run pytest tests/contract -q
 
-# GUI 类型检查 + 冒烟（需 Runtime 已启动）
-./scripts/verify-workbench.sh
+# 日常单元测试（不含 live / e2e）
+uv run pytest -q -m "not live and not e2e"
+
+# GUI 类型检查 + 前端单测
+cd packages/workbench && npm run typecheck && npm test
+
+# SSE 聊天冒烟（需 Runtime 已在 7878 就绪）
+./scripts/smoke-workbench-chat.sh
 ```
+
+内部设计备忘见 [`docs/HANDOVER.md`](docs/HANDOVER.md)（部分链接可能随文档精简而过期）。
 
 ---
 
-## 仓库结构（简图）
+## 仓库结构
 
 ```
 deepseek-tui-py/
-├── packages/workbench/     # Electron 桌面 GUI
-├── src/deepseek_tui/       # Python 引擎、工具、Runtime API
-├── scripts/dev-workbench.sh
-├── .deepseek/              # 本地配置与会话（运行时生成）
-└── contracts/              # Runtime API 契约
+├── packages/workbench/          # Electron 桌面 GUI（React + Vite）
+├── src/deepseek_tui/            # Python 包（合并后约 13 个子模块）
+│   ├── cli/                     # Typer CLI（serve / doctor / mcp …）
+│   ├── tui/                     # Textual 终端 UI
+│   ├── server/                  # FastAPI Runtime（threads、SSE、审批桥）
+│   ├── engine/                  # 对话引擎（orchestrator、turn、dispatch）
+│   ├── tools/                   # 内置工具注册表与实现
+│   ├── mcp/                     # MCP outbound client（manager / store / actions）
+│   ├── memory/                  # L0–L3 智能记忆
+│   ├── policy/                  # 审批、沙箱、execpolicy 规则
+│   ├── integrations/            # hooks、goal、skills、lsp
+│   ├── workflow/                # 工作流 DSL 与运行时
+│   ├── automation/              # 定时任务、飞书/邮件投递
+│   ├── state/                   # 会话、密钥、@mention 上下文
+│   ├── config/ / client/ / protocol/ / prompts/
+├── scripts/
+│   ├── dev-workbench.sh         # 启动 GUI（Runtime 由 GUI 拉起）
+│   ├── smoke-workbench-*.sh     # 冒烟脚本
+│   └── start-service.sh         # 仅起 Runtime 服务
+├── contracts/                   # OpenAPI + SSE JSON Schema
+├── config.example.toml
+└── .deepseek/                   # 本地配置与会话（gitignore，运行时生成）
 ```
 
-基于 [DeepSeek-TUI](https://github.com/deepseek-ai/DeepSeek-TUI)（Rust）的 Python 复刻，含 70+ 工具、MCP、子代理、审批与安全策略等能力。
+基于 [DeepSeek-TUI](https://github.com/deepseek-ai/DeepSeek-TUI)（Rust）的 Python 复刻，含 70+ 工具、MCP 客户端、子代理、审批与安全策略等能力。
 
 ---
 
