@@ -49,6 +49,16 @@ class ToolCallEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentRoundCompleteEvent:
+    """One LLM round finished; ``tool_calls`` empty means terminal round."""
+
+    round_idx: int
+    tool_calls: tuple[ToolCall, ...] = ()
+    preface_text: str | None = None
+    round_thinking: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ToolResultEvent:
     tool_call_id: str
     tool_name: str
@@ -181,6 +191,7 @@ EngineEvent = (
     | TextDeltaEvent
     | ThinkingDeltaEvent
     | ToolCallEvent
+    | AgentRoundCompleteEvent
     | ToolResultEvent
     | ApprovalRequiredEvent
     | ApprovalResolvedEvent

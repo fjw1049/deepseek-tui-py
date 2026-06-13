@@ -58,6 +58,7 @@ import {
   reconcileOptimisticUserBlock,
   threadBelongsToWorkspace,
   threadSnapshotLooksRunning,
+  upsertFinalAnswerBlock,
   upsertUserBlock,
   upsertWorkflowBlock
 } from './chat-store-runtime-helpers'
@@ -165,7 +166,12 @@ function finalizeTurnTiming(state: ChatState): Partial<ChatState> {
   }
 }
 
-function appendLiveReasoningBlock(blocks: ChatBlock[], text: string): ChatBlock[] {
+function appendLiveReasoningBlock(
+  blocks: ChatBlock[],
+  text: string,
+  itemId?: string,
+  createdAt?: string
+): ChatBlock[] {
   const sanitized = sanitizeReasoningPlaceholders(text)
   if (!sanitized) return blocks
   const now = Date.now()
@@ -173,22 +179,27 @@ function appendLiveReasoningBlock(blocks: ChatBlock[], text: string): ChatBlock[
     ...blocks,
     {
       kind: 'reasoning' as const,
-      id: `r-${now}`,
-      createdAt: new Date(now).toISOString(),
+      id: itemId ?? `r-${now}`,
+      createdAt: createdAt ?? new Date(now).toISOString(),
       text: sanitized
     }
   ]
 }
 
-function appendLiveAssistantBlock(blocks: ChatBlock[], text: string): ChatBlock[] {
+function appendLiveAssistantBlock(
+  blocks: ChatBlock[],
+  text: string,
+  itemId?: string,
+  createdAt?: string
+): ChatBlock[] {
   if (!text.trim()) return blocks
   const now = Date.now()
   return [
     ...blocks,
     {
       kind: 'assistant' as const,
-      id: `a-${now}`,
-      createdAt: new Date(now).toISOString(),
+      id: itemId ?? `a-${now}`,
+      createdAt: createdAt ?? new Date(now).toISOString(),
       text
     }
   ]
@@ -246,15 +257,33 @@ function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Parti
   if (sanitizedReasoning) {
     nextBlocks.push({ kind: 'reasoning', id: `r-${now}`, createdAt, text: sanitizedReasoning })
   }
-  if (state.liveAssistant.trim()) {
-    nextBlocks.push({ kind: 'assistant', id: `a-${now}`, createdAt, text: state.liveAssistant })
+  if (nextBlocks.length === state.blocks.length && !shouldClearReasoning && !state.liveAssistant.trim()) {
+    return base
   }
-  if (nextBlocks.length === state.blocks.length && !shouldClearReasoning) return base
   return {
     ...base,
     blocks: nextBlocks,
     ...(shouldClearReasoning ? { liveReasoning: '' } : {}),
     liveAssistant: ''
+  }
+}
+
+async function reloadActiveThreadBlocks(
+  get: () => ChatState,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
+): Promise<void> {
+  const state = get()
+  const threadId = state.activeThreadId
+  if (!threadId || state.runtimeConnection !== 'ready') return
+  try {
+    const provider = getProvider(state.providerId)
+    const { blocks: rawBlocks, latestSeq } = await provider.getThreadDetail(threadId)
+    set({
+      blocks: hydrateBlockModelLabels(threadId, rawBlocks),
+      lastSeq: latestSeq
+    })
+  } catch {
+    /* keep in-memory blocks if reload fails */
   }
 }
 
@@ -465,6 +494,11 @@ function buildThreadEventSink(
                   ? { ...s.turnReasoningLastAtByUserId, [userId]: now }
                   : { ...nextReasoningLastAtByUserId, [userId]: now }
             }
+            continue
+          }
+          if (delta.kind === 'agent_message') {
+            // Mid-turn model prefaces are persisted server-side only; phase_bridge
+            // narration is patched onto reasoning via onPhaseNarration.
             continue
           }
           if (liveReasoning.trim()) {
@@ -830,25 +864,61 @@ function buildThreadEventSink(
         }
       })
     },
-    onLiveSegmentComplete: (kind) => {
+    onLiveSegmentComplete: (kind, itemId, createdAt) => {
       resetBusyRecoveryAttempts()
       set((s) => {
         if (kind === 'agent_reasoning' && s.liveReasoning.trim()) {
           return {
-            blocks: appendLiveReasoningBlock(s.blocks, s.liveReasoning),
+            blocks: appendLiveReasoningBlock(s.blocks, s.liveReasoning, itemId, createdAt),
             liveReasoning: ''
           }
         }
         if (kind === 'agent_message' && s.liveAssistant.trim()) {
-          return {
-            blocks: appendLiveAssistantBlock(s.blocks, s.liveAssistant),
-            liveAssistant: ''
-          }
+          // Mid-turn model prefaces are persisted server-side only; phase_bridge
+          // narration is patched onto reasoning via onPhaseNarration.
+          return { liveAssistant: '' }
         }
         return {}
       })
       scheduleTurnCompletionProbe(get, sink)
     },
+    onFinalAnswer: (itemId, text, createdAt) => {
+      resetBusyRecoveryAttempts()
+      set((s) => ({
+        blocks: upsertFinalAnswerBlock(s.blocks, itemId, text, createdAt),
+        liveAssistant: ''
+      }))
+      scheduleTurnCompletionProbe(get, sink)
+    },
+    onPhaseNarration: (reasoningItemId, text) =>
+      set((s) => {
+        const trimmed = text.trim()
+        if (!trimmed) return {}
+        const hasBlock = s.blocks.some(
+          (block) => block.kind === 'reasoning' && block.id === reasoningItemId
+        )
+        if (!hasBlock) {
+          return {
+            blocks: [
+              ...s.blocks,
+              {
+                kind: 'reasoning' as const,
+                id: reasoningItemId,
+                createdAt: new Date().toISOString(),
+                text: '',
+                narration: trimmed
+              }
+            ]
+          }
+        }
+        return {
+          blocks: s.blocks.map((block) =>
+            block.kind === 'reasoning' && block.id === reasoningItemId
+              ? { ...block, narration: trimmed }
+              : block
+          )
+        }
+      }),
     onTurnComplete: () => {
       clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
@@ -879,8 +949,10 @@ function buildThreadEventSink(
         }
         return base
       })
+      set((s) => ({ usageRefreshKey: s.usageRefreshKey + 1 }))
       notifyTurnComplete(completedThreadId, completedState, completedKey)
       syncTurnCompletionPoll(set, get)
+      void reloadActiveThreadBlocks(get, set)
       void get().refreshThreads()
       void get().drainQueuedMessages()
     },
@@ -947,6 +1019,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadThreadIds: {},
   goalStatus: null,
   scrollToBlockId: null,
+  usageRefreshKey: 0,
 
   ...createAppActions({
     set,

@@ -52,8 +52,8 @@ export type ToolBlock = {
 
 export type ChatBlock =
   | { kind: 'user'; id: string; createdAt?: string; text: string; modelLabel?: string }
-  | { kind: 'assistant'; id: string; createdAt?: string; text: string }
-  | { kind: 'reasoning'; id: string; createdAt?: string; text: string }
+  | { kind: 'assistant'; id: string; createdAt?: string; text: string; agentSegment?: 'mid_turn_preface' | 'final_answer' }
+  | { kind: 'reasoning'; id: string; createdAt?: string; text: string; narration?: string }
   | ToolBlock
   | { kind: 'system'; id: string; createdAt?: string; text: string }
   | {
@@ -244,7 +244,15 @@ export type ThreadEventSink = {
   onUserInputStatus(ev: UserInputStatusPayload): void
   onTurnComplete(): void
   /** Reasoning or assistant live segment finalized on the runtime. */
-  onLiveSegmentComplete?(kind: 'agent_reasoning' | 'agent_message'): void
+  onLiveSegmentComplete?(
+    kind: 'agent_reasoning' | 'agent_message',
+    itemId: string,
+    createdAt?: string
+  ): void
+  /** Terminal final answer persisted on the runtime. */
+  onFinalAnswer?(itemId: string, text: string, createdAt?: string): void
+  /** Phase-bridge narration attached to a completed reasoning segment. */
+  onPhaseNarration?(reasoningItemId: string, text: string): void
   onError(err: Error): void
   /** Optional: thread metadata changed (title / archived). */
   onThreadUpdated?(ev: ThreadUpdatedPayload): void

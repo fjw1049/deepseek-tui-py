@@ -18,6 +18,7 @@ Manages active engines, turn monitoring, LRU eviction, and restart recovery.
 
 import asyncio
 import logging
+import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -85,6 +86,7 @@ from deepseek_tui.server.metrics import (
 )
 from deepseek_tui.config.models import Config
 from deepseek_tui.engine.events import (
+    AgentRoundCompleteEvent,
     ApprovalRequiredEvent,
     ElevationRequiredEvent,
     ErrorEvent,
@@ -99,6 +101,24 @@ from deepseek_tui.engine.events import (
     TurnStartedEvent,
     UserInputRequiredEvent,
     WorkflowProgressEvent,
+)
+from deepseek_tui.server.agent_segments import (
+    AGENT_SEGMENT_KEY,
+    FINAL_ANSWER,
+    MID_TURN_PREFACE,
+    extract_terminal_display_text,
+)
+from deepseek_tui.server.phase_bridge import (
+    PHASE_BRIDGE_AFTER_REASONING_KEY,
+    PHASE_BRIDGE_METADATA_KEY,
+    BatchKind,
+    ReasoningSegment,
+    TurnNarrationState,
+    classify_batch,
+    compute_narration_display,
+    decide_and_prepare,
+    note_published,
+    resolve_narration_locale,
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.tools.subagent import MailboxMessage
@@ -590,6 +610,28 @@ class RuntimeThreadManager:
         latest_seq = await self.store.current_seq()
         return ThreadDetail(thread=thread, turns=turns, items=items, latest_seq=latest_seq)
 
+    async def get_thread_usage(
+        self,
+        thread_id: str,
+        *,
+        group_by: str = "thread",
+    ) -> dict[str, Any]:
+        if group_by != "thread":
+            raise ValueError(f"unsupported usage grouping: {group_by}")
+        self.store.load_thread(thread_id)
+        turns = self.store.list_turns_for_thread(thread_id)
+        live_usage: dict[str, Any] | None = None
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if (
+                state is not None
+                and state.active_turn is not None
+            ):
+                ledger = getattr(state.engine, "turn_usage_ledger", None)
+                if ledger is not None and ledger.items:
+                    live_usage = ledger.totals()
+        return thread_usage_response(thread_id, turns, live_usage=live_usage)
+
     async def get_thread_context_breakdown(self, thread_id: str) -> dict[str, int]:
         """Context window estimate for Workbench / HTTP clients.
 
@@ -969,6 +1011,7 @@ class RuntimeThreadManager:
             {"turn": turn.model_dump(mode="json"), "manual_compaction": True},
         )
 
+        engine.turn_usage_ledger.reset()
         before_count = len(engine.session_messages)
         if before_count == 0:
             summary_text = "Nothing to compact — session is empty."
@@ -1000,6 +1043,20 @@ class RuntimeThreadManager:
         turn.ended_at = ended_at
         if turn.started_at:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        ledger_totals = engine.turn_usage_ledger.totals()
+        if engine.turn_usage_ledger.items:
+            turn.usage = ledger_totals
+            turn_cache_hit = ledger_totals.get("cache_hit_tokens", 0)
+            turn_cache_miss = ledger_totals.get("cache_miss_tokens", 0)
+            if turn_cache_hit > 0 or turn_cache_miss > 0:
+                engine.session_cache_hit_total += turn_cache_hit
+                engine.session_cache_miss_total += turn_cache_miss
+            turn_cost_usd = ledger_totals.get("cost_usd")
+            turn_cost_cny = ledger_totals.get("cost_cny")
+            if isinstance(turn_cost_usd, (int, float)) and turn_cost_usd > 0:
+                engine.session_cost_usd += float(turn_cost_usd)
+            if isinstance(turn_cost_cny, (int, float)) and turn_cost_cny > 0:
+                engine.session_cost_cny += float(turn_cost_cny)
         self.store.save_turn(turn)
 
         thread.updated_at = ended_at
@@ -1286,13 +1343,15 @@ class RuntimeThreadManager:
             if isinstance(event, TurnCompleteEvent):
                 turn_status = RuntimeTurnStatus.COMPLETED
                 turn_error = None
-                if event.usage is not None:
-                    u = event.usage
-                    turn_usage = {
-                        "prompt_tokens": u.input_tokens,
-                        "completion_tokens": u.output_tokens,
-                        "total_tokens": u.input_tokens + u.output_tokens,
-                    }
+                thread_model = self.store.load_thread(thread_id).model or "deepseek-chat"
+                async with self._active_lock:
+                    engine = self._active.get(thread_id)
+                    active_engine = engine.engine if engine is not None else None
+                turn_usage = turn_usage_from_engine_or_event(
+                    engine=active_engine,
+                    event=event,
+                    model=thread_model,
+                )
                 break
             if isinstance(event, TurnCancelledEvent):
                 turn_status = RuntimeTurnStatus.INTERRUPTED
@@ -1398,6 +1457,236 @@ class RuntimeThreadManager:
         )
         tool_call_started_ms: dict[str, int] = {}
         approval_pending_ms: dict[str, int] = {}
+        last_completed_reasoning: ReasoningSegment | None = None
+        narrated_reasoning_ids: set[str] = set()
+        narration_state = TurnNarrationState()
+        narration_compute_tasks: list[asyncio.Task[None]] = []
+        recent_tool_summaries: list[str] = []
+        recent_tool_had_error = False
+        turn_input_summary = self.store.load_turn(turn_id).input_summary
+        narration_cfg = self.config.ui.process_narration
+        narration_locale = resolve_narration_locale(
+            turn_input_summary,
+            config_locale=self.config.ui.locale,
+        )
+
+        async def persist_segment_narration(
+            segment: ReasoningSegment,
+            text: str,
+            batch_kind: BatchKind,
+            tool_calls: tuple,
+        ) -> None:
+            await self._persist_phase_bridge(thread_id, turn_id, segment, text)
+            note_published(
+                narration_state,
+                text,
+                batch=batch_kind,
+                tool_calls=tool_calls,
+            )
+
+        async def flush_narration_tasks(*, wait_remaining: bool = False) -> None:
+            nonlocal narration_compute_tasks
+            still: list[asyncio.Task[None]] = []
+            for task in narration_compute_tasks:
+                if not task.done():
+                    if wait_remaining:
+                        try:
+                            await asyncio.wait_for(task, timeout=narration_cfg.turn_wait_s)
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            if not task.done():
+                                task.cancel()
+                    if not task.done():
+                        still.append(task)
+                        continue
+                try:
+                    task.result()
+                except Exception:
+                    logger.exception(
+                        "phase_bridge compute failed turn=%s task=%s",
+                        turn_id,
+                        task.get_name(),
+                    )
+            narration_compute_tasks = still
+
+        async def finalize_open_reasoning() -> ReasoningSegment | None:
+            nonlocal current_reasoning_item_id, current_reasoning_text, last_completed_reasoning
+            if current_reasoning_item_id is None:
+                return last_completed_reasoning
+            await flush_delta_batch()
+            item = self.store.load_item(current_reasoning_item_id)
+            item.status = TurnItemLifecycleStatus.COMPLETED
+            item.summary = summarize_text(current_reasoning_text, SUMMARY_LIMIT)
+            item.detail = current_reasoning_text
+            item.ended_at = datetime.now(timezone.utc)
+            self.store.save_item(item)
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                current_reasoning_item_id,
+                "item.completed",
+                {"item": item.model_dump(mode="json")},
+            )
+            segment = ReasoningSegment(
+                item_id=current_reasoning_item_id,
+                text=current_reasoning_text,
+            )
+            last_completed_reasoning = segment
+            current_reasoning_item_id = None
+            current_reasoning_text = ""
+            return segment
+
+        async def finalize_open_message(
+            *,
+            agent_segment: str | None = None,
+            status: TurnItemLifecycleStatus | None = None,
+        ) -> None:
+            nonlocal current_message_item_id, current_message_text
+            if current_message_item_id is None:
+                return
+            await flush_delta_batch()
+            item = self.store.load_item(current_message_item_id)
+            if agent_segment:
+                base_meta = item.metadata if isinstance(item.metadata, dict) else {}
+                item.metadata = {**base_meta, AGENT_SEGMENT_KEY: agent_segment}
+            item.status = status or TurnItemLifecycleStatus.COMPLETED
+            item.summary = summarize_text(current_message_text, SUMMARY_LIMIT)
+            item.detail = current_message_text
+            item.ended_at = datetime.now(timezone.utc)
+            self.store.save_item(item)
+            event_name = (
+                "item.interrupted"
+                if item.status == TurnItemLifecycleStatus.INTERRUPTED
+                else "item.completed"
+            )
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                current_message_item_id,
+                event_name,
+                {"item": item.model_dump(mode="json")},
+            )
+            current_message_item_id = None
+            current_message_text = ""
+
+        async def promote_reasoning_to_final_answer(
+            segment: ReasoningSegment,
+            display_text: str,
+        ) -> None:
+            item = self.store.load_item(segment.item_id)
+            base_meta = item.metadata if isinstance(item.metadata, dict) else {}
+            item.kind = TurnItemKind.AGENT_MESSAGE
+            item.status = TurnItemLifecycleStatus.COMPLETED
+            item.detail = display_text
+            item.summary = summarize_text(display_text, SUMMARY_LIMIT)
+            item.metadata = {**base_meta, AGENT_SEGMENT_KEY: FINAL_ANSWER}
+            item.ended_at = datetime.now(timezone.utc)
+            self.store.save_item(item)
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                segment.item_id,
+                "item.completed",
+                {"item": item.model_dump(mode="json")},
+            )
+
+        async def persist_final_answer_message(*, text: str) -> None:
+            nonlocal current_message_item_id, current_message_text
+            cleaned = text.strip()
+            if not cleaned:
+                return
+            now = datetime.now(timezone.utc)
+            if current_message_item_id is not None:
+                item = self.store.load_item(current_message_item_id)
+                base_meta = item.metadata if isinstance(item.metadata, dict) else {}
+                item.kind = TurnItemKind.AGENT_MESSAGE
+                item.status = TurnItemLifecycleStatus.COMPLETED
+                item.detail = cleaned
+                item.summary = summarize_text(cleaned, SUMMARY_LIMIT)
+                item.metadata = {**base_meta, AGENT_SEGMENT_KEY: FINAL_ANSWER}
+                item.ended_at = now
+                item_id = current_message_item_id
+            else:
+                item_id = f"item_{uuid.uuid4().hex[:8]}"
+                item = TurnItemRecord(
+                    id=item_id,
+                    turn_id=turn_id,
+                    kind=TurnItemKind.AGENT_MESSAGE,
+                    status=TurnItemLifecycleStatus.COMPLETED,
+                    summary=summarize_text(cleaned, SUMMARY_LIMIT),
+                    detail=cleaned,
+                    metadata={AGENT_SEGMENT_KEY: FINAL_ANSWER},
+                    started_at=now,
+                    ended_at=now,
+                )
+                self.store.save_item(item)
+                self._attach_item_to_turn(turn_id, item_id)
+            self.store.save_item(item)
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                item_id,
+                "item.completed",
+                {"item": item.model_dump(mode="json")},
+            )
+            current_message_item_id = None
+            current_message_text = ""
+
+        def schedule_phase_bridge(
+            segment: ReasoningSegment, round_event: AgentRoundCompleteEvent
+        ) -> None:
+            nonlocal last_completed_reasoning
+            tool_calls = round_event.tool_calls
+            batch_kind = classify_batch(tool_calls)
+            decision, immediate = decide_and_prepare(
+                state=narration_state,
+                segment=segment,
+                tool_calls=tool_calls,
+                preface_text=round_event.preface_text,
+                narrated_ids=narrated_reasoning_ids,
+                min_chars=narration_cfg.min_chars,
+                has_tool_error=recent_tool_had_error,
+                pending_scheduled=len(narration_compute_tasks),
+                locale=narration_locale,
+                max_published=narration_cfg.max_per_turn,
+            )
+            if decision == "skip":
+                logger.debug(
+                    "phase_bridge skip turn=%s reasoning=%s batch=%s",
+                    turn_id,
+                    segment.item_id,
+                    batch_kind.value,
+                )
+                return
+            narrated_reasoning_ids.add(segment.item_id)
+            last_completed_reasoning = None
+            recent = recent_tool_summaries[-narration_cfg.include_recent_tool_results :]
+            tc_tuple = tuple(tool_calls)
+
+            async def run_and_persist() -> None:
+                try:
+                    text = await self._compute_phase_bridge(
+                        thread_id=thread_id,
+                        user_prompt=turn_input_summary,
+                        state=narration_state,
+                        segment=segment,
+                        tool_calls=tool_calls,
+                        recent_tool_results=recent,
+                        locale=narration_locale,
+                    )
+                except Exception:
+                    logger.exception(
+                        "phase_bridge compute failed turn=%s reasoning=%s",
+                        turn_id,
+                        segment.item_id,
+                    )
+                    return
+                if text:
+                    await persist_segment_narration(segment, text, batch_kind, tc_tuple)
+
+            task = asyncio.create_task(
+                run_and_persist(), name=f"phase-bridge-{segment.item_id}"
+            )
+            narration_compute_tasks.append(task)
 
         def note_tool_result_timing(tool_call_id: str) -> None:
             trace = get_turn_latency(turn_id)
@@ -1440,19 +1729,7 @@ class RuntimeThreadManager:
             elif isinstance(event, TextDeltaEvent):
                 first_response.set()
                 if current_reasoning_item_id is not None:
-                    await flush_delta_batch()
-                    item = self.store.load_item(current_reasoning_item_id)
-                    item.status = TurnItemLifecycleStatus.COMPLETED
-                    item.summary = summarize_text(current_reasoning_text, SUMMARY_LIMIT)
-                    item.detail = current_reasoning_text
-                    item.ended_at = datetime.now(timezone.utc)
-                    self.store.save_item(item)
-                    await self._emit_event(
-                        thread_id, turn_id, current_reasoning_item_id, "item.completed",
-                        {"item": item.model_dump(mode="json")},
-                    )
-                    current_reasoning_item_id = None
-                    current_reasoning_text = ""
+                    await finalize_open_reasoning()
 
                 if current_message_item_id is None:
                     await flush_delta_batch()
@@ -1465,6 +1742,7 @@ class RuntimeThreadManager:
                         status=TurnItemLifecycleStatus.IN_PROGRESS,
                         summary="",
                         detail="",
+                        metadata={AGENT_SEGMENT_KEY: MID_TURN_PREFACE},
                         started_at=now,
                     )
                     self.store.save_item(item)
@@ -1484,6 +1762,7 @@ class RuntimeThreadManager:
             elif isinstance(event, ThinkingDeltaEvent):
                 first_response.set()
                 if current_reasoning_item_id is None:
+                    last_completed_reasoning = None
                     await flush_delta_batch()
                     item_id = f"item_{uuid.uuid4().hex[:8]}"
                     now = datetime.now(timezone.utc)
@@ -1513,6 +1792,9 @@ class RuntimeThreadManager:
             elif isinstance(event, ToolCallEvent):
                 await flush_delta_batch()
                 first_response.set()
+                if current_reasoning_item_id is not None:
+                    await finalize_open_reasoning()
+                await finalize_open_message(agent_segment=MID_TURN_PREFACE)
                 tc = event.tool_call
                 tool_call_started_ms[tc.id] = now_ms()
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
@@ -1564,6 +1846,7 @@ class RuntimeThreadManager:
                             f"{event.tool_name}: {event.content}", SUMMARY_LIMIT
                         )
                     else:
+                        recent_tool_had_error = True
                         item.status = TurnItemLifecycleStatus.FAILED
                         item.summary = summarize_text(
                             f"{event.tool_name} failed: {event.content}", SUMMARY_LIMIT
@@ -1589,6 +1872,11 @@ class RuntimeThreadManager:
                     if refreshed:
                         item.metadata = {**item.metadata, **refreshed}
                     self.store.save_item(item)
+                    if event.success and item.summary:
+                        recent_tool_summaries.append(item.summary)
+                        keep = narration_cfg.include_recent_tool_results * 3
+                        if len(recent_tool_summaries) > keep:
+                            del recent_tool_summaries[:-keep]
                     event_name = (
                         "item.completed" if item.status == TurnItemLifecycleStatus.COMPLETED
                         else "item.failed"
@@ -1820,16 +2108,42 @@ class RuntimeThreadManager:
                     turn_status = RuntimeTurnStatus.INTERRUPTED
                 break
 
+            elif isinstance(event, AgentRoundCompleteEvent):
+                segment = await finalize_open_reasoning()
+                if not event.tool_calls:
+                    last_completed_reasoning = None
+                    display = extract_terminal_display_text(
+                        text=event.preface_text,
+                        thinking=event.round_thinking,
+                    )
+                    preface = (event.preface_text or "").strip()
+                    if display and segment is not None and not preface:
+                        await promote_reasoning_to_final_answer(segment, display)
+                    elif display and current_message_item_id is not None:
+                        await finalize_open_message(agent_segment=FINAL_ANSWER)
+                    elif display:
+                        await persist_final_answer_message(text=display)
+                    else:
+                        await finalize_open_message(agent_segment=FINAL_ANSWER)
+                else:
+                    await finalize_open_message(agent_segment=MID_TURN_PREFACE)
+                    segment = segment or last_completed_reasoning
+                    if segment is not None:
+                        schedule_phase_bridge(segment, event)
+                await flush_narration_tasks()
+
             elif isinstance(event, TurnCompleteEvent):
                 await flush_delta_batch()
                 first_response.set()
-                if event.usage is not None:
-                    u = event.usage
-                    turn_usage = {
-                        "prompt_tokens": u.input_tokens,
-                        "completion_tokens": u.output_tokens,
-                        "total_tokens": u.input_tokens + u.output_tokens,
-                    }
+                thread_model = self.store.load_thread(thread_id).model or "deepseek-chat"
+                async with self._active_lock:
+                    engine = self._active.get(thread_id)
+                    active_engine = engine.engine if engine is not None else None
+                turn_usage = turn_usage_from_engine_or_event(
+                    engine=active_engine,
+                    event=event,
+                    model=thread_model,
+                )
                 turn_status = RuntimeTurnStatus.COMPLETED
                 turn_error = None
                 break
@@ -1858,6 +2172,8 @@ class RuntimeThreadManager:
             thread_id, turn_id, workflow_items, turn_status
         )
 
+        await flush_narration_tasks(wait_remaining=True)
+
         # Finalize any open reasoning item
         if current_reasoning_item_id is not None:
             item = self.store.load_item(current_reasoning_item_id)
@@ -1882,24 +2198,19 @@ class RuntimeThreadManager:
 
         # Finalize any open message item
         if current_message_item_id is not None:
-            item = self.store.load_item(current_message_item_id)
-            item.status = (
+            orphan_segment = (
+                FINAL_ANSWER
+                if turn_status == RuntimeTurnStatus.COMPLETED
+                else None
+            )
+            orphan_status = (
                 TurnItemLifecycleStatus.INTERRUPTED
                 if turn_status == RuntimeTurnStatus.INTERRUPTED
-                else TurnItemLifecycleStatus.COMPLETED
+                else None
             )
-            item.summary = summarize_text(current_message_text, SUMMARY_LIMIT)
-            item.detail = current_message_text
-            item.ended_at = datetime.now(timezone.utc)
-            self.store.save_item(item)
-            event_name = (
-                "item.interrupted"
-                if item.status == TurnItemLifecycleStatus.INTERRUPTED
-                else "item.completed"
-            )
-            await self._emit_event(
-                thread_id, turn_id, current_message_item_id, event_name,
-                {"item": item.model_dump(mode="json")},
+            await finalize_open_message(
+                agent_segment=orphan_segment,
+                status=orphan_status,
             )
 
         # Finalize the turn record
@@ -2003,6 +2314,82 @@ class RuntimeThreadManager:
                 internal_kind="goal_follow_up",
                 goal_id=follow_up.goal_id,
             ),
+        )
+
+    def _insert_turn_item_after(self, turn_id: str, after_item_id: str, item_id: str) -> None:
+        turn = self.store.load_turn(turn_id)
+        if item_id in turn.item_ids:
+            return
+        try:
+            idx = turn.item_ids.index(after_item_id)
+            turn.item_ids.insert(idx + 1, item_id)
+        except ValueError:
+            turn.item_ids.append(item_id)
+        self.store.save_turn(turn)
+
+    async def _compute_phase_bridge(
+        self,
+        *,
+        thread_id: str,
+        user_prompt: str,
+        state: TurnNarrationState,
+        segment: ReasoningSegment,
+        tool_calls: tuple,
+        recent_tool_results: list[str],
+        locale: str,
+    ) -> str | None:
+        from deepseek_tui.engine.usage_ledger import usage_source
+        from deepseek_tui.protocol.responses import ToolCall
+
+        client = self._get_llm_client()
+        async with self._active_lock:
+            active = self._active.get(thread_id)
+            if active is not None:
+                client = active.engine.client
+        typed_calls: tuple[ToolCall, ...] = tool_calls
+        with usage_source("phase_bridge"):
+            return await compute_narration_display(
+                client,
+                self.config,
+                user_goal=user_prompt,
+                state=state,
+                segment=segment,
+                tool_calls=typed_calls,
+                recent_tool_results=recent_tool_results,
+                locale=locale,
+            )
+
+    async def _persist_phase_bridge(
+        self,
+        thread_id: str,
+        turn_id: str,
+        segment: ReasoningSegment,
+        text: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        item_id = f"item_{uuid.uuid4().hex[:8]}"
+        item = TurnItemRecord(
+            id=item_id,
+            turn_id=turn_id,
+            kind=TurnItemKind.STATUS,
+            status=TurnItemLifecycleStatus.COMPLETED,
+            summary=summarize_text(text, SUMMARY_LIMIT),
+            detail=text,
+            metadata={
+                PHASE_BRIDGE_METADATA_KEY: True,
+                PHASE_BRIDGE_AFTER_REASONING_KEY: segment.item_id,
+            },
+            started_at=now,
+            ended_at=now,
+        )
+        self.store.save_item(item)
+        self._insert_turn_item_after(turn_id, segment.item_id, item_id)
+        await self._emit_event(
+            thread_id,
+            turn_id,
+            item_id,
+            "item.completed",
+            {"item": item.model_dump(mode="json")},
         )
 
     def _attach_item_to_turn(self, turn_id: str, item_id: str) -> None:
@@ -2360,6 +2747,176 @@ class TurnRecord(BaseModel):
     error: str | None = None
     item_ids: list[str] = Field(default_factory=list)
     steer_count: int = 0
+
+
+def build_turn_usage_record(*, usage: Any, model: str) -> dict[str, Any]:
+    """Persist a per-turn usage delta on ``TurnRecord.usage``."""
+    from deepseek_tui.client.pricing import calculate_turn_cost_estimate_from_usage
+    from deepseek_tui.protocol.responses import Usage
+
+    u = usage if isinstance(usage, Usage) else Usage.model_validate(usage)
+    input_tokens = max(0, int(u.input_tokens))
+    output_tokens = max(0, int(u.output_tokens))
+    record: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "cache_hit_tokens": max(0, int(u.cache_read_input_tokens)),
+        "cache_miss_tokens": max(0, int(u.cache_creation_input_tokens)),
+        "turns": 1,
+        "token_economy_savings_tokens": 0,
+    }
+    estimate = calculate_turn_cost_estimate_from_usage(model, u)
+    if estimate is not None and estimate.is_positive:
+        record["cost_usd"] = estimate.usd
+        record["cost_cny"] = estimate.cny
+    return record
+
+
+def turn_usage_from_engine_or_event(
+    *,
+    engine: Any | None,
+    event: TurnCompleteEvent | None,
+    model: str,
+) -> dict[str, Any] | None:
+    ledger = getattr(engine, "turn_usage_ledger", None) if engine is not None else None
+    if ledger is not None and ledger.items:
+        return ledger.totals()
+    if event is not None and event.usage is not None:
+        return build_turn_usage_record(usage=event.usage, model=model)
+    return None
+
+
+def _usage_counter_value(usage: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            return int(value)
+    return 0
+
+
+def _usage_counter_float(usage: dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            return float(value)
+    return 0.0
+
+
+def _empty_thread_usage_bucket(thread_id: str) -> dict[str, Any]:
+    return {
+        "thread_id": thread_id,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "cache_miss_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": 0.0,
+        "cost_cny": 0.0,
+        "cache_savings_usd": 0.0,
+        "cache_savings_cny": 0.0,
+        "token_economy_savings_tokens": 0,
+        "token_economy_savings_usd": 0.0,
+        "token_economy_savings_cny": 0.0,
+        "turns": 0,
+        "cache_hit_rate": None,
+    }
+
+
+def _turn_usage_has_cache_telemetry(usage: dict[str, Any]) -> bool:
+    return any(key in usage for key in ("cache_hit_tokens", "cache_miss_tokens"))
+
+
+def _add_turn_usage_to_bucket(
+    bucket: dict[str, Any],
+    usage: dict[str, Any],
+) -> bool:
+    bucket["input_tokens"] += _usage_counter_value(
+        usage, "input_tokens", "prompt_tokens"
+    )
+    bucket["output_tokens"] += _usage_counter_value(
+        usage, "output_tokens", "completion_tokens"
+    )
+    hit = _usage_counter_value(usage, "cache_hit_tokens")
+    miss = _usage_counter_value(usage, "cache_miss_tokens")
+    has_cache = _turn_usage_has_cache_telemetry(usage)
+    if has_cache:
+        bucket["cached_tokens"] += hit
+        bucket["cache_miss_tokens"] += miss
+    bucket["total_tokens"] += _usage_counter_value(usage, "total_tokens")
+    if bucket["total_tokens"] <= 0:
+        bucket["total_tokens"] = bucket["input_tokens"] + bucket["output_tokens"]
+    bucket["cost_usd"] += _usage_counter_float(usage, "cost_usd")
+    bucket["cost_cny"] += _usage_counter_float(usage, "cost_cny")
+    bucket["token_economy_savings_tokens"] += _usage_counter_value(
+        usage, "token_economy_savings_tokens"
+    )
+    bucket["turns"] += max(1, _usage_counter_value(usage, "turns"))
+    return has_cache
+
+
+def aggregate_thread_usage_bucket(
+    thread_id: str,
+    turns: list[TurnRecord],
+    *,
+    live_usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    bucket = _empty_thread_usage_bucket(thread_id)
+    has_cache_telemetry = False
+    for turn in turns:
+        usage = turn.usage
+        if not isinstance(usage, dict) or not usage:
+            continue
+        has_cache_telemetry = (
+            _add_turn_usage_to_bucket(bucket, usage) or has_cache_telemetry
+        )
+    if isinstance(live_usage, dict) and live_usage:
+        has_cache_telemetry = (
+            _add_turn_usage_to_bucket(bucket, live_usage) or has_cache_telemetry
+        )
+    cache_total = bucket["cached_tokens"] + bucket["cache_miss_tokens"]
+    bucket["cache_hit_rate"] = (
+        bucket["cached_tokens"] / cache_total
+        if has_cache_telemetry and cache_total > 0
+        else None
+    )
+    return bucket
+
+
+def thread_usage_bucket_has_data(bucket: dict[str, Any]) -> bool:
+    return (
+        bucket["total_tokens"] > 0
+        or bucket["cached_tokens"] > 0
+        or bucket["cache_miss_tokens"] > 0
+        or bucket["cost_usd"] > 0
+        or bucket["cost_cny"] > 0
+        or bucket["token_economy_savings_tokens"] > 0
+        or bucket["turns"] > 0
+    )
+
+
+def thread_usage_response(
+    thread_id: str,
+    turns: list[TurnRecord],
+    *,
+    live_usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    bucket = aggregate_thread_usage_bucket(
+        thread_id, turns, live_usage=live_usage
+    )
+    if not thread_usage_bucket_has_data(bucket):
+        return {
+            "group_by": "thread",
+            "buckets": [],
+            "totals": {**bucket, "thread_count": 0},
+        }
+    totals = {**bucket, "thread_count": 1}
+    return {
+        "group_by": "thread",
+        "buckets": [bucket],
+        "totals": totals,
+    }
 
 
 class TurnItemRecord(BaseModel):

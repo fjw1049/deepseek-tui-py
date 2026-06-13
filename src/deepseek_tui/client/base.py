@@ -27,6 +27,7 @@ class RetryConfig:
         return float(min(self.base_delay * (2**attempt), self.max_delay))
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (
+    StreamDone,
     StreamError,
     StreamEvent,
     StreamTextDelta,
@@ -78,3 +79,22 @@ class LLMClient(ABC):
                     await asyncio.sleep(self.retry_config.error_delay(error_retries))
                     continue
                 raise
+
+
+class MeteredLLMClient(LLMClient):
+    """Wrap an LLM client and record ``StreamDone`` usage into a turn ledger."""
+
+    def __init__(
+        self,
+        inner: LLMClient,
+        ledger: "TurnUsageLedger",
+    ) -> None:
+        super().__init__(retry_config=inner.retry_config)
+        self._inner = inner
+        self._ledger = ledger
+
+    async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
+        async for event in self._inner.stream_chat_completion(request):
+            if isinstance(event, StreamDone) and event.usage is not None:
+                self._ledger.record_metered(model=request.model, usage=event.usage)
+            yield event

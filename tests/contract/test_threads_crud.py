@@ -114,3 +114,108 @@ async def test_threads_summary(client: AsyncClient) -> None:
     summary = r.json()
     assert summary["total"] >= 1
     assert "active" in summary
+
+
+def test_aggregate_thread_usage_bucket_sums_turns() -> None:
+    from datetime import datetime, timezone
+
+    from deepseek_tui.server.threads import (
+        RuntimeTurnStatus,
+        TurnRecord,
+        aggregate_thread_usage_bucket,
+        thread_usage_response,
+    )
+
+    now = datetime.now(timezone.utc)
+    turns = [
+        TurnRecord(
+            id="turn_a",
+            thread_id="thr_test",
+            status=RuntimeTurnStatus.COMPLETED,
+            input_summary="a",
+            created_at=now,
+            usage={
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "total_tokens": 1200,
+                "cache_hit_tokens": 800,
+                "cache_miss_tokens": 200,
+                "cost_usd": 0.01,
+                "cost_cny": 0.07,
+                "turns": 1,
+            },
+        ),
+        TurnRecord(
+            id="turn_b",
+            thread_id="thr_test",
+            status=RuntimeTurnStatus.COMPLETED,
+            input_summary="b",
+            created_at=now,
+            usage={
+                "input_tokens": 500,
+                "output_tokens": 100,
+                "total_tokens": 600,
+                "cache_hit_tokens": 400,
+                "cache_miss_tokens": 100,
+                "cost_usd": 0.005,
+                "cost_cny": 0.035,
+                "turns": 1,
+            },
+        ),
+    ]
+    bucket = aggregate_thread_usage_bucket("thr_test", turns)
+    assert bucket["input_tokens"] == 1500
+    assert bucket["output_tokens"] == 300
+    assert bucket["cached_tokens"] == 1200
+    assert bucket["cache_miss_tokens"] == 300
+    assert bucket["cache_hit_rate"] == pytest.approx(0.8)
+    assert bucket["turns"] == 2
+    response = thread_usage_response("thr_test", turns)
+    assert response["group_by"] == "thread"
+    assert len(response["buckets"]) == 1
+    assert response["buckets"][0]["thread_id"] == "thr_test"
+
+
+def test_aggregate_thread_usage_bucket_includes_live_usage() -> None:
+    from deepseek_tui.server.threads import aggregate_thread_usage_bucket
+
+    bucket = aggregate_thread_usage_bucket(
+        "thr_live",
+        [],
+        live_usage={
+            "input_tokens": 1200,
+            "output_tokens": 300,
+            "total_tokens": 1500,
+            "cache_hit_tokens": 900,
+            "cache_miss_tokens": 100,
+            "cost_usd": 0.02,
+            "turns": 3,
+        },
+    )
+    assert bucket["input_tokens"] == 1200
+    assert bucket["output_tokens"] == 300
+    assert bucket["turns"] == 3
+    assert bucket["cache_hit_rate"] == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_thread_usage_endpoint(client: AsyncClient) -> None:
+    create = await client.post("/v1/threads", json={"model": "deepseek-chat"})
+    assert create.status_code == 201
+    thread_id = create.json()["id"]
+
+    empty = await client.get(
+        f"/v1/usage?group_by=thread&thread_id={thread_id}",
+    )
+    assert empty.status_code == 200
+    payload = empty.json()
+    assert payload["group_by"] == "thread"
+    assert payload["buckets"] == []
+
+    missing = await client.get("/v1/usage?group_by=thread&thread_id=thr_missing")
+    assert missing.status_code == 404
+
+    bad_group = await client.get(
+        f"/v1/usage?group_by=day&thread_id={thread_id}",
+    )
+    assert bad_group.status_code == 400

@@ -1134,6 +1134,7 @@ from dataclasses import asdict
 from typing import Any
 
 from deepseek_tui.engine.events import (
+    AgentRoundCompleteEvent,
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ElevationRequiredEvent,
@@ -1244,6 +1245,12 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
             "snapshot": snapshot_payload,
             "completed": event.completed,
             "status": event.status,
+        }
+    if isinstance(event, AgentRoundCompleteEvent):
+        return {
+            "event": "agent_round_complete",
+            "round_idx": event.round_idx,
+            "terminal": not event.tool_calls,
         }
     # EngineEvent is a closed Union; this is only reached if a new variant
     # lands without a branch above. Raise instead of silent pass-through.

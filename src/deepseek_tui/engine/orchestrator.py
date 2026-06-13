@@ -37,6 +37,7 @@ from deepseek_tui.engine.dispatch import (
     should_stop_after_plan_tool,
 )
 from deepseek_tui.engine.events import (
+    AgentRoundCompleteEvent,
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ElevationRequiredEvent,
@@ -98,7 +99,7 @@ from deepseek_tui.integrations.lsp import (
     render_blocks,
 )
 from deepseek_tui.engine.prompts import AppMode as _AppMode
-from deepseek_tui.protocol.messages import Message, ToolUseBlock
+from deepseek_tui.protocol.messages import Message, TextBlock, ToolUseBlock
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.tools.registry import ToolError, ToolResult
@@ -246,6 +247,19 @@ def _summarize_call_args(arguments: dict[str, Any] | None) -> str:
     return ""
 
 
+def _assistant_preface_text(message: Message | None) -> str | None:
+    if message is None:
+        return None
+    parts: list[str] = []
+    for block in message.content:
+        if isinstance(block, TextBlock):
+            text = block.text.strip()
+            if text:
+                parts.append(text)
+    joined = "\n".join(parts).strip()
+    return joined or None
+
+
 class Engine:
     def __init__(
         self,
@@ -269,6 +283,9 @@ class Engine:
         self.handle = handle
         self.client = client
         self.default_model = default_model
+        from deepseek_tui.engine.usage_ledger import TurnUsageLedger
+
+        self.turn_usage_ledger = TurnUsageLedger()
         # When a full runtime is supplied, it wins — unpack registry + context
         # from it so managers stay paired with the context they own.
         if tool_runtime is not None:
@@ -527,6 +544,13 @@ class Engine:
             default_extra_body=dict(provider_cfg.extra_body or {}),
             hook_executor=hook_executor,
         )
+        from deepseek_tui.client.base import MeteredLLMClient
+
+        if isinstance(client, MeteredLLMClient):
+            engine.turn_usage_ledger = client._ledger
+        else:
+            engine.client = MeteredLLMClient(client, engine.turn_usage_ledger)
+        engine.turn_loop = TurnLoop(engine.client, compact_fn=engine._emergency_compact)
         if isinstance(tool_runtime, ToolRuntime):
             engine._owns_tool_runtime = False
         engine.capacity_controller = CapacityController(
@@ -557,7 +581,7 @@ class Engine:
         )
         if bool(getattr(cfg, "seam_enabled", False)):
             engine.seam_manager = SeamManager(
-                flash_client=client, config=SeamConfig(enabled=True)
+                flash_client=engine.client, config=SeamConfig(enabled=True)
             )
         engine._cycle_session_id = uuid.uuid4().hex
         if not engine.tool_context.metadata.get("runtime_thread_id"):
@@ -575,7 +599,7 @@ class Engine:
 
         wire_registry_client(
             engine.tool_registry,
-            client,
+            engine.client,
             root_model=engine.default_model,
         )
         if runtime.subagent_manager is not None:
@@ -588,7 +612,7 @@ class Engine:
             auto_approve = await engine.approval_handler.auto_approve_enabled()
             loop_runtime = SubAgentRuntime(
                 manager=runtime.subagent_manager,
-                client=client,
+                client=engine.client,
                 model=default_model,
                 config=cfg,
                 workspace=ws.resolve(),  # noqa: ASYNC240
@@ -689,7 +713,6 @@ class Engine:
         output_tokens = int(metadata.get("child_output_tokens") or 0)
         if input_tokens == 0 and output_tokens == 0:
             return
-        from deepseek_tui.client.pricing import calculate_turn_cost_estimate_from_usage
         from deepseek_tui.protocol.responses import Usage
 
         usage = Usage(
@@ -702,10 +725,14 @@ class Engine:
                 metadata.get("child_prompt_cache_miss_tokens") or 0
             ),
         )
-        estimate = calculate_turn_cost_estimate_from_usage(child_model, usage)
-        if estimate is not None:
-            self.session_cost_usd += estimate.usd
-            self.session_cost_cny += estimate.cny
+        # Metadata-only child totals (e.g. RLM rollup) when the parent client
+        # did not already meter the same subagent streams this turn.
+        if not any(item.source in {"subagent", "rlm", "tool"} for item in self.turn_usage_ledger.items):
+            self.turn_usage_ledger.add(
+                model=child_model,
+                source="subagent",
+                usage=usage,
+            )
 
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
@@ -1108,6 +1135,7 @@ class Engine:
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
+            self.turn_usage_ledger.reset()
             self.goal_controller.on_turn_start()
             self._save_crash_checkpoint(
                 working_messages,
@@ -1177,17 +1205,22 @@ class Engine:
 
                 clear_checkpoint()
             usage = result.usage
+            ledger_totals = self.turn_usage_ledger.totals()
+            combined_usage = self.turn_usage_ledger.combined_usage()
+            if combined_usage is not None:
+                usage = combined_usage
             logger.info(
                 "turn_complete duration_ms=%d input_tokens=%s output_tokens=%s "
                 "cache_hit=%s reasoning_tokens=%s last_round_tool_calls=%d "
-                "tool_rounds=%d",
+                "tool_rounds=%d metered_llm_calls=%d",
                 duration_ms,
-                getattr(usage, "input_tokens", 0) if usage else 0,
-                getattr(usage, "output_tokens", 0) if usage else 0,
-                getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
+                ledger_totals.get("input_tokens", 0) or (getattr(usage, "input_tokens", 0) if usage else 0),
+                ledger_totals.get("output_tokens", 0) or (getattr(usage, "output_tokens", 0) if usage else 0),
+                ledger_totals.get("cache_hit_tokens", 0) or (getattr(usage, "cache_read_input_tokens", 0) if usage else 0),
                 getattr(usage, "reasoning_tokens", 0) if usage else 0,
                 len(result.tool_calls or []),
                 result.tool_round_count,
+                ledger_totals.get("turns", 0),
             )
             # Accumulate session cost from the DeepSeek usage payload.
             # Hidden when pricing is unknown (off-platform providers,
@@ -1197,29 +1230,20 @@ class Engine:
             cache_miss_tokens = 0
             cost_usd: float | None = None
             cost_cny: float | None = None
-            if usage is not None:
-                # Accumulate cache hit/miss across the session so the
-                # status-bar chip reflects "how much prompt traffic the
-                # cache has saved you so far" instead of "what fraction
-                # of this single turn was a prefix hit" (the latter is
-                # nearly always 99%+ on a multi-turn DeepSeek session
-                # and conveys no information).
-                self.session_cache_hit_total += usage.cache_read_input_tokens
-                self.session_cache_miss_total += usage.cache_creation_input_tokens
+            turn_cache_hit = ledger_totals.get("cache_hit_tokens", 0)
+            turn_cache_miss = ledger_totals.get("cache_miss_tokens", 0)
+            if turn_cache_hit > 0 or turn_cache_miss > 0 or usage is not None:
+                self.session_cache_hit_total += turn_cache_hit
+                self.session_cache_miss_total += turn_cache_miss
                 cache_hit_tokens = self.session_cache_hit_total
                 cache_miss_tokens = self.session_cache_miss_total
-                from deepseek_tui.client.pricing import (
-                    calculate_turn_cost_estimate_from_usage,
-                )
-
-                model_for_pricing = op.model or self.default_model
-                estimate = calculate_turn_cost_estimate_from_usage(
-                    model_for_pricing, usage
-                )
-                if estimate is not None:
-                    self.session_cost_usd += estimate.usd
-                    self.session_cost_cny += estimate.cny
+                turn_cost_usd = ledger_totals.get("cost_usd")
+                turn_cost_cny = ledger_totals.get("cost_cny")
+                if isinstance(turn_cost_usd, (int, float)) and turn_cost_usd > 0:
+                    self.session_cost_usd += float(turn_cost_usd)
                     cost_usd = self.session_cost_usd
+                if isinstance(turn_cost_cny, (int, float)) and turn_cost_cny > 0:
+                    self.session_cost_cny += float(turn_cost_cny)
                     cost_cny = self.session_cost_cny
             running_subagents = 0
             running_tasks = 0
@@ -1228,9 +1252,9 @@ class Engine:
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
             if turn_ok:
-                follow_up = self.goal_controller.on_turn_complete(result.usage)
+                follow_up = self.goal_controller.on_turn_complete(usage)
             else:
-                self.goal_controller.on_turn_failed(result.outcome.value, result.usage)
+                self.goal_controller.on_turn_failed(result.outcome.value, usage)
                 follow_up = None
             steer = self.goal_controller.take_pending_steer()
             if steer:
@@ -1238,7 +1262,7 @@ class Engine:
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
-                    usage=result.usage,
+                    usage=combined_usage if combined_usage is not None else result.usage,
                     session_cost_usd=cost_usd,
                     session_cost_cny=cost_cny,
                     cache_hit_tokens=cache_hit_tokens,
@@ -1471,13 +1495,16 @@ class Engine:
                 logger.info(
                     "compact_triggered before_count=%d", len(messages)
                 )
-                compact_result = await compact_messages_safe(
-                    self.client,
-                    messages,
-                    self.compaction_config,
-                    workspace=self.tool_context.working_directory,
-                    model_override=model,
-                )
+                from deepseek_tui.engine.usage_ledger import usage_source
+
+                with usage_source("compaction"):
+                    compact_result = await compact_messages_safe(
+                        self.client,
+                        messages,
+                        self.compaction_config,
+                        workspace=self.tool_context.working_directory,
+                        model_override=model,
+                    )
                 messages[:] = compact_result.messages
                 logger.info(
                     "compact_done after_count=%d summary_attached=%s",
@@ -1513,16 +1540,30 @@ class Engine:
                 len(tools),
                 model,
             )
-            result = await self.turn_loop.run(
-                request,
-                self.handle.emit,
-                self.handle.cancel_event,
-                tools=tools,
-                include_tool_search=profile_includes_tool_search(self.tool_profile),
-                include_code_execution=self.tool_profile is None,
-                latency_turn_id=latency_turn_id,
-                round_idx=round_idx,
-            )
+            from deepseek_tui.engine.usage_ledger import usage_source
+
+            with usage_source("agent_round"):
+                result = await self.turn_loop.run(
+                    request,
+                    self.handle.emit,
+                    self.handle.cancel_event,
+                    tools=tools,
+                    include_tool_search=profile_includes_tool_search(self.tool_profile),
+                    include_code_execution=self.tool_profile is None,
+                    latency_turn_id=latency_turn_id,
+                    round_idx=round_idx,
+                )
+            if not result.cancelled:
+                from deepseek_tui.server.agent_segments import assistant_thinking_text
+
+                await self.handle.emit(
+                    AgentRoundCompleteEvent(
+                        round_idx=round_idx,
+                        tool_calls=tuple(result.tool_calls or ()),
+                        preface_text=_assistant_preface_text(result.assistant_message),
+                        round_thinking=assistant_thinking_text(result.assistant_message),
+                    )
+                )
             if round_trace is not None:
                 round_trace.tool_calls = len(result.tool_calls or [])
             if result.cancelled:
@@ -2106,7 +2147,10 @@ class Engine:
         self.tool_context.metadata["parent_session_messages"] = [
             m.model_dump(mode="json") for m in self.session_messages
         ]
-        result = await self._execute_single_tool_impl(tool_call, api_tools, model)
+        from deepseek_tui.engine.usage_ledger import usage_source
+
+        with usage_source("tool"):
+            result = await self._execute_single_tool_impl(tool_call, api_tools, model)
         if result is not None:
             self._accrue_child_token_cost_from_metadata(result.metadata)
             hook_ctx.tool_result = result.content
@@ -2534,19 +2578,22 @@ class Engine:
         )
         try:
             existing = await seam.collect_seam_texts(messages)
-            if existing:
-                recent = messages[:verbatim_start]
-                seam_text = await seam.recompact(
-                    existing, recent, level, 0, verbatim_start
-                )
-            else:
-                seam_text = await seam.produce_soft_seam(
-                    messages,
-                    level,
-                    0,
-                    verbatim_start,
-                    pinned_indices=sorted(pinned),
-                )
+            from deepseek_tui.engine.usage_ledger import usage_source
+
+            with usage_source("seam"):
+                if existing:
+                    recent = messages[:verbatim_start]
+                    seam_text = await seam.recompact(
+                        existing, recent, level, 0, verbatim_start
+                    )
+                else:
+                    seam_text = await seam.produce_soft_seam(
+                        messages,
+                        level,
+                        0,
+                        verbatim_start,
+                        pinned_indices=sorted(pinned),
+                    )
         except Exception as err:  # noqa: BLE001
             logger.warning("layered_context_checkpoint failed: %s", err)
             return
@@ -2604,13 +2651,16 @@ class Engine:
 
     async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
         """Emergency compaction callback for TurnLoop context overflow recovery."""
-        result = await compact_messages_safe(
-            self.client,
-            messages,
-            self.compaction_config,
-            workspace=self.tool_context.working_directory,
-            model_override=self.default_model,
-        )
+        from deepseek_tui.engine.usage_ledger import usage_source
+
+        with usage_source("compaction"):
+            result = await compact_messages_safe(
+                self.client,
+                messages,
+                self.compaction_config,
+                workspace=self.tool_context.working_directory,
+                model_override=self.default_model,
+            )
         # Persist the summary — previously discarded, so emergency/manual
         # compaction lost the archived history entirely.
         self._record_compaction_summary(result.summary_prompt)

@@ -217,6 +217,11 @@ function statusFromString(s: string | undefined): 'running' | 'success' | 'error
   return 'success'
 }
 
+function runtimeStatusLooksRunning(status?: string): boolean {
+  const normalized = status?.trim().toLowerCase()
+  return normalized === 'running' || normalized === 'in_progress' || normalized === 'queued' || normalized === 'started'
+}
+
 function displayModelFromUserMessageMeta(metadata: Record<string, unknown> | null | undefined): string | undefined {
   if (!metadata) return undefined
   const requested = typeof metadata.requested_model === 'string' ? metadata.requested_model.trim() : ''
@@ -453,6 +458,21 @@ function toolBlockFromItem(item: TurnItemJson): ToolBlock {
 
 function itemCreatedAt(item: TurnItemJson): string | undefined {
   return item.started_at ?? item.ended_at ?? undefined
+}
+
+function isPhaseBridgeItem(it: TurnItemJson): boolean {
+  return it.kind === 'status' && it.metadata?.phase_bridge === true
+}
+
+function readPhaseBridgeAfterReasoningId(it: TurnItemJson): string | undefined {
+  const id = it.metadata?.after_reasoning_id
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined
+}
+
+function readAgentSegment(it: TurnItemJson): 'mid_turn_preface' | 'final_answer' | undefined {
+  const segment = it.metadata?.agent_segment
+  if (segment === 'mid_turn_preface' || segment === 'final_answer') return segment
+  return undefined
 }
 
 function isSubagentMailboxItem(it: TurnItemJson): boolean {
@@ -890,6 +910,13 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     let latestTurnId: string | undefined = latestTurn?.id
     const latestTurnStatus = latestTurn?.status
     let latestUserMessageId: string | undefined
+    const narrationByReasoningId = new Map<string, string>()
+    for (const it of detail.items) {
+      if (!isPhaseBridgeItem(it)) continue
+      const afterId = readPhaseBridgeAfterReasoningId(it)
+      const text = it.summary?.trim()
+      if (afterId && text) narrationByReasoningId.set(afterId, text)
+    }
     for (const it of detail.items) {
       latestTurnId = deriveTurnId(it) ?? latestTurnId
       if (it.kind === 'user_message') {
@@ -909,10 +936,35 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         })
       } else if (it.kind === 'agent_message') {
         const text = it.detail ?? it.summary
-        if (text.trim()) blocks.push({ kind: 'assistant', id: it.id, createdAt: itemCreatedAt(it), text })
+        let agentSegment = readAgentSegment(it)
+        if (
+          !agentSegment &&
+          runtimeStatusLooksRunning(latestTurnStatus) &&
+          statusFromString(it.status) !== 'failed'
+        ) {
+          agentSegment = 'mid_turn_preface'
+        }
+        if (text.trim()) {
+          blocks.push({
+            kind: 'assistant',
+            id: it.id,
+            createdAt: itemCreatedAt(it),
+            text,
+            ...(agentSegment ? { agentSegment } : {})
+          })
+        }
       } else if (it.kind === 'agent_reasoning') {
         const text = it.detail ?? it.summary
-        if (text.trim()) blocks.push({ kind: 'reasoning', id: it.id, createdAt: itemCreatedAt(it), text })
+        if (text.trim()) {
+          const narration = narrationByReasoningId.get(it.id)
+          blocks.push({
+            kind: 'reasoning',
+            id: it.id,
+            createdAt: itemCreatedAt(it),
+            text,
+            ...(narration ? { narration } : {})
+          })
+        }
       } else if (it.kind === 'tool_call' && looksLikeUserInputToolItem(it)) {
         const questions = readUserInputQuestionsFromItem(it)
         if (questions) {
@@ -961,6 +1013,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
           blocks = upsertWorkflowBlock(blocks, progress)
         }
       } else if (it.kind === 'status' || it.kind === 'context_compaction') {
+        if (isPhaseBridgeItem(it)) continue
         const text = it.summary || it.kind
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
       }
@@ -1282,6 +1335,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 }
                 if (
                   it &&
+                  isPhaseBridgeItem(it) &&
+                  sink.onPhaseNarration
+                ) {
+                  const afterId = readPhaseBridgeAfterReasoningId(it)
+                  const text = it.summary?.trim()
+                  if (afterId && text) sink.onPhaseNarration(afterId, text)
+                  return
+                }
+                if (
+                  it &&
                   (it.kind === 'status' || it.kind === 'context_compaction') &&
                   sink.onSystemStatus
                 ) {
@@ -1302,10 +1365,22 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 }
                 if (
                   it &&
+                  it.kind === 'agent_message' &&
+                  readAgentSegment(it) === 'final_answer' &&
+                  sink.onFinalAnswer
+                ) {
+                  const text = (it.detail ?? it.summary ?? '').trim()
+                  if (text) {
+                    sink.onFinalAnswer(it.id, text, itemCreatedAt(it))
+                    return
+                  }
+                }
+                if (
+                  it &&
                   (it.kind === 'agent_reasoning' || it.kind === 'agent_message') &&
                   sink.onLiveSegmentComplete
                 ) {
-                  sink.onLiveSegmentComplete(it.kind)
+                  sink.onLiveSegmentComplete(it.kind, it.id, itemCreatedAt(it))
                   return
                 }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {

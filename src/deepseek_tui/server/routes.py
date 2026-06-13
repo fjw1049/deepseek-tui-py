@@ -837,6 +837,31 @@ from deepseek_tui.server.sessions import ImportTuiSessionRequest
 router_threads = APIRouter(prefix="/v1")
 
 
+@router_threads.get("/usage")
+async def thread_usage(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    group_by = request.query_params.get("group_by", "runtime")
+    if group_by != "thread":
+        raise api_error(
+            400,
+            f"unsupported usage grouping: {group_by}",
+            error="validation_error",
+        )
+    thread_id = (request.query_params.get("thread_id") or "").strip()
+    if not thread_id:
+        raise api_error(
+            400,
+            "thread_id is required when group_by=thread",
+            error="validation_error",
+        )
+    try:
+        return await mgr.get_thread_usage(thread_id, group_by=group_by)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="validation_error") from exc
+
+
 @router_threads.get("/threads")
 async def list_threads(request: Request) -> list[dict[str, Any]]:
     mgr = manager(request)

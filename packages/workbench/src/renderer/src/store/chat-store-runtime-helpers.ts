@@ -266,6 +266,35 @@ export function collectAssistantTextForTurn(
   return parts.join('\n\n').trim()
 }
 
+export function upsertFinalAnswerBlock(
+  blocks: ChatBlock[],
+  itemId: string,
+  text: string,
+  createdAt?: string
+): ChatBlock[] {
+  const trimmed = text.trim()
+  if (!trimmed) return blocks
+  const withoutReasoning = blocks.filter(
+    (block) => !(block.kind === 'reasoning' && block.id === itemId)
+  )
+  const nextBlock: ChatBlock = {
+    kind: 'assistant',
+    id: itemId,
+    createdAt: createdAt ?? new Date().toISOString(),
+    text: trimmed,
+    agentSegment: 'final_answer'
+  }
+  const existingIdx = withoutReasoning.findIndex(
+    (block) => block.kind === 'assistant' && block.id === itemId
+  )
+  if (existingIdx >= 0) {
+    const next = [...withoutReasoning]
+    next[existingIdx] = { ...withoutReasoning[existingIdx], ...nextBlock }
+    return next
+  }
+  return [...withoutReasoning, nextBlock]
+}
+
 export function clearedThreadSelection(): Pick<
   ChatState,
   | 'activeThreadId'

@@ -79,6 +79,7 @@ export type ChatState = {
   unreadThreadIds: Record<string, boolean>
   goalStatus: GoalStatusPayload['goal']
   scrollToBlockId: string | null
+  usageRefreshKey: number
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void

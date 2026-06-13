@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../../agent/types'
 import {
   buildSubagentInfrastructureToolIds,
+  findFallbackFinalAnswer,
   isSubagentOrchestrationToolName,
+  placeAssistantContentBlock,
+  reasoningNarrationFromBlocks,
   shouldDefaultExpandProcessSection,
   splitThink
 } from './MessageTimeline'
@@ -155,5 +158,94 @@ describe('buildSubagentInfrastructureToolIds', () => {
     })
 
     expect([...ids]).toEqual(['setup-success'])
+  })
+})
+
+describe('placeAssistantContentBlock', () => {
+  it('hides mid-turn prefaces from the work trace when a final answer exists', () => {
+    const processBlocks: ChatBlock[] = []
+    const answerBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
+    const preface = {
+      kind: 'assistant' as const,
+      id: 'preface',
+      text: '开始探索代码库结构。',
+      agentSegment: 'mid_turn_preface' as const
+    }
+    const finalBlock = {
+      kind: 'assistant' as const,
+      id: 'final',
+      text: '最终分析报告',
+      agentSegment: 'final_answer' as const
+    }
+
+    placeAssistantContentBlock(
+      preface,
+      preface,
+      {
+        hasExplicitFinalAnswer: true,
+        isProcessing: false,
+        index: 0,
+        trailingAssistantContentStart: 99
+      },
+      processBlocks,
+      answerBlocks
+    )
+    placeAssistantContentBlock(
+      finalBlock,
+      finalBlock,
+      {
+        hasExplicitFinalAnswer: true,
+        isProcessing: false,
+        index: 1,
+        trailingAssistantContentStart: 99
+      },
+      processBlocks,
+      answerBlocks
+    )
+
+    expect(processBlocks).toHaveLength(0)
+    expect(answerBlocks).toEqual([finalBlock])
+  })
+})
+
+describe('findFallbackFinalAnswer', () => {
+  it('promotes the last reasoning block when no explicit final answer exists', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'reasoning', id: 'item_r1', text: 'internal trace' },
+      { kind: 'reasoning', id: 'item_r2', text: '用户可见正文' }
+    ]
+    expect(findFallbackFinalAnswer(blocks)).toEqual({
+      kind: 'assistant',
+      id: 'item_r2',
+      text: '用户可见正文',
+      agentSegment: 'final_answer'
+    })
+  })
+
+  it('returns null when a final answer block already exists', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'assistant',
+        id: 'item_a1',
+        text: 'done',
+        agentSegment: 'final_answer'
+      }
+    ]
+    expect(findFallbackFinalAnswer(blocks)).toBeNull()
+  })
+})
+
+describe('reasoningNarrationFromBlocks', () => {
+  it('returns narration attached to reasoning blocks', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'reasoning', id: 'item_r1', text: 'internal', narration: '已理清结构，接下来读取入口' },
+      { kind: 'tool', id: 'item_t1', summary: 'read_file', status: 'success', toolKind: 'generic' }
+    ]
+    expect(reasoningNarrationFromBlocks(blocks)).toBe('已理清结构，接下来读取入口')
+  })
+
+  it('ignores reasoning blocks without narration', () => {
+    const blocks: ChatBlock[] = [{ kind: 'reasoning', id: 'item_r1', text: 'internal' }]
+    expect(reasoningNarrationFromBlocks(blocks)).toBe('')
   })
 })

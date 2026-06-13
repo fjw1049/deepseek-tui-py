@@ -48,6 +48,16 @@ class ProviderConfig(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProcessNarrationConfig(BaseModel):
+    model: str | None = None
+    min_chars: int = 200
+    min_interval_s: float = 3.0
+    flash_timeout_s: float = 4.0
+    turn_wait_s: float = 6.0
+    include_recent_tool_results: int = 3
+    max_per_turn: int = 12
+
+
 class UiConfig(BaseModel):
     color_scheme: str = "default"
     show_thinking: bool = True
@@ -63,6 +73,7 @@ class UiConfig(BaseModel):
     notify_method: str = "auto"
     notify_threshold_secs: float = 30.0
     frame_refresh_hz: float = 30.0
+    process_narration: ProcessNarrationConfig = Field(default_factory=ProcessNarrationConfig)
 
 
 class StateConfig(BaseModel):

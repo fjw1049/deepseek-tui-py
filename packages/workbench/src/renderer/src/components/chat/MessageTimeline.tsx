@@ -549,42 +549,42 @@ function findTrailingAssistantContentStart(blocks: ChatBlock[]): number {
 
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
 
-/** Move mid-turn assistant analysis out of the collapsible work trace. */
-function promoteProcessAssistantToAnswer(
-  processBlocks: ChatBlock[],
-  assistantContentBlocks: AssistantContentBlock[]
-): { processBlocks: ChatBlock[]; assistantContentBlocks: AssistantContentBlock[] } {
-  const processAssistants = processBlocks.filter(
-    (block): block is AssistantContentBlock => block.kind === 'assistant'
-  )
-  if (processAssistants.length === 0) {
-    return { processBlocks, assistantContentBlocks }
+function isFinalAnswerAssistantBlock(block: ChatBlock): block is AssistantContentBlock {
+  return block.kind === 'assistant' && block.agentSegment === 'final_answer'
+}
+
+export function placeAssistantContentBlock(
+  block: AssistantContentBlock,
+  contentBlock: AssistantContentBlock,
+  options: {
+    hasExplicitFinalAnswer: boolean
+    isProcessing: boolean
+    index: number
+    trailingAssistantContentStart: number
+  },
+  nextProcessBlocks: ChatBlock[],
+  nextAssistantContentBlocks: AssistantContentBlock[]
+): void {
+  // Mid-turn model prefaces are persisted for debugging but not shown in the
+  // work trace; phase_bridge narration under reasoning is the user-facing line.
+  if (block.agentSegment === 'mid_turn_preface') {
+    return
   }
-
-  const trailingChars = assistantContentBlocks.reduce(
-    (total, block) => total + block.text.trim().length,
-    0
-  )
-  const processChars = processAssistants.reduce(
-    (total, block) => total + block.text.trim().length,
-    0
-  )
-  const shouldPromote =
-    processChars > 0 &&
-    (trailingChars === 0 ||
-      (trailingChars < 320 && processChars >= 280) ||
-      processChars > trailingChars * 2)
-
-  if (!shouldPromote) {
-    return { processBlocks, assistantContentBlocks }
+  if (options.hasExplicitFinalAnswer) {
+    if (block.agentSegment === 'final_answer') {
+      nextAssistantContentBlocks.push(contentBlock)
+    } else {
+      nextProcessBlocks.push(contentBlock)
+    }
+    return
   }
-
-  const trailingIds = new Set(assistantContentBlocks.map((block) => block.id))
-  const promoted = processAssistants.filter((block) => !trailingIds.has(block.id))
-
-  return {
-    processBlocks: processBlocks.filter((block) => block.kind !== 'assistant'),
-    assistantContentBlocks: [...promoted, ...assistantContentBlocks]
+  if (
+    !options.isProcessing &&
+    options.index >= options.trailingAssistantContentStart
+  ) {
+    nextAssistantContentBlocks.push(contentBlock)
+  } else {
+    nextProcessBlocks.push(contentBlock)
   }
 }
 
@@ -628,6 +628,48 @@ function getReasoningSectionText(section: ProcessSection): string {
     .map((block) => block.text.trim())
     .filter(Boolean)
     .join('\n\n')
+}
+
+export function reasoningNarrationFromBlocks(blocks: ChatBlock[]): string {
+  for (const block of blocks) {
+    if (block.kind === 'reasoning' && block.narration?.trim()) {
+      return block.narration.trim()
+    }
+  }
+  return ''
+}
+
+export function findFallbackFinalAnswer(
+  blocks: ChatBlock[]
+): Extract<ChatBlock, { kind: 'assistant' }> | null {
+  if (blocks.some(isFinalAnswerAssistantBlock)) return null
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]
+    if (
+      block?.kind === 'assistant' &&
+      block.agentSegment !== 'mid_turn_preface' &&
+      block.text.trim()
+    ) {
+      return {
+        ...block,
+        text: block.text.trim(),
+        agentSegment: 'final_answer'
+      }
+    }
+  }
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]
+    if (block?.kind === 'reasoning' && block.text.trim()) {
+      return {
+        kind: 'assistant',
+        id: block.id,
+        createdAt: block.createdAt,
+        text: block.text.trim(),
+        agentSegment: 'final_answer'
+      }
+    }
+  }
+  return null
 }
 
 function sectionHasDetails(
@@ -718,6 +760,7 @@ function MessageTurn({
   const { processBlocks, assistantContentBlocks, turnFileChanges } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
     const nextAssistantContentBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
+    const hasExplicitFinalAnswer = turn.blocks.some(isFinalAnswerAssistantBlock)
     const trailingAssistantContentStart = isProcessing
       ? turn.blocks.length
       : findTrailingAssistantContentStart(turn.blocks)
@@ -730,11 +773,18 @@ function MessageTurn({
         }
         if (split.content.trim()) {
           const contentBlock = { ...block, text: split.content }
-          if (!isProcessing && index >= trailingAssistantContentStart) {
-            nextAssistantContentBlocks.push(contentBlock)
-          } else {
-            nextProcessBlocks.push(contentBlock)
-          }
+          placeAssistantContentBlock(
+            block,
+            contentBlock,
+            {
+              hasExplicitFinalAnswer,
+              isProcessing,
+              index,
+              trailingAssistantContentStart
+            },
+            nextProcessBlocks,
+            nextAssistantContentBlocks
+          )
         }
         continue
       }
@@ -745,9 +795,6 @@ function MessageTurn({
 
     if (liveProcessText.trim()) {
       nextProcessBlocks.push({ kind: 'reasoning', id: 'live-reasoning', text: liveProcessText })
-    }
-    if (isProcessing && liveContent.trim()) {
-      nextProcessBlocks.push({ kind: 'assistant', id: 'live-assistant', text: liveContent })
     }
 
     const nextTurnFileChanges = !isProcessing
@@ -772,13 +819,13 @@ function MessageTurn({
       : []
 
     if (!isProcessing) {
-      const promoted = promoteProcessAssistantToAnswer(
-        nextProcessBlocks,
-        nextAssistantContentBlocks
-      )
+      const fallbackAnswer = findFallbackFinalAnswer(turn.blocks)
       return {
-        processBlocks: promoted.processBlocks,
-        assistantContentBlocks: promoted.assistantContentBlocks,
+        processBlocks: nextProcessBlocks,
+        assistantContentBlocks:
+          nextAssistantContentBlocks.length > 0 || !fallbackAnswer
+            ? nextAssistantContentBlocks
+            : [fallbackAnswer],
         turnFileChanges: nextTurnFileChanges
       }
     }
@@ -1590,6 +1637,8 @@ function ProcessSectionRow({
     subagentInfrastructureToolIds
   })
   const reasoningText = section.kind === 'reasoning' ? getReasoningSectionText(section) : ''
+  const reasoningNarration =
+    section.kind === 'reasoning' ? reasoningNarrationFromBlocks(section.blocks) : ''
   const canToggleSection = hasDetails
   const { ref: deferredDetailRef, shouldRender: shouldRenderDetail } = useDeferredRender<HTMLDivElement>({
     enabled: expanded,
@@ -1599,6 +1648,13 @@ function ProcessSectionRow({
 
   if (section.kind === 'execution' && visibleBlocks.length === 0) {
     return null
+  }
+
+  if (section.kind === 'reasoning') {
+    const isLiveReasoning = section.blocks.some((block) => block.id === 'live-reasoning')
+    if (!reasoningNarration && !isLiveReasoning) {
+      return null
+    }
   }
 
   if (section.kind === 'execution' && visibleBlocks.length === 1) {
@@ -1683,6 +1739,10 @@ function ProcessSectionRow({
           <span className={active && !hasError ? 'ds-shiny-text' : ''}>{title}</span>
         </div>
       )}
+
+      {section.kind === 'reasoning' && reasoningNarration ? (
+        <p className="mt-1 text-[13.5px] leading-6 text-ds-muted/90">{reasoningNarration}</p>
+      ) : null}
 
       {expanded ? (
         <div
