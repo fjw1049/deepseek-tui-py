@@ -1609,6 +1609,8 @@ class RuntimeThreadManager:
             segment: ReasoningSegment, round_event: AgentRoundCompleteEvent
         ) -> None:
             nonlocal last_completed_reasoning
+            if not narration_cfg.enabled:
+                return
             tool_calls = round_event.tool_calls
             batch_kind = classify_batch(tool_calls)
             decision, immediate = decide_and_prepare(
