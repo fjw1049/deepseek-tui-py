@@ -1687,21 +1687,21 @@ function ProcessPhaseRow({
       (block.kind === 'subagent' && (block.status === 'failed' || block.status === 'cancelled'))
   )
 
-  // Skip phases with no tools (pure reasoning without action — the final
-  // thinking round before the answer). Also skip truly empty phases.
-  if (toolCount === 0 && !phase.hasLiveReasoning) {
-    return null
-  }
-
-  // Override label for live-reasoning-only phases (final thinking before answer)
-  const displayLabel = (toolCount === 0 && phase.hasLiveReasoning) ? '思考中…' : phase.label
-  const toolSuffix = toolCount > 0 ? ` · ${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
-
   // Extract narration from reasoning blocks in this phase
   const narration = useMemo(
     () => reasoningNarrationFromBlocks(phase.reasoningBlocks),
     [phase.reasoningBlocks]
   )
+
+  // Override label for live-reasoning-only phases (final thinking before answer)
+  const displayLabel = (toolCount === 0 && phase.hasLiveReasoning) ? '思考中…' : phase.label
+  const toolSuffix = toolCount > 0 ? ` · ${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
+
+  // Skip phases with no tools (pure reasoning without action — the final
+  // thinking round before the answer). Also skip truly empty phases.
+  if (toolCount === 0 && !phase.hasLiveReasoning) {
+    return null
+  }
 
   return (
     <div className="flex flex-col">
