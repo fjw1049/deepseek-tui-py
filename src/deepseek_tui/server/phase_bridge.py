@@ -151,8 +151,6 @@ class NarrationPlan:
     next_goal: str
 
     def display_text(self, *, locale: str = "zh") -> str | None:
-        if not self.publish:
-            return None
         parts = [p.strip() for p in (self.finding, self.next_goal) if p.strip()]
         if not parts:
             return None
@@ -558,6 +556,33 @@ def _parse_plan_json(raw: str) -> NarrationPlan | None:
     )
 
 
+def _extract_narration_from_text(raw: str) -> NarrationPlan | None:
+    """Extract a usable narration when Flash returns prose instead of JSON.
+
+    Takes the first meaningful sentence (up to 120 chars) as the finding.
+    """
+    text = raw.strip()
+    if not text or len(text) < 10:
+        return None
+    if contains_tool_name(text):
+        return None
+    # Take first sentence or first 120 chars
+    for sep in ("。", ".", "；", "\n"):
+        idx = text.find(sep)
+        if 10 < idx < 150:
+            text = text[:idx]
+            break
+    text = _truncate(text, 120)
+    if not text or len(text) < 10:
+        return None
+    return NarrationPlan(
+        publish=True,
+        phase="explore",
+        finding=text,
+        next_goal="",
+    )
+
+
 async def compute_narration_plan(
     client: LLMClient,
     *,
@@ -575,6 +600,7 @@ async def compute_narration_plan(
         system_prompt=system_prompt,
         max_tokens=180,
         temperature=0.1,
+        reasoning_effort="none",
     )
 
     async def _run() -> NarrationPlan | None:
@@ -596,12 +622,15 @@ async def compute_narration_plan(
             logger.info("phase_bridge flash returned empty response")
             return None
         plan = _parse_plan_json(source)
-        if plan is None:
-            logger.info(
-                "phase_bridge flash parse failed raw=%s",
-                (source[:200] + "...") if len(source) > 200 else source,
-            )
-        return plan
+        if plan is not None:
+            return plan
+        # JSON parsing failed — Flash returned natural language instead.
+        # Extract a usable narration directly from the raw text.
+        logger.info(
+            "phase_bridge flash not JSON, extracting from raw=%s",
+            (source[:120] + "...") if len(source) > 120 else source,
+        )
+        return _extract_narration_from_text(source)
 
     try:
         return await asyncio.wait_for(_run(), timeout=timeout_s)
