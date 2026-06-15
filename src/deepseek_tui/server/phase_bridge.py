@@ -447,15 +447,15 @@ def template_narration(
 
 
 def validate_plan(plan: NarrationPlan, *, locale: str = "zh") -> bool:
-    if not plan.publish:
-        return False
     combined = f"{plan.finding} {plan.next_goal}"
+    # Must have at least some content
     if not plan.finding.strip() and not plan.next_goal.strip():
         return False
     if contains_tool_name(combined):
         return False
-    if not text_matches_locale(combined, locale):
-        return False
+    # Ignore publish=false — Flash is overly conservative; if it produced
+    # meaningful finding/next_goal content, show it regardless.
+    # Ignore locale mismatch — English narration is better than template fallback.
     return True
 
 
@@ -521,16 +521,20 @@ def _flash_prompts(bundle: IntentBundle) -> tuple[str, str]:
 
     user_prompt = (
         f"{body}\n"
-        "返回 ONLY 一个 JSON 对象，字段:\n"
+        "返回一个 JSON 对象，字段:\n"
         '{"publish": true|false, "phase": "explore|locate|change|verify|recover", '
-        '"finding": "已确认/已定位的事实(仅来自已确认事实)", '
-        '"next_goal": "接下来要验证的目标(中文，不含工具名)"}\n'
-        "规则: 没有新进展则 publish=false; finding/next_goal 禁止出现工具函数名; "
-        "不要重复已确认事实列表原文; finding 与 next_goal 必须使用中文。"
+        '"finding": "本轮发现了什么（简短中文描述）", '
+        '"next_goal": "接下来要做什么（简短中文描述）"}\n'
+        "规则:\n"
+        "- 有新发现或明确进展时 publish=true\n"
+        "- finding 描述已确认的事实或定位结果，如「定位到 workflow 调度入口在 orchestrator.py」\n"
+        "- next_goal 描述接下来的动作意图，如「深入分析 round-robin 循环逻辑」\n"
+        "- 禁止出现工具函数名(read_file/grep_files等)\n"
+        "- finding 和 next_goal 必须用中文"
     )
     system_prompt = (
-        "You decide whether to show a one-line coding-assistant progress update. "
-        "Respond with JSON only. All user-visible strings must be Chinese."
+        "你是一个编程助手的进度播报器。根据思考内容和工具调用判断是否有新进展，"
+        "如果有则输出简短中文描述。只返回 JSON，不要其他文字。"
     )
     return user_prompt, system_prompt
 
