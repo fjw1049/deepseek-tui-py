@@ -632,22 +632,26 @@ type ProcessPhase = {
 
 function classifyPhaseLabel(executionBlocks: ChatBlock[]): string {
   const toolBlocks = executionBlocks.filter((b) => b.kind === 'tool') as ToolBlock[]
-  if (toolBlocks.length === 0) return '分析'
+  if (toolBlocks.length === 0) return '整理回复'
 
-  const hasRead = toolBlocks.some((b) => {
-    const name = toolNameFromProcessBlock(b)
-    return /^(read_file|list_dir|file_search)$/.test(name)
-  })
-  const hasGrep = toolBlocks.some((b) => /^grep/.test(toolNameFromProcessBlock(b)))
+  const names = toolBlocks.map((b) => toolNameFromProcessBlock(b))
+  const hasListDir = names.some((n) => /^list_dir$/.test(n))
+  const hasRead = names.some((n) => /^(read_file|file_search)$/.test(n))
+  const hasGrep = names.some((n) => /^grep/.test(n))
   const hasMutate = toolBlocks.some((b) => b.toolKind === 'file_change')
   const hasShell = toolBlocks.some((b) => b.toolKind === 'command_execution')
+  const hasWebSearch = names.some((n) => /^(web_search|fetch_url)$/.test(n))
 
   if (hasMutate) return '实施修改'
-  if (hasShell && !hasRead && !hasGrep) return '执行命令'
-  if (hasRead && hasGrep) return '代码探索'
-  if (hasRead) return '阅读代码'
+  if (hasShell && !hasRead && !hasGrep && !hasListDir) return '执行命令'
+  if (hasWebSearch) return '网络搜索'
+  if (hasListDir && !hasRead && !hasGrep) return '浏览结构'
+  if (hasGrep && hasRead) return '代码探索'
   if (hasGrep) return '搜索代码'
-  return '分析'
+  if (hasRead && hasListDir) return '代码探索'
+  if (hasRead) return '阅读代码'
+  if (hasListDir) return '浏览结构'
+  return '工具调用'
 }
 
 function groupProcessPhases(sections: ProcessSection[]): ProcessPhase[] {
@@ -1683,8 +1687,9 @@ function ProcessPhaseRow({
       (block.kind === 'subagent' && (block.status === 'failed' || block.status === 'cancelled'))
   )
 
-  // Skip empty phases (no tools, no live reasoning)
-  if (toolCount === 0 && !phase.hasLiveReasoning && phase.reasoningBlocks.length === 0) {
+  // Skip phases with no tools (pure reasoning without action — the final
+  // thinking round before the answer). Also skip truly empty phases.
+  if (toolCount === 0 && !phase.hasLiveReasoning) {
     return null
   }
 
