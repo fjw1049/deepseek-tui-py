@@ -771,7 +771,6 @@ class RuntimeThreadManager:
             "thread.forked",
             {"thread": forked.model_dump(mode="json"), "source_thread_id": source.id},
         )
-        self.store.copy_goal_journal_for_fork(source.id, forked.id)
         return forked
 
     # --- turn lifecycle ------------------------------------------------------
@@ -796,18 +795,6 @@ class RuntimeThreadManager:
 
         handle, engine_task = await self._ensure_engine_loaded(thread, trace=trace)
         trace.runtime_turn_created_ms = now_ms()
-
-        if req.internal_kind == "goal_follow_up" and req.goal_id:
-            async with self._active_lock:
-                state = self._active.get(thread_id)
-                controller = (
-                    getattr(state.engine, "goal_controller", None)
-                    if state is not None
-                    else None
-                )
-                if controller is None or not controller.validate_follow_up(req.goal_id):
-                    pop_turn_latency(turn_id)
-                    raise ValueError("goal follow-up is stale")
 
         async with self._active_lock:
             state = self._active.get(thread_id)
@@ -889,7 +876,6 @@ class RuntimeThreadManager:
                 model=model,
                 hidden=req.hidden,
                 internal_kind=req.internal_kind,
-                goal_id=req.goal_id,
             )
         )
         # Monitor runs concurrently; ensure task is referenced until turn ends.
@@ -1176,18 +1162,6 @@ class RuntimeThreadManager:
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
-        goal_controller = getattr(engine, "goal_controller", None)
-        if goal_controller is not None and hasattr(goal_controller, "rebind"):
-            goal_controller.rebind(
-                thread_id=thread.id,
-                journal_path=self.store.goal_journal_path(thread.id),
-            )
-            tid = thread.id
-
-            def _goal_changed() -> None:
-                asyncio.ensure_future(self._emit_goal_status_if_needed(tid))
-
-            goal_controller._on_change = _goal_changed
         engine.memory_thread_id = thread.id
         engine.memory_mode = thread.memory_mode
         if self._elevation_bridge is not None:
@@ -2254,67 +2228,7 @@ class RuntimeThreadManager:
                 state.active_turn = None
             self._touch_lru(thread_id)
 
-        await self._emit_goal_status_if_needed(thread_id)
-        await self._schedule_goal_follow_up_if_needed(thread_id)
-
     # --- helpers -------------------------------------------------------------
-
-    async def _emit_goal_status_if_needed(self, thread_id: str) -> None:
-        """Emit a goal.status SSE event so Workbench can update the GoalChip."""
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is None:
-                return
-            controller = getattr(state.engine, "goal_controller", None)
-        if controller is None:
-            return
-        goal = controller.current
-        if goal is None:
-            await self._emit_event(
-                thread_id, None, None, "goal.status",
-                {"goal": None},
-            )
-            return
-        await self._emit_event(
-            thread_id, None, None, "goal.status",
-            {
-                "goal": {
-                    "goal_id": goal.goal_id,
-                    "objective": goal.objective[:120],
-                    "status": goal.status.value,
-                    "tokens_used": goal.usage.tokens_used,
-                    "token_budget": goal.token_budget,
-                    "active_seconds": round(goal.usage.active_seconds, 1),
-                },
-            },
-        )
-
-    async def _schedule_goal_follow_up_if_needed(self, thread_id: str) -> None:
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is None:
-                return
-            controller = getattr(state.engine, "goal_controller", None)
-            if controller is None or not hasattr(controller, "take_pending_follow_up"):
-                return
-            follow_up = controller.take_pending_follow_up()
-        if follow_up is None:
-            return
-        if not controller.validate_follow_up(follow_up.goal_id):
-            return
-        thread = self.store.load_thread(thread_id)
-        await self.start_turn(
-            thread_id,
-            StartTurnRequest(
-                prompt=follow_up.content,
-                input_summary="Goal continuation",
-                model=thread.model,
-                mode=thread.mode,
-                hidden=True,
-                internal_kind="goal_follow_up",
-                goal_id=follow_up.goal_id,
-            ),
-        )
 
     def _insert_turn_item_after(self, turn_id: str, after_item_id: str, item_id: str) -> None:
         turn = self.store.load_turn(turn_id)
@@ -2990,7 +2904,6 @@ class StartTurnRequest(BaseModel):
     main_runtime_request_start_ms: int | None = None
     hidden: bool = False
     internal_kind: str | None = None
-    goal_id: str | None = None
 
 
 class SteerTurnRequest(BaseModel):
@@ -3044,7 +2957,6 @@ class RuntimeThreadStore:
         self._turns_dir = root / "turns"
         self._items_dir = root / "items"
         self._events_dir = root / "events"
-        self._goals_dir = root / "goals"
         self._state_path = root / "state.json"
 
         for d in (
@@ -3052,7 +2964,6 @@ class RuntimeThreadStore:
             self._turns_dir,
             self._items_dir,
             self._events_dir,
-            self._goals_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -3088,17 +2999,6 @@ class RuntimeThreadStore:
 
     def _events_path(self, thread_id: str) -> Path:
         return self._events_dir / f"{thread_id}.jsonl"
-
-    def goal_journal_path(self, thread_id: str) -> Path:
-        return self._goals_dir / f"{thread_id}.jsonl"
-
-    def copy_goal_journal_for_fork(self, source_thread_id: str, target_thread_id: str) -> None:
-        from deepseek_tui.integrations.goal import copy_goal_journal_file
-
-        copy_goal_journal_file(
-            self.goal_journal_path(source_thread_id),
-            self.goal_journal_path(target_thread_id),
-        )
 
     # --- CRUD ----------------------------------------------------------------
 

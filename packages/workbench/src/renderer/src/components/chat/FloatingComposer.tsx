@@ -28,7 +28,6 @@ import {
   Shrink,
   Square,
   Gauge,
-  Target,
   Workflow,
   X
 } from 'lucide-react'
@@ -56,7 +55,7 @@ import {
   useThreadUsageState
 } from '../../hooks/use-thread-usage'
 
-export type ComposerMode = 'plan' | 'agent' | 'ask' | 'goal' | 'workflow'
+export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
 
 type ComposerAttachment = {
   id: string
@@ -208,21 +207,17 @@ export function FloatingComposer({
       ? t('composerModePlan')
       : mode === 'ask'
         ? t('composerModeAsk')
-        : mode === 'goal'
-          ? t('composerModeGoal')
-          : mode === 'workflow'
-            ? t('composerModeWorkflow')
-            : t('composerModeAgent')
+        : mode === 'workflow'
+          ? t('composerModeWorkflow')
+          : t('composerModeAgent')
   const ModeIcon =
     mode === 'plan'
       ? ListTodo
       : mode === 'ask'
         ? MessageCircleQuestion
-        : mode === 'goal'
-          ? Target
-          : mode === 'workflow'
-            ? Workflow
-            : Bot
+        : mode === 'workflow'
+          ? Workflow
+          : Bot
 
   const placeholder = !runtimeReady
     ? t('runtimeActionNeedsConnection')
@@ -267,17 +262,6 @@ export function FloatingComposer({
             : t('slashCommandAskDescription'),
         keywords: ['ask', 'question', 'qa', '问答'],
         icon: <MessageCircleQuestion className="h-4 w-4" strokeWidth={1.9} />
-      },
-      {
-        id: 'goal',
-        kind: 'mode',
-        title: t('slashCommandGoalTitle'),
-        description:
-          mode === 'goal'
-            ? t('slashCommandGoalActiveDescription')
-            : t('slashCommandGoalDescription'),
-        keywords: ['goal', 'objective', 'target', '目标'],
-        icon: <Target className="h-4 w-4" strokeWidth={1.9} />
       },
       {
         id: 'workflow',
@@ -866,7 +850,6 @@ export function FloatingComposer({
                       { id: 'agent' as const, label: t('composerModeAgent'), icon: Bot },
                       { id: 'plan' as const, label: t('composerModePlan'), icon: ListTodo },
                       { id: 'ask' as const, label: t('composerModeAsk'), icon: MessageCircleQuestion },
-                      { id: 'goal' as const, label: t('composerModeGoal'), icon: Target },
                       { id: 'workflow' as const, label: t('composerModeWorkflow'), icon: Workflow }
                     ] as const
                   ).map((item) => (

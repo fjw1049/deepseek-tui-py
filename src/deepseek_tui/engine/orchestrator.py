@@ -59,7 +59,6 @@ from deepseek_tui.engine.handle import (
     AutoApprovalHandler,
     CancelRequestOp,
     EngineHandle,
-    GoalFollowUpOp,
     SendMessageOp,
 )
 from deepseek_tui.engine.turn import prepare_turn_for_model
@@ -121,6 +120,24 @@ def _resolve_app_mode(mode: str) -> _AppMode:
         return _AppMode(mode)
     except ValueError:
         return _AppMode.AGENT
+
+
+def _detect_locale(text: str) -> str:
+    """Detect locale tag from user message text.
+
+    Simple heuristic: if the message contains CJK characters (Chinese),
+    return "zh". Otherwise return "en". This ensures the Environment
+    block's ``lang`` field matches the user's language so the model
+    responds in the same language.
+    """
+    if not text:
+        return "en"
+    cjk_count = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+    # If >10% of non-space chars are CJK, treat as Chinese
+    non_space = len(text.replace(" ", ""))
+    if non_space > 0 and cjk_count / non_space > 0.1:
+        return "zh"
+    return "en"
 
 
 _TRIVIAL_RECALL_PROMPTS = {
@@ -397,15 +414,6 @@ class Engine:
         self._activity_coordinator = SessionActivityCoordinator(
             self, self.handle.try_emit
         )
-        from deepseek_tui.integrations.goal import GoalController
-        from deepseek_tui.integrations.goal import GOAL_CONTROLLER_KEY
-
-        goal_thread_id = str(self.tool_context.metadata.get("runtime_thread_id") or "default")
-        self.goal_controller = GoalController(
-            self.tool_context.working_directory,
-            goal_thread_id,
-        )
-        self.tool_context.metadata[GOAL_CONTROLLER_KEY] = self.goal_controller
 
     def sync_session(
         self,
@@ -584,8 +592,6 @@ class Engine:
                 flash_client=engine.client, config=SeamConfig(enabled=True)
             )
         engine._cycle_session_id = uuid.uuid4().hex
-        if not engine.tool_context.metadata.get("runtime_thread_id"):
-            engine.goal_controller.rebind(thread_id=engine._cycle_session_id)
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
         from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
@@ -910,7 +916,6 @@ class Engine:
                         logger.info("engine_turn_task_cancelled")
                     except Exception as exc:  # noqa: BLE001
                         logger.exception("engine_turn_task_failed")
-                        self.goal_controller.on_turn_failed(f"engine_error: {exc}")
                         await self.handle.emit(
                             ErrorEvent(
                                 message=f"Internal engine error: {exc}",
@@ -936,7 +941,6 @@ class Engine:
                             logger.info("engine_turn_task_cancelled")
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("engine_turn_task_failed")
-                            self.goal_controller.on_turn_failed(f"engine_error: {exc}")
                             await self.handle.emit(
                                 ErrorEvent(
                                     message=f"Internal engine error: {exc}",
@@ -957,25 +961,7 @@ class Engine:
                     else:
                         op = op_wait.result()
 
-                if isinstance(op, GoalFollowUpOp):
-                    if not self.goal_controller.validate_follow_up(op.goal_id):
-                        logger.info("goal_follow_up_stale goal_id=%s", op.goal_id)
-                        continue
-                    if turn_task is not None:
-                        await turn_task
-                    turn_task = asyncio.create_task(
-                        self._handle_send_message(
-                            SendMessageOp(
-                                content=op.content,
-                                model=op.model,
-                                hidden=True,
-                                internal_kind="goal_follow_up",
-                                goal_id=op.goal_id,
-                            )
-                        ),
-                        name="engine-goal-follow-up",
-                    )
-                elif isinstance(op, SendMessageOp):
+                if isinstance(op, SendMessageOp):
                     if turn_task is not None:
                         await turn_task
                     turn_task = asyncio.create_task(
@@ -1019,7 +1005,6 @@ class Engine:
                 # scoped to this turn, not to the engine run loop.
                 reason = self.handle.cancel_reason or "user_cancelled"
                 logger.info("turn_hard_cancelled reason=%s", reason)
-                self.goal_controller.on_turn_failed(reason)
                 await self.handle.emit(TurnCancelledEvent(reason=reason))
             finally:
                 self.handle._mark_turn_idle()
@@ -1112,31 +1097,28 @@ class Engine:
             )
 
         mode_hint = ""
-        if self.mode == "goal" and self.goal_controller.current is None:
-            mode_hint = (
-                "\n\n[Turn hint] No active goal exists — use create_goal "
-                "to establish an objective from the user's request, "
-                "then proceed."
-            )
-        elif self.mode == "workflow":
+        if self.mode == "workflow":
             mode_hint = (
                 "\n\n[Turn hint] Use the workflow tool to decompose "
                 "the user's request into a phased workflow spec."
             )
 
-        if op.internal_kind == "goal_follow_up" and op.goal_id:
-            if not self.goal_controller.validate_follow_up(op.goal_id):
-                logger.info(
-                    "goal_follow_up_stale_at_turn_start goal_id=%s", op.goal_id
+        # Language enforcement: inject a turn-level hint when user
+        # speaks Chinese so the model doesn't drift into English.
+        detected_locale = _detect_locale(processed.display_text or "")
+        if detected_locale == "zh":
+            working_messages.append(
+                Message.user(
+                    "[系统提示] 用户使用中文提问，你的思考过程(reasoning_content)和最终回复必须全程使用简体中文。"
+                    "代码、路径、命令等技术标识符保持原样，仅自然语言部分使用中文。"
                 )
-                return
+            )
 
         try:
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
             self.turn_usage_ledger.reset()
-            self.goal_controller.on_turn_start()
             self._save_crash_checkpoint(
                 working_messages,
                 model=op.model or self.default_model,
@@ -1147,6 +1129,7 @@ class Engine:
                 skills_context=self._render_skills_context(),
                 working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,
+                locale_tag=_detect_locale(processed.display_text or ""),
                 memory_enabled=self._memory_md_enabled(),
                 memory_path=self.memory_path,
                 memory_recall=memory_recall,
@@ -1178,9 +1161,6 @@ class Engine:
                     TurnCancelledEvent(
                         reason=self.handle.cancel_reason or "user_cancelled"
                     )
-                )
-                self.goal_controller.on_turn_failed(
-                    self.handle.cancel_reason or "user_cancelled"
                 )
                 return
 
@@ -1251,14 +1231,6 @@ class Engine:
                 running_subagents = self.tool_context.subagent_manager.running_count()
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
-            if turn_ok:
-                follow_up = self.goal_controller.on_turn_complete(usage)
-            else:
-                self.goal_controller.on_turn_failed(result.outcome.value, usage)
-                follow_up = None
-            steer = self.goal_controller.take_pending_steer()
-            if steer:
-                await self.handle.steer(steer)
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
@@ -1271,15 +1243,6 @@ class Engine:
                     running_tasks=running_tasks,
                 )
             )
-            if (
-                follow_up is not None
-                and not self.tool_context.metadata.get("runtime_thread_id")
-            ):
-                await self.handle.send_goal_follow_up(
-                    follow_up.goal_id,
-                    follow_up.content,
-                    model=op.model or self.default_model,
-                )
             await self._auto_persist_session()
             if not result.cancelled:
                 self._user_turn_index += 1

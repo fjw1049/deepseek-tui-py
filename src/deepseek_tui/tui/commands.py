@@ -96,7 +96,7 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/memory", "View or edit user memory file", _C),
     CommandEntry(
         "/mode",
-        "Switch or cycle mode (agent / plan / yolo / ask / goal / workflow)",
+        "Switch or cycle mode (agent / plan / yolo / ask / workflow)",
         _C,
     ),
     CommandEntry("/yolo", "Enable YOLO mode", _C),
@@ -126,7 +126,6 @@ REGISTRY: list[CommandEntry] = [
         _D,
     ),
     CommandEntry("/undo", "Undo last file-modifying tool", _E),
-    CommandEntry("/goal", "Manage the active goal", _T),
 ]
 
 # Build lookup dicts for fast dispatch.
@@ -296,7 +295,7 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
 
 # ── /mode ────────────────────────────────────────────────────────────────
 
-_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask", "goal", "workflow")
+_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask", "workflow")
 
 
 @_register("/mode")
@@ -505,7 +504,6 @@ def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
         restored_messages = parse_session_messages(session_data, path=load_path)
         metadata = session_metadata(session_data, path=load_path)
         apply_messages_to_engine(app._engine, restored_messages)
-        app._rebind_goal_for_session(metadata, fallback_id=load_path.stem)
     except Exception as exc:
         return CommandResult(error=f"Failed to restore messages: {exc}")
 
@@ -799,96 +797,6 @@ def cmd_tokens(args: str, app: DeepSeekTUI) -> CommandResult:
     ]
 
     return CommandResult(output="\n".join(lines))
-
-
-# ── /goal ────────────────────────────────────────────────────────────────
-
-
-def _schedule_goal_follow_up(app: "DeepSeekTUI") -> None:
-    if app._engine is None:
-        return
-    controller = getattr(app._engine, "goal_controller", None)
-    if controller is None or not hasattr(controller, "take_pending_follow_up"):
-        return
-    follow_up = controller.take_pending_follow_up()
-    if follow_up is None:
-        return
-    cfg = getattr(app, "config", None)
-    model = None
-    if cfg is not None:
-        model = cfg.model or cfg.default_text_model
-
-    async def _dispatch() -> None:
-        await app.handle.send_goal_follow_up(
-            follow_up.goal_id,
-            follow_up.content,
-            model=model,
-        )
-        app.run_worker(app._listen_events(), exclusive=True, name="event-listener")
-
-    app.run_worker(_dispatch(), name="goal-follow-up")
-
-
-@_register("/goal")
-def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
-    if app._engine is None:
-        return CommandResult(error="Engine not started — no goal runtime available")
-    controller = getattr(app._engine, "goal_controller", None)
-    if controller is None:
-        return CommandResult(error="Goal runtime is not attached")
-
-    parts = args.strip().split(maxsplit=1)
-    action = parts[0].lower() if parts else "status"
-    rest = parts[1] if len(parts) > 1 else ""
-
-    try:
-        if action in {"status", "show"}:
-            goal = controller.current
-        elif action == "create":
-            replace = False
-            objective = rest.strip()
-            for prefix in ("--replace ", "-r "):
-                if objective.startswith(prefix):
-                    replace = True
-                    objective = objective[len(prefix) :].strip()
-                    break
-            if not objective:
-                return CommandResult(
-                    error="Usage: /goal create [--replace|-r] <objective>"
-                )
-            goal = controller.create(objective, replace_existing=replace)
-            _schedule_goal_follow_up(app)
-        elif action == "pause":
-            goal = controller.pause(rest or "paused by user")
-        elif action == "resume":
-            goal = controller.resume()
-            _schedule_goal_follow_up(app)
-        elif action == "complete":
-            goal = controller.complete(rest or "completed by user")
-        elif action == "clear":
-            controller.clear(rest or "cleared by user")
-            return CommandResult(output="Goal cleared.")
-        else:
-            return CommandResult(
-                error=(
-                    "Usage: /goal [status|create|pause|resume|complete|clear] [text] "
-                    "(create supports --replace)"
-                )
-            )
-    except ValueError as exc:
-        return CommandResult(error=str(exc))
-
-    if goal is None:
-        return CommandResult(output="No goal is set.")
-    budget = goal.token_budget if goal.token_budget is not None else "none"
-    return CommandResult(
-        output=(
-            f"Goal: {goal.objective}\n"
-            f"Status: {goal.status.value}\n"
-            f"Tokens: {goal.usage.tokens_used:,} / {budget}\n"
-            f"Active seconds: {goal.usage.active_seconds:.1f}"
-        )
-    )
 
 
 # ── /system ──────────────────────────────────────────────────────────────

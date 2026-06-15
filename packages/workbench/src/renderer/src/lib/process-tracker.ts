@@ -1,6 +1,5 @@
-import type { ChatBlock, GoalStatusPayload } from '../agent/types'
+import type { ChatBlock } from '../agent/types'
 
-type GoalData = NonNullable<GoalStatusPayload['goal']>
 type WorkflowBlock = Extract<ChatBlock, { kind: 'workflow' }>
 
 export type TrackedProcessStatus =
@@ -10,37 +9,19 @@ export type TrackedProcessStatus =
   | 'failed'
   | 'cancelled'
 
-export type TrackedProcess =
-  | {
-      id: string
-      type: 'goal'
-      status: TrackedProcessStatus
-      title: string
-      subtitle: string
-      progressPct: number | null
-      relatedBlockIds: string[]
-      goal: GoalData
-    }
-  | {
-      id: string
-      type: 'workflow'
-      status: TrackedProcessStatus
-      title: string
-      subtitle: string
-      progressPct: number | null
-      relatedBlockIds: string[]
-      workflow: WorkflowBlock
-    }
+export type TrackedProcess = {
+  id: string
+  type: 'workflow'
+  status: TrackedProcessStatus
+  title: string
+  subtitle: string
+  progressPct: number | null
+  relatedBlockIds: string[]
+  workflow: WorkflowBlock
+}
 
 export type BuildTrackedProcessesInput = {
   blocks: ChatBlock[]
-  goalStatus: GoalStatusPayload['goal']
-}
-
-function goalStatusToProcessStatus(status: GoalData['status']): TrackedProcessStatus {
-  if (status === 'active') return 'running'
-  if (status === 'complete') return 'completed'
-  return 'waiting'
 }
 
 function workflowStatusToProcessStatus(status: WorkflowBlock['status']): TrackedProcessStatus {
@@ -53,11 +34,6 @@ function workflowStatusToProcessStatus(status: WorkflowBlock['status']): Tracked
 function progressPercent(done: number, total: number): number | null {
   if (total <= 0) return null
   return Math.max(0, Math.min(100, Math.round((done * 100) / total)))
-}
-
-function goalProgressPercent(goal: GoalData): number | null {
-  if (!goal.token_budget || goal.token_budget <= 0) return null
-  return Math.max(0, Math.min(100, Math.round((goal.tokens_used * 100) / goal.token_budget)))
 }
 
 function workflowSubtitle(block: WorkflowBlock): string {
@@ -97,25 +73,7 @@ function latestWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
 }
 
 export function buildTrackedProcesses({
-  blocks,
-  goalStatus
+  blocks
 }: BuildTrackedProcessesInput): TrackedProcess[] {
-  const processes: TrackedProcess[] = []
-
-  if (goalStatus) {
-    processes.push({
-      id: `goal:${goalStatus.goal_id}`,
-      type: 'goal',
-      status: goalStatusToProcessStatus(goalStatus.status),
-      title: goalStatus.objective,
-      subtitle: goalStatus.status,
-      progressPct: goalProgressPercent(goalStatus),
-      relatedBlockIds: [],
-      goal: goalStatus
-    })
-  }
-
-  processes.push(...latestWorkflowProcesses(blocks))
-
-  return processes
+  return latestWorkflowProcesses(blocks)
 }

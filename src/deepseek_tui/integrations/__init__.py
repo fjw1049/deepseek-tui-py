@@ -1,1 +1,1 @@
-"""Integrations — hooks, lsp, mcp, skills, and goal subsystems."""
+"""Integrations — hooks, lsp, mcp, and skills subsystems."""

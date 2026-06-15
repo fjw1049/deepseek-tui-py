@@ -35,33 +35,6 @@ def sse_frame(event_name: str, payload: dict[str, object]) -> str:
     return f"event: {event_name}\ndata: {data}\n\n"
 
 
-def _goal_status_snapshot(mgr: Any, thread_id: str) -> dict[str, object] | None:
-    """Out-of-band goal.status frame from the in-memory controller."""
-    state = mgr._active.get(thread_id)
-    if state is None:
-        return None
-    controller = getattr(state.engine, "goal_controller", None)
-    if controller is None:
-        return None
-    goal = controller.current
-    if goal is None:
-        return None
-    return {
-        "seq": 0,
-        "event": "goal.status",
-        "payload": {
-            "goal": {
-                "goal_id": goal.goal_id,
-                "objective": goal.objective[:120],
-                "status": goal.status.value,
-                "tokens_used": goal.usage.tokens_used,
-                "token_budget": goal.token_budget,
-                "active_seconds": round(goal.usage.active_seconds, 1),
-            },
-        },
-    }
-
-
 async def stream_thread_events(
     mgr: Any,
     thread_id: str,
@@ -80,10 +53,6 @@ async def stream_thread_events(
             last_seq = max(last_seq, record.seq)
             payload = runtime_event_payload(record)
             yield sse_frame(record.event, payload)
-
-        goal_snapshot = _goal_status_snapshot(mgr, thread_id)
-        if goal_snapshot is not None:
-            yield sse_frame("goal.status", goal_snapshot)
 
         while True:
             if is_disconnected is not None and await is_disconnected():

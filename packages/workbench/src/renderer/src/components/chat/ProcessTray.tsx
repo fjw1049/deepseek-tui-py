@@ -66,13 +66,6 @@ function toneFor(process: TrackedProcess): {
       dot: 'bg-sky-500'
     }
   }
-  if (process.type === 'goal') {
-    return {
-      ring: 'border-accent/30 bg-accent/10',
-      icon: 'bg-accent/10 text-accent',
-      dot: 'bg-accent'
-    }
-  }
   return {
     ring: 'border-violet-300/60 bg-violet-500/10 dark:border-violet-800/50',
     icon: 'bg-violet-500/15 text-violet-700 dark:text-violet-300',
@@ -97,8 +90,7 @@ function ProcessIcon({ process }: { process: TrackedProcess }): ReactElement {
   return <Target className="h-3.5 w-3.5" strokeWidth={2} />
 }
 
-function processKindLabel(process: TrackedProcess, t: (key: string) => string): string {
-  if (process.type === 'goal') return t('processTrayGoal')
+function processKindLabel(_process: TrackedProcess, t: (key: string) => string): string {
   return t('processTrayWorkflow')
 }
 
@@ -142,45 +134,6 @@ function ProcessChip({
         {statusLabel(process.status, t)}
       </span>
     </button>
-  )
-}
-
-function GoalDetail({ process }: { process: Extract<TrackedProcess, { type: 'goal' }> }): ReactElement {
-  const { t } = useTranslation('common')
-  const { goal } = process
-  const pct = process.progressPct
-
-  return (
-    <div className="rounded-[18px] border border-ds-border-muted bg-ds-card/70 px-4 py-3 text-[13px] leading-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="font-semibold text-ds-ink">{t('processTrayGoalDetail')}</div>
-        <span className="font-mono text-[11px] text-ds-faint">{goal.goal_id}</span>
-      </div>
-      <p className="mt-1 whitespace-pre-wrap text-ds-muted">{goal.objective}</p>
-      <div className="mt-3 flex flex-wrap gap-2 text-[11.5px] text-ds-faint">
-        <span className="rounded-full bg-ds-hover px-2 py-0.5">
-          {t('processTrayStatusLabel')}: {goal.status}
-        </span>
-        <span className="rounded-full bg-ds-hover px-2 py-0.5">
-          {goal.tokens_used.toLocaleString()}
-          {goal.token_budget ? ` / ${goal.token_budget.toLocaleString()}` : ''} tokens
-        </span>
-        <span className="rounded-full bg-ds-hover px-2 py-0.5">
-          {formatSeconds(goal.active_seconds)}
-        </span>
-      </div>
-      {pct !== null ? (
-        <div className="mt-3">
-          <div className="mb-1 flex justify-between text-[11px] text-ds-faint">
-            <span>{t('processTrayProgress')}</span>
-            <span>{pct}%</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-ds-border/60">
-            <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-      ) : null}
-    </div>
   )
 }
 
@@ -263,10 +216,7 @@ function WorkflowDetail({
 }
 
 function ProcessDetail({ process }: { process: TrackedProcess }): ReactElement {
-  if (process.type === 'workflow') {
-    return <WorkflowDetail process={process} />
-  }
-  return <GoalDetail process={process} />
+  return <WorkflowDetail process={process} />
 }
 
 function ProcessDetailModal({
@@ -325,15 +275,12 @@ function ProcessDetailModal({
 }
 
 export function ProcessTray(): ReactElement | null {
-  const { blocks, goalStatus } = useChatStore(
-    useShallow((s) => ({
-      blocks: s.blocks,
-      goalStatus: s.goalStatus
-    }))
+  const blocks = useChatStore(
+    useShallow((s) => s.blocks)
   )
   const processes = useMemo(
-    () => buildTrackedProcesses({ blocks, goalStatus }),
-    [blocks, goalStatus]
+    () => buildTrackedProcesses({ blocks }),
+    [blocks]
   )
   const [openId, setOpenId] = useState<string | null>(null)
 

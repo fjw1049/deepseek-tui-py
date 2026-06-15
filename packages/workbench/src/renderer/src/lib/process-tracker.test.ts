@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatBlock, GoalStatusPayload } from '../agent/types'
+import type { ChatBlock } from '../agent/types'
 import { buildTrackedProcesses } from './process-tracker'
-
-const goal: NonNullable<GoalStatusPayload['goal']> = {
-  goal_id: 'goal_1',
-  objective: 'Ship process tracker',
-  status: 'active',
-  tokens_used: 25,
-  token_budget: 100,
-  active_seconds: 12
-}
 
 function todoBlock(id: string, statuses: string[]): ChatBlock {
   return {
@@ -34,20 +25,6 @@ function todoBlock(id: string, statuses: string[]): ChatBlock {
 }
 
 describe('buildTrackedProcesses', () => {
-  it('tracks active goal state', () => {
-    const processes = buildTrackedProcesses({ blocks: [], goalStatus: goal })
-
-    expect(processes).toEqual([
-      expect.objectContaining({
-        id: 'goal:goal_1',
-        type: 'goal',
-        status: 'running',
-        title: 'Ship process tracker',
-        progressPct: 25
-      })
-    ])
-  })
-
   it('tracks workflow blocks without exposing subagent blocks', () => {
     const blocks: ChatBlock[] = [
       {
@@ -79,7 +56,7 @@ describe('buildTrackedProcesses', () => {
       }
     ]
 
-    const processes = buildTrackedProcesses({ blocks, goalStatus: null })
+    const processes = buildTrackedProcesses({ blocks })
 
     expect(processes).toHaveLength(1)
     expect(processes[0]).toEqual(
@@ -99,7 +76,7 @@ describe('buildTrackedProcesses', () => {
       todoBlock('todo-1', ['completed', 'in_progress'])
     ]
 
-    const processes = buildTrackedProcesses({ blocks, goalStatus: null })
+    const processes = buildTrackedProcesses({ blocks })
 
     expect(processes).toEqual([])
   })
@@ -115,6 +92,6 @@ describe('buildTrackedProcesses', () => {
       }
     ]
 
-    expect(buildTrackedProcesses({ blocks, goalStatus: null })).toEqual([])
+    expect(buildTrackedProcesses({ blocks })).toEqual([])
   })
 })

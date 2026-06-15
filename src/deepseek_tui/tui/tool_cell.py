@@ -1,30 +1,19 @@
-"""Tool cell and diff viewer widgets.
+"""Tool cell widgets — InlineToolCell (single-line) + BlockToolCell (panel).
+
+Dual-mode tool display inspired by opencode's InlineTool / BlockTool split:
+
+- **InlineToolCell**: Compact single-line for read-only tools (grep, read, ls, git).
+  Consecutive inline cells stack with zero margin for visual density.
+- **BlockToolCell**: Panel with left border for mutation tools (edit, write, shell).
+  Shows expandable content (diff, output) with breathing room.
+
+Both cells share the same status lifecycle:
+  running → awaiting → done/failed/denied
+
+External content always passes through ``rich.markup.escape``.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From tool_cell.py
-# ======================================================================
-
-"""Tool call cell — Rust-style structured tool card.
-
-Renders a single tool execution with:
-
-- header line: status bullet + family glyph + verb + state ± elapsed
-- args summary on a ``▏ `` dim gutter (first non-empty value, 56 chars max)
-- head/tail output preview (click to expand to full)
-- unified diff content routed through diff_viewer's renderer
-
-Mirrors the Rust ``ToolCell`` rendering in
-``crates/tui/src/tui/history.rs`` (functions ``render_tool_header`` and
-``render_card_detail_line``). External content (tool_name / args /
-result) always passes through ``rich.markup.escape`` to keep the
-2026-05-11 markup-injection regression closed
-(``tests/parity/phase_e/test_markup_escape.py``).
-"""
 
 import json
 import re
@@ -39,47 +28,13 @@ from textual.binding import Binding
 from textual.widgets import Static
 
 from deepseek_tui.tui.cards import PagerScreen
+from deepseek_tui.tui.tool_classify import ToolDisplay, classify_tool
 
 _DETAIL_RAIL = "▏"
 _TOOL_HEADER_SUMMARY_LIMIT = 56
-_PREVIEW_LINE_LIMIT = 12
+_PREVIEW_LINE_LIMIT = 10
 
-# Family glyph + verb per tool name. Glyphs follow the Rust catalog in
-# ``crates/tui/src/tui/widgets/tool_card.rs`` (▷ read, ◆ patch, ▶ run,
-# ⌕ search, ☰ list, ◈ git, ◇ generic). Verb is a short lowercase label.
-_TOOL_GLYPHS: dict[str, tuple[str, str]] = {
-    "read_file": ("▷", "read"),
-    "write_file": ("◆", "write"),
-    "edit_file": ("◆", "patch"),
-    "apply_patch": ("◆", "patch"),
-    "multi_edit": ("◆", "patch"),
-    "exec_shell": ("▶", "run"),
-    "exec_shell_cancel": ("⊘", "stop"),
-    "exec_shell_wait": ("◷", "wait"),
-    "exec_shell_interact": ("▶", "run"),
-    "grep_files": ("⌕", "search"),
-    "file_search": ("⌕", "search"),
-    "list_dir": ("☰", "ls"),
-    "project_map": ("☰", "map"),
-    "web_search": ("⌕", "web"),
-    "fetch_url": ("⇣", "fetch"),
-}
-
-
-def _classify(tool_name: str) -> tuple[str, str]:
-    """Pick (glyph, verb) for ``tool_name``."""
-    if tool_name in _TOOL_GLYPHS:
-        return _TOOL_GLYPHS[tool_name]
-    if tool_name.startswith("git_"):
-        return ("◈", "git")
-    if tool_name.startswith("task_"):
-        return ("◇", "task")
-    if tool_name.startswith("agent_"):
-        return ("◇", "agent")
-    if tool_name.startswith("github_"):
-        return ("◇", "github")
-    return ("◇", tool_name)
-
+# ── Agent ID extraction (shared) ─────────────────────────────────────
 
 _COMPACT_DELEGATE_TOOLS = frozenset(
     {"agent_spawn", "delegate_to_agent", "spawn_agent", "agent_result", "agent_wait"}
@@ -107,6 +62,9 @@ def _extract_agent_id(result: str) -> str | None:
 
 def _is_compact_delegate_tool(tool_name: str) -> bool:
     return tool_name in _COMPACT_DELEGATE_TOOLS
+
+
+# ── Shared helpers ────────────────────────────────────────────────────
 
 
 def _looks_like_diff(text: str) -> bool:
@@ -140,11 +98,7 @@ def _summarize_args(arguments: dict[str, object] | None) -> str | None:
 def _head_tail_preview(
     text: str, *, max_lines: int = _PREVIEW_LINE_LIMIT
 ) -> tuple[list[str], int]:
-    """Sample head + tail. Returns (visible_lines, omitted_count).
-
-    When omission applies, the literal ``"…"`` marker line is inserted
-    between head and tail so the renderer can style it specially.
-    """
+    """Sample head + tail. Returns (visible_lines, omitted_count)."""
     lines = text.splitlines()
     if len(lines) <= max_lines:
         return lines, 0
@@ -155,16 +109,148 @@ def _head_tail_preview(
     return [*head, "…", *tail], omitted
 
 
-class ToolCell(Static):
-    """One tool call as a structured card."""
+def _elapsed_str(started: float, finished: float | None) -> str:
+    if finished is None:
+        return ""
+    secs = max(0.0, finished - started)
+    if secs < 0.1:
+        return ""
+    return f" · {secs:.1f}s"
 
-    DEFAULT_CSS = "ToolCell { margin: 0 0 1 0; }"
-    # ``o`` opens the full tool output in a PagerScreen modal so long
-    # tool results (head/tail-truncated by ``_head_tail_preview``) can be
-    # read in full with vim-style scrolling + search. Mirrors Rust
-    # ``pager.rs`` keymap. The cell must be focusable for the binding to
-    # fire; clicking the cell focuses it (Textual default) and the user
-    # then presses ``o``.
+
+def _status_bullet(status: str) -> str:
+    return {
+        "running": "·",
+        "awaiting": "?",
+        "done": "•",
+        "failed": "✗",
+        "denied": "⊘",
+    }.get(status, "·")
+
+
+def _state_color(status: str) -> str:
+    return {
+        "running": "yellow",
+        "awaiting": "yellow",
+        "done": "dim",
+        "failed": "red",
+        "denied": "red",
+    }.get(status, "yellow")
+
+
+# ======================================================================
+# InlineToolCell — single-line compact display
+# ======================================================================
+
+
+class InlineToolCell(Static):
+    """Single-line tool cell for read-only / lightweight operations.
+
+    Visual states:
+      pending:  ~ verb summary...
+      running:  [yellow]· icon verb summary[/]
+      done:     [dim]icon verb summary · elapsed[/]
+      failed:   [red]✗ icon verb summary — error[/]
+      denied:   [strikethrough dim]⊘ verb summary[/]
+    """
+
+    DEFAULT_CSS = "InlineToolCell { margin: 0; padding: 0 0 0 3; }"
+
+    def __init__(
+        self,
+        tool_name: str,
+        tool_call_id: str,
+        arguments: dict[str, object] | None = None,
+        *,
+        display: ToolDisplay | None = None,
+    ) -> None:
+        super().__init__("")
+        self.tool_name = tool_name
+        self.tool_call_id = tool_call_id
+        self._arguments: dict[str, object] = dict(arguments) if arguments else {}
+        self._display = display or classify_tool(tool_name)
+        self._status: str = "running"
+        self._result: str = ""
+        self._started_at: float = time.monotonic()
+        self._finished_at: float | None = None
+        self._refresh()
+
+    @property
+    def cell_type(self) -> str:
+        return "inline"
+
+    def set_result(self, content: str, success: bool) -> None:
+        self._status = "done" if success else "failed"
+        self._result = content
+        self._finished_at = time.monotonic()
+        self._refresh()
+
+    def set_awaiting_approval(self) -> None:
+        self._status = "awaiting"
+        self._refresh()
+
+    def set_approved(self) -> None:
+        if self._status == "awaiting":
+            self._status = "running"
+        self._refresh()
+
+    def set_denied(self, reason: str = "") -> None:
+        self._status = "denied"
+        if reason:
+            self._result = reason
+        self._finished_at = time.monotonic()
+        self._refresh()
+
+    def _format_summary(self) -> str:
+        """Build the display string from args (path, pattern, command, etc.)."""
+        summary = _summarize_args(self._arguments)
+        if summary:
+            return escape(summary)
+        return escape(self.tool_name)
+
+    def _refresh(self) -> None:
+        icon = self._display.icon
+        verb = self._display.verb
+        summary = self._format_summary()
+        elapsed = _elapsed_str(self._started_at, self._finished_at)
+        color = _state_color(self._status)
+        bullet = _status_bullet(self._status)
+
+        if self._status == "running":
+            self.update(f"[{color}]{bullet} {icon} {verb}[/] {summary}")
+        elif self._status == "awaiting":
+            self.update(f"[{color}]{bullet} {icon} {verb}[/] {summary} [yellow]· awaiting approval[/]")
+        elif self._status == "done":
+            self.update(f"[dim]{icon} {verb} {summary}{elapsed}[/]")
+        elif self._status == "failed":
+            err_preview = escape(self._result.splitlines()[0][:60]) if self._result else "error"
+            self.update(f"[{color}]{bullet} {icon} {verb} {summary} — {err_preview}[/]")
+        elif self._status == "denied":
+            self.update(f"[dim strikethrough]{icon} {verb} {summary}[/]")
+        else:
+            self.update(f"[{color}]{bullet} {icon} {verb}[/] {summary}")
+
+
+# ======================================================================
+# BlockToolCell — panel with left border + expandable content
+# ======================================================================
+
+
+class BlockToolCell(Static):
+    """Panel-style tool cell for mutation operations (edit, write, shell).
+
+    Renders with a left border character and padded content area.
+    Content is expandable/collapsible on click.
+    """
+
+    DEFAULT_CSS = """
+    BlockToolCell {
+        margin: 0;
+        padding: 0 0 0 1;
+        border-left: thick $accent;
+    }
+    """
+
     can_focus = True
     BINDINGS = [
         Binding("o", "open_pager", "Open in pager", show=False),
@@ -175,48 +261,42 @@ class ToolCell(Static):
         tool_name: str,
         tool_call_id: str,
         arguments: dict[str, object] | None = None,
+        *,
+        display: ToolDisplay | None = None,
     ) -> None:
         super().__init__("")
         self.tool_name = tool_name
         self.tool_call_id = tool_call_id
         self._arguments: dict[str, object] = dict(arguments) if arguments else {}
-        # Status: ``running`` | ``awaiting`` | ``done`` | ``failed`` |
-        # ``denied``. Each maps to a distinct bullet + colour below.
+        self._display = display or classify_tool(tool_name, has_output=True)
         self._status: str = "running"
         self._result: str = ""
         self._started_at: float = time.monotonic()
         self._finished_at: float | None = None
-        # Folding state: collapsed → header only (no args, no body);
-        # expanded → full layout. Default is expanded so the user sees
-        # what the tool returned without an extra click, and they can
-        # click the header to hide noisy results from history.
         self._collapsed: bool = False
         self._refresh()
+
+    @property
+    def cell_type(self) -> str:
+        return "block"
 
     def set_result(self, content: str, success: bool) -> None:
         self._status = "done" if success else "failed"
         self._result = content
         self._finished_at = time.monotonic()
-        # Auto-collapse on completion so the final assistant message
-        # stays the visual focus. The user can click the header to
-        # re-expand and inspect args + output.
         self._collapsed = True
         self._refresh()
 
     def set_awaiting_approval(self) -> None:
-        """Mark the cell as paused waiting on user approval."""
         self._status = "awaiting"
         self._refresh()
 
     def set_approved(self) -> None:
-        """User approved; resume running state (cell will stay
-        ``running`` until the engine emits a result)."""
         if self._status == "awaiting":
             self._status = "running"
         self._refresh()
 
     def set_denied(self, reason: str = "") -> None:
-        """User (or sandbox policy) denied the call. Terminal state."""
         self._status = "denied"
         if reason:
             self._result = reason
@@ -225,174 +305,100 @@ class ToolCell(Static):
         self._refresh()
 
     def on_click(self, event: events.Click) -> None:  # type: ignore[override]
-        """Toggle collapsed / expanded for the *entire* tool block.
-
-        Replaces the older "expand the truncated tail" affordance: that
-        action was easy to miss and gave a third hidden state. Now a
-        click always toggles between "header only" and "full preview"
-        — the user has one consistent gesture for hiding noisy tool
-        output from the transcript history.
-        """
         self._collapsed = not self._collapsed
         self._refresh()
 
     def action_open_pager(self) -> None:
-        """Push a ``PagerScreen`` modal with the full tool output.
-
-        Bound to the ``o`` key (Rust pager parity). No-op when the tool
-        hasn't produced output yet, so an empty modal doesn't pop over
-        a still-running call.
-        """
         if not self._result:
             return
         lines = self._result.splitlines() or [self._result]
         title = f"{self.tool_name} · {self._status}"
         self.app.push_screen(PagerScreen(title=title, lines=lines))
 
-    def _elapsed_str(self) -> str:
-        if self._finished_at is None:
-            return ""
-        secs = max(0.0, self._finished_at - self._started_at)
-        if secs < 0.1:
-            return ""
-        return f" · {secs:.1f}s"
+    def _header_markup(self) -> str:
+        icon = self._display.icon
+        verb = self._display.verb
+        summary = _summarize_args(self._arguments) or self.tool_name
+        summary = escape(summary)
+        color = _state_color(self._status)
+        bullet = _status_bullet(self._status)
+        elapsed = _elapsed_str(self._started_at, self._finished_at)
 
-    def _status_bullet(self) -> str:
-        return {
-            "running": "·",
-            "awaiting": "?",
-            "done": "•",
-            "failed": "✗",
-            "denied": "⊘",
-        }.get(self._status, "·")
-
-    def _state_color(self) -> str:
-        return {
-            "running": "yellow",
-            "awaiting": "yellow",
-            "done": "green",
-            "failed": "red",
-            "denied": "red",
-        }.get(self._status, "yellow")
-
-    def _state_label(self) -> str:
-        return {
-            "awaiting": "awaiting approval",
-        }.get(self._status, self._status)
-
-    def _header_markup(self, *, compact_detail: str | None = None) -> str:
-        glyph, verb = _classify(self.tool_name)
-        if _is_compact_delegate_tool(self.tool_name):
-            glyph, verb = "◐", "delegate"
-        bullet = self._status_bullet()
-        color = self._state_color()
-        elapsed = self._elapsed_str()
-        label = self._state_label()
-        detail = compact_detail or escape(self.tool_name)
-        # Tiny ▸/▾ caret hints folding state — only shown when there's
-        # actually a body to hide / reveal, otherwise it's noise.
-        if self._has_body() and not _is_compact_delegate_tool(self.tool_name):
+        # Fold caret
+        has_body = bool(self._result)
+        if has_body:
             caret = "▸" if self._collapsed else "▾"
             caret_part = f"[dim]{caret}[/] "
         else:
             caret_part = ""
+
+        if self._status == "done":
+            return (
+                f"{caret_part}[dim]{bullet}[/] "
+                f"[bold]{icon}[/] [bold]{verb}[/] "
+                f"[white]{summary}[/] "
+                f"[dim]· done{elapsed}[/]"
+            )
         return (
-            f"{caret_part}"
-            f"[{color}]{bullet}[/] "
-            f"[bold]{escape(glyph)}[/] "
-            f"[bold]{escape(verb)}[/] "
-            f"[white]{detail}[/] "
-            f"[{color}]· {label}{elapsed}[/]"
+            f"{caret_part}[{color}]{bullet}[/] "
+            f"[bold]{icon}[/] [bold]{verb}[/] "
+            f"[white]{summary}[/] "
+            f"[{color}]· {self._status}{elapsed}[/]"
         )
 
-    def _compact_delegate_header(self) -> str | None:
-        """Single-line spawn/result header; DelegateCard owns the live tree (#409)."""
-        if not _is_compact_delegate_tool(self.tool_name):
-            return None
-        agent_id = _extract_agent_id(self._result)
-        if agent_id is None and self._arguments:
-            for key in ("agent_id", "id"):
-                value = self._arguments.get(key)
-                if isinstance(value, str) and value.strip():
-                    agent_id = value.strip()
-                    break
-        detail = agent_id or "…"
-        if len(detail) > 12:
-            detail = detail[:12]
-        return self._header_markup(compact_detail=detail)
-
-    def _has_body(self) -> bool:
-        return bool(self._arguments) or bool(self._result)
-
     def _refresh(self) -> None:
-        compact = self._compact_delegate_header()
-        if compact is not None:
-            self.update(compact)
+        header = self._header_markup()
+
+        if self._collapsed and self._result:
+            line_count = len(self._result.splitlines()) or 1
+            self.update(f"{header}  [dim italic]({line_count} lines)[/]")
             return
 
-        header = self._header_markup()
-        # Collapsed state: header line only, optionally a hint about
-        # how much is hidden so the user doesn't lose the fact that
-        # there was output.
-        if self._collapsed and self._has_body():
-            hint_parts: list[str] = []
-            if self._arguments:
-                hint_parts.append("args")
-            if self._result:
-                line_count = len(self._result.splitlines()) or 1
-                hint_parts.append(f"{line_count} line(s) output")
-            hint = " · ".join(hint_parts)
-            self.update(f"{header}  [dim italic](hidden: {hint})[/]")
+        if not self._result:
+            self.update(header)
+            return
+
+        # Expanded: show content
+        if _looks_like_diff(self._result):
+            self.update(self._render_with_diff(header))
             return
 
         lines: list[str] = [header]
-        summary = _summarize_args(self._arguments)
-        if summary:
-            lines.append(f"[dim]{_DETAIL_RAIL} {escape(summary)}[/]")
-
-        if self._result and _looks_like_diff(self._result):
-            self.update(self._render_with_diff(lines, self._result))
-            return
-
-        if self._result:
-            preview_lines, omitted = _head_tail_preview(self._result)
-            for line in preview_lines:
-                if line == "…":
-                    lines.append(f"[dim]{_DETAIL_RAIL} …[/]")
-                else:
-                    lines.append(f"[dim]{_DETAIL_RAIL} {escape(line)}[/]")
-            if omitted > 0:
-                lines.append(
-                    f"[dim italic]{_DETAIL_RAIL} … {omitted} line(s) "
-                    f"truncated[/]"
-                )
-
+        preview_lines, omitted = _head_tail_preview(self._result)
+        for line in preview_lines:
+            if line == "…":
+                lines.append(f"  [dim]…[/]")
+            else:
+                lines.append(f"  [dim]{escape(line)}[/]")
+        if omitted > 0:
+            lines.append(f"  [dim italic]… {omitted} more line(s)[/]")
         self.update("\n".join(lines))
 
-    def _render_with_diff(
-        self, header_lines: list[str], diff_text: str
-    ) -> RenderableType:
-        """Compose header markup + parsed unified diff renderable."""
-        header = Text.from_markup("\n".join(header_lines))
-        files = parse_unified_diff(diff_text)
+    def _render_with_diff(self, header: str) -> RenderableType:
+        header_text = Text.from_markup(header)
+        files = parse_unified_diff(self._result)
         if not files:
-            preview_lines, omitted = _head_tail_preview(diff_text)
-            body_markup = "\n".join(
-                f"[dim]{_DETAIL_RAIL} {escape(line) if line != '…' else '…'}[/]"
+            preview_lines, omitted = _head_tail_preview(self._result)
+            body = "\n".join(
+                f"  [dim]{escape(line) if line != '…' else '…'}[/]"
                 for line in preview_lines
             )
-            if omitted > 0:
-                body_markup += (
-                    f"\n[dim italic]{_DETAIL_RAIL} … {omitted} more line(s); "
-                    f"click to expand[/]"
-                )
-            return Text.from_markup("\n".join(header_lines) + "\n" + body_markup)
+            return Text.from_markup(header + "\n" + body)
         diff_body = render_diff_to_rich(files, line_numbers=True)
-        return _Group(header, diff_body)
+        return _Group(header_text, diff_body)
 
 
 # ======================================================================
-# From diff_viewer.py
+# Legacy ToolCell alias — preserves import compatibility
+# ======================================================================
+
+# The old ToolCell is now BlockToolCell. Existing code that imports
+# ``from deepseek_tui.tui.tool_cell import ToolCell`` continues to work.
+ToolCell = BlockToolCell
+
+
+# ======================================================================
+# From diff_viewer.py — Diff parsing and rendering
 # ======================================================================
 
 """Diff viewer widget — renders unified diffs with color coding.
@@ -405,14 +411,10 @@ Parses unified diff format and renders with Rich styling:
 - Context lines: dim
 """
 
-
-import re
 from dataclasses import dataclass, field
 
 from rich.style import Style
-from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import Static
 
 # ===========================================================================
 # Diff parsing

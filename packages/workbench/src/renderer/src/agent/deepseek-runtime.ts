@@ -5,7 +5,6 @@ import type {
   ElevationRequestPayload,
   EvolutionProposalPayload,
   ChatBlock,
-  GoalStatusPayload,
   NormalizedThread,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
@@ -1434,11 +1433,6 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 return
               }
 
-              if (ev === 'goal.status' && sink.onGoalStatus) {
-                const goal = payload.goal as GoalStatusPayload['goal'] | undefined
-                sink.onGoalStatus({ goal: goal ?? null })
-                return
-              }
 
               if (ev === 'thread.updated' && sink.onThreadUpdated) {
                 const thread = payload.thread as Record<string, unknown> | undefined

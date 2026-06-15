@@ -841,9 +841,6 @@ function buildThreadEventSink(
         return { blocks: [...s.blocks, nextBlock] }
       })
     },
-    onGoalStatus: (ev) => {
-      set(() => ({ goalStatus: ev.goal }))
-    },
     onWorkflowProgress: (ev) => {
       set((s) => {
         const flushed = flushLiveBlocks(s)
@@ -1017,7 +1014,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   queuedMessages: [],
   watchTurnCompletion: {},
   unreadThreadIds: {},
-  goalStatus: null,
   scrollToBlockId: null,
   usageRefreshKey: 0,
 
@@ -1601,8 +1597,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,
         queuedMessages: [],
-        goalStatus: null,
-        scrollToBlockId: synced.scrollToBlockId
+              scrollToBlockId: synced.scrollToBlockId
       })
       syncTurnCompletionPoll(set, get)
       const ac = sseAbort = new AbortController()

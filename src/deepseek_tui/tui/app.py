@@ -129,6 +129,7 @@ class DeepSeekTUI(App[None]):
         Binding("pageup", "transcript_page_up", "PageUp", show=False),
         Binding("pagedown", "transcript_page_down", "PageDown", show=False),
         Binding("ctrl+t", "toggle_thinking", "Thinking", show=False),
+        Binding("ctrl+d", "toggle_details", "Details", show=False),
     ]
 
     def __init__(
@@ -314,37 +315,6 @@ class DeepSeekTUI(App[None]):
         finally:
             self._engine_starting = False
 
-    def _rebind_goal_for_session(
-        self, metadata: dict, *, fallback_id: str, fork: bool = False
-    ) -> None:
-        """Reattach the goal journal to the restored session id."""
-        if self._engine is None:
-            return
-        import uuid as _uuid
-
-        from deepseek_tui.integrations.goal import (
-            copy_goal_journal_for_fork,
-            resolve_goal_thread_id,
-        )
-
-        workspace = self._engine.tool_context.working_directory
-        source_id = resolve_goal_thread_id(
-            metadata,
-            fallback_id=fallback_id,
-            workspace=workspace,
-        )
-        if fork:
-            fork_id = _uuid.uuid4().hex
-            copy_goal_journal_for_fork(workspace, source_id, fork_id)
-            stable_id = fork_id
-        else:
-            stable_id = source_id
-        controller = getattr(self._engine, "goal_controller", None)
-        if controller is not None and hasattr(controller, "rebind"):
-            controller.rebind(thread_id=stable_id)
-        self._engine._cycle_session_id = stable_id
-        self._engine.memory_thread_id = stable_id
-
     def _apply_resume_or_fork(self) -> str | None:
         """Restore session messages from disk if a resume/fork id was given.
 
@@ -375,8 +345,6 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
-        is_fork = self._fork_session_id is not None and self._resume_session_id is None
-        self._rebind_goal_for_session(metadata, fallback_id=path.stem, fork=is_fork)
         mm = metadata.get("memory_mode")
         if isinstance(mm, str) and mm.strip():
             self._engine.memory_mode = mm.strip().lower()
@@ -404,7 +372,6 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
-        self._rebind_goal_for_session(metadata, fallback_id=path.stem)
         mm = metadata.get("memory_mode")
         if isinstance(mm, str) and mm.strip():
             self._engine.memory_mode = mm.strip().lower()
@@ -759,10 +726,10 @@ class DeepSeekTUI(App[None]):
                 else:
                     status.set_status("ready")
                 status.set_finished()
+                total_tokens = 0
                 if event.usage is not None:
-                    status.set_tokens(
-                        event.usage.input_tokens + event.usage.output_tokens
-                    )
+                    total_tokens = event.usage.input_tokens + event.usage.output_tokens
+                    status.set_tokens(total_tokens)
                 # Cost + cache chips are populated only when the event
                 # actually carries them (off-platform providers leave
                 # cost None so the chip stays hidden).
@@ -771,7 +738,21 @@ class DeepSeekTUI(App[None]):
                         event.session_cost_usd,
                         event.session_cost_cny or 0.0,
                     )
-                transcript.finalize_message()
+                # Compute turn elapsed
+                turn_elapsed = 0.0
+                if self._turn_started_at is not None:
+                    turn_elapsed = time.monotonic() - self._turn_started_at
+                # Pass metadata to transcript for turn summary line
+                turn_model = ""
+                if self._engine is not None:
+                    turn_model = getattr(self._engine, "default_model", "") or ""
+                transcript.finalize_message(
+                    mode=self._interaction_mode,
+                    model=turn_model,
+                    elapsed=turn_elapsed,
+                    tokens=total_tokens,
+                    cost=event.session_cost_usd,
+                )
                 self._schedule_info_sidebar_refresh()
                 self._maybe_notify_turn_done()
                 break
@@ -980,8 +961,8 @@ class DeepSeekTUI(App[None]):
         self.push_screen(FilePicker(), _on_pick)
 
     def action_cycle_mode(self) -> None:
-        """Cycle agent/plan/yolo/ask/goal/workflow modes (Tab, Rust ``Tab``)."""
-        modes = ("agent", "plan", "yolo", "ask", "goal", "workflow")
+        """Cycle agent/plan/yolo/ask/workflow modes (Tab, Rust ``Tab``)."""
+        modes = ("agent", "plan", "yolo", "ask", "workflow")
         current = self.query_one(StatusBar)._mode or "agent"
         try:
             idx = modes.index(current)
@@ -1035,6 +1016,13 @@ class DeepSeekTUI(App[None]):
         transcript = self.query_one(Transcript)
         transcript.show_thinking = bool(self.config.ui.show_thinking)
         self.query_one(StatusBar).set_status(f"thinking {state}")
+
+    def action_toggle_details(self) -> None:
+        """Toggle tool detail visibility (Ctrl+D)."""
+        transcript = self.query_one(Transcript)
+        transcript.toggle_details()
+        state = "on" if transcript.show_details else "off"
+        self.query_one(StatusBar).set_status(f"tool details {state}")
 
     @staticmethod
     def _discover_session_picks() -> list[tuple[str, str]]:

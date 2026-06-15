@@ -50,7 +50,6 @@ class AppMode(enum.Enum):
     AGENT = "agent"
     YOLO = "yolo"
     PLAN = "plan"
-    GOAL = "goal"
     WORKFLOW = "workflow"
 
     def mode_prompt(self) -> str:
@@ -58,8 +57,6 @@ class AppMode(enum.Enum):
             return AGENT_MODE()
         elif self is AppMode.YOLO:
             return YOLO_MODE()
-        elif self is AppMode.GOAL:
-            return GOAL_MODE()
         elif self is AppMode.WORKFLOW:
             return WORKFLOW_MODE()
         return PLAN_MODE()
@@ -173,7 +170,7 @@ def build_system_prompt(
         full_prompt += "\n\n" + memory_recall.append_system.strip()
 
     # Context Management (Agent / Yolo only)
-    if mode in (AppMode.AGENT, AppMode.YOLO, AppMode.GOAL, AppMode.WORKFLOW):
+    if mode in (AppMode.AGENT, AppMode.YOLO, AppMode.WORKFLOW):
         full_prompt += (
             "\n\n## Context Management\n\n"
             "When the conversation gets long (you'll see a context usage indicator), you can:\n"
@@ -440,10 +437,6 @@ def YOLO_MODE() -> str:  # noqa: N802
     return _get("modes/yolo.md")
 
 
-def GOAL_MODE() -> str:  # noqa: N802
-    return _get("modes/goal.md")
-
-
 def WORKFLOW_MODE() -> str:  # noqa: N802
     return _get("modes/workflow.md")
 
@@ -511,7 +504,6 @@ def load_prompt(name: str) -> str:
         "agent_mode": AGENT_MODE,
         "plan_mode": PLAN_MODE,
         "yolo_mode": YOLO_MODE,
-        "goal_mode": GOAL_MODE,
         "workflow_mode": WORKFLOW_MODE,
         "auto_approval": AUTO_APPROVAL,
         "suggest_approval": SUGGEST_APPROVAL,

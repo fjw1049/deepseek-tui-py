@@ -221,17 +221,6 @@ export type ThreadUpdatedPayload = {
   changes: Record<string, unknown>
 }
 
-export type GoalStatusPayload = {
-  goal: {
-    goal_id: string
-    objective: string
-    status: 'active' | 'paused' | 'budget_limited' | 'complete'
-    tokens_used: number
-    token_budget: number | null
-    active_seconds: number
-  } | null
-}
-
 export type ThreadEventSink = {
   onSeq(seq: number): void
   onDeltas(deltas: ThreadDeltaEvent[]): void
@@ -262,8 +251,6 @@ export type ThreadEventSink = {
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
   /** Optional: workflow orchestration progress (upsert by toolCallId). */
   onWorkflowProgress?(ev: WorkflowProgressPayload): void
-  /** Optional: goal lifecycle status updates for the process tracker UI. */
-  onGoalStatus?(ev: GoalStatusPayload): void
 }
 
 export interface AgentProvider {

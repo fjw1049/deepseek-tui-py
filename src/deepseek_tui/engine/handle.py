@@ -25,7 +25,6 @@ class SendMessageOp:
     system_prompt: str | None = None
     hidden: bool = False
     internal_kind: str | None = None
-    goal_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,14 +32,7 @@ class CancelRequestOp:
     reason: str = "user_cancelled"
 
 
-@dataclass(frozen=True, slots=True)
-class GoalFollowUpOp:
-    goal_id: str
-    content: str
-    model: str | None = None
-
-
-EngineOp = SendMessageOp | CancelRequestOp | GoalFollowUpOp
+EngineOp = SendMessageOp | CancelRequestOp
 
 
 # --- Approval handlers (formerly engine/approval.py) -------------------------
@@ -128,14 +120,6 @@ class EngineHandle:
                 system_prompt=system_prompt,
             )
         )
-
-    async def send_goal_follow_up(
-        self,
-        goal_id: str,
-        content: str,
-        model: str | None = None,
-    ) -> None:
-        await self.send_op(GoalFollowUpOp(goal_id=goal_id, content=content, model=model))
 
     async def send_op(self, op: EngineOp) -> None:
         await self._op_queue.put(op)
