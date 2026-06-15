@@ -518,21 +518,18 @@ def _flash_prompts(bundle: IntentBundle) -> tuple[str, str]:
         return user_prompt, system_prompt
 
     user_prompt = (
-        f"{body}\n"
-        "返回一个 JSON 对象，字段:\n"
-        '{"publish": true|false, "phase": "explore|locate|change|verify|recover", '
-        '"finding": "本轮发现了什么（简短中文描述）", '
-        '"next_goal": "接下来要做什么（简短中文描述）"}\n'
-        "规则:\n"
-        "- 有新发现或明确进展时 publish=true\n"
-        "- finding 描述已确认的事实或定位结果，如「定位到 workflow 调度入口在 orchestrator.py」\n"
-        "- next_goal 描述接下来的动作意图，如「深入分析 round-robin 循环逻辑」\n"
-        "- 禁止出现工具函数名(read_file/grep_files等)\n"
-        "- finding 和 next_goal 必须用中文"
+        f"{body}\n\n"
+        "请用一句中文（20-50字）描述当前进展。格式要求：\n"
+        "- 直接输出一句话，不要任何前缀、分析过程或解释\n"
+        "- 描述已确认的发现或正在做的事，例如：\n"
+        "  「定位到 workflow 调度入口在 orchestrator.py 的 round-robin 循环中」\n"
+        "  「发现配置加载链路经过 3 层：CLI → Config → TOML」\n"
+        "  「正在分析 engine 的多轮工具调用机制」\n"
+        "- 不要出现工具函数名(read_file/grep_files等)\n"
+        "- 不要说「我们分析」「用户要求」等元描述"
     )
     system_prompt = (
-        "你是一个编程助手的进度播报器。根据思考内容和工具调用判断是否有新进展，"
-        "如果有则输出简短中文描述。只返回 JSON，不要其他文字。"
+        "直接输出一句中文进度描述。不要分析，不要解释，不要JSON。只输出那一句话。"
     )
     return user_prompt, system_prompt
 
@@ -556,29 +553,60 @@ def _parse_plan_json(raw: str) -> NarrationPlan | None:
     )
 
 
+_META_PREFIXES = re.compile(
+    r"^(我们分析|我来分析|让我分析|分析一下|分析本轮|本轮工作摘要[：:]?\s*)"
+    r"|^(当前阶段|用户(当前|正在|要求|提供|说))"
+    r"|^(根据|基于|综合|总结[：:]?\s*)",
+    re.MULTILINE,
+)
+
+
 def _extract_narration_from_text(raw: str) -> NarrationPlan | None:
     """Extract a usable narration when Flash returns prose instead of JSON.
 
-    Takes the first meaningful sentence (up to 120 chars) as the finding.
+    Strips meta-commentary prefixes and finds the core descriptive content.
     """
     text = raw.strip()
-    if not text or len(text) < 10:
+    if not text or len(text) < 6:
         return None
-    if contains_tool_name(text):
+
+    # Strip meta prefixes like "我们分析一下..."
+    cleaned = _META_PREFIXES.sub("", text).strip()
+    if not cleaned:
+        cleaned = text
+
+    # If multi-sentence, try to find the most informative one
+    sentences = re.split(r'[。；\n]', cleaned)
+    sentences = [s.strip() for s in sentences if len(s.strip()) >= 8]
+
+    best = None
+    for s in sentences:
+        if contains_tool_name(s):
+            continue
+        # Skip sentences that are still meta-commentary
+        if re.match(r'^(用户|当前|上一轮|下一步|因此|所以)', s):
+            continue
+        best = s
+        break
+
+    if not best and sentences:
+        # Fallback: just take first non-tool-name sentence
+        for s in sentences:
+            if not contains_tool_name(s):
+                best = s
+                break
+
+    if not best:
         return None
-    # Take first sentence or first 120 chars
-    for sep in ("。", ".", "；", "\n"):
-        idx = text.find(sep)
-        if 10 < idx < 150:
-            text = text[:idx]
-            break
-    text = _truncate(text, 120)
-    if not text or len(text) < 10:
+
+    best = _truncate(best, 120)
+    if len(best) < 6:
         return None
+
     return NarrationPlan(
         publish=True,
         phase="explore",
-        finding=text,
+        finding=best,
         next_goal="",
     )
 

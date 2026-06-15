@@ -1697,6 +1697,12 @@ function ProcessPhaseRow({
   const displayLabel = (toolCount === 0 && phase.hasLiveReasoning) ? '思考中…' : phase.label
   const toolSuffix = toolCount > 0 ? ` · ${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
 
+  // Extract narration from reasoning blocks in this phase
+  const narration = useMemo(
+    () => reasoningNarrationFromBlocks(phase.reasoningBlocks),
+    [phase.reasoningBlocks]
+  )
+
   return (
     <div className="flex flex-col">
       <button
@@ -1720,6 +1726,10 @@ function ProcessPhaseRow({
           <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-55" strokeWidth={1.8} />
         )}
       </button>
+
+      {narration ? (
+        <p className="mt-0.5 pl-1 text-[13px] leading-5 text-ds-muted/85 italic">{narration}</p>
+      ) : null}
 
       {expanded ? (
         <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
