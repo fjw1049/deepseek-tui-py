@@ -600,7 +600,7 @@ async def compute_narration_plan(
         system_prompt=system_prompt,
         max_tokens=180,
         temperature=0.1,
-        reasoning_effort="none",
+        reasoning_effort="low",
     )
 
     async def _run() -> NarrationPlan | None:
