@@ -579,14 +579,29 @@ async def compute_narration_plan(
 
     async def _run() -> NarrationPlan | None:
         chunks: list[str] = []
+        thinking_chunks: list[str] = []
         from deepseek_tui.protocol.responses import StreamTextDelta, StreamThinkingDelta
 
         async for event in client.stream_chat_completion(request):
             if isinstance(event, StreamTextDelta):
                 chunks.append(event.text)
             elif isinstance(event, StreamThinkingDelta):
-                chunks.append(event.thinking)
-        return _parse_plan_json("".join(chunks))
+                thinking_chunks.append(event.thinking)
+        raw_text = "".join(chunks)
+        raw_thinking = "".join(thinking_chunks)
+        # Try text first; if empty, try thinking content (some models
+        # put the JSON response in reasoning tokens)
+        source = raw_text.strip() or raw_thinking.strip()
+        if not source:
+            logger.info("phase_bridge flash returned empty response")
+            return None
+        plan = _parse_plan_json(source)
+        if plan is None:
+            logger.info(
+                "phase_bridge flash parse failed raw=%s",
+                (source[:200] + "...") if len(source) > 200 else source,
+            )
+        return plan
 
     try:
         return await asyncio.wait_for(_run(), timeout=timeout_s)
@@ -637,7 +652,16 @@ async def compute_narration_display(
     if plan is not None:
         rendered = render_plan(plan, locale=locale)
         if rendered:
+            logger.info("phase_bridge success narration=%s", rendered[:80])
             return rendered
+        logger.info(
+            "phase_bridge render_plan rejected publish=%s finding=%r next_goal=%r",
+            plan.publish,
+            plan.finding[:60] if plan.finding else "",
+            plan.next_goal[:60] if plan.next_goal else "",
+        )
+    else:
+        logger.info("phase_bridge compute_narration_plan returned None")
     if fallback:
         logger.info(
             "phase_bridge using template fallback locale=%s batch=%s",
