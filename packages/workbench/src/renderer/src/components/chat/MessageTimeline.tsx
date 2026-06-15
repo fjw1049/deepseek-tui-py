@@ -1693,6 +1693,8 @@ function ProcessPhaseRow({
     return null
   }
 
+  // Override label for live-reasoning-only phases (final thinking before answer)
+  const displayLabel = (toolCount === 0 && phase.hasLiveReasoning) ? '思考中…' : phase.label
   const toolSuffix = toolCount > 0 ? ` · ${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
 
   return (
@@ -1710,7 +1712,7 @@ function ProcessPhaseRow({
           </span>
         ) : null}
         <span className={isActive ? 'ds-shiny-text' : ''}>
-          {phase.label}{toolSuffix}
+          {displayLabel}{toolSuffix}
         </span>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
