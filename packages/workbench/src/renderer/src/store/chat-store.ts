@@ -497,8 +497,15 @@ function buildThreadEventSink(
             continue
           }
           if (delta.kind === 'agent_message') {
-            // Mid-turn model prefaces are persisted server-side only; phase_bridge
-            // narration is patched onto reasoning via onPhaseNarration.
+            // Stream agent_message deltas into liveAssistant so the user
+            // sees text flowing in real-time. If this turns out to be a
+            // mid-turn preface (tool event arrives next), onLiveSegmentComplete
+            // will clear liveAssistant. The final answer streams visibly.
+            if (liveReasoning.trim()) {
+              blocks = appendLiveReasoningBlock(blocks, liveReasoning)
+              liveReasoning = ''
+            }
+            liveAssistant += delta.text
             continue
           }
           if (liveReasoning.trim()) {
