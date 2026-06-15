@@ -619,6 +619,89 @@ function groupProcessSections(blocks: ChatBlock[]): ProcessSection[] {
   return sections
 }
 
+// ── Phase grouping: merge reasoning→execution pairs into phases ──────
+
+type ProcessPhase = {
+  id: string
+  label: string
+  reasoningBlocks: ChatBlock[]
+  executionBlocks: ChatBlock[]
+  outputBlocks: ChatBlock[]
+  hasLiveReasoning: boolean
+}
+
+function classifyPhaseLabel(executionBlocks: ChatBlock[]): string {
+  const toolBlocks = executionBlocks.filter((b) => b.kind === 'tool') as ToolBlock[]
+  if (toolBlocks.length === 0) return '分析'
+
+  const hasRead = toolBlocks.some((b) => {
+    const name = toolNameFromProcessBlock(b)
+    return /^(read_file|list_dir|file_search)$/.test(name)
+  })
+  const hasGrep = toolBlocks.some((b) => /^grep/.test(toolNameFromProcessBlock(b)))
+  const hasMutate = toolBlocks.some((b) => b.toolKind === 'file_change')
+  const hasShell = toolBlocks.some((b) => b.toolKind === 'command_execution')
+
+  if (hasMutate) return '实施修改'
+  if (hasShell && !hasRead && !hasGrep) return '执行命令'
+  if (hasRead && hasGrep) return '代码探索'
+  if (hasRead) return '阅读代码'
+  if (hasGrep) return '搜索代码'
+  return '分析'
+}
+
+function groupProcessPhases(sections: ProcessSection[]): ProcessPhase[] {
+  const phases: ProcessPhase[] = []
+  let currentPhase: ProcessPhase | null = null
+
+  for (const section of sections) {
+    if (section.kind === 'reasoning') {
+      // Start a new phase on each reasoning section
+      if (currentPhase) phases.push(currentPhase)
+      currentPhase = {
+        id: section.id,
+        label: '',
+        reasoningBlocks: [...section.blocks],
+        executionBlocks: [],
+        outputBlocks: [],
+        hasLiveReasoning: section.blocks.some((b) => b.id === 'live-reasoning')
+      }
+    } else if (section.kind === 'execution') {
+      if (!currentPhase) {
+        currentPhase = {
+          id: section.id,
+          label: '',
+          reasoningBlocks: [],
+          executionBlocks: [],
+          outputBlocks: [],
+          hasLiveReasoning: false
+        }
+      }
+      currentPhase.executionBlocks.push(...section.blocks)
+    } else if (section.kind === 'output') {
+      if (!currentPhase) {
+        currentPhase = {
+          id: section.id,
+          label: '',
+          reasoningBlocks: [],
+          executionBlocks: [],
+          outputBlocks: [],
+          hasLiveReasoning: false
+        }
+      }
+      currentPhase.outputBlocks.push(...section.blocks)
+    }
+  }
+  if (currentPhase) phases.push(currentPhase)
+
+  // Assign labels based on execution block content
+  for (const phase of phases) {
+    phase.label = classifyPhaseLabel(phase.executionBlocks)
+  }
+
+  return phases
+}
+
 function getReasoningSectionText(section: ProcessSection): string {
   if (section.kind !== 'reasoning') return ''
   return section.blocks
@@ -841,6 +924,10 @@ function MessageTurn({
     () => (workExpanded || isProcessing ? groupProcessSections(processBlocks) : []),
     [processBlocks, workExpanded, isProcessing]
   )
+  const processPhases = useMemo(
+    () => (workExpanded || isProcessing ? groupProcessPhases(processSections) : []),
+    [processSections, workExpanded, isProcessing]
+  )
   const reasoningSectionCount = useMemo(
     () => processSections.filter((section) => section.kind === 'reasoning').length,
     [processSections]
@@ -870,16 +957,13 @@ function MessageTurn({
             onToggle={() => setWorkExpanded((value) => !value)}
             activeWorkflowName={processBlocks.find((b): b is ChatBlock & { kind: 'workflow'; workflowName: string } => b.kind === 'workflow' && b.status === 'running')?.workflowName}
           />
-          {workExpanded && processSections.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              {processSections.map((section) => (
-                <ProcessSectionRow
-                  key={section.id}
-                  section={section}
+          {workExpanded && processPhases.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {processPhases.map((phase) => (
+                <ProcessPhaseRow
+                  key={phase.id}
+                  phase={phase}
                   processing={isProcessing}
-                  hasLiveAssistantStream={hasLiveAssistantStream}
-                  reasoningDurationMs={reasoningDurationMs}
-                  singleReasoningSection={reasoningSectionCount === 1}
                   viewportRef={viewportRef}
                   todoSession={todoSession}
                   todoEvents={todoEvents}
@@ -1561,6 +1645,112 @@ function SubagentDetailDialog({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function ProcessPhaseRow({
+  phase,
+  processing,
+  viewportRef,
+  todoSession = null,
+  todoEvents = [],
+  subagentSummary = null,
+  subagentInfrastructureToolIds = new Set()
+}: {
+  phase: ProcessPhase
+  processing: boolean
+  viewportRef: RefObject<HTMLDivElement | null>
+  todoSession?: TodoTurnSession | null
+  todoEvents?: TodoTurnEvent[]
+  subagentSummary?: SubagentTurnSummary | null
+  subagentInfrastructureToolIds?: Set<string>
+}): ReactElement | null {
+  const { t } = useTranslation('common')
+  const [expanded, setExpanded] = useState(false)
+  const isActive = phase.hasLiveReasoning || phase.executionBlocks.some(blockHasPendingRuntimeWork)
+
+  const filteredTools = visibleExecutionBlocks(
+    phase.executionBlocks,
+    todoSession,
+    subagentSummary,
+    subagentInfrastructureToolIds
+  )
+  const toolCount = filteredTools.length
+  const hasError = filteredTools.some(
+    (block) =>
+      (block.kind === 'tool' && block.status === 'error') ||
+      (block.kind === 'subagent' && (block.status === 'failed' || block.status === 'cancelled'))
+  )
+
+  // Skip empty phases (no tools, no live reasoning)
+  if (toolCount === 0 && !phase.hasLiveReasoning && phase.reasoningBlocks.length === 0) {
+    return null
+  }
+
+  const toolSuffix = toolCount > 0 ? ` · ${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
+
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className={`group flex w-fit max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[14px] font-medium transition hover:opacity-85 ${
+          hasError ? 'text-red-600 dark:text-red-300' : 'text-ds-muted'
+        }`}
+      >
+        {isActive ? (
+          <span className="mr-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+            <Bot className="h-3.5 w-3.5 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
+          </span>
+        ) : null}
+        <span className={isActive ? 'ds-shiny-text' : ''}>
+          {phase.label}{toolSuffix}
+        </span>
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-55" strokeWidth={1.8} />
+        )}
+      </button>
+
+      {expanded ? (
+        <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
+          <div className="flex flex-col gap-0.5">
+            {filteredTools.map((block) => {
+              const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
+              if (inlineTodo) return <div key={`todo-${block.id}`}>{inlineTodo}</div>
+              const todoEvent = renderTodoEventAtBlock(block, todoSession, todoEvents)
+              if (todoEvent) return <div key={`todo-event-${block.id}`}>{todoEvent}</div>
+              if (shouldHideTodoToolBlock(block, todoSession)) return null
+              const subagentNode = renderSubagentSummaryAtBlock(block, subagentSummary)
+              if (subagentNode) return <div key={`sa-${block.id}`}>{subagentNode}</div>
+              if (shouldHideSubagentBlock(block, subagentSummary)) return null
+              if (shouldHideSubagentToolBlock(block, subagentSummary)) return null
+              if (shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)) return null
+              return <ProcessEntryRow key={block.id} block={block} processing={processing} />
+            })}
+          </div>
+        </div>
+      ) : (
+        toolCount > 0 ? (
+          <div className="mt-0.5 pl-1 text-[13px] text-ds-faint">
+            {filteredTools.slice(0, 3).map((block) => {
+              const desc = describeProcessBlock(block, t)
+              const { verb, rest } = splitVerb(desc)
+              return (
+                <div key={block.id} className="truncate">
+                  <span className="font-medium text-ds-muted">{verb}</span>
+                  {rest ? <span className="ml-1 font-mono text-[12px]">{rest}</span> : null}
+                </div>
+              )
+            })}
+            {toolCount > 3 ? (
+              <div className="text-ds-faint/70">… {toolCount - 3} more</div>
+            ) : null}
+          </div>
+        ) : null
+      )}
     </div>
   )
 }
