@@ -488,6 +488,23 @@ class Transcript(VerticalScroll):
             self._current_assistant.finalize()
             self._current_assistant = None
 
+    def _discard_transitional_assistant(self) -> None:
+        """Remove the in-flight assistant cell when a tool call arrives.
+
+        Mid-round text like "我来读一下文件..." is transitional narration
+        that shouldn't persist in the transcript. Only the final round's
+        text (no tool_calls following) stays visible.
+        """
+        if self._current_assistant is not None:
+            try:
+                self._current_assistant.remove()
+            except Exception:
+                pass
+            self._current_assistant = None
+            # Reset display buffer so the final round starts fresh
+            self._current_buffer = ""
+            self._display_buffer = ""
+
     def append_delta(self, content: str) -> None:
         self._hide_welcome()
         self._current_buffer += content
@@ -527,7 +544,14 @@ class Transcript(VerticalScroll):
         arguments: dict[str, object],
     ) -> None:
         self._hide_welcome()
-        self._close_open_segments_other_than("")
+        # Discard transitional assistant text (mid-round narration like
+        # "我来分析一下..." that precedes tool calls). Only final-round
+        # text (no tool calls after it) should remain visible.
+        self._discard_transitional_assistant()
+        # Thinking cells stay — they provide useful timing info.
+        if self._thinking_cell is not None:
+            self._thinking_cell.finalize()
+            self._thinking_cell = None
 
         entry = (
             f"[bold magenta]⏳ {escape(tool_name)}[/] "
