@@ -1109,8 +1109,8 @@ class Engine:
         if detected_locale == "zh":
             working_messages.append(
                 Message.user(
-                    "[系统提示] 用户使用中文提问，你的思考过程(reasoning_content)和最终回复必须全程使用简体中文。"
-                    "代码、路径、命令等技术标识符保持原样，仅自然语言部分使用中文。"
+                    "**Important**: The user asked the question in Chinese. Your thought process (reasoning_content) and final reply must be entirely in Simplified Chinese."
+                    "Technical identifiers such as code, paths, and commands should remain unchanged; only the natural language portion should use Chinese."
                 )
             )
 

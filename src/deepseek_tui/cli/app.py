@@ -65,6 +65,7 @@ def _load_config(
 
 # ── @app.callback: default action (no subcommand → launch TUI) ──────────
 
+# 主要功能：CLI 默认入口。解析全局 flags，无子命令时启动 TUI；带 -p 走 one-shot
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
@@ -91,12 +92,14 @@ def main_callback(
     if ctx.invoked_subcommand is not None:
         return
 
+    # 合并配置（默认→config.toml→profile→环境变量→命令行覆盖），产出生效 Config
     loaded = _load_config(config, profile, provider, model)
 
     # Wire the rotating log handlers up before any subsystem runs so the
     # very first INFO event ("engine starting") lands in the file.
     from deepseek_tui.utils import setup_logging
 
+    # 装配按小时滚动的日志 handler（须在子系统启动前，确保首条 INFO 落盘）
     setup_logging(
         loaded,
         level_override=log_level,
@@ -106,6 +109,7 @@ def main_callback(
 
     from deepseek_tui.tools.runtime import prune_older_than
 
+    # 清理过期的 spillover 溢出文件（超大工具输出落盘后的残留），non-fatal
     prune_older_than()
 
     if prompt is not None:
@@ -120,6 +124,7 @@ def _launch_tui(config: Config) -> None:
     try:
         from deepseek_tui.tui.app import DeepSeekTUI
         tui_app = DeepSeekTUI(config=config)
+        # 启动 Textual 事件循环（阻塞）：compose 搭 UI → on_mount 装技能/画状态栏/后台起引擎 → 进消息循环
         tui_app.run()
     except ImportError as exc:
         typer.echo("TUI not available — textual not installed.", err=True)
@@ -145,6 +150,7 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
     from deepseek_tui.engine.handle import EngineHandle
     from deepseek_tui.state.secrets import SecretsManager
 
+    # 密钥管理器：统一按 keyring→env→config.toml→None 优先级解析 API key（懒加载后端）
     mgr = SecretsManager()
     api_key = mgr.resolve_api_key(config)
     if not api_key:
@@ -157,9 +163,13 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
         base_url=pc.base_url or "https://api.deepseek.com",
         timeout_seconds=float(pc.timeout),
     )
+    # 引擎↔调用方的双向管道：op 队列收输入、event 队列吐输出
     handle = EngineHandle()
+    # 优先用显式指定的 model，否则退回默认文本模型
     model = config.model or config.default_text_model
+    # async 工厂：装配工具运行时/技能/MCP，返回已就绪但未运行的引擎
     engine = await Engine.create(handle, client, config=config, default_model=model)
+    # 把引擎主循环丢到后台并发跑（长驻 while 循环，靠 cancel 才停）
     engine_task = asyncio.create_task(engine.run())
 
     try:
