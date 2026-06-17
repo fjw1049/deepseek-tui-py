@@ -1404,6 +1404,7 @@ class Engine:
         # ``cycle_config.threshold_for(model)``, archive the cycle to disk
         # and continue with a trimmed message list. Best-effort — failures
         # never block the conversation.
+        # 输入逼近窗口上限时，归档全量历史到磁盘、只留最近 8 条继续
         if self.cycle_config.enabled:
             await self._maybe_advance_cycle(messages, model)
         turn_id = self.tool_context.metadata.get("turn_latency_turn_id")
@@ -1440,7 +1441,7 @@ class Engine:
                     self.working_set.observe_references(processed.references)
 
             # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
-            # 观测 token/工具调用密度,容量预检查
+            # 观测 token/工具调用密度,容量预检查；改写式（删旧+塞摘要）
             await run_pre_request_checkpoint(
                 self.capacity_controller,
                 self.turn_counter,
@@ -1449,7 +1450,6 @@ class Engine:
                 compact_fn=self._emergency_compact,
             )
             await self._maybe_layered_context_checkpoint(messages, model)
-
             # Hard cap: force compaction when message count is excessive,
             # as a memory safety net. The token-based threshold (500K floor)
             # handles normal compaction; this catches pathological cases where
@@ -1506,6 +1506,9 @@ class Engine:
             from deepseek_tui.engine.usage_ledger import usage_source
 
             with usage_source("agent_round"):
+                # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
+                # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量
+                # cancelled=是否取消 / outcome=成功或失败类型 / error_message=错误描述
                 result = await self.turn_loop.run(
                     request,
                     self.handle.emit,

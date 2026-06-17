@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>deepseek-tui-py · Workflow 全景图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#1f2937',
+        primaryTextColor: '#e5e7eb',
+        primaryBorderColor: '#3b82f6',
+        lineColor: '#64748b',
+        secondaryColor: '#0f172a',
+        tertiaryColor: '#111827',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: '13px',
+      },
+      flowchart: { htmlLabels: true, curve: 'basis', padding: 12 },
+      sequence: { actorMargin: 60, boxMargin: 8 },
+    });
+  });
+</script>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #111827;
+    --panel2: #0f172a;
+    --border: #1f2937;
+    --text: #e5e7eb;
+    --muted: #94a3b8;
+    --accent: #3b82f6;
+    --accent2: #22d3ee;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --ok: #34d399;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(11,15,23,0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: 0.3px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  nav {
+    position: sticky; top: 53px; z-index: 40;
+    background: var(--panel2);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 28px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    font-size: 13px;
+  }
+  nav a {
+    color: var(--muted); text-decoration: none;
+    padding: 4px 10px; border-radius: 6px;
+    border: 1px solid transparent;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  nav a:hover { color: var(--text); background: var(--panel); border-color: var(--border); }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin-bottom: 22px;
+  }
+  section h2 {
+    font-size: 19px; margin: 0 0 4px 0;
+    border-left: 3px solid var(--accent);
+    padding-left: 10px;
+  }
+  section h2 .anchor { color: var(--muted); font-size: 13px; font-weight: 400; margin-left: 8px; }
+  section h3 { font-size: 15px; margin: 18px 0 6px; color: var(--accent2); font-family: ui-monospace, monospace; }
+  section p { margin: 8px 0; color: #cbd5e1; }
+  section .lead { color: var(--muted); font-size: 14px; margin-top: 0; }
+  .diagram {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin: 14px 0;
+    overflow-x: auto;
+  }
+  .mermaid { display: flex; justify-content: center; }
+  code, .file {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: #0a0f1c;
+    color: #93c5fd;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid #1e293b;
+  }
+  pre {
+    background: #0a0f1c;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    color: #d1d5db;
+    line-height: 1.55;
+  }
+  pre .k { color: #f472b6; }
+  pre .s { color: #34d399; }
+  pre .c { color: #64748b; font-style: italic; }
+  pre .n { color: #fbbf24; }
+  table {
+    width: 100%; border-collapse: collapse; margin: 12px 0;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left; padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--accent2); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td code { font-size: 12px; }
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; font-family: ui-monospace, monospace;
+    border: 1px solid var(--border);
+  }
+  .pill.entry { color: var(--ok); border-color: #14532d; background: #052e16; }
+  .pill.engine { color: var(--accent2); border-color: #155e75; background: #083344; }
+  .pill.server { color: var(--accent); border-color: #1e3a8a; background: #0c1637; }
+  .pill.tui { color: #c084fc; border-color: #581c87; background: #1e1033; }
+  .pill.tool { color: var(--warn); border-color: #78350f; background: #2a1808; }
+  .pill.danger { color: var(--danger); border-color: #7f1d1d; background: #2a0e0e; }
+  ul { color: #cbd5e1; } li { margin: 3px 0; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 2px; font-size: 12px; color: var(--muted); }
+  .callout {
+    border-left: 3px solid var(--warn);
+    background: rgba(245,158,11,0.06);
+    padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0;
+    font-size: 13.5px;
+  }
+  .callout.danger { border-color: var(--danger); background: rgba(239,68,68,0.06); }
+  .callout.info { border-color: var(--accent); background: rgba(59,130,246,0.06); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 30px 0 40px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>deepseek-tui-py · Workflow 全景图</h1>
+  <span class="sub">从 <code>__main__.py</code> 入口逐层下钻 · engine / server / tui / tools / 子系统</span>
+</header>
+
+<nav>
+  <a href="#s0">0 · 总览</a>
+  <a href="#s1">1 · CLI 入口</a>
+  <a href="#s2">2 · 三大运行模式</a>
+  <a href="#s3">3 · TUI 模式</a>
+  <a href="#s4">4 · One-shot 模式</a>
+  <a href="#s5">5 · Serve 模式</a>
+  <a href="#s6">6 · Engine 装配</a>
+  <a href="#s7">7 · Engine 主循环</a>
+  <a href="#s8">8 · TurnLoop / 工具派发</a>
+  <a href="#s9">9 · 工具运行时</a>
+  <a href="#s10">10 · 工具注册表</a>
+  <a href="#s11">11 · Server 内部</a>
+  <a href="#s12">12 · 线程 / Turn 生命周期</a>
+  <a href="#s13">13 · 辅助子系统</a>
+  <a href="#s14">14 · 已知断点</a>
+</nav>
+
+<main>
+
+<!-- ===================== 0 总览 ===================== -->
+<section id="s0">
+  <h2>0 · 总览 <span class="anchor">顶层架构</span></h2>
+  <p class="lead">包根 <code>src/deepseek_tui/</code>。所有运行模式最终都汇聚到 <code>Engine</code>；<code>Engine</code> 通过 <code>ToolRuntime</code> 驱动工具、通过 <code>DeepSeekClient</code> 调模型、通过 <code>EngineHandle</code> 与调用方双向通信。</p>
+
+  <div class="legend">
+    <span class="pill entry">入口</span>
+    <span class="pill tui">TUI</span>
+    <span class="pill server">Server</span>
+    <span class="pill engine">Engine</span>
+    <span class="pill tool">Tools</span>
+  </div>
+
+  <div class="diagram">
+<pre class="mermaid">
+graph TD
+  Entry["__main__.py<br/>main()"]:::entry
+  CLI["cli/app.py<br/>Typer app (22 子命令)"]:::entry
+
+  Entry --> CLI
+  CLI -- "无子命令 -p" --> OneShot["_run_one_shot"]:::entry
+  CLI -- "无子命令" --> TUI["_launch_tui<br/>DeepSeekTUI.run()"]:::tui
+  CLI -- "serve / app-server" --> Server["server.run_http / run_stdio"]:::server
+  CLI -- "auth/config/thread/mcp/..." --> SubCmds["CLI 子命令<br/>(直接操作 state/mcp/store)"]:::entry
+
+  TUI --> Engine["engine.orchestrator.Engine"]:::engine
+  OneShot --> Engine
+  Server --> AppRuntime["server.runtime.AppRuntime"]:::server
+  AppRuntime --> RTM["server.threads.RuntimeThreadManager"]:::server
+  RTM --> Engine
+
+  Engine --> Client["client.deepseek.DeepSeekClient<br/>(HTTP + SSE)"]:::engine
+  Engine --> Tools["tools.runtime.ToolRuntime"]:::tool
+  Engine --> Memory["memory.coordinator"]:::engine
+  Engine --> Policy["policy.approval / sandbox"]:::engine
+  Engine --> Handle["engine.handle.EngineHandle<br/>op 队列 ↔ event 队列"]:::engine
+
+  TUI -. events .-> Handle
+  OneShot -. events .-> Handle
+  RTM -. events .-> Handle
+
+  classDef entry fill:#052e16,stroke:#14532d,color:#bbf7d0;
+  classDef tui fill:#1e1033,stroke:#581c87,color:#e9d5ff;
+  classDef server fill:#0c1637,stroke:#1e3a8a,color:#bfdbfe;
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+  classDef tool fill:#2a1808,stroke:#78350f,color:#fde68a;
+</pre>
+  </div>
+
+  <p>三条调用链颜色对应：</p>
+  <ul>
+    <li><span class="pill tui">TUI</span> <code>__main__ → cli.app → DeepSeekTUI → Engine</code>（默认交互模式）</li>
+    <li><span class="pill server">Server</span> <code>__main__ → cli.app → server.run_http → AppRuntime → RuntimeThreadManager → Engine</code>（HTTP/stdio 后端）</li>
+    <li><span class="pill entry">One-shot</span> <code>__main__ → cli.app → _run_one_shot → Engine</code>（<code>-p</code> 单轮）</li>
+  </ul>
+</section>
+
+<!-- ===================== 1 CLI 入口 ===================== -->
+<section id="s1">
+  <h2>1 · CLI 入口 <span class="anchor">src/deepseek_tui/cli/app.py</span></h2>
+  <p class="lead"><code>__main__.py</code> 只做 <code>from .cli.app import app; app()</code>。真正的入口是 Typer <code>app</code>，由 <code>@app.callback(invoke_without_command=True)</code> 的 <code>main_callback</code> 承担默认动作。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  Start(["python -m deepseek_tui<br/>或 deepseek-tui"]) --> CB["main_callback(ctx, ...)<br/>解析全局 flags"]
+
+  CB -- "--version" --> V["打印版本 退出"]
+  CB -- "ctx.invoked_subcommand is not None" --> Sub["交给子命令处理  return"]
+  CB -- "无子命令" --> Load["_load_config<br/>ConfigLoader().load()"]
+
+  Load --> Log["utils.setup_logging<br/>按小时滚动日志"]
+  Log --> Prune["tools.runtime.prune_older_than<br/>清理 spillover 残留"]
+  Prune -- "prompt is not None (-p)" --> OS["_run_one_shot(config, prompt)"]
+  Prune -- "否则" --> TUI["_launch_tui(config)"]
+
+  OS --> OSD["_run_one_shot_async<br/>SecretsManager → DeepSeekClient<br/>Engine.create → engine.run() task<br/>handle.send_message → 遍历 events"]
+  TUI --> TUID["DeepSeekTUI(config).run()"]
+
+  classDef default fill:#0f172a,stroke:#334155,color:#e2e8f0;
+</pre>
+  </div>
+
+  <h3>子命令全景（22 个）</h3>
+  <table>
+    <tr><th>命令</th><th>作用</th><th>落地到</th></tr>
+    <tr><td><code>version</code> / <code>doctor</code></td><td>版本 / 环境诊断</td><td>就地打印</td></tr>
+    <tr><td><code>models</code> / <code>model list|resolve</code></td><td>列出 / 解析模型</td><td><code>config.providers.PROVIDER_DEFAULTS</code></td></tr>
+    <tr><td><code>serve</code> / <code>app-server</code></td><td>启动 HTTP / stdio 后端</td><td><code>server.run_http / run_stdio</code></td></tr>
+    <tr><td><code>auth status|set|get|clear|list|migrate</code></td><td>密钥环管理</td><td><code>state.secrets</code></td></tr>
+    <tr><td><code>login</code> / <code>logout</code></td><td>快捷登录 / 全清</td><td><code>state.secrets</code></td></tr>
+    <tr><td><code>config get|set|unset|list|path|show</code></td><td>读写 config.toml</td><td><code>config.loader / paths</code></td></tr>
+    <tr><td><code>thread list|read|resume|fork|archive|unarchive|set-name</code></td><td>会话元数据 CRUD</td><td><code>state.session</code> ⚠</td></tr>
+    <tr><td><code>sessions</code> / <code>resume</code> / <code>fork</code></td><td>会话列表 / 恢复 / 分叉</td><td><code>state.session</code> + <code>tui.app</code></td></tr>
+    <tr><td><code>sandbox check</code></td><td>命令安全评估</td><td><code>policy.command_safety</code></td></tr>
+    <tr><td><code>features</code></td><td>特性开关</td><td><code>config.models.features</code></td></tr>
+    <tr><td><code>init</code></td><td>生成 AGENTS.md</td><td>就地写文件</td></tr>
+    <tr><td><code>exec</code> / <code>review</code></td><td>单轮 / git diff 审查</td><td><code>_run_one_shot</code></td></tr>
+    <tr><td><code>apply</code></td><td>应用 patch</td><td><code>git apply</code></td></tr>
+    <tr><td><code>setup</code></td><td>初始化 MCP / skills 目录</td><td><code>mcp.store / config.paths</code></td></tr>
+    <tr><td><code>mcp init|add|enable|disable|remove|validate|connect|tools</code></td><td>MCP 服务器管理</td><td><code>mcp.actions / store / manager</code></td></tr>
+    <tr><td><code>completions</code></td><td>shell 补全提示</td><td>就地打印</td></tr>
+    <tr><td><code>metrics</code></td><td>会话统计</td><td><code>state.session</code> ⚠</td></tr>
+    <tr><td><code>update</code></td><td>自更新（pip）</td><td>打印提示</td></tr>
+  </table>
+
+  <div class="callout danger">⚠ <code>thread / sessions / metrics</code> 三个子命令在 <code>cli/app.py:731,1052,1357</code> 写的是 <code>from deepseek_tui.state.database import Database</code> 和 <code>from deepseek_tui.state.session_manager import SessionManager</code> —— 这两个模块不存在，类实际在 <code>state/session.py</code>。运行即 <code>ModuleNotFoundError</code>。详见 <a href="#s14">§14 已知断点</a>。</div>
+</section>
+
+<!-- ===================== 2 三大运行模式 ===================== -->
+<section id="s2">
+  <h2>2 · 三大运行模式 <span class="anchor">main_callback 分流</span></h2>
+  <p class="lead">默认无子命令时，<code>main_callback</code> 按 <code>-p</code> 是否存在二选一：<code>_run_one_shot</code> 或 <code>_launch_tui</code>；带 <code>serve</code> 子命令走 server。三条路最终都构造 <code>Engine</code>，区别在「谁来消费 event 队列」。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph CLI["cli/app.py main_callback"]
+    direction TB
+    A["装好 Config + logging + prune"]
+  end
+  A -- "-p prompt" --> OS["_run_one_shot<br/>(stdout 打印 events)"]:::entry
+  A -- "交互" --> TUI["_launch_tui<br/>(Textual 渲染 events)"]:::tui
+  A -- "serve 子命令" --> SRV["server.run_http / run_stdio<br/>(SSE / JSON-RPC 推送 events)"]:::server
+
+  OS --> EC1["Engine.create + engine.run"]:::engine
+  TUI --> EC2["Engine.create + engine.run"]:::engine
+  SRV --> AR["AppRuntime.create"]:::server
+  AR --> RTM["RuntimeThreadManager"]:::server
+  RTM --> EC3["Engine.create + engine.run"]:::engine
+
+  classDef entry fill:#052e16,stroke:#14532d,color:#bbf7d0;
+  classDef tui fill:#1e1033,stroke:#581c87,color:#e9d5ff;
+  classDef server fill:#0c1637,stroke:#1e3a8a,color:#bfdbfe;
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+</pre>
+  </div>
+</section>
+
+<!-- ===================== 3 TUI 模式 ===================== -->
+<section id="s3">
+  <h2>3 · TUI 模式 <span class="anchor">tui/app.py · DeepSeekTUI</span></h2>
+  <p class="lead">Textual <code>App</code>。<code>compose</code> 搭界面 → <code>on_mount</code> 起后台 worker <code>_start_engine</code> → <code>Engine.create</code> 完成后把 <code>engine.run()</code> 丢成 task，同时 <code>_listen_events</code> 消费事件队列刷新 UI。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant U as 用户
+  participant App as DeepSeekTUI (Textual)
+  participant W as run_worker(_start_engine)
+  participant E as Engine
+  participant H as EngineHandle
+
+  U->>App: 启动
+  App->>App: compose() 搭 Sidebar/Transcript/Composer/StatusBar
+  App->>W: on_mount → run_worker(_start_engine, exclusive)
+  Note over W: 不阻塞 UI，先渲染欢迎页
+  W->>E: Engine.create(handle, client, config)
+  E-->>W: engine 就绪
+  W->>App: self._engine = engine
+  App->>E: asyncio.create_task(engine.run())
+  App->>App: _flush_pending_messages()
+  App->>H: _listen_events 监听 event 队列
+
+  U->>App: 输入回车
+  App->>App: _submit_user_message(text)
+  App->>H: handle.send_message(text)  [入 op 队列]
+  H->>E: next_op() 取到 SendMessageOp
+  E->>E: _handle_send_message → TurnLoop
+  E-->>H: emit TextDelta / ToolCall / ToolResult / TurnComplete
+  H-->>App: _listen_events 收到 event
+  App->>App: 刷新 Transcript / Sidebar / StatusBar
+</pre>
+  </div>
+
+  <h3>关键方法（tui/app.py）</h3>
+  <table>
+    <tr><th>方法</th><th>行</th><th>职责</th></tr>
+    <tr><td><code>compose</code></td><td>167</td><td>装配 Sidebar / Transcript / Composer / StatusBar / Input</td></tr>
+    <tr><td><code>on_mount</code></td><td>178</td><td>起 <code>_start_engine</code> worker；UI 立即可交互</td></tr>
+    <tr><td><code>_start_engine</code></td><td>220</td><td><code>Engine.create</code> → <code>engine.run()</code> task → session_start hook</td></tr>
+    <tr><td><code>_listen_events</code></td><td>624</td><td>后台 worker，消费 <code>handle.events()</code> 刷 UI</td></tr>
+    <tr><td><code>_submit_user_message</code></td><td>480</td><td>触发 message_submit hook + <code>handle.send_message</code></td></tr>
+    <tr><td><code>action_*</code></td><td>836+</td><td>快捷键：new/interrupt/quit/sidebar/mode/picker...</td></tr>
+  </table>
+
+  <div class="callout danger">⚠ <code>_start_engine</code>（app.py:229）写 <code>from deepseek_tui.tui.approval_handler import TUIApprovalHandler</code>，该模块不存在，类在 <code>tui/session_restore.py:125</code>。引擎启动即崩。</div>
+</section>
+
+<!-- ===================== 4 One-shot 模式 ===================== -->
+<section id="s4">
+  <h2>4 · One-shot 模式 <span class="anchor">cli/app.py · _run_one_shot</span></h2>
+  <p class="lead">最薄的调用链，适合理解 Engine 的最小用法：<code>SecretsManager → DeepSeekClient → Engine.create → engine.run() → handle.send_message → 遍历 events</code>。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant CLI as _run_one_shot
+  participant SM as SecretsManager
+  participant C as DeepSeekClient
+  participant H as EngineHandle
+  participant E as Engine
+
+  CLI->>SM: resolve_api_key(config)
+  SM-->>CLI: api_key
+  CLI->>C: new DeepSeekClient(api_key, base_url, timeout)
+  CLI->>H: EngineHandle()
+  CLI->>E: Engine.create(handle, client, config, default_model)
+  CLI->>E: asyncio.create_task(engine.run())
+  CLI->>H: handle.send_message(prompt)
+  loop 遍历 handle.events()
+    H-->>CLI: TextDeltaEvent → print(text)
+    H-->>CLI: ToolCallEvent → echo [tool: name]
+    H-->>CLI: ToolResultEvent → echo [tool result: ok|error]
+    H-->>CLI: ErrorEvent → echo + break
+    H-->>CLI: TurnCompleteEvent → break
+  end
+  CLI->>E: engine_task.cancel() + engine.shutdown()
+</pre>
+  </div>
+</section>
+
+<!-- ===================== 5 Serve 模式 ===================== -->
+<section id="s5">
+  <h2>5 · Serve 模式 <span class="anchor">cli/app.py serve → server.app</span></h2>
+  <p class="lead"><code>serve</code> 子命令调 <code>server.run_http(options, config)</code>（或 <code>run_stdio</code>）。<code>run_http</code> 内部 <code>AppRuntime.create</code> → <code>build_fastapi_app</code>，挂上 parity 路由（<code>/v1/*</code>）和可选的 legacy 路由。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  Serve["serve 子命令"]:::server
+  Serve --> RH["server.run_http(options, config)"]:::server
+  RH --> Arc["AppRuntime.create(config)"]:::server
+  Arc --> BFA["build_fastapi_app(runtime, options)"]:::server
+
+  BFA --> ARA["attach_runtime_api(app, auth, cors)<br/>挂 /v1 parity 路由 + Auth 中间件"]:::server
+  ARA --> Rtr["routes.build_runtime_api_router()<br/>15 个域路由"]:::server
+  BFA --> Mgr["app.state.thread_manager =<br/>RuntimeThreadManager(...)"]:::server
+  BFA --> Legacy{"http_mode?"}
+  Legacy -- "True" --> L1["build_router() → /legacy"]
+  Legacy -- "False" --> L2["build_router() → 根 + /v1"]
+
+  RH --> UV["uvicorn.run(app, host, port)"]:::server
+
+  classDef server fill:#0c1637,stroke:#1e3a8a,color:#bfdbfe;
+</pre>
+  </div>
+
+  <div class="callout info">parity 路由（<code>routes.py</code>）是 Workbench GUI 用的正式 API，返回裸 JSON + SSE；<code>build_router()</code>（<code>app.py</code>）是 legacy 封装（<code>{"ok":...}</code>），两者部分路由重复。详见 <a href="#s11">§11</a>。</div>
+</section>
+
+<!-- ===================== 6 Engine 装配 ===================== -->
+<section id="s6">
+  <h2>6 · Engine 装配 <span class="anchor">engine.orchestrator.Engine.create</span></h2>
+  <p class="lead">异步工厂 <code>Engine.create</code>（orchestrator.py:482）是整个系统的「装配车间」：一次性把工具运行时、技能、TurnLoop、容量控制器、Seam、Memory、sandbox 策略、子 agent runtime 全部接好。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  Call(["Engine.create(handle, client, config, ...)"])
+  Call --> Hooks["handle.attach_hooks(build_hook_dispatcher(cfg))<br/>挂 HookDispatcher"]
+  Call --> TR["create_tool_runtime(cfg, ws, mode, ...)<br/>装配 registry + 5 个 manager"]:::tool
+  Call --> Skills["discover_in_workspace(ws)<br/>发现技能"]:::engine
+  Call --> Ctx["per_engine_context (ToolContext, 按线程 ws)"]:::tool
+  Call --> Build["cls(handle, client, ...) 构造 Engine 实例"]:::engine
+
+  Build --> Metered["client = MeteredLLMClient(client, ledger)<br/>计量 + usage 账本"]:::engine
+  Build --> TL["turn_loop = TurnLoop(client, compact_fn)"]:::engine
+  Build --> Cap["capacity_controller = CapacityController(...)"]:::engine
+  Build --> Mem{"smart_memory_enabled?"}
+  Mem -- "yes" --> MemC["MemoryCoordinator(provider)<br/>coordinator.start()"]:::engine
+  Mem -- "no" --> MemN["memory_coordinator = None"]:::engine
+  Build --> Cyc["cycle_config (默认 off)"]:::engine
+  Build --> Seam{"seam_enabled?"}
+  Seam -- "yes" --> SeamM["SeamManager(flash_client)"]:::engine
+  Build --> Sand["sync_execution_sandbox_policy(ctx, mode, ws)"]:::engine
+  Build --> Wire["wire_registry_client(registry, client, root_model)"]:::tool
+  Build --> Sub{"subagent_manager?"}
+  Sub -- "yes" --> SubRT["SubAgentRuntime + attach_loop_runtime<br/>挂 cancel / completion sink"]:::tool
+
+  classDef tool fill:#2a1808,stroke:#78350f,color:#fde68a;
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+</pre>
+  </div>
+
+  <h3>装配产物（Engine 实例字段）</h3>
+  <table>
+    <tr><th>字段</th><th>来源</th><th>用途</th></tr>
+    <tr><td><code>tool_runtime / tool_registry / tool_context</code></td><td><code>tools.runtime.create_tool_runtime</code></td><td>工具注册表 + 执行上下文 + 5 个 manager</td></tr>
+    <tr><td><code>turn_loop</code></td><td><code>engine.turn.TurnLoop</code></td><td>单轮 streaming 状态机</td></tr>
+    <tr><td><code>capacity_controller</code></td><td><code>engine.capacity</code></td><td>请求前 / 工具后 / 错误升级 三个 checkpoint（干预侧 P1 未完成）</td></tr>
+    <tr><td><code>seam_manager</code></td><td><code>engine.seam</code></td><td>Flash 归档上下文（默认 off）</td></tr>
+    <tr><td><code>memory_coordinator</code></td><td><code>memory.coordinator</code></td><td>智能记忆 L0–L3（默认 off）</td></tr>
+    <tr><td><code>turn_usage_ledger</code></td><td><code>MeteredLLMClient</code></td><td>每轮 usage 记账</td></tr>
+    <tr><td><code>handle</code></td><td>外部传入 <code>EngineHandle</code></td><td>op 队列 / event 队列 / cancel / steer</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 7 Engine 主循环 ===================== -->
+<section id="s7">
+  <h2>7 · Engine 主循环 <span class="anchor">Engine.run (orchestrator.py:897)</span></h2>
+  <p class="lead">长驻 <code>while True</code>：从 <code>handle.next_op()</code> 取 op，<code>SendMessageOp</code> 派给 <code>_handle_send_message</code>（每条消息开一个 turn task），<code>CancelRequestOp</code> 取消当前 turn。turn task 与 op 等待并发赛跑（<code>asyncio.wait FIRST_COMPLETED</code>）。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  Run(["Engine.run()"]):::engine
+  Run --> Emit0["emit SessionStartedEvent"]:::engine
+  Run --> Loop{"while True"}:::engine
+
+  Loop -- "turn_task.done()" --> Reap["收 result / emit ErrorEvent"]:::engine
+  Loop -- "turn_task is None" --> Wait1["op = await handle.next_op()"]:::engine
+  Loop -- "turn_task 在跑" --> Race["asyncio.wait({op_wait, turn_task})<br/>FIRST_COMPLETED"]:::engine
+  Race --> OpReady{"op 就绪?"}
+  OpReady -- "是" --> Dispatch
+  OpReady -- "turn 先完成" --> Reap
+
+  Wait1 --> Dispatch{"op 类型"}
+  OpReady -- "是" --> Dispatch
+  Dispatch -- "SendMessageOp" --> TT["turn_task = create_task(_handle_send_message)"]:::engine
+  Dispatch -- "CancelRequestOp" --> Cancel["cancel_event.set()<br/>turn_task.cancel()"]:::engine
+
+  TT --> Loop
+
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+</pre>
+  </div>
+
+  <h3>op 与 event 的双向通道（engine/handle.py）</h3>
+  <div class="grid2">
+    <div>
+      <p><b>入：op 队列</b>（调用方 → Engine）</p>
+      <ul>
+        <li><code>SendMessageOp</code> — 发消息</li>
+        <li><code>CancelRequestOp</code> — 取消</li>
+        <li>steer / interrupt op</li>
+      </ul>
+    </div>
+    <div>
+      <p><b>出：event 队列</b>（Engine → 调用方）</p>
+      <ul>
+        <li><code>SessionStartedEvent</code> / <code>SessionEndedEvent</code></li>
+        <li><code>TurnStartedEvent</code> / <code>TurnCompleteEvent</code> / <code>TurnCancelledEvent</code></li>
+        <li><code>TextDeltaEvent</code> / <code>ToolCallEvent</code> / <code>ToolResultEvent</code></li>
+        <li><code>ApprovalRequiredEvent</code> / <code>ElevationRequiredEvent</code></li>
+        <li><code>WorkflowProgressEvent</code> / <code>RlmProgressEvent</code> / <code>StatusEvent</code> / <code>ErrorEvent</code></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 8 TurnLoop ===================== -->
+<section id="s8">
+  <h2>8 · TurnLoop / 工具派发 <span class="anchor">engine.turn + engine.dispatch</span></h2>
+  <p class="lead"><code>_handle_send_message</code> 进入 <code>TurnLoop</code>。每轮：准备消息 → 调模型 streaming → 解析 tool_call → 经 <code>CapacityController</code> checkpoint → 派发工具（并行 / 串行）→ 把结果回灌 → 继续下一轮，直到模型不再发 tool_call 或触顶 <code>max_tool_round_trips</code>。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  SM(["handle.send_message(op)"]):::engine
+  SM --> HSM["_handle_send_message<br/>bind_turn / reset_cancel"]:::engine
+  HSM --> TL["TurnLoop.run()"]:::engine
+
+  TL --> Prep["prepare_turn_for_model<br/>@mention 展开 / context 处理"]:::engine
+  Prep --> Cap1["run_pre_request_checkpoint<br/>(容量闸门)"]:::engine
+  Cap1 --> SP["build_system_prompt<br/>mode / personality / skills / project ctx"]:::engine
+  SP --> Stream["client.stream_chat_completion<br/>SSE 增量"]:::engine
+
+  Stream -- TextDelta --> Emit1["emit TextDeltaEvent"]:::engine
+  Stream -- ToolCall --> Parse["parse_parallel_tool_calls<br/>should_parallelize?"]:::engine
+  Stream -- finish --> Emit2["emit AgentRoundCompleteEvent"]:::engine
+
+  Parse --> Cap2["run_post_tool_checkpoint<br/>(P1 未完成, 仅 log)"]:::engine
+  Cap2 --> Disp["dispatch.py 派发工具"]:::tool
+
+  Disp -- native tool --> Reg["ToolRegistry.invoke(tool, args, ctx)"]:::tool
+  Disp -- mcp tool --> McpE["mcp.execute.execute_external_mcp_tool"]:::tool
+  Disp -- subagent --> Sub["tools.subagent.run_subagent_loop"]:::tool
+
+  Reg --> TR["emit ToolResultEvent"]:::engine
+  McpE --> TR
+  Sub --> TR
+  TR --> Loop{"还有 tool_call<br/>且未触顶?"}
+  Loop -- "是" --> Prep
+  Loop -- "否" --> Done["emit TurnCompleteEvent"]:::engine
+
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+  classDef tool fill:#2a1808,stroke:#78350f,color:#fde68a;
+</pre>
+  </div>
+
+  <h3>容量 / 审批介入点</h3>
+  <table>
+    <tr><th>checkpoint</th><th>位置</th><th>现状</th></tr>
+    <tr><td><code>run_pre_request_checkpoint</code></td><td>发模型前</td><td>已接入</td></tr>
+    <tr><td><code>run_post_tool_checkpoint</code></td><td>工具执行后</td><td>仅 log（VERIFY_WITH_TOOL_REPLAY 延后 P1）</td></tr>
+    <tr><td><code>run_error_escalation_checkpoint</code></td><td>错误升级</td><td>仅 log（VERIFY_AND_REPLAN 延后 P1）</td></tr>
+    <tr><td><code>compact_messages_safe</code></td><td>上下文超限时</td><td>已接入</td></tr>
+    <tr><td><code>ApprovalRequiredEvent</code></td><td>工具需审批</td><td>经 <code>ApprovalHandler</code> → TUI/HTTP 弹审批</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 9 工具运行时 ===================== -->
+<section id="s9">
+  <h2>9 · 工具运行时 <span class="anchor">tools.runtime.create_tool_runtime</span></h2>
+  <p class="lead">单一入口，把 <code>ToolRegistry</code> + <code>ToolContext</code> + 5 个 manager 装成一个 <code>ToolRuntime</code>，供 <code>Engine.create</code> 使用。调用方负责 <code>shutdown()</code>。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  CRT["create_tool_runtime(cfg, ws, mode, ...)"]:::tool
+  CRT --> Reg["build_default_registry(cfg)<br/>注册所有内置工具"]:::tool
+  CRT --> Ctx["ToolContext(working_directory=ws)<br/>+ metadata 容器"]:::tool
+  CRT --> TM["TaskManager (tasks 目录)<br/>durable 后台任务"]:::tool
+  CRT --> SM["SubAgentManager + Mailbox<br/>子 agent 生命周期"]:::tool
+  CRT --> MM["McpManager (按 cfg.features.mcp)<br/>外部 MCP 服务器池"]:::tool
+  CRT --> LM["LspManager<br/>语言诊断"]:::tool
+  CRT --> AM["AutomationManager + run_scheduler_loop<br/>(按 cfg.features.automations)"]:::tool
+  CRT --> Pol["挂 Policy (exec/network/sandbox)<br/>到 ctx.metadata"]:::tool
+
+  Reg --> TR["ToolRuntime(context, registry,<br/>task/subagent/mcp/lsp/automation manager)"]:::tool
+  Ctx --> TR
+  TM --> TR
+  SM --> TR
+  MM --> TR
+  LM --> TR
+  AM --> TR
+  Pol --> TR
+
+  TR --> Engine["Engine.create 消费"]:::engine
+
+  classDef tool fill:#2a1808,stroke:#78350f,color:#fde68a;
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+</pre>
+  </div>
+
+  <p>另外，<code>tools/runtime.py</code> 还导出 <code>MultiToolUseParallelTool</code>（并行工具包装，注册到 registry）和 spillover API（<code>prune_older_than / apply_spillover</code>，超大工具输出落盘），<code>cli/app.py:110</code> 启动时就会调 <code>prune_older_than()</code> 清残留。</p>
+</section>
+
+<!-- ===================== 10 工具注册表 ===================== -->
+<section id="s10">
+  <h2>10 · 工具注册表 <span class="anchor">tools/registry.py · build_default_registry</span></h2>
+  <p class="lead">所有内置工具在 <code>build_default_registry</code> 注册。下表按类别分组，标注门控开关。</p>
+
+  <table>
+    <tr><th>类别</th><th>工具模块</th><th>注册的工具</th><th>门控</th></tr>
+    <tr><td rowspan="4">文件 / 代码</td><td><code>file.py</code></td><td>read_file / write_file / edit_file / list_dir</td><td>write/edit 在 plan 模式禁用</td></tr>
+    <tr><td><code>patch.py</code></td><td>apply_patch / Diagnostics / ProjectMap</td><td>apply_patch 受 features.apply_patch</td></tr>
+    <tr><td><code>search.py</code></td><td>grep_files / file_search（本地）</td><td>—</td></tr>
+    <tr><td><code>shell.py</code></td><td>exec_shell / _wait / _interact / _cancel</td><td>allow_shell + features.shell_tool</td></tr>
+    <tr><td>网络</td><td><code>web.py</code></td><td>fetch_url / web_search</td><td>features.web_search</td></tr>
+    <tr><td rowspan="2">知识 / 记忆</td><td><code>knowledge.py</code></td><td>remember / note / review / rlm_query / update_plan / recall_archive / skill_load</td><td>部分受 features</td></tr>
+    <tr><td><code>memory.py</code></td><td>memory_search / conversation_search</td><td>cfg.smart_memory_enabled()</td></tr>
+    <tr><td rowspan="3">编排</td><td><code>subagent.py</code></td><td>spawn/result/cancel/close/resume/list/send/assign/wait/delegate</td><td>features.subagents</td></tr>
+    <tr><td><code>task.py</code></td><td>task create/list/read/cancel/gate + shell-start/wait + PR-attempt</td><td>features.tasks</td></tr>
+    <tr><td><code>workflow.py</code></td><td>workflow（跑 Workflow IR）</td><td>features.subagents</td></tr>
+    <tr><td>清单</td><td><code>todo.py</code></td><td>todo_* / checklist_*（内存清单）</td><td>—</td></tr>
+    <tr><td>RLM</td><td><code>rlm.py</code></td><td>rlm（递归 LLM over Python REPL）</td><td>—</td></tr>
+    <tr><td rowspan="2">外部</td><td><code>mcp.py</code></td><td>resource/prompt 列举 + 读取</td><td>features.mcp</td></tr>
+    <tr><td><code>git.py</code></td><td>status/diff/log/show/blame + issue/PR/comment/close</td><td>—</td></tr>
+    <tr><td rowspan="3">其它</td><td><code>automation.py</code></td><td>automation_create/run/...（8 个）</td><td>features.automations</td></tr>
+    <tr><td><code>time_tools.py</code></td><td>current_time</td><td>features.automations</td></tr>
+    <tr><td><code>user_input.py</code></td><td>request_user_input / retrieve_tool_result</td><td>—</td></tr>
+    <tr><td>校验</td><td><code>validation.py</code></td><td>validate_data / run_tests / revert_turn<br/>（+ StructuredOutputTool 仅子 agent 用）</td><td>—</td></tr>
+    <tr><td>编码</td><td><code>encoding.py</code></td><td>DeprecatingAliasTool + 工具名编解码</td><td>—</td></tr>
+    <tr><td>并行</td><td><code>runtime.py</code></td><td>MultiToolUseParallelTool</td><td>—</td></tr>
+  </table>
+
+  <div class="callout info"><code>tools/approval.py</code> 不是工具模块（无 ToolSpec），是 engine/policy 的审批胶水层（gate / presentation / elevation），被 <code>engine/orchestrator.py</code>、<code>server/threads.py</code>、<code>policy/approval.py</code> 导入。</div>
+</section>
+
+<!-- ===================== 11 Server 内部 ===================== -->
+<section id="s11">
+  <h2>11 · Server 内部 <span class="anchor">server.app / routes / runtime / threads</span></h2>
+  <p class="lead">两层：<code>AppRuntime</code>（领域逻辑，HTTP 与 stdio 共用）+ <code>build_fastapi_app</code>（HTTP 包装）。线程生命周期由 <code>RuntimeThreadManager</code> 管，每条 turn 在独立 task 里跑 Engine，事件经 SSE 推回。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  RH["server.run_http"]:::server
+  RH --> ARC["AppRuntime.create(config)<br/>ToolRuntime + 内存 ThreadStore"]:::server
+  ARC --> BFA["build_fastapi_app(runtime, options)"]:::server
+  BFA --> ARA["attach_runtime_api<br/>+ RuntimeAuthMiddleware + CORS"]:::server
+  ARA --> RR["routes.build_runtime_api_router()<br/>15 个 /v1 域路由"]:::server
+  BFA --> RTM["app.state.thread_manager =<br/>RuntimeThreadManager"]:::server
+  BFA --> Legacy["build_router() (legacy 封装)"]:::server
+  RH --> UV["uvicorn.run"]:::server
+
+  RR -- "/v1/threads POST" --> Create["RTM.start_turn"]:::server
+  RR -- "/v1/threads/{id}/events" --> SSE["stream_thread_events<br/>SSE 推送"]:::server
+  RR -- "/v1/threads/{id}/interrupt" --> Int["RTM.interrupt_turn"]:::server
+  RR -- "/v1/approvals/{id} POST" --> Apr["ApprovalBridge.resolve"]:::server
+  RR -- "/v1/automations/*" --> Auto["AppRuntime.create/run/... automation"]:::server
+  RR -- "/v1/mcp/startup" --> McpS["AppRuntime.mcp_startup"]:::server
+
+  classDef server fill:#0c1637,stroke:#1e3a8a,color:#bfdbfe;
+</pre>
+  </div>
+
+  <h3>parity 路由分组（routes.py · build_runtime_api_router）</h3>
+  <div class="grid2">
+    <div>
+      <ul>
+        <li><code>router_health</code> — <code>/health</code> / <code>/healthz</code> / <code>/health/ready</code></li>
+        <li><code>router_threads</code> — <code>/v1/threads</code> CRUD + <code>/usage</code> + <code>/import-session</code></li>
+        <li><code>router_turns</code> — <code>/v1/threads/{id}/turns</code>（start_turn 入口）</li>
+        <li><code>router_events</code> — <code>/v1/threads/{id}/events</code>（SSE）</li>
+        <li><code>router_approvals</code> — <code>/v1/approvals/*</code></li>
+        <li><code>router_elevations</code> — <code>/v1/elevations/*</code></li>
+        <li><code>router_user_inputs</code> — <code>/v1/threads/{id}/user-inputs/*</code></li>
+        <li><code>router_workspace</code> — <code>/v1/workspace/status</code></li>
+      </ul>
+    </div>
+    <div>
+      <ul>
+        <li><code>router_tasks</code> — <code>/v1/tasks/*</code></li>
+        <li><code>router_skills</code> — <code>/v1/skills</code></li>
+        <li><code>router_mcp</code> — <code>/v1/mcp/startup</code> / <code>/preload-status</code></li>
+        <li><code>router_jobs</code> — <code>/v1/jobs</code></li>
+        <li><code>router_sessions</code> — <code>/v1/sessions</code> + <code>/export-session</code></li>
+        <li><code>router_automation</code> — <code>/v1/triggers</code></li>
+        <li><code>ingress_router</code> — <code>/v1/automation/feishu/*</code></li>
+        <li><code>automations_router</code> — <code>/v1/automations/*</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">legacy <code>build_router()</code>（app.py）额外有 app-server 专用路由 <code>/thread /app /prompt /prompt/stream /tool /apps/mcp/*</code>，这些不在 parity 路由里；但其 runtime-thread 子集与 <code>routes.py</code> 重复维护。</div>
+</section>
+
+<!-- ===================== 12 线程 / Turn 生命周期 ===================== -->
+<section id="s12">
+  <h2>12 · 线程 / Turn 生命周期 <span class="anchor">server.threads.RuntimeThreadManager</span></h2>
+  <p class="lead">每条 <code>POST /v1/threads/{id}/turns</code> → <code>RTM.start_turn</code> → 起 Engine turn task + <code>_monitor_turn</code> 监听 event → 经 <code>phase_bridge</code> 分段叙事 → 落 <code>RuntimeThreadStore</code>（JSON+JSONL）持久化 → SSE 推回客户端。</p>
+
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant C as 客户端
+  participant R as routes.router_turns
+  participant RTM as RuntimeThreadManager
+  participant E as Engine
+  participant H as EngineHandle
+  participant PB as phase_bridge
+  participant Store as RuntimeThreadStore
+
+  C->>R: POST /v1/threads/{id}/turns
+  R->>RTM: start_turn(thread_id, StartTurnRequest)
+  RTM->>Store: 载入 ThreadRecord + 历史 turns
+  RTM->>E: Engine.create(handle, client, ...)
+  RTM->>E: create_task(engine.run())
+  RTM->>H: handle.send_message(user_input)
+  RTM->>RTM: _monitor_turn (async)
+
+  loop 监听 handle.events()
+    H-->>RTM: TextDelta / ToolCall / ToolResult
+    RTM->>PB: classify_batch / compute_narration_display
+    PB-->>RTM: 分段叙事文本
+    RTM->>Store: append TurnItemRecord / TurnRecord
+    RTM-->>C: SSE: item_started/item_completed/turn_completed
+  end
+
+  C->>R: POST /v1/threads/{id}/interrupt
+  R->>RTM: interrupt_turn(thread_id, turn_id)
+  RTM->>H: cancel_event.set()
+  RTM-->>C: SSE: turn_interrupted
+</pre>
+  </div>
+
+  <h3>持久化模型（threads.py）</h3>
+  <table>
+    <tr><th>类型</th><th>含义</th></tr>
+    <tr><td><code>ThreadRecord</code></td><td>线程元数据（id / created_at / updated_at / workspace / model ...）</td></tr>
+    <tr><td><code>TurnRecord</code></td><td>单轮记录（status / model / usage / 时间窗）</td></tr>
+    <tr><td><code>TurnItemRecord</code></td><td>轮内 item（text / tool_call / tool_result / thinking）</td></tr>
+    <tr><td><code>RuntimeEventRecord</code></td><td>事件归档</td></tr>
+    <tr><td><code>RuntimeThreadStore</code></td><td>JSON + JSONL 落盘（<code>~/.deepseek/threads/</code>）</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 13 辅助子系统 ===================== -->
+<section id="s13">
+  <h2>13 · 辅助子系统 <span class="anchor">memory / policy / mcp / state / integrations / protocol</span></h2>
+
+  <h3>13.1 智能记忆链（memory/）</h3>
+  <p class="lead">L0→L1→L2→L3 四级，由 <code>NativeMemoryProvider</code>（seed.py）组装，<code>MemoryCoordinator</code> 统一调度。仅在 <code>cfg.smart_memory_enabled()</code> 时由 <code>Engine.create</code> 拉起。</p>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  L0["l0.py<br/>原始对话 JSONL<br/>记录 + 检索"]:::engine
+  L1["l1.py<br/>用户事实抽取"]:::engine
+  L2["l2.py<br/>场景抽取"]:::engine
+  L3["l3.py<br/>人格合成"]:::engine
+  PL["pipeline.py<br/>L1/L2/L3 调度 + 子 agent loop"]:::engine
+  ST["store.py<br/>SQLite + FTS5 + checkpoint"]:::engine
+  SE["search.py<br/>embedding / FTS / 混合检索"]:::engine
+  SD["seed.py<br/>NativeMemoryProvider<br/>组装 L0-L3"]:::engine
+  CO["coordinator.py<br/>MemoryCoordinator<br/>对外门面"]:::engine
+
+  CO --> SD
+  SD --> L0
+  SD --> L1
+  SD --> L2
+  SD --> L3
+  SD --> PL
+  SD --> ST
+  SD --> SE
+  L0 --> ST
+  L1 --> ST
+  L2 --> ST
+  PL --> L2
+  PL --> L3
+
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+</pre>
+  </div>
+
+  <h3>13.2 策略层（policy/）</h3>
+  <table>
+    <tr><th>文件</th><th>职责</th><th>消费方</th></tr>
+    <tr><td><code>command_safety.py</code></td><td>命令分级（safe/risky/dangerous）</td><td>approval / shell / cli sandbox</td></tr>
+    <tr><td><code>exec_policy.py</code></td><td>Rust-parity 命令规则引擎（Policy / RuleSet）</td><td>tools.registry / runtime</td></tr>
+    <tr><td><code>approval.py</code></td><td>工具审批层（ApprovalRequest / Cache / ExecPolicyEngine）</td><td>engine / server / tools</td></tr>
+    <tr><td><code>network.py</code></td><td>网络策略（fetch/web_search 准入）</td><td>tools.registry / runtime / web</td></tr>
+    <tr><td><code>sandbox.py</code></td><td>执行沙箱（seatbelt 策略生成）</td><td>orchestrator / shell / subagent</td></tr>
+  </table>
+  <div class="callout">⚠ <code>approval.py</code> 与 <code>exec_policy.py</code> 前 ~590 行字节级重复（<code>Decision / ExecPolicyError / AmendError / blocking_append_allow_prefix_rule</code>）。<code>exec_policy.py</code> 是正位，<code>approval.py</code> 应改为 import。</div>
+
+  <h3>13.3 MCP（mcp/）</h3>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  CF["config.py<br/>McpServerConfig + load"]:::server
+  TR["transport.py<br/>Stdio / SSE 传输"]:::server
+  CL["client.py<br/>JSON-RPC 客户端"]:::server
+  MG["manager.py<br/>McpManager 服务器池"]:::server
+  EX["execute.py<br/>Engine↔MCP 适配"]:::engine
+  ST["store.py<br/>mcp.json CRUD + 快照"]:::server
+  AC["actions.py<br/>CLI/TUI 增删改"]:::server
+
+  CF --> MG
+  TR --> CL
+  CL --> MG
+  MG --> EX
+  ST --> AC
+  classDef server fill:#0c1637,stroke:#1e3a8a,color:#bfdbfe;
+  classDef engine fill:#083344,stroke:#155e75,color:#a5f3fc;
+</pre>
+  </div>
+
+  <h3>13.4 状态 / 集成 / 协议</h3>
+  <table>
+    <tr><th>子包</th><th>关键文件</th><th>职责</th></tr>
+    <tr><td rowspan="3"><code>state/</code></td><td><code>session.py</code></td><td>Database + SessionManager + checkpoints（<b>CLI 子命令实际应导入此文件</b>）</td></tr>
+    <tr><td><code>secrets.py</code></td><td>SecretsManager / Secrets（keyring→env→config 优先级）</td></tr>
+    <tr><td><code>context.py</code></td><td>用户输入 @mention 展开（被 engine.turn 用）</td></tr>
+    <tr><td rowspan="3"><code>integrations/</code></td><td><code>hooks.py</code></td><td>HookDispatcher + sinks（stdout/jsonl/webhook/shell）+ 生命周期 hook</td></tr>
+    <tr><td><code>lsp.py</code></td><td>LspManager（语言诊断）</td></tr>
+    <tr><td><code>skills.py</code></td><td>技能发现 / 安装 / 信任（<b>单文件，非包</b>）</td></tr>
+    <tr><td rowspan="3"><code>protocol/</code></td><td><code>messages.py</code></td><td>Message / MessageRequest / Role（<b>重度使用</b>）</td></tr>
+    <tr><td><code>responses.py</code></td><td>StreamEvent / Usage / ToolCall（<b>重度使用</b>）</td></tr>
+    <tr><td><code>events.py / approval.py / threads.py</code></td><td>IPC 线材类型（<span class="pill danger">零外部消费</span>，Rust-parity 占位）</td></tr>
+    <tr><td rowspan="3"><code>workflow/</code></td><td><code>models.py</code></td><td>Workflow IR（spec / snapshot / result）</td></tr>
+    <tr><td><code>adapters.py</code></td><td>Pi-JS 脚本解析</td></tr>
+    <tr><td><code>runtime.py</code></td><td>run_workflow + DeepSeekAgentRunner</td></tr>
+    <tr><td rowspan="2"><code>automation/</code></td><td><code>pipeline.py</code></td><td>触发分发 + 投递 + 分诊</td></tr>
+    <tr><td><code>inbox.py / delivery.py</code></td><td>IMAP 取件 / Feishu 发送 / 摘要构建</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 14 已知断点 ===================== -->
+<section id="s14">
+  <h2>14 · 已知断点 <span class="anchor">运行即崩 / 静默失效</span></h2>
+  <p class="lead">以下是上一轮审核发现的 5 处断链 import（合并文件后未更新调用方），按严重程度排列。<b>本图仅标注位置，未做任何修改。</b></p>
+
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  A["tui/app.py:229<br/>from tui.approval_handler import TUIApprovalHandler"]:::danger
+  B["tui/commands.py:725<br/>from tui.plan_prompt import PlanOutcome, PlanPromptScreen"]:::danger
+  C["tui/app.py:189<br/>from integrations.skills.system import install_system_skills"]:::danger
+  D["tui/commands.py:1193,1263<br/>from integrations.skills.install import fetch_registry/..."]:::danger
+  E["cli/app.py:731,1052,1357<br/>from state.database / state.session_manager import ..."]:::danger
+
+  A -. 应为 .-> A2["from tui.session_restore import TUIApprovalHandler"]:::ok
+  B -. 应为 .-> B2["from tui.plan import PlanOutcome, PlanPromptScreen"]:::ok
+  C -. 应为 .-> C2["from integrations.skills import install_system_skills"]:::ok
+  D -. 应为 .-> D2["from integrations.skills import fetch_registry, ..."]:::ok
+  E -. 应为 .-> E2["from state.session import Database, SessionManager"]:::ok
+
+  A -- 影响 --> IA["引擎启动即崩 (ModuleNotFoundError)"]
+  B -- 影响 --> IB["/plan 命令即崩"]
+  C -- 影响 --> IC["被 try/except 吞, 系统技能静默不安装"]
+  D -- 影响 --> ID["/skill install 等命令即崩"]
+  E -- 影响 --> IE["thread / sessions / metrics 子命令即崩"]
+
+  classDef danger fill:#2a0e0e,stroke:#7f1d1d,color:#fecaca;
+  classDef ok fill:#052e16,stroke:#14532d,color:#bbf7d0;
+</pre>
+  </div>
+
+  <table>
+    <tr><th>#</th><th>位置</th><th>错误 import</th><th>实际位置</th><th>影响</th></tr>
+    <tr><td>1</td><td><code>tui/app.py:229</code></td><td><code>tui.approval_handler.TUIApprovalHandler</code></td><td><code>tui/session_restore.py:125</code></td><td>引擎启动即崩</td></tr>
+    <tr><td>2</td><td><code>tui/commands.py:725</code></td><td><code>tui.plan_prompt.{PlanOutcome,PlanPromptScreen}</code></td><td><code>tui/plan.py:40,112</code></td><td><code>/plan</code> 即崩</td></tr>
+    <tr><td>3</td><td><code>tui/app.py:189</code></td><td><code>integrations.skills.system.install_system_skills</code></td><td><code>integrations/skills.py</code>（单文件）</td><td>静默吞掉，系统技能不装</td></tr>
+    <tr><td>4</td><td><code>tui/commands.py:1193,1263</code></td><td><code>integrations.skills.install.{fetch_registry,...}</code></td><td>同上</td><td><code>/skill install</code> 即崩</td></tr>
+    <tr><td>5</td><td><code>cli/app.py:731,1052,1357</code></td><td><code>state.database.Database</code> / <code>state.session_manager.SessionManager</code></td><td><code>state/session.py</code></td><td><code>thread/sessions/metrics</code> 子命令即崩</td></tr>
+  </table>
+</section>
+
+</main>
+
+<footer>
+  deepseek-tui-py · Workflow 全景图 · 基于源码静态审核生成 · 未对代码做任何改动
+</footer>
+
+</body>
+</html>
