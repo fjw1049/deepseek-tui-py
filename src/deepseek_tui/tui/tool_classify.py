@@ -51,8 +51,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "recall_archive": ("◇", "recall"),
     "memory_search": ("◇", "search"),
     "conversation_search": ("◇", "search"),
-    "rlm": ("◇", "rlm"),
-    "rlm_query": ("◇", "query"),
     # Plan / checklist
     "update_plan": ("◇", "plan"),
     "checklist_write": ("◇", "checklist"),

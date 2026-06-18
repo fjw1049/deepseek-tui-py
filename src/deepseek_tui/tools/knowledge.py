@@ -1,4 +1,4 @@
-"""Memory, review, recall, plan, note, rlm_query, and skill_load tools.
+"""Memory, review, recall, plan, note, and skill_load tools.
 
 Mirrors Rust tools at ``crates/tui/src/tools/{remember,review,recall_archive}.rs``
 and ``crates/tui/src/commands/{note,review}.rs``.
@@ -255,106 +255,6 @@ class ReviewTool(ToolSpec):
             content=output,
             metadata={"target": target, "parsed": parsed},
         )
-
-
-# ===========================================================================
-# rlm_query — recursive LLM query (Rust rlm/, 406 LOC)
-# ===========================================================================
-
-
-class RlmQueryTool(ToolSpec):
-    """Send a sub-query to the LLM and return the answer."""
-
-    def __init__(self, config: Config | None = None) -> None:
-        self._config = config
-
-    def name(self) -> str:
-        return "rlm_query"
-
-    def description(self) -> str:
-        return (
-            "Send a focused sub-query to the LLM to get an answer without "
-            "consuming main conversation context. Useful for factual lookups, "
-            "summarization, or focused analysis."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The question or task for the LLM.",
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Optional context to include.",
-                },
-                "max_tokens": {
-                    "type": "integer",
-                    "description": "Maximum tokens in the response.",
-                },
-            },
-            "required": ["query"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.NETWORK]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        query = _require_string(input_data, "query")
-        extra_context = _optional_string(input_data, "context") or ""
-        max_tokens = _optional_int(input_data, "max_tokens") or 1024
-
-        user_content = query
-        if extra_context:
-            user_content = f"Context:\n{extra_context}\n\nQuestion:\n{query}"
-
-        from deepseek_tui.client.deepseek import DeepSeekClient
-        from deepseek_tui.config.loader import ConfigLoader
-        from deepseek_tui.config.models import Config
-        from deepseek_tui.protocol.messages import Message
-        from deepseek_tui.protocol.messages import MessageRequest
-        from deepseek_tui.protocol.responses import StreamTextDelta
-
-        config = self._config
-        if config is None:
-            try:
-                config = ConfigLoader().load()
-            except Exception:
-                config = Config()
-        try:
-            client = DeepSeekClient.from_config(config)
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(
-                success=False,
-                content=f"rlm_query: cannot build LLM client: {exc}",
-                metadata={"query": query},
-            )
-
-        request = MessageRequest(
-            model=getattr(config, "model", None) or "deepseek-chat",
-            messages=[Message.user(user_content)],
-            max_tokens=max_tokens,
-            stream=True,
-        )
-
-        result_text: list[str] = []
-        try:
-            async for event in client.stream_chat_completion(request):
-                if isinstance(event, StreamTextDelta):
-                    result_text.append(event.text)
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(
-                success=False,
-                content=f"rlm_query failed: {exc}",
-                metadata={"query": query},
-            )
-        finally:
-            await client.close()
-
-        output = "".join(result_text)
-        return ToolResult(success=True, content=output, metadata={"query": query})
 
 
 # ===========================================================================

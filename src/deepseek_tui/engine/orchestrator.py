@@ -42,9 +42,7 @@ from deepseek_tui.engine.events import (
     ApprovalResolvedEvent,
     ElevationRequiredEvent,
     ErrorEvent,
-    RlmProgressEvent,
     SandboxDeniedEvent,
-    SessionEndedEvent,
     SessionStartedEvent,
     StatusEvent,
     ToolResultEvent,
@@ -601,13 +599,6 @@ class Engine:
             mode,
             engine.tool_context.working_directory,
         )
-        from deepseek_tui.tools.registry import wire_registry_client
-
-        wire_registry_client(
-            engine.tool_registry,
-            engine.client,
-            root_model=engine.default_model,
-        )
         if runtime.subagent_manager is not None:
             runtime.subagent_manager.attach_parent_cancel(handle.cancel_event)
             runtime.subagent_manager.attach_parent_completion_sink(
@@ -731,9 +722,9 @@ class Engine:
                 metadata.get("child_prompt_cache_miss_tokens") or 0
             ),
         )
-        # Metadata-only child totals (e.g. RLM rollup) when the parent client
+        # Metadata-only child totals when the parent client
         # did not already meter the same subagent streams this turn.
-        if not any(item.source in {"subagent", "rlm", "tool"} for item in self.turn_usage_ledger.items):
+        if not any(item.source in {"subagent", "tool"} for item in self.turn_usage_ledger.items):
             self.turn_usage_ledger.add(
                 model=child_model,
                 source="subagent",
@@ -2219,19 +2210,7 @@ class Engine:
             if denied:
                 return None
 
-        if tool_name == "rlm":
-
-            def _rlm_progress(iteration: int, summary: str, rpc_count: int = 0) -> None:
-                self.handle.try_emit(
-                    RlmProgressEvent(
-                        iteration=iteration,
-                        summary=summary,
-                        rpc_count=rpc_count,
-                    )
-                )
-
-            self.tool_context.metadata["rlm_progress_cb"] = _rlm_progress
-        elif tool_name == "workflow":
+        if tool_name == "workflow":
             self.tool_context.metadata["engine_cancel_event"] = self.handle.cancel_event
             self.tool_context.metadata["workflow_tool_call_id"] = tool_call.id
 
@@ -2253,7 +2232,6 @@ class Engine:
                 tool_name, tool_call.arguments, self.tool_context
             )
         finally:
-            self.tool_context.metadata.pop("rlm_progress_cb", None)
             if tool_name == "workflow":
                 self.tool_context.metadata.pop("engine_cancel_event", None)
                 self.tool_context.metadata.pop("workflow_tool_call_id", None)

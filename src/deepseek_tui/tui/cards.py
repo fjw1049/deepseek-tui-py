@@ -20,7 +20,7 @@ status line in the transcript:
   status glyph + role + agent id, plus the last
   :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
   from the head and an ellipsis row signals truncation.
-- :class:`FanoutCard` — multi-child dispatch (``rlm`` etc.). Dot-grid
+- :class:`FanoutCard` — multi-child dispatch. Dot-grid
   with one glyph per worker plus an aggregate counts line.
 
 The state-machine half of each card is plain Python so unit tests can
@@ -319,7 +319,7 @@ def apply_to_fanout(card: FanoutCard, msg: MailboxMessage) -> bool:
 # ---------------------------------------------------------------------------
 
 
-_FAMILY_GLYPH = {"delegate": "↳", "fanout": "⫶", "rlm": "Σ"}
+_FAMILY_GLYPH = {"delegate": "↳", "fanout": "⫶"}
 
 
 def _card_header(family: str, status: AgentLifecycle, role: str, detail: str) -> str:

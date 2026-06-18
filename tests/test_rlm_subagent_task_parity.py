@@ -11,12 +11,6 @@ import pytest
 
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.protocol.responses import Usage
-from deepseek_tui.tools.registry import build_default_registry, wire_registry_client
-from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.rlm import ReplRuntime, chunk_coverage
-from deepseek_tui.tools.rlm import RlmTool
-from deepseek_tui.tools.rlm import RlmUsage
 from deepseek_tui.tools.subagent import (
     SpawnRequest,
     SubAgentAssignment,
@@ -32,60 +26,6 @@ from deepseek_tui.tools.task import (
     TaskManager,
     TaskManagerConfig,
 )
-
-
-class TestRlmWiring:
-    def test_wire_registry_injects_client(self):
-        registry = build_default_registry()
-        client = MagicMock()
-        wire_registry_client(registry, client, root_model="deepseek-v4-pro")
-        rlm = registry.get("rlm")
-        assert isinstance(rlm, RlmTool)
-        assert rlm._client is client
-        assert rlm._root_model == "deepseek-v4-pro"
-
-    def test_wire_registry_injects_client_without_overwrite_warning(self, caplog):
-        registry = build_default_registry()
-        client = MagicMock()
-        with caplog.at_level(logging.WARNING, logger="deepseek_tui.tools.registry"):
-            wire_registry_client(registry, client, root_model="deepseek-v4-pro")
-
-        assert "Overwriting existing tool: rlm" not in caplog.text
-
-    def test_rlm_description_does_not_suppress_use(self):
-        tool = RlmTool(client=None, root_model="x")
-        desc = tool.description()
-        assert "DO NOT use" not in desc
-        assert "slower and more expensive" not in desc
-        assert "chunk_context()" in desc
-
-    def test_rlm_schema_has_no_child_model_override(self):
-        schema = RlmTool(client=None, root_model="x").input_schema()
-        assert "child_model" not in schema["properties"]
-
-    @pytest.mark.asyncio
-    async def test_rlm_execute_requires_client(self, tmp_path: Path):
-        tool = RlmTool(client=None, root_model="x")
-        ctx = ToolContext(working_directory=tmp_path)
-        sample = tmp_path / "big.txt"
-        sample.write_text("hello world", encoding="utf-8")
-        with pytest.raises(Exception, match="requires an active DeepSeek client"):
-            await tool.execute({"task": "summarize", "file_path": "big.txt"}, ctx)
-
-    def test_chunk_helpers_in_repl(self):
-        runtime = ReplRuntime.spawn("abcdefghij", {})
-        chunks = runtime.namespace["chunk_context"](max_chars=4, overlap=1)
-        coverage = chunk_coverage(chunks)
-        assert coverage["chunks"] >= 2
-        assert coverage["chars_covered"] > 0
-
-    def test_rlm_usage_accumulator(self):
-        usage = RlmUsage()
-        usage.add(Usage(input_tokens=10, output_tokens=5))
-        usage.add(Usage(input_tokens=3, output_tokens=2, cache_read_input_tokens=1))
-        assert usage.input_tokens == 13
-        assert usage.output_tokens == 7
-        assert usage.cache_read_input_tokens == 1
 
 
 class TestEngineChildCostAccrual:

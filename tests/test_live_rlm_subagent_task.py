@@ -1,10 +1,10 @@
-"""Live integration tests for RLM / Subagent / Task parity work.
+"""Live integration tests for Subagent / Task parity work.
 
 Uses project ``.deepseek/config.toml`` (real DeepSeek API). Run explicitly:
 
     .venv/bin/python -m pytest tests/test_live_rlm_subagent_task.py -m live -v
 
-Individual caps: API smoke ~30s, RLM ~120s, subagent ~90s, task gate ~15s,
+Individual caps: API smoke ~30s, subagent ~90s, task gate ~15s,
 task executor ~90s each.
 """
 
@@ -22,9 +22,7 @@ from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
 from deepseek_tui.policy.approval import ExecPolicyEngine
-from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.subagent import (
     Mailbox,
     SpawnRequest,
@@ -46,9 +44,7 @@ from deepseek_tui.tools.task import TaskCreateTool, TaskGateRunTool
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 _TIMEOUT_API = 30
-_TIMEOUT_RLM = 120
 _TIMEOUT_SUBAGENT = 90
-_TIMEOUT_ENGINE = 60
 _TIMEOUT_GATE = 15
 _TIMEOUT_TASK_EXEC = 90
 
@@ -125,120 +121,6 @@ class TestLiveRlmSubagentTask:
         combined = (text + "".join(thinking)).upper()
         assert combined, "expected assistant text or reasoning content"
         assert "OK" in combined
-
-    async def test_02_engine_wires_rlm_client(
-        self, project_config: Config, live_model: str, tmp_path: Path
-    ) -> None:
-        cfg = project_config.model_copy(deep=True)
-        cfg.features = FeatureConfig(tasks=True, subagents=True, mcp=False)
-        client = DeepSeekClient.from_config(cfg)
-        handle = EngineHandle()
-
-        async def _run() -> None:
-            engine = await Engine.create(
-                handle=handle,
-                client=client,
-                config=cfg,
-                working_directory=tmp_path,
-                default_model=live_model,
-                approval_handler=AutoApprovalHandler(),
-                exec_policy=ExecPolicyEngine(approval_policy="auto"),
-            )
-            try:
-                rlm = engine.tool_registry.get("rlm")
-                assert isinstance(rlm, RlmTool)
-                assert rlm._client is client
-                assert rlm._root_model == live_model
-            finally:
-                await engine.shutdown()
-                await client.close()
-
-        await asyncio.wait_for(_run(), timeout=_TIMEOUT_ENGINE)
-
-    async def test_03_rlm_tool_live_inline(
-        self, project_config: Config, live_model: str, tmp_path: Path
-    ) -> None:
-        """RLM end-to-end: REPL + child llm_query + FINAL on real API."""
-        client = DeepSeekClient.from_config(project_config)
-        tool = RlmTool(client=client, root_model=live_model)
-        ctx = ToolContext(working_directory=tmp_path)
-        content = "apple\nbanana\napple\ncherry\napple\n"
-        task = (
-            "Use Python to count lines containing apple, "
-            "llm_query to return only the number, then FINAL."
-        )
-
-        async def _run_once() -> None:
-            result = await tool.execute(
-                {"task": task, "content": content},
-                ctx,
-            )
-            assert result.success is True
-            assert "3" in result.content
-            meta = result.metadata
-            assert meta.get("child_model") == "deepseek-v4-flash"
-            assert meta.get("termination") == "final"
-            assert int(meta.get("total_rpcs") or 0) >= 1
-            assert int(meta.get("child_input_tokens") or 0) > 0
-            assert int(meta.get("child_output_tokens") or 0) > 0
-
-        async def _run() -> None:
-            last_exc: Exception | None = None
-            for _attempt in range(2):
-                try:
-                    await _run_once()
-                    return
-                except (AssertionError, Exception) as exc:  # noqa: BLE001
-                    last_exc = exc
-            raise last_exc or AssertionError("RLM live test failed after retries")
-
-        try:
-            await asyncio.wait_for(_run(), timeout=_TIMEOUT_RLM)
-        finally:
-            await client.close()
-
-    async def test_04_rlm_via_engine_accrues_child_cost(
-        self, project_config: Config, live_model: str, tmp_path: Path
-    ) -> None:
-        cfg = project_config.model_copy(deep=True)
-        cfg.features = FeatureConfig(tasks=False, subagents=False, mcp=False)
-        client = DeepSeekClient.from_config(cfg)
-        handle = EngineHandle()
-
-        async def _run() -> None:
-            engine = await Engine.create(
-                handle=handle,
-                client=client,
-                config=cfg,
-                working_directory=tmp_path,
-                default_model=live_model,
-                approval_handler=AutoApprovalHandler(),
-                exec_policy=ExecPolicyEngine(approval_policy="auto"),
-            )
-            try:
-                before = engine.session_cost_usd
-                tc = ToolCall(
-                    id="live-rlm-1",
-                    name="rlm",
-                    arguments={
-                        "task": (
-                            "Count lines containing 'x' in context with Python, "
-                            "llm_query for the number only, then FINAL."
-                        ),
-                        "content": "x\ny\nx\n",
-                    },
-                )
-                result = await engine._execute_single_tool(
-                    tc, [], live_model
-                )
-                assert result is not None and result.success
-                assert engine.session_cost_usd >= before
-                assert result.metadata.get("child_model") == "deepseek-v4-flash"
-            finally:
-                await engine.shutdown()
-                await client.close()
-
-        await asyncio.wait_for(_run(), timeout=_TIMEOUT_RLM)
 
     async def test_05_task_gate_run_live_persistence(
         self, project_config: Config, tmp_path: Path

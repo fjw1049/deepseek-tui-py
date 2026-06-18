@@ -1,4 +1,4 @@
-"""Integration tests for RLM / Subagent / Task wiring through real managers."""
+"""Integration tests for Subagent / Task wiring through real managers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.runtime import create_tool_runtime
 from deepseek_tui.tools.subagent import (
     Mailbox,
@@ -28,30 +27,6 @@ from deepseek_tui.tools.task import (
     TaskManagerConfig,
 )
 from deepseek_tui.tools.task import TaskGateRunTool
-
-
-class TestEngineRlmWiring:
-    @pytest.mark.asyncio
-    async def test_engine_create_wires_rlm_client(self, tmp_path: Path):
-        cfg = Config(
-            features=FeatureConfig(tasks=True, subagents=True),
-            default_text_model="deepseek-v4-pro",
-        )
-        handle = EngineHandle()
-        client = AsyncMock()
-        engine = await Engine.create(
-            handle=handle,
-            client=client,
-            config=cfg,
-            working_directory=tmp_path,
-            default_model="deepseek-v4-pro",
-        )
-        rlm = engine.tool_registry.get("rlm")
-        assert isinstance(rlm, RlmTool)
-        assert rlm._client is client
-        assert rlm._root_model == "deepseek-v4-pro"
-        if engine.tool_runtime is not None:
-            await engine.tool_runtime.shutdown()
 
 
 class TestTaskGateRunIntegration:
@@ -151,7 +126,4 @@ class TestToolRuntimeIntegration:
         assert runtime.subagent_manager is not None
         assert runtime.context.task_manager is runtime.task_manager
         assert runtime.context.subagent_manager is runtime.subagent_manager
-        rlm = runtime.registry.get("rlm")
-        assert isinstance(rlm, RlmTool)
-        assert rlm._client is None  # wired later by Engine.create
         await runtime.shutdown()

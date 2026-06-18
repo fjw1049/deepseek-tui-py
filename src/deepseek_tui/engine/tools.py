@@ -56,7 +56,6 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "grep_files",
         "file_search",
         "diagnostics",
-        "rlm",
         "recall_archive",
         MULTI_TOOL_PARALLEL_NAME,
         "update_plan",

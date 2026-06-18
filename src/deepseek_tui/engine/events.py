@@ -118,15 +118,6 @@ class SubAgentMailboxEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class RlmProgressEvent:
-    """RLM iteration progress while the ``rlm`` tool is executing."""
-
-    iteration: int
-    summary: str
-    rpc_count: int = 0
-
-
-@dataclass(frozen=True, slots=True)
 class WorkflowProgressEvent:
     """Workflow orchestration progress while the ``workflow`` tool runs."""
 
@@ -201,7 +192,6 @@ EngineEvent = (
     | TurnCancelledEvent
     | TurnCompleteEvent
     | SubAgentMailboxEvent
-    | RlmProgressEvent
     | WorkflowProgressEvent
     | SessionActivityEvent
     | UserInputRequiredEvent

@@ -515,7 +515,6 @@ from deepseek_tui.tools.knowledge import (
     RecallArchiveTool,
     RememberTool,
     ReviewTool,
-    RlmQueryTool,
     SkillLoadTool,
 )
 from deepseek_tui.tools.mcp import (
@@ -526,7 +525,6 @@ from deepseek_tui.tools.mcp import (
 )
 from deepseek_tui.tools.runtime import MultiToolUseParallelTool
 from deepseek_tui.tools.user_input import RetrieveToolResultTool
-from deepseek_tui.tools.rlm import RlmTool
 from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
 from deepseek_tui.tools.shell import (
     ExecShellCancelTool,
@@ -701,10 +699,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # Knowledge / memory / review tools
     registry.register(NoteTool())
     registry.register(PlanUpdateTool())
-    registry.register(RlmQueryTool(config=cfg))
-    registry.register(
-        RlmTool(client=None, root_model=cfg.default_text_model or "deepseek-chat")
-    )
     registry.register(SkillLoadTool())
 
     # Engine-intercepted special tools (always active)
@@ -751,28 +745,8 @@ def build_subagent_registry(
     """
     cfg = config or Config()
     registry = build_default_registry(cfg, mode=mode)
-    wire_registry_client(registry, client, root_model=root_model or "deepseek-chat")
     if allowed_tools is not None:
         registry.filter_by_names(set(allowed_tools))
     if extra_tools:
         registry.register_all(extra_tools)
     return registry
-
-
-def wire_registry_client(
-    registry: ToolRegistry,
-    client: LLMClient | None,
-    *,
-    root_model: str | None = None,
-) -> None:
-    """Re-register ``rlm`` with a live client after :class:`Engine` construction.
-
-    ``build_default_registry`` registers ``RlmTool(client=None)`` because the
-    registry is built before the HTTP client exists. Call this from
-    :meth:`Engine.create` once the client is available.
-    """
-    if not registry.contains("rlm"):
-        return
-    model = root_model or "deepseek-chat"
-    registry.remove("rlm")
-    registry.register(RlmTool(client=client, root_model=model))

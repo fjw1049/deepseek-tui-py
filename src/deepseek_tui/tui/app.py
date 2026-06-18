@@ -25,7 +25,6 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ErrorEvent,
-    RlmProgressEvent,
     WorkflowProgressEvent,
     SandboxDeniedEvent,
     SessionActivityEvent,
@@ -774,10 +773,6 @@ class DeepSeekTUI(App[None]):
                 self._schedule_info_sidebar_refresh()
                 if event.message:
                     status.set_phase(f"background: {event.message[:50]}")
-            elif isinstance(event, RlmProgressEvent):
-                status.set_phase(
-                    f"rlm round {event.iteration}: {event.summary[:80]}"
-                )
             elif isinstance(event, WorkflowProgressEvent):
                 from deepseek_tui.workflow.models import WorkflowSnapshot
                 from deepseek_tui.workflow.runtime import render_workflow_text
