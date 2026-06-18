@@ -426,7 +426,7 @@ class TaskShellStartTool(ToolSpec):
         process_id = shell_result.content  # uuid string returned as content
         now = _utc_now_iso()
         task.timeline.append(
-            _TimelineEntryFactory(
+            TaskTimelineEntry(
                 timestamp=now,
                 kind="shell_started",
                 summary=f"bg shell: {command[:120]}",
@@ -506,7 +506,7 @@ class TaskShellWaitTool(ToolSpec):
                 )
             )
             task.timeline.append(
-                _TimelineEntryFactory(
+                TaskTimelineEntry(
                     timestamp=now,
                     kind="shell_completed",
                     summary=f"rc={wait_result.metadata.get('returncode')}",
@@ -633,7 +633,7 @@ class PrAttemptRecordTool(ToolSpec):
         )
         task.attempts.append(attempt)
         task.timeline.append(
-            _TimelineEntryFactory(
+            TaskTimelineEntry(
                 timestamp=_utc_now_iso(),
                 kind="pr_attempt",
                 summary=f"attempt #{attempt_index}: {changed_files[:3]}",

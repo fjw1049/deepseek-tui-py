@@ -2105,9 +2105,10 @@ class Engine:
             m.model_dump(mode="json") for m in self.session_messages
         ]
         from deepseek_tui.engine.usage_ledger import usage_source
-
+        # usage_source("tool") 是一个上下文管理器，把这期间产生的 token 用量都归类到 "tool" 来源
         with usage_source("tool"):
             result = await self._execute_single_tool_impl(tool_call, api_tools, model)
+        # 累计子代理 token 成本 + 回填 hook 结果
         if result is not None:
             self._accrue_child_token_cost_from_metadata(result.metadata)
             hook_ctx.tool_result = result.content
@@ -2124,8 +2125,11 @@ class Engine:
         """Inner tool dispatch (lifecycle hooks handled by wrapper)."""
         from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
 
+        # 先归一化：把 Rust 桥接别名（如 mcp_read_resource）映射回注册表工具名，
+        # 后续的 is_external_mcp_tool 判定才会把它正确归到注册表分支而非外部 MCP 分支。
         tool_name = normalize_mcp_bridge_tool_name(tool_call.name)
-        # Snapshot before file-modifying tools
+        # 写文件类工具执行前拍快照（供 /undo）。注意：parallel 自身不是写工具，
+        # 这里不会拍；其子工具的快照由 _execute_parallel_tools 逐个走完整分发时各自拍。
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
         # --- Special built-in tools (not in ToolRegistry) ---
@@ -2177,6 +2181,8 @@ class Engine:
         from deepseek_tui.tools.approval import approval_request_for_mcp
 
         if is_external_mcp_tool(tool_name, self.tool_registry.contains(tool_name)):
+            # 仅当 mcp_<server>_<tool> 形态、且不在注册表、也不是 read-resource 别名时走此分支；
+            # read-resource 已被上面 normalize 改写为注册表工具名，会落到下方注册表分支。
             if self.mcp_manager is None:
                 raise ToolError(f"MCP tool '{tool_name}' called but no MCP manager configured")
             approval_request = approval_request_for_mcp(
@@ -2211,6 +2217,8 @@ class Engine:
                 return None
 
         if tool_name == "workflow":
+            # workflow 工具需要回调进引擎（取消事件、进度/状态上报），通过 metadata 临时注入。
+            # 注意：审批门在此之前已执行，被拒会直接 return None，不会走到注入这一步。
             self.tool_context.metadata["engine_cancel_event"] = self.handle.cancel_event
             self.tool_context.metadata["workflow_tool_call_id"] = tool_call.id
 
@@ -2232,6 +2240,8 @@ class Engine:
                 tool_name, tool_call.arguments, self.tool_context
             )
         finally:
+            # 无论 execute 是否抛异常，都清掉临时注入的 metadata，避免污染下一次工具调用。
+            # pop(..., None) 保证即使因 workflow 未走注入分支也不会 KeyError。
             if tool_name == "workflow":
                 self.tool_context.metadata.pop("engine_cancel_event", None)
                 self.tool_context.metadata.pop("workflow_tool_call_id", None)
