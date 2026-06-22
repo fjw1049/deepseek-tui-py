@@ -108,10 +108,12 @@ class _ScriptedClient(LLMClient):
         super().__init__(RetryConfig(base_delay=0.0, max_delay=0.0))
         self.scripts = scripts
         self.calls = 0
+        self.requests: list[MessageRequest] = []
 
     async def stream_chat_completion(
         self, request: MessageRequest
     ) -> AsyncIterator[StreamEvent]:
+        self.requests.append(request)
         script = self.scripts[min(self.calls, len(self.scripts) - 1)]
         self.calls += 1
         for event in script:
@@ -183,3 +185,21 @@ async def test_successful_stream_unaffected():
     result, _ = await _run_turn(client)
     assert result.outcome == TurnOutcomeStatus.SUCCESS
     assert client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_glm_default_output_limit_fits_provider_cap():
+    client = _ScriptedClient([[StreamDone(usage=None)]])
+    loop = TurnLoop(client)
+
+    await loop.run(
+        request=MessageRequest(
+            model="glm-5.2",
+            messages=[Message.user("hi")],
+        ),
+        emit=lambda _event: asyncio.sleep(0),
+        cancel_event=asyncio.Event(),
+        tools=None,
+    )
+
+    assert client.requests[0].max_tokens == 4096

@@ -48,6 +48,7 @@ __all__ = [
     "compaction_threshold_for_model",
     "context_window_for_model",
     "deprecation_for_model",
+    "max_output_tokens_for_model",
     "normalize_model",
     "normalize_model_name",
     "provider_capability",
@@ -455,7 +456,7 @@ def provider_capability(
         probed = _context_window_for_model_optional(resolved_model)
         window = probed if probed is not None else DEFAULT_CONTEXT_WINDOW_TOKENS
 
-    max_output = 262_144 if (is_v4_pro or is_v4_flash) else 4096
+    max_output = max_output_tokens_for_model(resolved_model)
 
     # thinking_supported: DeepSeek v4 + OpenAI reasoning models + Claude
     # thinking models. This flag gates whether reasoning_effort / thinking
@@ -483,6 +484,18 @@ def provider_capability(
         request_payload_mode=RequestPayloadMode.CHAT_COMPLETIONS,
         deprecation=deprecation_for_model(resolved_model),
     )
+
+
+def max_output_tokens_for_model(model: str) -> int:
+    """Return the default per-request output limit for a model."""
+    model_lower = model.lower()
+    is_v4_pro = "v4-pro" in model_lower or model_lower == "deepseek-v4pro"
+    is_v4_flash = (
+        "v4-flash" in model_lower
+        or model_lower == "deepseek-v4flash"
+        or model_lower == "deepseek-v4"
+    )
+    return 262_144 if (is_v4_pro or is_v4_flash) else 4096
 
 
 # ---------------------------------------------------------------------------

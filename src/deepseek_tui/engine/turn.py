@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from deepseek_tui.client.base import LLMClient
+from deepseek_tui.config.providers import max_output_tokens_for_model
 from deepseek_tui.engine.context import (
     context_input_budget,
     estimated_input_tokens,
@@ -242,8 +243,11 @@ class TurnLoop:
                 )
 
             # Check context budget before requesting
+            output_token_limit = request.max_tokens or max_output_tokens_for_model(
+                request.model
+            )
             if request.messages:
-                input_budget = context_input_budget(request.model, TURN_MAX_OUTPUT_TOKENS)
+                input_budget = context_input_budget(request.model, output_token_limit)
                 if input_budget is not None:
                     # Estimate the full payload, not just messages: the
                     # system prompt (rules/skills/handoff) and tool schemas
@@ -296,7 +300,7 @@ class TurnLoop:
                     if request.tool_choice is not None
                     else ({"type": "auto"} if active_tools else None)
                 ),
-                max_tokens=request.max_tokens or TURN_MAX_OUTPUT_TOKENS,
+                max_tokens=output_token_limit,
                 # Forward reasoning / sampling controls from the upstream
                 # request so non-streaming Engine config (Config.reasoning_effort
                 # etc.) reaches the LLM client. Without this propagation the
