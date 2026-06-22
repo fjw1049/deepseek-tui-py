@@ -1671,7 +1671,7 @@ function ProcessPhaseRow({
   subagentInfrastructureToolIds?: Set<string>
 }): ReactElement | null {
   const { t } = useTranslation('common')
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const isActive = phase.hasLiveReasoning || phase.executionBlocks.some(blockHasPendingRuntimeWork)
 
   const filteredTools = visibleExecutionBlocks(
@@ -1733,6 +1733,24 @@ function ProcessPhaseRow({
 
       {expanded ? (
         <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
+          {(() => {
+            const reasoningText = phase.reasoningBlocks
+              .filter(
+                (block): block is Extract<ChatBlock, { kind: 'reasoning' }> =>
+                  block.kind === 'reasoning'
+              )
+              .map((block) => block.text.trim())
+              .filter(Boolean)
+              .join('\n\n')
+            if (!reasoningText) return null
+            return (
+              <div className="ds-markdown mb-1 text-[13.5px] leading-6 text-ds-muted">
+                <div className="line-clamp-3">
+                  <AssistantMarkdown text={reasoningText} streaming={isActive && processing} />
+                </div>
+              </div>
+            )
+          })()}
           <div className="flex flex-col gap-0.5">
             {filteredTools.map((block) => {
               const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
