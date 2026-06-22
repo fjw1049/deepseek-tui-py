@@ -161,3 +161,5 @@ export const workspacePickFilesPayloadSchema = z
     imagesOnly: z.boolean().optional()
   })
   .strict()
+
+export const trendingPeriodSchema = z.enum(['daily', 'weekly', 'monthly'])

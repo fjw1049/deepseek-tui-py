@@ -180,6 +180,21 @@ export type WorkspaceSuggestionsResult =
   | { ok: true; suggestions: WorkspaceSuggestion[] }
   | { ok: false; suggestions: null }
 
+export type TrendingRepo = {
+  rank: number
+  name: string
+  description: string
+  stars: string
+  gained: string
+  topics: string[]
+  isNew: boolean
+  url: string
+}
+export type TrendingPeriod = 'daily' | 'weekly' | 'monthly'
+export type TrendingResult =
+  | { ok: true; repos: TrendingRepo[]; period: TrendingPeriod; cachedAt: number }
+  | { ok: false; error: string }
+
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
@@ -228,6 +243,7 @@ export type DsGuiApi = {
   ) => Promise<EndpointTestResult>
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
   getWorkspaceSuggestions: (workspaceRoot: string) => Promise<WorkspaceSuggestionsResult>
+  getTrendingRepos: (period: TrendingPeriod) => Promise<TrendingResult>
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>

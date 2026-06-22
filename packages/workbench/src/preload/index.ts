@@ -52,6 +52,7 @@ const api = {
     ipcRenderer.invoke('deepseek:diagnostics'),
   getWorkspaceSuggestions: (workspaceRoot) =>
     ipcRenderer.invoke('workspace:suggestions', workspaceRoot),
+  getTrendingRepos: (period) => ipcRenderer.invoke('trending:repos', period),
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>

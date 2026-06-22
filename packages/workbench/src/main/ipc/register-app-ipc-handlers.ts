@@ -29,6 +29,7 @@ import {
   terminalInputPayloadSchema,
   terminalLifecyclePayloadSchema,
   terminalResizePayloadSchema,
+  trendingPeriodSchema,
   workspaceFileTargetPayloadSchema,
   workspacePickFilesPayloadSchema,
   workspaceRootSchema
@@ -43,6 +44,7 @@ import {
   runtimeTokenFilePath
 } from '../deepseek-process'
 import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
+import { getTrendingRepos } from '../services/trending-repos'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
 import {
@@ -840,6 +842,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
 
   ipcMain.handle('workspace:suggestions', async (_, workspaceRoot: unknown) =>
     getWorkspaceSuggestions(parseIpcPayload('workspace:suggestions', workspaceRootSchema, workspaceRoot))
+  )
+
+  ipcMain.handle('trending:repos', async (_, period: unknown) =>
+    getTrendingRepos(parseIpcPayload('trending:repos', trendingPeriodSchema, period))
   )
 
   ipcMain.handle('editor:list', async () => listEditorsResult())
