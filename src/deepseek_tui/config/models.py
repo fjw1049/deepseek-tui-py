@@ -37,6 +37,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 class ProviderConfig(BaseModel):
+    protocol: Literal["openai", "anthropic"] | None = None
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
@@ -498,13 +499,15 @@ class Config(BaseModel):
 
         configured = self.providers.get(self.provider, ProviderConfig())
         overrides: dict[str, Any] = {}
-        if self.api_key is not None and self.provider == "deepseek":
+        if self.api_key is not None:
             overrides["api_key"] = self.api_key
         if self.base_url is not None:
             overrides["base_url"] = self.base_url
-        model = self.model or self.default_text_model
-        if model is not None:
-            overrides["model"] = model
+        # Only inject model from top-level when the user explicitly set it
+        # (self.model). default_text_model is a DeepSeek-specific fallback
+        # that should not override PROVIDER_DEFAULTS for other providers.
+        if self.model is not None:
+            overrides["model"] = self.model
         merged = ProviderConfig.model_validate(
             _deep_merge(configured.model_dump(), overrides)
         )
@@ -513,10 +516,18 @@ class Config(BaseModel):
         # DeepSeek endpoint.
         defaults = PROVIDER_DEFAULTS.get(self.provider)
         if defaults is not None:
+            if merged.protocol is None:
+                merged.protocol = defaults.protocol
             if merged.base_url is None:
                 merged.base_url = defaults.base_url
             if merged.model is None:
                 merged.model = defaults.model
+        # Final fallback: if still no model after provider defaults, use
+        # the global default_text_model (preserves existing DeepSeek behavior).
+        if merged.model is None:
+            merged.model = self.default_text_model
+        if merged.protocol is None:
+            merged.protocol = "openai"
         return merged
 
     @classmethod

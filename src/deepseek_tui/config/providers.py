@@ -125,6 +125,8 @@ class ApiProvider(str, Enum):
     NOVITA = "novita"
     FIREWORKS = "fireworks"
     SGLANG = "sglang"
+    VOLCENGINE_ARK = "volcengine-ark"
+    VOLCENGINE_ARK_ANTHROPIC = "volcengine-ark-anthropic"
 
     @classmethod
     def parse(cls, value: str) -> ApiProvider | None:
@@ -149,6 +151,10 @@ class ApiProvider(str, Enum):
                 return cls.FIREWORKS
             case "sglang" | "sg-lang":
                 return cls.SGLANG
+            case "volcengine-ark" | "volcengine_ark" | "volc-ark" | "ark":
+                return cls.VOLCENGINE_ARK
+            case "volcengine-ark-anthropic" | "ark-anthropic":
+                return cls.VOLCENGINE_ARK_ANTHROPIC
         return None
 
     @property
@@ -161,6 +167,8 @@ class ApiProvider(str, Enum):
             ApiProvider.NOVITA: "Novita AI",
             ApiProvider.FIREWORKS: "Fireworks AI",
             ApiProvider.SGLANG: "SGLang",
+            ApiProvider.VOLCENGINE_ARK: "火山引擎方舟",
+            ApiProvider.VOLCENGINE_ARK_ANTHROPIC: "火山引擎方舟 (Anthropic)",
         }[self]
 
     @classmethod
@@ -174,6 +182,8 @@ class ApiProvider(str, Enum):
             cls.NOVITA,
             cls.FIREWORKS,
             cls.SGLANG,
+            cls.VOLCENGINE_ARK,
+            cls.VOLCENGINE_ARK_ANTHROPIC,
         ]
 
 
@@ -365,6 +375,22 @@ def _context_window_for_model_optional(model: str) -> int | None:
         return DEFAULT_CONTEXT_WINDOW_TOKENS
     if "claude" in lower:
         return 200_000
+    # GPT models
+    if "gpt" in lower or "o1" in lower or "o3" in lower or "o4" in lower:
+        # GPT-4.1 / o3 / o4-mini support 1M context
+        if any(tag in lower for tag in ("gpt-4.1", "o3", "o4")):
+            return 1_000_000
+        return 128_000
+    # Google Gemini
+    if "gemini" in lower:
+        if "2.5" in lower:
+            return 1_000_000
+        return 1_000_000
+    # Qwen
+    if "qwen" in lower:
+        if "long" in lower:
+            return 1_000_000
+        return 131_072
     return None
 
 
@@ -430,7 +456,16 @@ def provider_capability(
         window = probed if probed is not None else DEFAULT_CONTEXT_WINDOW_TOKENS
 
     max_output = 262_144 if (is_v4_pro or is_v4_flash) else 4096
+
+    # thinking_supported: DeepSeek v4 + OpenAI reasoning models + Claude
+    # thinking models. This flag gates whether reasoning_effort / thinking
+    # fields are sent in the request payload.
     thinking_supported = is_v4_pro or is_v4_flash
+    if not thinking_supported:
+        thinking_supported = any(
+            tag in model_lower
+            for tag in ("o1", "o3", "o4", "-thinking", "reasoner")
+        )
 
     cache_telemetry_supported = provider in (
         ApiProvider.DEEPSEEK,
@@ -462,6 +497,7 @@ class ProviderDefaults:
     base_url: str
     model: str
     flash_model: str | None = None
+    protocol: str = "openai"
 
 
 # Defaults table — model strings match the Rust ``DEFAULT_*_MODEL`` constants.
@@ -497,6 +533,15 @@ PROVIDER_DEFAULTS: dict[str, ProviderDefaults] = {
     "sglang": ProviderDefaults(
         base_url="http://localhost:30000/v1",
         model="deepseek-ai/DeepSeek-V4-Pro",
+    ),
+    "volcengine-ark": ProviderDefaults(
+        base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
+        model="GLM-5.2",
+    ),
+    "volcengine-ark-anthropic": ProviderDefaults(
+        base_url="https://ark.cn-beijing.volces.com/api/coding",
+        model="GLM-5.2",
+        protocol="anthropic",
     ),
 }
 

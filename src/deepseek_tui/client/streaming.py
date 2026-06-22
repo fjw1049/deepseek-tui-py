@@ -8,6 +8,7 @@ from typing import Any
 
 from deepseek_tui.protocol.responses import (
     StreamDone,
+    StreamError,
     StreamEvent,
     StreamTextDelta,
     StreamThinkingDelta,
@@ -149,4 +150,103 @@ class OpenAIStreamParser:
             self._tool_calls.clear()
         if not events or not isinstance(events[-1], StreamDone):
             events.append(StreamDone(usage=self._usage))
+        return events
+
+
+class AnthropicStreamParser:
+    """Translate Anthropic Messages SSE events into the shared stream model."""
+
+    def __init__(self) -> None:
+        self._tool_calls: dict[int, _ToolCallBuilder] = {}
+        self._usage = Usage()
+        self._done = False
+
+    def parse_event(
+        self, event_name: str, payload: dict[str, Any]
+    ) -> list[StreamEvent]:
+        events: list[StreamEvent] = []
+        event_type = str(payload.get("type") or event_name)
+
+        if event_type == "message_start":
+            usage = payload.get("message", {}).get("usage", {})
+            if isinstance(usage, dict):
+                self._usage = Usage.model_validate(usage)
+            return events
+
+        if event_type == "content_block_start":
+            index = payload.get("index", 0)
+            block = payload.get("content_block")
+            if isinstance(index, int) and isinstance(block, dict):
+                if block.get("type") == "tool_use":
+                    tool_id = str(block.get("id") or f"tool-call-{index}")
+                    name = str(block.get("name") or "")
+                    from deepseek_tui.tools.encoding import from_api_tool_name
+
+                    self._tool_calls[index] = _ToolCallBuilder(
+                        id=tool_id,
+                        name=from_api_tool_name(name),
+                    )
+                elif block.get("type") == "text" and block.get("text"):
+                    events.append(StreamTextDelta(text=str(block["text"])))
+            return events
+
+        if event_type == "content_block_delta":
+            index = payload.get("index", 0)
+            delta = payload.get("delta")
+            if not isinstance(delta, dict):
+                return events
+            delta_type = delta.get("type")
+            if delta_type == "text_delta" and delta.get("text"):
+                events.append(StreamTextDelta(text=str(delta["text"])))
+            elif delta_type == "thinking_delta" and delta.get("thinking"):
+                events.append(StreamThinkingDelta(thinking=str(delta["thinking"])))
+            elif delta_type == "input_json_delta" and isinstance(index, int):
+                fragment = str(delta.get("partial_json") or "")
+                builder = self._tool_calls.get(index)
+                if builder is not None:
+                    builder.append(fragment)
+                    events.append(
+                        StreamToolCallDelta(
+                            tool_call_id=builder.id,
+                            name=builder.name,
+                            arguments_fragment=fragment,
+                        )
+                    )
+            return events
+
+        if event_type == "content_block_stop":
+            index = payload.get("index", 0)
+            if isinstance(index, int):
+                builder = self._tool_calls.pop(index, None)
+                if builder is not None:
+                    events.append(StreamToolCallComplete(tool_call=builder.build()))
+            return events
+
+        if event_type == "message_delta":
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                current = self._usage.model_dump()
+                current.update(usage)
+                self._usage = Usage.model_validate(current)
+            return events
+
+        if event_type == "error":
+            error = payload.get("error")
+            message = error.get("message") if isinstance(error, dict) else error
+            events.append(StreamError(message=str(message or "Anthropic API error")))
+            return events
+
+        if event_type == "message_stop":
+            events.extend(self.finalize())
+        return events
+
+    def finalize(self) -> list[StreamEvent]:
+        if self._done:
+            return []
+        events: list[StreamEvent] = []
+        for index in sorted(self._tool_calls):
+            events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
+        self._tool_calls.clear()
+        self._done = True
+        events.append(StreamDone(usage=self._usage))
         return events

@@ -60,6 +60,8 @@ _PROVIDER_ENV_CANDIDATES: dict[str, tuple[str, ...]] = {
     "nvidia_nim": ("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY", "DEEPSEEK_API_KEY"),
     "nim": ("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY", "DEEPSEEK_API_KEY"),
     "openai": ("OPENAI_API_KEY",),
+    "volcengine-ark": ("ARK_API_KEY", "VOLCENGINE_API_KEY"),
+    "volcengine-ark-anthropic": ("ARK_API_KEY", "VOLCENGINE_API_KEY"),
 }
 
 

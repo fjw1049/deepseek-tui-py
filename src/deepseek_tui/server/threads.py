@@ -175,18 +175,20 @@ class _ActiveTurnState:
 
 
 class _ActiveThreadState:
-    __slots__ = ("handle", "engine", "engine_task", "active_turn")
+    __slots__ = ("handle", "engine", "engine_task", "active_turn", "provider")
 
     def __init__(
         self,
         handle: EngineHandle,
         engine: Engine,
         engine_task: asyncio.Task[None],
+        provider: str = "deepseek",
     ) -> None:
         self.handle = handle
         self.engine = engine
         self.engine_task: asyncio.Task[None] = engine_task
         self.active_turn: _ActiveTurnState | None = None
+        self.provider = provider
 
 
 class _ApprovalDecision:
@@ -226,6 +228,7 @@ class RuntimeThreadManager:
         self.manager_cfg = manager_cfg
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
         self._llm_client = llm_client
+        self._provider_clients: dict[str, LLMClient] = {}
         self._approval_bridge = approval_bridge
         self._elevation_bridge = elevation_bridge
         self._shared_tool_runtime = shared_tool_runtime
@@ -304,6 +307,14 @@ class RuntimeThreadManager:
 
     def shutdown(self) -> None:
         self._cancel_event.set()
+        for client in self._provider_clients.values():
+            close = getattr(client, "close", None)
+            if close is not None:
+                try:
+                    asyncio.get_running_loop().create_task(close())
+                except RuntimeError:
+                    pass
+        self._provider_clients.clear()
         if self._approval_bridge is not None:
             self._approval_bridge.cancel_all()
         if self._elevation_bridge is not None:
@@ -335,6 +346,7 @@ class RuntimeThreadManager:
             created_at=now,
             updated_at=now,
             model=model,
+            provider=(req.provider or self.config.provider).strip() or self.config.provider,
             workspace=workspace,
             mode=mode,
             allow_shell=allow_shell,
@@ -781,6 +793,8 @@ class RuntimeThreadManager:
             raise ValueError("prompt is required")
 
         thread = self.store.load_thread(thread_id)
+        provider = (req.provider or thread.provider or self.config.provider).strip()
+        model = (req.model or thread.model).strip()
         effective_mode = (req.mode or thread.mode or "agent").strip() or "agent"
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
         timeout_s = first_response_timeout_s(effective_mode)
@@ -802,6 +816,11 @@ class RuntimeThreadManager:
                 pop_turn_latency(turn_id)
                 raise ValueError("Thread already has an active turn")
             if state is not None:
+                if state.provider != provider:
+                    client = self._get_llm_client(provider)
+                    state.engine.client = client
+                    state.engine.turn_loop.client = client
+                    state.provider = provider
                 state.engine.mode = effective_mode
                 state.engine.tool_context.metadata["turn_latency_turn_id"] = turn_id
 
@@ -850,6 +869,8 @@ class RuntimeThreadManager:
         self.store.save_turn(turn)
 
         thread.latest_turn_id = turn_id
+        thread.provider = provider
+        thread.model = model
         thread.updated_at = now
         self.store.save_thread(thread)
 
@@ -862,7 +883,6 @@ class RuntimeThreadManager:
                 {"item": user_item.model_dump(mode="json")},
             )
 
-        model = req.model or thread.model
         monitor_task = asyncio.create_task(
             self._monitor_turn_safe(thread_id, turn_id, handle, effective_mode),
             name=f"monitor-{turn_id}",
@@ -1145,8 +1165,8 @@ class RuntimeThreadManager:
             shared_mcp = getattr(shared_runtime, "mcp_manager", None)
         create_kwargs: dict[str, Any] = {
             "handle": handle,
-            "client": self._get_llm_client(),
-            "config": self.config,
+            "client": self._get_llm_client(thread.provider),
+            "config": self._config_for_provider(thread.provider, thread.model),
             "working_directory": workspace,
             "default_model": thread.model,
             "mode": (thread.mode or "agent").strip() or "agent",
@@ -1171,7 +1191,10 @@ class RuntimeThreadManager:
         async with self._active_lock:
             evicted = self._enforce_lru_capacity()
             self._active[thread.id] = _ActiveThreadState(
-                handle=handle, engine=engine, engine_task=engine_task
+                handle=handle,
+                engine=engine,
+                engine_task=engine_task,
+                provider=thread.provider,
             )
             self._touch_lru(thread.id)
 
@@ -1213,12 +1236,37 @@ class RuntimeThreadManager:
             auto_approve=auto_approve,
         )
 
-    def _get_llm_client(self) -> LLMClient:
-        if self._llm_client is not None:
+    def _get_llm_client(self, provider: str | None = None) -> LLMClient:
+        requested = (provider or self.config.provider).strip() or self.config.provider
+        cached = getattr(self, "_provider_clients", {}).get(requested)
+        if cached is not None:
+            return cached
+        if self._llm_client is not None and requested == self.config.provider:
             return self._llm_client
-        from deepseek_tui.client.deepseek import DeepSeekClient
+        from deepseek_tui.client.factory import build_llm_client
 
-        return DeepSeekClient.from_config(self.config)
+        if requested == self.config.provider:
+            client = build_llm_client(self.config)
+        else:
+            client = build_llm_client(self._config_for_provider(requested))
+        if not hasattr(self, "_provider_clients"):
+            self._provider_clients = {}
+        self._provider_clients[requested] = client
+        return client
+
+    def _config_for_provider(
+        self, provider: str, model: str | None = None
+    ) -> Config:
+        requested = provider.strip() or self.config.provider
+        provider_config = self.config.model_copy(deep=True)
+        provider_config.provider = requested
+        if requested != self.config.provider:
+            provider_config.api_key = None
+            provider_config.base_url = None
+            provider_config.model = model
+        elif model is not None:
+            provider_config.model = model
+        return provider_config
 
     def _touch_lru(self, thread_id: str) -> None:
         self._lru.pop(thread_id, None)
@@ -2258,15 +2306,20 @@ class RuntimeThreadManager:
         from deepseek_tui.protocol.responses import ToolCall
 
         client = self._get_llm_client()
+        narration_config = self.config
         async with self._active_lock:
             active = self._active.get(thread_id)
             if active is not None:
                 client = active.engine.client
+                thread = self.store.load_thread(thread_id)
+                narration_config = self._config_for_provider(
+                    active.provider, thread.model
+                )
         typed_calls: tuple[ToolCall, ...] = tool_calls
         with usage_source("phase_bridge"):
             return await compute_narration_display(
                 client,
-                self.config,
+                narration_config,
                 user_goal=user_prompt,
                 state=state,
                 segment=segment,
@@ -2628,6 +2681,7 @@ class ThreadRecord(BaseModel):
     created_at: datetime
     updated_at: datetime
     model: str
+    provider: str = "deepseek"
     workspace: str
     mode: str = "agent"
     allow_shell: bool = False
@@ -2877,6 +2931,7 @@ class RuntimeStoreState(BaseModel):
 
 
 class CreateThreadRequest(BaseModel):
+    provider: str | None = None
     model: str | None = None
     workspace: str | None = None
     mode: str | None = None
@@ -2897,6 +2952,7 @@ class UpdateThreadRequest(BaseModel):
 class StartTurnRequest(BaseModel):
     prompt: str
     input_summary: str | None = None
+    provider: str | None = None
     model: str | None = None
     mode: str | None = None
     allow_shell: bool | None = None

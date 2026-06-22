@@ -366,7 +366,7 @@ async def _collect_turn_events(
 async def _run_task_engine_turn(
     task: ExecutionTask, cancel: asyncio.Event
 ) -> "TaskExecutionResult":
-    from deepseek_tui.client.deepseek import DeepSeekClient
+    from deepseek_tui.client.factory import build_llm_client
     from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import FeatureConfig, HooksConfig
     from deepseek_tui.engine.orchestrator import Engine
@@ -384,7 +384,7 @@ async def _run_task_engine_turn(
     )
     cfg.hooks = HooksConfig(enabled=False, hooks=[])
     handle = EngineHandle()
-    client = DeepSeekClient.from_config(cfg)
+    client = build_llm_client(cfg)
     workspace = Path(task.workspace).resolve()  # noqa: ASYNC240
 
     shared_mcp = getattr(task.task_manager, "_shared_mcp_manager", None)

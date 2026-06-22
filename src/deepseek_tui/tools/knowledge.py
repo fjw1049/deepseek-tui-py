@@ -215,7 +215,7 @@ class ReviewTool(ToolSpec):
         if focus:
             user_prompt += f"\n\nFocus especially on: {focus}"
 
-        from deepseek_tui.client.deepseek import DeepSeekClient
+        from deepseek_tui.client.factory import build_llm_client
         from deepseek_tui.config.loader import ConfigLoader
         from deepseek_tui.config.models import Config
         from deepseek_tui.protocol.messages import Message
@@ -226,7 +226,7 @@ class ReviewTool(ToolSpec):
                 config = ConfigLoader().load()
             except Exception:
                 config = Config()
-        client = DeepSeekClient.from_config(config)
+        client = build_llm_client(config)
 
         from deepseek_tui.protocol.messages import MessageRequest
 

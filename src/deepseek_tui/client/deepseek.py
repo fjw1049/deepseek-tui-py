@@ -80,17 +80,25 @@ class DeepSeekClient(LLMClient):
         base_url: str = "https://api.deepseek.com",
         timeout_seconds: float = 90.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        thinking_supported: bool = False,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.transport = transport
+        self.thinking_supported = thinking_supported
+        self.extra_headers = dict(extra_headers or {})
         self._http_client: httpx.AsyncClient | None = None
 
     @classmethod
     def from_config(cls, config: object) -> DeepSeekClient:
-        """Build a client from a Config instance (or use env fallback)."""
+        """Build a client from a Config instance (or use env fallback).
+
+        Prefer ``build_llm_client()`` from ``client.factory`` for new code;
+        this class method is kept for backwards compatibility.
+        """
         import os
 
         from deepseek_tui.state.secrets import SecretsManager
@@ -101,10 +109,13 @@ class DeepSeekClient(LLMClient):
             api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         pc = config.effective_provider_config()  # type: ignore[union-attr]
         base_url = pc.base_url or "https://api.deepseek.com"
+        # Infer thinking_supported from base_url for legacy callers.
+        thinking = "deepseek" in base_url.lower()
         return cls(
             api_key=api_key,
             base_url=base_url,
             timeout_seconds=float(pc.timeout),
+            thinking_supported=thinking,
         )
 
     def _get_http_client(self) -> httpx.AsyncClient:
@@ -144,6 +155,7 @@ class DeepSeekClient(LLMClient):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            **self.extra_headers,
         }
         payload = self._build_payload(request)
         client = self._get_http_client()
@@ -175,13 +187,15 @@ class DeepSeekClient(LLMClient):
         )
 
     def _chat_completions_url(self) -> str:
-        """Build the chat-completions URL without doubling ``/v1``.
+        """Build the chat-completions URL without doubling the version prefix.
 
-        Several PROVIDER_DEFAULTS base URLs (openai/openrouter/nvidia/
-        novita/fireworks/sglang) already end in ``/v1``; appending
-        ``/v1/chat/completions`` blindly yields a 404.
+        Several PROVIDER_DEFAULTS base URLs already end in a version path
+        (``/v1``, ``/v3``, etc.); appending ``/v1/chat/completions``
+        blindly yields a 404.  Detect any ``/vN`` suffix and append only
+        ``/chat/completions`` when present.
         """
-        if self.base_url.endswith("/v1"):
+        import re
+        if re.search(r"/v\d+$", self.base_url):
             return f"{self.base_url}/chat/completions"
         return f"{self.base_url}/v1/chat/completions"
 
@@ -313,13 +327,14 @@ class DeepSeekClient(LLMClient):
             payload["top_p"] = request.top_p
         # ``reasoning_effort`` / ``thinking`` are DeepSeek-specific fields;
         # standard OpenAI-compatible endpoints reject unknown keys with 400.
-        # Gate on the official DeepSeek endpoint only — the registry's
-        # ``thinking_supported`` flag is model-derived, so it would still
-        # send these fields to third-party hosts serving DeepSeek models.
+        # Gate on the ``thinking_supported`` capability flag set at
+        # construction time by the client factory. This correctly handles
+        # DeepSeek models served via third-party hosts (e.g. OpenRouter)
+        # where base_url no longer contains "deepseek".
         if (
             request.reasoning_effort is not None
             and request.reasoning_effort != "off"
-            and "deepseek" in self.base_url.lower()
+            and self.thinking_supported
         ):
             payload["reasoning_effort"] = request.reasoning_effort
             payload["thinking"] = {"type": "enabled"}
@@ -337,10 +352,14 @@ class OpenAICompatClient(DeepSeekClient):
         base_url: str,
         timeout_seconds: float = 90.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        thinking_supported: bool = False,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             api_key=api_key,
             base_url=base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            thinking_supported=thinking_supported,
+            extra_headers=extra_headers,
         )

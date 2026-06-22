@@ -138,7 +138,7 @@ def _run_one_shot(config: Config, prompt: str) -> None:
 
 async def _run_one_shot_async(config: Config, prompt: str) -> None:
     """Async implementation of one-shot mode."""
-    from deepseek_tui.client.deepseek import DeepSeekClient
+    from deepseek_tui.client.factory import build_llm_client
     from deepseek_tui.engine.orchestrator import Engine
     from deepseek_tui.engine.events import (
         ErrorEvent,
@@ -148,21 +148,12 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
         TurnCompleteEvent,
     )
     from deepseek_tui.engine.handle import EngineHandle
-    from deepseek_tui.state.secrets import SecretsManager
 
-    # 密钥管理器：统一按 keyring→env→config.toml→None 优先级解析 API key（懒加载后端）
-    mgr = SecretsManager()
-    api_key = mgr.resolve_api_key(config)
-    if not api_key:
+    client = build_llm_client(config)
+    if not client.api_key:
         typer.echo("No API key configured. Run `deepseek-tui login` first.", err=True)
         raise typer.Exit(1)
 
-    pc = config.effective_provider_config()
-    client = DeepSeekClient(
-        api_key=api_key,
-        base_url=pc.base_url or "https://api.deepseek.com",
-        timeout_seconds=float(pc.timeout),
-    )
     # 引擎↔调用方的双向管道：op 队列收输入、event 队列吐输出
     handle = EngineHandle()
     # 优先用显式指定的 model，否则退回默认文本模型
