@@ -29,6 +29,7 @@ import {
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
+import { decodeModelRef } from '@shared/model-ref'
 import type {
   AppRoute,
   ChatState,
@@ -1179,7 +1180,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const settings = await window.dsGui.getSettings()
         const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
-        const needsInitialSetup = !settings.deepseek.apiKey.trim()
+        const needsInitialSetup = !settings.deepseek.apiKey.trim() &&
+          !settings.customEndpoints.some(
+            (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
+          )
         applyTheme(settings.theme)
         applyUiFontScale(settings.uiFontScale)
         await get().applyI18nFromSettings(settings.locale)
@@ -1740,6 +1744,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       shouldAutoTitleThread(activeThread)
     const threadSnap = get().threads.find((thread) => thread.id === activeThreadId)
     const composerModel = queued?.model ?? get().composerModel.trim()
+    const selectedModel = decodeModelRef(composerModel)
     const userModelChip =
       queued?.modelLabel ?? optimisticUserModelLabel(composerModel, threadSnap?.model)
     const previousBlocks = get().blocks
@@ -1803,7 +1808,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ? await p.createThread({
                 workspace: workspaceRoot,
                 title: generatedTitle,
-                mode: mode ?? 'agent'
+                mode: mode ?? 'agent',
+                provider: selectedModel.providerId,
+                model: selectedModel.modelId
               })
             : null
         const threadId = reusableThreadId ?? createdThread?.id ?? null
@@ -1871,7 +1878,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const { turnId, userMessageItemId } = await p.sendUserMessage(activeThreadId, trimmedText, {
         mode,
         uiSubmitAtMs: now,
-        ...(composerModel ? { model: composerModel } : {})
+        ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
+        ...(selectedModel.modelId ? { model: selectedModel.modelId } : {})
       })
       set({ activeThreadWarmup: { threadId: activeThreadId, status: 'ready' } })
       // Mirror the composer model selection against the runtime's stable

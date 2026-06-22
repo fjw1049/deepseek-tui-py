@@ -14,6 +14,7 @@ import {
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { formatComposerModelLabel } from '../../lib/composer-model-label'
 
 import type { ChatBlock, NormalizedThread } from '../../agent/types'
 import type { ComposerActionCommandId } from '../../lib/composer-slash-commands'
@@ -142,7 +143,7 @@ function ModelPanel({
             item === model ? 'bg-accent/10 text-ds-ink' : 'text-ds-muted hover:bg-ds-hover'
           }`}
         >
-          <span>{item}</span>
+          <span>{formatComposerModelLabel(item)}</span>
           {item === model ? <Check className="h-4 w-4 text-accent" /> : null}
         </button>
       ))}

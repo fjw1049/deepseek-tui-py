@@ -864,12 +864,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     workspace?: string
     title?: string
     mode?: string
+    provider?: string
+    model?: string
   }): Promise<NormalizedThread> {
     const settings = await window.dsGui.getSettings()
     const flags = runtimeExecutionFlags(settings)
     const body = JSON.stringify({
       workspace: input.workspace,
       mode: input.mode ?? 'agent',
+      provider: input.provider,
+      model: input.model,
       ...flags
     })
     const r = await window.dsGui.runtimeRequest('/v1/threads', 'POST', body)
@@ -1029,7 +1033,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
   async sendUserMessage(
     threadId: string,
     text: string,
-    options?: { mode?: string; model?: string; uiSubmitAtMs?: number }
+    options?: { mode?: string; provider?: string; model?: string; uiSubmitAtMs?: number }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }> {
     const settings = await window.dsGui.getSettings()
     const flags = runtimeExecutionFlags(settings)
@@ -1039,6 +1043,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       JSON.stringify({
         prompt: text,
         mode: options?.mode,
+        provider: options?.provider,
         model: options?.model,
         ui_submit_at_ms: options?.uiSubmitAtMs,
         ...flags

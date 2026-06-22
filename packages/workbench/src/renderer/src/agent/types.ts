@@ -266,7 +266,7 @@ export interface AgentProvider {
   isThreadTurnActive?(threadId: string): Promise<boolean>
   warmThread?(threadId: string): Promise<void>
   listThreads(): Promise<NormalizedThread[]>
-  createThread(input: { workspace?: string; title?: string; mode?: string }): Promise<NormalizedThread>
+  createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string }): Promise<NormalizedThread>
   getThreadDetail(threadId: string): Promise<{
     blocks: ChatBlock[]
     latestSeq: number
@@ -277,7 +277,7 @@ export interface AgentProvider {
   sendUserMessage(
     threadId: string,
     text: string,
-    options?: { mode?: string; model?: string; uiSubmitAtMs?: number }
+    options?: { mode?: string; provider?: string; model?: string; uiSubmitAtMs?: number }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }>
   steerUserMessage?(threadId: string, turnId: string, text: string): Promise<void>
   interruptTurn(threadId: string, turnId: string): Promise<void>

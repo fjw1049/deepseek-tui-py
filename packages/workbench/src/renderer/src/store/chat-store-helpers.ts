@@ -4,6 +4,7 @@ import {
   DEFAULT_COMPOSER_MODEL_IDS
 } from '@shared/default-composer-models'
 import type { ChatState } from './chat-store-types'
+import { decodeModelRef } from '@shared/model-ref'
 
 const COMPOSER_MODEL_STORAGE_KEY = 'deepseekgui.composerModel'
 const TURN_MODEL_STORAGE_KEY = 'deepseekgui.turnModelLabel'
@@ -46,7 +47,10 @@ export function optimisticUserModelLabel(
   threadModel: string | undefined
 ): string | undefined {
   const composer = composerModel.trim()
-  if (composer) return composer.toLowerCase() === 'auto' ? 'auto' : composer
+  if (composer) {
+    const model = decodeModelRef(composer).modelId
+    return model.toLowerCase() === 'auto' ? 'auto' : model
+  }
   const model = threadModel?.trim()
   return model || undefined
 }

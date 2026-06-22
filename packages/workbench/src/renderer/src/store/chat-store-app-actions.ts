@@ -1,5 +1,6 @@
 import type i18next from 'i18next'
 import type { AppSettingsV1 } from '@shared/app-settings'
+import { encodeModelRef } from '@shared/model-ref'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
@@ -56,11 +57,27 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     },
 
     loadComposerModels: async () => {
-      if (getComposerModelLoadPromise()) return getComposerModelLoadPromise()!
+      const existing = getComposerModelLoadPromise()
+      if (existing) {
+        await existing.catch(() => {})
+      }
       if (typeof window.dsGui === 'undefined') return
       const task = (async () => {
         const res = await window.dsGui.fetchUpstreamModels()
-        const pick = mergeComposerPickList(res.ok, res.ok ? res.modelIds : [])
+        const upstreamIds = res.ok ? [...res.modelIds] : []
+        // Inject custom endpoint models so they appear in the composer picker
+        try {
+          const settings = await window.dsGui.getSettings()
+          for (const ep of settings.customEndpoints ?? []) {
+            if (!ep.enabled) continue
+            for (const model of ep.models) {
+              if (!model.enabled) continue
+              const ref = encodeModelRef(ep.id, model.id)
+              if (model.id && !upstreamIds.includes(ref)) upstreamIds.push(ref)
+            }
+          }
+        } catch { /* custom models are a bonus, not critical */ }
+        const pick = mergeComposerPickList(res.ok || upstreamIds.length > 0, upstreamIds)
         const allowed = new Set(pick)
         set((state) => {
           let model = state.composerModel
