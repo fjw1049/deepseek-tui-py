@@ -7,7 +7,6 @@ Stage 6.5: Slash command activation — SlashMenu in compose tree,
 
 from __future__ import annotations
 
-
 import asyncio
 import logging
 import os
@@ -20,12 +19,11 @@ from textual.widgets import Header
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.config.models import Config
-from deepseek_tui.engine.handle import EngineHandle, SendMessageOp
 from deepseek_tui.engine.events import (
+    AgentRoundCompleteEvent,
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ErrorEvent,
-    WorkflowProgressEvent,
     SandboxDeniedEvent,
     SessionActivityEvent,
     StatusEvent,
@@ -38,23 +36,22 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
+    WorkflowProgressEvent,
 )
+from deepseek_tui.engine.handle import EngineHandle, SendMessageOp
+from deepseek_tui.presentation.reducer import TurnPresentationReducer
+from deepseek_tui.presentation.semantics import resolve_narration_locale
 from deepseek_tui.tools.subagent import MailboxMessageKind
-from deepseek_tui.tui.plan import BacktrackState, EscEffect
 from deepseek_tui.tui.commands import dispatch
-from deepseek_tui.tui.input import CommandPalette
-from deepseek_tui.tui.input import Composer, ComposerHint, PASTE_ENTER_SUPPRESS_WINDOW_SECS
-from deepseek_tui.tui.dialogs import FileMention
-from deepseek_tui.tui.dialogs import HelpPanel
-from deepseek_tui.tui.sidebar import (
-    InfoSidebar,
-    InfoSidebarData,
-    filter_sidebar_agents,
-    filter_sidebar_tasks,
-    filter_sidebar_todos,
-    plan_snapshot_from_metadata,
-    reset_turn_sidebar_sources,
+from deepseek_tui.tui.dialogs import FileMention, HelpPanel, UserInputDialog
+from deepseek_tui.tui.input import (
+    PASTE_ENTER_SUPPRESS_WINDOW_SECS,
+    CommandPalette,
+    Composer,
+    ComposerHint,
+    SlashMenu,
 )
+from deepseek_tui.tui.plan import BacktrackState, EscEffect
 from deepseek_tui.tui.session_restore import (
     apply_messages_to_engine,
     parse_session_messages,
@@ -62,8 +59,17 @@ from deepseek_tui.tui.session_restore import (
     session_started_at_iso,
     try_restore_crash_checkpoint,
 )
-from deepseek_tui.tui.sidebar import Sidebar, SidebarEntry
-from deepseek_tui.tui.input import SlashMenu
+from deepseek_tui.tui.sidebar import (
+    InfoSidebar,
+    InfoSidebarData,
+    Sidebar,
+    SidebarEntry,
+    filter_sidebar_agents,
+    filter_sidebar_tasks,
+    filter_sidebar_todos,
+    plan_snapshot_from_metadata,
+    reset_turn_sidebar_sources,
+)
 from deepseek_tui.tui.status import StatusBar
 from deepseek_tui.tui.transcript import Transcript
 
@@ -162,6 +168,7 @@ class DeepSeekTUI(App[None]):
         # shows running agents plus this set so completed agents from
         # earlier questions do not linger.
         self._turn_agent_ids: set[str] = set()
+        self._presentation = TurnPresentationReducer(locale="zh")
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -225,7 +232,7 @@ class DeepSeekTUI(App[None]):
         from datetime import datetime, timezone
 
         from deepseek_tui.engine.orchestrator import Engine
-        from deepseek_tui.tui.approval_handler import TUIApprovalHandler
+        from deepseek_tui.tui.session_restore import TUIApprovalHandler
         from deepseek_tui.tui.onboarding import (
             OnboardingScreen,
             is_onboarded,
@@ -448,21 +455,12 @@ class DeepSeekTUI(App[None]):
 
     def _build_client(self) -> LLMClient | None:
         """Construct an LLM client from config + secrets."""
-        from deepseek_tui.client.deepseek import DeepSeekClient
-        from deepseek_tui.state.secrets import SecretsManager
+        from deepseek_tui.client.factory import build_llm_client
 
-        mgr = SecretsManager()
-        api_key = mgr.resolve_api_key(self.config)
-        if not api_key:
+        client = build_llm_client(self.config)
+        if not client.api_key:
             return None
-
-        pc = self.config.effective_provider_config()
-        base_url = pc.base_url or "https://api.deepseek.com"
-        return DeepSeekClient(
-            api_key=api_key,
-            base_url=base_url,
-            timeout_seconds=float(pc.timeout),
-        )
+        return client
 
     # ── message submission ────────────────────────────────────────────
 
@@ -640,6 +638,12 @@ class DeepSeekTUI(App[None]):
                 # Ctrl+T toggle takes effect at the next finalize.
                 transcript.show_thinking = bool(self.config.ui.show_thinking)
                 transcript.start_assistant_message()
+                self._presentation.reset()
+                self._presentation.locale = resolve_narration_locale(
+                    event.user_text,
+                    config_locale=self.config.ui.locale,
+                )
+                self._refresh_plan_progress_hint(status)
                 self._schedule_info_sidebar_refresh()
             elif isinstance(event, TextDeltaEvent):
                 transcript.append_delta(event.text)
@@ -649,13 +653,20 @@ class DeepSeekTUI(App[None]):
                 tc = event.tool_call
                 transcript.add_tool_call(tc.id, tc.name, tc.arguments)
                 if tc.name in ("agent_spawn", "delegate_to_agent", "spawn_agent"):
-                    status.set_phase(f"spawning sub-agent...")
+                    status.set_phase("spawning sub-agent...")
                 else:
                     status.set_phase(f"running {tc.name}")
             elif isinstance(event, ToolResultEvent):
                 transcript.update_tool_result(
                     event.tool_call_id, event.content, event.success
                 )
+                completed_batch = self._presentation.on_tool_result(
+                    event.tool_call_id, success=event.success
+                )
+                if completed_batch is not None:
+                    transcript.try_collapse_batch(completed_batch)
+                self._refresh_plan_progress_hint(status)
+                self._schedule_info_sidebar_refresh()
                 if event.success and event.tool_name in (
                     "agent_spawn",
                     "delegate_to_agent",
@@ -665,6 +676,10 @@ class DeepSeekTUI(App[None]):
                     if agent_id:
                         self._turn_agent_ids.add(agent_id)
                         self._schedule_info_sidebar_refresh()
+            elif isinstance(event, AgentRoundCompleteEvent):
+                batch = self._presentation.on_round_complete(event)
+                if batch is not None:
+                    status.set_phase(batch.batch_summary)
             elif isinstance(event, ApprovalRequiredEvent):
                 # The modal dialog IS the notification — surfacing an
                 # extra "Approval required for X" notice on top of every
@@ -674,6 +689,7 @@ class DeepSeekTUI(App[None]):
                     f"awaiting approval: {event.request.tool_name}"
                 )
                 transcript.mark_tool_awaiting_approval(event.tool_call_id)
+                self._presentation.on_tool_approval_required(event.tool_call_id)
             elif isinstance(event, ApprovalResolvedEvent):
                 label = "approved" if event.approved else "denied"
                 status.set_status(f"tool {label}")
@@ -683,16 +699,27 @@ class DeepSeekTUI(App[None]):
                     transcript.mark_tool_denied(
                         event.tool_call_id, event.reason
                     )
+                    completed_batch = self._presentation.on_tool_denied(
+                        event.tool_call_id
+                    )
+                    if completed_batch is not None:
+                        transcript.try_collapse_batch(completed_batch)
             elif isinstance(event, SandboxDeniedEvent):
                 # Sandbox denial happens INSTEAD of tool execution — no
                 # ToolResultEvent ever fires for this call. Mark the
                 # cell denied so it doesn't stay stuck at "running".
                 transcript.mark_tool_denied(event.tool_call_id, event.reason)
+                completed_batch = self._presentation.on_tool_denied(
+                    event.tool_call_id
+                )
+                if completed_batch is not None:
+                    transcript.try_collapse_batch(completed_batch)
                 status.set_status(
                     f"sandbox denied: {event.tool_name}"
                 )
             elif isinstance(event, UserInputRequiredEvent):
                 status.set_status("awaiting user input...")
+                self._presentation.mark_non_collapsible(event.tool_call_id)
                 self._handle_user_input_event(event, transcript)
             elif isinstance(event, ErrorEvent):
                 if self._engine is not None:
@@ -702,6 +729,7 @@ class DeepSeekTUI(App[None]):
                 transcript.add_notice(event.message, severity="error")
                 status.set_status("error")
             elif isinstance(event, TurnCancelledEvent):
+                self._presentation.on_turn_cancelled()
                 status.set_status("cancelled")
                 status.set_finished()
                 transcript.finalize_message()
@@ -792,39 +820,65 @@ class DeepSeekTUI(App[None]):
                     if self._turn_started_at is not None:
                         status.set_started(self._turn_started_at)
                     status.set_phase("synthesizing")
+
+    def _refresh_plan_progress_hint(self, status: StatusBar | None = None) -> None:
+        """Project the active plan step and its successor into the composer."""
+        if self._engine is None:
+            return
+        _, steps = plan_snapshot_from_metadata(self._engine.tool_context.metadata)
+        current_index = next(
+            (
+                index
+                for index, step in enumerate(steps)
+                if step.get("status") == "in_progress"
+            ),
+            None,
+        )
+        current = (
+            str(steps[current_index].get("title", ""))
+            if current_index is not None
+            else ""
+        )
+        pending = [
+            str(step.get("title", ""))
+            for index, step in enumerate(steps)
+            if step.get("status") == "pending"
+            and (current_index is None or index > current_index)
+        ]
+        next_step = pending[0] if pending else ""
+        try:
+            self.query_one(ComposerHint).set_progress(current, next_step)
+        except Exception:
+            return
+        if current and status is not None:
+            status.set_phase(current[:120])
+
     # ── user input handling ─────────────────────────────────────────
 
     def _handle_user_input_event(
         self, event: UserInputRequiredEvent, transcript: Transcript
     ) -> None:
-        """Display questions and resolve with first option (auto-select).
+        """Show an interactive dialog and resolve the engine wait on dismissal."""
 
-        A full interactive picker can be added later; for now this
-        unblocks the Engine so it never deadlocks.
-        """
-        response: dict[str, object] = {"answers": []}
-        answers: list[dict[str, str]] = []
-        for q in event.questions:
-            qid = str(q.get("id", ""))
-            question = q.get("question", "")
-            options = q.get("options", [])
-            option_labels = [
-                o.get("label", "?") if isinstance(o, dict) else str(o)
-                for o in (options if isinstance(options, list) else [])
+        def _on_result(result: dict[str, object] | None) -> None:
+            response = result or {"answers": []}
+            raw_answers = response.get("answers")
+            answers = raw_answers if isinstance(raw_answers, list) else []
+            valid_answers = [
+                answer
+                for answer in answers
+                if isinstance(answer, dict) and "question_id" in answer
             ]
-            display = f"Question: {question}\nOptions: {', '.join(option_labels)}"
-            transcript.add_notice(display, severity="info")
-            if option_labels and qid:
-                selected = option_labels[0]
-                answers.append({"question_id": qid, "value": selected})
+            response = {"answers": valid_answers}
+            if valid_answers:
                 transcript.add_notice(
-                    f"Auto-selected: {selected}",
-                    severity="info",
+                    f"Answered {len(valid_answers)} question(s)", severity="info"
                 )
-        if answers:
-            response = {"answers": answers}
+            else:
+                transcript.add_notice("Input request dismissed", severity="warning")
+            self.handle.resolve_user_input(event.tool_call_id, response)
 
-        self.handle.resolve_user_input(event.tool_call_id, response)
+        self.push_screen(UserInputDialog(event.questions), _on_result)
 
     # ── actions ───────────────────────────────────────────────────────
 
@@ -925,7 +979,7 @@ class DeepSeekTUI(App[None]):
 
     def action_open_model_picker(self) -> None:
         """Open the model picker (Ctrl+M, Rust ``Ctrl+M``)."""
-        from deepseek_tui.tui.dialogs import ModelPicker
+        from deepseek_tui.tui.dialogs import ModelPicker, _build_model_list_from_config
 
         def _on_pick(picked: str | None) -> None:
             if not picked or self._engine is None:
@@ -935,7 +989,8 @@ class DeepSeekTUI(App[None]):
             self.query_one(StatusBar).set_model(picked)
             self.query_one(ComposerHint).set_model(picked)
 
-        self.push_screen(ModelPicker(), _on_pick)
+        models = _build_model_list_from_config(self.config)
+        self.push_screen(ModelPicker(models=models), _on_pick)
 
     def action_open_file_picker(self) -> None:
         """Open the workspace file picker (Ctrl+P, Rust ``Ctrl+P``).

@@ -17,6 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from rich.markup import escape
 from textual import events
 from textual.message import Message
 from textual.widgets import Static, TextArea
@@ -46,6 +47,8 @@ class ComposerHint(Static):
         super().__init__("")
         self._mode: str = "agent"
         self._model: str = ""
+        self._current_step: str = ""
+        self._next_step: str = ""
         self._refresh()
 
     def set_mode(self, mode: str) -> None:
@@ -56,9 +59,19 @@ class ComposerHint(Static):
         self._model = model
         self._refresh()
 
+    def set_progress(self, current_step: str = "", next_step: str = "") -> None:
+        self._current_step = current_step.strip()
+        self._next_step = next_step.strip()
+        self._refresh()
+
     def _refresh(self) -> None:
         chords = "[dim]↵ send · ⌃J newline · ⇧⇥ mode[/]"
-        self.update(chords)
+        progress: list[str] = []
+        if self._current_step:
+            progress.append(f"[bright_cyan]→ {escape(self._current_step[:48])}[/]")
+        if self._next_step:
+            progress.append(f"[dim]next: {escape(self._next_step[:42])}[/]")
+        self.update("  [dim]·[/]  ".join([*progress, chords]))
 
 
 class Composer(TextArea):

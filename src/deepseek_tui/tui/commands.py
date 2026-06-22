@@ -126,6 +126,7 @@ REGISTRY: list[CommandEntry] = [
         _D,
     ),
     CommandEntry("/undo", "Undo last file-modifying tool", _E),
+    CommandEntry("/endpoint", "Manage OpenAI/Anthropic-compatible endpoints", _C),
 ]
 
 # Build lookup dicts for fast dispatch.
@@ -355,29 +356,40 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"Current provider: {current}")
 
     requested = args.strip().lower()
-    if requested not in PROVIDER_DEFAULTS:
-        available = ", ".join(PROVIDER_DEFAULTS.keys())
-        return CommandResult(error=f"Unknown provider: {requested}. Available: {available}")
-
     cfg = getattr(app, "config", None)
     if cfg is None:
         return CommandResult(error="config not attached — cannot switch provider")
 
+    # Accept any provider: either in PROVIDER_DEFAULTS or user-configured
+    # in [providers.X] section. Only reject if completely unknown.
+    is_known = requested in PROVIDER_DEFAULTS
+    is_user_configured = requested in cfg.providers
+    if not is_known and not is_user_configured:
+        available = sorted(set(list(PROVIDER_DEFAULTS.keys()) + list(cfg.providers.keys())))
+        return CommandResult(
+            error=(
+                f"Unknown provider: {requested}. "
+                f"Available: {', '.join(available)}. "
+                f"Add [providers.{requested}] to config.toml or use /endpoint to add one."
+            )
+        )
+
     previous_provider = cfg.provider
     previous_model = cfg.model
     cfg.provider = requested
-    # Pick the provider-appropriate model: explicit [providers.X] model
-    # first, then the registry default — keeping the old provider's model
-    # would send e.g. ``deepseek-v4-pro`` to OpenAI.
+
+    # Resolve model: user-configured > PROVIDER_DEFAULTS > keep current
     provider_cfg = cfg.providers.get(requested)
-    new_model = (
-        provider_cfg.model
-        if provider_cfg is not None and provider_cfg.model
-        else PROVIDER_DEFAULTS[requested].model
-    )
+    if provider_cfg is not None and provider_cfg.model:
+        new_model = provider_cfg.model
+    elif is_known:
+        new_model = PROVIDER_DEFAULTS[requested].model
+    else:
+        new_model = cfg.model or cfg.default_text_model
+
+    cfg.model = new_model
 
     if app._engine is None:
-        cfg.model = new_model
         return CommandResult(
             output=(
                 f"Provider set to: {requested} (model: {new_model}). "
@@ -387,8 +399,6 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
 
     new_client = app._build_client()
     if new_client is None:
-        # No API key resolvable for the new provider — roll back so the
-        # session keeps a working client.
         cfg.provider = previous_provider
         cfg.model = previous_model
         return CommandResult(
@@ -416,6 +426,228 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
         output=(
             f"Provider switched to: {requested} (model: {new_model}). "
             "Note: running subagents keep the previous client until restart."
+        )
+    )
+
+
+# ── /endpoint ──────────────────────────────────────────────────────────
+
+def _run_endpoint_test_async(
+    app: DeepSeekTUI,
+    base_url: str,
+    api_key: str,
+    model: str,
+    label: str,
+    *,
+    protocol: str = "openai",
+) -> None:
+    """Fire-and-forget async endpoint test, writes result to transcript."""
+    import asyncio
+
+    async def _test() -> None:
+        from deepseek_tui.client.factory import test_endpoint
+        from deepseek_tui.tui.transcript import Transcript
+
+        result = await test_endpoint(
+            base_url, api_key, model, protocol=protocol
+        )
+        transcript = app.query_one(Transcript)
+        if result.success:
+            transcript.add_notice(
+                f"[{label}] ✓ {result.message}", severity="info"
+            )
+        else:
+            transcript.add_notice(
+                f"[{label}] ✗ {result.message}", severity="error"
+            )
+
+    try:
+        asyncio.ensure_future(_test())
+    except RuntimeError:
+        pass
+
+
+@_register("/endpoint")
+def cmd_endpoint(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Add, list, test, or remove custom endpoints at runtime.
+
+    Usage:
+      /endpoint                           — list configured endpoints
+      /endpoint add <name> <protocol> <url> <model>  — add, test, and switch
+      /endpoint test [name]               — test connectivity
+      /endpoint remove <name>             — remove a custom endpoint
+    """
+    from deepseek_tui.config.models import ProviderConfig
+
+    cfg = getattr(app, "config", None)
+    if cfg is None:
+        return CommandResult(error="config not attached")
+
+    parts = args.strip().split()
+
+    # /endpoint (no args) — list
+    if not parts:
+        lines = [f"Current provider: {cfg.provider}\n", "Configured endpoints:"]
+        for name, pc in cfg.providers.items():
+            url = pc.base_url or "(default)"
+            model = pc.model or "(default)"
+            has_key = "✓" if pc.api_key else "✗"
+            active = " ←" if name == cfg.provider else ""
+            lines.append(f"  {name:<20} url={url}  model={model}  key={has_key}{active}")
+        if not cfg.providers:
+            lines.append(
+                "  (none — add with /endpoint add <name> "
+                "<openai|anthropic> <url> <model>)"
+            )
+        lines.append("")
+        lines.append("Commands: /endpoint add|test|remove")
+        return CommandResult(output="\n".join(lines))
+
+    action = parts[0].lower()
+
+    # API keys deliberately do not travel through slash-command text because
+    # commands can be retained in transcripts/session history.
+    if action == "add":
+        if len(parts) < 5:
+            return CommandResult(
+                error=(
+                    "Usage: /endpoint add <name> <openai|anthropic> "
+                    "<base_url> <model>"
+                )
+            )
+        name = parts[1].lower()
+        protocol = parts[2].lower()
+        if protocol not in {"openai", "anthropic"}:
+            return CommandResult(error="protocol must be openai or anthropic")
+        base_url = parts[3]
+        model = " ".join(parts[4:])
+
+        from deepseek_tui.state.secrets import SecretsManager
+
+        api_key = SecretsManager().resolve_api_key(
+            cfg, provider_name=name
+        )
+        if not api_key:
+            return CommandResult(
+                error=(
+                    f"No API key stored for '{name}'. Configure its provider "
+                    "key via keyring/config/environment before adding the endpoint."
+                )
+            )
+
+        # Register in config
+        cfg.providers[name] = ProviderConfig(
+            base_url=base_url,
+            model=model,
+            protocol=protocol,
+        )
+
+        # Auto-switch to the new endpoint
+        cfg.provider = name
+        cfg.model = model
+
+        if app._engine is not None:
+            new_client = app._build_client()
+            if new_client is not None:
+                old_client = app._engine.client
+                app._engine.client = new_client
+                app._engine.turn_loop.client = new_client
+                _apply_model_to_app(app, model)
+                close = getattr(old_client, "close", None)
+                if close is not None:
+                    import asyncio
+                    try:
+                        asyncio.get_running_loop()
+                        asyncio.ensure_future(close())
+                    except RuntimeError:
+                        pass
+            else:
+                return CommandResult(
+                    error=f"Endpoint registered but failed to build client for {name}"
+                )
+        else:
+            _apply_model_to_app(app, model)
+
+        # Auto-test connectivity
+        _run_endpoint_test_async(
+            app,
+            base_url,
+            api_key,
+            model,
+            f"测试 {name}",
+            protocol=protocol,
+        )
+
+        return CommandResult(
+            output=(
+                f"Endpoint '{name}' added and activated.\n"
+                f"  url:   {base_url}\n"
+                f"  model: {model}\n"
+                "正在测试连接..."
+            )
+        )
+
+    # /endpoint test [name]
+    if action == "test":
+        name = parts[1].lower() if len(parts) > 1 else cfg.provider
+        pc = cfg.providers.get(name)
+        if pc is None:
+            from deepseek_tui.config.providers import PROVIDER_DEFAULTS
+            defaults = PROVIDER_DEFAULTS.get(name)
+            if defaults is None:
+                return CommandResult(error=f"Provider '{name}' 未配置")
+            base_url = defaults.base_url
+            model = defaults.model
+            protocol = defaults.protocol
+            # Try to resolve key
+            from deepseek_tui.state.secrets import SecretsManager
+            mgr = SecretsManager()
+            api_key = mgr.resolve_api_key(cfg, provider_name=name) or ""
+        else:
+            from deepseek_tui.config.providers import PROVIDER_DEFAULTS
+            defaults = PROVIDER_DEFAULTS.get(name)
+            base_url = pc.base_url or (defaults.base_url if defaults else "")
+            api_key = pc.api_key or ""
+            model = pc.model or (defaults.model if defaults else "")
+            protocol = pc.protocol or (defaults.protocol if defaults else "openai")
+            if not api_key:
+                from deepseek_tui.state.secrets import SecretsManager
+                mgr = SecretsManager()
+                api_key = mgr.resolve_api_key(cfg, provider_name=name) or ""
+
+        if not base_url:
+            return CommandResult(error=f"Provider '{name}' 未配置 base_url")
+        if not api_key:
+            return CommandResult(error=f"Provider '{name}' 未找到 API Key")
+
+        _run_endpoint_test_async(
+            app,
+            base_url,
+            api_key,
+            model,
+            f"测试 {name}",
+            protocol=protocol,
+        )
+        return CommandResult(output=f"正在测试 '{name}' ({base_url}) ...")
+
+    # /endpoint remove <name>
+    if action in ("remove", "rm", "delete"):
+        if len(parts) < 2:
+            return CommandResult(error="Usage: /endpoint remove <name>")
+        name = parts[1].lower()
+        if name not in cfg.providers:
+            return CommandResult(error=f"Endpoint '{name}' not found")
+        if cfg.provider == name:
+            return CommandResult(
+                error=f"Cannot remove active provider '{name}'. Switch first with /provider."
+            )
+        del cfg.providers[name]
+        return CommandResult(output=f"Endpoint '{name}' removed.")
+
+    return CommandResult(
+        error=(
+            f"Unknown action: {action}. "
+            "Usage: /endpoint [add|test|remove]"
         )
     )
 

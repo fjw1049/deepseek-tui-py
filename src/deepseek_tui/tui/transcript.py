@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Literal
+from typing import Literal, cast
 
 from rich.align import Align
 from rich.console import Group as _Group
@@ -27,11 +27,16 @@ from textual import events
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from deepseek_tui.tui.status import FrameRateLimiter
-from deepseek_tui.tui.tool_cell import BlockToolCell, InlineToolCell, ToolCell
-from deepseek_tui.tui.tool_classify import classify_tool
+from deepseek_tui.presentation.models import (
+    ActionBatchView,
+    ToolActionStatus,
+    ToolActionView,
+)
 from deepseek_tui.tools.subagent import MailboxMessage, MailboxMessageKind
 from deepseek_tui.tui.sanitize import strip_subagent_sentinels
+from deepseek_tui.tui.status import FrameRateLimiter
+from deepseek_tui.tui.tool_cell import BlockToolCell, InlineToolCell
+from deepseek_tui.tui.tool_classify import classify_tool
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +82,32 @@ _MARGIN_RULES: dict[tuple[str, str], int] = {
     ("user", "assistant"): 1,
     ("user", "thinking"): 0,
     ("user", "notice"): 0,
+    ("assistant", "intent"): 0,
+    ("thinking", "intent"): 0,
+    ("notice", "intent"): 0,
+    ("user", "intent"): 0,
+    ("inline", "intent"): 0,
+    ("block", "intent"): 1,
+    ("intent", "inline"): 0,
+    ("intent", "block"): 0,
+    ("intent", "assistant"): 1,
+    ("intent", "thinking"): 0,
+    ("intent", "notice"): 0,
+    ("intent", "intent"): 0,
+    ("batch", "inline"): 0,
+    ("batch", "block"): 1,
+    ("batch", "assistant"): 1,
+    ("batch", "thinking"): 0,
+    ("batch", "notice"): 0,
+    ("batch", "intent"): 0,
+    ("batch", "batch"): 0,
+    ("inline", "batch"): 0,
+    ("block", "batch"): 1,
+    ("assistant", "batch"): 1,
+    ("thinking", "batch"): 0,
+    ("notice", "batch"): 0,
+    ("intent", "batch"): 0,
+    ("user", "batch"): 1,
 }
 
 
@@ -220,6 +251,69 @@ class _ThinkingCell(Static):
             for line in body_lines
         )
         self.update(f"{summary}\n{rail}")
+
+
+class _IntentCell(Static):
+    """Short public narration shown before a batch of tool calls."""
+
+    DEFAULT_CSS = "_IntentCell { margin: 0; padding: 0 0 0 3; }"
+
+    def __init__(self, text: str) -> None:
+        self.text = text.strip()
+        lines = self.text.splitlines()[:2]
+        display = "\n".join(lines)
+        if len(self.text.splitlines()) > 2:
+            display += " …"
+        super().__init__(f"[dim italic bright_cyan]{escape(display)}[/]")
+
+
+class _ActionBatchCell(Static):
+    """Collapsed summary for a completed batch of inline tool calls."""
+
+    DEFAULT_CSS = "_ActionBatchCell { margin: 0; padding: 0 0 0 3; }"
+
+    def __init__(
+        self,
+        summary: str,
+        actions: list[ToolActionView],
+        elapsed: float,
+        *,
+        has_error: bool,
+    ) -> None:
+        super().__init__("")
+        self.summary = summary
+        self.actions = actions
+        self.elapsed = elapsed
+        self.has_error = has_error
+        self._collapsed = not has_error
+        self._refresh()
+
+    def on_click(self, event: events.Click) -> None:  # type: ignore[override]
+        self._collapsed = not self._collapsed
+        self._refresh()
+
+    def _refresh(self) -> None:
+        caret = "▸" if self._collapsed else "▾"
+        icon = "⚠" if self.has_error else "✓"
+        style = "bright_red" if self.has_error else "dim italic"
+        elapsed = f" · {self.elapsed:.1f}s" if self.elapsed >= 0.1 else ""
+        header = (
+            f"[dim]{caret}[/] [{style}]{icon} {escape(self.summary)}"
+            f" · {len(self.actions)} 项{elapsed}[/]"
+        )
+        if self._collapsed:
+            self.update(header)
+            return
+        lines = [header]
+        for action in self.actions:
+            ok = action.status == "done"
+            action_icon = "✓" if ok else "✗"
+            action_style = "dim" if ok else "bright_red"
+            lines.append(
+                f"  [{action_style}]{action_icon} {escape(action.tool_name)} "
+                f"{escape(action.summary)}[/{action_style}]"
+            )
+        self.update("\n".join(lines))
 
 
 class _NoticeCell(Static):
@@ -387,6 +481,7 @@ class Transcript(VerticalScroll):
         self._welcome_cell: _WelcomeCell | None = None
         # Dynamic spacing state
         self._last_mounted_type: str = ""
+        self._recent_intent_fingerprints: list[str] = []
 
     def on_mount(self) -> None:
         self._show_welcome_if_empty()
@@ -479,6 +574,7 @@ class Transcript(VerticalScroll):
         self._current_assistant = None
         self._thinking_cell = None
         self._turn_thinking_cells = []
+        self._recent_intent_fingerprints = []
 
     def _close_open_segments_other_than(self, kind: str) -> None:
         if kind != "thinking" and self._thinking_cell is not None:
@@ -489,21 +585,25 @@ class Transcript(VerticalScroll):
             self._current_assistant = None
 
     def _discard_transitional_assistant(self) -> None:
-        """Remove the in-flight assistant cell when a tool call arrives.
-
-        Mid-round text like "我来读一下文件..." is transitional narration
-        that shouldn't persist in the transcript. Only the final round's
-        text (no tool_calls following) stays visible.
-        """
+        """Downgrade in-flight assistant text to a compact intent hint."""
         if self._current_assistant is not None:
+            text = self._current_assistant.content_text.strip()
             try:
                 self._current_assistant.remove()
             except Exception:
                 pass
             self._current_assistant = None
-            # Reset display buffer so the final round starts fresh
             self._current_buffer = ""
             self._display_buffer = ""
+            if _is_noise_text(text):
+                return
+            display = text if len(text) <= 200 else text[:199].rstrip() + "…"
+            fingerprint = " ".join(display.lower().split())[:80]
+            if fingerprint in self._recent_intent_fingerprints:
+                return
+            self._recent_intent_fingerprints.append(fingerprint)
+            self._recent_intent_fingerprints = self._recent_intent_fingerprints[-5:]
+            self._mount_cell(_IntentCell(display), "intent")
 
     def append_delta(self, content: str) -> None:
         self._hide_welcome()
@@ -628,6 +728,57 @@ class Transcript(VerticalScroll):
             if idx is not None and idx < len(self._messages):
                 self._messages[idx] = f"⊘ {cell.tool_name}\n{reason}"
 
+    def try_collapse_batch(self, batch: ActionBatchView) -> None:
+        """Replace a completed homogeneous inline batch with one summary cell."""
+        if batch.batch_kind == "mutate" or not batch.can_collapse:
+            return
+        cells: list[tuple[str, InlineToolCell]] = []
+        for tool_call_id in batch.expected_tool_ids:
+            cell = self._tool_cells.get(tool_call_id)
+            if not isinstance(cell, InlineToolCell):
+                return
+            if cell._status not in {"done", "failed", "denied"}:
+                return
+            cells.append((tool_call_id, cell))
+        if len(cells) < 3:
+            return
+
+        starts = [cell._started_at for _, cell in cells]
+        finishes = [
+            cell._finished_at
+            for _, cell in cells
+            if cell._finished_at is not None
+        ]
+        elapsed = max(finishes) - min(starts) if starts and finishes else 0.0
+        actions = [
+            ToolActionView(
+                tool_call_id=tool_call_id,
+                tool_name=cell.tool_name,
+                status=cast(ToolActionStatus, cell._status),
+                summary=_summarize_tool_args(cell._arguments),
+                detail=cell._result,
+                started_at=cell._started_at,
+                finished_at=cell._finished_at,
+                success=cell._status == "done",
+            )
+            for tool_call_id, cell in cells
+        ]
+        for tool_call_id, cell in cells:
+            try:
+                cell.remove()
+            except Exception:
+                pass
+            self._tool_cells.pop(tool_call_id, None)
+        self._mount_and_scroll(
+            _ActionBatchCell(
+                batch.batch_summary,
+                actions,
+                elapsed,
+                has_error=batch.has_error,
+            ),
+            "batch",
+        )
+
     def apply_subagent_mailbox(self, message: MailboxMessage) -> None:
         """Mount or update a delegate card for sub-agent progress."""
         from deepseek_tui.tui.cards import (
@@ -745,6 +896,7 @@ class Transcript(VerticalScroll):
         self._subagent_card_state.clear()
         self._welcome_cell = None
         self._last_mounted_type = ""
+        self._recent_intent_fingerprints = []
         try:
             self.remove_children()
         except Exception:
@@ -791,3 +943,21 @@ class Transcript(VerticalScroll):
             if prefix in msg:
                 return i
         return None
+
+
+def _is_noise_text(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 5:
+        return True
+    return not any(character.isalnum() for character in stripped)
+
+
+def _summarize_tool_args(arguments: dict[str, object]) -> str:
+    for key in ("path", "file_path", "pattern", "query", "command", "url"):
+        value = arguments.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip().splitlines()[0][:60]
+    for value in arguments.values():
+        if value is not None and str(value).strip():
+            return str(value).strip().splitlines()[0][:60]
+    return ""

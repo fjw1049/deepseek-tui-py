@@ -7,13 +7,42 @@ import json
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Literal, Sequence
+from typing import TYPE_CHECKING, Literal
 
 from deepseek_tui.config.providers import PROVIDER_DEFAULTS
-from deepseek_tui.engine.orchestrator import _summarize_call_args
+from deepseek_tui.presentation.semantics import (
+    BatchKind,
+    Phase,
+    batch_intent_text,
+    classify_batch,
+    contains_tool_name,
+    infer_next_phase,
+    resolve_narration_locale,
+    template_narration,
+)
+from deepseek_tui.presentation.semantics import (
+    batch_root as _batch_root,
+)
+from deepseek_tui.presentation.semantics import (
+    script_counts as _script_counts,
+)
+from deepseek_tui.presentation.semantics import (
+    truncate_text as _truncate,
+)
 from deepseek_tui.protocol.responses import ToolCall
+
+__all__ = [
+    "BatchKind",
+    "Phase",
+    "batch_intent_text",
+    "classify_batch",
+    "contains_tool_name",
+    "infer_next_phase",
+    "resolve_narration_locale",
+    "template_narration",
+]
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -25,71 +54,7 @@ PHASE_BRIDGE_METADATA_KEY = "phase_bridge"
 PHASE_BRIDGE_AFTER_REASONING_KEY = "after_reasoning_id"
 
 MAX_PUBLISHED_PER_TURN = 12
-_TOOL_NAME_RE = re.compile(
-    r"\b(read_file|list_dir|grep_files?|search_files?|write_file|apply_patch|"
-    r"exec_shell|run_terminal|glob_file_search|codebase_search)\b",
-    re.I,
-)
-_MUTATE_TOOLS = frozenset(
-    {
-        "write_file",
-        "apply_patch",
-        "edit_file",
-        "search_replace",
-        "exec_shell",
-        "exec_shell_wait",
-        "exec_shell_interact",
-        "run_terminal_cmd",
-    }
-)
-_SEARCH_TOOLS = frozenset({"grep_files", "grep", "search_files", "glob_file_search", "codebase_search"})
-_READ_TOOLS = frozenset({"read_file", "read"})
-_DIR_TOOLS = frozenset({"list_dir", "list_directory"})
-
-
-class BatchKind(str, Enum):
-    EXPLORE_DIR = "explore_dir"
-    EXPLORE_READ = "explore_read"
-    SEARCH = "search"
-    INSPECT = "inspect"
-    MUTATE = "mutate"
-    MIXED = "mixed"
-
-
-class Phase(str, Enum):
-    EXPLORE = "explore"
-    LOCATE = "locate"
-    CHANGE = "change"
-    VERIFY = "verify"
-    RECOVER = "recover"
-
-
 GateDecision = Literal["skip", "use_preface", "compute"]
-NarrationLocale = Literal["zh", "en"]
-
-_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
-
-
-def _script_counts(text: str) -> tuple[int, int]:
-    cjk = len(_CJK_RE.findall(text))
-    latin = len(_LATIN_RE.findall(text))
-    return cjk, latin
-
-
-def resolve_narration_locale(user_text: str, *, config_locale: str = "auto") -> NarrationLocale:
-    """Resolve bridge language from user input, with config fallback."""
-    cleaned = user_text.strip()
-    cjk, latin = _script_counts(cleaned)
-    total = cjk + latin
-    if total >= 4:
-        if cjk > 0 and cjk / total >= 0.15:
-            return "zh"
-        if latin > 0:
-            return "en"
-    if config_locale in {"zh", "en"}:
-        return config_locale  # type: ignore[return-value]
-    return "zh"
 
 
 def preface_matches_locale(text: str, locale: str) -> bool:
@@ -180,19 +145,8 @@ def resolve_narration_model(config: Config) -> str | None:
     return defaults.flash_model
 
 
-def _truncate(text: str, limit: int) -> str:
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    return text[: max(limit - 1, 0)].rstrip() + "…"
-
-
 def _normalize_fingerprint(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
-
-
-def contains_tool_name(text: str) -> bool:
-    return bool(_TOOL_NAME_RE.search(text))
 
 
 def usable_preface(text: str | None) -> str | None:
@@ -206,123 +160,9 @@ def usable_preface(text: str | None) -> str | None:
     return _truncate(cleaned, 120)
 
 
-def _tool_path(arguments: dict[str, object] | None) -> str | None:
-    if not arguments:
-        return None
-    for key in ("path", "file_path", "target_directory", "directory", "dir"):
-        value = arguments.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def classify_batch(tool_calls: Sequence[ToolCall]) -> BatchKind:
-    if not tool_calls:
-        return BatchKind.MIXED
-    names = [tc.name.lower() for tc in tool_calls]
-    if any(name in _MUTATE_TOOLS for name in names):
-        return BatchKind.MUTATE
-    read_count = sum(1 for name in names if name in _READ_TOOLS)
-    dir_count = sum(1 for name in names if name in _DIR_TOOLS)
-    search_count = sum(1 for name in names if name in _SEARCH_TOOLS)
-    if read_count >= 2 and read_count == len(tool_calls):
-        return BatchKind.EXPLORE_READ
-    if dir_count >= 1 and dir_count + read_count == len(tool_calls) and read_count <= 1:
-        return BatchKind.EXPLORE_DIR
-    if search_count >= 1 and search_count == len(tool_calls):
-        return BatchKind.SEARCH
-    if len(tool_calls) == 1 and read_count == 1:
-        return BatchKind.INSPECT
-    return BatchKind.MIXED
-
-
-def _batch_root(tool_calls: Sequence[ToolCall]) -> str | None:
-    for tc in tool_calls:
-        path = _tool_path(dict(tc.arguments) if tc.arguments else None)
-        if path:
-            parts = path.replace("\\", "/").strip("/").split("/")
-            return parts[0] if parts else path
-    return None
-
-
-def infer_next_phase(
-    current: Phase,
-    batch: BatchKind,
-    *,
-    has_tool_error: bool,
-) -> Phase:
-    if has_tool_error:
-        return Phase.RECOVER
-    if batch == BatchKind.MUTATE:
-        return Phase.CHANGE
-    if batch == BatchKind.INSPECT and current == Phase.EXPLORE:
-        return Phase.LOCATE
-    if batch == BatchKind.EXPLORE_READ and current == Phase.EXPLORE:
-        return Phase.LOCATE
-    if current == Phase.CHANGE and batch in {BatchKind.SEARCH, BatchKind.INSPECT}:
-        return Phase.VERIFY
-    return current
-
-
-def batch_intent_text(
-    batch: BatchKind,
-    tool_calls: Sequence[ToolCall],
-    *,
-    locale: str = "zh",
-) -> str:
-    if locale == "en":
-        if batch == BatchKind.EXPLORE_DIR:
-            root = _batch_root(tool_calls) or "project root"
-            return f"Survey structure under {root}"
-        if batch == BatchKind.EXPLORE_READ:
-            paths = [
-                p
-                for tc in tool_calls
-                if (p := _tool_path(dict(tc.arguments) if tc.arguments else None))
-            ]
-            if paths:
-                head = ", ".join(_truncate(p, 40) for p in paths[:2])
-                suffix = f" and {len(paths) - 2} more" if len(paths) > 2 else ""
-                return f"Read {head}{suffix} in parallel"
-            return "Read multiple source files in parallel"
-        if batch == BatchKind.SEARCH:
-            return "Search the codebase for relevant implementations"
-        if batch == BatchKind.INSPECT:
-            path = _tool_path(dict(tool_calls[0].arguments) if tool_calls[0].arguments else None)
-            return f"Inspect {_truncate(path or 'a key file', 48)}"
-        if batch == BatchKind.MUTATE:
-            return "Apply changes and prepare verification"
-        if batch == BatchKind.MIXED:
-            return f"Used {len(tool_calls)} tools to continue analysis"
-        return "Continue the current task"
-
-    if batch == BatchKind.EXPLORE_DIR:
-        root = _batch_root(tool_calls) or "项目目录"
-        return f"浏览 {root} 的结构"
-    if batch == BatchKind.EXPLORE_READ:
-        paths = [
-            p
-            for tc in tool_calls
-            if (p := _tool_path(dict(tc.arguments) if tc.arguments else None))
-        ]
-        if paths:
-            head = ", ".join(_truncate(p, 40) for p in paths[:2])
-            suffix = f" 等 {len(paths)} 个文件" if len(paths) > 2 else ""
-            return f"并行查看 {head}{suffix}"
-        return "并行阅读多个源文件"
-    if batch == BatchKind.SEARCH:
-        return "搜索代码以定位相关实现"
-    if batch == BatchKind.INSPECT:
-        path = _tool_path(dict(tool_calls[0].arguments) if tool_calls[0].arguments else None)
-        return f"深入阅读 {_truncate(path or '关键文件', 48)}"
-    if batch == BatchKind.MUTATE:
-        return "实施修改并准备验证"
-    if batch == BatchKind.MIXED:
-        return f"调用 {len(tool_calls)} 个工具继续分析"
-    return "继续推进当前任务"
-
-
-def extract_confirmed_facts(recent_tool_results: Sequence[str], *, limit: int = 3) -> tuple[str, ...]:
+def extract_confirmed_facts(
+    recent_tool_results: Sequence[str], *, limit: int = 3
+) -> tuple[str, ...]:
     facts: list[str] = []
     for raw in recent_tool_results[-limit:]:
         line = raw.strip()
@@ -431,30 +271,13 @@ def gate_decision(
     return "skip"
 
 
-def template_narration(
-    *,
-    locale: str,
-    batch: BatchKind,
-    tool_calls: Sequence[ToolCall],
-) -> str | None:
-    """Localized one-liner when Flash is unavailable."""
-    text = batch_intent_text(batch, tool_calls, locale=locale)
-    if contains_tool_name(text):
-        return None
-    return _truncate(text, 120)
-
-
 def validate_plan(plan: NarrationPlan, *, locale: str = "zh") -> bool:
     combined = f"{plan.finding} {plan.next_goal}"
-    # Must have at least some content
     if not plan.finding.strip() and not plan.next_goal.strip():
         return False
     if contains_tool_name(combined):
         return False
-    # Ignore publish=false — Flash is overly conservative; if it produced
-    # meaningful finding/next_goal content, show it regardless.
-    # Ignore locale mismatch — English narration is better than template fallback.
-    return True
+    return text_matches_locale(combined, locale)
 
 
 def render_plan(plan: NarrationPlan, *, locale: str = "zh") -> str | None:
@@ -463,7 +286,13 @@ def render_plan(plan: NarrationPlan, *, locale: str = "zh") -> str | None:
     return plan.display_text(locale=locale)
 
 
-def note_published(state: TurnNarrationState, text: str, *, batch: BatchKind, tool_calls: Sequence[ToolCall]) -> None:
+def note_published(
+    state: TurnNarrationState,
+    text: str,
+    *,
+    batch: BatchKind,
+    tool_calls: Sequence[ToolCall],
+) -> None:
     state.published_count += 1
     state.last_fingerprint = _normalize_fingerprint(text)
     state.last_published_at = time.monotonic()

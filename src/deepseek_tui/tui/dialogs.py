@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 
 
 # ======================================================================
@@ -283,6 +285,41 @@ AVAILABLE_MODELS: list[tuple[str, str]] = [
 ]
 
 
+def _build_model_list_from_config(config: object | None) -> list[tuple[str, str]]:
+    """Build a dynamic model list from config.providers + PROVIDER_DEFAULTS.
+
+    Any provider with a configured model appears in the picker.
+    Falls back to AVAILABLE_MODELS if config is unavailable.
+    """
+    from deepseek_tui.config.providers import PROVIDER_DEFAULTS
+
+    seen: set[str] = set()
+    items: list[tuple[str, str]] = []
+
+    # 1. User-configured providers (highest priority)
+    if config is not None and hasattr(config, "providers"):
+        for name, pc in config.providers.items():
+            model = getattr(pc, "model", None)
+            if model and model not in seen:
+                seen.add(model)
+                items.append((model, f"{model} ({name})"))
+
+    # 2. PROVIDER_DEFAULTS (known providers not yet in user config)
+    for name, defaults in PROVIDER_DEFAULTS.items():
+        if defaults.model and defaults.model not in seen:
+            seen.add(defaults.model)
+            items.append((defaults.model, f"{defaults.model} ({name})"))
+        if defaults.flash_model and defaults.flash_model not in seen:
+            seen.add(defaults.flash_model)
+            items.append((defaults.flash_model, f"{defaults.flash_model} ({name} flash)"))
+
+    # 3. Fallback
+    if not items:
+        return AVAILABLE_MODELS
+
+    return items
+
+
 class ModelPicker(_FilterablePickerScreen):
     """Pick an LLM model."""
 
@@ -380,6 +417,33 @@ AVAILABLE_PROVIDERS: list[tuple[str, str]] = [
     ("anthropic", "Anthropic Claude"),
     ("local", "Local / Ollama"),
 ]
+
+
+def _build_provider_list_from_config(config: object | None) -> list[tuple[str, str]]:
+    """Build a dynamic provider list from config.providers + PROVIDER_DEFAULTS."""
+    from deepseek_tui.config.providers import PROVIDER_DEFAULTS
+
+    seen: set[str] = set()
+    items: list[tuple[str, str]] = []
+
+    # 1. User-configured providers
+    if config is not None and hasattr(config, "providers"):
+        for name, pc in config.providers.items():
+            if name not in seen:
+                seen.add(name)
+                url = getattr(pc, "base_url", None) or ""
+                label = f"{name} ({url})" if url else name
+                items.append((name, label))
+
+    # 2. Known defaults not already in user config
+    for name, defaults in PROVIDER_DEFAULTS.items():
+        if name not in seen:
+            seen.add(name)
+            items.append((name, f"{name} ({defaults.base_url})"))
+
+    if not items:
+        return AVAILABLE_PROVIDERS
+    return items
 
 
 class ProviderPicker(_FilterablePickerScreen):
@@ -653,3 +717,143 @@ class FileMention(Vertical):
         if event.option.id:
             self.post_message(self.Selected(event.option.id))
         self.hide()
+
+
+# ======================================================================
+# User input request
+# ======================================================================
+
+@dataclass(slots=True)
+class UserInputDialogState:
+    """Pure multi-question state used by :class:`UserInputDialog`."""
+
+    questions: list[dict[str, object]]
+    index: int = 0
+    answers: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def current(self) -> dict[str, object] | None:
+        if 0 <= self.index < len(self.questions):
+            return self.questions[self.index]
+        return None
+
+    def answer(self, value: str) -> bool:
+        question = self.current
+        cleaned = value.strip()
+        if question is None or not cleaned:
+            return False
+        question_id = str(question.get("id") or f"question_{self.index + 1}")
+        self.answers.append({"question_id": question_id, "value": cleaned})
+        self.index += 1
+        return self.current is None
+
+    def response(self) -> dict[str, object]:
+        return {"answers": list(self.answers)}
+
+
+class UserInputDialog(ModalScreen[dict[str, object] | None]):
+    """Interactive option/free-text dialog for model-requested user input."""
+
+    CSS = """
+    UserInputDialog { align: center middle; }
+    UserInputDialog #user-input-box {
+        width: 80;
+        max-width: 90%;
+        height: auto;
+        max-height: 28;
+        border: thick $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    UserInputDialog #user-input-options { height: auto; max-height: 12; }
+    UserInputDialog #user-input-custom { margin-top: 1; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, questions: list[dict[str, object]]) -> None:
+        super().__init__()
+        self.state = UserInputDialogState(list(questions))
+        self._option_values: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="user-input-box"):
+            yield Static("[bold bright_cyan]Input required[/]", id="user-input-title")
+            yield Static("", id="user-input-question")
+            yield OptionList(id="user-input-options")
+            yield Input(
+                placeholder="Type a custom answer and press Enter",
+                id="user-input-custom",
+            )
+            yield Static(
+                "[dim]Select an option, or enter a custom answer · Esc cancels[/]"
+            )
+
+    def on_mount(self) -> None:
+        if self.state.current is None:
+            self.dismiss(self.state.response())
+            return
+        self._refresh_question()
+
+    def _refresh_question(self) -> None:
+        question = self.state.current
+        if question is None:
+            self.dismiss(self.state.response())
+            return
+        number = self.state.index + 1
+        total = len(self.state.questions)
+        prompt = escape(str(question.get("question") or "Please choose"))
+        self.query_one("#user-input-question", Static).update(
+            f"[bold]{number}/{total}[/]  {prompt}"
+        )
+        options = question.get("options")
+        option_list = self.query_one("#user-input-options", OptionList)
+        option_list.clear_options()
+        self._option_values = []
+        if isinstance(options, list):
+            for option in options:
+                if isinstance(option, dict):
+                    label = str(option.get("label") or "").strip()
+                    description = str(option.get("description") or "").strip()
+                else:
+                    label = str(option).strip()
+                    description = ""
+                if not label:
+                    continue
+                self._option_values.append(label)
+                display = escape(label)
+                if description:
+                    display += f"  [dim]{escape(description)}[/]"
+                option_list.add_option(
+                    Option(display, id=str(len(self._option_values) - 1))
+                )
+        custom = self.query_one("#user-input-custom", Input)
+        custom.value = ""
+        if self._option_values:
+            option_list.focus()
+        else:
+            custom.focus()
+
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        try:
+            index = int(str(event.option.id))
+            value = self._option_values[index]
+        except (TypeError, ValueError, IndexError):
+            return
+        self._accept(value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._accept(event.value)
+
+    def _accept(self, value: str) -> None:
+        if not value.strip():
+            return
+        if self.state.answer(value):
+            self.dismiss(self.state.response())
+        else:
+            self._refresh_question()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
