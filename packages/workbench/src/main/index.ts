@@ -222,7 +222,10 @@ function runtimeFailure(error: string, message: string, status = 0) {
 function resolveConfiguredApiKey(settings: AppSettingsV1): string {
   const fromSettings = settings.deepseek.apiKey?.trim() ?? ''
   const fromEnv = process.env.DEEPSEEK_API_KEY?.trim() ?? ''
-  return fromSettings || fromEnv
+  const fromCustom = settings.customEndpoints.find(
+    (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
+  )?.apiKey.trim() ?? ''
+  return fromSettings || fromEnv || fromCustom
 }
 
 function runtimeJsonError(error: string, message: string): Error {
@@ -476,7 +479,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
     if (!hasApiKey) {
       throw runtimeJsonError(
         'missing_api_key',
-        'DeepSeek API Key is required before the GUI can start the local runtime.'
+        'Configure a DeepSeek or custom-provider API key before starting the local runtime.'
       )
     }
     if (!settings.deepseek.autoStart) {
@@ -487,7 +490,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
   if (!hasApiKey) {
     throw runtimeJsonError(
       'missing_api_key',
-      'DeepSeek API Key is required before the GUI can start the local runtime.'
+      'Configure a DeepSeek or custom-provider API key before starting the local runtime.'
     )
   }
   if (!settings.deepseek.autoStart) {
@@ -650,6 +653,7 @@ function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): 
     a.runtimeToken !== b.runtimeToken ||
     a.approvalPolicy !== b.approvalPolicy ||
     a.sandboxMode !== b.sandboxMode ||
+    JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints) ||
     JSON.stringify(a.extraCorsOrigins) !== JSON.stringify(b.extraCorsOrigins)
   )
 }

@@ -9,6 +9,7 @@ import {
   mergeClawSettings,
   mergeMemorySettings,
   normalizeAppSettings,
+  normalizeCustomEndpoints,
   normalizeMemorySettings,
   normalizeWorkbenchSkills,
   type AppSettingsPatch,
@@ -135,6 +136,7 @@ const defaultSettings = (): AppSettingsV1 => ({
     approvalPolicy: 'on-request',
     sandboxMode: 'workspace-write'
   },
+  customEndpoints: [],
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   log: {
     enabled: true,
@@ -157,6 +159,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     ...defaults,
     ...parsed,
     deepseek: { ...defaults.deepseek, ...parsed.deepseek },
+    customEndpoints: normalizeCustomEndpoints(parsed.customEndpoints ?? defaults.customEndpoints),
     log: { ...defaults.log, ...parsed.log },
     notifications: { ...defaults.notifications, ...parsed.notifications },
     skills: normalizeWorkbenchSkills(parsed.skills, parsed.claw?.skills?.extraDirs),

@@ -384,5 +384,27 @@
   "logRetentionSeven": "7 天",
   "loading": "加载中…",
   "loadFailed": "无法加载设置：{{message}}",
-  "preloadBridgeError": "应用桥接不可用。请重启应用或检查预加载脚本路径。"
+  "preloadBridgeError": "应用桥接不可用。请重启应用或检查预加载脚本路径。",
+
+  "customEndpoints": "自定义模型端点",
+  "customEndpointsDesc": "先配置协议、URL 和 API Key，再为同一端点添加并测试多个模型。DeepSeek 与所有已启用端点的模型都会出现在模型选择器中。",
+  "activeLabel": "当前激活",
+  "activateBtn": "激活",
+  "testBtn": "测试",
+  "addEndpointTitle": "添加自定义端点",
+  "addEndpointBtn": "添加自定义端点",
+  "endpointNamePlaceholder": "端点名称（如 qingyun）",
+  "endpointUrlPlaceholder": "Base URL（如 https://api.example.com/v1）",
+  "endpointKeyPlaceholder": "API Key（如 sk-...）",
+  "endpointModelPlaceholder": "模型名称（如 claude-sonnet-4-6）",
+  "cancelBtn": "取消",
+  "addBtn": "添加",
+  "endpointEnabled": "已启用",
+  "endpointDisabled": "已停用",
+  "enableEndpointBtn": "启用",
+  "disableEndpointBtn": "停用",
+  "modelTestPassed": "工具兼容",
+  "modelTestFailed": "测试失败",
+  "modelUntested": "未测试",
+  "testAndAddModelBtn": "测试并添加"
 }

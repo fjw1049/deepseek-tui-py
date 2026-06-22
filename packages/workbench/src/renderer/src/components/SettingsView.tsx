@@ -7,6 +7,8 @@ import {
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
+  type CustomEndpointV1,
+  type EndpointProtocol,
   type MemorySettingsPatchV1,
   type SandboxMode
 } from '@shared/app-settings'
@@ -20,6 +22,7 @@ import {
   Globe,
   Loader2,
   Plug,
+  Plus,
   RefreshCw,
   Settings,
   Shield,
@@ -28,7 +31,9 @@ import {
   CalendarClock,
   Brain,
   PawPrint,
-  X
+  Trash2,
+  X,
+  Zap
 } from 'lucide-react'
 import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
@@ -58,7 +63,7 @@ import { PetSprite } from './pet/PetSprite'
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate'>
+  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate' | 'customEndpoints'>
 > & {
   deepseek?: Partial<AppSettingsV1['deepseek']>
   log?: Partial<AppSettingsV1['log']>
@@ -67,6 +72,7 @@ type SettingsPatch = Partial<
   memory?: MemorySettingsPatchV1
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
+  customEndpoints?: AppSettingsV1['customEndpoints']
 }
 type InlineNotice = {
   tone: 'success' | 'error' | 'info'
@@ -99,6 +105,7 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
       ...current.deepseek,
       ...(patch.deepseek ?? {})
     },
+    customEndpoints: patch.customEndpoints ?? current.customEndpoints,
     log: {
       ...current.log,
       ...(patch.log ?? {})
@@ -360,7 +367,10 @@ export function SettingsView(): ReactElement {
   useEffect(() => {
     if (!form || initializedCategory.current) return
     initializedCategory.current = true
-    if (!form.deepseek.apiKey?.trim()) {
+    const hasCustomKey = form.customEndpoints.some(
+      (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
+    )
+    if (!form.deepseek.apiKey?.trim() && !hasCustomKey) {
       openSettings('runtime')
     }
   }, [form, openSettings])
@@ -1126,6 +1136,13 @@ export function SettingsView(): ReactElement {
                     }
                   />
                 </SettingsCard>
+
+                <SettingsCard title={t('customEndpoints')} className="mt-6">
+                  <CustomEndpointsPanel
+                    endpoints={form.customEndpoints}
+                    onUpdate={(patch) => update(patch)}
+                  />
+                </SettingsCard>
             </>
           )}
 
@@ -1766,6 +1783,308 @@ function PetMascotSettingsControl({
           ) : null}
         </div>
       </fieldset>
+    </div>
+  )
+}
+
+function CustomEndpointsPanel({
+  endpoints,
+  onUpdate
+}: {
+  endpoints: CustomEndpointV1[]
+  onUpdate: (patch: SettingsPatch) => void
+}): ReactElement {
+  const { t } = useTranslation('settings')
+  const [showAdd, setShowAdd] = useState(false)
+  const [addName, setAddName] = useState('')
+  const [addUrl, setAddUrl] = useState('')
+  const [addKey, setAddKey] = useState('')
+  const [addProtocol, setAddProtocol] = useState<EndpointProtocol>('openai')
+  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({})
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string; testing: boolean }>>({})
+
+  const updateEndpoints = (next: CustomEndpointV1[]): void => {
+    onUpdate({ customEndpoints: next })
+  }
+
+  const handleAdd = (): void => {
+    if (!addName.trim() || !addUrl.trim() || !addKey.trim()) return
+    const slug = addName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'endpoint'
+    const usedIds = new Set(['deepseek', ...endpoints.map((endpoint) => endpoint.id)])
+    let id = slug
+    let suffix = 2
+    while (usedIds.has(id)) {
+      id = `${slug}-${suffix}`
+      suffix += 1
+    }
+    const newEndpoint: CustomEndpointV1 = {
+      id,
+      name: addName.trim(),
+      protocol: addProtocol,
+      baseUrl: addUrl.trim(),
+      apiKey: addKey.trim(),
+      enabled: true,
+      models: []
+    }
+    updateEndpoints([...endpoints, newEndpoint])
+    setAddName('')
+    setAddUrl('')
+    setAddKey('')
+    setAddProtocol('openai')
+    setShowAdd(false)
+  }
+
+  const handleRemove = (index: number): void => {
+    updateEndpoints(endpoints.filter((_, i) => i !== index))
+  }
+
+  const handleToggleEndpoint = (index: number): void => {
+    updateEndpoints(
+      endpoints.map((endpoint, i) =>
+        i === index ? { ...endpoint, enabled: !endpoint.enabled } : endpoint
+      )
+    )
+  }
+
+  const handleTest = async (ep: CustomEndpointV1, modelId: string): Promise<boolean> => {
+    const key = `${ep.id}::${modelId}`
+    setTestResults((prev) => ({ ...prev, [key]: { ok: false, message: '正在测试...', testing: true } }))
+    try {
+      const result = await window.dsGui.testEndpoint(ep.protocol, ep.baseUrl, ep.apiKey, modelId)
+      setTestResults((prev) => ({ ...prev, [key]: { ok: result.ok, message: result.message, testing: false } }))
+      return result.ok
+    } catch (e) {
+      setTestResults((prev) => ({
+        ...prev,
+        [key]: { ok: false, message: e instanceof Error ? e.message : String(e), testing: false }
+      }))
+      return false
+    }
+  }
+
+  const handleAddModel = async (index: number): Promise<void> => {
+    const endpoint = endpoints[index]
+    const modelId = (modelDrafts[endpoint.id] ?? '').trim()
+    if (!modelId || endpoint.models.some((model) => model.id === modelId)) return
+    const passed = await handleTest(endpoint, modelId)
+    const now = new Date().toISOString()
+    updateEndpoints(
+      endpoints.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              models: [
+                ...item.models,
+                {
+                  id: modelId,
+                  enabled: true,
+                  testStatus: passed ? 'passed' as const : 'failed' as const,
+                  toolCalling: passed,
+                  lastTestedAt: now
+                }
+              ]
+            }
+          : item
+      )
+    )
+    setModelDrafts((prev) => ({ ...prev, [endpoint.id]: '' }))
+  }
+
+  const handleRetestModel = async (index: number, modelId: string): Promise<void> => {
+    const endpoint = endpoints[index]
+    const passed = await handleTest(endpoint, modelId)
+    updateEndpoints(
+      endpoints.map((item, endpointIndex) =>
+        endpointIndex === index
+          ? {
+              ...item,
+              models: item.models.map((model) =>
+                model.id === modelId
+                  ? {
+                      ...model,
+                      testStatus: passed ? 'passed' as const : 'failed' as const,
+                      toolCalling: passed,
+                      lastTestedAt: new Date().toISOString()
+                    }
+                  : model
+              )
+            }
+          : item
+      )
+    )
+  }
+
+  const handleRemoveModel = (endpointIndex: number, modelId: string): void => {
+    updateEndpoints(
+      endpoints.map((endpoint, index) =>
+        index === endpointIndex
+          ? { ...endpoint, models: endpoint.models.filter((model) => model.id !== modelId) }
+          : endpoint
+      )
+    )
+  }
+
+  return (
+    <div className="px-4 py-5">
+      <p className="mb-4 text-[13px] leading-6 text-ds-muted">
+        {t('customEndpointsDesc')}
+      </p>
+
+      {endpoints.map((ep, index) => (
+        <div key={ep.id} className="mb-3 rounded-xl border border-ds-border bg-ds-card p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[14px] font-semibold text-ds-ink">{ep.name}</span>
+                <span className="rounded-full bg-ds-hover px-2 py-0.5 text-[10px] font-medium uppercase text-ds-muted">
+                  {ep.protocol}
+                </span>
+                <span className={`text-[11px] ${ep.enabled ? 'text-emerald-600' : 'text-ds-faint'}`}>
+                  {ep.enabled ? t('endpointEnabled') : t('endpointDisabled')}
+                </span>
+              </div>
+              <div className="mt-1 truncate font-mono text-[12px] text-ds-muted">{ep.baseUrl}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleToggleEndpoint(index)}
+                className="rounded-lg border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover"
+              >
+                {ep.enabled ? t('disableEndpointBtn') : t('enableEndpointBtn')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemove(index)}
+                className="rounded-lg border border-ds-border p-1 text-ds-muted hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+              >
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {ep.models.map((model) => {
+              const testKey = `${ep.id}::${model.id}`
+              const test = testResults[testKey]
+              return (
+                <div key={model.id} className="rounded-lg border border-ds-border-muted bg-ds-hover/30 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">{model.id}</span>
+                    <span className={`text-[10px] ${model.testStatus === 'passed' ? 'text-emerald-600' : model.testStatus === 'failed' ? 'text-red-600' : 'text-ds-faint'}`}>
+                      {model.testStatus === 'passed' ? t('modelTestPassed') : model.testStatus === 'failed' ? t('modelTestFailed') : t('modelUntested')}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={test?.testing}
+                      onClick={() => void handleRetestModel(index, model.id)}
+                      className="inline-flex items-center gap-1 rounded-md border border-ds-border px-2 py-0.5 text-[11px] text-ds-muted disabled:opacity-50"
+                    >
+                      {test?.testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                      {t('testBtn')}
+                    </button>
+                    <button type="button" onClick={() => handleRemoveModel(index, model.id)} className="text-ds-faint hover:text-red-600">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {test && !test.testing ? (
+                    <div className={`mt-1 text-[11px] ${test.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {test.message}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+            <div className="flex gap-2">
+              <input
+                className="min-w-0 flex-1 rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 font-mono text-[12px] text-ds-ink"
+                placeholder={t('endpointModelPlaceholder')}
+                value={modelDrafts[ep.id] ?? ''}
+                onChange={(event) => setModelDrafts((prev) => ({ ...prev, [ep.id]: event.target.value }))}
+              />
+              <button
+                type="button"
+                disabled={!(modelDrafts[ep.id] ?? '').trim()}
+                onClick={() => void handleAddModel(index)}
+                className="rounded-lg bg-ds-userbubble px-3 py-1.5 text-[12px] font-medium text-ds-userbubbleFg disabled:opacity-50"
+              >
+                {t('testAndAddModelBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {showAdd ? (
+        <div className="mt-3 rounded-xl border border-accent/30 bg-ds-card p-4 shadow-sm">
+          <h4 className="mb-3 text-[14px] font-semibold text-ds-ink">
+            {t('addEndpointTitle')}
+          </h4>
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                placeholder={t('endpointNamePlaceholder')}
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+              />
+              <select
+                className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                value={addProtocol}
+                onChange={(e) => setAddProtocol(e.target.value as EndpointProtocol)}
+              >
+                <option value="openai">OpenAI compatible</option>
+                <option value="anthropic">Anthropic compatible</option>
+              </select>
+            </div>
+            <input
+              className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+              placeholder={t('endpointUrlPlaceholder')}
+              value={addUrl}
+              onChange={(e) => setAddUrl(e.target.value)}
+            />
+            <input
+              type="password"
+              className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+              placeholder={t('endpointKeyPlaceholder')}
+              value={addKey}
+              onChange={(e) => setAddKey(e.target.value)}
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdd(false)
+                  setAddName('')
+                  setAddUrl('')
+                  setAddKey('')
+                  setAddProtocol('openai')
+                }}
+                className="rounded-xl border border-ds-border px-3 py-1.5 text-[13px] font-medium text-ds-muted hover:bg-ds-hover"
+              >
+                {t('cancelBtn')}
+              </button>
+              <button
+                type="button"
+                onClick={handleAdd}
+                disabled={!addName.trim() || !addUrl.trim() || !addKey.trim()}
+                className="rounded-xl bg-ds-userbubble px-3 py-1.5 text-[13px] font-medium text-ds-userbubbleFg disabled:opacity-50"
+              >
+                {t('addBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowAdd(true)}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-dashed border-ds-border px-3 py-2 text-[13px] font-medium text-ds-muted transition hover:border-accent/40 hover:bg-ds-hover hover:text-ds-ink"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2} />
+          {t('addEndpointBtn')}
+        </button>
+      )}
     </div>
   )
 }

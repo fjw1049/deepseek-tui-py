@@ -36,6 +36,31 @@ export type DeepseekSettingsV1 = {
   sandboxMode: SandboxMode
 }
 
+export type EndpointProtocol = 'openai' | 'anthropic'
+
+export type CustomEndpointModelV1 = {
+  /** Wire model identifier sent to the provider. */
+  id: string
+  /** Optional friendly label shown beside the wire identifier. */
+  label?: string
+  enabled: boolean
+  testStatus: 'untested' | 'passed' | 'failed'
+  toolCalling?: boolean
+  lastTestedAt?: string
+}
+
+export type CustomEndpointV1 = {
+  /** Stable routing id; unlike name this must not change after creation. */
+  id: string
+  /** User-chosen name (e.g. "Qingyun", "My Local LLM"). */
+  name: string
+  protocol: EndpointProtocol
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+  models: CustomEndpointModelV1[]
+}
+
 export type LogConfigV1 = {
   enabled: boolean
   retentionDays: number
@@ -221,6 +246,7 @@ export type AppSettingsV1 = {
   uiFontScale: UiFontScale
   agentProvider: 'deepseek-runtime'
   deepseek: DeepseekSettingsV1
+  customEndpoints: CustomEndpointV1[]
   workspaceRoot: string
   log: LogConfigV1
   notifications: NotificationConfigV1
@@ -231,7 +257,7 @@ export type AppSettingsV1 = {
 }
 
 export type AppSettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate'>
+  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate' | 'customEndpoints'>
 > & {
   deepseek?: Partial<DeepseekSettingsV1>
   log?: Partial<LogConfigV1>
@@ -240,6 +266,7 @@ export type AppSettingsPatch = Partial<
   memory?: MemorySettingsPatchV1
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<GuiUpdateConfigV1>
+  customEndpoints?: CustomEndpointV1[]
 }
 
 export const CLAW_CURRENT_USER_REQUEST_HEADING = '[Current user request]'
@@ -858,6 +885,59 @@ export function normalizeWorkbenchSkills(
   return { extraDirs: compactStrings(merged) }
 }
 
+export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[] {
+  if (!Array.isArray(endpoints)) return []
+  const usedEndpointIds = new Set(['deepseek'])
+  return endpoints
+    .filter((ep): ep is Record<string, unknown> => typeof ep === 'object' && ep !== null)
+    .filter((ep) => typeof ep.name === 'string' && ep.name.trim())
+    .map((ep, index) => {
+      const name = String(ep.name).trim()
+      const fallbackId = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'endpoint'}-${index + 1}`
+      const rawId = typeof ep.id === 'string' && ep.id.trim() ? ep.id.trim() : fallbackId
+      const requestedId = rawId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || fallbackId
+      let endpointId = requestedId
+      let endpointSuffix = 2
+      while (usedEndpointIds.has(endpointId)) {
+        endpointId = `${requestedId}-${endpointSuffix}`
+        endpointSuffix += 1
+      }
+      usedEndpointIds.add(endpointId)
+      const rawModels = Array.isArray(ep.models)
+        ? ep.models
+        : typeof ep.model === 'string' && ep.model.trim()
+          ? [{ id: ep.model, enabled: true, testStatus: 'untested' }]
+          : []
+      const seen = new Set<string>()
+      const models = rawModels
+        .filter((model): model is Record<string, unknown> => typeof model === 'object' && model !== null)
+        .map((model): CustomEndpointModelV1 => ({
+          id: typeof model.id === 'string' ? model.id.trim() : '',
+          label: typeof model.label === 'string' && model.label.trim() ? model.label.trim() : undefined,
+          enabled: model.enabled !== false,
+          testStatus: model.testStatus === 'passed' || model.testStatus === 'failed'
+            ? model.testStatus
+            : 'untested',
+          toolCalling: typeof model.toolCalling === 'boolean' ? model.toolCalling : undefined,
+          lastTestedAt: typeof model.lastTestedAt === 'string' ? model.lastTestedAt : undefined
+        }))
+        .filter((model) => {
+          if (!model.id || seen.has(model.id)) return false
+          seen.add(model.id)
+          return true
+        })
+      return {
+        id: endpointId,
+        name,
+        protocol: ep.protocol === 'anthropic' ? 'anthropic' : 'openai',
+        baseUrl: typeof ep.baseUrl === 'string' ? ep.baseUrl.trim() : '',
+        apiKey: typeof ep.apiKey === 'string' ? ep.apiKey.trim() : '',
+        enabled: ep.enabled !== false,
+        models
+      }
+    })
+}
+
 export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
   const maybeSettings = settings as AppSettingsV1 & {
     notifications?: Partial<NotificationConfigV1>
@@ -873,6 +953,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
       ...settings.deepseek,
       baseUrl: normalizeDeepseekBaseUrl(settings.deepseek.baseUrl)
     },
+    customEndpoints: normalizeCustomEndpoints(maybeSettings.customEndpoints),
     notifications: {
       turnComplete: maybeSettings.notifications?.turnComplete !== false
     },

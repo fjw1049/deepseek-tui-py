@@ -1,4 +1,4 @@
-import type { AppSettingsPatch, AppSettingsV1 } from './app-settings'
+import type { AppSettingsPatch, AppSettingsV1, EndpointProtocol } from './app-settings'
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
 import type {
@@ -45,6 +45,9 @@ export type PathOpenResult = { ok: boolean; message?: string; path?: string }
 export type SkillSaveResult = { ok: true; path: string } | { ok: false; message: string }
 export type DeepseekConfigFileResult = { path: string; content: string; exists: boolean }
 export type DeepseekConfigSaveResult = { ok: true; path: string }
+export type EndpointTestResult =
+  | { ok: true; model: string; latencyMs: number; message: string }
+  | { ok: false; model: string; latencyMs: number; message: string }
 
 export type FeishuConfigV1 = {
   appId: string
@@ -217,6 +220,12 @@ export type DsGuiApi = {
     skillsDir: string
   }>
   openHooksDir: () => Promise<PathOpenResult>
+  testEndpoint: (
+    protocol: EndpointProtocol,
+    baseUrl: string,
+    apiKey: string,
+    model: string
+  ) => Promise<EndpointTestResult>
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
   getWorkspaceSuggestions: (workspaceRoot: string) => Promise<WorkspaceSuggestionsResult>
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>

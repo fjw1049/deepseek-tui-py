@@ -5,11 +5,72 @@ import {
   buildAutomationComposerPrompt,
   mergeMemorySettings,
   normalizeAppSettings,
+  normalizeCustomEndpoints,
   unwrapAutomationComposerPromptForDisplay,
   unwrapClawUserPromptForDisplay
 } from './app-settings'
 
 describe('unwrapAutomationComposerPromptForDisplay', () => {
+  it('migrates one-model endpoints to provider models without losing credentials', () => {
+    const endpoints = normalizeCustomEndpoints([
+      {
+        name: 'Qingyun',
+        baseUrl: 'https://api.example.test',
+        apiKey: 'test-key',
+        model: 'claude-sonnet',
+        active: true
+      }
+    ])
+
+    expect(endpoints).toEqual([
+      {
+        id: 'qingyun-1',
+        name: 'Qingyun',
+        protocol: 'openai',
+        baseUrl: 'https://api.example.test',
+        apiKey: 'test-key',
+        enabled: true,
+        models: [
+          {
+            id: 'claude-sonnet',
+            label: undefined,
+            enabled: true,
+            testStatus: 'untested',
+            toolCalling: undefined,
+            lastTestedAt: undefined
+          }
+        ]
+      }
+    ])
+  })
+
+  it('keeps multiple models on one endpoint and removes duplicate ids', () => {
+    const [endpoint] = normalizeCustomEndpoints([
+      {
+        id: 'ark',
+        name: 'Ark',
+        protocol: 'anthropic',
+        baseUrl: 'https://ark.example',
+        apiKey: 'test-key',
+        models: [
+          { id: 'model-a', enabled: true, testStatus: 'passed' },
+          { id: 'model-a', enabled: true },
+          { id: 'model-b', enabled: false }
+        ]
+      }
+    ])
+
+    expect(endpoint.protocol).toBe('anthropic')
+    expect(endpoint.models.map((model) => model.id)).toEqual(['model-a', 'model-b'])
+  })
+
+  it('reserves the built-in DeepSeek provider id', () => {
+    const [endpoint] = normalizeCustomEndpoints([
+      { id: 'deepseek', name: 'DeepSeek proxy', models: [] }
+    ])
+    expect(endpoint.id).toBe('deepseek-2')
+  })
+
   it('strips playbook wrapper and keeps user text only', () => {
     const wrapped = buildAutomationComposerPrompt('一分钟后发到飞书', {
       feishuChatId: 'oc_test',

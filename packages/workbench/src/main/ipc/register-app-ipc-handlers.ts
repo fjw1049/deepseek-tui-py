@@ -214,12 +214,15 @@ async function diagnoseDeepseekRuntime(
     : null
   const issues: DeepseekRuntimeDiagnosticIssue[] = [...configIssues]
 
-  if (!settings.deepseek.apiKey.trim() && !process.env.DEEPSEEK_API_KEY?.trim()) {
+  const hasCustomKey = settings.customEndpoints.some(
+    (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
+  )
+  if (!settings.deepseek.apiKey.trim() && !process.env.DEEPSEEK_API_KEY?.trim() && !hasCustomKey) {
     issues.push({
       severity: 'error',
       code: 'missing_api_key',
-      title: 'Missing DeepSeek API key',
-      message: 'The GUI cannot auto-start the local runtime until a DeepSeek API key is configured.'
+      title: 'Missing model-provider API key',
+      message: 'The GUI cannot auto-start the local runtime until a DeepSeek or custom-provider key is configured.'
     })
   }
 
@@ -610,6 +613,132 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
         ok: false as const,
         message: error instanceof Error ? error.message : String(error)
       }
+    }
+  })
+
+  ipcMain.handle('endpoint:test', async (_event, args: {
+    protocol: 'openai' | 'anthropic'
+    baseUrl: string
+    apiKey: string
+    model: string
+  }) => {
+    const { protocol, baseUrl, apiKey, model } = args
+    let url = baseUrl.replace(/\/+$/, '')
+    if (protocol === 'anthropic') {
+      if (url.endsWith('/v1/messages')) {
+        // Full Messages URL supplied.
+      } else if (url.endsWith('/v1')) {
+        url = `${url}/messages`
+      } else {
+        url = `${url}/v1/messages`
+      }
+    } else if (/\/v\d+$/.test(url)) {
+      url = `${url}/chat/completions`
+    } else {
+      url = `${url}/v1/chat/completions`
+    }
+    const start = Date.now()
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15_000)
+      const anthropic = protocol === 'anthropic'
+      const toolName = 'compat_probe'
+      let resp: Response
+      try {
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: anthropic
+            ? {
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'Content-Type': 'application/json'
+              }
+            : {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+              },
+          body: JSON.stringify(anthropic
+            ? {
+                model,
+                messages: [{ role: 'user', content: 'Call compat_probe with value ok.' }],
+                max_tokens: 64,
+                stream: false,
+                tools: [{
+                  name: toolName,
+                  description: 'Compatibility probe',
+                  input_schema: {
+                    type: 'object',
+                    properties: { value: { type: 'string' } },
+                    required: ['value']
+                  }
+                }],
+                tool_choice: { type: 'tool', name: toolName }
+              }
+            : {
+                model,
+                messages: [{ role: 'user', content: 'Call compat_probe with value ok.' }],
+                max_tokens: 64,
+                stream: false,
+                tools: [{
+                  type: 'function',
+                  function: {
+                    name: toolName,
+                    description: 'Compatibility probe',
+                    parameters: {
+                      type: 'object',
+                      properties: { value: { type: 'string' } },
+                      required: ['value']
+                    }
+                  }
+                }],
+                tool_choice: { type: 'function', function: { name: toolName } }
+              }),
+          signal: controller.signal
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
+      const latencyMs = Date.now() - start
+      if (resp.ok) {
+        const body = await resp.json() as Record<string, unknown>
+        const content = Array.isArray(body.content) ? body.content : []
+        const choices = Array.isArray(body.choices) ? body.choices : []
+        const anthropicToolOk = content.some((item) =>
+          item && typeof item === 'object' &&
+          (item as { type?: unknown }).type === 'tool_use' &&
+          (item as { name?: unknown }).name === toolName
+        )
+        const firstChoice = choices[0] as {
+          message?: { tool_calls?: Array<{ function?: { name?: string } }> }
+        } | undefined
+        const openAiToolOk = firstChoice?.message?.tool_calls?.some(
+          (call) => call.function?.name === toolName
+        ) === true
+        if (!(anthropic ? anthropicToolOk : openAiToolOk)) {
+          return {
+            ok: false,
+            model,
+            latencyMs,
+            message: '连接成功，但模型未返回必需的工具调用'
+          }
+        }
+        const respModel = typeof body.model === 'string' ? body.model : model
+        return {
+          ok: true,
+          model: respModel,
+          latencyMs,
+          message: `文本与工具协议兼容 (模型: ${respModel}, 延迟: ${latencyMs}ms)`
+        }
+      }
+      const bodyText = (await resp.text()).slice(0, 200)
+      return { ok: false, model, latencyMs, message: `HTTP ${resp.status}: ${bodyText}` }
+    } catch (error) {
+      const latencyMs = Date.now() - start
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('abort')) {
+        return { ok: false, model, latencyMs, message: `连接超时 (15s)` }
+      }
+      return { ok: false, model, latencyMs, message: `连接失败: ${msg.slice(0, 100)}` }
     }
   })
 

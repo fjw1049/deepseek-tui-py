@@ -110,7 +110,65 @@ async function runDeepseekCommand(
 }
 
 export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
-  return deepseekConfigFieldsChanged(prev, next) || memoryConfigFieldsChanged(prev, next)
+  return (
+    deepseekConfigFieldsChanged(prev, next) ||
+    memoryConfigFieldsChanged(prev, next) ||
+    JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
+  )
+}
+
+function removeTomlSections(content: string, sectionNames: Set<string>): string {
+  if (sectionNames.size === 0) return content
+  const lines = content.split(/\r?\n/)
+  const output: string[] = []
+  let skipping = false
+  for (const line of lines) {
+    const section = line.match(/^\s*\[([^\]]+)\]\s*$/)
+    if (section) skipping = sectionNames.has(section[1].trim())
+    if (!skipping) output.push(line)
+  }
+  return output.join('\n')
+}
+
+async function syncCustomEndpointConfig(
+  settings: AppSettingsV1,
+  previous?: AppSettingsV1
+): Promise<void> {
+  const configPath = resolveDeepseekConfigPath()
+  let content = ''
+  try {
+    content = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const currentSectionNames = new Set(
+    settings.customEndpoints.filter((endpoint) => endpoint.enabled).map(
+      (endpoint) => `providers.${endpoint.id}`
+    )
+  )
+  const removedSectionNames = new Set(
+    [
+      ...(previous?.customEndpoints ?? []),
+      ...settings.customEndpoints.filter((endpoint) => !endpoint.enabled)
+    ]
+      .map((endpoint) => `providers.${endpoint.id}`)
+      .filter((section) => !currentSectionNames.has(section))
+  )
+  content = removeTomlSections(content, removedSectionNames)
+  const sections: Record<string, Record<string, string | boolean | undefined>> = {}
+  for (const endpoint of settings.customEndpoints) {
+    if (!endpoint.enabled) continue
+    const defaultModel = endpoint.models.find((model) => model.enabled)?.id
+    sections[`providers.${endpoint.id}`] = {
+      protocol: endpoint.protocol,
+      base_url: endpoint.baseUrl,
+      api_key: endpoint.apiKey,
+      model: defaultModel
+    }
+  }
+  const next = upsertTomlSections(content, sections)
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, next, 'utf8')
 }
 
 async function syncMemoryConfig(settings: AppSettingsV1): Promise<void> {
@@ -225,5 +283,8 @@ export async function syncDeepseekTuiConfig(
   }
   if (!previous || memoryConfigFieldsChanged(previous, settings)) {
     await syncMemoryConfig(settings)
+  }
+  if (!previous || JSON.stringify(previous.customEndpoints) !== JSON.stringify(settings.customEndpoints)) {
+    await syncCustomEndpointConfig(settings, previous)
   }
 }

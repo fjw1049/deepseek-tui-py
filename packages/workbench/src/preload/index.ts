@@ -46,6 +46,8 @@ const api = {
   openFeishuConfigDir: () => ipcRenderer.invoke('feishu:config:open-dir'),
   getDeepseekPaths: () => ipcRenderer.invoke('deepseek:paths:get'),
   openHooksDir: () => ipcRenderer.invoke('deepseek:hooks:open-dir'),
+  testEndpoint: (protocol, baseUrl, apiKey, model) =>
+    ipcRenderer.invoke('endpoint:test', { protocol, baseUrl, apiKey, model }),
   diagnoseDeepseekRuntime: () =>
     ipcRenderer.invoke('deepseek:diagnostics'),
   getWorkspaceSuggestions: (workspaceRoot) =>

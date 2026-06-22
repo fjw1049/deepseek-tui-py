@@ -384,5 +384,27 @@
   "logRetentionSeven": "7 days",
   "loading": "Loading…",
   "loadFailed": "Could not load settings: {{message}}",
-  "preloadBridgeError": "The app bridge is not available. Restart the application or check the preload path."
+  "preloadBridgeError": "The app bridge is not available. Restart the application or check the preload path.",
+
+  "customEndpoints": "Custom Model Endpoints",
+  "customEndpointsDesc": "Configure protocol, URL, and API key first, then add and test multiple models on the same endpoint. DeepSeek and every enabled endpoint remain available in the model picker.",
+  "activeLabel": "Active",
+  "activateBtn": "Activate",
+  "testBtn": "Test",
+  "addEndpointTitle": "Add Custom Endpoint",
+  "addEndpointBtn": "Add Custom Endpoint",
+  "endpointNamePlaceholder": "Endpoint name (e.g. qingyun)",
+  "endpointUrlPlaceholder": "Base URL (e.g. https://api.example.com/v1)",
+  "endpointKeyPlaceholder": "API Key (e.g. sk-...)",
+  "endpointModelPlaceholder": "Model name (e.g. claude-sonnet-4-6)",
+  "cancelBtn": "Cancel",
+  "addBtn": "Add",
+  "endpointEnabled": "Enabled",
+  "endpointDisabled": "Disabled",
+  "enableEndpointBtn": "Enable",
+  "disableEndpointBtn": "Disable",
+  "modelTestPassed": "Tool compatible",
+  "modelTestFailed": "Test failed",
+  "modelUntested": "Untested",
+  "testAndAddModelBtn": "Test and add"
 }
