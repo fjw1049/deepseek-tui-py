@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import {
-  Check,
   ChevronRight,
   ExternalLink,
   FileEdit,
@@ -15,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatComposerModelLabel } from '../../lib/composer-model-label'
+import { useChatStore } from '../../store/chat-store'
 
 import type { ChatBlock, NormalizedThread } from '../../agent/types'
 import type { ComposerActionCommandId } from '../../lib/composer-slash-commands'
@@ -129,6 +129,7 @@ function ModelPanel({
 }: Props): ReactElement {
   const query = commandArgs.trim().toLowerCase()
   const options = modelOptions.filter((item) => !query || item.toLowerCase().includes(query))
+  const composerModelMeta = useChatStore((s) => s.composerModelMeta)
   return (
     <div className="space-y-2">
       {options.map((item) => (
@@ -139,12 +140,11 @@ function ModelPanel({
             onModelChange(item)
             onClose()
           }}
-          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] transition ${
+          className={`flex w-full min-w-0 items-center justify-center rounded-xl px-3 py-2.5 text-center text-[13px] font-medium transition ${
             item === model ? 'bg-accent/10 text-ds-ink' : 'text-ds-muted hover:bg-ds-hover'
           }`}
         >
-          <span>{formatComposerModelLabel(item)}</span>
-          {item === model ? <Check className="h-4 w-4 text-accent" /> : null}
+          <span className="truncate whitespace-nowrap">{formatComposerModelLabel(item, composerModelMeta)}</span>
         </button>
       ))}
       {options.length === 0 ? <div className="text-[12px] text-ds-faint">No matching models.</div> : null}

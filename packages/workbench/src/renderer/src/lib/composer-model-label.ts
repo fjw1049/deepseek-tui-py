@@ -1,15 +1,39 @@
 import { DEFAULT_COMPOSER_MODEL_IDS } from '@shared/default-composer-models'
 import { decodeModelRef } from '@shared/model-ref'
 
-/** Short label for the composer model chip (e.g. deepseek-v4-pro → v4-pro). */
-export function formatComposerModelLabel(modelId: string): string {
+/** Provider display name + optional model label for custom-endpoint models. */
+export type ComposerModelMeta = {
+  endpointName: string
+  label?: string
+}
+
+/**
+ * Short label for the composer model chip.
+ *
+ * Built-in DeepSeek models show as ``deepseek/v4-pro`` (the ``deepseek-``
+ * prefix on the wire id is stripped so we don't render ``deepseek/deepseek-v4-pro``).
+ * Custom-endpoint models show as ``<endpointName>/<modelLabel|modelId>``, e.g.
+ * ``青云/claude-opus-4-6`` or ``青云/我的Opus`` when a label is set.
+ *
+ * ``metaMap`` is optional so callers without endpoint metadata (e.g. the ``/model``
+ * command panel before store hydration) still get a readable label — they fall
+ * back to the raw provider id.
+ */
+export function formatComposerModelLabel(
+  modelId: string,
+  metaMap?: Record<string, ComposerModelMeta>
+): string {
   const ref = decodeModelRef(modelId)
   const id = ref.modelId
   if (!id) return ''
-  if (id === 'deepseek-v4-pro') return 'v4-pro'
-  if (id === 'deepseek-v4-flash') return 'v4-flash'
-  if (id.startsWith('deepseek-')) return id.slice('deepseek-'.length)
-  return ref.providerId === 'deepseek' ? id : `${id} · ${ref.providerId}`
+  if (ref.providerId === 'deepseek') {
+    const stripped = id.startsWith('deepseek-') ? id.slice('deepseek-'.length) : id
+    return `deepseek/${stripped}`
+  }
+  const meta = metaMap?.[modelId]
+  const displayId = meta?.label?.trim() || id
+  const providerName = meta?.endpointName?.trim() || ref.providerId
+  return `${providerName}/${displayId}`
 }
 
 export function filterComposerModelOptions(

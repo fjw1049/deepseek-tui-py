@@ -5,6 +5,7 @@ import type {
   RuntimeConnectionStatus,
   UserInputAnswer
 } from '../agent/types'
+import type { ComposerModelMeta } from '../lib/composer-model-label'
 import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
 export type QueuedUserMessage = {
@@ -73,6 +74,7 @@ export type ChatState = {
   inspectorSelectedId: string | null
   composerModel: string
   composerPickList: string[]
+  composerModelMeta: Record<string, ComposerModelMeta>
   queuedMessages: QueuedUserMessage[]
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>

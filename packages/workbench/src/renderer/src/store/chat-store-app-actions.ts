@@ -2,6 +2,7 @@ import type i18next from 'i18next'
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { encodeModelRef } from '@shared/model-ref'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
+import type { ComposerModelMeta } from '../lib/composer-model-label'
 import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
 type CreateAppActionsOptions = {
@@ -65,7 +66,10 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const task = (async () => {
         const res = await window.dsGui.fetchUpstreamModels()
         const upstreamIds = res.ok ? [...res.modelIds] : []
-        // Inject custom endpoint models so they appear in the composer picker
+        // Inject custom endpoint models so they appear in the composer picker.
+        // Also collect {ref → endpoint name + model label} so the picker chip can
+        // render ``青云/claude-opus-4-6`` instead of the raw routing id.
+        const metaMap: Record<string, ComposerModelMeta> = {}
         try {
           const settings = await window.dsGui.getSettings()
           for (const ep of settings.customEndpoints ?? []) {
@@ -74,6 +78,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
               if (!model.enabled) continue
               const ref = encodeModelRef(ep.id, model.id)
               if (model.id && !upstreamIds.includes(ref)) upstreamIds.push(ref)
+              metaMap[ref] = { endpointName: ep.name, label: model.label }
             }
           }
         } catch { /* custom models are a bonus, not critical */ }
@@ -86,7 +91,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
           }
           if (model !== '' && !allowed.has(model)) model = ''
           if (model !== state.composerModel) persistComposerModel(model)
-          return { composerPickList: pick, composerModel: model }
+          return { composerPickList: pick, composerModel: model, composerModelMeta: metaMap }
         })
       })().finally(() => {
         setComposerModelLoadPromise(null)

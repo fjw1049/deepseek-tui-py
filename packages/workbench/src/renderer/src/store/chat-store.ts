@@ -1019,6 +1019,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   inspectorSelectedId: null,
   composerModel: 'deepseek-v4-pro',
   composerPickList: mergeComposerPickList(false, []),
+  composerModelMeta: {},
   queuedMessages: [],
   watchTurnCompletion: {},
   unreadThreadIds: {},

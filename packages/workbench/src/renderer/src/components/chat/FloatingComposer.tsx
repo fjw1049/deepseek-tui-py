@@ -154,6 +154,7 @@ export function FloatingComposer({
   const threads = useChatStore((s) => s.threads)
   const blocks = useChatStore((s) => s.blocks)
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
+  const composerModelMeta = useChatStore((s) => s.composerModelMeta)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
   const composingRef = useRef(false)
@@ -200,7 +201,7 @@ export function FloatingComposer({
     [composerModel, composerPickList]
   )
   const activeModelId = composerModel.trim() || modelOptions[0] || 'deepseek-v4-pro'
-  const activeModelLabel = formatComposerModelLabel(activeModelId)
+  const activeModelLabel = formatComposerModelLabel(activeModelId, composerModelMeta)
 
   const modeLabel =
     mode === 'plan'
@@ -842,7 +843,7 @@ export function FloatingComposer({
               </button>
               {plusMenuOpen ? (
                 <div className="ds-glass absolute bottom-full left-0 z-40 mb-2 min-w-[220px] overflow-hidden rounded-2xl p-1.5">
-                  <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
+                  <div className="flex w-full justify-center px-2 py-1 text-center text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerModeSection')}
                   </div>
                   {(
@@ -874,7 +875,7 @@ export function FloatingComposer({
                     </button>
                   ))}
                   <div className="my-1 border-t border-ds-border-muted" />
-                  <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
+                  <div className="flex w-full items-center justify-center px-2 py-1 text-center text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerPlusAttachSection')}
                   </div>
                   <button
@@ -936,8 +937,8 @@ export function FloatingComposer({
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
               </button>
               {modelMenuOpen ? (
-                <div className="ds-glass absolute bottom-full right-0 z-40 mb-2 min-w-[180px] overflow-hidden rounded-2xl p-1.5">
-                  <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-ds-faint">
+                <div className="ds-glass absolute bottom-full right-0 z-40 mb-2 w-max min-w-[220px] max-w-[min(420px,calc(100vw-32px))] overflow-hidden rounded-2xl p-1.5">
+                  <div className="flex w-full items-center justify-center px-2 py-1 text-center text-[11px] font-medium uppercase tracking-wide text-ds-faint">
                     {t('composerModelSection')}
                   </div>
                   {modelOptions.map((id) => (
@@ -950,16 +951,13 @@ export function FloatingComposer({
                         setModelMenuOpen(false)
                         focusComposer()
                       }}
-                      className={`flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
+                      className={`flex w-full min-w-0 items-center justify-center rounded-xl px-2.5 py-2 text-center text-[13px] font-medium transition ${
                         id === activeModelId
-                          ? 'bg-accent/10 font-semibold text-ds-ink'
+                          ? 'bg-accent/10 text-ds-ink'
                           : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                       }`}
                     >
-                      <span>{formatComposerModelLabel(id)}</span>
-                      {id === activeModelId ? (
-                        <span className="text-[11px] text-accent">{t('slashCommandCurrent')}</span>
-                      ) : null}
+                      <span className="truncate whitespace-nowrap">{formatComposerModelLabel(id, composerModelMeta)}</span>
                     </button>
                   ))}
                 </div>
@@ -995,82 +993,72 @@ export function FloatingComposer({
           ) : null}
         </div>
       </div>
-      <div className="mt-2 flex min-h-8 flex-wrap items-center justify-between gap-x-2.5 gap-y-1.5 px-3 sm:px-4">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+      <div className="mt-2 grid min-h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
+        <div className="min-w-0">
           <GitBranchPicker workspaceRoot={effectiveWorkspaceRoot} />
-          {showThreadUsageFooter ? (
-            <div
-              className="ds-composer-usage ds-no-drag inline-flex min-h-7 max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 overflow-visible rounded-lg border border-ds-border-muted bg-ds-card/72 px-2.5 py-0.5 text-[12.5px] font-medium leading-5 text-ds-muted shadow-sm"
-              title={
-                threadUsage
-                  ? t('sessionUsageDetailsTitle', {
-                      tokens: formatCompactNumber(threadUsage.totalTokens),
-                      cost: formatCost(threadUsage.costUsd, i18n.language, threadUsage.costCny),
-                      saved: formatCompactNumber(threadUsage.tokenEconomySavingsTokens),
-                      cache: formatPercent(threadUsage.cacheHitRate),
-                      cached: formatCompactNumber(threadUsage.cachedTokens),
-                      miss: formatCompactNumber(threadUsage.cacheMissTokens),
-                      turns: threadUsage.turns
-                    })
-                  : t('sessionUsageUnavailable')
-              }
-            >
-              <BarChart3 className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.9} />
-              {threadUsage ? (
-                <>
-                  <span className="ds-composer-usage-tokens shrink-0 truncate tabular-nums">
-                    {t('sessionUsageTokens', {
-                      tokens: formatCompactNumber(threadUsage.totalTokens)
-                    })}
-                  </span>
-                  <span className="text-ds-faint">·</span>
-                  <span className="ds-composer-usage-cost shrink-0 truncate tabular-nums">
-                    {t('sessionUsageCost', {
-                      cost: formatCost(threadUsage.costUsd, i18n.language, threadUsage.costCny)
-                    })}
-                  </span>
-                  {threadUsage.tokenEconomySavingsTokens > 0 ? (
-                    <>
-                      <span className="text-ds-faint">·</span>
-                      <span
-                        className="shrink-0 tabular-nums text-emerald-700 dark:text-emerald-300"
-                        title={t('sessionUsageContextSavingsTitle', {
-                          tokens: formatCompactNumber(threadUsage.tokenEconomySavingsTokens)
-                        })}
-                      >
-                        {t('sessionUsageContextSavings', {
-                          tokens: formatCompactNumber(threadUsage.tokenEconomySavingsTokens)
-                        })}
-                      </span>
-                    </>
-                  ) : null}
-                  <span className="text-ds-faint">·</span>
-                  <span className="ds-composer-usage-cache shrink-0 truncate tabular-nums">
-                    {t('sessionUsageCache', {
-                      cache: formatPercent(threadUsage.cacheHitRate)
-                    })}
-                  </span>
-                  <span className="text-ds-faint">·</span>
-                  <span className="ds-composer-usage-turns shrink-0 truncate tabular-nums">
-                    {t('sessionUsageTurns', { turns: threadUsage.turns })}
-                  </span>
-                </>
-              ) : (
-                <span className="shrink-0 text-ds-faint">
-                  {threadUsageState.loading
-                    ? t('sessionUsageLoading')
-                    : t('sessionUsageUnavailable')}
-                </span>
-              )}
-            </div>
-          ) : null}
         </div>
-        <ContextUsageMeter
-          blocks={blocks}
-          model={activeModelId}
-          hasActiveThread={hasActiveThread}
-          threadId={activeThreadId}
-        />
+        {showThreadUsageFooter && threadUsage ? (
+          <div
+            className="ds-composer-usage ds-no-drag inline-flex min-h-7 max-w-full min-w-0 items-center gap-x-2 overflow-hidden whitespace-nowrap rounded-lg border border-ds-border-muted bg-ds-card/72 px-2.5 py-0.5 text-[12.5px] font-medium leading-5 text-ds-muted shadow-sm"
+            title={
+              threadUsage
+                ? t('sessionUsageDetailsTitle', {
+                    tokens: formatCompactNumber(threadUsage.totalTokens),
+                    cost: formatCost(threadUsage.costUsd, i18n.language, threadUsage.costCny),
+                    saved: formatCompactNumber(threadUsage.tokenEconomySavingsTokens),
+                    cache: formatPercent(threadUsage.cacheHitRate),
+                    cached: formatCompactNumber(threadUsage.cachedTokens),
+                    miss: formatCompactNumber(threadUsage.cacheMissTokens),
+                    turns: threadUsage.turns
+                  })
+                : t('sessionUsageUnavailable')
+            }
+          >
+            <BarChart3 className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.9} />
+            <span className="ds-composer-usage-tokens shrink-0 truncate tabular-nums">
+              {t('sessionUsageTokens', {
+                tokens: formatCompactNumber(threadUsage.totalTokens)
+              })}
+            </span>
+            <span className="text-ds-faint">·</span>
+            <span className="ds-composer-usage-cost shrink-0 truncate tabular-nums">
+              {t('sessionUsageCost', {
+                cost: formatCost(threadUsage.costUsd, i18n.language, threadUsage.costCny)
+              })}
+            </span>
+            {threadUsage.tokenEconomySavingsTokens > 0 ? (
+              <>
+                <span className="text-ds-faint">·</span>
+                <span
+                  className="shrink-0 tabular-nums text-emerald-700 dark:text-emerald-300"
+                  title={t('sessionUsageContextSavingsTitle', {
+                    tokens: formatCompactNumber(threadUsage.tokenEconomySavingsTokens)
+                  })}
+                >
+                  {t('sessionUsageContextSavings', {
+                    tokens: formatCompactNumber(threadUsage.tokenEconomySavingsTokens)
+                  })}
+                </span>
+              </>
+            ) : null}
+            <span className="text-ds-faint">·</span>
+            <span className="ds-composer-usage-cache shrink-0 truncate tabular-nums">
+              {t('sessionUsageCache', {
+                cache: formatPercent(threadUsage.cacheHitRate)
+              })}
+              </span>
+          </div>
+        ) : (
+          <span />
+        )}
+        <div className="min-w-0 justify-self-end">
+          <ContextUsageMeter
+            blocks={blocks}
+            model={activeModelId}
+            hasActiveThread={hasActiveThread}
+            threadId={activeThreadId}
+          />
+        </div>
       </div>
       {!runtimeReady ? (
         <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">
