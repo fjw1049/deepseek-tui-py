@@ -1368,15 +1368,30 @@ def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(error="Engine not started")
     import asyncio
 
-    async def _do_compact() -> str:
-        msgs = app._engine.session_messages
-        if not msgs:
-            return "Nothing to compact — session is empty."
-        compacted = await app._engine._emergency_compact(msgs)
-        app._engine.session_messages[:] = compacted
-        return (
-            f"Context compacted: {len(msgs)} → {len(compacted)} messages."
-        )
+    async def _do_compact() -> None:
+        from deepseek_tui.tui.transcript import Transcript
+
+        engine = app._engine
+        before = len(engine.session_messages)
+        if before == 0:
+            transcript = app.query_one(Transcript)
+            transcript.add_notice("Nothing to compact — session is empty.", severity="info")
+            return
+        result = await engine._run_compaction(list(engine.session_messages))
+        engine.session_messages[:] = result.messages
+        transcript = app.query_one(Transcript)
+        if result.success:
+            transcript.add_notice(
+                f"Context compacted: {before} → {len(result.messages)} messages.",
+                severity="info",
+            )
+        else:
+            transcript.add_notice(
+                f"Compaction failed after {result.retries_used} retries — "
+                f"messages unchanged ({before} → {len(result.messages)}). "
+                f"See log for details; try again or run /clear.",
+                severity="error",
+            )
 
     try:
         asyncio.get_running_loop()

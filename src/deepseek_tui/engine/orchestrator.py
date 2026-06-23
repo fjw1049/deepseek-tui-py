@@ -355,6 +355,18 @@ class Engine:
         # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
+        # Last real input_tokens reported by the provider (from the final
+        # stream of the previous turn). Used as the primary signal for
+        # should_compact: it is the exact billed input, zero estimation
+        # error. Zero before the first turn completes — callers fall back
+        # to the char-based estimate. See HANDOVER §compaction tuning.
+        self.last_real_input_tokens: int = 0
+        # Auto-compaction failure cooldown: rounds remaining before we try
+        # auto-compaction again after a failed attempt. Without this, a
+        # failing compaction (e.g. summary model returns empty) would retry
+        # 3x every round for the entire turn — pure waste. Set to N rounds
+        # on failure, decremented each round, blocks auto-compaction while > 0.
+        self._compact_cooldown_rounds: int = 0
         # Stage 3.next.1 approval cache — fingerprints repeat tool calls
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
@@ -1177,6 +1189,12 @@ class Engine:
 
                 clear_checkpoint()
             usage = result.usage
+            # Record the last real input_tokens from the provider so the
+            # next turn's should_compact has a zero-estimation-error signal.
+            # result.usage is the final round's StreamDone usage, which is the
+            # largest input of the turn (messages only grow between rounds).
+            if usage is not None and getattr(usage, "input_tokens", 0):
+                self.last_real_input_tokens = usage.input_tokens
             ledger_totals = self.turn_usage_ledger.totals()
             combined_usage = self.turn_usage_ledger.combined_usage()
             if combined_usage is not None:
@@ -1443,34 +1461,51 @@ class Engine:
             )
             await self._maybe_layered_context_checkpoint(messages, model)
             # Hard cap: force compaction when message count is excessive,
-            # as a memory safety net. The token-based threshold (500K floor)
-            # handles normal compaction; this catches pathological cases where
-            # many small messages accumulate without hitting the token floor.
-            if len(messages) > 500 or should_compact(messages, self.compaction_config):
-                logger.info(
-                    "compact_triggered before_count=%d", len(messages)
+            # as a memory safety net. The token-based threshold handles
+            # normal compaction; this catches pathological cases where many
+            # small messages accumulate without hitting the token floor.
+            # The hard cap ignores the failure cooldown — it's a safety net.
+            hard_cap_hit = len(messages) > 500
+            should_trigger = hard_cap_hit or (
+                self._compact_cooldown_rounds <= 0
+                and should_compact(
+                    messages, self.compaction_config,
+                    real_input_tokens=self.last_real_input_tokens,
                 )
-                from deepseek_tui.engine.usage_ledger import usage_source
-
-                with usage_source("compaction"):
-                    compact_result = await compact_messages_safe(
-                        self.client,
-                        messages,
-                        self.compaction_config,
-                        workspace=self.tool_context.working_directory,
-                        model_override=model,
-                    )
+            )
+            if should_trigger:
+                logger.info(
+                    "compact_triggered before_count=%d hard_cap=%s cooldown=%d",
+                    len(messages), hard_cap_hit, self._compact_cooldown_rounds,
+                )
+                compact_result = await self._run_compaction(messages)
                 messages[:] = compact_result.messages
                 logger.info(
-                    "compact_done after_count=%d summary_attached=%s",
+                    "compact_done after_count=%d summary_attached=%s success=%s",
                     len(messages),
                     bool(compact_result.summary_prompt),
+                    compact_result.success,
                 )
-                if compact_result.summary_prompt:
-                    system_prompt = f"{system_prompt}\n\n{compact_result.summary_prompt}"
-                    # Also persist for future turns — the local system_prompt
-                    # var above only lives until this turn ends.
-                    self._record_compaction_summary(compact_result.summary_prompt)
+                if compact_result.success:
+                    self._compact_cooldown_rounds = 0
+                    if compact_result.summary_prompt:
+                        system_prompt = f"{system_prompt}\n\n{compact_result.summary_prompt}"
+                        # _run_compaction already persisted the summary via
+                        # _record_compaction_summary; the local system_prompt
+                        # var only lives until this turn ends.
+                else:
+                    # Compaction failed (e.g. summary model returned empty).
+                    # Don't retry every round — it'll just fail the same way
+                    # and waste 3 LLM calls per round for the whole turn.
+                    # Back off for several rounds; the hard cap can still
+                    # force a retry if messages pile up dangerously.
+                    self._compact_cooldown_rounds = 5
+                    logger.warning(
+                        "compact_failed_backoff cooldown_rounds=5 — "
+                        "auto-compaction will be skipped for 5 rounds"
+                    )
+            elif self._compact_cooldown_rounds > 0:
+                self._compact_cooldown_rounds -= 1
 
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.

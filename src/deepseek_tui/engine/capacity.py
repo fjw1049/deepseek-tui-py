@@ -531,11 +531,12 @@ LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 # Rust v0.8.11: hard floor for automatic compaction. Below this,
-# should_compact() returns false regardless of config. Lowered from
-# 500K to 128K — with V4's 1M window, 500K was too conservative and
-# prevented compaction from ever triggering in normal sessions.
-# Manual /compact bypasses this floor.
-MINIMUM_AUTO_COMPACTION_TOKENS = 128_000
+# should_compact() returns false regardless of config. Tuned for V4's
+# 1M window with real-input-token semantics (last_real_input_tokens):
+# 200K = 20% of window. Below this the prefix cache is still healthy
+# (hit rate >85% in production logs) and compaction's cache-destroying
+# cost outweighs its benefit. Manual /compact bypasses this floor.
+MINIMUM_AUTO_COMPACTION_TOKENS = 200_000
 
 
 @dataclass
@@ -743,6 +744,8 @@ def should_compact(
     messages: list[Message],
     config: CompactionConfig,
     pinned_indices: set[int] | None = None,
+    *,
+    real_input_tokens: int = 0,
 ) -> bool:
     """Determine if messages should be compacted.
 
@@ -750,6 +753,11 @@ def should_compact(
         messages: Current message history
         config: Compaction configuration
         pinned_indices: Explicitly pinned message indices
+        real_input_tokens: Last real ``input_tokens`` reported by the
+            provider (from the previous turn's final stream). When > 0,
+            used as the primary pressure signal — it is the exact billed
+            input, zero estimation error. When 0 (first turn, or provider
+            didn't report), falls back to the char-based estimate.
 
     Returns:
         True if compaction should trigger
@@ -757,6 +765,19 @@ def should_compact(
     if not config.enabled or not messages:
         return False
 
+    # Prefer the provider's real input_tokens when available. The
+    # char-based estimate undercounts by ~6x in practice (it omits system
+    # prompt, tool schemas, framing, reasoning), which made the old
+    # auto-floor effectively unreachable. The real number has no such bias.
+    if real_input_tokens > 0:
+        if real_input_tokens < config.auto_floor_tokens:
+            return False
+        # Real input already accounts for system prompt, tools, framing —
+        # no need to add pinned_tokens adjustment (that was compensating
+        # for the estimate's blind spots). Compare directly.
+        return real_input_tokens >= config.token_threshold
+
+    # Fallback: char-based estimate (first turn, or provider reported no usage).
     # Rust v0.8.11: hard floor — don't auto-compact below this token count.
     # V4 prefix-cache economics: compaction rewrites the stable prefix,
     # destroying KV cache. At low token counts the cache is healthy and
