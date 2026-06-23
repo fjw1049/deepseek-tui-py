@@ -2588,7 +2588,7 @@ class Engine:
             messages, self.tool_context.working_directory
         )
         try:
-            existing = await seam.collect_seam_texts(messages)
+            existing = seam.collect_seam_texts(messages)
             from deepseek_tui.engine.usage_ledger import usage_source
 
             with usage_source("seam"):
