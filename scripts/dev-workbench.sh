@@ -10,7 +10,25 @@ export DEEPSEEK_SKIP_KEYRING=1
 # Repo-local .deepseek/config.toml is merged as a project override by ConfigLoader.
 
 # Prefer repo venv so Electron does not fall back to system python3 (often 3.9 without deps).
-if [[ -z "${DEEPSEEK_PYTHON:-}" && -x "$ROOT/.venv/bin/python" ]]; then
+# Venvs copied from another machine often break (symlinks to another user's Python).
+ensure_python_venv() {
+  local py="$ROOT/.venv/bin/python"
+  if [[ -x "$py" ]] && "$py" -c "import typing_extensions, pydantic" 2>/dev/null; then
+    return 0
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "[workbench] ERROR: Python venv missing/broken and 'uv' is not installed." >&2
+    echo "[workbench] Install uv (https://docs.astral.sh/uv/) then run:" >&2
+    echo "  cd \"$ROOT\" && uv venv .venv --python 3.12 --clear && uv sync --extra dev" >&2
+    exit 1
+  fi
+  echo "[workbench] Python venv missing or broken — recreating with uv..."
+  uv venv "$ROOT/.venv" --python 3.12 --clear
+  (cd "$ROOT" && uv sync --extra dev)
+}
+
+if [[ -z "${DEEPSEEK_PYTHON:-}" ]]; then
+  ensure_python_venv
   export DEEPSEEK_PYTHON="$ROOT/.venv/bin/python"
 fi
 
