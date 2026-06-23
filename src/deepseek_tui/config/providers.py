@@ -397,6 +397,12 @@ def _context_window_for_model_optional(model: str) -> int | None:
 
 # ---------------------------------------------------------------------------
 # Compaction thresholds (mirror models.rs:266-294)
+#
+# NOTE: compaction_threshold_for_model / compaction_message_threshold_for_model
+# are dead code — kept for Rust parity but never called. The Python engine
+# uses CompactionConfig.token_threshold / auto_floor_tokens directly, now
+# driven by real provider input_tokens (see engine.capacity.should_compact).
+# Safe to wire up if/when per-model adaptive thresholds are wanted.
 # ---------------------------------------------------------------------------
 
 

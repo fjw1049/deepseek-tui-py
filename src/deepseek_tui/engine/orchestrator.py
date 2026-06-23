@@ -1161,6 +1161,20 @@ class Engine:
                     duration_ms,
                     self.handle.cancel_reason or "user_cancelled",
                 )
+                # Even on cancel, if the provider returned a StreamDone
+                # before the cancel landed, result.usage.input_tokens is a
+                # valid pressure reading — more accurate than the char-based
+                # estimate. Record it so the next turn's should_compact /
+                # seam / cycle decisions aren't forced back to the ~6x-
+                # undercounting estimate. If no usage arrived (cancel too
+                # early), keep the previous value rather than zeroing — a
+                # stale-but-real reading beats falling back to the estimate.
+                cancelled_usage = result.usage
+                if (
+                    cancelled_usage is not None
+                    and getattr(cancelled_usage, "input_tokens", 0)
+                ):
+                    self.last_real_input_tokens = cancelled_usage.input_tokens
                 await self.handle.emit(
                     TurnCancelledEvent(
                         reason=self.handle.cancel_reason or "user_cancelled"
@@ -2549,12 +2563,19 @@ class Engine:
         seam = self.seam_manager
         if seam is None or not seam.config.enabled:
             return
-        from deepseek_tui.engine.context import estimated_input_tokens
 
-        try:
-            tokens = estimated_input_tokens(messages)
-        except Exception:  # noqa: BLE001
-            return
+        # Prefer the provider's real input_tokens (zero estimation error);
+        # fall back to the char-based estimate on the first turn only.
+        # Same fix as should_compact — the estimate undercounts ~6x and
+        # made seam's L1 (192K) unreachable in practice.
+        tokens = self.last_real_input_tokens
+        if tokens <= 0:
+            from deepseek_tui.engine.context import estimated_input_tokens
+
+            try:
+                tokens = estimated_input_tokens(messages)
+            except Exception:  # noqa: BLE001
+                return
         highest = await seam.highest_level()
         level = seam.seam_level_for(tokens, highest)
         if level is None:
@@ -2685,12 +2706,19 @@ class Engine:
         """
         if not messages:
             return
-        from deepseek_tui.engine.context import estimated_input_tokens
 
-        try:
-            active_tokens = estimated_input_tokens(messages)
-        except Exception:  # noqa: BLE001 — token estimation is best-effort
-            return
+        # Prefer the provider's real input_tokens (zero estimation error);
+        # fall back to the char-based estimate on the first turn only.
+        # Same fix as should_compact — the estimate undercounts ~6x and
+        # made cycle's 768K threshold unreachable in practice.
+        active_tokens = self.last_real_input_tokens
+        if active_tokens <= 0:
+            from deepseek_tui.engine.context import estimated_input_tokens
+
+            try:
+                active_tokens = estimated_input_tokens(messages)
+            except Exception:  # noqa: BLE001 — token estimation is best-effort
+                return
         if not should_advance_cycle(
             active_tokens,
             reserved_headroom_tokens=8_000,

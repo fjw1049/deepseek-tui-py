@@ -387,7 +387,12 @@ def build_observation(
         for b in msg.content
     )
     estimated_tokens = max(1, total_chars // 4)
-    context_limit = 128_000
+    # Use the model's actual context window, not a hardcoded 128K. The old
+    # constant made context_used_ratio ~8x too low on V4 (1M window), so
+    # the controller never saw "high pressure" even near the real limit.
+    from deepseek_tui.config.providers import context_window_for_model
+
+    context_limit = context_window_for_model(model)
     context_used_ratio = min(1.0, estimated_tokens / context_limit)
 
     return CapacityObservationInput(
