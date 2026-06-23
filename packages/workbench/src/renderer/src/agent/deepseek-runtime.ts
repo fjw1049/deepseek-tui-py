@@ -943,7 +943,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         if (
           !agentSegment &&
           runtimeStatusLooksRunning(latestTurnStatus) &&
-          statusFromString(it.status) !== 'failed'
+          statusFromString(it.status) !== 'error'
         ) {
           agentSegment = 'mid_turn_preface'
         }

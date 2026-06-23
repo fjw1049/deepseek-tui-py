@@ -6,6 +6,9 @@ import {
   findFallbackFinalAnswer,
   isSubagentOrchestrationToolName,
   placeAssistantContentBlock,
+  processPhaseHeadingParts,
+  processPhaseReasoningDetailText,
+  reasoningDetailTextFromBlocks,
   reasoningNarrationFromBlocks,
   shouldDefaultExpandProcessSection,
   splitThink
@@ -239,7 +242,7 @@ describe('reasoningNarrationFromBlocks', () => {
   it('returns narration attached to reasoning blocks', () => {
     const blocks: ChatBlock[] = [
       { kind: 'reasoning', id: 'item_r1', text: 'internal', narration: '已理清结构，接下来读取入口' },
-      { kind: 'tool', id: 'item_t1', summary: 'read_file', status: 'success', toolKind: 'generic' }
+      { kind: 'tool', id: 'item_t1', summary: 'read_file', status: 'success', toolKind: 'tool_call' }
     ]
     expect(reasoningNarrationFromBlocks(blocks)).toBe('已理清结构，接下来读取入口')
   })
@@ -247,5 +250,95 @@ describe('reasoningNarrationFromBlocks', () => {
   it('ignores reasoning blocks without narration', () => {
     const blocks: ChatBlock[] = [{ kind: 'reasoning', id: 'item_r1', text: 'internal' }]
     expect(reasoningNarrationFromBlocks(blocks)).toBe('')
+  })
+})
+
+describe('reasoningDetailTextFromBlocks', () => {
+  it('hides raw reasoning when localized narration is available', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'reasoning',
+        id: 'item_r1',
+        text: "Good, I've gathered a lot of information. Let me inspect more files.",
+        narration: '已确认基础信息，继续分析核心模块'
+      }
+    ]
+
+    expect(reasoningDetailTextFromBlocks(blocks)).toBe('')
+  })
+
+  it('keeps raw reasoning as a fallback when narration is missing', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'reasoning', id: 'item_r1', text: '正在分析项目结构。' },
+      { kind: 'reasoning', id: 'item_r2', text: '继续查看核心模块。' }
+    ]
+
+    expect(reasoningDetailTextFromBlocks(blocks)).toBe('正在分析项目结构。\n\n继续查看核心模块。')
+  })
+})
+
+describe('processPhaseHeadingParts', () => {
+  it('uses localized narration as the primary phase heading', () => {
+    expect(
+      processPhaseHeadingParts({
+        label: '网络搜索',
+        toolCount: 3,
+        narration: '先获取仓库基础信息和 README',
+        hasLiveReasoning: false
+      })
+    ).toEqual({
+      primary: '先获取仓库基础信息和 README',
+      meta: '网络搜索 · 3 个工具'
+    })
+  })
+
+  it('uses a deterministic topic sentence when narration is missing', () => {
+    expect(
+      processPhaseHeadingParts({
+        label: '网络搜索',
+        toolCount: 2,
+        narration: '',
+        hasLiveReasoning: false
+      })
+    ).toEqual({
+      primary: '正在通过网络搜索补充信息',
+      meta: '网络搜索 · 2 个工具'
+    })
+  })
+
+  it('falls back to a generic topic for unknown tool categories', () => {
+    expect(
+      processPhaseHeadingParts({
+        label: '工具调用',
+        toolCount: 1,
+        narration: '',
+        hasLiveReasoning: false
+      })
+    ).toEqual({
+      primary: '正在调用工具推进任务',
+      meta: '工具调用 · 1 个工具'
+    })
+  })
+})
+
+describe('processPhaseReasoningDetailText', () => {
+  it('hides raw reasoning for tool-backed phases', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'reasoning',
+        id: 'item_r1',
+        text: 'Now I have enough context. Let me fetch more files.'
+      }
+    ]
+
+    expect(processPhaseReasoningDetailText(blocks, 2)).toBe('')
+  })
+
+  it('keeps raw reasoning for pure reasoning fallback', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'reasoning', id: 'item_r1', text: '正在整理最终回复。' }
+    ]
+
+    expect(processPhaseReasoningDetailText(blocks, 0)).toBe('正在整理最终回复。')
   })
 })

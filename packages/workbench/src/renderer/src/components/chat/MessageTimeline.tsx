@@ -708,7 +708,12 @@ function groupProcessPhases(sections: ProcessSection[]): ProcessPhase[] {
 
 function getReasoningSectionText(section: ProcessSection): string {
   if (section.kind !== 'reasoning') return ''
-  return section.blocks
+  return reasoningDetailTextFromBlocks(section.blocks)
+}
+
+export function reasoningDetailTextFromBlocks(blocks: ChatBlock[]): string {
+  if (reasoningNarrationFromBlocks(blocks)) return ''
+  return blocks
     .filter(
       (block): block is Extract<ChatBlock, { kind: 'reasoning' }> => block.kind === 'reasoning'
     )
@@ -724,6 +729,54 @@ export function reasoningNarrationFromBlocks(blocks: ChatBlock[]): string {
     }
   }
   return ''
+}
+
+export function processPhaseHeadingParts({
+  label,
+  toolCount,
+  narration,
+  hasLiveReasoning
+}: {
+  label: string
+  toolCount: number
+  narration: string
+  hasLiveReasoning: boolean
+}): { primary: string; meta: string } {
+  const displayLabel = (toolCount === 0 && hasLiveReasoning) ? '思考中…' : label
+  const toolSuffix = toolCount > 0 ? ` · ${toolCount} 个工具` : ''
+  const toolLabel = `${displayLabel}${toolSuffix}`
+  const primary = narration.trim()
+  if (primary) return { primary, meta: toolLabel }
+  if (toolCount === 0 && hasLiveReasoning) return { primary: displayLabel, meta: '' }
+  return { primary: processPhaseFallbackHeading(label), meta: toolLabel }
+}
+
+function processPhaseFallbackHeading(label: string): string {
+  switch (label) {
+    case '网络搜索':
+      return '正在通过网络搜索补充信息'
+    case '执行命令':
+      return '正在执行命令收集结果'
+    case '浏览结构':
+      return '正在浏览项目结构'
+    case '代码探索':
+      return '正在梳理代码结构'
+    case '搜索代码':
+      return '正在定位相关实现'
+    case '阅读代码':
+      return '正在阅读关键文件'
+    case '实施修改':
+      return '正在实施代码修改'
+    case '整理回复':
+      return '正在整理回复'
+    default:
+      return '正在调用工具推进任务'
+  }
+}
+
+export function processPhaseReasoningDetailText(blocks: ChatBlock[], toolCount: number): string {
+  if (toolCount > 0) return ''
+  return reasoningDetailTextFromBlocks(blocks)
 }
 
 export function findFallbackFinalAnswer(
@@ -922,7 +975,7 @@ function MessageTurn({
       assistantContentBlocks: nextAssistantContentBlocks,
       turnFileChanges: nextTurnFileChanges
     }
-  }, [turn.blocks, isProcessing, liveProcessText, liveContent, workspaceRoot])
+  }, [turn.blocks, isProcessing, liveProcessText, workspaceRoot])
 
   const processSections = useMemo(
     () => (workExpanded || isProcessing ? groupProcessSections(processBlocks) : []),
@@ -1693,9 +1746,12 @@ function ProcessPhaseRow({
     [phase.reasoningBlocks]
   )
 
-  // Override label for live-reasoning-only phases (final thinking before answer)
-  const displayLabel = (toolCount === 0 && phase.hasLiveReasoning) ? '思考中…' : phase.label
-  const toolSuffix = toolCount > 0 ? ` · ${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
+  const heading = processPhaseHeadingParts({
+    label: phase.label,
+    toolCount,
+    narration,
+    hasLiveReasoning: phase.hasLiveReasoning
+  })
 
   // Skip phases with no tools (pure reasoning without action — the final
   // thinking round before the answer). Also skip truly empty phases.
@@ -1717,9 +1773,7 @@ function ProcessPhaseRow({
             <Bot className="h-3.5 w-3.5 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
           </span>
         ) : null}
-        <span className={isActive ? 'ds-shiny-text' : ''}>
-          {displayLabel}{toolSuffix}
-        </span>
+        <span className={isActive ? 'ds-shiny-text' : ''}>{heading.primary}</span>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
         ) : (
@@ -1727,21 +1781,14 @@ function ProcessPhaseRow({
         )}
       </button>
 
-      {narration ? (
-        <p className="mt-0.5 pl-1 text-[13px] leading-5 text-ds-muted/85 italic">{narration}</p>
+      {heading.meta ? (
+        <p className="mt-0.5 pl-1 text-[12.5px] leading-5 text-ds-faint">{heading.meta}</p>
       ) : null}
 
       {expanded ? (
         <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
           {(() => {
-            const reasoningText = phase.reasoningBlocks
-              .filter(
-                (block): block is Extract<ChatBlock, { kind: 'reasoning' }> =>
-                  block.kind === 'reasoning'
-              )
-              .map((block) => block.text.trim())
-              .filter(Boolean)
-              .join('\n\n')
+            const reasoningText = processPhaseReasoningDetailText(phase.reasoningBlocks, toolCount)
             if (!reasoningText) return null
             return (
               <div className="ds-markdown mb-1 text-[13.5px] leading-6 text-ds-muted">
@@ -2238,8 +2285,31 @@ function stripInlineJsonPayload(text: string): string {
   return text.trim()
 }
 
+const TOOL_NAME_LABELS: Record<string, string> = {
+  apply_patch: '应用补丁',
+  edit_file: '编辑文件',
+  exec_shell: '执行命令',
+  exec_shell_interact: '交互命令',
+  exec_shell_wait: '等待命令',
+  fetch_url: '获取网页',
+  file_search: '搜索文件',
+  github_issue_context: '读取 GitHub 上下文',
+  glob_file_search: '搜索文件',
+  grep: '搜索代码',
+  grep_files: '搜索文件',
+  list_dir: '浏览目录',
+  read_file: '读取文件',
+  run_terminal_cmd: '执行命令',
+  search_files: '搜索文件',
+  web_search: '网络搜索',
+  write_file: '写入文件'
+}
+
 function humanizeToolName(name: string): string {
-  const trimmed = name.trim().replace(/[_-]+/g, ' ')
+  const canonical = name.trim().toLowerCase()
+  const mapped = TOOL_NAME_LABELS[canonical]
+  if (mapped) return mapped
+  const trimmed = canonical.replace(/[_-]+/g, ' ')
   if (!trimmed) return ''
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
 }
