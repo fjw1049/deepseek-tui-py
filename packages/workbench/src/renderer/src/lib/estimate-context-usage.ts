@@ -52,6 +52,18 @@ function contextWindowForModel(model: string): number {
     const kilo = Number(match[1])
     if (kilo >= 8 && kilo <= 1024) return kilo * 1000
   }
+  // DeepSeek V4 family + legacy aliases all resolve to the 1M window.
+  // The old blanket `includes('deepseek') → 128K` made the fallback show
+  // ~8x too much headroom on V4 when the backend context API was down.
+  if (
+    lower.includes('v4') ||
+    lower.includes('deepseek-chat') ||
+    lower.includes('deepseek-reasoner') ||
+    lower.includes('deepseek-r1') ||
+    lower.includes('deepseek-v3')
+  ) {
+    return 1_000_000
+  }
   if (lower.includes('deepseek')) return DEFAULT_CONTEXT_WINDOW
   return DEFAULT_CONTEXT_WINDOW
 }

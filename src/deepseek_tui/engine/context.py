@@ -363,11 +363,19 @@ def is_context_length_error_message(message: str) -> bool:
 # --- Legacy aliases (keep backward compatibility with turn_loop) ----------
 
 def estimated_input_tokens(messages: list[Message]) -> int:
-    """Rough estimate of input tokens from message list (legacy)."""
+    """Rough estimate of input tokens from message list (legacy).
+
+    Uses ``// 3`` to match the conservative coefficient used by the other
+    breakdown buckets (``_estimate_text_tokens_conservative``). The old
+    ``// 4`` mixed two coefficients in the same total — system/tools used
+    ``/3`` while conversation used ``/4``, biasing the breakdown. This is
+    only the fallback path when ``real_input_tokens`` is unavailable; the
+    primary path back-derives conversation from the provider's real total.
+    """
     total_chars = 0
     for m in messages:
         total_chars += len(json.dumps(m.model_dump()))
-    return max(1, total_chars // 4)
+    return max(1, total_chars // 3)
 
 
 def _api_tool_name(tool: dict[str, Any]) -> str:
@@ -405,6 +413,7 @@ def estimate_context_breakdown(
     api_tools: list[dict[str, Any]] | None = None,
     workspace: Any | None = None,
     mode: str = "agent",
+    real_input_tokens: int = 0,
 ) -> dict[str, int]:
     """Estimate token occupancy by category for the next request.
 
@@ -414,6 +423,14 @@ def estimate_context_breakdown(
     ``tools`` and ``free`` are retained for old Workbench/TUI clients. Newer
     clients should prefer the more explainable top-level buckets:
     ``tool_definitions``, ``mcp``, ``skills``, ``rules``, and ``conversation``.
+
+    ``real_input_tokens``: when > 0, the provider's last reported input
+    (from the previous turn's StreamDone). Used to calibrate the total: the
+    static buckets (system/tools/rules/skills) keep their estimate (small,
+    relatively stable), and conversation is back-derived as
+    ``real_total - static``. This makes the total and conversation accurate
+    while keeping per-bucket proportions meaningful. When 0 (first turn),
+    falls back to pure estimation for all buckets.
     """
     from pathlib import Path
 
@@ -461,13 +478,19 @@ def estimate_context_breakdown(
     tools_tokens = tool_definitions_tokens + mcp_tokens
 
     conv_tokens = estimated_input_tokens(messages) if messages else 0
-    total = (
-        system_tokens
-        + rules_tokens
-        + skills_tokens
-        + tools_tokens
-        + conv_tokens
+
+    # Calibrate against the provider's real input when available. The char-
+    # based estimate undercounts ~3x (omits framing, reasoning, API overhead),
+    # so the GUI would show "13% Full" when reality is ~44%. Real total is
+    # authoritative; conversation is back-derived as real - static.
+    static_total = (
+        system_tokens + rules_tokens + skills_tokens + tools_tokens
     )
+    if real_input_tokens > 0:
+        total = real_input_tokens
+        conv_tokens = max(0, real_input_tokens - static_total)
+    else:
+        total = static_total + conv_tokens
     window = context_window_for_model(target_model) or 0
     free = max(0, window - total) if window else 0
 

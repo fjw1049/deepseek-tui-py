@@ -782,6 +782,7 @@ class Engine:
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
+            real_input_tokens=self.last_real_input_tokens,
         )
 
     async def context_breakdown_live(self, model: str | None = None) -> dict[str, int]:
@@ -810,6 +811,7 @@ class Engine:
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
+            real_input_tokens=self.last_real_input_tokens,
         )
 
     def _initial_request_tools_for_context(
