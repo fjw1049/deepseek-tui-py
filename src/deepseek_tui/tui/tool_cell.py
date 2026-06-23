@@ -324,6 +324,14 @@ class BlockToolCell(Static):
         bullet = _status_bullet(self._status)
         elapsed = _elapsed_str(self._started_at, self._finished_at)
 
+        # Delegate tools: show agent_id from result and use "delegate" verb
+        if _is_compact_delegate_tool(self.tool_name) and self._result:
+            agent_id = _extract_agent_id(self._result)
+            if agent_id:
+                short_id = agent_id[:13]
+                summary = escape(f"{short_id} [{summary}]")
+                verb = "delegate"
+
         # Fold caret
         has_body = bool(self._result)
         if has_body:
