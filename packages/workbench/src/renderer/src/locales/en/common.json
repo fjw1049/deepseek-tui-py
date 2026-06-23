@@ -526,6 +526,7 @@
   "trendingRetry": "Retry",
   "trendingNew": "NEW",
   "trendingNoDescription": "No description available",
+  "trendingRepoFallbackTopic": "GitHub repo",
   "trendingAnalyzePrompt": "Analyze the GitHub repo {{name}}: project purpose, core architecture, tech stack, highlights, and what I can learn from or adapt. Repo URL: {{url}}",
   "todoSidebarTitle": "Todos",
   "todoSidebarEmpty": "No todos yet. They appear here after the agent uses todo_write or checklist tools.",
