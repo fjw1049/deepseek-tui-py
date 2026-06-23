@@ -1023,11 +1023,21 @@ class RuntimeThreadManager:
             summary_text = "Nothing to compact — session is empty."
             engine.session_messages.clear()
         else:
-            compacted = await engine._emergency_compact(list(engine.session_messages))
-            engine.session_messages[:] = compacted
-            summary_text = (
-                f"Context compacted: {before_count} → {len(compacted)} messages."
-            )
+            result = await engine._run_compaction(list(engine.session_messages))
+            engine.session_messages[:] = result.messages
+            if result.success:
+                summary_text = (
+                    f"Context compacted: {before_count} → {len(result.messages)} messages."
+                )
+            else:
+                # Compaction failed (e.g. summary model returned empty).
+                # Messages are unchanged; surface this so the user knows
+                # /compact did nothing rather than silently appearing OK.
+                summary_text = (
+                    f"Compaction failed after {result.retries_used} retries — "
+                    f"messages unchanged ({before_count} → {len(result.messages)}). "
+                    f"See log for details; try again or run /clear."
+                )
 
         item_id = f"item_{uuid.uuid4().hex[:8]}"
         item = TurnItemRecord(

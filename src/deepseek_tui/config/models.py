@@ -463,8 +463,8 @@ class Config(BaseModel):
     # default so existing tests stay deterministic; long-running real
     # sessions can flip these via TOML once they're ready for cycle
     # archive-and-replay.
-    cycle_enabled: bool = False
-    seam_enabled: bool = False
+    cycle_enabled: bool = True
+    seam_enabled: bool = True
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()

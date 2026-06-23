@@ -531,10 +531,11 @@ LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 # Rust v0.8.11: hard floor for automatic compaction. Below this,
-# should_compact() returns false regardless of config. V4 prefix-cache
-# economics — compaction rewrites the stable prefix, destroying KV cache.
+# should_compact() returns false regardless of config. Lowered from
+# 500K to 128K — with V4's 1M window, 500K was too conservative and
+# prevented compaction from ever triggering in normal sessions.
 # Manual /compact bypasses this floor.
-MINIMUM_AUTO_COMPACTION_TOKENS = 500_000
+MINIMUM_AUTO_COMPACTION_TOKENS = 128_000
 
 
 @dataclass
@@ -547,7 +548,7 @@ class CompactionConfig:
     "deepseek-chat" silently routed compaction to v4-flash.
     """
     enabled: bool = True
-    token_threshold: int = 800_000  # 80% of V4 1M window
+    token_threshold: int = 400_000  # Trigger compaction at ~40% of V4 1M window
     message_threshold: int = 500  # Rust uses token-based, not message-based
     model: str | None = None  # None = inherit main model (Rust behavior)
     cache_summary: bool = True
@@ -580,6 +581,7 @@ class CompactionResult:
     summary_prompt: str | None = None
     removed_messages: list[Message] = field(default_factory=list)
     retries_used: int = 0
+    success: bool = False
 
 
 def _summary_input_limits_for_model(model: str) -> SummaryInputLimits:
@@ -870,15 +872,26 @@ async def compact_messages_safe(
                 summary_prompt=summary_prompt,
                 removed_messages=removed_messages,
                 retries_used=attempt,
+                success=True,
             )
 
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "compact_attempt_failed attempt=%d/%d error=%s",
+                attempt + 1, max_retries, exc,
+                exc_info=True,
+            )
             if attempt < max_retries - 1:
                 # Exponential backoff: 1s, 2s, 4s
                 delay = (2 ** attempt)
                 await asyncio.sleep(delay)
                 continue
             # Final attempt failed, return original messages
+            logger.warning(
+                "compact_all_retries_exhausted retries=%d",
+                max_retries,
+                exc_info=True,
+            )
             return CompactionResult(messages=messages, retries_used=attempt + 1)
 
     return CompactionResult(messages=messages)
@@ -929,7 +942,6 @@ async def _create_summary(client: LLMClient, messages: list[Message], model: str
         messages=[Message.user(summary_prompt)],
         max_tokens=limits.max_tokens,
         system_prompt="You are a helpful assistant that creates concise conversation summaries.",
-        stream=False,
     )
 
     response = client.stream_chat_completion(request)

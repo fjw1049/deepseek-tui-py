@@ -18,6 +18,7 @@ from deepseek_tui.engine.capacity import (
 )
 from deepseek_tui.engine.capacity import (
     CompactionConfig,
+    CompactionResult,
     compact_messages_safe,
     should_compact,
 )
@@ -2552,7 +2553,12 @@ class Engine:
             logger.warning("layered_context_checkpoint failed: %s", err)
             return
         if seam_text and seam_text.strip():
-            messages.append(Message.assistant(seam_text))
+            # Insert seam at verbatim window boundary — between old messages
+            # and recent verbatim turns. This preserves prefix cache (no
+            # deletion of prior messages) while placing the summary where
+            # the LLM can use it as a bridge between stale prefix and fresh
+            # context.
+            messages.insert(verbatim_start, Message.assistant(seam_text))
 
     async def _auto_persist_session(self) -> None:
         """Best-effort session persistence after each turn.
@@ -2603,8 +2609,16 @@ class Engine:
             combined = combined[-self._COMPACTION_SUMMARY_MAX_CHARS :]
         self._compaction_summary_prompt = combined
 
-    async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
-        """Emergency compaction callback for TurnLoop context overflow recovery."""
+    async def _run_compaction(
+        self, messages: list[Message]
+    ) -> CompactionResult:
+        """Run compaction and return the full result (incl. success flag).
+
+        Shared by :meth:`_emergency_compact` (TurnLoop callback, which
+        only wants the messages) and the manual ``/compact`` path in
+        ``threads.py`` (which needs ``success`` to surface failures to
+        the user).
+        """
         from deepseek_tui.engine.usage_ledger import usage_source
 
         with usage_source("compaction"):
@@ -2618,6 +2632,11 @@ class Engine:
         # Persist the summary — previously discarded, so emergency/manual
         # compaction lost the archived history entirely.
         self._record_compaction_summary(result.summary_prompt)
+        return result
+
+    async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
+        """Emergency compaction callback for TurnLoop context overflow recovery."""
+        result = await self._run_compaction(messages)
         return result.messages
 
     async def _maybe_advance_cycle(
@@ -2625,12 +2644,9 @@ class Engine:
     ) -> None:
         """Archive a full cycle to disk and trim history when threshold crossed.
 
-        Mirrors Rust ``Engine::maybe_advance_cycle`` (engine.rs:887-888) at the
-        wiring level. The Rust version produces a model-curated briefing via
-        ``produce_briefing``; this minimal port uses a structured-state seed
-        (no LLM call) so it works offline. The deeper ``produce_briefing``
-        path stays available — see ``cycle_manager.produce_briefing`` — and is
-        documented in HANDOVER as a follow-up.
+        Produces a model-curated briefing via produce_briefing (or Flash seam
+        briefing if seams exist) so the next cycle starts with context about
+        decisions, constraints, and progress from the archived history.
         """
         if not messages:
             return
@@ -2666,14 +2682,102 @@ class Engine:
         except OSError as exc:
             logger.warning("cycle_archive_failed error=%s", exc)
             return
-        # Replace history with a minimal seed so the next request fits the
-        # window. The verbatim window of recent turns is preserved.
-        keep = min(8, len(messages))
-        seed = messages[-keep:]
+
+        # --- Produce briefing for the next cycle ---
+        briefing_text = ""
+        from deepseek_tui.engine.cycle import (
+            CycleBriefing,
+            StructuredState,
+            build_seed_messages,
+            produce_briefing,
+        )
+        from deepseek_tui.engine.usage_ledger import usage_source
+
+        # Build structured state snapshot
+        structured = StructuredState(
+            mode_label=self.mode or "agent",
+            workspace=str(self.tool_context.working_directory),
+            working_set_summary=self.working_set.summary() or None,
+        )
+        structured_block = structured.to_system_block()
+
+        # Try Flash briefing from seams first (cheap); fall back to full
+        # produce_briefing if no seams or if Flash fails.
+        try:
+            with usage_source("cycle_briefing"):
+                if self.seam_manager is not None:
+                    existing_seams = self.seam_manager.collect_seam_texts(messages)
+                    if existing_seams:
+                        briefing_text = await self.seam_manager.produce_flash_briefing(
+                            existing_seams, structured_state=structured_block
+                        )
+                if not briefing_text:
+                    briefing_text = await produce_briefing(
+                        self.client,
+                        model,
+                        messages,
+                        self.cycle_config.briefing_max_for(model),
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cycle_briefing_failed error=%s", exc)
+            # Continue without briefing — still better than crashing
+
+        # Assemble seed messages for the new cycle
+        briefing_obj = None
+        if briefing_text:
+            briefing_obj = CycleBriefing(
+                cycle=self._cycle_n,
+                timestamp=int(time.time()),
+                briefing_text=briefing_text,
+                token_estimate=len(briefing_text) // 4,
+            )
+
+        seed_dicts = build_seed_messages(
+            structured_state_block=structured_block,
+            briefing=briefing_obj,
+            pending_user_message=None,
+        )
+
+        # Convert seed dicts to Message objects and preserve recent messages.
+        # When the briefing came back empty (Flash refused, timed out, or no
+        # seams existed), preserving only 4 recent messages would silently
+        # discard the entire pre-cycle history with no replacement. Fall back
+        # to a larger verbatim window so the next cycle at least has recent
+        # context to work from, and warn so the empty briefing is observable.
+        if briefing_text:
+            keep = min(4, len(messages))
+        else:
+            keep = min(16, len(messages))
+            logger.warning(
+                "cycle_briefing_empty fallback_keep=%d/%d — preserving extra "
+                "recent messages because briefing generation produced no text",
+                keep, len(messages),
+            )
+
+        recent = messages[-keep:]
+
         messages.clear()
-        messages.extend(seed)
+        for sd in seed_dicts:
+            role = sd["role"]
+            content = sd["content"]
+            if role == "user":
+                messages.append(Message.user(content))
+            else:
+                messages.append(Message.assistant(content))
+        messages.extend(recent)
+
+        # Reset seam tracking for the new cycle
+        if self.seam_manager is not None:
+            await self.seam_manager.reset()
+
         self._cycle_n += 1
         self._cycle_started_at = int(time.time())
+        logger.info(
+            "cycle_advanced new_cycle=%d seed_msgs=%d briefing_tokens=%d",
+            self._cycle_n,
+            len(messages),
+            len(briefing_text) // 4 if briefing_text else 0,
+        )
 
     # --- Engine-intercepted special tools --------------------------------
 
