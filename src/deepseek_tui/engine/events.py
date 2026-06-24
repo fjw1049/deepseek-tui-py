@@ -5,18 +5,11 @@ Consolidates events.py and streaming.py.
 
 from __future__ import annotations
 
-
-
-# ======================================================================
-# From events.py
-# ======================================================================
-
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from deepseek_tui.policy.approval import ApprovalRequest
-from deepseek_tui.protocol.messages import Message
+from deepseek_tui.protocol.messages import ContentBlock, Message, Role, TextBlock, ThinkingBlock
 from deepseek_tui.protocol.responses import ToolCall, Usage
 
 if TYPE_CHECKING:
@@ -199,15 +192,6 @@ EngineEvent = (
     | SessionEndedEvent
 )
 
-
-# ======================================================================
-# From streaming.py
-# ======================================================================
-
-
-from dataclasses import dataclass, field
-
-from deepseek_tui.protocol.messages import ContentBlock, Message, Role, TextBlock, ThinkingBlock
 
 # Fake-wrapper filtering — mirrors Rust ``streaming.rs:73-137``.
 # Some models try to forge tool calls in plain text instead of using the

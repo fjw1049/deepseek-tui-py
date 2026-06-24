@@ -5,29 +5,24 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From widgets/status_bar.py
-# ======================================================================
-
-"""Status footer — mirrors Rust ``crates/tui/src/tui/widgets/footer.rs``.
-
-Single 1-row bar docked to the bottom of the app, rendered as a
-3-column Rich ``Table.grid`` inside one ``Static``. The earlier
-``Horizontal`` + three-child approach proved brittle under Textual's
-dock layout (the row vanished when stacked with ``ComposerHint`` and
-``Composer`` on the same edge); collapsing to one Static + one
-internal grid sidesteps the layout fight entirely while keeping the
-``mode·model·cost  /  chord chips  /  cache·worked·ctx`` layout the
-user designed off the Rust footer. Middle chord hints omit ``⇧⇥ mode``
-and ``⌃O models`` (shortcuts still work); only ``⌃P`` / ``⌃R`` remain.
-
-Legacy parity (phase-E tests): the ``_status``, ``_model``, ``_mode``,
-``_tokens`` attributes plus the legacy setters
-(``set_status`` / ``set_model`` / ``set_mode`` / ``set_tokens``)
-remain. ``set_cost`` / ``set_currency`` are the new
-hooks the engine drives off ``TurnCompleteEvent``.
-"""
-
+# Status footer — mirrors Rust ``crates/tui/src/tui/widgets/footer.rs``.
+#
+# Single 1-row bar docked to the bottom of the app, rendered as a
+# 3-column Rich ``Table.grid`` inside one ``Static``. The earlier
+# ``Horizontal`` + three-child approach proved brittle under Textual's
+# dock layout (the row vanished when stacked with ``ComposerHint`` and
+# ``Composer`` on the same edge); collapsing to one Static + one
+# internal grid sidesteps the layout fight entirely while keeping the
+# ``mode·model·cost  /  chord chips  /  cache·worked·ctx`` layout the
+# user designed off the Rust footer. Middle chord hints omit ``⇧⇥ mode``
+# and ``⌃O models`` (shortcuts still work); only ``⌃P`` / ``⌃R`` remain.
+#
+# Legacy parity (phase-E tests): the ``_status``, ``_model``, ``_mode``,
+# ``_tokens`` attributes plus the legacy setters
+# (``set_status`` / ``set_model`` / ``set_mode`` / ``set_tokens``)
+# remain. ``set_cost`` / ``set_currency`` are the new
+# hooks the engine drives off ``TurnCompleteEvent``.
+#
 import time
 
 from rich.table import Table
@@ -215,26 +210,20 @@ class StatusBar(Static):
             pass
 
 
-# ======================================================================
-# From frame_rate_limiter.py
-# ======================================================================
-
-"""Frame-rate limiter for the TUI render loop.
-
-Mirrors ``crates/tui/src/tui/frame_rate_limiter.rs`` (186 LOC).
-
-When the model streams a long assistant response, every SSE chunk would
-fire a redraw. The user can't perceive frames faster than ~120 FPS, and
-ratatui/Textual diff-and-flush has real cost, so capping the redraw rate
-is a strict performance win.
-
-In Python/Textual, the integration is conceptually the same as Rust: the
-caller marks a draw event, then asks the limiter how long to wait before
-the next draw is allowed. The implementation is monotonic-time based and
-agnostic to the UI framework.
-"""
-
-
+# Frame-rate limiter for the TUI render loop.
+#
+# Mirrors ``crates/tui/src/tui/frame_rate_limiter.rs`` (186 LOC).
+#
+# When the model streams a long assistant response, every SSE chunk would
+# fire a redraw. The user can't perceive frames faster than ~120 FPS, and
+# ratatui/Textual diff-and-flush has real cost, so capping the redraw rate
+# is a strict performance win.
+#
+# In Python/Textual, the integration is conceptually the same as Rust: the
+# caller marks a draw event, then asks the limiter how long to wait before
+# the next draw is allowed. The implementation is monotonic-time based and
+# agnostic to the UI framework.
+#
 from dataclasses import dataclass
 
 MIN_FRAME_INTERVAL_SECS: float = 1.0 / 120.0
@@ -288,29 +277,23 @@ class FrameRateLimiter:
         self.low_motion = low_motion
 
 
-# ======================================================================
-# From osc8.py
-# ======================================================================
-
-"""OSC 8 hyperlink emission and stripping.
-
-Mirrors ``crates/tui/src/tui/osc8.rs`` (165 LOC).
-
-Modern terminals (iTerm2, Terminal.app 13+, Ghostty, Kitty, WezTerm,
-Alacritty, recent gnome-terminal/konsole) make a substring clickable when
-it is wrapped in::
-
-    \\x1b]8;;TARGET\\x1b\\\\LABEL\\x1b]8;;\\x1b\\\\
-
-Terminals that don't understand the sequence simply render the visible
-``LABEL`` and ignore the escape. So emitting OSC 8 is a strict UX upgrade
-for supporting terminals and a no-op for the rest.
-
-The clipboard / selection extraction path must strip the codes before
-handing text to the user — that's what :func:`strip_into` is for.
-"""
-
-
+# OSC 8 hyperlink emission and stripping.
+#
+# Mirrors ``crates/tui/src/tui/osc8.rs`` (165 LOC).
+#
+# Modern terminals (iTerm2, Terminal.app 13+, Ghostty, Kitty, WezTerm,
+# Alacritty, recent gnome-terminal/konsole) make a substring clickable when
+# it is wrapped in::
+#
+#     \\x1b]8;;TARGET\\x1b\\\\LABEL\\x1b]8;;\\x1b\\\\
+#
+# Terminals that don't understand the sequence simply render the visible
+# ``LABEL`` and ignore the escape. So emitting OSC 8 is a strict UX upgrade
+# for supporting terminals and a no-op for the rest.
+#
+# The clipboard / selection extraction path must strip the codes before
+# handing text to the user — that's what :func:`strip_into` is for.
+#
 OSC8_PREFIX = "\x1b]8;;"
 OSC8_TERMINATOR = "\x1b\\"
 

@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From turn_latency.py
-# ======================================================================
-
-"""Per-turn latency trace for Workbench / HTTP runtime diagnostics."""
-
-
+# Per-turn latency trace for Workbench / HTTP runtime diagnostics.
 import json
 import logging
 import time
@@ -101,8 +95,6 @@ class TurnLatencyTrace:
     delta_events_emitted: int = 0
     approval_wait_total_ms: int = 0
     approval_wait_count: int = 0
-    tool_exec_total_ms: int = 0
-    tool_exec_count: int = 0
     rounds: list[TurnLatencyRound] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -137,12 +129,15 @@ class TurnLatencyTrace:
         self.approval_wait_total_ms += max(0, duration_ms)
         self.approval_wait_count += 1
 
-    def note_tool_exec(self, duration_ms: int) -> None:
-        self.tool_exec_total_ms += max(0, duration_ms)
-        self.tool_exec_count += 1
-
     def segments_ms(self) -> dict[str, int | None]:
-        """Best-effort segment durations for log analysis."""
+        """Best-effort segment durations for log analysis.
+
+        ``tool_exec_ms`` is summed from per-round ``tool_exec_ms``, which is
+        the wall clock of each (possibly parallel) tool batch. Rounds are
+        serial, so this sum does not double-count parallel calls.
+        ``agent_loop_ms`` is the full turn wall clock from turn creation to
+        completion; tool execution is part of the loop, not subtracted.
+        """
 
         def span(start: int | None, end: int | None) -> int | None:
             if start is None or end is None:
@@ -151,14 +146,14 @@ class TurnLatencyTrace:
 
         origin = self.ui_submit_at_ms or self.main_runtime_request_start_ms
         agent_origin = self.runtime_turn_created_ms or self.engine_load_end_ms
+        # Per-round tool exec is the wall clock of each (possibly parallel)
+        # batch; rounds are serial so this sum does not overlap.
+        tool_exec_rounds_ms = sum(
+            r.tool_exec_ms for r in self.rounds if r.tool_exec_ms
+        ) or None
+        # agent_loop is the total wall clock from turn creation to completion;
+        # tool execution is part of the loop, not subtracted from it.
         agent_loop_ms = span(agent_origin, self.turn_completed_ms)
-        if agent_loop_ms is not None:
-            agent_loop_ms = max(
-                0,
-                agent_loop_ms
-                - self.approval_wait_total_ms
-                - self.tool_exec_total_ms,
-            )
 
         return {
             "ui_to_main_ms": span(self.ui_submit_at_ms, self.main_runtime_request_start_ms),
@@ -175,7 +170,7 @@ class TurnLatencyTrace:
                 self.llm_first_sse_chunk_ms, self.runtime_first_delta_emitted_ms
             ),
             "approval_wait_ms": self.approval_wait_total_ms or None,
-            "tool_exec_ms": self.tool_exec_total_ms or None,
+            "tool_exec_ms": tool_exec_rounds_ms,
             "agent_loop_ms": agent_loop_ms,
             "end_to_end_ms": span(origin, self.turn_completed_ms),
         }
@@ -222,13 +217,7 @@ def first_response_timeout_message(trace: TurnLatencyTrace | None) -> str:
     return "模型首包响应超时，请稍后重试。"
 
 
-# ======================================================================
-# From turn_delta_batcher.py
-# ======================================================================
-
-"""Coalesce streaming ``item.delta`` events before persistence / SSE."""
-
-
+# Coalesce streaming ``item.delta`` events before persistence / SSE.
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any

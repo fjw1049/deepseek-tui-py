@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-
-
-# ======================================================================
-# From decision.py
-# ======================================================================
-
-
-"""Execpolicy decision enum.
-
-Mirrors ``crates/tui/src/execpolicy/decision.rs`` (27 LOC).
-
-Rust serde shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
-serialised as a string. The Rust enum derives ``Ord`` with the variant
-order ``Allow < Prompt < Forbidden``, which :meth:`Policy.check` relies
-on when aggregating multiple matches (the most-restrictive decision
-wins). We preserve that ordering here.
-"""
+# Execpolicy decision enum.
+# Mirrors ``crates/tui/src/execpolicy/decision.rs`` (27 LOC).
+#
+# Rust serde shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
+# serialised as a string. The Rust enum derives ``Ord`` with the variant
+# order ``Allow < Prompt < Forbidden``, which :meth:`Policy.check` relies
+# on when aggregating multiple matches (the most-restrictive decision
+# wins). We preserve that ordering here.
 
 
 from enum import Enum
@@ -74,17 +65,9 @@ _RANK: dict[str, int] = {
 
 
 
-# ======================================================================
-# From errors.py
-# ======================================================================
-
-
-"""Errors raised by the Rust-parity execpolicy machinery.
-
-Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
-``AmendError`` variants from ``amend.rs:12-55``.
-"""
-
+# Errors raised by the Rust-parity execpolicy machinery.
+# Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
+# ``AmendError`` variants from ``amend.rs:12-55``.
 
 from pathlib import Path
 from typing import Any
@@ -207,12 +190,6 @@ class AmendError(Exception):
 
 
 
-# ======================================================================
-# From models.py
-# ======================================================================
-
-
-
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -270,33 +247,25 @@ class PolicyRule:
 
 
 
-# ======================================================================
-# From approval_cache.py
-# ======================================================================
-
-
-"""Per-call approval cache with fingerprint keys.
-
-Mirrors ``crates/tui/src/tools/approval_cache.rs`` (280 lines).
-
-Instead of caching approvals by tool name alone — which would let an
-approved ``exec_shell "cat foo"`` silently unlock
-``exec_shell "rm -rf /"`` — this cache keys off a **call fingerprint**
-that includes the semantically-relevant portion of the arguments.
-
-Fingerprint shapes:
-
-- ``apply_patch`` → ``patch:<hash of sorted unique file paths>``
-- ``exec_shell*`` → ``shell:<classify_command(tokens)>`` (flags dropped)
-- ``fetch_url`` / ``web_fetch`` → ``net:<hostname>``
-- everything else → ``tool:<tool_name>``
-
-Entries carry an ``approved_for_session`` flag. When true, subsequent
-calls with the same fingerprint auto-approve for the rest of the
-session. When false, the grant is one-shot: the next call with the same
-key still has to re-prompt.
-"""
-
+# Per-call approval cache with fingerprint keys.
+# Mirrors ``crates/tui/src/tools/approval_cache.rs`` (280 lines).
+#
+# Instead of caching approvals by tool name alone — which would let an
+# approved ``exec_shell "cat foo"`` silently unlock
+# ``exec_shell "rm -rf /"`` — this cache keys off a **call fingerprint**
+# that includes the semantically-relevant portion of the arguments.
+#
+# Fingerprint shapes:
+#
+# - ``apply_patch`` → ``patch:<hash of sorted unique file paths>``
+# - ``exec_shell*`` → ``shell:<classify_command(tokens)>`` (flags dropped)
+# - ``fetch_url`` / ``web_fetch`` → ``net:<hostname>``
+# - everything else → ``tool:<tool_name>``
+#
+# Entries carry an ``approved_for_session`` flag. When true, subsequent
+# calls with the same fingerprint auto-approve for the rest of the
+# session. When false, the grant is one-shot: the next call with the same
+# key still has to re-prompt.
 
 import hashlib
 from dataclasses import dataclass, field
@@ -477,29 +446,21 @@ def _parse_host(tool_input: Any) -> str:
 
 
 
-# ======================================================================
-# From amend.py
-# ======================================================================
-
-
-"""Advisory file-locked append for policy amendments.
-
-Mirrors ``crates/tui/src/execpolicy/amend.rs`` (225 LOC).
-
-The invariant (and the Rust test fixtures): appending a new
-``prefix_rule(...)`` line must
-
-1. create the parent directory if it doesn't exist;
-2. take an advisory lock on the policy file (``fcntl.flock`` on Unix);
-3. ensure the existing content ends in ``\\n`` before appending;
-4. release the lock via the standard context manager on exit.
-
-macOS / Linux only (the current project scope). Windows support is
-deferred — the audit noted the sandbox module is the real Windows
-blocker, so we don't spend effort here on a Win-specific ``msvcrt``
-lock path.
-"""
-
+# Advisory file-locked append for policy amendments.
+# Mirrors ``crates/tui/src/execpolicy/amend.rs`` (225 LOC).
+#
+# The invariant (and the Rust test fixtures): appending a new
+# ``prefix_rule(...)`` line must
+#
+# 1. create the parent directory if it doesn't exist;
+# 2. take an advisory lock on the policy file (``fcntl.flock`` on Unix);
+# 3. ensure the existing content ends in ``\n`` before appending;
+# 4. release the lock via the standard context manager on exit.
+#
+# macOS / Linux only (the current project scope). Windows support is
+# deferred — the audit noted the sandbox module is the real Windows
+# blocker, so we don't spend effort here on a Win-specific ``msvcrt``
+# lock path.
 
 import json
 from pathlib import Path
@@ -587,12 +548,6 @@ def _append_locked_line(policy_path: Path, line: str) -> None:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
-
-
-
-# ======================================================================
-# From engine.py
-# ======================================================================
 
 
 

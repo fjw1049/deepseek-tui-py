@@ -1,23 +1,12 @@
 """Cycle tracking and session activity.
 
-Consolidates cycle_manager.py and session_activity.py.
+Consolidates cycle_manager.py and session_activity.py. Mirrors Rust
+``cycle_manager.rs`` (~1,071 LOC): manages long-running session context
+by archiving full conversation cycles to disk and producing compact
+briefings for fresh context windows.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From cycle_manager.py
-# ======================================================================
-
-"""Cycle manager — checkpoint-restart cycle management.
-
-Mirrors Rust ``cycle_manager.rs`` (~1,071 LOC).
-Manages long-running session context by archiving full conversation cycles
-to disk and producing compact briefings for fresh context windows.
-"""
-
 
 import json
 import time
@@ -397,21 +386,13 @@ def _message_to_dict(msg: Any) -> dict[str, Any]:
     return {"role": "unknown", "content": str(msg)}
 
 
-# ======================================================================
-# From session_activity.py
-# ======================================================================
-
-"""Session-level activity coordinator — mailbox drain + task polling.
-
-Decouples background work observability from a single parent turn so the TUI
-can keep updating after ``TurnComplete`` when tasks or late mailbox events
-arrive. Mirrors Rust ``subagent-mailbox-drainer`` + sidebar navigator.
-
-Important: started only from :meth:`Engine.run`, not ``Engine.create``, so
-unit tests that construct an engine without a consumer do not spawn a forever
-background loop.
-"""
-
+# Session-level activity coordinator — mailbox drain + task polling.
+# Decouples background work observability from a single parent turn so the TUI
+# can keep updating after ``TurnComplete`` when tasks or late mailbox events
+# arrive. Mirrors Rust ``subagent-mailbox-drainer`` + sidebar navigator.
+# Important: started only from :meth:`Engine.run`, not ``Engine.create``, so
+# unit tests that construct an engine without a consumer do not spawn a forever
+# background loop.
 
 import asyncio
 import logging

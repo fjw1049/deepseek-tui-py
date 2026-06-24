@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From session_catalog.py
-# ======================================================================
-
-"""Unified TUI session files + Workbench thread catalog."""
-
-
+# Unified TUI session files + Workbench thread catalog.
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -193,13 +187,7 @@ def export_thread_to_tui_session(
     return path, sid
 
 
-# ======================================================================
-# From session_import.py
-# ======================================================================
-
-"""Import TUI session JSON snapshots into durable runtime threads."""
-
-
+# Import TUI session JSON snapshots into durable runtime threads.
 import json
 import uuid
 from datetime import datetime, timezone

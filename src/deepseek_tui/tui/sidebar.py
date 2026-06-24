@@ -5,18 +5,12 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From sidebar.py
-# ======================================================================
-
-"""Sidebar widget — session/thread list panel.
-
-Mirrors Rust ``tui/sidebar.rs`` (~770 LOC).
-Provides a toggleable left-side panel listing recent sessions/threads
-with keyboard navigation, filtering, and session actions.
-"""
-
-
+# Sidebar widget — session/thread list panel.
+#
+# Mirrors Rust ``tui/sidebar.rs`` (~770 LOC).
+# Provides a toggleable left-side panel listing recent sessions/threads
+# with keyboard navigation, filtering, and session actions.
+#
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -256,43 +250,38 @@ class Sidebar(Widget):
         return entries
 
 
-# ======================================================================
-# From info_sidebar.py
-# ======================================================================
-
-"""Right-side info sidebar — Plan / Todos / Tasks / Agents live state.
-
-Mirrors Rust ``crates/tui/src/tui/sidebar.rs::render_sidebar_auto``.
-Each panel reads its data from a pre-fetched snapshot the app pushes
-in via :meth:`update_data`; the widget itself stays sync-only so it
-can be called from anywhere in the event loop without await.
-
-Layout (auto mode — empty panels collapse to zero height):
-
-::
-
-    ┌────────────────────────────────────────┐
-    │ Plan                                   │  <- always visible
-    │ ◆ Implement auth middleware            │
-    │ cycles: 2 (active: 3)                  │
-    │ [x] 1. Design API schema              │
-    │ [~] 2. Write handlers                  │
-    ├────────────────────────────────────────┤
-    │ Todos                                  │  <- only if non-empty
-    │ 50%  complete (2/4)                    │
-    │ [x] #1 implement auth                 │
-    │ [~] #2 unit tests                     │
-    ├────────────────────────────────────────┤
-    │ Tasks                                  │  <- only if non-empty
-    │ 1 running                              │
-    │ task_3563ea15  running 4.1s            │
-    ├────────────────────────────────────────┤
-    │ Agents                                 │  <- only if non-empty
-    │ 2 agents (1 running)                   │
-    │ agent_a1b2  explore  done              │
-    └────────────────────────────────────────┘
-"""
-
+# Right-side info sidebar — Plan / Todos / Tasks / Agents live state.
+#
+# Mirrors Rust ``crates/tui/src/tui/sidebar.rs::render_sidebar_auto``.
+# Each panel reads its data from a pre-fetched snapshot the app pushes
+# in via :meth:`update_data`; the widget itself stays sync-only so it
+# can be called from anywhere in the event loop without await.
+#
+# Layout (auto mode — empty panels collapse to zero height):
+#
+# ::
+#
+#     ┌────────────────────────────────────────┐
+#     │ Plan                                   │  <- always visible
+#     │ ◆ Implement auth middleware            │
+#     │ cycles: 2 (active: 3)                  │
+#     │ [x] 1. Design API schema              │
+#     │ [~] 2. Write handlers                  │
+#     ├────────────────────────────────────────┤
+#     │ Todos                                  │  <- only if non-empty
+#     │ 50%  complete (2/4)                    │
+#     │ [x] #1 implement auth                 │
+#     │ [~] #2 unit tests                     │
+#     ├────────────────────────────────────────┤
+#     │ Tasks                                  │  <- only if non-empty
+#     │ 1 running                              │
+#     │ task_3563ea15  running 4.1s            │
+#     ├────────────────────────────────────────┤
+#     │ Agents                                 │  <- only if non-empty
+#     │ 2 agents (1 running)                   │
+#     │ agent_a1b2  explore  done              │
+#     └────────────────────────────────────────┘
+#
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -686,22 +675,16 @@ class InfoSidebar(Widget):
         return Group(*lines), True
 
 
-# ======================================================================
-# From context_inspector.py
-# ======================================================================
-
-"""Compact session-context inspector text renderer.
-
-Mirrors ``crates/tui/src/tui/context_inspector.rs`` (466 LOC).
-
-Builds the textual snapshot rendered by the ``/context`` slash command.
-The Rust implementation reaches deep into ``App`` state; the Python port
-takes a small :class:`InspectorSnapshot` dataclass so unit tests don't
-need to spin up a Textual app and the engine layer can build the
-snapshot from whatever live state it has at the time.
-"""
-
-
+# Compact session-context inspector text renderer.
+#
+# Mirrors ``crates/tui/src/tui/context_inspector.rs`` (466 LOC).
+#
+# Builds the textual snapshot rendered by the ``/context`` slash command.
+# The Rust implementation reaches deep into ``App`` state; the Python port
+# takes a small :class:`InspectorSnapshot` dataclass so unit tests don't
+# need to spin up a Textual app and the engine layer can build the
+# snapshot from whatever live state it has at the time.
+#
 from dataclasses import dataclass, field
 from pathlib import Path
 

@@ -187,8 +187,11 @@ Use `apply_patch` for structural edits, coordinated changes, or cases where line
 ### `edit_file`
 Use `edit_file` for one clear replacement in one file. Use `apply_patch` when the edit changes whole blocks, touches multiple files, or needs surrounding line context.
 
+### `fetch_url`
+Use `fetch_url` to read HTTP/HTTPS content (web pages, raw GitHub files, JSON endpoints) — do not hand-roll `curl`/`wget` in `exec_shell` for a URL read. `fetch_url` handles redirects, truncation, and timeouts uniformly and returns clean Markdown for pages. For a raw GitHub file that times out, retry via the jsDelivr mirror `https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/<path>` instead of hammering `raw.githubusercontent.com`. Use `web_search` when you don't have a URL and need to discover one.
+
 ### `exec_shell`
-Use `exec_shell` for shell-native diagnostics, pipelines, and bounded commands. Use structured tools for structured operations when they map directly (`grep_files`, `git_diff`, `read_file`). For long commands, servers, full test suites, or release computations, start background work with `task_shell_start` or `exec_shell` using `background: true`, then poll with `task_shell_wait` or `exec_shell_wait`. For temp files, see **Shell temp files and sandbox** above — prefer `/tmp` for ephemeral shell temp and `scratch/` when you need to read the output back with file tools.
+Use `exec_shell` for shell-native diagnostics, pipelines, and bounded commands. Use structured tools for structured operations when they map directly (`grep_files`, `git_diff`, `read_file`). For long commands, servers, full test suites, or release computations, start background work with `task_shell_start` or `exec_shell` using `background: true`, then poll with `task_shell_wait` or `exec_shell_wait`. For temp files, see **Shell temp files and sandbox** above — prefer `/tmp` for ephemeral shell temp and `scratch/` when you need to read the output back with file tools. Do not use `exec_shell` with `curl`/`wget` to fetch a URL — use `fetch_url` instead.
 
 ### `agent_spawn`
 Use `agent_spawn` for independent investigations or implementation slices that can run while you continue coordinating. Use `fork_context: true` when the child must inherit the current transcript and plan/todo state. Use `agent_wait` when you need one or more completions. Use `agent_result` when the sentinel summary is too thin or you need the full structured output. Keep tiny single-read/search tasks local so the transcript stays compact.

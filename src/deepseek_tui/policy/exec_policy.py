@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-
-
-# ======================================================================
-# From decision.py
-# ======================================================================
-
-
-"""Execpolicy decision enum.
-
-Mirrors ``crates/tui/src/execpolicy/decision.rs`` (27 LOC).
-
-Rust serde shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
-serialised as a string. The Rust enum derives ``Ord`` with the variant
-order ``Allow < Prompt < Forbidden``, which :meth:`Policy.check` relies
-on when aggregating multiple matches (the most-restrictive decision
-wins). We preserve that ordering here.
-"""
+# Execpolicy decision enum.
+# Mirrors ``crates/tui/src/execpolicy/decision.rs`` (27 LOC).
+#
+# Rust serde shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
+# serialised as a string. The Rust enum derives ``Ord`` with the variant
+# order ``Allow < Prompt < Forbidden``, which :meth:`Policy.check` relies
+# on when aggregating multiple matches (the most-restrictive decision
+# wins). We preserve that ordering here.
 
 
 from enum import Enum
@@ -74,17 +65,9 @@ _RANK: dict[str, int] = {
 
 
 
-# ======================================================================
-# From errors.py
-# ======================================================================
-
-
-"""Errors raised by the Rust-parity execpolicy machinery.
-
-Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
-``AmendError`` variants from ``amend.rs:12-55``.
-"""
-
+# Errors raised by the Rust-parity execpolicy machinery.
+# Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
+# ``AmendError`` variants from ``amend.rs:12-55``.
 
 from pathlib import Path
 from typing import Any
@@ -207,29 +190,21 @@ class AmendError(Exception):
 
 
 
-# ======================================================================
-# From rule.py
-# ======================================================================
-
-
-"""Rule data model for the Rust-parity execpolicy system.
-
-Mirrors ``crates/tui/src/execpolicy/rule.rs`` (160 LOC):
-
-* :class:`PatternToken` — ``Single(str) | Alts(list[str])``
-* :class:`PrefixPattern` — ``{first: str, rest: list[PatternToken]}``
-  with :meth:`matches_prefix` returning the matched prefix slice
-* :class:`RuleMatch` — discriminated variants ``prefix_rule_match`` /
-  ``heuristics_rule_match`` with a :meth:`decision` accessor
-* :class:`PrefixRule` — a concrete rule carrying a pattern + decision
-  + optional justification, implementing :class:`Rule`
-* :func:`validate_match_examples` / :func:`validate_not_match_examples`
-
-The ``RuleMatch`` wire shape uses ``type`` discriminator values
-``prefixRuleMatch`` / ``heuristicsRuleMatch`` to match Rust's
-``#[serde(rename_all = "camelCase")]`` on the enum tag.
-"""
-
+# Rule data model for the Rust-parity execpolicy system.
+# Mirrors ``crates/tui/src/execpolicy/rule.rs`` (160 LOC):
+#
+# * :class:`PatternToken` — ``Single(str) | Alts(list[str])``
+# * :class:`PrefixPattern` — ``{first: str, rest: list[PatternToken]}``
+#   with :meth:`matches_prefix` returning the matched prefix slice
+# * :class:`RuleMatch` — discriminated variants ``prefix_rule_match`` /
+#   ``heuristics_rule_match`` with a :meth:`decision` accessor
+# * :class:`PrefixRule` — a concrete rule carrying a pattern + decision
+#   + optional justification, implementing :class:`Rule`
+# * :func:`validate_match_examples` / :func:`validate_not_match_examples`
+#
+# The ``RuleMatch`` wire shape uses ``type`` discriminator values
+# ``prefixRuleMatch`` / ``heuristicsRuleMatch`` to match Rust's
+# ``#[serde(rename_all = "camelCase")]`` on the enum tag.
 
 import shlex
 from abc import ABC, abstractmethod
@@ -468,36 +443,27 @@ def validate_not_match_examples(
                 )
 
 
-
-# ======================================================================
-# From matcher.py
-# ======================================================================
-
-
-"""Command matching helpers for execpolicy rules.
-
-Mirrors ``crates/tui/src/execpolicy/matcher.rs`` (198 LOC).
-
-Three public functions:
-
-* :func:`normalize_command` — shlex-parse + re-join, with heredoc
-  bodies stripped first (issue #419) so ``cat <<EOF > file\\nbody\\nEOF``
-  collapses to ``cat > file`` before pattern matching.
-* :func:`pattern_matches` — ``*`` wildcards → regex. Both ``pattern``
-  and ``command`` run through :func:`normalize_command` first.
-* :func:`strip_heredoc_bodies` — exposed for unit tests / callers that
-  want the intermediate form.
-
-Differences vs. Rust:
-
-* Rust's ``regex`` crate has no lookbehind, so Rust preprocesses
-  ``<<<`` (here-string) to a placeholder before running the heredoc
-  regex. Python's ``re`` supports lookbehind (``(?<!<)``), so in
-  theory we could skip the placeholder dance — but we preserve it
-  byte-identically so test fixtures captured from the Rust version
-  round-trip cleanly.
-"""
-
+# Command matching helpers for execpolicy rules.
+# Mirrors ``crates/tui/src/execpolicy/matcher.rs`` (198 LOC).
+#
+# Three public functions:
+#
+# * :func:`normalize_command` — shlex-parse + re-join, with heredoc
+#   bodies stripped first (issue #419) so ``cat <<EOF > file\\nbody\\nEOF``
+#   collapses to ``cat > file`` before pattern matching.
+# * :func:`pattern_matches` — ``*`` wildcards → regex. Both ``pattern``
+#   and ``command`` run through :func:`normalize_command` first.
+# * :func:`strip_heredoc_bodies` — exposed for unit tests / callers that
+#   want the intermediate form.
+#
+# Differences vs. Rust:
+#
+# * Rust's ``regex`` crate has no lookbehind, so Rust preprocesses
+#   ``<<<`` (here-string) to a placeholder before running the heredoc
+#   regex. Python's ``re`` supports lookbehind (``(?<!<)``), so in
+#   theory we could skip the placeholder dance — but we preserve it
+#   byte-identically so test fixtures captured from the Rust version
+#   round-trip cleanly.
 
 import re
 import shlex
@@ -598,25 +564,16 @@ def pattern_matches(pattern: str, command: str) -> bool:
     return bool(regex.fullmatch(norm_command))
 
 
-
-# ======================================================================
-# From policy.py
-# ======================================================================
-
-
-"""Policy engine for the Rust-parity execpolicy system.
-
-Mirrors ``crates/tui/src/execpolicy/policy.rs`` (145 LOC):
-
-* :class:`Policy` — maps first-token (program) → list of :class:`Rule`;
-  evaluates command-token lists with an optional heuristics fallback.
-* :class:`Evaluation` — decision + matched-rules payload emitted for
-  each evaluated command.
-
-Rust's ``check`` takes ``heuristics_fallback: &F`` where ``F: Fn(&[String]) -> Decision``.
-Python translation: any callable ``(list[str]) -> Decision``.
-"""
-
+# Policy engine for the Rust-parity execpolicy system.
+# Mirrors ``crates/tui/src/execpolicy/policy.rs`` (145 LOC):
+#
+# * :class:`Policy` — maps first-token (program) → list of :class:`Rule`;
+#   evaluates command-token lists with an optional heuristics fallback.
+# * :class:`Evaluation` — decision + matched-rules payload emitted for
+#   each evaluated command.
+#
+# Rust's ``check`` takes ``heuristics_fallback: &F`` where ``F: Fn(&[String]) -> Decision``.
+# Python translation: any callable ``(list[str]) -> Decision``.
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -797,48 +754,40 @@ def _dump_rules(rules: list[RuleMatch]) -> list[Any]:
     return out
 
 
-
-# ======================================================================
-# From parser.py
-# ======================================================================
-
-
-"""Mini-Starlark parser for execpolicy rule files.
-
-Rust uses the ``starlark`` crate to evaluate policy files that look
-like this::
-
-    prefix_rule(pattern=["git", "status"], decision="allow")
-    prefix_rule(
-        pattern=["git", ["log", "diff"]],
-        decision="allow",
-        justification="read-only git inspection",
-        match=["git log", "git diff HEAD"],
-        not_match=["git push"],
-    )
-
-Rust's Starlark is a full Python-like DSL with ``def`` / ``if`` / ``for``
-/ ``import`` / f-strings. We don't need that surface — only ``prefix_rule``
-calls with literal-list / literal-string arguments.
-
-This module implements a ~200 LOC subset sufficient to parse the
-default policy ships with the Rust repo. Grammar:
-
-    module     := statement*
-    statement  := COMMENT | call | blank
-    call       := IDENT '(' args ')' NEWLINE
-    args       := (arg (',' arg)*)?
-    arg        := IDENT '=' expr | expr
-    expr       := STRING | LIST
-    LIST       := '[' (expr (',' expr)*)? ']'
-
-The goal is byte-for-byte equivalence with Rust's ``prefix_rule``
-behaviour — not general Starlark compatibility. Unsupported syntax
-(``def`` / ``if`` / f-strings / ``import``) surfaces via a clear
-:class:`ExecPolicyError` so users notice when the Rust file uses
-features beyond our subset.
-"""
-
+# Mini-Starlark parser for execpolicy rule files.
+#
+# Rust uses the ``starlark`` crate to evaluate policy files that look
+# like this::
+#
+#     prefix_rule(pattern=["git", "status"], decision="allow")
+#     prefix_rule(
+#         pattern=["git", ["log", "diff"]],
+#         decision="allow",
+#         justification="read-only git inspection",
+#         match=["git log", "git diff HEAD"],
+#         not_match=["git push"],
+#     )
+#
+# Rust's Starlark is a full Python-like DSL with ``def`` / ``if`` / ``for``
+# / ``import`` / f-strings. We don't need that surface — only ``prefix_rule``
+# calls with literal-list / literal-string arguments.
+#
+# This module implements a ~200 LOC subset sufficient to parse the
+# default policy ships with the Rust repo. Grammar:
+#
+#     module     := statement*
+#     statement  := COMMENT | call | blank
+#     call       := IDENT '(' args ')' NEWLINE
+#     args       := (arg (',' arg)*)?
+#     arg        := IDENT '=' expr | expr
+#     expr       := STRING | LIST
+#     LIST       := '[' (expr (',' expr)*)? ']'
+#
+# The goal is byte-for-byte equivalence with Rust's ``prefix_rule``
+# behaviour — not general Starlark compatibility. Unsupported syntax
+# (``def`` / ``if`` / f-strings / ``import``) surfaces via a clear
+# :class:`ExecPolicyError` so users notice when the Rust file uses
+# features beyond our subset.
 
 import ast
 from dataclasses import dataclass
@@ -1152,36 +1101,27 @@ def _tokenize_string_example(raw: str) -> list[str]:
     return tokens
 
 
-
-# ======================================================================
-# From rules.py
-# ======================================================================
-
-
-"""Execpolicy rules loaded from TOML configuration.
-
-Mirrors ``crates/tui/src/execpolicy/rules.rs`` (123 LOC). This is the
-lightweight TOML-based rules layer — the parallel system to the
-Starlark-based :mod:`deepseek_tui.execpolicy.parser` / :mod:`policy`.
-
-Wire format::
-
-    [rules.git]
-    allow = ["git status", "git log *"]
-    deny = ["git push --force"]
-
-    [rules.danger]
-    deny = ["rm -rf /", "rm -rf /*"]
-
-Evaluation semantics (mirrors Rust ``ExecPolicyConfig::evaluate`` at
-rules.rs:43-64):
-
-1. Scan every ``deny`` pattern in every group in insertion order.
-   First match → ``Deny(reason)``.
-2. Scan every ``allow`` pattern. First match → ``Allow``.
-3. No match → ``AskUser("execpolicy: no matching allow rule")``.
-"""
-
+# Execpolicy rules loaded from TOML configuration.
+# Mirrors ``crates/tui/src/execpolicy/rules.rs`` (123 LOC). This is the
+# lightweight TOML-based rules layer — the parallel system to the
+# Starlark-based :mod:`deepseek_tui.execpolicy.parser` / :mod:`policy`.
+#
+# Wire format::
+#
+#     [rules.git]
+#     allow = ["git status", "git log *"]
+#     deny = ["git push --force"]
+#
+#     [rules.danger]
+#     deny = ["rm -rf /", "rm -rf /*"]
+#
+# Evaluation semantics (mirrors Rust ``ExecPolicyConfig::evaluate`` at
+# rules.rs:43-64):
+#
+# 1. Scan every ``deny`` pattern in every group in insertion order.
+#    First match → ``Deny(reason)``.
+# 2. Scan every ``allow`` pattern. First match → ``Allow``.
+# 3. No match → ``AskUser("execpolicy: no matching allow rule")``.
 
 import sys
 from dataclasses import dataclass, field

@@ -1,18 +1,10 @@
 """L3 memory layer — persona/relationship extraction.
 
 Consolidates native/l3_persona.py and persona_trigger.py.
+L3 persona — aggregate persona-type L1 rows into persona.md.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/l3_persona.py
-# ======================================================================
-
-"""L3 persona — aggregate persona-type L1 rows into persona.md."""
-
 
 import hashlib
 import inspect
@@ -348,12 +340,7 @@ class _PersonaEditTool(_PersonaPathMixin, ToolSpec):
         )
 
 
-# ======================================================================
-# From native/persona_trigger.py
-# ======================================================================
-
-"""Persona generation trigger logic aligned with TencentDB memory."""
-
+# Persona generation trigger logic aligned with TencentDB memory.
 
 from dataclasses import dataclass
 from pathlib import Path

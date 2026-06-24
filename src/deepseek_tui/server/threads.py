@@ -5,17 +5,11 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From thread_manager.py
-# ======================================================================
-
-"""RuntimeThreadManager — orchestrates Engine lifecycles for HTTP threads.
-
-Mirrors Rust ``RuntimeThreadManager`` (runtime_threads.rs:594-2488).
-Manages active engines, turn monitoring, LRU eviction, and restart recovery.
-"""
-
-
+# RuntimeThreadManager — orchestrates Engine lifecycles for HTTP threads.
+#
+# Mirrors Rust ``RuntimeThreadManager`` (runtime_threads.rs:594-2488).
+# Manages active engines, turn monitoring, LRU eviction, and restart recovery.
+#
 import asyncio
 import logging
 import time
@@ -1733,9 +1727,10 @@ class RuntimeThreadManager:
                 return
             if approval_start is not None:
                 trace.note_approval_wait(end - approval_start)
-                trace.note_tool_exec(max(0, approval_start - started))
-            else:
-                trace.note_tool_exec(end - started)
+            # Tool execution wall clock is captured per-round by the
+            # orchestrator (round_trace.tool_exec_ms). Per-call tracking here
+            # double-counted parallel tool batches, so it is intentionally
+            # not recorded.
 
         async def flush_delta_batch() -> None:
             emitted = await delta_batcher.flush()
@@ -2575,22 +2570,16 @@ class RuntimeThreadManager:
                 self.store.save_thread(thread)
 
 
-# ======================================================================
-# From runtime_threads.py
-# ======================================================================
-
-"""Durable thread/turn/item runtime for the HTTP API and background tasks.
-
-Mirrors Rust ``crates/tui/src/runtime_threads.rs`` (4,413 lines).
-This module keeps DeepSeek-only execution while exposing Codex-like lifecycle
-semantics (threads, turns, items, interrupt/steer, and replayable events).
-
-Split into two layers:
-- Data models + RuntimeThreadStore (this file) — pure I/O, no engine logic
-- RuntimeThreadManager (thread_manager.py) — orchestration + engine loading
-"""
-
-
+# Durable thread/turn/item runtime for the HTTP API and background tasks.
+#
+# Mirrors Rust ``crates/tui/src/runtime_threads.rs`` (4,413 lines).
+# This module keeps DeepSeek-only execution while exposing Codex-like lifecycle
+# semantics (threads, turns, items, interrupt/steer, and replayable events).
+#
+# Split into two layers:
+# - Data models + RuntimeThreadStore (this file) — pure I/O, no engine logic
+# - RuntimeThreadManager (thread_manager.py) — orchestration + engine loading
+#
 import json
 import logging
 import shutil

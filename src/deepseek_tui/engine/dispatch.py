@@ -1,19 +1,8 @@
 """Tool execution dispatch and argument repair.
 
 Consolidates dispatch.py, executors.py, arg_repair.py.
-"""
-
-from __future__ import annotations
-
-
-
-# ======================================================================
-# From dispatch.py
-# ======================================================================
-
-"""Tool dispatch — plan/execute helpers for the per-turn tool batch.
-
-Mirrors `crates/tui/src/core/engine/dispatch.rs:1-354`.
+Tool dispatch — plan/execute helpers for the per-turn tool batch.
+Mirrors ``crates/tui/src/core/engine/dispatch.rs:1-354``.
 
 Owns:
   * The ``multi_tool_use.parallel`` payload parser.
@@ -21,6 +10,7 @@ Owns:
   * Tool execution plan/outcome types.
 """
 
+from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
@@ -287,18 +277,10 @@ def emit_tool_audit(event: dict[str, Any]) -> None:
         pass
 
 
-# ======================================================================
-# From executors.py
-# ======================================================================
-
-"""Real executors for Task and SubAgent — replace the sleep-50ms stubs.
-
-Sub-agents run ``run_subagent_loop`` (shared SubAgentManager, no nested Engine).
-Tasks run a single Engine turn with the **shared** process TaskManager injected.
-
-Mirrors Rust ``run_subagent`` + ``EngineTaskExecutor``.
-"""
-
+# Real executors for Task and SubAgent — replace the sleep-50ms stubs.
+# Sub-agents run ``run_subagent_loop`` (shared SubAgentManager, no nested Engine).
+# Tasks run a single Engine turn with the **shared** process TaskManager injected.
+# Mirrors Rust ``run_subagent`` + ``EngineTaskExecutor``.
 
 import asyncio
 import logging
@@ -477,24 +459,15 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
     return AgentRunOutput(text=str(out), structured=None)
 
 
-# ======================================================================
-# From arg_repair.py
-# ======================================================================
-
-"""Deterministic JSON argument repair ladder.
-
-Mirrors ``crates/tui/src/tools/arg_repair.rs``.
-
-LLM streaming can produce malformed JSON in tool call arguments:
-- Truncated streams → unclosed braces/brackets
-- Control characters (0x00-0x1F) inside string values
-- Trailing commas before } or ]
-- Excess closing delimiters from delta corruption
-
-The repair ladder attempts increasingly aggressive fixes, guaranteeing
-a valid dict is always returned (worst case: empty {}).
-"""
-
+# Deterministic JSON argument repair ladder.
+# Mirrors ``crates/tui/src/tools/arg_repair.rs``.
+# LLM streaming can produce malformed JSON in tool call arguments:
+# - Truncated streams → unclosed braces/brackets
+# - Control characters (0x00-0x1F) inside string values
+# - Trailing commas before } or ]
+# - Excess closing delimiters from delta corruption
+# The repair ladder attempts increasingly aggressive fixes, guaranteeing
+# a valid dict is always returned (worst case: empty {}).
 
 import json
 import re

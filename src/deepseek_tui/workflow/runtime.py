@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From runtime.py
-# ======================================================================
-
-"""Execute Workflow IR."""
-
-
+# Execute Workflow IR.
 import asyncio
 import json
 import time
@@ -502,13 +496,7 @@ def render_workflow_text(snapshot: WorkflowSnapshot, *, completed: bool = False)
     return "\n".join(lines)
 
 
-# ======================================================================
-# From agent_runner.py
-# ======================================================================
-
-"""DeepSeek SubAgentManager adapter for workflow steps."""
-
-
+# DeepSeek SubAgentManager adapter for workflow steps.
 import asyncio
 import time
 from typing import Any, Protocol

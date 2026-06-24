@@ -52,11 +52,39 @@ def test_segments_include_approval_tool_exec_and_agent_loop() -> None:
         turn_completed_ms=100_000,
     )
     trace.note_approval_wait(9_600)
-    trace.note_tool_exec(40_000)
+    # Per-round tool exec is the wall clock of each (possibly parallel)
+    # batch; the segment sums rounds.
+    round_trace = trace.start_round(0)
+    round_trace.tool_exec_ms = 40_000
     segments = trace.segments_ms()
     assert segments["approval_wait_ms"] == 9_600
     assert segments["tool_exec_ms"] == 40_000
-    assert segments["agent_loop_ms"] == 49_400
+    # agent_loop is the full turn wall clock; tool execution is part of
+    # the loop, not subtracted (the old subtraction went negative on
+    # parallel-heavy turns and clamped to 0).
+    assert segments["agent_loop_ms"] == 99_000
+
+
+def test_tool_exec_ms_does_not_exceed_end_to_end_for_parallel_calls() -> None:
+    """Regression: the reverse-skill turn had ``tool_exec_ms`` (566415)
+    exceed ``end_to_end_ms`` (565168) because per-call wall clocks were
+    summed, double-counting parallel batches. Summing per-round batch
+    wall clocks instead keeps tool_exec within end_to_end."""
+    trace = TurnLatencyTrace(
+        turn_id="turn_test",
+        main_runtime_request_start_ms=0,
+        runtime_turn_created_ms=0,
+        turn_completed_ms=100_000,
+    )
+    # Two parallel 60s calls would have summed to 120s under the old
+    # per-call tracking. The round records the batch wall clock (60s),
+    # which is what segments_ms must use.
+    round_trace = trace.start_round(0)
+    round_trace.tool_exec_ms = 60_000
+    segments = trace.segments_ms()
+    assert segments["tool_exec_ms"] == 60_000
+    assert segments["end_to_end_ms"] == 100_000
+    assert segments["tool_exec_ms"] <= segments["end_to_end_ms"]
 
 
 def test_round_payload_includes_llm_durations() -> None:

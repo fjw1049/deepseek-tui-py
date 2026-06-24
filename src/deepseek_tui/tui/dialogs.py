@@ -7,12 +7,7 @@ from dataclasses import dataclass, field
 
 
 
-# ======================================================================
-# From approval.py
-# ======================================================================
-
-"""Approval modal — surfaces impacts and command preview before approval."""
-
+# Approval modal — surfaces impacts and command preview before approval.
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -154,18 +149,12 @@ class ApprovalDialog(ModalScreen[bool]):
         self.dismiss(False)
 
 
-# ======================================================================
-# From pickers.py
-# ======================================================================
-
-"""Picker widgets — model, mode, and file selection.
-
-Mirrors Rust ``tui/model_picker.rs`` + ``tui/mode_picker.rs``
-+ file picker functionality (~800 LOC combined).
-Implemented as Textual ModalScreen overlays with filterable lists.
-"""
-
-
+# Picker widgets — model, mode, and file selection.
+#
+# Mirrors Rust ``tui/model_picker.rs`` + ``tui/mode_picker.rs``
+# + file picker functionality (~800 LOC combined).
+# Implemented as Textual ModalScreen overlays with filterable lists.
+#
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -466,17 +455,11 @@ class SessionPicker(_FilterablePickerScreen):
         super().__init__("Select Session", sessions)
 
 
-# ======================================================================
-# From help_panel.py
-# ======================================================================
-
-"""Help / keybinds panel — mirrors Rust help screen.
-
-Provides a modal overlay showing all keybindings and available commands,
-with section grouping and scrollable content.
-"""
-
-
+# Help / keybinds panel — mirrors Rust help screen.
+#
+# Provides a modal overlay showing all keybindings and available commands,
+# with section grouping and scrollable content.
+#
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -625,16 +608,11 @@ class _SlashCommandHelp(Static):
             self.update("[dim]Slash commands unavailable[/]")
 
 
-# ======================================================================
-# From file_mention.py
-# ======================================================================
-
-"""@file mention autocomplete — mirrors Rust ``tui/file_mention.rs``.
-
-Stage 6.6: Detects ``@`` in the composer input and shows a file
-completion popup. Files are listed from the working directory.
-"""
-
+# @file mention autocomplete — mirrors Rust ``tui/file_mention.rs``.
+#
+# Stage 6.6: Detects ``@`` in the composer input and shows a file
+# completion popup. Files are listed from the working directory.
+#
 import os
 from pathlib import Path
 

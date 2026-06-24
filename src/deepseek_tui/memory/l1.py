@@ -1,18 +1,10 @@
 """L1 memory layer — fact extraction and deduplication.
 
 Consolidates native/l1_*.py and prompts/l1_extraction.py.
+L1 memory extraction via LLM.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/l1_extractor.py
-# ======================================================================
-
-"""L1 memory extraction via LLM."""
-
 
 import inspect
 import json
@@ -306,11 +298,7 @@ class L1Extractor:
         )
 
 
-# ======================================================================
-# From native/l1_dedup.py
-# ======================================================================
-
-"""L1 batch conflict detection for TencentDB-style memory decisions."""
+# L1 batch conflict detection for TencentDB-style memory decisions.
 # ruff: noqa: E501
 
 

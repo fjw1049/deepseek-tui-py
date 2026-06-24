@@ -14,9 +14,6 @@ if TYPE_CHECKING:
     from deepseek_tui.integrations.hooks import HookDispatcher
 
 
-# --- Ops (formerly engine/ops.py) -------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class SendMessageOp:
     content: str
@@ -33,9 +30,6 @@ class CancelRequestOp:
 
 
 EngineOp = SendMessageOp | CancelRequestOp
-
-
-# --- Approval handlers (formerly engine/approval.py) -------------------------
 
 
 class ApprovalHandler:

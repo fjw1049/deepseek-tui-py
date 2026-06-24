@@ -7,18 +7,13 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From validation_tools.py
-# ======================================================================
-
-"""Data validation + test runner + revert turn tools.
-
-Mirrors:
-- ``crates/tui/src/tools/validate_data.rs``
-- ``crates/tui/src/tools/test_runner.rs``
-- ``crates/tui/src/tools/revert_turn.rs``
-"""
-
+# Data validation + test runner + revert turn tools.
+#
+# Mirrors:
+# - ``crates/tui/src/tools/validate_data.rs``
+# - ``crates/tui/src/tools/test_runner.rs``
+# - ``crates/tui/src/tools/revert_turn.rs``
+#
 import asyncio
 import json
 from pathlib import Path
@@ -360,13 +355,7 @@ class RevertTurnTool(ToolSpec):
             )
 
 
-# ======================================================================
-# From structured_output_tool.py
-# ======================================================================
-
-"""Terminating structured-output tool for sub-agent workflows."""
-
-
+# Terminating structured-output tool for sub-agent workflows.
 from typing import Any
 
 from deepseek_tui.tools.registry import ToolCapability, ToolResult, ToolSpec
@@ -443,16 +432,11 @@ class StructuredOutputTool(ToolSpec):
         )
 
 
-# ======================================================================
-# From _validators.py
-# ======================================================================
-
-"""Shared input validation helpers for tool implementations.
-
-Extracted from per-tool duplicates to reduce ~100 lines of redundancy
-across 12+ tool files.
-"""
-
+# Shared input validation helpers for tool implementations.
+#
+# Extracted from per-tool duplicates to reduce ~100 lines of redundancy
+# across 12+ tool files.
+#
 from typing import Any
 
 from deepseek_tui.tools.registry import ToolError

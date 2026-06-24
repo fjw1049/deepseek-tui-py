@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From runtime_api/app.py
-# ======================================================================
-
-"""Build FastAPI app fragment for Workbench runtime API."""
-
-
+# Build FastAPI app fragment for Workbench runtime API.
 from typing import Any
 
 from deepseek_tui.server.approval import ApprovalBridge
@@ -73,30 +67,24 @@ def attach_cors(app: Any, origins: list[str]) -> None:
     )
 
 
-# ======================================================================
-# From routes.py
-# ======================================================================
-
-"""FastAPI router for app-server endpoints.
-
-Mirrors ``crates/app-server/src/lib.rs`` (783 lines). Each handler is a
-thin delegator to :class:`AppRuntime` so HTTP + stdio JSON-RPC share the
-same code path.
-
-Extended with runtime-thread lifecycle routes (mirrors Rust runtime_api.rs):
-- POST /threads          — create thread
-- GET  /threads          — list threads
-- GET  /threads/{id}     — get thread detail
-- PATCH /threads/{id}    — update thread (archive/unarchive)
-- POST /threads/{id}/fork — fork thread
-- POST /threads/{id}/turns — start turn
-- POST /threads/{id}/turns/{turn_id}/interrupt — interrupt turn
-- POST /threads/{id}/turns/{turn_id}/steer — steer turn
-- POST /threads/{id}/compact — compact thread
-- GET  /threads/{id}/events — events since seq
-"""
-
-
+# FastAPI router for app-server endpoints.
+#
+# Mirrors ``crates/app-server/src/lib.rs`` (783 lines). Each handler is a
+# thin delegator to :class:`AppRuntime` so HTTP + stdio JSON-RPC share the
+# same code path.
+#
+# Extended with runtime-thread lifecycle routes (mirrors Rust runtime_api.rs):
+# - POST /threads          — create thread
+# - GET  /threads          — list threads
+# - GET  /threads/{id}     — get thread detail
+# - PATCH /threads/{id}    — update thread (archive/unarchive)
+# - POST /threads/{id}/fork — fork thread
+# - POST /threads/{id}/turns — start turn
+# - POST /threads/{id}/turns/{turn_id}/interrupt — interrupt turn
+# - POST /threads/{id}/turns/{turn_id}/steer — steer turn
+# - POST /threads/{id}/compact — compact thread
+# - GET  /threads/{id}/events — events since seq
+#
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -459,18 +447,12 @@ async def stdio_mcp_startup(
     return await runtime.mcp_startup()
 
 
-# ======================================================================
-# From server.py
-# ======================================================================
-
-"""App server entry points — HTTP (FastAPI/uvicorn) and stdio JSON-RPC.
-
-Mirrors ``crates/app-server/src/lib.rs`` (783 lines). The HTTP path uses
-FastAPI + uvicorn. The stdio path speaks newline-delimited JSON-RPC 2.0.
-Both call into the same :class:`AppRuntime` so state stays consistent.
-"""
-
-
+# App server entry points — HTTP (FastAPI/uvicorn) and stdio JSON-RPC.
+#
+# Mirrors ``crates/app-server/src/lib.rs`` (783 lines). The HTTP path uses
+# FastAPI + uvicorn. The stdio path speaks newline-delimited JSON-RPC 2.0.
+# Both call into the same :class:`AppRuntime` so state stays consistent.
+#
 import asyncio
 import json
 import logging
@@ -788,18 +770,12 @@ def _rpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     }
 
 
-# ======================================================================
-# From sse.py
-# ======================================================================
-
-"""SSE (Server-Sent Events) support for streaming responses.
-
-Mirrors the SSE framing used by Rust app-server. Each envelope contains
-an ``event:`` field (the tagged-union discriminator) and a ``data:``
-field (the payload JSON), terminated by a blank line.
-"""
-
-
+# SSE (Server-Sent Events) support for streaming responses.
+#
+# Mirrors the SSE framing used by Rust app-server. Each envelope contains
+# an ``event:`` field (the tagged-union discriminator) and a ``data:``
+# field (the payload JSON), terminated by a blank line.
+#
 import json
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
@@ -823,18 +799,12 @@ async def iter_sse(source: AsyncIterable[dict[str, Any]]) -> AsyncIterator[str]:
         yield format_sse(envelope)
 
 
-# ======================================================================
-# From broadcast.py
-# ======================================================================
-
-"""Async broadcast channel — one sender, multiple receivers.
-
-Mirrors Rust ``tokio::sync::broadcast`` semantics with bounded capacity.
-Each subscriber gets its own asyncio.Queue; when full, oldest items are
-dropped (lagging receiver behaviour).
-"""
-
-
+# Async broadcast channel — one sender, multiple receivers.
+#
+# Mirrors Rust ``tokio::sync::broadcast`` semantics with bounded capacity.
+# Each subscriber gets its own asyncio.Queue; when full, oldest items are
+# dropped (lagging receiver behaviour).
+#
 import asyncio
 import logging
 from typing import Generic, TypeVar

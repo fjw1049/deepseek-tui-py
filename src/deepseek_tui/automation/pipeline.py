@@ -3,18 +3,10 @@
 
 from __future__ import annotations
 
-
-
-# ======================================================================
-# From pipeline.py
-# ======================================================================
-
-"""Dispatch + post-run delivery for automations (OpenHuman ``deliver_if_configured``)."""
-
-
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -192,6 +184,8 @@ async def enqueue_automation_task(
         except Exception:  # noqa: BLE001
             pass
 
+    from deepseek_tui.tools.automation import _utc_now_iso
+
     workspace = automation.cwds[0] if automation.cwds else None
     new_task = NewTaskRequest(
         prompt=await build_final_prompt(automation),
@@ -205,8 +199,6 @@ async def enqueue_automation_task(
     try:
         task = await task_manager.add_task(new_task)
         run.status = AutomationRunStatus.RUNNING
-        from deepseek_tui.tools.automation import _utc_now_iso
-
         run.started_at = _utc_now_iso()
         run.task_id = task.id
         run.thread_id = getattr(task, "thread_id", None)
@@ -214,8 +206,6 @@ async def enqueue_automation_task(
         run.error = None
     except Exception as exc:  # noqa: BLE001
         run.status = AutomationRunStatus.FAILED
-        from deepseek_tui.tools.automation import _utc_now_iso
-
         run.ended_at = _utc_now_iso()
         run.error = f"Failed to enqueue task: {exc}"
 
@@ -578,19 +568,6 @@ async def run_feishu_inbound_agent(
         "summary": summary,
     }
 
-
-# ======================================================================
-# From triage.py
-# ======================================================================
-
-"""Optional webhook triage (OpenHuman ``run_triage`` subset; cron always skips)."""
-
-
-import logging
-from dataclasses import dataclass
-from typing import Any
-
-logger = logging.getLogger(__name__)
 
 TRIAGE_SKIP = "skip"
 TRIAGE_RUN = "run"

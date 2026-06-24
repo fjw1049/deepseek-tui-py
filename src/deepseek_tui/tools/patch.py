@@ -7,11 +7,6 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From utility_tools.py
-# ======================================================================
-
-
 import logging
 from dataclasses import asdict
 from pathlib import Path
@@ -424,28 +419,22 @@ def _walk(base: Path, current: Path, lines: list[str], max_depth: int, depth: in
             lines.append(f"{indent}{entry.name}")
 
 
-# ======================================================================
-# From patch_engine.py
-# ======================================================================
-
-"""Unified-diff patcher with fuzzy matching.
-
-Mirrors ``crates/tui/src/tools/apply_patch.rs`` (1,469 lines). Provides
-pure-Python equivalents for:
-
-- :func:`parse_unified_diff` / :func:`parse_unified_diff_files`
-- :func:`apply_hunks_to_lines` / :func:`apply_hunk` (with cumulative
-  offset across hunks)
-- :func:`matches_at_position` (whitespace-normalized by ``rstrip``)
-- :class:`Hunk` / :class:`HunkLine` / :class:`PatchResult` /
-  :class:`FileSummary`
-
-``MAX_FUZZ = 50`` follows Rust (apply_patch.rs:21). Fuzz search starts
-at the adjusted line (cumulative offset applied) and widens symmetrically
-up to ``max_fuzz`` lines on either side.
-"""
-
-
+# Unified-diff patcher with fuzzy matching.
+#
+# Mirrors ``crates/tui/src/tools/apply_patch.rs`` (1,469 lines). Provides
+# pure-Python equivalents for:
+#
+# - :func:`parse_unified_diff` / :func:`parse_unified_diff_files`
+# - :func:`apply_hunks_to_lines` / :func:`apply_hunk` (with cumulative
+#   offset across hunks)
+# - :func:`matches_at_position` (whitespace-normalized by ``rstrip``)
+# - :class:`Hunk` / :class:`HunkLine` / :class:`PatchResult` /
+#   :class:`FileSummary`
+#
+# ``MAX_FUZZ = 50`` follows Rust (apply_patch.rs:21). Fuzz search starts
+# at the adjusted line (cumulative offset applied) and widens symmetrically
+# up to ``max_fuzz`` lines on either side.
+#
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path

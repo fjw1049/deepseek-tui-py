@@ -7,20 +7,14 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From user_input_tool.py
-# ======================================================================
-
-"""RequestUserInputTool — pauses execution to ask the user a question.
-
-Mirrors `crates/tui/src/tools/user_input.rs`.
-
-The Engine intercepts this tool name, validates the input, emits a
-UserInputRequiredEvent, and blocks until the TUI resolves the future.
-The ToolSpec itself always raises — it must never be dispatched directly.
-"""
-
-
+# RequestUserInputTool — pauses execution to ask the user a question.
+#
+# Mirrors `crates/tui/src/tools/user_input.rs`.
+#
+# The Engine intercepts this tool name, validates the input, emits a
+# UserInputRequiredEvent, and blocks until the TUI resolves the future.
+# The ToolSpec itself always raises — it must never be dispatched directly.
+#
 from typing import Any
 
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
@@ -135,16 +129,10 @@ class RequestUserInputTool(ToolSpec):
         raise ToolError("request_user_input must be handled by the engine")
 
 
-# ======================================================================
-# From retrieve_tool_result.py
-# ======================================================================
-
-"""``retrieve_tool_result`` — selective retrieval for spilled tool outputs.
-
-Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/tool_result_retrieval.rs``.
-"""
-
-
+# ``retrieve_tool_result`` — selective retrieval for spilled tool outputs.
+#
+# Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/tool_result_retrieval.rs``.
+#
 import json
 import re
 from pathlib import Path

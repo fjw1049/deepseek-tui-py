@@ -1,22 +1,12 @@
 """Capacity control — token budget, rate limiting, compaction.
 
 Consolidates capacity.py, capacity_flow.py, compaction.py.
+Capacity-aware guardrail controller for context pressure management.
+Mirrors ``crates/tui/src/core/capacity.rs:1-784``
++ ``crates/tui/src/core/engine/capacity_flow.rs:1-975``.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From capacity.py
-# ======================================================================
-
-"""Capacity-aware guardrail controller for context pressure management.
-
-Mirrors `crates/tui/src/core/capacity.rs:1-784`
-         + `crates/tui/src/core/engine/capacity_flow.rs:1-975`
-"""
-
 
 import enum
 from collections import deque
@@ -338,17 +328,10 @@ class CapacityController:
             return RiskBand.LOW
 
 
-# ======================================================================
-# From capacity_flow.py
-# ======================================================================
-
-"""Capacity checkpoint flow logic for the Engine.
-
-Simplified port of `crates/tui/src/core/engine/capacity_flow.rs:1-975`.
-Implements the 3 checkpoint entry points that route to guardrail actions.
-Full tool-replay and canonical-state-rebuild logic is deferred (P1).
-"""
-
+# Capacity checkpoint flow logic for the Engine.
+# Simplified port of ``crates/tui/src/core/engine/capacity_flow.rs:1-975``.
+# Implements the 3 checkpoint entry points that route to guardrail actions.
+# Full tool-replay and canonical-state-rebuild logic is deferred (P1).
 
 import logging
 from typing import TYPE_CHECKING
@@ -498,15 +481,8 @@ async def run_error_escalation_checkpoint(
     return decision
 
 
-# ======================================================================
-# From compaction.py
-# ======================================================================
-
-"""Context compaction for long conversations.
-
-Mirrors `crates/tui/src/compaction.rs:1-2008`
-"""
-
+# Context compaction for long conversations.
+# Mirrors ``crates/tui/src/compaction.rs:1-2008``.
 
 import asyncio
 import re

@@ -3,15 +3,6 @@
 
 from __future__ import annotations
 
-
-
-# ======================================================================
-# From delivery_format.py
-# ======================================================================
-
-"""Format automation task output for human-facing delivery (Feishu / email)."""
-
-
 import re
 from typing import TYPE_CHECKING
 

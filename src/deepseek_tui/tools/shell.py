@@ -6,24 +6,24 @@ import asyncio
 import logging
 import os
 import pty
+import re
 import shlex
 import uuid
 from asyncio.subprocess import Process
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.policy.approval import Decision
+from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.policy.sandbox import (
+    SANDBOX_MANAGER,
     CommandSpec,
     ExecEnv,
     ExecutionSandboxPolicy,
-    SANDBOX_MANAGER,
     apply_sandbox_metadata,
 )
+from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.validation import require_string as _require_string
-from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,9 @@ class ExecShellTool(ToolSpec):
             "Execute a shell command. Supports background jobs (background=true) "
             "and an optional pseudo-TTY (pty=true) for interactive programs. "
             "Foreground commands are killed after timeout_ms milliseconds "
-            "(default 120000, max 600000)."
+            "(default 120000, max 600000). Do not use this to fetch a URL — "
+            "use fetch_url instead; only shell out with curl/wget when fetch_url "
+            "is unavailable or you need shell piping around the response."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -155,6 +157,14 @@ class ExecShellTool(ToolSpec):
                 timeout_ms,
                 process.pid,
             )
+            # Record the timeout against its host (if the command fetches a
+            # URL) so repeated timeouts on the same host escalate to a
+            # mirror / tool-swap suggestion rather than silent retries.
+            _url = _extract_http_url(command)
+            if _url is not None:
+                from deepseek_tui.tools.network_escalation import record_host_timeout
+
+                record_host_timeout(context, _url)
             # Kill so we don't leak a zombie when the model fires off a
             # runaway command. Best-effort terminate first to give Python
             # signal handlers a chance, then fall back to kill.
@@ -171,14 +181,13 @@ class ExecShellTool(ToolSpec):
                 content=(
                     f"Command timed out after {timeout_ms} ms and was killed: "
                     f"{command}\n\n"
-                    "For long-running work, use task_shell_start + task_shell_wait "
-                    "on a durable task instead of foreground exec_shell."
+                    + _timeout_fallback_hint(command, context)
                 ),
                 metadata={
                     "timed_out": True,
                     "timeout_ms": timeout_ms,
                     "returncode": process.returncode,
-                    "job_hint": "task_shell_start",
+                    "job_hint": _timeout_job_hint(command, context),
                 },
             )
         logger.info(
@@ -209,6 +218,92 @@ def _resolve_timeout_ms(raw: object) -> int:
     if raw > EXEC_MAX_TIMEOUT_MS:
         raise ToolError(f"timeout_ms must be <= {EXEC_MAX_TIMEOUT_MS}")
     return raw
+
+
+def _extract_http_url(command: str) -> str | None:
+    """Return the first http(s) URL in ``command``, or None.
+
+    Used only to shape the timeout fallback hint; never used to execute
+    anything, so a permissive match is fine.
+    """
+    m = re.search(r"https?://[^\s'\"<>)]+", command)
+    return m.group(0) if m else None
+
+
+def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
+    """Capability-aware suggestion shown after an exec_shell timeout.
+
+    The fallback depends on what the command was doing and what the runtime
+    actually has wired (read off ``context``, not the static registry —
+    tools registered but unwired at runtime are exactly the failure mode
+    we avoid recommending here):
+      - ``curl <url>``          → prefer fetch_url; if the same host has
+                                   timed out repeatedly this turn, also
+                                   offer the jsDelivr mirror URL.
+      - active durable task      → task_shell_start + task_shell_wait
+      - task_manager wired but
+        no active task           → task_create first, then task_shell_start
+      - otherwise                → exec_shell(background=true) + exec_shell_wait
+
+    The mirror/tool-swap suggestion appears once the host has crossed the
+    escalation threshold (see network_escalation). A single timeout stays
+    a quiet "prefer fetch_url" hint; repeated failures on the same host
+    escalate to a generic "try a mirror/CDN or web_search" suggestion.
+
+    No host-specific knowledge (e.g. jsDelivr for raw GitHub) lives here —
+    that belongs in a domain layer (skill / MCP), not the generic network
+    fallback. This keeps the hint correct for any host: YouTube, X, raw
+    GitHub, etc. all get the same capability-aware behaviour.
+    """
+    # Lazy import avoids a registry <-> shell <-> network_escalation cycle.
+    from deepseek_tui.tools.network_escalation import should_escalate
+
+    url = _extract_http_url(command)
+    looks_like_curl = "curl" in command and url is not None
+    if looks_like_curl:
+        hint = (
+            "For fetching URL contents, prefer the fetch_url tool instead of "
+            "shell curl (it handles redirects, truncation and timeouts "
+            "uniformly)."
+        )
+        if url is not None and should_escalate(context, url):
+            hint += (
+                "\nThis host has timed out repeatedly this turn — consider "
+                "a mirror/CDN, web_search, or an alternative source instead "
+                "of retrying in place."
+            )
+        return hint
+    if context.task_manager is not None:
+        if context.active_task_id:
+            return (
+                "For long-running work, use task_shell_start + task_shell_wait "
+                "on the active durable task instead of foreground exec_shell."
+            )
+        return (
+            "For long-running work, create a durable task with task_create, "
+            "then use task_shell_start + task_shell_wait instead of a "
+            "foreground exec_shell."
+        )
+    return (
+        "For long-running work, use exec_shell(background=true) and then "
+        "exec_shell_wait to collect output, instead of a foreground "
+        "exec_shell that blocks until the timeout."
+    )
+
+
+def _timeout_job_hint(command: str, context: ToolContext) -> str:
+    """Machine-readable hint mirrored into result metadata.
+
+    Callers (UI/telemetry) key off this to surface the right next action
+    without re-parsing the human hint.
+    """
+    if "curl" in command and _extract_http_url(command) is not None:
+        return "fetch_url"
+    if context.task_manager is not None:
+        if context.active_task_id:
+            return "task_shell_start"
+        return "task_create"
+    return "exec_shell_background"
 
 
 class ExecShellWaitTool(ToolSpec):
@@ -459,6 +554,15 @@ def _build_shell_result(
             stderr=stderr_text,
         )
     content = _decode_output(stdout, stderr)
+    # On failure, surface stderr first and labelled — otherwise a long
+    # stdout buries the actual error (the reverse-skill trace had a git
+    # clone fail with 57B of stderr the model never acted on, because it
+    # came after 161B of stdout). Success keeps stdout-then-stderr order.
+    if process.returncode not in (0, None) and stderr_text:
+        content = (
+            f"[exit {process.returncode}] stderr:\n{stderr_text}\n"
+            f"--- stdout ---\n{_decode_stream(stdout)}"
+        ).strip()
     if (
         exec_env is not None
         and policy is not None

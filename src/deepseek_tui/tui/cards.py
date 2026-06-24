@@ -5,31 +5,25 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From agent_card.py
-# ======================================================================
-
-"""Sub-agent activity cards (delegate + fanout).
-
-Mirrors ``crates/tui/src/tui/widgets/agent_card.rs`` (671 LOC).
-
-Two cards consume :class:`MailboxMessage` envelopes and surface a live
-status line in the transcript:
-
-- :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
-  status glyph + role + agent id, plus the last
-  :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
-  from the head and an ellipsis row signals truncation.
-- :class:`FanoutCard` — multi-child dispatch. Dot-grid
-  with one glyph per worker plus an aggregate counts line.
-
-The state-machine half of each card is plain Python so unit tests can
-drive it without a Textual runtime. The :class:`AgentCardWidget` is a
-thin :class:`textual.widgets.Static` adapter that renders a card's
-current state using Rich markup.
-"""
-
-
+# Sub-agent activity cards (delegate + fanout).
+#
+# Mirrors ``crates/tui/src/tui/widgets/agent_card.rs`` (671 LOC).
+#
+# Two cards consume :class:`MailboxMessage` envelopes and surface a live
+# status line in the transcript:
+#
+# - :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
+#   status glyph + role + agent id, plus the last
+#   :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
+#   from the head and an ellipsis row signals truncation.
+# - :class:`FanoutCard` — multi-child dispatch. Dot-grid
+#   with one glyph per worker plus an aggregate counts line.
+#
+# The state-machine half of each card is plain Python so unit tests can
+# drive it without a Textual runtime. The :class:`AgentCardWidget` is a
+# thin :class:`textual.widgets.Static` adapter that renders a card's
+# current state using Rich markup.
+#
 import enum
 from dataclasses import dataclass, field
 
@@ -386,35 +380,29 @@ class AgentCardWidget(Static):
         self.update(card.render_text())
 
 
-# ======================================================================
-# From pager.py
-# ======================================================================
-
-"""Long-output pager overlay.
-
-Mirrors ``crates/tui/src/tui/pager.rs`` (809 LOC).
-
-Vim-style key bindings:
-
-- ``j`` / Down       — scroll down one line
-- ``k`` / Up         — scroll up one line
-- ``g g`` / Home     — jump to top (the chord state lives on
-  :class:`PagerState.pending_g`)
-- ``G`` / End        — jump to bottom
-- ``Ctrl+D`` / ``Ctrl+U``  — half-page down / up
-- ``Ctrl+F`` / ``Ctrl+B`` / Space / Shift+Space / PageDown / PageUp
-  — full page down / up
-- ``/`` — start search; ``Enter`` commits, ``Esc`` cancels.
-- ``n`` / ``N`` — next / previous match.
-- ``q`` / ``Esc`` — close.
-
-Layered the same way as :class:`PlanPromptState`: a pure-state class so
-unit tests can drive the keymap without spinning up Textual, plus a thin
-:class:`PagerScreen` adapter that wires Textual bindings to the state
-machine.
-"""
-
-
+# Long-output pager overlay.
+#
+# Mirrors ``crates/tui/src/tui/pager.rs`` (809 LOC).
+#
+# Vim-style key bindings:
+#
+# - ``j`` / Down       — scroll down one line
+# - ``k`` / Up         — scroll up one line
+# - ``g g`` / Home     — jump to top (the chord state lives on
+#   :class:`PagerState.pending_g`)
+# - ``G`` / End        — jump to bottom
+# - ``Ctrl+D`` / ``Ctrl+U``  — half-page down / up
+# - ``Ctrl+F`` / ``Ctrl+B`` / Space / Shift+Space / PageDown / PageUp
+#   — full page down / up
+# - ``/`` — start search; ``Enter`` commits, ``Esc`` cancels.
+# - ``n`` / ``N`` — next / previous match.
+# - ``q`` / ``Esc`` — close.
+#
+# Layered the same way as :class:`PlanPromptState`: a pure-state class so
+# unit tests can drive the keymap without spinning up Textual, plus a thin
+# :class:`PagerScreen` adapter that wires Textual bindings to the state
+# machine.
+#
 import enum
 from dataclasses import dataclass, field
 

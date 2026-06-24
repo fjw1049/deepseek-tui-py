@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -9,8 +7,16 @@ from dataclasses import dataclass
 
 import httpx
 
-
-# --- Retry config (formerly client/retry.py) ---------------------------------
+from deepseek_tui.protocol.messages import MessageRequest
+from deepseek_tui.protocol.responses import (
+    StreamDone,
+    StreamError,
+    StreamEvent,
+    StreamTextDelta,
+    StreamThinkingDelta,
+    StreamToolCallComplete,
+    StreamToolCallDelta,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,16 +31,6 @@ class RetryConfig:
 
     def error_delay(self, attempt: int) -> float:
         return float(min(self.base_delay * (2**attempt), self.max_delay))
-from deepseek_tui.protocol.messages import MessageRequest
-from deepseek_tui.protocol.responses import (
-    StreamDone,
-    StreamError,
-    StreamEvent,
-    StreamTextDelta,
-    StreamThinkingDelta,
-    StreamToolCallComplete,
-    StreamToolCallDelta,
-)
 
 
 class LLMClient(ABC):

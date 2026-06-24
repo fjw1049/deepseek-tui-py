@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From session_restore.py
-# ======================================================================
-
-"""Shared TUI session JSON → Engine + Transcript restore helpers."""
-
-
+# Shared TUI session JSON → Engine + Transcript restore helpers.
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,18 +94,13 @@ def session_started_at_iso(metadata: dict[str, Any], *, path: Path | None = None
     return None
 
 
-# ======================================================================
-# From approval_handler.py
-# ======================================================================
-
-"""TUI-backed approval handler — mirrors Rust ``tui/approval.rs``.
-
-Stage 6.4: Bridges the engine's ``ApprovalHandler`` interface to the
-Textual ``ApprovalDialog`` modal screen. When the engine requests
-approval, this handler signals the TUI app to push the dialog and
-awaits the user's response via an asyncio Future.
-"""
-
+# TUI-backed approval handler — mirrors Rust ``tui/approval.rs``.
+#
+# Stage 6.4: Bridges the engine's ``ApprovalHandler`` interface to the
+# Textual ``ApprovalDialog`` modal screen. When the engine requests
+# approval, this handler signals the TUI app to push the dialog and
+# awaits the user's response via an asyncio Future.
+#
 import asyncio
 from typing import TYPE_CHECKING
 

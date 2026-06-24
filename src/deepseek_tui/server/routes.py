@@ -89,13 +89,7 @@ def runtime_from_request(request: Any) -> Any:
     return runtime
 
 
-# ======================================================================
-# From _deps.py
-# ======================================================================
-
-"""Shared request helpers + ValueError classifier for runtime_api routes."""
-
-
+# Shared request helpers + ValueError classifier for runtime_api routes.
 from typing import Any
 
 from fastapi import Request
@@ -151,13 +145,7 @@ def classify_turn_value_error(exc: ValueError) -> Exception:
     return api_error(400, msg, error="invalid_request")
 
 
-# ======================================================================
-# From approvals.py
-# ======================================================================
-
-"""POST /v1/approvals/{id} — resolve a pending tool approval."""
-
-
+# POST /v1/approvals/{id} — resolve a pending tool approval.
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
@@ -196,13 +184,7 @@ async def decide_approval(request: Request, approval_id: str) -> dict[str, objec
     }
 
 
-# ======================================================================
-# From automation.py
-# ======================================================================
-
-"""Automation HTTP — CRUD, triggers, Feishu inbound."""
-
-
+# Automation HTTP — CRUD, triggers, Feishu inbound.
 import os
 from typing import Any
 
@@ -452,13 +434,7 @@ async def list_automation_runs(
     return payload.get("runs", [])
 
 
-# ======================================================================
-# From elevations.py
-# ======================================================================
-
-"""POST /v1/elevations/{id} — resolve a pending sandbox elevation (L3)."""
-
-
+# POST /v1/elevations/{id} — resolve a pending sandbox elevation (L3).
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
@@ -498,13 +474,7 @@ async def decide_elevation(request: Request, elevation_id: str) -> dict[str, obj
     }
 
 
-# ======================================================================
-# From events.py
-# ======================================================================
-
-"""GET /v1/threads/{id}/events — long-lived SSE with backlog replay."""
-
-
+# GET /v1/threads/{id}/events — long-lived SSE with backlog replay.
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
@@ -545,13 +515,7 @@ async def stream_events(request: Request, thread_id: str) -> StreamingResponse:
     return StreamingResponse(generator, media_type="text/event-stream")
 
 
-# ======================================================================
-# From health.py
-# ======================================================================
-
-"""GET /health and /healthz — connection probes."""
-
-
+# GET /health and /healthz — connection probes.
 from fastapi import APIRouter, Request
 
 router_health = APIRouter()
@@ -582,13 +546,7 @@ async def health_ready(request: Request) -> dict[str, object]:
     }
 
 
-# ======================================================================
-# From jobs.py
-# ======================================================================
-
-"""GET /v1/jobs — shell + durable task snapshot for Workbench."""
-
-
+# GET /v1/jobs — shell + durable task snapshot for Workbench.
 from fastapi import APIRouter, Request
 
 
@@ -602,18 +560,12 @@ async def list_jobs(request: Request) -> dict[str, object]:
     return await mgr.jobs_snapshot(thread_id=thread_id or None)
 
 
-# ======================================================================
-# From mcp.py
-# ======================================================================
-
-"""POST /v1/mcp/startup — start enabled MCP servers (Workbench Settings reload).
-
-The Workbench reloads MCP config from disk then asks the runtime to (re)connect
-its enabled servers. The legacy router exposed this under ``/legacy/mcp/startup``
-only; the GUI talks exclusively to ``/v1/*`` so the parity route lives here.
-"""
-
-
+# POST /v1/mcp/startup — start enabled MCP servers (Workbench Settings reload).
+#
+# The Workbench reloads MCP config from disk then asks the runtime to (re)connect
+# its enabled servers. The legacy router exposed this under ``/legacy/mcp/startup``
+# only; the GUI talks exclusively to ``/v1/*`` so the parity route lives here.
+#
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -634,13 +586,7 @@ async def mcp_preload_status(request: Request) -> dict[str, Any]:
     return runtime.mcp_preload_status()
 
 
-# ======================================================================
-# From sessions.py
-# ======================================================================
-
-"""GET /v1/sessions + export Workbench threads back to TUI session files."""
-
-
+# GET /v1/sessions + export Workbench threads back to TUI session files.
 from datetime import datetime, timezone
 from typing import Any
 
@@ -697,13 +643,7 @@ async def export_session(request: Request, thread_id: str) -> dict[str, Any]:
     }
 
 
-# ======================================================================
-# From skills.py
-# ======================================================================
-
-"""GET /v1/skills — discovered skills for Workbench settings/diagnostics."""
-
-
+# GET /v1/skills — discovered skills for Workbench settings/diagnostics.
 from pathlib import Path
 from typing import Any
 
@@ -741,13 +681,7 @@ async def list_skills(request: Request) -> dict[str, Any]:
     }
 
 
-# ======================================================================
-# From tasks.py
-# ======================================================================
-
-"""GET/POST /v1/tasks — durable background task queue."""
-
-
+# GET/POST /v1/tasks — durable background task queue.
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -785,13 +719,7 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
     return task
 
 
-# ======================================================================
-# From threads.py
-# ======================================================================
-
-"""/v1/threads CRUD + summary + fork + resume."""
-
-
+# /v1/threads CRUD + summary + fork + resume.
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -943,13 +871,7 @@ async def resume_thread(request: Request, thread_id: str) -> dict[str, Any]:
     return detail.model_dump(mode="json")
 
 
-# ======================================================================
-# From turns.py
-# ======================================================================
-
-"""/v1/threads/{id}/turns lifecycle: start / interrupt / steer / compact."""
-
-
+# /v1/threads/{id}/turns lifecycle: start / interrupt / steer / compact.
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -1025,13 +947,7 @@ async def compact_thread(request: Request, thread_id: str) -> dict[str, Any]:
     return turn.model_dump(mode="json")
 
 
-# ======================================================================
-# From user_inputs.py
-# ======================================================================
-
-"""POST /v1/user-inputs/{id} — answer or cancel a pending question."""
-
-
+# POST /v1/user-inputs/{id} — answer or cancel a pending question.
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -1072,13 +988,7 @@ async def user_input_response(
     return {"ok": True}
 
 
-# ======================================================================
-# From workspace.py
-# ======================================================================
-
-"""GET /v1/workspace/status — diagnostic dialog."""
-
-
+# GET /v1/workspace/status — diagnostic dialog.
 from typing import Any
 
 from fastapi import APIRouter, Request

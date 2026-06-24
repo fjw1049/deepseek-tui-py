@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From runtime_api/approval_bridge.py
-# ======================================================================
-
-"""HTTP-suspended tool approvals for headless / GUI runtimes."""
-
-
+# HTTP-suspended tool approvals for headless / GUI runtimes.
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -180,13 +174,7 @@ class HttpApprovalHandler(ApprovalHandler):
         return ApprovalDecision.APPROVED
 
 
-# ======================================================================
-# From runtime_api/elevation_bridge.py
-# ======================================================================
-
-"""HTTP-suspended sandbox elevation for Workbench / headless runtimes."""
-
-
+# HTTP-suspended sandbox elevation for Workbench / headless runtimes.
 import asyncio
 from dataclasses import dataclass, field
 

@@ -7,30 +7,24 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From runtime.py
-# ======================================================================
-
-"""Runtime bundle — wire the registry, managers, and ToolContext together.
-
-This solves the "each tool wired in isolation" problem: :func:`create_tool_runtime`
-is the **one** entry point the engine / tests / CLI go through to get a
-fully-operational ToolContext with:
-
-- TaskManager (Stage 3.1) started and attached
-- SubAgentManager (Stage 3.2) attached with its Mailbox
-- McpManager (Stage 4.3) attached via ``ToolContext.metadata`` so the
-  mcp_tools dispatchers can reach it
-- AutomationManager + scheduler loop (2026-05-15) attached when
-  ``features.automations`` is enabled
-- Policy (Stage 2.5) attached
-- workspace rooted at the caller-supplied cwd
-
-Call :meth:`ToolRuntime.shutdown` (or use it as an async context manager) to
-drain managers cleanly.
-"""
-
-
+# Runtime bundle — wire the registry, managers, and ToolContext together.
+#
+# This solves the "each tool wired in isolation" problem: :func:`create_tool_runtime`
+# is the **one** entry point the engine / tests / CLI go through to get a
+# fully-operational ToolContext with:
+#
+# - TaskManager (Stage 3.1) started and attached
+# - SubAgentManager (Stage 3.2) attached with its Mailbox
+# - McpManager (Stage 4.3) attached via ``ToolContext.metadata`` so the
+#   mcp_tools dispatchers can reach it
+# - AutomationManager + scheduler loop (2026-05-15) attached when
+#   ``features.automations`` is enabled
+# - Policy (Stage 2.5) attached
+# - workspace rooted at the caller-supplied cwd
+#
+# Call :meth:`ToolRuntime.shutdown` (or use it as an async context manager) to
+# drain managers cleanly.
+#
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -358,21 +352,15 @@ async def _build_mcp_manager(cfg: Config) -> McpManager:
     return McpManager(servers, config_path=path)
 
 
-# ======================================================================
-# From parallel_tool.py
-# ======================================================================
-
-"""MultiToolUseParallelTool — expands a batch of read-only tool calls.
-
-Mirrors `crates/tui/src/tools/parallel.rs`.
-
-The model may emit a single ``multi_tool_use.parallel`` tool call whose
-``tool_uses`` array contains multiple sub-calls.  The Engine intercepts
-this name and fans out the sub-calls concurrently (read-only only).
-The ToolSpec itself always raises — it must never be dispatched directly.
-"""
-
-
+# MultiToolUseParallelTool — expands a batch of read-only tool calls.
+#
+# Mirrors `crates/tui/src/tools/parallel.rs`.
+#
+# The model may emit a single ``multi_tool_use.parallel`` tool call whose
+# ``tool_uses`` array contains multiple sub-calls.  The Engine intercepts
+# this name and fans out the sub-calls concurrently (read-only only).
+# The ToolSpec itself always raises — it must never be dispatched directly.
+#
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
 
@@ -415,16 +403,10 @@ class MultiToolUseParallelTool(ToolSpec):
         raise ToolError("multi_tool_use.parallel must be handled by the engine")
 
 
-# ======================================================================
-# From spillover.py
-# ======================================================================
-
-"""Tool-output spillover writer (#422).
-
-Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/truncate.rs``.
-"""
-
-
+# Tool-output spillover writer (#422).
+#
+# Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/truncate.rs``.
+#
 import logging
 import os
 import time

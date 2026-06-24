@@ -7,33 +7,28 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From automation_tools.py
-# ======================================================================
-
-"""Model-visible automation tools backed by :class:`AutomationManager`.
-
-Mirrors Rust ``crates/tui/src/tools/automation.rs`` (382 LOC).
-
-Eight tools:
-
-================== ================================================
-``automation_create``    create a durable scheduled automation (REQUIRES_APPROVAL)
-``automation_list``      list automations with status / next_run / last_run
-``automation_read``      detailed view of one automation + recent runs
-``automation_update``    edit name / prompt / rrule / cwds / status
-``automation_pause``     pause an active automation
-``automation_resume``    resume a paused automation
-``automation_delete``    delete (also wipes the automation's run history)
-``automation_run``       enqueue a one-off run right now
-================== ================================================
-
-The ``AutomationManager`` lives on ``ToolContext.metadata`` under the
-key :data:`AUTOMATION_MANAGER_KEY`, set by ``Engine.create`` when the
-feature flag is enabled. If no manager is attached (feature flag off),
-each tool returns a clean error so the LLM can fall back gracefully.
-"""
-
+# Model-visible automation tools backed by :class:`AutomationManager`.
+#
+# Mirrors Rust ``crates/tui/src/tools/automation.rs`` (382 LOC).
+#
+# Eight tools:
+#
+# ================== ================================================
+# ``automation_create``    create a durable scheduled automation (REQUIRES_APPROVAL)
+# ``automation_list``      list automations with status / next_run / last_run
+# ``automation_read``      detailed view of one automation + recent runs
+# ``automation_update``    edit name / prompt / rrule / cwds / status
+# ``automation_pause``     pause an active automation
+# ``automation_resume``    resume a paused automation
+# ``automation_delete``    delete (also wipes the automation's run history)
+# ``automation_run``       enqueue a one-off run right now
+# ================== ================================================
+#
+# The ``AutomationManager`` lives on ``ToolContext.metadata`` under the
+# key :data:`AUTOMATION_MANAGER_KEY`, set by ``Engine.create`` when the
+# feature flag is enabled. If no manager is attached (feature flag off),
+# each tool returns a clean error so the LLM can fall back gracefully.
+#
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -594,42 +589,37 @@ class AutomationRunTool(ToolSpec):
 _ = asdict
 
 
-# ======================================================================
-# From automation_manager.py
-# ======================================================================
-
-"""Durable automation records and scheduler-supporting manager.
-
-Mirrors Rust ``crates/tui/src/automation_manager.rs`` (937 LOC).
-
-Automations are local-first recurring jobs that **enqueue standard
-durable tasks**. This module stores automation definitions and run
-history under ``~/.deepseek/automations/`` (or
-``DEEPSEEK_AUTOMATIONS_DIR`` override).
-
-Layout::
-
-    <root>/
-      automations/<id>.json          ← one AutomationRecord
-      runs/<automation_id>/<run_id>.json  ← one AutomationRunRecord per fire
-
-The scheduler tick (see ``automation_scheduler.run_scheduler_loop``)
-calls :meth:`AutomationManager.scheduler_tick` and
-:meth:`AutomationManager.reconcile_run_statuses` on a fixed cadence.
-
-Every disk write goes through ``write_json_atomic`` (tmp file + rename)
-so partially-written records cannot survive a crash.
-
-RRULE subset matches Rust :class:`AutomationSchedule`:
-
-* ``FREQ=HOURLY;INTERVAL=N[;BYDAY=MO,TU]``
-* ``FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=30``
-
-Times in ``next_after`` are computed in **local time** (matches Rust
-``with_timezone(&Local)`` at automation_manager.rs:223) so a user with
-a 9am rule fires at their local 9am, not UTC 9am.
-"""
-
+# Durable automation records and scheduler-supporting manager.
+#
+# Mirrors Rust ``crates/tui/src/automation_manager.rs`` (937 LOC).
+#
+# Automations are local-first recurring jobs that **enqueue standard
+# durable tasks**. This module stores automation definitions and run
+# history under ``~/.deepseek/automations/`` (or
+# ``DEEPSEEK_AUTOMATIONS_DIR`` override).
+#
+# Layout::
+#
+#     <root>/
+#       automations/<id>.json          ← one AutomationRecord
+#       runs/<automation_id>/<run_id>.json  ← one AutomationRunRecord per fire
+#
+# The scheduler tick (see ``automation_scheduler.run_scheduler_loop``)
+# calls :meth:`AutomationManager.scheduler_tick` and
+# :meth:`AutomationManager.reconcile_run_statuses` on a fixed cadence.
+#
+# Every disk write goes through ``write_json_atomic`` (tmp file + rename)
+# so partially-written records cannot survive a crash.
+#
+# RRULE subset matches Rust :class:`AutomationSchedule`:
+#
+# * ``FREQ=HOURLY;INTERVAL=N[;BYDAY=MO,TU]``
+# * ``FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=30``
+#
+# Times in ``next_after`` are computed in **local time** (matches Rust
+# ``with_timezone(&Local)`` at automation_manager.rs:223) so a user with
+# a 9am rule fires at their local 9am, not UTC 9am.
+#
 import json
 import logging
 import os
@@ -1478,27 +1468,22 @@ class AutomationManager:
                             self.save_run(run)
 
 
-# ======================================================================
-# From automation_scheduler.py
-# ======================================================================
-
-"""Background scheduler for :class:`AutomationManager`.
-
-Mirrors Rust ``automation_manager.rs::spawn_scheduler`` (817-850).
-
-The loop ticks the manager + reconciles run statuses on a fixed
-cadence. Failures inside a single tick are logged and swallowed so a
-transient error never kills the scheduler — the next tick gets a fresh
-chance.
-
-Q1 decision (Engine-level): one scheduler task per ``Engine`` instance,
-started in ``Engine.create`` and cancelled in ``Engine.shutdown``.
-
-Q2 decision: tick interval defaults to 15 s (matches Rust
-``AutomationSchedulerConfig::default``), with a 5-second floor for
-sanity. Tests can pass ``tick_interval_secs=1`` for fast iteration.
-"""
-
+# Background scheduler for :class:`AutomationManager`.
+#
+# Mirrors Rust ``automation_manager.rs::spawn_scheduler`` (817-850).
+#
+# The loop ticks the manager + reconciles run statuses on a fixed
+# cadence. Failures inside a single tick are logged and swallowed so a
+# transient error never kills the scheduler — the next tick gets a fresh
+# chance.
+#
+# Q1 decision (Engine-level): one scheduler task per ``Engine`` instance,
+# started in ``Engine.create`` and cancelled in ``Engine.shutdown``.
+#
+# Q2 decision: tick interval defaults to 15 s (matches Rust
+# ``AutomationSchedulerConfig::default``), with a 5-second floor for
+# sanity. Tests can pass ``tick_interval_secs=1`` for fast iteration.
+#
 import asyncio
 import logging
 from dataclasses import dataclass

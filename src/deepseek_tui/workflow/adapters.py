@@ -5,17 +5,11 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From adapters/pi_js.py
-# ======================================================================
-
-"""Parse Pi-style workflow scripts (meta export only → IR skeleton).
-
-Full JS body execution is not supported in Python; callers must supply
-``phases`` in the IR ``spec`` or convert the script to IR externally.
-"""
-
-
+# Parse Pi-style workflow scripts (meta export only → IR skeleton).
+#
+# Full JS body execution is not supported in Python; callers must supply
+# ``phases`` in the IR ``spec`` or convert the script to IR externally.
+#
 import json
 import re
 from typing import Any
@@ -154,13 +148,7 @@ def _validate_meta(meta: dict[str, Any]) -> None:
                 raise PiJsParseError("each meta phase must have a title string")
 
 
-# ======================================================================
-# From prompts.py
-# ======================================================================
-
-"""Workflow prompt snippets for the main model."""
-
-
+# Workflow prompt snippets for the main model.
 from functools import lru_cache
 from importlib.resources import files
 

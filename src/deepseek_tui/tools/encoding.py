@@ -7,36 +7,30 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From encoding.py
-# ======================================================================
-
-"""Tool-name codec for the DeepSeek (OpenAI-compatible) Chat Completions API.
-
-Behavioral parity with the Rust implementation at
-``crates/tui/src/client.rs:25-112`` of the original DeepSeek-TUI project.
-
-The provider only accepts ``[A-Za-z0-9_-]`` in tool names, so any other
-character must be escaped. Rust uses a reversible scheme:
-
-* ``-`` → ``--``
-* any other non-``[A-Za-z0-9_]`` char ``c`` →
-  ``-x{codepoint:06X}-`` (six upper-case hex digits, dash-delimited)
-
-Decoding is split into two passes:
-
-1. **Delimiter-based pass** (`-x000041-` form): handles correctly
-   formed escapes and ``--`` → ``-``.
-2. **Bare hex pass**: real DeepSeek models occasionally mangle the
-   delimiter form, e.g. ``-x00002E-`` → ``.x00002E-`` or ``x00002E``.
-   This pass scans for bare ``x[0-9A-Fa-f]{6}-?`` sequences and decodes
-   only those whose target character is one ``to_api_tool_name`` would
-   have encoded (i.e. NOT alphanumeric, ``_`` or ``-``). This avoids
-   accidentally rewriting innocent strings like ``foox000041bar``
-   (where ``x000041`` would map back to ``A``).
-"""
-
-
+# Tool-name codec for the DeepSeek (OpenAI-compatible) Chat Completions API.
+#
+# Behavioral parity with the Rust implementation at
+# ``crates/tui/src/client.rs:25-112`` of the original DeepSeek-TUI project.
+#
+# The provider only accepts ``[A-Za-z0-9_-]`` in tool names, so any other
+# character must be escaped. Rust uses a reversible scheme:
+#
+# * ``-`` → ``--``
+# * any other non-``[A-Za-z0-9_]`` char ``c`` →
+#   ``-x{codepoint:06X}-`` (six upper-case hex digits, dash-delimited)
+#
+# Decoding is split into two passes:
+#
+# 1. **Delimiter-based pass** (`-x000041-` form): handles correctly
+#    formed escapes and ``--`` → ``-``.
+# 2. **Bare hex pass**: real DeepSeek models occasionally mangle the
+#    delimiter form, e.g. ``-x00002E-`` → ``.x00002E-`` or ``x00002E``.
+#    This pass scans for bare ``x[0-9A-Fa-f]{6}-?`` sequences and decodes
+#    only those whose target character is one ``to_api_tool_name`` would
+#    have encoded (i.e. NOT alphanumeric, ``_`` or ``-``). This avoids
+#    accidentally rewriting innocent strings like ``foox000041bar``
+#    (where ``x000041`` would map back to ``A``).
+#
 import re
 
 __all__ = ["from_api_tool_name", "to_api_tool_name"]
@@ -166,13 +160,7 @@ def _safe_hex_to_char(hex_str: str) -> str | None:
     return chr(code)
 
 
-# ======================================================================
-# From deprecation.py
-# ======================================================================
-
-"""Deprecated tool alias notices — mirrors Rust ``wrap_with_deprecation_notice``."""
-
-
+# Deprecated tool alias notices — mirrors Rust ``wrap_with_deprecation_notice``.
 from dataclasses import replace
 
 from deepseek_tui.tools.registry import (
@@ -239,26 +227,20 @@ class DeprecatingAliasTool(ToolSpec):
         return attach_deprecation(result, self._alias, self._canonical)
 
 
-# ======================================================================
-# From schema_sanitize.py
-# ======================================================================
-
-"""JSON Schema sanitizer for DeepSeek strict function calling.
-
-Mirrors ``crates/tui/src/tools/schema_sanitize.rs``.
-
-Pydantic-generated schemas contain patterns that DeepSeek's strict mode
-rejects:
-  - ``anyOf: [X, {type: "null"}]`` for Optional fields
-  - bare ``{type: "object"}`` without ``properties``
-  - ``required`` entries not present in ``properties``
-  - single-element ``oneOf`` / ``allOf`` wrappers
-
-This module normalizes schemas in-place so strict mode can be enabled
-without hand-editing tool definitions.
-"""
-
-
+# JSON Schema sanitizer for DeepSeek strict function calling.
+#
+# Mirrors ``crates/tui/src/tools/schema_sanitize.rs``.
+#
+# Pydantic-generated schemas contain patterns that DeepSeek's strict mode
+# rejects:
+#   - ``anyOf: [X, {type: "null"}]`` for Optional fields
+#   - bare ``{type: "object"}`` without ``properties``
+#   - ``required`` entries not present in ``properties``
+#   - single-element ``oneOf`` / ``allOf`` wrappers
+#
+# This module normalizes schemas in-place so strict mode can be enabled
+# without hand-editing tool definitions.
+#
 from typing import Any
 
 

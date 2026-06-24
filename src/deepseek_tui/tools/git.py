@@ -7,11 +7,6 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From git_tools.py
-# ======================================================================
-
-
 import asyncio
 from pathlib import Path
 
@@ -199,11 +194,6 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
     if not isinstance(value, int):
         raise ToolError(f"{key} must be an integer")
     return value
-
-
-# ======================================================================
-# From github_tools.py
-# ======================================================================
 
 
 import asyncio

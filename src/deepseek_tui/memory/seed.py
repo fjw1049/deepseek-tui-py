@@ -1,18 +1,10 @@
 """Memory seed, manifest, and native provider.
 
 Consolidates native/seed.py, manifest.py, provider.py.
+Historical conversation import for native memory.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/seed.py
-# ======================================================================
-
-"""Historical conversation import for native memory."""
-
 
 import asyncio
 import json
@@ -149,8 +141,7 @@ def _turn_payload(turn: Any, idx: int) -> tuple[str, list[dict[str, Any]]]:
 # From native/manifest.py
 # ======================================================================
 
-"""Memory data-dir manifest and provenance records."""
-
+# Memory data-dir manifest and provenance records.
 
 import json
 import os
@@ -233,8 +224,7 @@ def _now_iso() -> str:
 # From native/provider.py
 # ======================================================================
 
-"""Native L0+L1+FTS memory provider."""
-
+# Native L0+L1+FTS memory provider.
 
 import asyncio
 import functools

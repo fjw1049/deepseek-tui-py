@@ -5,29 +5,23 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From plan_prompt.py
-# ======================================================================
-
-"""Plan-mode confirmation prompt.
-
-Mirrors ``crates/tui/src/tui/plan_prompt.rs`` (291 LOC).
-
-After a plan is generated in plan mode, the user must pick one of four
-options:
-
-1. Accept plan (Agent) — start implementation with approvals
-2. Accept plan (YOLO) — start implementation, auto-approve
-3. Revise plan — ask follow-ups or request changes
-4. Exit plan mode — return to Agent mode without implementation
-
-This module provides the data + selection state machine plus a Textual
-``ModalScreen`` for interactive picking. The state machine logic mirrors
-Rust 1:1 so the unit tests cover the same edge cases (digit shortcuts,
-letter shortcuts, up/down navigation, enter/escape).
-"""
-
-
+# Plan-mode confirmation prompt.
+#
+# Mirrors ``crates/tui/src/tui/plan_prompt.rs`` (291 LOC).
+#
+# After a plan is generated in plan mode, the user must pick one of four
+# options:
+#
+# 1. Accept plan (Agent) — start implementation with approvals
+# 2. Accept plan (YOLO) — start implementation, auto-approve
+# 3. Revise plan — ask follow-ups or request changes
+# 4. Exit plan mode — return to Agent mode without implementation
+#
+# This module provides the data + selection state machine plus a Textual
+# ``ModalScreen`` for interactive picking. The state machine logic mirrors
+# Rust 1:1 so the unit tests cover the same edge cases (digit shortcuts,
+# letter shortcuts, up/down navigation, enter/escape).
+#
 import enum
 from dataclasses import dataclass
 
@@ -203,35 +197,29 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
         self.dismiss(PlanOutcome.DISMISSED)
 
 
-# ======================================================================
-# From backtrack.py
-# ======================================================================
-
-"""Esc-Esc backtrack state machine.
-
-Mirrors ``crates/tui/src/tui/backtrack.rs`` (386 LOC).
-
-Lets the user rewind the active conversation to a previous user
-message. The chord is intentionally two-step so a single stray ``Esc``
-after a popup close cannot accidentally rewind a turn:
-
-1. **First Esc** (no popup, no streaming, nothing to clear) — moves
-   ``Inactive`` → ``Primed``. The composer surfaces a transient hint
-   ("Press Esc again to backtrack").
-2. **Second Esc** — moves ``Primed`` → ``Selecting``. The live-transcript
-   overlay opens with the most recent user message highlighted.
-   Left/Right step through prior user messages.
-3. **Enter** — commits the selection: yields the chosen ``selected_idx``
-   (a depth-from-tail offset, where ``0`` = newest user turn). Resets the
-   machine to ``Inactive``.
-
-The state machine knows nothing about the rest of the app — it stores
-only the small bookkeeping required to pick the right user turn. UI
-routing (popup detection, streaming guard, fork side effects) lives in
-``DeepSeekTUI``.
-"""
-
-
+# Esc-Esc backtrack state machine.
+#
+# Mirrors ``crates/tui/src/tui/backtrack.rs`` (386 LOC).
+#
+# Lets the user rewind the active conversation to a previous user
+# message. The chord is intentionally two-step so a single stray ``Esc``
+# after a popup close cannot accidentally rewind a turn:
+#
+# 1. **First Esc** (no popup, no streaming, nothing to clear) — moves
+#    ``Inactive`` → ``Primed``. The composer surfaces a transient hint
+#    ("Press Esc again to backtrack").
+# 2. **Second Esc** — moves ``Primed`` → ``Selecting``. The live-transcript
+#    overlay opens with the most recent user message highlighted.
+#    Left/Right step through prior user messages.
+# 3. **Enter** — commits the selection: yields the chosen ``selected_idx``
+#    (a depth-from-tail offset, where ``0`` = newest user turn). Resets the
+#    machine to ``Inactive``.
+#
+# The state machine knows nothing about the rest of the app — it stores
+# only the small bookkeeping required to pick the right user turn. UI
+# routing (popup detection, streaming guard, fork side effects) lives in
+# ``DeepSeekTUI``.
+#
 import enum
 from dataclasses import dataclass
 

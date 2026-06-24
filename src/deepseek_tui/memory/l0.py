@@ -1,18 +1,9 @@
 """L0 memory layer — raw turn recording, search, summarization.
 
-Consolidates native/l0_*.py.
+Consolidates native/l0_*.py. L0 JSONL incremental recorder.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/l0_recorder.py
-# ======================================================================
-
-"""L0 JSONL incremental recorder."""
-
 
 import json
 import time
@@ -142,12 +133,7 @@ class L0Recorder:
         return out
 
 
-# ======================================================================
-# From native/l0_search.py
-# ======================================================================
-
-"""L0 JSONL conversation search (keyword / BM25)."""
-
+# L0 JSONL conversation search (keyword / BM25).
 
 import json
 import math
@@ -278,12 +264,7 @@ def format_l0_hits(hits: list[dict[str, Any]], *, summarize: bool = False) -> st
     return "\n\n".join(lines)
 
 
-# ======================================================================
-# From native/l0_summarize.py
-# ======================================================================
-
-"""Summarized L0 conversation hit formatting."""
-
+# Summarized L0 conversation hit formatting.
 
 from collections import defaultdict
 from typing import Any

@@ -1,19 +1,8 @@
 """Tool catalog and response parser.
 
 Consolidates tool_catalog.py and tool_parser.py.
-"""
-
-from __future__ import annotations
-
-
-
-# ======================================================================
-# From tool_catalog.py
-# ======================================================================
-
-"""Deferred tool catalog and built-in advanced tool helpers.
-
-Mirrors `crates/tui/src/core/engine/tool_catalog.rs:1-475`.
+Deferred tool catalog and built-in advanced tool helpers.
+Mirrors ``crates/tui/src/core/engine/tool_catalog.rs:1-475``.
 
 The streaming turn loop owns when tools are offered or executed. This module
 owns the catalog-level policy around deferred loading, tool search, missing
@@ -21,6 +10,7 @@ tool suggestions, and the small set of built-in advanced tools that are not
 registered by the normal tool registry.
 """
 
+from __future__ import annotations
 
 import asyncio
 import json
@@ -546,16 +536,10 @@ async def execute_code_execution_tool(
     )
 
 
-# ======================================================================
-# From tool_parser.py
-# ======================================================================
-
-"""Tool call parsing for text-based and streaming fragments.
-
-Mirrors `crates/tui/src/core/tool_parser.rs` (510 lines) for text-based legacy format support.
-Mirrors `crates/tui/src/core/engine/dispatch.rs:151-220` for stream fragment reassembly.
-"""
-
+# Tool call parsing for text-based and streaming fragments.
+# Mirrors ``crates/tui/src/core/tool_parser.rs`` (510 lines) for text-based
+# legacy format support; ``crates/tui/src/core/engine/dispatch.rs:151-220``
+# for stream fragment reassembly.
 
 import json
 import re

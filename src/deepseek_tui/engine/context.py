@@ -1,23 +1,12 @@
 """Message context formatting and working set.
 
 Consolidates context.py, project_context.py, working_set.py.
+Context budgeting and prompt-shaping helpers for the engine.
+Mirrors ``crates/tui/src/core/engine/context.rs:1-382``. Shared by the
+streaming turn loop, capacity flow, and engine session maintenance code.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From context.py
-# ======================================================================
-
-"""Context budgeting and prompt-shaping helpers for the engine.
-
-Mirrors `crates/tui/src/core/engine/context.rs:1-382`.
-Shared by the streaming turn loop, capacity flow, and engine session
-maintenance code.
-"""
-
 
 import json
 import math
@@ -508,29 +497,15 @@ def estimate_context_breakdown(
     }
 
 
-# ======================================================================
-# From project_context.py
-# ======================================================================
-
-"""Project context loader — discovers AGENTS.md / CLAUDE.md / instructions.
-
-Mirrors Rust ``crates/tui/src/project_context.rs``. Resolves the first
-project-instruction file found, walks up parent directories for monorepo
-setups, falls back to a user-level ``~/.deepseek/AGENTS.md``, and finally
-auto-generates a placeholder ``<workspace>/.deepseek/instructions.md`` so
-the engine has *something* to anchor on.
-
-The loaded content is wrapped as::
-
-    <project_instructions source="<path>">
-    <content>
-    </project_instructions>
-
-and injected into the system prompt by ``engine/prompts.py``. Without this
-the model never sees ``AGENTS.md`` / ``CLAUDE.md`` — they sit on disk and
-do nothing.
-"""
-
+# Project context loader — discovers AGENTS.md / CLAUDE.md / instructions.
+# Mirrors Rust ``crates/tui/src/project_context.rs``. Resolves the first
+# project-instruction file found, walks up parent directories for monorepo
+# setups, falls back to a user-level ``~/.deepseek/AGENTS.md``, and finally
+# auto-generates a placeholder ``<workspace>/.deepseek/instructions.md`` so
+# the engine has *something* to anchor on. The loaded content is wrapped as
+# ``<project_instructions source="<path>">…</project_instructions>`` and
+# injected into the system prompt by ``engine/prompts.py``. Without this the
+# model never sees AGENTS.md / CLAUDE.md — they sit on disk and do nothing.
 
 import logging
 from dataclasses import dataclass, field
@@ -806,15 +781,8 @@ def _auto_generate_context(workspace: Path) -> str | None:
     return _AUTO_GENERATED_TEMPLATE
 
 
-# ======================================================================
-# From working_set.py
-# ======================================================================
-
-"""Working set management for tracking user-relevant files and context.
-
-Mirrors `crates/tui/src/session/working_set.rs`
-"""
-
+# Working set management for tracking user-relevant files and context.
+# Mirrors ``crates/tui/src/session/working_set.rs``.
 
 from pathlib import Path
 from typing import Any

@@ -1,18 +1,10 @@
 """Memory search — embedding, FTS tokenization, hybrid search.
 
 Consolidates native/embedding.py, fts_tokenize.py, hybrid_search.py.
+OpenAI-compatible embedding client for smart memory.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/embedding.py
-# ======================================================================
-
-"""OpenAI-compatible embedding client for smart memory."""
-
 
 import array
 import logging
@@ -115,8 +107,7 @@ class EmbeddingClient:
 # From native/fts_tokenize.py
 # ======================================================================
 
-"""FTS5 query builder with optional jieba for CJK."""
-
+# FTS5 query builder with optional jieba for CJK.
 
 import re
 
@@ -189,8 +180,7 @@ def build_fts_query(query: str, *, mode: str = "auto") -> str:
 # From native/hybrid_search.py
 # ======================================================================
 
-"""Hybrid merge: FTS + substring candidates with RRF (no embedding required)."""
-
+# Hybrid merge: FTS + substring candidates with RRF (no embedding required).
 
 from typing import TypeVar
 

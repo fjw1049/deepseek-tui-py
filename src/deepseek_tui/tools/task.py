@@ -7,18 +7,12 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From task_tools.py
-# ======================================================================
-
-"""Durable task tools — thin wrappers over :class:`TaskManager`.
-
-Mirrors Rust `crates/tui/src/tools/tasks.rs` (1,012 lines). All 11 tools
-delegate to ``context.task_manager`` which provides the durable TaskManager
-implementation.
-"""
-
-
+# Durable task tools — thin wrappers over :class:`TaskManager`.
+#
+# Mirrors Rust `crates/tui/src/tools/tasks.rs` (1,012 lines). All 11 tools
+# delegate to ``context.task_manager`` which provides the durable TaskManager
+# implementation.
+#
 import asyncio
 import uuid
 from dataclasses import asdict
@@ -1025,18 +1019,12 @@ def _optional_int(data: dict[str, Any], key: str) -> int | None:
     return int(value)
 
 
-# ======================================================================
-# From task_manager.py
-# ======================================================================
-
-"""Durable task manager.
-
-Mirrors `crates/tui/src/task_manager.rs` (1,845 lines). Persists each task as
-its own JSON file under ``./.deepseek/tasks/`` and maintains a queue in
-``queue.json`` so tasks survive process restarts.
-"""
-
-
+# Durable task manager.
+#
+# Mirrors `crates/tui/src/task_manager.rs` (1,845 lines). Persists each task as
+# its own JSON file under ``./.deepseek/tasks/`` and maintains a queue in
+# ``queue.json`` so tasks survive process restarts.
+#
 import asyncio
 import json
 import os

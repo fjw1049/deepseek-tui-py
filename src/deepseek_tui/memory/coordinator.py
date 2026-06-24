@@ -1,18 +1,11 @@
 """Memory coordinator — orchestration, provider, gates, formatting.
 
-Consolidates coordinator.py, provider.py, factory.py, gates.py, formatting.py, user_memory.py.
+Consolidates coordinator.py, provider.py, factory.py, gates.py,
+formatting.py, user_memory.py. Memory coordinator — gates, recall
+timeout, provider dispatch.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From coordinator.py
-# ======================================================================
-
-"""Memory coordinator — gates, recall timeout, provider dispatch."""
-
 
 import asyncio
 import logging
@@ -194,12 +187,7 @@ class MemoryCoordinator:
         )
 
 
-# ======================================================================
-# From provider.py
-# ======================================================================
-
-"""Memory provider protocol — mirrors TencentDB ``MemoryProvider`` surface."""
-
+# Memory provider protocol — mirrors TencentDB ``MemoryProvider`` surface.
 
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -265,12 +253,7 @@ class MemoryProvider(Protocol):
     ) -> str: ...
 
 
-# ======================================================================
-# From factory.py
-# ======================================================================
-
-"""Create the native smart-memory provider."""
-
+# Create the native smart-memory provider.
 
 from typing import TYPE_CHECKING
 
@@ -288,12 +271,7 @@ def create_smart_memory_provider(config: "Config", client: "LLMClient") -> "Memo
     return NativeMemoryProvider(config, client)
 
 
-# ======================================================================
-# From gates.py
-# ======================================================================
-
-"""Turn capture quality gates for memory."""
-
+# Turn capture quality gates for memory.
 
 _CONFIRMATION_PATTERNS = frozenset({"y", "yes", "ok", "sure", "go ahead", "do it", "proceed"})
 
@@ -325,12 +303,7 @@ def should_capture_turn(
 __all__ = ["should_capture_turn"]
 
 
-# ======================================================================
-# From formatting.py
-# ======================================================================
-
-"""``<relevant-memories>`` block formatting — TencentDB parity."""
-
+# ``<relevant-memories>`` block formatting — TencentDB parity.
 
 import re
 import time
@@ -437,12 +410,7 @@ def escape_memory_xml_tags(text: str) -> str:
     )
 
 
-# ======================================================================
-# From user_memory.py
-# ======================================================================
-
-"""User-level memory file — mirrors ``crates/tui/src/memory.rs``."""
-
+# User-level memory file — mirrors ``crates/tui/src/memory.rs``.
 
 import os
 from datetime import datetime, timezone

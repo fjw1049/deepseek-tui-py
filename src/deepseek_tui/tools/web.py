@@ -10,16 +10,16 @@ from urllib.parse import urlparse
 
 import httpx
 
-from deepseek_tui.tools.validation import optional_int as _optional_int
-from deepseek_tui.tools.validation import require_string as _require_string
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
     ToolCapability,
+    ToolContext,
     ToolError,
     ToolResult,
     ToolSpec,
 )
-from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.validation import optional_int as _optional_int
+from deepseek_tui.tools.validation import require_string as _require_string
 
 _TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 _ANYSEARCH_API_KEY = os.environ.get("ANYSEARCH_API_KEY", "")
@@ -53,9 +53,11 @@ class FetchUrlTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Fetch a URL and return readable content. Uses AnySearch extract for "
-            "general pages (clean Markdown, low noise); raw HTTP for direct files "
-            "(raw GitHub, .md/.txt). Default max_chars=30000."
+            "Fetch a URL and return readable content. Prefer this over "
+            "hand-rolling curl/wget in exec_shell for any HTTP(S) read. "
+            "Uses AnySearch extract for general pages (clean Markdown, low "
+            "noise); raw HTTP for direct files (raw GitHub, .md/.txt). "
+            "Default max_chars=30000."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -89,47 +91,69 @@ class FetchUrlTool(ToolSpec):
         content_type = ""
         extract_error = ""
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            if _is_direct_resource_url(url):
-                _check_network_policy(url, "fetch_url", context)
-                response = await _http_get(client, url)
-                status_code = response.status_code
-                content_type = response.headers.get("content-type", "")
-                final_url = str(response.url)
-                if not response.is_success:
-                    raise ToolError(
-                        f"HTTP {status_code} fetching {url}: {response.text[:200]}"
-                    )
-                content = response.text
-                backend = "direct"
-            else:
-                try:
-                    content = await _anysearch_extract(
-                        client,
-                        url=url,
-                        api_key=self._anysearch_api_key or None,
-                        context=context,
-                    )
-                    backend = "anysearch_extract"
-                except ToolError as exc:
-                    extract_error = str(exc)
-
-                if not content.strip():
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if _is_direct_resource_url(url):
                     _check_network_policy(url, "fetch_url", context)
                     response = await _http_get(client, url)
                     status_code = response.status_code
                     content_type = response.headers.get("content-type", "")
                     final_url = str(response.url)
                     if not response.is_success:
-                        detail = extract_error or f"HTTP {status_code}"
-                        raise ToolError(f"fetch_url failed for {url}: {detail}")
-                    content = response.text
-                    backend = "httpx_fallback"
-                    if "html" in content_type.lower():
-                        content = (
-                            "[Raw HTML fallback — navigation/noise may remain. "
-                            "Prefer a direct file URL or retry later.]\n\n" + content
+                        raise ToolError(
+                            f"HTTP {status_code} fetching {url}: {response.text[:200]}"
                         )
+                    content = response.text
+                    backend = "direct"
+                else:
+                    try:
+                        content = await _anysearch_extract(
+                            client,
+                            url=url,
+                            api_key=self._anysearch_api_key or None,
+                            context=context,
+                        )
+                        backend = "anysearch_extract"
+                    except ToolError as exc:
+                        extract_error = str(exc)
+
+                    if not content.strip():
+                        _check_network_policy(url, "fetch_url", context)
+                        response = await _http_get(client, url)
+                        status_code = response.status_code
+                        content_type = response.headers.get("content-type", "")
+                        final_url = str(response.url)
+                        if not response.is_success:
+                            detail = extract_error or f"HTTP {status_code}"
+                            raise ToolError(f"fetch_url failed for {url}: {detail}")
+                        content = response.text
+                        backend = "httpx_fallback"
+                        if "html" in content_type.lower():
+                            content = (
+                                "[Raw HTML fallback — navigation/noise may remain. "
+                                "Prefer a direct file URL or retry later.]\n\n" + content
+                            )
+        except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+            # Record the per-host timeout and surface an escalation hint so
+            # the model doesn't retry in place (the reverse-skill trace
+            # burned multiple rounds on raw.githubusercontent timeouts).
+            # The hint is host-agnostic — domain-specific mirrors (jsDelivr
+            # for raw GitHub, etc.) are taught in the skill/prompt layer.
+            from deepseek_tui.tools.network_escalation import (
+                record_host_timeout,
+                should_escalate,
+            )
+
+            record_host_timeout(context, url)
+            hint = ""
+            if should_escalate(context, url):
+                hint = (
+                    " This host has timed out repeatedly — consider a "
+                    "mirror/CDN, web_search, or an alternative source."
+                )
+            raise ToolError(
+                f"fetch_url timed out after {timeout:.0f}s fetching {url}.{hint}"
+            ) from exc
 
         truncated = len(content) > max_chars
         if truncated:

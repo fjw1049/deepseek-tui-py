@@ -5,13 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From models.py
-# ======================================================================
-
-"""Workflow IR and runtime snapshot models."""
-
-
+# Workflow IR and runtime snapshot models.
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -182,13 +176,7 @@ class WorkflowRunContext:
     synthesis_step_ids: list[str] = field(default_factory=list)
 
 
-# ======================================================================
-# From validate.py
-# ======================================================================
-
-"""Parse and validate Workflow IR JSON."""
-
-
+# Parse and validate Workflow IR JSON.
 from typing import Any
 
 
@@ -502,13 +490,7 @@ def _extract_output_refs(template: str) -> list[str]:
     return list(refs)
 
 
-# ======================================================================
-# From serialize.py
-# ======================================================================
-
-"""JSON-serializable views of workflow runtime state."""
-
-
+# JSON-serializable views of workflow runtime state.
 from dataclasses import asdict
 from typing import Any
 
@@ -525,13 +507,7 @@ def agent_run_to_dict(run: WorkflowAgentRun) -> dict[str, Any]:
     return asdict(run)
 
 
-# ======================================================================
-# From template.py
-# ======================================================================
-
-"""Template rendering for workflow prompts."""
-
-
+# Template rendering for workflow prompts.
 import re
 from typing import Any
 
@@ -606,10 +582,6 @@ def render_template(
             text = _OUTPUTS_INDEX_RE.sub("\n".join(lines) if lines else "(no outputs)", text)
     return text
 
-
-# ======================================================================
-# From constants.py
-# ======================================================================
 
 # (constants moved above make_preview)
 MAX_FANOUT_ITEMS = 16

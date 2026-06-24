@@ -8,8 +8,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-# --- Config errors (formerly config/errors.py) --------------------------------
-
 
 class ConfigError(Exception):
     pass

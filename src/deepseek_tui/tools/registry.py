@@ -7,11 +7,6 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From base.py
-# ======================================================================
-
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -114,11 +109,6 @@ class ToolSpec(ABC):
         return True
 
 
-# ======================================================================
-# From context.py
-# ======================================================================
-
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -175,32 +165,26 @@ class ToolContext:
         return resolved
 
 
-# ======================================================================
-# From registry.py
-# ======================================================================
-
-"""Tool registry, mirroring `crates/tui/src/tools/registry.rs`.
-
-Two important Rust invariants the Python port preserves:
-
-1. **Alphabetical sort in `to_api_tools()`** (Rust L144-149, GitHub
-   issue #263). DeepSeek's KV prefix cache only stays warm if the tool
-   array is byte-stable across launches. Python's ``dict`` preserves
-   insertion order, but cross-process registration order varies (env,
-   config, MCP discovery), so we sort by name on serialisation.
-2. **Memoised serialised catalog** (Rust L151-156). Each tool's
-   ``description()`` and ``input_schema()`` is sampled exactly once per
-   registration. Some tools — notably MCP adapters whose upstream
-   description string drifts on reconnect — would otherwise rewrite
-   the catalog mid-session and bust the prefix cache.
-
-The wire format we emit is the standard OpenAI ``{type, function}``
-envelope, with two non-OpenAI Rust extension fields (``allowed_callers``
-and ``defer_loading``) tucked into the ``function`` object. Both fields
-are silently ignored by providers that don't recognise them.
-"""
-
-
+# Tool registry, mirroring `crates/tui/src/tools/registry.rs`.
+#
+# Two important Rust invariants the Python port preserves:
+#
+# 1. **Alphabetical sort in `to_api_tools()`** (Rust L144-149, GitHub
+#    issue #263). DeepSeek's KV prefix cache only stays warm if the tool
+#    array is byte-stable across launches. Python's ``dict`` preserves
+#    insertion order, but cross-process registration order varies (env,
+#    config, MCP discovery), so we sort by name on serialisation.
+# 2. **Memoised serialised catalog** (Rust L151-156). Each tool's
+#    ``description()`` and ``input_schema()`` is sampled exactly once per
+#    registration. Some tools — notably MCP adapters whose upstream
+#    description string drifts on reconnect — would otherwise rewrite
+#    the catalog mid-session and bust the prefix cache.
+#
+# The wire format we emit is the standard OpenAI ``{type, function}``
+# envelope, with two non-OpenAI Rust extension fields (``allowed_callers``
+# and ``defer_loading``) tucked into the ``function`` object. Both fields
+# are silently ignored by providers that don't recognise them.
+#
 import asyncio
 import logging
 from typing import Any
@@ -471,11 +455,6 @@ class ToolRegistry:
                 "defer_loading": tool.defer_loading(),
             },
         }
-
-
-# ======================================================================
-# From builder.py
-# ======================================================================
 
 
 from typing import TYPE_CHECKING

@@ -5,31 +5,25 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From runtime.py
-# ======================================================================
-
-"""Application runtime — single orchestration entry for the app-server.
-
-Mirrors ``deepseek_core::Runtime`` (crates/core/src/runtime.rs) — not
-line-by-line, but in role: the app-server's handlers never construct an
-:class:`Engine` directly. They go through this class so config, thread
-storage, and the Stage 3 tool runtime are shared across every request.
-
-Scope for Stage 4.1:
-
-- In-memory thread store keyed by ``thread_id``
-- Lazy :class:`ToolRuntime` construction (one per AppRuntime lifetime)
-- Thin handlers for the 7 HTTP endpoints: healthz / thread / app /
-  prompt / tool / jobs / mcp_startup
-- MCP startup is best-effort (Stage 4.3 wires real MCP)
-
-Stage 4.2 adds a :class:`HookDispatcher` that fans lifecycle events
-(Response*, ToolLifecycle, ApprovalLifecycle, JobLifecycle) to any
-sinks configured via ``config.hooks`` (stdout / JSONL file / webhooks).
-"""
-
-
+# Application runtime — single orchestration entry for the app-server.
+#
+# Mirrors ``deepseek_core::Runtime`` (crates/core/src/runtime.rs) — not
+# line-by-line, but in role: the app-server's handlers never construct an
+# :class:`Engine` directly. They go through this class so config, thread
+# storage, and the Stage 3 tool runtime are shared across every request.
+#
+# Scope for Stage 4.1:
+#
+# - In-memory thread store keyed by ``thread_id``
+# - Lazy :class:`ToolRuntime` construction (one per AppRuntime lifetime)
+# - Thin handlers for the 7 HTTP endpoints: healthz / thread / app /
+#   prompt / tool / jobs / mcp_startup
+# - MCP startup is best-effort (Stage 4.3 wires real MCP)
+#
+# Stage 4.2 adds a :class:`HookDispatcher` that fans lifecycle events
+# (Response*, ToolLifecycle, ApprovalLifecycle, JobLifecycle) to any
+# sinks configured via ``config.hooks`` (stdout / JSONL file / webhooks).
+#
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -1114,22 +1108,16 @@ def _build_hook_dispatcher(config: Config) -> HookDispatcher:
     return build_hook_dispatcher(config)
 
 
-# ======================================================================
-# From engine_bridge.py
-# ======================================================================
-
-"""Bridge engine events into SSE envelopes.
-
-Mirrors the Rust event-frame path used by ``app-server``: turn_loop
-emits EngineEvent dataclasses, and the bridge serializes each one into
-``{"event": "<snake_case>", ...}`` dicts that :func:`iter_sse` can frame.
-
-Stage 4.1.next.next wires :class:`AppRuntime.stream_prompt` through this
-bridge so the /prompt/stream endpoint streams real assistant deltas and
-tool results instead of the 3-frame placeholder.
-"""
-
-
+# Bridge engine events into SSE envelopes.
+#
+# Mirrors the Rust event-frame path used by ``app-server``: turn_loop
+# emits EngineEvent dataclasses, and the bridge serializes each one into
+# ``{"event": "<snake_case>", ...}`` dicts that :func:`iter_sse` can frame.
+#
+# Stage 4.1.next.next wires :class:`AppRuntime.stream_prompt` through this
+# bridge so the /prompt/stream endpoint streams real assistant deltas and
+# tool results instead of the 3-frame placeholder.
+#
 from dataclasses import asdict
 from typing import Any
 

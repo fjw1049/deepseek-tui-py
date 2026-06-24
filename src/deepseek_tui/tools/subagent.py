@@ -7,17 +7,11 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From subagent_tools.py
-# ======================================================================
-
-"""Sub-agent tools — thin wrappers over :class:`SubAgentManager`.
-
-Mirrors Rust ``crates/tui/src/tools/subagent/mod.rs`` (3,604 lines).
-All 10 tools delegate to ``context.subagent_manager``.
-"""
-
-
+# Sub-agent tools — thin wrappers over :class:`SubAgentManager`.
+#
+# Mirrors Rust ``crates/tui/src/tools/subagent/mod.rs`` (3,604 lines).
+# All 10 tools delegate to ``context.subagent_manager``.
+#
 import json
 from dataclasses import asdict
 from typing import Any
@@ -678,26 +672,20 @@ class DelegateToAgentTool(ToolSpec):
         )
 
 
-# ======================================================================
-# From subagent/manager.py
-# ======================================================================
-
-"""Sub-agent runtime and manager.
-
-Mirrors `crates/tui/src/tools/subagent/mod.rs` (3,604 lines). Provides:
-
-- :class:`SubAgentType` / :class:`SubAgentStatus` / :class:`SubAgentResult`
-- :class:`SubAgentManager`: spawn/cancel/result/list/resume/assign/send_input
-- ``asyncio.Task``-backed execution (not multiprocessing — LLM calls are
-  IO-bound; see HANDOVER.md decision 2026-05-07)
-- Persistence under ``<workspace>/.deepseek/subagents.v1.json``
-
-The executor that drives the LLM loop is plugged in at manager
-construction; the default is a placeholder that sleeps briefly and
-returns a synthetic result (integration debt tracked for Stage 4).
-"""
-
-
+# Sub-agent runtime and manager.
+#
+# Mirrors `crates/tui/src/tools/subagent/mod.rs` (3,604 lines). Provides:
+#
+# - :class:`SubAgentType` / :class:`SubAgentStatus` / :class:`SubAgentResult`
+# - :class:`SubAgentManager`: spawn/cancel/result/list/resume/assign/send_input
+# - ``asyncio.Task``-backed execution (not multiprocessing — LLM calls are
+#   IO-bound; see HANDOVER.md decision 2026-05-07)
+# - Persistence under ``<workspace>/.deepseek/subagents.v1.json``
+#
+# The executor that drives the LLM loop is plugged in at manager
+# construction; the default is a placeholder that sleeps briefly and
+# returns a synthetic result (integration debt tracked for Stage 4).
+#
 import asyncio
 import json
 import logging
@@ -1872,21 +1860,15 @@ def _write_json_atomic(path: Path, value: Any) -> None:
         raise
 
 
-# ======================================================================
-# From subagent/mailbox.py
-# ======================================================================
-
-"""Sub-agent mailbox — structured progress/lifecycle event stream.
-
-Mirrors `crates/tui/src/tools/subagent/mailbox.rs` (478 lines).
-
-The mailbox carries lifecycle events from a tree of sub-agents to
-interested consumers (parent agent, UI card, persistence). Sequence
-numbers are monotonic across the whole mailbox so consumers see a single
-consistent ordering even with multiple producers.
-"""
-
-
+# Sub-agent mailbox — structured progress/lifecycle event stream.
+#
+# Mirrors `crates/tui/src/tools/subagent/mailbox.rs` (478 lines).
+#
+# The mailbox carries lifecycle events from a tree of sub-agents to
+# interested consumers (parent agent, UI card, persistence). Sequence
+# numbers are monotonic across the whole mailbox so consumers see a single
+# consistent ordering even with multiple producers.
+#
 import asyncio
 from dataclasses import dataclass
 from enum import Enum
@@ -2090,13 +2072,7 @@ class Mailbox:
             out.append(envelope)
 
 
-# ======================================================================
-# From subagent/completion.py
-# ======================================================================
-
-"""Sub-agent completion payloads for parent turn handoff (Rust issue #756)."""
-
-
+# Sub-agent completion payloads for parent turn handoff (Rust issue #756).
 import json
 from dataclasses import dataclass
 
@@ -2167,13 +2143,7 @@ def build_completion_payload(snap: SubAgentResult) -> str:
     return payload
 
 
-# ======================================================================
-# From subagent/output.py
-# ======================================================================
-
-"""Sub-agent run result types (workflow + structured output)."""
-
-
+# Sub-agent run result types (workflow + structured output).
 from dataclasses import dataclass
 from typing import Any
 

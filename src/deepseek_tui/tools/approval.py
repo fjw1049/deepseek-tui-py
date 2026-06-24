@@ -7,19 +7,13 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From approval_gate.py
-# ======================================================================
-
-"""Tool approval gate — mirrors Rust ``turn_loop`` + ``ToolSpec::approval_requirement``.
-
-Single source of truth for *whether* to prompt/block. Presentation lives in
-``approval_present``; legacy ``ExecPolicyEngine.evaluate`` delegates here.
-
-See ``docs/APPROVAL_CODE_AUDIT.md`` for naming rationale (Tool vs MCP mirrors).
-"""
-
-
+# Tool approval gate — mirrors Rust ``turn_loop`` + ``ToolSpec::approval_requirement``.
+#
+# Single source of truth for *whether* to prompt/block. Presentation lives in
+# ``approval_present``; legacy ``ExecPolicyEngine.evaluate`` delegates here.
+#
+# See ``docs/APPROVAL_CODE_AUDIT.md`` for naming rationale (Tool vs MCP mirrors).
+#
 from enum import Enum
 
 from deepseek_tui.engine.dispatch import is_mcp_tool, mcp_tool_is_read_only
@@ -189,13 +183,7 @@ def _requirement_needs_prompt(req: ApprovalRequirement, mode: str) -> bool:
     return False
 
 
-# ======================================================================
-# From approval_present.py
-# ======================================================================
-
-"""Build human-readable approval presentation (mirrors ``tui/approval.rs``)."""
-
-
+# Build human-readable approval presentation (mirrors ``tui/approval.rs``).
 import json
 from typing import Any
 
@@ -484,13 +472,7 @@ def _truncate(text: str, max_len: int) -> str:
     return text[: max_len - 3] + "..."
 
 
-# ======================================================================
-# From elevation_present.py
-# ======================================================================
-
-"""SSE payload for sandbox elevation (L3) — Workbench parity."""
-
-
+# SSE payload for sandbox elevation (L3) — Workbench parity.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

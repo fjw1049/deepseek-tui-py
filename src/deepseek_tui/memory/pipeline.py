@@ -1,18 +1,10 @@
 """Memory pipeline — L0→L3 orchestration, scheduling, agent loop.
 
 Consolidates native/pipeline.py, scheduler.py, agent_loop.py.
+Native L2/L3 pipeline scheduling for smart memory.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/pipeline.py
-# ======================================================================
-
-"""Native L2/L3 pipeline scheduling for smart memory."""
-
 
 import asyncio
 import logging
@@ -280,8 +272,7 @@ def _now_ms() -> int:
 # From native/scheduler.py
 # ======================================================================
 
-"""Per-thread L1 extraction scheduling — wraps PeriodicTurnScheduler when warmup off."""
-
+# Per-thread L1 extraction scheduling — wraps PeriodicTurnScheduler when warmup off.
 
 import asyncio
 import logging
@@ -472,8 +463,7 @@ class L1Scheduler:
 # From native/agent_loop.py
 # ======================================================================
 
-"""Headless tool-call loop for memory pipeline agents."""
-
+# Headless tool-call loop for memory pipeline agents.
 
 import inspect
 from dataclasses import dataclass, field

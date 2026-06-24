@@ -1,21 +1,11 @@
 """Turn execution state machine.
 
 Consolidates turn_loop.py and input_processor.py.
+Main streaming turn loop for the engine.
+Mirrors ``crates/tui/src/core/engine/turn_loop.rs:1-1597``.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From turn_loop.py
-# ======================================================================
-
-"""Main streaming turn loop for the engine.
-
-Mirrors `crates/tui/src/core/engine/turn_loop.rs:1-1597`
-"""
-
 
 import asyncio
 import enum
@@ -590,12 +580,7 @@ def _should_transparently_retry(
     )
 
 
-# ======================================================================
-# From input_processor.py
-# ======================================================================
-
-"""Engine-facing entry for user turn preprocessing."""
-
+# Engine-facing entry for user turn preprocessing.
 
 from pathlib import Path
 

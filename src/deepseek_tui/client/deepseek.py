@@ -342,9 +342,6 @@ class DeepSeekClient(LLMClient):
         return payload
 
 
-# --- OpenAI-compatible client (formerly client/openai_compat.py) -------------
-
-
 class OpenAICompatClient(DeepSeekClient):
     def __init__(
         self,

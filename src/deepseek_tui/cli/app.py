@@ -250,14 +250,7 @@ def models(
     provider: str | None = PROVIDER_OPTION,
 ) -> None:
     """List available models from the provider registry."""
-    from deepseek_tui.config.providers import PROVIDER_DEFAULTS
-
-    for prov_name, defaults in PROVIDER_DEFAULTS.items():
-        if provider and prov_name != provider:
-            continue
-        typer.echo(f"{defaults.model} ({prov_name})")
-        if defaults.flash_model:
-            typer.echo(f"{defaults.flash_model} ({prov_name})")
+    model_list(provider=provider)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -786,13 +779,7 @@ def thread_resume(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Resume a saved thread (delegates to top-level `resume`)."""
-    loaded = _load_config(config, profile)
-    try:
-        from deepseek_tui.tui.app import DeepSeekTUI
-        DeepSeekTUI(config=loaded, resume_session_id=thread_id).run()
-    except ImportError as exc:
-        typer.echo(f"TUI not available: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    resume(session_id=thread_id, config=config, profile=profile)
 
 
 @thread_app.command("fork")
@@ -802,13 +789,7 @@ def thread_fork(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Fork a saved thread (delegates to top-level `fork`)."""
-    loaded = _load_config(config, profile)
-    try:
-        from deepseek_tui.tui.app import DeepSeekTUI
-        DeepSeekTUI(config=loaded, fork_session_id=thread_id).run()
-    except ImportError as exc:
-        typer.echo(f"TUI not available: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    fork(session_id=thread_id, config=config, profile=profile)
 
 
 @thread_app.command("archive")

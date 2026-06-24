@@ -1,21 +1,11 @@
 """Prompt composition and tool profiles.
 
 Consolidates engine/prompts.py, tool_profiles.py, and prompts/ package.
+Engine-level system prompt builder.
+Mirrors ``crates/tui/src/prompts.rs::system_prompt_for_mode_with_context``.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From engine/prompts.py
-# ======================================================================
-
-"""Engine-level system prompt builder.
-
-Mirrors `crates/tui/src/prompts.rs::system_prompt_for_mode_with_context`.
-"""
-
 
 import os
 import sys
@@ -259,12 +249,7 @@ def _load_handoff_block(workspace: Path) -> str | None:
     )
 
 
-# ======================================================================
-# From engine/tool_profiles.py
-# ======================================================================
-
-"""Tool visibility profiles — slim catalogs for automation composer and cron runs."""
-
+# Tool visibility profiles — slim catalogs for automation composer and cron runs.
 
 from typing import Any
 
@@ -373,18 +358,10 @@ def _copy_tool_entry(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ======================================================================
-# From prompts/__init__.py
-# ======================================================================
-
-"""System prompt composition from layered template files.
-
-Mirrors `crates/tui/src/prompts.rs` — composable layers loaded at runtime:
-  base.md → personality overlay → mode delta → approval policy
-
-Prompt files are copied verbatim from the Rust source (English, unmodified).
-"""
-
+# System prompt composition from layered template files.
+# Mirrors ``crates/tui/src/prompts.rs`` — composable layers loaded at runtime:
+# base.md → personality overlay → mode delta → approval policy.
+# Prompt files are copied verbatim from the Rust source (English, unmodified).
 
 import enum
 from importlib.resources import files as pkg_files

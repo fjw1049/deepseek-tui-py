@@ -543,10 +543,21 @@ class Engine:
         provider_cfg = cfg.effective_provider_config()
         # When reusing a shared runtime, create a per-engine ToolContext with
         # the correct working_directory so system prompts reflect the thread's
-        # workspace rather than the process cwd.
+        # workspace rather than the process cwd. We branch off the runtime's
+        # context instead of constructing a bare one, otherwise the per-engine
+        # context loses task_manager/subagent_manager/network_policy/policy and
+        # registered-but-runtime-unwired tools (e.g. task_shell_start) become
+        # guaranteed failures. metadata is shallow-copied so per-engine writes
+        # (memory provider, search-call counter) don't mutate the shared one.
+        import dataclasses as _dc
+
         per_engine_context: ToolContext | None = None
         if isinstance(tool_runtime, ToolRuntime) and ws != runtime.context.working_directory:
-            per_engine_context = ToolContext(working_directory=ws)
+            per_engine_context = _dc.replace(
+                runtime.context,
+                working_directory=ws,
+                metadata=dict(runtime.context.metadata),
+            )
         engine = cls(
             handle=handle,
             client=client,
@@ -1044,6 +1055,12 @@ class Engine:
         from deepseek_tui.tools.memory import MEMORY_SEARCH_CALLS_KEY
 
         self.tool_context.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
+        # Reset per-host timeout escalation so a prior turn's transient
+        # network blip doesn't carry over (network_escalation counters are
+        # meant to be turn-scoped, not session-scoped).
+        from deepseek_tui.tools.network_escalation import reset_host_timeouts
+
+        reset_host_timeouts(self.tool_context)
         thread_id = self._resolve_memory_thread_id()
         workspace_str = str(self.tool_context.working_directory.resolve())
         memory_recall = None

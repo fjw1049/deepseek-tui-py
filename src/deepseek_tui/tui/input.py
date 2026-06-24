@@ -5,12 +5,7 @@ from __future__ import annotations
 
 
 
-# ======================================================================
-# From composer.py
-# ======================================================================
-
-"""Input composer widget — mirrors Rust ``tui/user_input.rs``."""
-
+# Input composer widget — mirrors Rust ``tui/user_input.rs``.
 import os
 import subprocess
 import tempfile
@@ -203,11 +198,6 @@ def _open_external_editor(initial_content: str) -> str | None:
             pass
 
 
-# ======================================================================
-# From slash_menu.py
-# ======================================================================
-
-
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
@@ -275,16 +265,11 @@ class SlashMenu(Vertical):
         self.hide()
 
 
-# ======================================================================
-# From command_palette.py
-# ======================================================================
-
-"""Command palette widget — mirrors Rust ``tui/command_palette.rs``.
-
-Stage 6.6: Ctrl+K style command palette for quick access to slash
-commands, model switching, and other actions.
-"""
-
+# Command palette widget — mirrors Rust ``tui/command_palette.rs``.
+#
+# Stage 6.6: Ctrl+K style command palette for quick access to slash
+# commands, model switching, and other actions.
+#
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message

@@ -1,18 +1,10 @@
 """Memory store — SQLite with FTS5, checkpoint, backup, cleanup.
 
 Consolidates native/store.py, checkpoint.py, backup.py, cleaner.py.
+SQLite + FTS5 memory store.
 """
 
 from __future__ import annotations
-
-
-
-# ======================================================================
-# From native/store.py
-# ======================================================================
-
-"""SQLite + FTS5 memory store."""
-
 
 import hashlib
 import json
@@ -664,8 +656,7 @@ class MemoryStore:
 # From native/checkpoint.py
 # ======================================================================
 
-"""Durable checkpoint state for the native memory pipeline."""
-
+# Durable checkpoint state for the native memory pipeline.
 
 import json
 import os
@@ -861,8 +852,7 @@ class CheckpointManager:
 # From native/backup.py
 # ======================================================================
 
-"""Small backup helper for L2/L3 memory artifacts."""
-
+# Small backup helper for L2/L3 memory artifacts.
 
 import shutil
 import time
@@ -915,8 +905,7 @@ def _stamp() -> str:
 # From native/cleaner.py
 # ======================================================================
 
-"""TTL cleanup for native memory artifacts."""
-
+# TTL cleanup for native memory artifacts.
 
 import json
 import time

@@ -27,10 +27,6 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Environment variable → config field mapping (formerly env_mapping.py)
-# ============================================================================
-
 ENV_TO_FIELD: dict[str, tuple[str, ...]] = {
     "DEEPSEEK_PROVIDER": ("provider",),
     "DEEPSEEK_TUI_PROVIDER": ("provider",),
@@ -91,10 +87,6 @@ def read_env_overrides() -> dict[str, Any]:
     return overrides
 
 
-# ============================================================================
-# Config warnings (formerly warnings.py)
-# ============================================================================
-
 _UNCONSUMED_TOP_LEVEL: dict[str, str] = {
     "tools_file": "custom tool manifest path (not loaded)",
 }
@@ -122,11 +114,6 @@ def warn_unconsumed_config_fields(config: Config) -> None:
             "enforced; %s",
             _UNCONSUMED_CONTEXT["enabled"],
         )
-
-
-# ============================================================================
-# ConfigLoader
-# ============================================================================
 
 
 class ConfigLoader:
