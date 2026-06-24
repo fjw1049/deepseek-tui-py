@@ -491,8 +491,6 @@ from deepseek_tui.tools.git import (
 from deepseek_tui.tools.knowledge import (
     NoteTool,
     PlanUpdateTool,
-    RecallArchiveTool,
-    RememberTool,
     ReviewTool,
     SkillLoadTool,
 )
@@ -685,20 +683,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(RequestUserInputTool())
     if cfg.features.web_search:
         registry.register(ReviewTool(config=cfg))
-
-    if cfg.memory_enabled():
-        registry.register(RememberTool())
-        registry.register(RecallArchiveTool())
-
-    if cfg.smart_memory_enabled():
-        from deepseek_tui.tools.memory import (
-            ConversationSearchTool,
-            MemorySearchTool,
-        )
-
-        registry.register(MemorySearchTool())
-        registry.register(ConversationSearchTool())
-
 
     registry.register(ValidateDataTool())
     registry.register(RunTestsTool())

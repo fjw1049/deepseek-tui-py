@@ -93,7 +93,6 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/context", "Context inspector", _D, ("/ctx",)),
     CommandEntry("/export", "Export to markdown", _S),
     CommandEntry("/config", "Open configuration editor", _C),
-    CommandEntry("/memory", "View or edit user memory file", _C),
     CommandEntry(
         "/mode",
         "Switch or cycle mode (agent / plan / yolo / ask / workflow)",
@@ -746,10 +745,6 @@ def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
     started = session_started_at_iso(metadata, path=load_path)
     if started:
         app._session_started_at_iso = started
-
-    mm = metadata.get("memory_mode")
-    if isinstance(mm, str) and mm.strip():
-        app._engine.memory_mode = mm.strip().lower()
 
     session_id = str(metadata.get("id", "unknown"))[:8]
     message_count = metadata.get("message_count", len(restored_messages))
@@ -1615,54 +1610,6 @@ def cmd_log(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=f"(no log entries yet at {path})")
     body = "\n".join(lines)
     return CommandResult(output=f"-- last {len(lines)} lines from {path} --\n{body}")
-
-
-# ── /memory ─────────────────────────────────────────────────────────────
-
-@_register("/memory")
-def cmd_memory(args: str, app: DeepSeekTUI) -> CommandResult:
-    """User memory file — mirrors Rust ``/memory`` (MEMORY.md)."""
-    cfg = getattr(app, "config", None)
-    if cfg is None:
-        return CommandResult(error="config not attached")
-    path = cfg.resolved_memory_path()
-    enabled = cfg.memory_enabled()
-    sub = (args or "").strip().lower()
-    if sub in ("help", "?"):
-        return CommandResult(
-            output=(
-                "/memory — show path and contents\n"
-                "/memory path — print file path only\n"
-                "/memory edit — open in $EDITOR\n"
-                "Composer: type `# your note` and Enter to append without a turn."
-            )
-        )
-    if sub == "path":
-        return CommandResult(output=str(path))
-    if sub == "edit":
-        editor = __import__("os").environ.get("VISUAL") or __import__("os").environ.get(
-            "EDITOR", "nano"
-        )
-        return CommandResult(
-            output=f"Open memory file:\n  {editor} {path}"
-        )
-    if not enabled:
-        return CommandResult(
-            output=(
-                f"Memory is disabled. Set [memory] enabled = true or "
-                f"DEEPSEEK_MEMORY=on, then restart.\nPath when enabled: {path}"
-            )
-        )
-    from deepseek_tui.memory.coordinator import load
-
-    content = load(path)
-    if content is None:
-        body = "(empty)"
-    else:
-        body = content if len(content) < 4000 else content[:4000] + "\n…[truncated]"
-    return CommandResult(
-        output=f"memory: enabled\npath: {path}\n\n{body}"
-    )
 
 
 # ── /undo ───────────────────────────────────────────────────────────────

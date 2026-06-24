@@ -1,6 +1,6 @@
-"""Memory, review, recall, plan, note, and skill_load tools.
+"""Review, recall, plan, note, and skill_load tools.
 
-Mirrors Rust tools at ``crates/tui/src/tools/{remember,review,recall_archive}.rs``
+Mirrors Rust tools at ``crates/tui/src/tools/{review,recall_archive}.rs``
 and ``crates/tui/src/commands/{note,review}.rs``.
 """
 
@@ -8,14 +8,10 @@ from __future__ import annotations
 
 
 
-import asyncio
 import json
-import math
 import os
 import re
 import subprocess
-from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,83 +20,6 @@ from deepseek_tui.tools.registry import ToolContext
 
 if TYPE_CHECKING:
     from deepseek_tui.config.models import Config
-
-# ===========================================================================
-# remember — persist a note to user memory (Rust remember.rs, 138 LOC)
-# ===========================================================================
-
-
-class RememberTool(ToolSpec):
-    """Append a durable note to the user memory file."""
-
-    def name(self) -> str:
-        return "remember"
-
-    def description(self) -> str:
-        return (
-            "Append a durable note to the user memory file so it surfaces in "
-            "future sessions. Use this when the user states a preference, a "
-            "convention they want enforced, or a fact about themselves or "
-            "their workflow that you should not have to relearn next time. "
-            "Keep notes terse (one sentence)."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "note": {
-                    "type": "string",
-                    "description": "The single-sentence durable note to remember.",
-                }
-            },
-            "required": ["note"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        note = _require_string(input_data, "note")
-        memory_path = _memory_path(context)
-        memory_path.parent.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        entry = f"- ({timestamp}) {note.strip()}\n"
-        with memory_path.open("a", encoding="utf-8") as f:
-            f.write(entry)
-
-        l1_id: str | None = None
-        from deepseek_tui.tools.memory import MEMORY_PROVIDER_KEY
-
-        provider = context.metadata.get(MEMORY_PROVIDER_KEY)
-        if provider is not None and hasattr(provider, "remember_instruction"):
-            tid = context.metadata.get("runtime_thread_id")
-            thread_id = tid if isinstance(tid, str) and tid else None
-            ws = str(context.working_directory.resolve())
-            fn = provider.remember_instruction
-            if asyncio.iscoroutinefunction(fn):
-                l1_id = await fn(
-                    note.strip(),
-                    workspace=ws,
-                    thread_id=thread_id,
-                )
-            else:
-                l1_id = fn(
-                    note.strip(),
-                    workspace=ws,
-                    thread_id=thread_id,
-                )
-
-        meta: dict[str, object] = {"path": str(memory_path)}
-        if l1_id:
-            meta["l1_memory_id"] = l1_id
-        return ToolResult(
-            success=True,
-            content=f"remembered: {note.strip()}",
-            metadata=meta,
-        )
-
 
 # ===========================================================================
 # note — quick note tool (Rust commands/note.rs, ~60 LOC)
@@ -353,90 +272,6 @@ class PlanUpdateTool(ToolSpec):
 
 
 # ===========================================================================
-# recall_archive — BM25 search over cycle archives (Rust 723 LOC)
-# ===========================================================================
-
-DEFAULT_MAX_RECALL_RESULTS = 3
-HARD_MAX_RECALL_RESULTS = 10
-CONTEXT_WINDOW_CHARS = 240
-K1 = 1.5
-B = 0.75
-
-
-class RecallArchiveTool(ToolSpec):
-    """Search prior context cycles for content not in the briefing."""
-
-    def name(self) -> str:
-        return "recall_archive"
-
-    def description(self) -> str:
-        return (
-            "Search prior context cycles for content not in your briefing. "
-            "Use sparingly — frequent recalls mean your briefing was too sparse."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query. BM25-scored against archived messages.",
-                },
-                "cycle": {
-                    "type": "integer",
-                    "description": "Optional: limit to a specific prior cycle number.",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum hits to return (default 3, capped at 10).",
-                },
-            },
-            "required": ["query"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        query = _require_string(input_data, "query")
-        cycle_filter = _optional_int(input_data, "cycle")
-        max_results = min(
-            _optional_int(input_data, "max_results") or DEFAULT_MAX_RECALL_RESULTS,
-            HARD_MAX_RECALL_RESULTS,
-        )
-
-        archives_dir = _archives_dir(context)
-        if not archives_dir.exists():
-            return ToolResult(
-                success=True,
-                content="No cycle archives found.",
-                metadata={"hits": 0},
-            )
-
-        hits = _bm25_search(archives_dir, query, cycle_filter, max_results)
-        if not hits:
-            return ToolResult(
-                success=True,
-                content="No matching archived messages found.",
-                metadata={"hits": 0, "query": query},
-            )
-
-        lines = []
-        for hit in hits:
-            lines.append(
-                f"[cycle {hit['cycle']}, msg {hit['index']}, {hit['role']}] "
-                f"(score={hit['score']:.2f})\n  {hit['excerpt']}"
-            )
-        content = "\n\n".join(lines)
-        return ToolResult(
-            success=True,
-            content=content,
-            metadata={"hits": len(hits), "query": query},
-        )
-
-
-# ===========================================================================
 # skill_load — load a skill file into context (Rust 365 LOC)
 # ===========================================================================
 
@@ -643,20 +478,6 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
     raise ToolError(f"'{key}' must be an integer")
 
 
-def _memory_path(context: ToolContext) -> Path:
-    """``~/.deepseek/memory.md`` — cross-project long-term memory.
-
-    Mirrors Rust ``tui/config.rs:1930``. ``DEEPSEEK_MEMORY_PATH`` overrides
-    for tests.
-    """
-    from deepseek_tui.config.paths import user_memory_path
-
-    env = os.environ.get("DEEPSEEK_MEMORY_PATH", "").strip()
-    if env:
-        return Path(env).expanduser()
-    return user_memory_path()
-
-
 def _notes_path(context: ToolContext) -> Path:
     """``~/.deepseek/notes.txt`` — user scratch notes (Rust .txt format).
 
@@ -669,22 +490,6 @@ def _notes_path(context: ToolContext) -> Path:
     if env:
         return Path(env).expanduser()
     return user_notes_path()
-
-
-def _archives_dir(context: ToolContext) -> Path:
-    """Cycle archive search root.
-
-    Rust cycle archives live at ``~/.deepseek/sessions/<id>/cycles/``
-    (cycle_manager.rs:460-475); ``_bm25_search`` recurses under this root
-    to find every session's cycles. ``DEEPSEEK_ARCHIVES_DIR`` env var
-    overrides (used by tests to isolate from the real sessions tree).
-    """
-    from deepseek_tui.config.paths import user_sessions_dir
-
-    env = os.environ.get("DEEPSEEK_ARCHIVES_DIR", "").strip()
-    if env:
-        return Path(env).expanduser()
-    return user_sessions_dir()
 
 
 def _gather_review_content(target: str, context: ToolContext, max_chars: int) -> str:
@@ -720,106 +525,3 @@ def _gather_review_content(target: str, context: ToolContext, max_chars: int) ->
         raise ToolError(f"File not found: {target}")
     content = file_path.read_text(encoding="utf-8", errors="replace")
     return content[:max_chars]
-
-
-# --- BM25 search for recall_archive ----------------------------------------
-
-
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"\w+", text.lower())
-
-
-def _bm25_search(
-    archives_dir: Path,
-    query: str,
-    cycle_filter: int | None,
-    max_results: int,
-) -> list[dict[str, Any]]:
-    query_terms = _tokenize(query)
-    if not query_terms:
-        return []
-
-    documents: list[dict[str, Any]] = []
-    # Walk any ``*.jsonl`` under ``archives_dir`` so we pick up both the
-    # real layout (``sessions/<id>/cycles/*.jsonl`` per Rust
-    # cycle_manager.rs:460-475) and tests that stage flat files.
-    for path in sorted(archives_dir.rglob("*.jsonl")):
-        cycle_num = _extract_cycle_num(path.name)
-        if cycle_filter is not None and cycle_num != cycle_filter:
-            continue
-        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
-            if not line.strip():
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            text = _extract_text(msg)
-            if text:
-                documents.append({
-                    "cycle": cycle_num,
-                    "index": i,
-                    "role": msg.get("role", "unknown"),
-                    "text": text,
-                    "tokens": _tokenize(text),
-                })
-
-    if not documents:
-        return []
-
-    avg_dl = sum(len(d["tokens"]) for d in documents) / len(documents)
-    df: Counter[str] = Counter()
-    for doc in documents:
-        unique = set(doc["tokens"])
-        for term in unique:
-            df[term] += 1
-
-    n = len(documents)
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for doc in documents:
-        score = 0.0
-        dl = len(doc["tokens"])
-        tf_map = Counter(doc["tokens"])
-        for term in query_terms:
-            if term not in tf_map:
-                continue
-            tf = tf_map[term]
-            idf = math.log((n - df[term] + 0.5) / (df[term] + 0.5) + 1.0)
-            numerator = tf * (K1 + 1)
-            denominator = tf + K1 * (1 - B + B * dl / avg_dl)
-            score += idf * numerator / denominator
-        if score > 0:
-            scored.append((score, doc))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    hits = []
-    for score, doc in scored[:max_results]:
-        excerpt = doc["text"][:CONTEXT_WINDOW_CHARS]
-        if len(doc["text"]) > CONTEXT_WINDOW_CHARS:
-            excerpt += "…"
-        hits.append({
-            "cycle": doc["cycle"],
-            "index": doc["index"],
-            "role": doc["role"],
-            "score": score,
-            "excerpt": excerpt,
-        })
-    return hits
-
-
-def _extract_cycle_num(filename: str) -> int:
-    m = re.search(r"(\d+)", filename)
-    return int(m.group(1)) if m else 0
-
-
-def _extract_text(msg: dict[str, Any]) -> str:
-    content = msg.get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
-        return " ".join(parts)
-    return ""

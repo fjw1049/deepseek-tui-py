@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Bot,
   ExternalLink,
-  Flame,
   RefreshCw,
   Star,
   TrendingUp
@@ -18,7 +17,8 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
   { value: 'monthly', labelKey: 'trendingMonthly' }
 ]
 
-const VISIBLE_TOPIC_COUNT = 2
+const VISIBLE_TOPIC_COUNT = 1
+const VISIBLE_REPO_COUNT = 3
 const CARD_THEMES = [
   {
     border: 'hover:border-emerald-400/35',
@@ -51,7 +51,6 @@ type Props = {
 }
 
 function RepoMetrics({ repo }: { repo: TrendingRepo }): ReactElement {
-  const { t } = useTranslation('common')
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ds-faint">
       <span className="inline-flex items-center gap-1">
@@ -60,20 +59,14 @@ function RepoMetrics({ repo }: { repo: TrendingRepo }): ReactElement {
       </span>
       <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
         <TrendingUp className="h-3.5 w-3.5" strokeWidth={1.7} aria-hidden />
-        {repo.gained || '—'} {t('trendingGained')}
+        {repo.gained || '—'}
       </span>
-      {repo.isNew ? (
-        <span className="rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-300">
-          {t('trendingNew')}
-        </span>
-      ) : null}
     </div>
   )
 }
 
 function RepoTopics({ topics, fallback }: { topics: string[]; fallback: string }): ReactElement {
   const visibleTopics = topics.slice(0, VISIBLE_TOPIC_COUNT)
-  const extraTopicCount = topics.length - visibleTopics.length
   const labels = visibleTopics.length > 0 ? visibleTopics : [fallback]
 
   return (
@@ -81,17 +74,12 @@ function RepoTopics({ topics, fallback }: { topics: string[]; fallback: string }
       {labels.map((topic) => (
         <span
           key={topic}
-          className="inline-flex min-w-0 max-w-[48%] shrink items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10.5px] font-medium text-ds-muted"
+          className="inline-flex min-w-0 max-w-[120px] shrink-0 items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10.5px] font-medium text-ds-muted"
         >
           <span className="shrink-0 font-semibold text-accent">#</span>
           <span className="min-w-0 truncate">{topic}</span>
         </span>
       ))}
-      {extraTopicCount > 0 ? (
-        <span className="shrink-0 rounded-md border border-ds-border bg-ds-elevated px-1.5 py-0.5 text-[10.5px] font-medium text-ds-faint">
-          +{extraTopicCount}
-        </span>
-      ) : null}
     </div>
   )
 }
@@ -109,7 +97,7 @@ function RepoRow({
   return (
     <div
       className={[
-        'group relative flex h-full min-h-0 overflow-hidden rounded-[14px] border border-ds-border bg-ds-card/78 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_18px_38px_rgba(15,23,42,0.10)]',
+        'group relative flex h-full min-h-[126px] overflow-hidden rounded-[20px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_18px_38px_rgba(15,23,42,0.10)]',
         theme.border
       ].join(' ')}
     >
@@ -117,7 +105,7 @@ function RepoRow({
       <button
         type="button"
         onClick={() => onAnalyze(repo)}
-        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-3 text-left"
+        className="relative flex min-w-0 flex-1 flex-col px-4 py-3.5 text-left"
       >
         <div className="flex min-w-0 items-center gap-2">
           <RepoTopics topics={repo.topics} fallback={t('trendingRepoFallbackTopic')} />
@@ -135,17 +123,17 @@ function RepoRow({
             </span>
           ) : null}
         </div>
-        <p className="mt-2 line-clamp-2 text-[13px] font-medium leading-[18px] text-ds-ink">
+        <p className="mt-3 line-clamp-2 text-[14px] font-semibold leading-5 text-ds-ink">
           {repo.description || t('trendingNoDescription')}
         </p>
-        <div className="mt-auto flex min-w-0 items-center gap-2 pt-2">
-          <div className="min-w-0 flex-1 truncate rounded-md bg-ds-elevated/70 px-2 py-1 text-[11.5px] font-medium text-ds-muted">
-            {repo.name}
+        <div className="mt-auto flex min-w-0 items-center gap-2 pt-3">
+          <div className="min-w-0 truncate text-[12px] font-semibold text-ds-muted">
+            {repo.name.split('/').pop() || repo.name}
           </div>
-          <RepoMetrics repo={{ ...repo, isNew: false }} />
+          <RepoMetrics repo={repo} />
           <span
             className={[
-              'hidden h-6 w-6 shrink-0 items-center justify-center rounded-full transition group-hover:translate-x-0.5 sm:inline-flex',
+              'ml-auto hidden h-7 w-7 shrink-0 items-center justify-center rounded-full transition group-hover:translate-x-0.5 sm:inline-flex',
               theme.action
             ].join(' ')}
             aria-hidden
@@ -159,7 +147,7 @@ function RepoRow({
         title={t('trendingOpenGithub')}
         aria-label={`${t('trendingOpenGithub')}: ${repo.name}`}
         onClick={() => void window.dsGui.openExternal(repo.url)}
-        className="relative flex w-10 shrink-0 items-start justify-center rounded-r-[14px] pt-3 text-ds-faint transition hover:bg-ds-card hover:text-accent"
+        className="relative flex w-9 shrink-0 items-start justify-center rounded-r-[20px] pt-3.5 text-ds-faint transition hover:bg-ds-card hover:text-accent"
       >
         <ExternalLink className="h-4 w-4" strokeWidth={1.8} />
       </button>
@@ -207,20 +195,17 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const analyzeRepo = (repo: TrendingRepo): void => {
     onSelectSuggestion?.(t('trendingAnalyzePrompt', { name: repo.name, url: repo.url }))
   }
+  const visibleRepos = repos.slice(0, VISIBLE_REPO_COUNT)
 
   return (
     <div className="ds-no-drag w-full">
-      <div className="ds-hero-panel ds-glass flex w-full flex-col overflow-hidden rounded-[22px] px-5 py-6 sm:px-6 lg:h-[536px]">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="ds-hero-panel ds-glass flex w-full flex-col overflow-hidden rounded-[24px] px-5 py-5 sm:px-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1 text-left">
-            <div className="mb-2 flex items-center gap-1.5 text-accent">
-              <Flame className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden />
-              <span className="text-[13px] font-semibold">{t('emptyHeroBadge')}</span>
-            </div>
-            <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-ds-ink sm:text-[24px]">
-              {t('emptyHeroTitle')}
-            </h1>
-            <p className="mt-2 max-w-[640px] text-[14px] leading-7 text-ds-muted">{t('emptyHeroSub')}</p>
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-ds-ink">
+              {t('emptyHeroBadge')} {t('emptyHeroRecommended')}
+            </h2>
+            <p className="mt-1 max-w-[680px] text-[13px] leading-6 text-ds-muted">{t('emptyHeroSub')}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <div className="inline-flex rounded-full border border-ds-border bg-ds-elevated p-1">
@@ -252,13 +237,13 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
           </div>
         </div>
 
-        <div className="mt-4 h-[288px] min-h-0 overflow-y-auto pr-1 lg:h-[360px]">
+        <div className="mt-4 min-h-0">
           {loading ? (
-            <div className="grid auto-rows-[112px] grid-cols-1 gap-3 lg:grid-cols-2">
-              {Array.from({ length: 6 }).map((_, index) => (
+            <div className="grid auto-rows-[126px] grid-cols-1 gap-3 lg:grid-cols-3">
+              {Array.from({ length: VISIBLE_REPO_COUNT }).map((_, index) => (
                 <div
                   key={index}
-                  className="h-full animate-pulse rounded-[14px] border border-ds-border bg-ds-card/60 px-3.5 py-3"
+                  className="h-full animate-pulse rounded-[20px] border border-ds-border bg-ds-card/60 px-4 py-3.5"
                 >
                   <div className="flex items-start gap-2.5">
                     <div className="h-7 w-7 rounded-[9px] bg-ds-elevated" />
@@ -286,8 +271,8 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
               </button>
             </div>
           ) : (
-            <div className="grid auto-rows-[112px] grid-cols-1 gap-3 lg:grid-cols-2">
-              {repos.map((repo) => (
+            <div className="grid auto-rows-[126px] grid-cols-1 gap-3 lg:grid-cols-3">
+              {visibleRepos.map((repo) => (
                 <RepoRow key={repo.name} repo={repo} onAnalyze={analyzeRepo} />
               ))}
             </div>

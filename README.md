@@ -83,9 +83,6 @@ tasks = true
 automations = true
 mcp = true
 
-[memory.smart]
-enabled = false   # 置 true 开启 L0→L3 智能记忆
-
 # 可选：自动化投递（飞书 / 邮件）
 # [automation.feishu]
 # app_id = "..."
@@ -155,7 +152,6 @@ deepseek-tui-py/
 │   ├── engine/                  # 对话引擎（orchestrator、turn、dispatch）
 │   ├── tools/                   # 内置工具注册表与实现
 │   ├── mcp/                     # MCP outbound client（manager / store / actions）
-│   ├── memory/                  # L0–L3 智能记忆
 │   ├── policy/                  # 审批、沙箱、execpolicy 规则
 │   ├── integrations/            # hooks、goal、skills、lsp
 │   ├── workflow/                # 工作流 DSL 与运行时

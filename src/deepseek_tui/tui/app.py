@@ -279,12 +279,6 @@ class DeepSeekTUI(App[None]):
                 exec_policy=exec_policy_for_config(self.config),
                 approval_handler=approval_handler,
             )
-            session_tid = self._resume_session_id or self._fork_session_id
-            if session_tid:
-                self._engine.memory_thread_id = session_tid
-            elif self._engine._cycle_session_id:
-                self._engine.memory_thread_id = self._engine._cycle_session_id
-            self._engine.memory_mode = self.config.memory.mode
             self._engine_task = asyncio.create_task(self._engine.run())
             logger.info("tui_engine_started")
             status = self.query_one(StatusBar)
@@ -351,9 +345,6 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
-        mm = metadata.get("memory_mode")
-        if isinstance(mm, str) and mm.strip():
-            self._engine.memory_mode = mm.strip().lower()
         transcript = self.query_one(Transcript)
         transcript.hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
@@ -378,9 +369,6 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored)
-        mm = metadata.get("memory_mode")
-        if isinstance(mm, str) and mm.strip():
-            self._engine.memory_mode = mm.strip().lower()
         self.query_one(Transcript).hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
         if started:
@@ -513,8 +501,6 @@ class DeepSeekTUI(App[None]):
 
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
         text = event.text or ""
-        if text.startswith("#") and self._handle_memory_quick_add(text):
-            return
         if self._engine is None:
             if self._engine_starting:
                 self._pending_messages.append(text)
@@ -537,24 +523,6 @@ class DeepSeekTUI(App[None]):
             )
             return
         await self._submit_user_message(text)
-
-    def _handle_memory_quick_add(self, text: str) -> bool:
-        """``# note`` composer prefix — append to memory without a turn."""
-        cfg = getattr(self, "config", None)
-        if cfg is None or not cfg.memory_enabled():
-            return False
-        entry = text[1:].strip()
-        if not entry:
-            return False
-        from deepseek_tui.memory.coordinator import append_entry
-
-        append_entry(cfg.resolved_memory_path(), entry)
-        transcript = self.query_one(Transcript)
-        transcript.add_notice(f"Added to memory: {entry}", severity="info")
-        composer = self.query_one(Composer)
-        composer.text = ""
-        composer.post_message(Composer.TextChanged(""))
-        return True
 
     # ── slash command handling ────────────────────────────────────────
 

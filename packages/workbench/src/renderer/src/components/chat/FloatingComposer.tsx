@@ -10,7 +10,6 @@ import {
 import {
   BarChart3,
   Bot,
-  BrainCircuit,
   ChevronDown,
   Clock3,
   FileDiff,
@@ -298,14 +297,6 @@ export function FloatingComposer({
         description: t('composerCommandCompactDescription'),
         keywords: ['compact', 'compress', '压缩'],
         icon: <Shrink className="h-4 w-4" strokeWidth={1.9} />
-      },
-      {
-        id: 'memory',
-        kind: 'action',
-        title: t('composerCommandMemoryTitle'),
-        description: t('composerCommandMemoryDescription'),
-        keywords: ['memory', '记忆'],
-        icon: <BrainCircuit className="h-4 w-4" strokeWidth={1.9} />
       },
       {
         id: 'mcp',

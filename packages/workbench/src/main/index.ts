@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { JsonSettingsStore, getRuntimeBaseUrl, devServerHintUrl } from './settings-store'
 import deepseekLogoPng from '../asset/img/deepseek.png'
@@ -152,8 +153,20 @@ function createAppIcon(source: string): Electron.NativeImage {
     : nativeImage.createFromPath(source)
 }
 
-const appIcon = createAppIcon(deepseekLogoPng)
-traceStartup('app icon loaded', { source: deepseekLogoPng.startsWith('data:') ? 'data-url' : 'path' })
+function resolveDevIconPath(): string {
+  const fromSource = join(dirname(fileURLToPath(import.meta.url)), '../asset/img/deepseek.png')
+  if (existsSync(fromSource)) return fromSource
+  return join(process.cwd(), 'src/asset/img/deepseek.png')
+}
+const devIconPath = resolveDevIconPath()
+const appIcon = app.isPackaged
+  ? createAppIcon(deepseekLogoPng)
+  : nativeImage.createFromPath(devIconPath)
+traceStartup('app icon loaded', {
+  source: app.isPackaged ? (deepseekLogoPng.startsWith('data:') ? 'data-url' : 'path') : devIconPath,
+  empty: appIcon.isEmpty(),
+  size: appIcon.isEmpty() ? undefined : appIcon.getSize()
+})
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 traceStartup('single instance lock checked', { gotSingleInstanceLock })
 

@@ -45,12 +45,8 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     # GitHub (read-only)
     "github_issue_context": ("◈", "issue"),
     "github_pr_context": ("◈", "pr"),
-    # Memory / knowledge
-    "remember": ("◇", "remember"),
+    # Knowledge
     "note": ("◇", "note"),
-    "recall_archive": ("◇", "recall"),
-    "memory_search": ("◇", "search"),
-    "conversation_search": ("◇", "search"),
     # Plan / checklist
     "update_plan": ("◇", "plan"),
     "checklist_write": ("◇", "checklist"),

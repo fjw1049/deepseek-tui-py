@@ -98,9 +98,8 @@ async def test_per_engine_context_inherits_runtime_managers(
 async def test_per_engine_context_metadata_is_isolated(
     tmp_path: Path, isolated_config: Config
 ):
-    """Per-engine metadata writes (memory provider, search-call counter,
-    etc.) must not leak back into the shared runtime context — the dict
-    is shallow-copied, not aliased."""
+    """Per-engine metadata writes must not leak back into the shared
+    runtime context — the dict is shallow-copied, not aliased."""
     runtime_ws = tmp_path / "runtime_ws"
     runtime_ws.mkdir()
     engine_ws = tmp_path / "engine_ws"

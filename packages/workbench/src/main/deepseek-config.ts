@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { defaultMemorySettings } from '../shared/app-settings'
 import type { AppSettingsV1 } from '../shared/app-settings'
 import { upsertTomlSections } from '../shared/toml-section'
 import {
@@ -47,10 +46,6 @@ function deepseekConfigFieldsChanged(prev: AppSettingsV1, next: AppSettingsV1): 
     a.approvalPolicy !== b.approvalPolicy ||
     a.sandboxMode !== b.sandboxMode
   )
-}
-
-function memoryConfigFieldsChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
-  return JSON.stringify(prev.memory) !== JSON.stringify(next.memory)
 }
 
 async function runDeepseekCommand(
@@ -112,7 +107,6 @@ async function runDeepseekCommand(
 export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return (
     deepseekConfigFieldsChanged(prev, next) ||
-    memoryConfigFieldsChanged(prev, next) ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
   )
 }
@@ -167,50 +161,6 @@ async function syncCustomEndpointConfig(
     }
   }
   const next = upsertTomlSections(content, sections)
-  await mkdir(dirname(configPath), { recursive: true })
-  await writeFile(configPath, next, 'utf8')
-}
-
-async function syncMemoryConfig(settings: AppSettingsV1): Promise<void> {
-  const configPath = resolveDeepseekConfigPath()
-  let content = ''
-  try {
-    content = await readFile(configPath, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-  const memory = settings.memory ?? defaultMemorySettings()
-  const smart = memory.smart
-  const next = upsertTomlSections(content, {
-    memory: {
-      enabled: memory.enabled,
-      mode: memory.mode
-    },
-    'memory.smart': {
-      enabled: smart.enabled,
-      data_dir: smart.dataDir || undefined,
-      recall_enabled: smart.recallEnabled,
-      capture_enabled: smart.captureEnabled,
-      recall_timeout_ms: smart.recallTimeoutMs,
-      recall_score_threshold: smart.recallScoreThreshold,
-      recall_limit: smart.recallLimit,
-      capture_min_user_chars: smart.captureMinUserChars,
-      l1_every_n: smart.l1EveryN,
-      l1_idle_timeout_seconds: smart.l1IdleTimeoutSeconds,
-      l1_confidence_min: smart.l1ConfidenceMin,
-      l1_max_per_session: smart.l1MaxPerSession,
-      l1_decay_half_life_days: smart.l1DecayHalfLifeDays,
-      hybrid_search: smart.hybridSearch,
-      fts_tokenizer: smart.ftsTokenizer,
-      embedding_provider: smart.embeddingProvider,
-      embedding_model: smart.embeddingModel,
-      embedding_base_url: smart.embeddingBaseUrl || undefined,
-      embedding_api_key: smart.embeddingApiKey || undefined,
-      embedding_dimensions: smart.embeddingDimensions ?? undefined,
-      embedding_dedup_threshold: smart.embeddingDedupThreshold,
-      embedding_backfill_on_start: smart.embeddingBackfillOnStart
-    }
-  })
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(configPath, next, 'utf8')
 }
@@ -280,9 +230,6 @@ export async function syncDeepseekTuiConfig(
     for (const command of commands) {
       await runDeepseekCommand(launcher, command)
     }
-  }
-  if (!previous || memoryConfigFieldsChanged(previous, settings)) {
-    await syncMemoryConfig(settings)
   }
   if (!previous || JSON.stringify(previous.customEndpoints) !== JSON.stringify(settings.customEndpoints)) {
     await syncCustomEndpointConfig(settings, previous)

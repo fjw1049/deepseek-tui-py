@@ -264,70 +264,10 @@ class SkillsConfig(BaseModel):
     auto_update: bool = False
 
 
-class MemorySmartConfig(BaseModel):
-    """[memory.smart] — native L0/L1 smart memory (TencentDB-style, Python-native)."""
-
-    enabled: bool = False
-    data_dir: str = ""
-    recall_enabled: bool = True
-    capture_enabled: bool = True
-    recall_timeout_ms: int = 5000
-    flush_timeout_ms: int = 2000
-    recall_score_threshold: float = 0.3
-    recall_limit: int = 8
-    capture_min_user_chars: int = 20
-    capture_skip_slash_commands: bool = True
-    l1_every_n: int = 5
-    l1_warmup_enabled: bool = True
-    l1_idle_timeout_seconds: int = 600
-    l1_confidence_min: float = 0.6
-    l1_max_per_session: int = 20
-    l2_enabled: bool = True
-    l2_delay_after_l1_seconds: int = 90
-    l2_min_interval_seconds: int = 900
-    l2_max_interval_seconds: int = 3600
-    l2_session_active_window_hours: int = 24
-    l2_max_scenes: int = 15
-    l3_persona_llm_enabled: bool = True
-    l3_persona_interval: int = 50
-    l1_decay_half_life_days: int = 180
-    retention_days: int = 0
-    cleanup_on_start: bool = False
-    l1_inject_position: str = "user"
-    hybrid_search: bool = True
-    embedding_provider: str = "none"
-    embedding_model: str = "text-embedding-3-large"
-    embedding_base_url: str = ""
-    embedding_api_key: str = ""
-    embedding_dimensions: int | None = None
-    embedding_timeout_ms: int = 90000
-    embedding_dedup_threshold: float = 0.92
-    embedding_backfill_on_start: bool = False
-    fts_tokenizer: str = "auto"
-
-    def embedding_enabled(self) -> bool:
-        return self.embedding_provider.strip().lower() in ("openai", "remote")
-
-    def resolved_data_dir(self) -> Path:
-        from deepseek_tui.config.paths import user_memory_data_dir
-
-        if self.data_dir.strip():
-            return Path(self.data_dir).expanduser()
-        return user_memory_data_dir()
-
-
 class MemoryConfig(BaseModel):
-    """[memory] subsection — mirrors Rust ``MemoryConfig``.
+    """[memory] — reserved for future plugin system."""
 
-    Top-level ``Config.memory_path`` already covers the storage path.
-    Default **off** (Rust parity): opt-in via ``[memory] enabled = true``
-    or ``DEEPSEEK_MEMORY=on``.
-    """
-
-    enabled: bool = False
-    mode: str = "manual"
-    max_entries: int = 500
-    smart: MemorySmartConfig = Field(default_factory=MemorySmartConfig)
+    model_config = {"extra": "ignore"}
 
 
 
@@ -429,7 +369,6 @@ class Config(BaseModel):
     skills_dir: Path = Path(".deepseek/skills")
     mcp_config_path: Path = Path(".deepseek/mcp.json")
     notes_path: Path = Path(".deepseek/notes.txt")
-    memory_path: Path = Path(".deepseek/memory.md")
     max_subagents: int = 10
     instructions: list[Path] = Field(default_factory=list)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
@@ -466,31 +405,6 @@ class Config(BaseModel):
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()
-
-    def resolved_memory_path(self) -> Path:
-        """Resolve memory file path (``DEEPSEEK_MEMORY_PATH`` > config > default)."""
-        from deepseek_tui.config.paths import expand_path, user_memory_path
-
-        override = os.environ.get("DEEPSEEK_MEMORY_PATH")
-        if override:
-            return expand_path(override)
-        raw = self.memory_path
-        if raw.is_absolute():
-            return expand_path(raw)
-        return user_memory_path()
-
-    def memory_enabled(self) -> bool:
-        """Whether user-memory injection is active (Rust ``Config::memory_enabled``)."""
-        from deepseek_tui.memory.coordinator import memory_enabled_from_env
-
-        env = memory_enabled_from_env()
-        if env is not None:
-            return env
-        return self.memory.enabled
-
-    def smart_memory_enabled(self) -> bool:
-        """Whether native smart memory (L0/L1/FTS) is active."""
-        return self.memory.smart.enabled
 
     def effective_provider_config(self) -> ProviderConfig:
         from deepseek_tui.config.providers import PROVIDER_DEFAULTS

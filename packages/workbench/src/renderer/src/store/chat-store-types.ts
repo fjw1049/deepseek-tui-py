@@ -27,7 +27,6 @@ export type InitialSetupMode = 'required' | 'preview'
 export type SettingsRouteSection =
   | 'general'
   | 'runtime'
-  | 'memory'
   | 'permissions'
   | 'mcp'
   | 'skill'

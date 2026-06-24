@@ -2,7 +2,6 @@ export const COMPOSER_ACTION_COMMAND_IDS = [
   'model',
   'context',
   'compact',
-  'memory',
   'mcp',
   'skills',
   'diff',

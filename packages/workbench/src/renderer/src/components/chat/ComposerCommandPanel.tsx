@@ -5,7 +5,6 @@ import {
   FileEdit,
   GitFork,
   Loader2,
-  MemoryStick,
   Package,
   Plug,
   RefreshCw,
@@ -94,7 +93,6 @@ export function ComposerCommandPanel(props: Props): ReactElement {
     model: t('composerCommandModelTitle'),
     context: t('composerCommandContextTitle'),
     compact: t('composerCommandCompactTitle'),
-    memory: t('composerCommandMemoryTitle'),
     mcp: t('composerCommandMcpTitle'),
     skills: t('composerCommandSkillsTitle'),
     diff: t('composerCommandDiffTitle'),
@@ -108,7 +106,6 @@ export function ComposerCommandPanel(props: Props): ReactElement {
         {command === 'model' ? <ModelPanel {...props} /> : null}
         {command === 'context' ? <ContextPanel {...props} /> : null}
         {command === 'compact' ? <CompactPanel {...props} /> : null}
-        {command === 'memory' ? <MemoryPanel /> : null}
         {command === 'mcp' ? <McpPanel runtimeReady={props.runtimeReady} /> : null}
         {command === 'skills' ? <SkillsPanel runtimeReady={props.runtimeReady} /> : null}
         {command === 'diff' ? <DiffPanel blocks={props.blocks} onOpenDiff={props.onOpenDiff} /> : null}
@@ -228,34 +225,6 @@ function CompactPanel({ activeThread, busy, runtimeReady, onCompact, onClose }: 
         Compact context
       </button>
       {!activeThread ? <div className="text-[11px] text-ds-faint">Start a thread first.</div> : null}
-    </div>
-  )
-}
-
-function MemoryPanel(): ReactElement {
-  const [settings, setSettings] = useState<Awaited<ReturnType<typeof window.dsGui.getSettings>> | null>(null)
-  useEffect(() => {
-    void window.dsGui.getSettings().then(setSettings)
-  }, [])
-  if (!settings) return <Loader2 className="h-4 w-4 animate-spin text-ds-muted" />
-  const memory = settings.memory
-  const patch = async (next: { enabled?: boolean; mode?: 'manual' | 'hybrid' | 'auto' }): Promise<void> => {
-    const updated = await window.dsGui.setSettings({ memory: { ...memory, ...next } })
-    setSettings(updated)
-  }
-  return (
-    <div className="space-y-3">
-      <button type="button" onClick={() => void patch({ enabled: !memory.enabled })} className="flex w-full items-center justify-between rounded-xl bg-ds-main/60 px-3 py-3 text-left">
-        <span className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><MemoryStick className="h-4 w-4" />Memory</span>
-        <span className={memory.enabled ? 'text-emerald-600' : 'text-ds-faint'}>{memory.enabled ? 'Enabled' : 'Disabled'}</span>
-      </button>
-      <div className="grid grid-cols-3 gap-2">
-        {(['manual', 'hybrid', 'auto'] as const).map((mode) => (
-          <button key={mode} type="button" onClick={() => void patch({ mode })} className={`${buttonClass} ${memory.mode === mode ? 'border-accent/40 bg-accent/10 text-accent' : ''}`}>
-            {mode}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }

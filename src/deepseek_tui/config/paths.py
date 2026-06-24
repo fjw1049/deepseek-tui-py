@@ -3,7 +3,7 @@
 Two-layer layout, mirroring Rust ``crates/tui/src/config.rs:1690-1930``:
 
 * **User-level** ``~/.deepseek/`` — cross-project state: credentials,
-  long-term memory, session history, audit log, composer history,
+  session history, audit log, composer history,
   workspace trust, MCP config, user skills, task queue.
 * **Project-level** ``<workspace>/.deepseek/`` — checkout-scoped state:
   project config overrides, current session handoff, active sub-agent
@@ -11,8 +11,7 @@ Two-layer layout, mirroring Rust ``crates/tui/src/config.rs:1690-1930``:
 
 Callers MUST go through the typed helpers below. Do not hardcode
 ``Path.home() / ".deepseek"`` or ``Path.cwd() / ".deepseek"``; do not
-introduce new "layer-ambiguous" helpers. See
-``memory/path-layout-contract.md``.
+introduce new "layer-ambiguous" helpers.
 """
 
 from __future__ import annotations
@@ -70,18 +69,6 @@ def user_requirements_path() -> Path:
 def user_agents_path() -> Path:
     """``~/.deepseek/AGENTS.md`` — global fallback instructions."""
     return user_deepseek_dir() / "AGENTS.md"
-
-
-def user_memory_path() -> Path:
-    """``~/.deepseek/memory.md`` — cross-project long-term memory."""
-    return user_deepseek_dir() / "memory.md"
-
-
-def user_memory_data_dir() -> Path:
-    """``~/.deepseek/memory_data/`` — native L0 JSONL + L1 SQLite store."""
-    return user_deepseek_dir() / "memory_data"
-
-
 
 
 def user_notes_path() -> Path:

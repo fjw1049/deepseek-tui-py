@@ -139,28 +139,6 @@ def _detect_locale(text: str) -> str:
     return "en"
 
 
-_TRIVIAL_RECALL_PROMPTS = {
-    "hi",
-    "hello",
-    "hey",
-    "ok",
-    "okay",
-    "thanks",
-    "thank you",
-    "你好",
-    "您好",
-    "好的",
-    "好",
-    "嗯",
-    "谢谢",
-}
-
-
-def _should_skip_memory_recall(text: str) -> bool:
-    normalized = text.strip().lower()
-    if not normalized:
-        return True
-    return normalized in _TRIVIAL_RECALL_PROMPTS
 
 
 def _clip_summary_line(text: str, limit: int = 200) -> str:
@@ -387,11 +365,6 @@ class Engine:
         self.default_temperature = default_temperature
         self.default_top_p = default_top_p
         self.default_extra_body: dict[str, Any] = dict(default_extra_body or {})
-        self.memory_enabled: bool = False
-        self.memory_path: Path | None = None
-        self.memory_coordinator: object | None = None
-        self.memory_thread_id: str | None = None
-        self.memory_mode: str | None = None
         self._user_turn_index: int = 0
         from deepseek_tui.integrations.hooks import HookExecutor
 
@@ -548,7 +521,7 @@ class Engine:
         # context loses task_manager/subagent_manager/network_policy/policy and
         # registered-but-runtime-unwired tools (e.g. task_shell_start) become
         # guaranteed failures. metadata is shallow-copied so per-engine writes
-        # (memory provider, search-call counter) don't mutate the shared one.
+        # don't mutate the shared one.
         import dataclasses as _dc
 
         per_engine_context: ToolContext | None = None
@@ -589,23 +562,6 @@ class Engine:
         # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
         # and ``Config.seam_enabled`` once those fields exist; today they
         # default to False so behavior is unchanged from the pre-batch state.
-        engine.memory_enabled = cfg.memory_enabled()
-        engine.memory_path = cfg.resolved_memory_path()
-        engine.memory_mode = cfg.memory.mode
-        from deepseek_tui.tools.memory import MEMORY_PROVIDER_KEY, MEMORY_SEARCH_CALLS_KEY
-
-        engine.tool_context.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
-        if cfg.smart_memory_enabled():
-            from deepseek_tui.memory.coordinator import MemoryCoordinator
-            from deepseek_tui.memory.coordinator import create_smart_memory_provider
-
-            provider = create_smart_memory_provider(cfg, client)
-            coordinator = MemoryCoordinator(cfg, provider)
-            await coordinator.start()
-            engine.memory_coordinator = coordinator
-            engine.tool_context.metadata[MEMORY_PROVIDER_KEY] = provider
-        else:
-            engine.memory_coordinator = None
         engine.cycle_config = CycleConfig(
             enabled=bool(getattr(cfg, "cycle_enabled", False)),
         )
@@ -651,65 +607,8 @@ class Engine:
     async def shutdown_session(self) -> None:
         """Stop background coordinators and tool runtime (tests / teardown)."""
         await self._activity_coordinator.stop()
-        coordinator = self.memory_coordinator
-        if coordinator is not None:
-            from deepseek_tui.memory.coordinator import MemoryCoordinator
-
-            if isinstance(coordinator, MemoryCoordinator):
-                await coordinator.stop()
-            self.memory_coordinator = None
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
-
-    def _resolve_memory_thread_id(self) -> str:
-        if self.memory_thread_id:
-            return self.memory_thread_id
-        runtime_tid = self.tool_context.metadata.get("runtime_thread_id")
-        if isinstance(runtime_tid, str) and runtime_tid:
-            return runtime_tid
-        if self._cycle_session_id:
-            return self._cycle_session_id
-        return "default"
-
-    def _memory_md_enabled(self) -> bool:
-        coordinator = self.memory_coordinator
-        if coordinator is not None:
-            from deepseek_tui.memory.coordinator import MemoryCoordinator
-
-            if isinstance(coordinator, MemoryCoordinator):
-                return coordinator.memory_md_enabled(self.memory_mode)
-        return self.memory_enabled
-
-    @staticmethod
-    def _messages_for_capture(messages: list[Message]) -> list[dict[str, str]]:
-        from deepseek_tui.protocol.messages import TextBlock, ToolResultBlock
-
-        out: list[dict[str, str]] = []
-        for msg in messages:
-            parts: list[str] = []
-            for block in msg.content:
-                if isinstance(block, TextBlock):
-                    parts.append(block.text)
-                elif isinstance(block, ToolResultBlock):
-                    parts.append(str(block.content))
-            content = "\n".join(parts).strip()
-            if not content:
-                continue
-            out.append({"role": msg.role.value, "content": content})
-        return out
-
-    @staticmethod
-    def _turn_had_tool_calls(messages: list[Message]) -> bool:
-        from deepseek_tui.protocol.messages import Role, ToolUseBlock
-
-        for msg in messages:
-            if msg.role == Role.TOOL:
-                return True
-            if msg.role == Role.ASSISTANT:
-                for block in msg.content:
-                    if isinstance(block, ToolUseBlock):
-                        return True
-        return False
 
 
 
@@ -1052,44 +951,14 @@ class Engine:
         )
         if self.tool_profile == TOOL_PROFILE_FULL:
             self.tool_profile = None
-        from deepseek_tui.tools.memory import MEMORY_SEARCH_CALLS_KEY
-
-        self.tool_context.metadata[MEMORY_SEARCH_CALLS_KEY] = 0
         # Reset per-host timeout escalation so a prior turn's transient
         # network blip doesn't carry over (network_escalation counters are
         # meant to be turn-scoped, not session-scoped).
         from deepseek_tui.tools.network_escalation import reset_host_timeouts
 
         reset_host_timeouts(self.tool_context)
-        thread_id = self._resolve_memory_thread_id()
-        workspace_str = str(self.tool_context.working_directory.resolve())
-        memory_recall = None
-        coordinator = self.memory_coordinator
-        if coordinator is not None and not _should_skip_memory_recall(
-            processed.model_text or ""
-        ):
-            from deepseek_tui.memory.coordinator import MemoryCoordinator
-
-            if isinstance(coordinator, MemoryCoordinator):
-                memory_recall = await coordinator.recall_for_turn(
-                    thread_id,
-                    processed.model_text or "",
-                    workspace=workspace_str,
-                    thread_memory_mode=self.memory_mode,
-                )
 
         user_message = Message.user(processed.model_text)
-        if (
-            memory_recall
-            and memory_recall.l1_context.strip()
-            and memory_recall.inject_position == "user"
-        ):
-            from deepseek_tui.memory.coordinator import wrap_relevant_memories
-
-            wrapped = wrap_relevant_memories(
-                processed.model_text or "", memory_recall.l1_context
-            )
-            user_message = Message.user(wrapped)
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
@@ -1153,9 +1022,6 @@ class Engine:
                 working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,
                 locale_tag=_detect_locale(processed.display_text or ""),
-                memory_enabled=self._memory_md_enabled(),
-                memory_path=self.memory_path,
-                memory_recall=memory_recall,
                 workflow_guidelines=self.tool_registry.contains("workflow"),
             )
             if mode_hint:
@@ -1289,20 +1155,6 @@ class Engine:
             await self._auto_persist_session()
             if not result.cancelled:
                 self._user_turn_index += 1
-                if coordinator is not None:
-                    from deepseek_tui.memory.coordinator import MemoryCoordinator
-
-                    if isinstance(coordinator, MemoryCoordinator):
-                        thread_id_for_mem = self._resolve_memory_thread_id()
-                        turn_slice = working_messages[prior_count:]
-                        await coordinator.capture_after_turn(
-                            thread_id=thread_id_for_mem,
-                            user_text=processed.model_text or op.content or "",
-                            workspace=str(self.tool_context.working_directory.resolve()),
-                            messages=self._messages_for_capture(turn_slice),
-                            had_tool_calls=self._turn_had_tool_calls(turn_slice),
-                            success=turn_ok,
-                        )
         finally:
             self.handle.clear_response_id()
 
@@ -2656,8 +2508,6 @@ class Engine:
                 "compaction_summary_prompt": self._compaction_summary_prompt,
                 "metadata": {
                     "id": self._cycle_session_id,
-                    "memory_mode": self.memory_mode,
-                    "memory_thread_id": self.memory_thread_id or self._cycle_session_id,
                 },
             }
             tmp = session_file.with_suffix(".tmp")

@@ -11,8 +11,6 @@ import os
 import sys
 from pathlib import Path
 
-from deepseek_tui.memory.coordinator import wrap_relevant_memories_system_block
-from deepseek_tui.memory.coordinator import RecallResult
 
 import enum
 
@@ -107,9 +105,6 @@ def build_system_prompt(
     skills_context: str | None = None,
     locale_tag: str = "en",
     project_context_enabled: bool = True,
-    memory_enabled: bool = False,
-    memory_path: Path | None = None,
-    memory_recall: RecallResult | None = None,
     workflow_guidelines: bool = False,
 ) -> str:
     """Build the full system prompt for the engine.
@@ -155,9 +150,6 @@ def build_system_prompt(
         full_prompt += "\n\n" + render_environment_block(workspace, locale_tag)
 
 
-    if memory_recall and memory_recall.append_system.strip():
-        full_prompt += "\n\n" + memory_recall.append_system.strip()
-
     # Context Management (Agent / Yolo only)
     if mode in (AppMode.AGENT, AppMode.YOLO, AppMode.WORKFLOW):
         full_prompt += (
@@ -193,40 +185,13 @@ def build_system_prompt(
         if handoff_block:
             full_prompt += "\n\n" + handoff_block
 
-    if (
-        memory_recall
-        and memory_recall.l1_context.strip()
-        and memory_recall.inject_position == "system_volatile"
-    ):
-        volatile_l1 = wrap_relevant_memories_system_block(memory_recall.l1_context)
-        if volatile_l1:
-            full_prompt += "\n\n" + volatile_l1
 
-
-    # User memory (~/.deepseek/memory.md) — opt-in, re-read each turn.
-    memory_block = _load_user_memory(memory_enabled, memory_path)
-    if memory_block:
-        full_prompt += "\n\n" + memory_block
 
     # Working-set summary
     if working_set_summary and working_set_summary.strip():
         full_prompt += "\n\n" + working_set_summary
 
     return full_prompt
-
-
-def _load_user_memory(
-    enabled: bool,
-    memory_path: Path | None,
-) -> str | None:
-    """Compose ``<user_memory>`` block — mirrors ``memory::compose_block``."""
-    if memory_path is None:
-        from deepseek_tui.config.paths import user_memory_path
-
-        memory_path = user_memory_path()
-    from deepseek_tui.memory.coordinator import compose_block
-
-    return compose_block(enabled, memory_path)
 
 
 def _load_handoff_block(workspace: Path) -> str | None:
