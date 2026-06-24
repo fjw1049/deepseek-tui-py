@@ -720,6 +720,21 @@ textarea {
   padding-bottom: clamp(2rem, 7vh, 4rem);
 }
 
+.ds-trending-grid-scroll {
+  max-height: calc(126px * 3 + 0.75rem * 2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 0.25rem;
+  scrollbar-gutter: stable;
+}
+
+@media (min-width: 1024px) {
+  .ds-trending-grid-scroll {
+    max-height: calc(126px * 2 + 0.75rem * 1);
+  }
+}
+
 .ds-chat-stage-stack {
   display: flex;
   width: min(960px, 100%);
