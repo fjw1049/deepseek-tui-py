@@ -56,7 +56,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
       <div
         className={`ds-no-drag flex min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] border border-accent/15 bg-accent-soft text-accent shadow-[inset_0_1px_0_rgba(255,255,255,0.62)] dark:border-accent/25 dark:bg-accent-soft dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-accent/15 bg-accent-soft text-accent shadow-[inset_0_1px_0_rgba(255,255,255,0.62)] dark:border-accent/25 dark:bg-accent-soft dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
           <MessageSquare
             className="h-[14px] w-[14px] shrink-0 opacity-95"
             strokeWidth={2}
@@ -82,12 +82,12 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
             </div>
           </div>
         ) : showWorkspaceMeta ? (
-          <div className="min-w-0 pt-0.5">
+          <div className="min-w-0">
             <div className="truncate text-[12.5px] font-medium text-ds-faint">{workspaceLabel}</div>
           </div>
         ) : (
-          <div className="min-w-0 pt-0.5">
-            <div className="truncate text-[13px] font-semibold leading-[18px] tracking-[-0.01em] text-ds-ink opacity-90">
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold leading-8 tracking-[-0.01em] text-ds-ink opacity-90">
               {t('newChat')}
             </div>
           </div>

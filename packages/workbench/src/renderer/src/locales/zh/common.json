@@ -525,6 +525,8 @@
   "trendingLoading": "正在加载热门仓库...",
   "trendingError": "加载失败",
   "trendingRetry": "重试",
+  "trendingDisplayCount": "显示数量",
+  "trendingDisplayCountOption": "显示 {{count}} 个",
   "trendingNew": "NEW",
   "trendingNoDescription": "暂无描述",
   "trendingRepoFallbackTopic": "GitHub 仓库",

@@ -139,7 +139,7 @@ class FetchUrlTool(ToolSpec):
             # burned multiple rounds on raw.githubusercontent timeouts).
             # The hint is host-agnostic — domain-specific mirrors (jsDelivr
             # for raw GitHub, etc.) are taught in the skill/prompt layer.
-            from deepseek_tui.tools.network_escalation import (
+            from deepseek_tui.utils.network_escalation import (
                 record_host_timeout,
                 should_escalate,
             )

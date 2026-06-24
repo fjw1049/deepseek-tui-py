@@ -166,7 +166,7 @@ export function SidebarProjectsSection({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-0.5 pb-1">
+      <div className="min-h-0 flex-1 overflow-y-auto px-0.5 pb-2 pt-0.5">
         {groups.length === 0 ? (
           <SidebarEmpty
             runtimeReady={runtimeReady}
@@ -188,14 +188,14 @@ export function SidebarProjectsSection({
             ? sortedThreads
             : sortedThreads.slice(0, 5)
           return (
-            <div key={workspacePath} className="mb-1">
+            <div key={workspacePath} className="mb-2">
               <div className="ds-sidebar-workspace group" title={workspacePath}>
                 <button
                   type="button"
                   onClick={() =>
                     setCollapsed((current) => ({ ...current, [workspacePath]: !current[workspacePath] }))
                   }
-                  className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+                  className="flex min-h-[40px] min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2.5 text-left"
                 >
                   {isCollapsed ? (
                     <ChevronRight className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
@@ -207,7 +207,7 @@ export function SidebarProjectsSection({
                   ) : (
                     <FolderOpen className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.75} />
                   )}
-                  <span className="min-w-0 flex-1 truncate">{folderName}</span>
+                  <span className="ds-sidebar-project-label min-w-0 flex-1 truncate">{folderName}</span>
                 </button>
                 <button
                   type="button"
@@ -236,7 +236,7 @@ export function SidebarProjectsSection({
               </div>
 
               {!isCollapsed ? (
-                <div className="mt-0.5 space-y-0.5 pl-2">
+                <div className="mt-1 space-y-1 pl-2">
                   {sortedThreads.length === 0 ? (
                     <div className="flex items-center justify-between gap-2 px-2 py-1">
                       <div className="text-[13.5px] leading-5 text-ds-faint">
@@ -358,7 +358,7 @@ function ThreadRow({
       <button
         type="button"
         onClick={onSelect}
-        className="flex w-full items-center gap-1.5 px-3 py-2 pr-[5.5rem] text-left"
+        className="relative flex w-full items-center gap-2 px-2.5 py-2.5 text-left"
         disabled={deleting || exporting}
         aria-label={
           showRunning
@@ -386,18 +386,19 @@ function ThreadRow({
           strokeWidth={1.8}
         />
         <span
-          className={`ds-sidebar-thread min-w-0 flex-1 truncate ${
-            showUnreadDot && !active ? 'font-semibold' : ''
-          }`}
+          className={[
+            'ds-sidebar-thread min-w-0 flex-1 truncate pr-14',
+            active || (showUnreadDot && !active) ? 'ds-sidebar-thread--emphasis' : ''
+          ].join(' ')}
           title={thread.title}
         >
           {thread.title}
         </span>
-        <span className="ds-sidebar-thread-meta shrink-0 transition-opacity duration-200 group-hover:opacity-0">
+        <span className="ds-sidebar-thread-meta pointer-events-none absolute right-12 top-1/2 max-w-[4.75rem] -translate-y-1/2 truncate transition-opacity duration-200 group-hover:opacity-0">
           {formatRelativeTimeCompact(thread.updatedAt)}
         </span>
       </button>
-      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+      <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
         {canCompact ? (
           <button
             type="button"

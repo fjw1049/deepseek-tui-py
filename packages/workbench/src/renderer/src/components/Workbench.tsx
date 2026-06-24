@@ -230,7 +230,6 @@ export function Workbench(): ReactElement {
     runtimeConnection,
     setRoute,
     openSettings,
-    openPlugins,
     setError,
     sendMessage,
     queuedMessages,
@@ -263,7 +262,6 @@ export function Workbench(): ReactElement {
       runtimeConnection: s.runtimeConnection,
       setRoute: s.setRoute,
       openSettings: s.openSettings,
-      openPlugins: s.openPlugins,
       setError: s.setError,
       sendMessage: s.sendMessage,
       queuedMessages: s.queuedMessages,
@@ -481,12 +479,13 @@ export function Workbench(): ReactElement {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault()
+        setRoute('chat')
         void createThread()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [createThread])
+  }, [createThread, setRoute])
 
   useEffect(() => {
     const sync = (): void => {
@@ -521,14 +520,6 @@ export function Workbench(): ReactElement {
   const startNewChat = (): void => {
     setRoute('chat')
     void createThread()
-  }
-
-  const startNewAutomationTask = (): void => {
-    setRoute('automation')
-  }
-
-  const openChannels = (): void => {
-    setRoute('channels')
   }
 
   const startNewChatInWorkspace = (workspaceRoot: string): void => {
@@ -683,9 +674,6 @@ export function Workbench(): ReactElement {
             <Sidebar
               threads={threads}
               activeThreadId={activeThreadId}
-              pluginsActive={route === 'plugins'}
-              automationActive={route === 'automation'}
-              channelsActive={route === 'channels'}
               runtimeReady={runtimeConnection === 'ready'}
               onSelectThread={openThread}
               onDeleteThread={deleteThread}
@@ -700,12 +688,10 @@ export function Workbench(): ReactElement {
               }}
               onExportThread={exportThreadToSession}
               onNewChat={startNewChat}
-              onOpenAutomations={startNewAutomationTask}
-              onOpenChannels={openChannels}
               onNewChatInWorkspace={startNewChatInWorkspace}
               onImportSession={() => setImportSessionOpen(true)}
               onOpenSettings={(section) => openSettings(section)}
-              onOpenPlugins={() => openPlugins()}
+              onCollapseSidebar={() => setLeftSidebarCollapsed(true)}
             />
             <div
               role="separator"
@@ -804,22 +790,26 @@ export function Workbench(): ReactElement {
             }`}
           >
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="ds-topbar-surface relative z-10 mt-3 flex min-h-[46px] w-full shrink-0 items-stretch overflow-visible rounded-[24px]">
-              <div className="flex w-full min-w-0 items-center justify-between gap-3 px-3 py-2 sm:px-4 md:pl-5 md:pr-2">
+            <header className="relative z-10 flex min-h-[48px] w-full shrink-0 items-center border-b border-ds-border-muted/35 bg-transparent">
+              <div
+                className={`flex w-full min-w-0 items-center justify-between gap-3 py-2 ${
+                  stageCentered
+                    ? 'ds-empty-stage-topbar'
+                    : 'px-3 sm:px-4 md:pl-5 md:pr-2'
+                }`}
+              >
                 <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={toggleLeftSidebar}
-                    className="ds-sidebar-toggle-button shrink-0"
-                    aria-label={leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')}
-                    title={leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')}
-                  >
-                    {leftSidebarCollapsed ? (
+                  {leftSidebarCollapsed ? (
+                    <button
+                      type="button"
+                      onClick={toggleLeftSidebar}
+                      className="ds-sidebar-toggle-button shrink-0"
+                      aria-label={t('sidebarExpand')}
+                      title={t('sidebarExpand')}
+                    >
                       <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
-                    ) : (
-                      <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
-                    )}
-                  </button>
+                    </button>
+                  ) : null}
                   <SessionHeader compact className="min-w-0 flex-1" />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -842,7 +832,7 @@ export function Workbench(): ReactElement {
             <div className="flex min-h-0 flex-1">
               {stageCentered ? (
                 <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col">
-                  <div className="min-h-0 flex-[1.2]" aria-hidden />
+                  <div className="min-h-0 flex-[0.65]" aria-hidden />
                   <div className="ds-chat-stage ds-empty-stage-hero shrink-0">
                     <MessageTimeline
                       blocks={blocks}

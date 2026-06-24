@@ -6,7 +6,7 @@ import {
   Command,
   LayoutGrid,
   MessageCircle,
-  PanelLeft,
+  PanelLeftClose,
   Plus,
   Settings
 } from 'lucide-react'
@@ -18,9 +18,6 @@ import { SidebarProjectsSection } from './SidebarProjectsSection'
 type Props = {
   threads: NormalizedThread[]
   activeThreadId: string | null
-  pluginsActive: boolean
-  automationActive: boolean
-  channelsActive: boolean
   runtimeReady: boolean
   onSelectThread: (id: string) => void
   onDeleteThread: (id: string) => Promise<void>
@@ -29,20 +26,15 @@ type Props = {
   onCompactThread: (id: string) => Promise<void>
   onExportThread: (id: string) => Promise<{ path: string } | null>
   onNewChat: () => void
-  onOpenAutomations: () => void
-  onOpenChannels: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onImportSession: () => void
   onOpenSettings: (section?: SettingsRouteSection) => void
-  onOpenPlugins: () => void
+  onCollapseSidebar: () => void
 }
 
 export function Sidebar({
   threads,
   activeThreadId,
-  pluginsActive,
-  automationActive,
-  channelsActive,
   runtimeReady,
   onSelectThread,
   onDeleteThread,
@@ -51,20 +43,25 @@ export function Sidebar({
   onCompactThread,
   onExportThread,
   onNewChat,
-  onOpenAutomations,
-  onOpenChannels,
   onNewChatInWorkspace,
   onImportSession,
   onOpenSettings,
-  onOpenPlugins
+  onCollapseSidebar
 }: Props): ReactElement {
   const { t, i18n } = useTranslation('common')
+  const route = useChatStore((s) => s.route)
+  const setRoute = useChatStore((s) => s.setRoute)
+  const openPlugins = useChatStore((s) => s.openPlugins)
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
   const deleteWorkspace = useChatStore((s) => s.deleteWorkspace)
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
+  const chatActive = route === 'chat'
+  const automationActive = route === 'automation'
+  const channelsActive = route === 'channels'
+  const pluginsActive = route === 'plugins'
 
   return (
     <aside className="ds-drag ds-sidebar-shell ds-frosted relative flex h-full w-full shrink-0 flex-col px-3 pb-3">
@@ -72,9 +69,15 @@ export function Sidebar({
         <div aria-hidden className="ds-titlebar-safe-block" />
         <div className="flex min-h-[48px] items-center justify-between px-1 py-1">
           <div className="ds-sidebar-workbench-label">{t('sidebarWorkbench')}</div>
-          <div className="ds-sidebar-workbench-icon" aria-hidden>
-            <PanelLeft className="h-4 w-4" strokeWidth={1.9} />
-          </div>
+          <button
+            type="button"
+            onClick={onCollapseSidebar}
+            className="ds-sidebar-toggle-button ds-no-drag shrink-0"
+            aria-label={t('sidebarCollapse')}
+            title={t('sidebarCollapse')}
+          >
+            <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
+          </button>
         </div>
       </div>
 
@@ -86,12 +89,19 @@ export function Sidebar({
           disabled={!runtimeReady}
           disabledHint={t('runtimeActionNeedsConnection')}
           shortcut="⌘N"
-          variant="flat-accent"
+          variant="flat"
+          active={chatActive}
         />
         <SidebarLink
           icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
           label={t('newAutomationTask')}
-          onClick={runtimeReady ? onOpenAutomations : undefined}
+          onClick={
+            runtimeReady
+              ? () => {
+                  setRoute('automation')
+                }
+              : undefined
+          }
           disabled={!runtimeReady}
           disabledHint={t('runtimeActionNeedsConnection')}
           variant="flat"
@@ -100,7 +110,7 @@ export function Sidebar({
         <SidebarLink
           icon={<MessageCircle className="h-4 w-4" strokeWidth={1.9} />}
           label={t('messageChannels')}
-          onClick={onOpenChannels}
+          onClick={() => setRoute('channels')}
           variant="flat"
           active={channelsActive}
         />
@@ -108,7 +118,7 @@ export function Sidebar({
           <SidebarLink
             icon={<LayoutGrid className="h-4 w-4" strokeWidth={1.75} />}
             label={t('plugins')}
-            onClick={onOpenPlugins}
+            onClick={() => openPlugins()}
             active={pluginsActive}
           />
         ) : null}
@@ -183,21 +193,24 @@ function SidebarLink({
       disabled={disabled}
       title={disabled ? disabledHint : undefined}
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
       className={`ds-sidebar-link ds-no-drag ${variantClass} ${active ? 'ds-sidebar-link--active' : ''}`}
     >
       <span
         className={`ds-sidebar-link__icon ${
-          variant === 'flat-accent'
+          active
             ? 'text-accent'
-            : variant === 'footer'
-              ? 'text-ds-faint'
-              : 'text-ds-muted'
+            : variant === 'flat-accent'
+              ? 'text-accent'
+              : variant === 'footer'
+                ? 'text-ds-faint'
+                : 'text-ds-muted'
         }`}
       >
         {icon}
       </span>
       <span className="flex-1 truncate text-left">{label}</span>
-      {shortcut ? (
+      {shortcut && active ? (
         <kbd className="ds-kbd hidden items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono text-[12px] font-medium text-ds-faint transition-colors duration-200 sm:inline-flex">
           <Command className="h-2.5 w-2.5" strokeWidth={2} />
           {shortcut.replace('⌘', '')}

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deepseek_tui.tools.network_escalation import (
+from deepseek_tui.utils.network_escalation import (
     host_timeout_count,
     should_escalate,
 )

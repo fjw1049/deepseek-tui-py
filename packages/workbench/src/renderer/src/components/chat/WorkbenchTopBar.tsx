@@ -112,13 +112,20 @@ export function WorkbenchTopBar({
     return <Icon className={`${className} shrink-0`} strokeWidth={1.8} />
   }
 
+  const toolButtonBase =
+    'inline-flex h-8 shrink-0 items-center justify-center rounded-full border shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
+  const toolButtonIdle =
+    'border-transparent bg-ds-elevated/45 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
+  const toolButtonActive =
+    'border-ds-border-strong bg-ds-elevated/80 text-ds-ink dark:bg-white/10'
+
   return (
     <div className="ds-no-drag flex shrink-0 items-center justify-end gap-1">
       <div ref={editorMenuRef} className="relative">
         <button
           type="button"
           onClick={() => setEditorMenuOpen((value) => !value)}
-          className="inline-flex items-center gap-1 rounded-full border border-transparent bg-ds-elevated/45 px-2.5 py-1.5 text-ds-faint opacity-90 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] dark:hover:bg-white/8"
+          className={`${toolButtonBase} ${toolButtonIdle} gap-1 px-2`}
           aria-label={t('editorPickerTitle')}
           aria-expanded={editorMenuOpen}
           title={
@@ -168,10 +175,8 @@ export function WorkbenchTopBar({
         type="button"
         onClick={onToggleTerminalPanel}
         disabled={!terminalPanelEnabled}
-        className={`rounded-full border px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition disabled:cursor-not-allowed disabled:opacity-45 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
-          terminalPanelOpen
-            ? 'border-ds-border-strong bg-ds-elevated/80 text-ds-ink dark:bg-white/10'
-            : 'border-transparent bg-ds-elevated/45 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
+        className={`${toolButtonBase} w-8 disabled:cursor-not-allowed disabled:opacity-45 ${
+          terminalPanelOpen ? toolButtonActive : toolButtonIdle
         }`}
         aria-label={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
         aria-pressed={terminalPanelOpen}
@@ -188,11 +193,7 @@ export function WorkbenchTopBar({
             key={item.mode}
             type="button"
             onClick={() => onToggleRightPanelMode(item.mode)}
-            className={`rounded-full border px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
-              active
-                ? 'border-ds-border-strong bg-ds-elevated/80 text-ds-ink dark:bg-white/10'
-                : 'border-transparent bg-ds-elevated/45 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
-            }`}
+            className={`${toolButtonBase} w-8 ${active ? toolButtonActive : toolButtonIdle}`}
             aria-label={item.label}
             aria-pressed={active}
             title={item.label}

@@ -2608,7 +2608,7 @@ function UserMessageBubble({
   if (editing) {
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
-        <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0 border border-accent/35 ring-1 ring-accent/15">
+        <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0">
           <textarea
             ref={textareaRef}
             value={draft}

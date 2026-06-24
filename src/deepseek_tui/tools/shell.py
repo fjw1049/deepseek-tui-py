@@ -162,7 +162,7 @@ class ExecShellTool(ToolSpec):
             # mirror / tool-swap suggestion rather than silent retries.
             _url = _extract_http_url(command)
             if _url is not None:
-                from deepseek_tui.tools.network_escalation import record_host_timeout
+                from deepseek_tui.utils.network_escalation import record_host_timeout
 
                 record_host_timeout(context, _url)
             # Kill so we don't leak a zombie when the model fires off a
@@ -256,7 +256,7 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
     GitHub, etc. all get the same capability-aware behaviour.
     """
     # Lazy import avoids a registry <-> shell <-> network_escalation cycle.
-    from deepseek_tui.tools.network_escalation import should_escalate
+    from deepseek_tui.utils.network_escalation import should_escalate
 
     url = _extract_http_url(command)
     looks_like_curl = "curl" in command and url is not None

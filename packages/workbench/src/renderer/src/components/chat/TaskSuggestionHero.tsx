@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   ArrowRight,
   Bot,
+  ChevronDown,
   ExternalLink,
   RefreshCw,
   Star,
@@ -18,7 +19,8 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
 ]
 
 const VISIBLE_TOPIC_COUNT = 1
-const VISIBLE_REPO_COUNT = 3
+const DEFAULT_VISIBLE_REPO_COUNT = 6
+const MAX_VISIBLE_REPO_COUNT = 10
 const CARD_THEMES = [
   {
     border: 'hover:border-emerald-400/35',
@@ -162,6 +164,11 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [visibleLimit, setVisibleLimit] = useState<6 | 10>(DEFAULT_VISIBLE_REPO_COUNT)
+
+  useEffect(() => {
+    setVisibleLimit(DEFAULT_VISIBLE_REPO_COUNT)
+  }, [period])
 
   useEffect(() => {
     let cancelled = false
@@ -195,7 +202,9 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const analyzeRepo = (repo: TrendingRepo): void => {
     onSelectSuggestion?.(t('trendingAnalyzePrompt', { name: repo.name, url: repo.url }))
   }
-  const visibleRepos = repos.slice(0, VISIBLE_REPO_COUNT)
+  const cappedRepos = repos.slice(0, MAX_VISIBLE_REPO_COUNT)
+  const visibleRepos = cappedRepos.slice(0, visibleLimit)
+  const canExpandList = cappedRepos.length > DEFAULT_VISIBLE_REPO_COUNT
 
   return (
     <div className="ds-no-drag w-full">
@@ -225,6 +234,30 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
                 </button>
               ))}
             </div>
+            {canExpandList ? (
+              <label className="relative inline-flex items-center">
+                <span className="sr-only">{t('trendingDisplayCount')}</span>
+                <select
+                  value={visibleLimit}
+                  onChange={(event) =>
+                    setVisibleLimit(Number(event.target.value) === 10 ? 10 : DEFAULT_VISIBLE_REPO_COUNT)
+                  }
+                  className="ds-select h-9 appearance-none rounded-full border border-ds-border bg-ds-elevated py-0 pl-3 pr-8 text-[12px] font-medium text-ds-ink"
+                >
+                  <option value={DEFAULT_VISIBLE_REPO_COUNT}>
+                    {t('trendingDisplayCountOption', { count: DEFAULT_VISIBLE_REPO_COUNT })}
+                  </option>
+                  <option value={MAX_VISIBLE_REPO_COUNT}>
+                    {t('trendingDisplayCountOption', { count: MAX_VISIBLE_REPO_COUNT })}
+                  </option>
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-ds-faint"
+                  strokeWidth={1.9}
+                  aria-hidden
+                />
+              </label>
+            ) : null}
             <button
               type="button"
               title={t('trendingRetry')}
@@ -240,7 +273,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
         <div className="mt-4 min-h-0">
           {loading ? (
             <div className="grid auto-rows-[126px] grid-cols-1 gap-3 lg:grid-cols-3">
-              {Array.from({ length: VISIBLE_REPO_COUNT }).map((_, index) => (
+              {Array.from({ length: DEFAULT_VISIBLE_REPO_COUNT }).map((_, index) => (
                 <div
                   key={index}
                   className="h-full animate-pulse rounded-[20px] border border-ds-border bg-ds-card/60 px-4 py-3.5"

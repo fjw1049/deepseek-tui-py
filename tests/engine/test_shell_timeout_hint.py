@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.network_escalation import record_host_timeout
+from deepseek_tui.utils.network_escalation import record_host_timeout
 from deepseek_tui.tools.shell import _timeout_fallback_hint, _timeout_job_hint
 
 

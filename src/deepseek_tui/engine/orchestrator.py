@@ -954,7 +954,7 @@ class Engine:
         # Reset per-host timeout escalation so a prior turn's transient
         # network blip doesn't carry over (network_escalation counters are
         # meant to be turn-scoped, not session-scoped).
-        from deepseek_tui.tools.network_escalation import reset_host_timeouts
+        from deepseek_tui.utils.network_escalation import reset_host_timeouts
 
         reset_host_timeouts(self.tool_context)
 
