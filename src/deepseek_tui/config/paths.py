@@ -184,6 +184,16 @@ def user_workspace_trust_path() -> Path:
     return user_deepseek_dir() / "workspace-trust.json"
 
 
+def workbench_usage_dir() -> Path:
+    """``~/.deepseek/workbench/usage/`` — Workbench model usage ledger."""
+    return user_deepseek_dir() / "workbench" / "usage"
+
+
+def workbench_usage_ledger_path() -> Path:
+    """``~/.deepseek/workbench/usage/ledger-v1.json`` — daily model usage."""
+    return workbench_usage_dir() / "ledger-v1.json"
+
+
 # ---------------------------------------------------------------------------
 # Project-level: <workspace>/.deepseek/
 # ---------------------------------------------------------------------------

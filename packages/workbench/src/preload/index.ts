@@ -53,6 +53,10 @@ const api = {
   getWorkspaceSuggestions: (workspaceRoot) =>
     ipcRenderer.invoke('workspace:suggestions', workspaceRoot),
   getTrendingRepos: (period) => ipcRenderer.invoke('trending:repos', period),
+  queryUsage: (params) => ipcRenderer.invoke('usage:query', params ?? {}),
+  pruneUsageProvider: (providerId) => ipcRenderer.invoke('usage:prune-provider', { providerId }),
+  pruneUsageEndpointModel: (providerId, modelId) =>
+    ipcRenderer.invoke('usage:prune-endpoint-model', { providerId, modelId }),
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>

@@ -36,3 +36,7 @@ export function resolveDeepseekConfigPath(): string {
 export function resolveMcpConfigPath(): string {
   return resolveDeepseekPaths().mcpPath
 }
+
+export function resolveWorkbenchUsageLedgerPath(): string {
+  return join(resolveUserDeepseekDir(), 'workbench', 'usage', 'ledger-v1.json')
+}

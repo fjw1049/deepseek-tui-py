@@ -163,3 +163,25 @@ export const workspacePickFilesPayloadSchema = z
   .strict()
 
 export const trendingPeriodSchema = z.enum(['daily', 'weekly', 'monthly'])
+
+export const usageRangeSchema = z.enum(['7d', '30d', '90d'])
+
+export const usageQueryPayloadSchema = z
+  .object({
+    range: usageRangeSchema.optional(),
+    locale: z.string().trim().max(32).optional()
+  })
+  .strict()
+
+export const usagePruneProviderPayloadSchema = z
+  .object({
+    providerId: trimmedString(MAX_ID_LENGTH)
+  })
+  .strict()
+
+export const usagePruneEndpointModelPayloadSchema = z
+  .object({
+    providerId: trimmedString(MAX_ID_LENGTH),
+    modelId: trimmedString(MAX_ID_LENGTH)
+  })
+  .strict()

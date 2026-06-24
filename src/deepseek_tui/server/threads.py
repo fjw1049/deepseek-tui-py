@@ -651,12 +651,25 @@ class RuntimeThreadManager:
         turn_usage: dict[str, Any] | None,
         *,
         fallback_model: str,
+        turn_id: str | None = None,
+        thread_id: str | None = None,
+        ended_at: datetime | None = None,
     ) -> None:
         accumulate_model_usage_from_turn(
             self._session_model_usage,
             turn_usage,
             fallback_model=fallback_model,
         )
+        if turn_id and thread_id and ended_at and turn_usage:
+            from deepseek_tui.server.workbench_usage_ledger import record_turn_usage
+
+            record_turn_usage(
+                turn_id=turn_id,
+                ended_at=ended_at,
+                thread_id=thread_id,
+                turn_usage=turn_usage,
+                fallback_model=fallback_model,
+            )
 
     async def get_thread_context_breakdown(self, thread_id: str) -> dict[str, int]:
         """Context window estimate for Workbench / HTTP clients.
@@ -1075,6 +1088,9 @@ class RuntimeThreadManager:
             self._record_turn_model_usage(
                 turn.usage,
                 fallback_model=thread.model or "deepseek-chat",
+                turn_id=turn_id,
+                thread_id=thread_id,
+                ended_at=ended_at,
             )
             turn_cache_hit = ledger_totals.get("cache_hit_tokens", 0)
             turn_cache_miss = ledger_totals.get("cache_miss_tokens", 0)
@@ -1424,6 +1440,9 @@ class RuntimeThreadManager:
             self._record_turn_model_usage(
                 turn_usage,
                 fallback_model=thread_for_usage.model or "deepseek-chat",
+                turn_id=turn_id,
+                thread_id=thread_id,
+                ended_at=ended_at,
             )
         self.store.save_turn(turn)
 
@@ -2279,6 +2298,9 @@ class RuntimeThreadManager:
             self._record_turn_model_usage(
                 turn_usage,
                 fallback_model=thread_for_usage.model or "deepseek-chat",
+                turn_id=turn_id,
+                thread_id=thread_id,
+                ended_at=ended_at,
             )
         self.store.save_turn(turn)
 

@@ -1,20 +1,8 @@
 import { useEffect, useState } from 'react'
 import { formatCompactNumber, formatCost } from './use-thread-usage'
+import type { ModelUsageBucket, ModelUsageSummary } from '@shared/usage-ledger'
 
-export type ModelUsageBucket = {
-  model: string
-  inputTokens: number
-  outputTokens: number
-  totalTokens: number
-  costUsd: number | null
-  costCny: number | null
-  turns: number
-}
-
-export type ModelUsageSummary = {
-  buckets: ModelUsageBucket[]
-  totals: Omit<ModelUsageBucket, 'model'>
-}
+export type { ModelUsageBucket, ModelUsageSummary }
 
 export type ModelUsageState = {
   usage: ModelUsageSummary | null

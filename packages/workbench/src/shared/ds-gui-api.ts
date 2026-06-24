@@ -20,6 +20,7 @@ import type {
   WorkspaceFileResolveResult,
   WorkspaceFileTarget
 } from './workspace-file'
+import type { UsageQueryResult, UsageRange } from './usage-ledger'
 
 export type RuntimeRequestResult = { ok: boolean; status: number; body: string }
 export type WorkspacePickResult = { canceled: boolean; path: string | null }
@@ -195,6 +196,8 @@ export type TrendingResult =
   | { ok: true; repos: TrendingRepo[]; period: TrendingPeriod; cachedAt: number }
   | { ok: false; error: string }
 
+export type { UsageQueryResult, UsageRange } from './usage-ledger'
+
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
@@ -244,6 +247,9 @@ export type DsGuiApi = {
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
   getWorkspaceSuggestions: (workspaceRoot: string) => Promise<WorkspaceSuggestionsResult>
   getTrendingRepos: (period: TrendingPeriod) => Promise<TrendingResult>
+  queryUsage: (params?: { range?: UsageRange; locale?: string }) => Promise<UsageQueryResult>
+  pruneUsageProvider: (providerId: string) => Promise<{ ok: true }>
+  pruneUsageEndpointModel: (providerId: string, modelId: string) => Promise<{ ok: true }>
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>

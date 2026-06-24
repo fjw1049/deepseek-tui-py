@@ -30,6 +30,9 @@ import {
   terminalLifecyclePayloadSchema,
   terminalResizePayloadSchema,
   trendingPeriodSchema,
+  usagePruneEndpointModelPayloadSchema,
+  usagePruneProviderPayloadSchema,
+  usageQueryPayloadSchema,
   workspaceFileTargetPayloadSchema,
   workspacePickFilesPayloadSchema,
   workspaceRootSchema
@@ -73,6 +76,7 @@ import {
   fetchPetManifest,
   resolvePetSpritesheet
 } from '../services/pet-asset-service'
+import { usageLedgerService } from '../services/usage-ledger-service'
 import type { createTerminalService } from '../services/terminal-service'
 
 type TerminalService = ReturnType<typeof createTerminalService>
@@ -929,4 +933,27 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('pet:cache-featured', async (_, limit: unknown) =>
     cacheFeaturedPets(typeof limit === 'number' ? limit : 15)
   )
+
+  ipcMain.handle('usage:query', async (_, payload: unknown) => {
+    const request = parseIpcPayload('usage:query', usageQueryPayloadSchema, payload ?? {})
+    return usageLedgerService.query(request.range ?? '7d', request.locale ?? 'en')
+  })
+  ipcMain.handle('usage:prune-provider', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'usage:prune-provider',
+      usagePruneProviderPayloadSchema,
+      payload
+    )
+    await usageLedgerService.pruneProvider(request.providerId)
+    return { ok: true as const }
+  })
+  ipcMain.handle('usage:prune-endpoint-model', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'usage:prune-endpoint-model',
+      usagePruneEndpointModelPayloadSchema,
+      payload
+    )
+    await usageLedgerService.pruneEndpointModel(request.providerId, request.modelId)
+    return { ok: true as const }
+  })
 }

@@ -57,7 +57,8 @@ import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
 import { PetSprite } from './pet/PetSprite'
-import { toModelUsageSummary } from '../lib/session-model-usage'
+import type { UsageRange } from '@shared/usage-ledger'
+import { usePersistentUsage } from '../hooks/use-persistent-usage'
 
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -136,14 +137,10 @@ export function SettingsView(): ReactElement {
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
   const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
-  const runtimeConnection = useChatStore((s) => s.runtimeConnection)
-  const sessionModelUsage = useChatStore((s) => s.sessionModelUsage)
   const composerModel = useChatStore((s) => s.composerModel)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  const modelUsageSummary = useMemo(
-    () => toModelUsageSummary(sessionModelUsage),
-    [sessionModelUsage, usageRefreshKey]
-  )
+  const [usageRange, setUsageRange] = useState<UsageRange>('30d')
+  const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
@@ -1151,13 +1148,15 @@ export function SettingsView(): ReactElement {
 
                 <SettingsCard title={t('modelUsageSection')} className="mt-6">
                   <ModelUsagePanel
-                    usage={modelUsageSummary}
-                    loading={false}
-                    loaded
-                    error={null}
-                    runtimeReady={runtimeConnection === 'ready'}
+                    usage={persistentUsage.data?.summary ?? null}
+                    daily={persistentUsage.data?.daily ?? []}
+                    loading={persistentUsage.loading}
+                    loaded={persistentUsage.loaded}
+                    error={persistentUsage.error}
                     activeModelId={composerModel}
                     composerModelMeta={composerModelMeta}
+                    range={usageRange}
+                    onRangeChange={setUsageRange}
                   />
                 </SettingsCard>
             </>
@@ -1808,6 +1807,9 @@ function CustomEndpointsPanel({
   const pruneSessionModelUsageEndpointModel = useChatStore(
     (s) => s.pruneSessionModelUsageEndpointModel
   )
+  const bumpUsageRefreshKey = (): void => {
+    useChatStore.setState((state) => ({ usageRefreshKey: state.usageRefreshKey + 1 }))
+  }
   const [showAdd, setShowAdd] = useState(false)
   const [addName, setAddName] = useState('')
   const [addUrl, setAddUrl] = useState('')
@@ -1895,6 +1897,7 @@ function CustomEndpointsPanel({
     if (removed) {
       if (editingEndpointId === removed.id) cancelEndpointEdit()
       pruneSessionModelUsageProvider(removed.id)
+      void window.dsGui.pruneUsageProvider(removed.id).finally(bumpUsageRefreshKey)
     }
     updateEndpoints(endpoints.filter((_, i) => i !== index))
   }
@@ -1977,7 +1980,12 @@ function CustomEndpointsPanel({
 
   const handleRemoveModel = (endpointIndex: number, modelId: string): void => {
     const endpoint = endpoints[endpointIndex]
-    if (endpoint) pruneSessionModelUsageEndpointModel(endpoint.id, modelId)
+    if (endpoint) {
+      pruneSessionModelUsageEndpointModel(endpoint.id, modelId)
+      void window.dsGui
+        .pruneUsageEndpointModel(endpoint.id, modelId)
+        .finally(bumpUsageRefreshKey)
+    }
     updateEndpoints(
       endpoints.map((item, index) =>
         index === endpointIndex

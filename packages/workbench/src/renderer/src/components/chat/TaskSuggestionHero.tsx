@@ -1,7 +1,6 @@
 import type { ReactElement } from 'react'
 import { useEffect, useState } from 'react'
 import {
-  ArrowRight,
   Bot,
   ExternalLink,
   RefreshCw,
@@ -10,6 +9,10 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TrendingPeriod, TrendingRepo } from '../../../../shared/ds-gui-api'
+import type { UsageRange } from '@shared/usage-ledger'
+import { useChatStore } from '../../store/chat-store'
+import { usePersistentUsage } from '../../hooks/use-persistent-usage'
+import { ModelUsageHeroPanel } from '../settings/ModelUsageHeroPanel'
 
 const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
   { value: 'daily', labelKey: 'trendingDaily' },
@@ -18,8 +21,8 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
 ]
 
 const VISIBLE_TOPIC_COUNT = 1
-const TRENDING_REPO_LIMIT = 10
-const TRENDING_SCROLL_VISIBLE_COUNT = 6
+const TRENDING_REPO_LIMIT = 6
+const TRENDING_SCROLL_VISIBLE_COUNT = 4
 const CARD_THEMES = [
   {
     border: 'hover:border-emerald-400/35',
@@ -53,13 +56,13 @@ type Props = {
 
 function RepoMetrics({ repo }: { repo: TrendingRepo }): ReactElement {
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ds-faint">
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-ds-faint">
       <span className="inline-flex items-center gap-1">
-        <Star className="h-3.5 w-3.5" strokeWidth={1.7} aria-hidden />
+        <Star className="h-3 w-3" strokeWidth={1.7} aria-hidden />
         {repo.stars || '—'}
       </span>
       <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
-        <TrendingUp className="h-3.5 w-3.5" strokeWidth={1.7} aria-hidden />
+        <TrendingUp className="h-3 w-3" strokeWidth={1.7} aria-hidden />
         {repo.gained || '—'}
       </span>
     </div>
@@ -75,7 +78,7 @@ function RepoTopics({ topics, fallback }: { topics: string[]; fallback: string }
       {labels.map((topic) => (
         <span
           key={topic}
-          className="inline-flex min-w-0 max-w-[120px] shrink-0 items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10.5px] font-medium text-ds-muted"
+          className="inline-flex min-w-0 max-w-[96px] shrink-0 items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] font-medium text-ds-muted"
         >
           <span className="shrink-0 font-semibold text-accent">#</span>
           <span className="min-w-0 truncate">{topic}</span>
@@ -98,7 +101,7 @@ function RepoRow({
   return (
     <div
       className={[
-        'group relative flex h-full min-h-[126px] overflow-hidden rounded-[20px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_18px_38px_rgba(15,23,42,0.10)]',
+        'group relative flex min-h-[108px] overflow-hidden rounded-[18px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
         theme.border
       ].join(' ')}
     >
@@ -106,41 +109,27 @@ function RepoRow({
       <button
         type="button"
         onClick={() => onAnalyze(repo)}
-        className="relative flex min-w-0 flex-1 flex-col px-4 py-3.5 text-left"
+        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-3 text-left"
       >
         <div className="flex min-w-0 items-center gap-2">
           <RepoTopics topics={repo.topics} fallback={t('trendingRepoFallbackTopic')} />
           <span
             className={[
-              'shrink-0 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums',
+              'shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
               theme.rank
             ].join(' ')}
           >
             #{repo.rank}
           </span>
-          {repo.isNew ? (
-            <span className="shrink-0 rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-300">
-              {t('trendingNew')}
-            </span>
-          ) : null}
         </div>
-        <p className="mt-3 line-clamp-2 text-[14px] font-semibold leading-5 text-ds-ink">
+        <p className="mt-2 line-clamp-2 text-[13px] font-semibold leading-5 text-ds-ink">
           {repo.description || t('trendingNoDescription')}
         </p>
-        <div className="mt-auto flex min-w-0 items-center gap-2 pt-3">
-          <div className="min-w-0 truncate text-[12px] font-semibold text-ds-muted">
+        <div className="mt-auto flex min-w-0 items-center gap-2 pt-2">
+          <div className="min-w-0 truncate text-[11.5px] font-semibold text-ds-muted">
             {repo.name.split('/').pop() || repo.name}
           </div>
           <RepoMetrics repo={repo} />
-          <span
-            className={[
-              'ml-auto hidden h-7 w-7 shrink-0 items-center justify-center rounded-full transition group-hover:translate-x-0.5 sm:inline-flex',
-              theme.action
-            ].join(' ')}
-            aria-hidden
-          >
-            <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.9} />
-          </span>
         </div>
       </button>
       <button
@@ -148,9 +137,9 @@ function RepoRow({
         title={t('trendingOpenGithub')}
         aria-label={`${t('trendingOpenGithub')}: ${repo.name}`}
         onClick={() => void window.dsGui.openExternal(repo.url)}
-        className="relative flex w-9 shrink-0 items-start justify-center rounded-r-[20px] pt-3.5 text-ds-faint transition hover:bg-ds-card hover:text-accent"
+        className="relative flex w-8 shrink-0 items-start justify-center rounded-r-[18px] pt-3 text-ds-faint transition hover:bg-ds-card hover:text-accent"
       >
-        <ExternalLink className="h-4 w-4" strokeWidth={1.8} />
+        <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
       </button>
     </div>
   )
@@ -158,6 +147,11 @@ function RepoRow({
 
 export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement {
   const { t } = useTranslation('common')
+  const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
+  const composerModelMeta = useChatStore((s) => s.composerModelMeta)
+  const [usageTab, setUsageTab] = useState<'overview' | 'models'>('models')
+  const [usageRange, setUsageRange] = useState<UsageRange>('30d')
+  const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const [period, setPeriod] = useState<TrendingPeriod>('daily')
   const [repos, setRepos] = useState<TrendingRepo[]>([])
   const [loading, setLoading] = useState(true)
@@ -201,93 +195,89 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
   return (
     <div className="ds-no-drag w-full">
-      <div className="ds-hero-panel ds-glass flex w-full flex-col overflow-hidden rounded-[24px] px-5 py-5 sm:px-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1 text-left">
-            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-ds-ink">
-              {t('emptyHeroBadge')} {t('emptyHeroRecommended')}
-            </h2>
-            <p className="mt-1 max-w-[680px] text-[13px] leading-6 text-ds-muted">{t('emptyHeroSub')}</p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-full border border-ds-border bg-ds-elevated p-1">
-              {PERIODS.map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => setPeriod(item.value)}
-                  className={[
-                    'rounded-full px-3 py-1.5 text-[12px] font-medium transition',
-                    period === item.value
-                      ? 'bg-accent text-white shadow-sm'
-                      : 'text-ds-muted hover:text-ds-ink'
-                  ].join(' ')}
-                >
-                  {t(item.labelKey)}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              title={t('trendingRetry')}
-              aria-label={t('trendingRetry')}
-              onClick={() => setReloadKey((value) => value + 1)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-ds-border bg-ds-elevated text-ds-muted transition hover:border-accent/25 hover:text-accent"
-            >
-              <RefreshCw className={['h-4 w-4', loading ? 'animate-spin' : ''].join(' ')} strokeWidth={1.8} />
-            </button>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <ModelUsageHeroPanel
+          summary={persistentUsage.data?.summary ?? null}
+          daily={persistentUsage.data?.daily ?? []}
+          loading={persistentUsage.loading}
+          loaded={persistentUsage.loaded}
+          error={persistentUsage.error}
+          range={usageRange}
+          onRangeChange={setUsageRange}
+          tab={usageTab}
+          onTabChange={setUsageTab}
+          composerModelMeta={composerModelMeta}
+        />
 
-        <div className="relative mt-4 min-h-0">
-          {loading ? (
-            <div className="ds-trending-grid-scroll grid auto-rows-[126px] grid-cols-1 gap-3 lg:grid-cols-3">
-              {Array.from({ length: TRENDING_SCROLL_VISIBLE_COUNT }).map((_, index) => (
-                <div
-                  key={index}
-                  className="h-full animate-pulse rounded-[20px] border border-ds-border bg-ds-card/60 px-4 py-3.5"
-                >
-                  <div className="flex items-start gap-2.5">
-                    <div className="h-7 w-7 rounded-[9px] bg-ds-elevated" />
-                    <div className="min-w-0 flex-1">
-                      <div className="h-4 w-2/3 rounded bg-ds-elevated" />
-                      <div className="mt-2 h-3 w-1/2 rounded bg-ds-elevated" />
-                    </div>
-                  </div>
-                  <div className="mt-3 h-4 w-3/5 rounded bg-ds-elevated" />
-                  <div className="mt-2 h-3 w-full rounded bg-ds-elevated" />
-                </div>
-              ))}
+        <div className="ds-hero-panel ds-glass flex h-full min-h-[420px] flex-col overflow-hidden rounded-[24px] px-4 py-4 sm:px-5 sm:py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-ds-ink">
+                {t('emptyHeroBadge')}
+              </h2>
+              <p className="mt-1 text-[12.5px] leading-5 text-ds-muted">{t('emptyHeroSubCompact')}</p>
             </div>
-          ) : error ? (
-            <div className="rounded-[14px] border border-ds-border bg-ds-card/75 px-4 py-5 text-left">
-              <p className="text-[14px] font-medium text-ds-ink">{t('trendingError')}</p>
-              <p className="mt-1 text-[12px] leading-5 text-ds-muted">{error}</p>
-              <button
-                type="button"
-                onClick={() => setReloadKey((value) => value + 1)}
-                className="mt-3 inline-flex items-center gap-2 rounded-full border border-ds-border bg-ds-elevated px-3 py-1.5 text-[12px] font-medium text-ds-ink transition hover:border-accent/25 hover:text-accent"
-              >
-                <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.8} />
-                {t('trendingRetry')}
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="ds-trending-grid-scroll grid auto-rows-[126px] grid-cols-1 gap-3 lg:grid-cols-3">
-                {trendingRepos.map((repo) => (
-                  <RepoRow key={repo.name} repo={repo} onAnalyze={analyzeRepo} />
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="inline-flex rounded-full border border-ds-border bg-ds-elevated p-0.5">
+                {PERIODS.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setPeriod(item.value)}
+                    className={[
+                      'rounded-full px-2.5 py-1 text-[11px] font-medium transition',
+                      period === item.value
+                        ? 'bg-accent text-white shadow-sm'
+                        : 'text-ds-muted hover:text-ds-ink'
+                    ].join(' ')}
+                  >
+                    {t(item.labelKey)}
+                  </button>
                 ))}
               </div>
-              {hasScrollableRepos ? (
-                <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--ds-bg-canvas)_92%,transparent)] to-transparent pb-1 pt-6 text-center text-[11px] text-ds-faint">
-                  {t('trendingScrollHint')}
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
+              <button
+                type="button"
+                title={t('trendingRetry')}
+                aria-label={t('trendingRetry')}
+                onClick={() => setReloadKey((value) => value + 1)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-ds-border bg-ds-elevated text-ds-muted transition hover:border-accent/25 hover:text-accent"
+              >
+                <RefreshCw className={['h-3.5 w-3.5', loading ? 'animate-spin' : ''].join(' ')} strokeWidth={1.8} />
+              </button>
+            </div>
+          </div>
 
+          <div className="relative mt-3 min-h-0 flex-1">
+            {loading ? (
+              <div className="ds-trending-grid-scroll flex h-full flex-col gap-2.5 overflow-y-auto pr-1">
+                {Array.from({ length: TRENDING_SCROLL_VISIBLE_COUNT }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="min-h-[108px] animate-pulse rounded-[18px] border border-ds-border bg-ds-card/60"
+                  />
+                ))}
+              </div>
+            ) : error ? (
+              <div className="rounded-[14px] border border-ds-border bg-ds-card/75 px-4 py-4 text-left">
+                <p className="text-[13px] font-medium text-ds-ink">{t('trendingError')}</p>
+                <p className="mt-1 text-[12px] leading-5 text-ds-muted">{error}</p>
+              </div>
+            ) : (
+              <>
+                <div className="ds-trending-grid-scroll flex h-full max-h-[340px] flex-col gap-2.5 overflow-y-auto pr-1">
+                  {trendingRepos.map((repo) => (
+                    <RepoRow key={repo.name} repo={repo} onAnalyze={analyzeRepo} />
+                  ))}
+                </div>
+                {hasScrollableRepos ? (
+                  <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--ds-bg-canvas)_92%,transparent)] to-transparent pb-1 pt-5 text-center text-[10.5px] text-ds-faint">
+                    {t('trendingScrollHint')}
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
