@@ -3,7 +3,7 @@ import type { AppSettingsV1 } from '@shared/app-settings'
 import { encodeModelRef } from '@shared/model-ref'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
-import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
+import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, LegacySettingsRouteSection, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
 type CreateAppActionsOptions = {
   set: ChatStoreSet
@@ -102,11 +102,18 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     setRoute: (route) => set({ route }),
 
-    openSettings: (section: SettingsRouteSection | 'agents' = 'general') =>
+    openSettings: (section: SettingsRouteSection | LegacySettingsRouteSection = 'general') => {
+      const normalized: SettingsRouteSection =
+        section === 'agents'
+          ? 'models'
+          : section === 'runtime'
+            ? 'general'
+            : section
       set({
         route: 'settings',
-        settingsSection: section === 'agents' ? 'runtime' : section
-      }),
+        settingsSection: normalized
+      })
+    },
 
     openPlugins: (host?: PluginHostRoute) => {
       if (!WORKBENCH_FEATURES.pluginMarketplace) return

@@ -737,7 +737,7 @@ export function Workbench(): ReactElement {
             <AutomationCenter
               runtimeReady={runtimeConnection === 'ready'}
               workspaceRoot={workspaceRoot}
-              onOpenRuntimeSettings={() => openSettings('runtime')}
+              onOpenRuntimeSettings={() => openSettings('general')}
             />
           </Suspense>
         ) : route === 'channels' ? (
@@ -772,7 +772,7 @@ export function Workbench(): ReactElement {
                     <button
                       type="button"
                       className="rounded-lg px-3 py-1 text-[12px] font-medium text-amber-900/80 transition hover:bg-amber-50/70 dark:text-amber-100 dark:hover:bg-amber-900/30"
-                      onClick={() => openSettings('runtime')}
+                      onClick={() => openSettings('general')}
                     >
                       {t('openSettings')}
                     </button>
@@ -843,7 +843,7 @@ export function Workbench(): ReactElement {
                       stageCentered={stageCentered}
                       useChatStageWidth={false}
                       onRetryConnection={() => void probeRuntime('user')}
-                      onOpenSettings={() => openSettings('runtime')}
+                      onOpenSettings={() => openSettings('general')}
                       onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                       onSelectSuggestion={(text) => setInput(text)}
                       devPreviewCard={
@@ -893,7 +893,7 @@ export function Workbench(): ReactElement {
                     runtimeConnection={runtimeConnection}
                     stageCentered={stageCentered}
                     onRetryConnection={() => void probeRuntime('user')}
-                    onOpenSettings={() => openSettings('runtime')}
+                    onOpenSettings={() => openSettings('general')}
                     onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                     onSelectSuggestion={(text) => setInput(text)}
                     devPreviewCard={
@@ -1006,7 +1006,7 @@ export function Workbench(): ReactElement {
         onRetry={() => probeRuntime('user')}
         onOpenSettings={() => {
           setRuntimeDiagnosticsOpen(false)
-          openSettings('runtime')
+          openSettings('general')
         }}
       />
       <ImportSessionDialog

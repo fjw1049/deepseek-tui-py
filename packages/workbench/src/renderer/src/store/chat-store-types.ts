@@ -3,9 +3,11 @@ import type {
   ChatBlock,
   NormalizedThread,
   RuntimeConnectionStatus,
+  TurnCompletePayload,
   UserInputAnswer
 } from '../agent/types'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
+import type { SessionModelUsageMap } from '../lib/session-model-usage'
 import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
 export type QueuedUserMessage = {
@@ -26,15 +28,15 @@ export type SendMessageOverrides = {
 export type InitialSetupMode = 'required' | 'preview'
 export type SettingsRouteSection =
   | 'general'
-  | 'runtime'
+  | 'models'
   | 'permissions'
   | 'mcp'
   | 'skill'
   | 'hooks'
   | 'claw'
 
-/** @deprecated Use `runtime`; kept for deep-link normalization. */
-export type LegacySettingsRouteSection = SettingsRouteSection | 'agents'
+/** @deprecated Use `models` or `general`; kept for deep-link normalization. */
+export type LegacySettingsRouteSection = SettingsRouteSection | 'agents' | 'runtime'
 export type AppRoute = 'chat' | 'settings' | 'plugins' | 'automation' | 'channels'
 export type PluginHostRoute = 'chat'
 export type ThreadWarmupStatus = 'idle' | 'warming' | 'ready' | 'failed'
@@ -79,6 +81,9 @@ export type ChatState = {
   unreadThreadIds: Record<string, boolean>
   scrollToBlockId: string | null
   usageRefreshKey: number
+  sessionModelUsage: SessionModelUsageMap
+  pruneSessionModelUsageProvider: (providerId: string) => void
+  pruneSessionModelUsageEndpointModel: (providerId: string, modelId: string) => void
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void

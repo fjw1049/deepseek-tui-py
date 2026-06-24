@@ -234,6 +234,9 @@ class RuntimeThreadManager:
             str, asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]]
         ] = {}
         self._pending_user_inputs: dict[str, _PendingUserInputRecord] = {}
+        # Per-model token/cost totals since this runtime process started.
+        self._session_model_usage: dict[str, dict[str, Any]] = {}
+        self._session_started_at = datetime.now(timezone.utc)
 
         self.event_bus: AsyncBroadcast[RuntimeEventRecord] = AsyncBroadcast(
             capacity=EVENT_CHANNEL_CAPACITY
@@ -609,6 +612,51 @@ class RuntimeThreadManager:
                 if ledger is not None and ledger.items:
                     live_usage = ledger.totals()
         return thread_usage_response(thread_id, turns, live_usage=live_usage)
+
+    async def get_session_model_usage(self, *, scope: str = "session") -> dict[str, Any]:
+        if scope != "session":
+            raise ValueError(f"unsupported usage scope: {scope}")
+        merged: dict[str, dict[str, Any]] = {}
+        for thread in self.store.list_threads():
+            fallback_model = thread.model or "deepseek-chat"
+            for turn in self.store.list_turns_for_thread(thread.id):
+                if turn.status != RuntimeTurnStatus.COMPLETED:
+                    continue
+                if turn.ended_at is not None and turn.ended_at < self._session_started_at:
+                    continue
+                if not isinstance(turn.usage, dict) or not turn.usage:
+                    continue
+                accumulate_model_usage_from_turn(
+                    merged,
+                    turn.usage,
+                    fallback_model=fallback_model,
+                )
+        async with self._active_lock:
+            for thread_id, state in self._active.items():
+                if state.active_turn is None:
+                    continue
+                ledger = getattr(state.engine, "turn_usage_ledger", None)
+                if ledger is None or not ledger.items:
+                    continue
+                thread = self.store.load_thread(thread_id)
+                accumulate_model_usage_from_turn(
+                    merged,
+                    ledger.totals(),
+                    fallback_model=thread.model or "deepseek-chat",
+                )
+        return session_model_usage_response(merged)
+
+    def _record_turn_model_usage(
+        self,
+        turn_usage: dict[str, Any] | None,
+        *,
+        fallback_model: str,
+    ) -> None:
+        accumulate_model_usage_from_turn(
+            self._session_model_usage,
+            turn_usage,
+            fallback_model=fallback_model,
+        )
 
     async def get_thread_context_breakdown(self, thread_id: str) -> dict[str, int]:
         """Context window estimate for Workbench / HTTP clients.
@@ -1024,6 +1072,10 @@ class RuntimeThreadManager:
         ledger_totals = engine.turn_usage_ledger.totals()
         if engine.turn_usage_ledger.items:
             turn.usage = ledger_totals
+            self._record_turn_model_usage(
+                turn.usage,
+                fallback_model=thread.model or "deepseek-chat",
+            )
             turn_cache_hit = ledger_totals.get("cache_hit_tokens", 0)
             turn_cache_miss = ledger_totals.get("cache_miss_tokens", 0)
             if turn_cache_hit > 0 or turn_cache_miss > 0:
@@ -1367,6 +1419,12 @@ class RuntimeThreadManager:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
         turn.usage = turn_usage
         turn.error = turn_error
+        if turn_usage is not None:
+            thread_for_usage = self.store.load_thread(thread_id)
+            self._record_turn_model_usage(
+                turn_usage,
+                fallback_model=thread_for_usage.model or "deepseek-chat",
+            )
         self.store.save_turn(turn)
 
         thread = self.store.load_thread(thread_id)
@@ -2216,6 +2274,12 @@ class RuntimeThreadManager:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
         turn.usage = turn_usage
         turn.error = turn_error
+        if turn_usage is not None:
+            thread_for_usage = self.store.load_thread(thread_id)
+            self._record_turn_model_usage(
+                turn_usage,
+                fallback_model=thread_for_usage.model or "deepseek-chat",
+            )
         self.store.save_turn(turn)
 
         # Update thread
@@ -2704,6 +2768,18 @@ def build_turn_usage_record(*, usage: Any, model: str) -> dict[str, Any]:
     if estimate is not None and estimate.is_positive:
         record["cost_usd"] = estimate.usd
         record["cost_cny"] = estimate.cny
+    model_id = model.strip() or "unknown"
+    record["models"] = {
+        model_id: {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_hit_tokens": record["cache_hit_tokens"],
+            "cache_miss_tokens": record["cache_miss_tokens"],
+            "cost_usd": float(record.get("cost_usd", 0.0) or 0.0),
+            "cost_cny": float(record.get("cost_cny", 0.0) or 0.0),
+            "turns": 1,
+        }
+    }
     return record
 
 
@@ -2828,6 +2904,91 @@ def thread_usage_bucket_has_data(bucket: dict[str, Any]) -> bool:
         or bucket["token_economy_savings_tokens"] > 0
         or bucket["turns"] > 0
     )
+
+
+def _empty_model_usage_bucket(model: str) -> dict[str, Any]:
+    return {
+        "model": model,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": 0.0,
+        "cost_cny": 0.0,
+        "turns": 0,
+    }
+
+
+def _merge_model_usage_bucket(
+    session: dict[str, dict[str, Any]],
+    model_id: str,
+    bucket: dict[str, Any],
+) -> None:
+    normalized = (model_id or "unknown").strip() or "unknown"
+    target = session.setdefault(normalized, _empty_model_usage_bucket(normalized))
+    input_tokens = _usage_counter_value(bucket, "input_tokens", "prompt_tokens")
+    output_tokens = _usage_counter_value(
+        bucket, "output_tokens", "completion_tokens"
+    )
+    target["input_tokens"] += input_tokens
+    target["output_tokens"] += output_tokens
+    target["total_tokens"] += _usage_counter_value(bucket, "total_tokens")
+    if target["total_tokens"] <= 0:
+        target["total_tokens"] = target["input_tokens"] + target["output_tokens"]
+    target["cost_usd"] += _usage_counter_float(bucket, "cost_usd")
+    target["cost_cny"] += _usage_counter_float(bucket, "cost_cny")
+    target["turns"] += max(1, _usage_counter_value(bucket, "turns"))
+
+
+def accumulate_model_usage_from_turn(
+    session: dict[str, dict[str, Any]],
+    turn_usage: dict[str, Any] | None,
+    *,
+    fallback_model: str,
+) -> None:
+    if not isinstance(turn_usage, dict) or not turn_usage:
+        return
+    models = turn_usage.get("models")
+    if isinstance(models, dict) and models:
+        for model_id, bucket in models.items():
+            if isinstance(bucket, dict):
+                _merge_model_usage_bucket(session, str(model_id), bucket)
+        return
+    fallback = (fallback_model or "unknown").strip() or "unknown"
+    _merge_model_usage_bucket(session, fallback, turn_usage)
+
+
+def session_model_usage_response(
+    session: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    buckets = sorted(
+        session.values(),
+        key=lambda item: (
+            -int(item.get("total_tokens", 0) or 0),
+            str(item.get("model", "")),
+        ),
+    )
+    totals = _empty_model_usage_bucket("total")
+    totals.pop("model", None)
+    for bucket in buckets:
+        totals["input_tokens"] += int(bucket.get("input_tokens", 0) or 0)
+        totals["output_tokens"] += int(bucket.get("output_tokens", 0) or 0)
+        totals["total_tokens"] += int(bucket.get("total_tokens", 0) or 0)
+        totals["cost_usd"] += float(bucket.get("cost_usd", 0.0) or 0.0)
+        totals["cost_cny"] += float(bucket.get("cost_cny", 0.0) or 0.0)
+        totals["turns"] += int(bucket.get("turns", 0) or 0)
+    if not buckets:
+        return {
+            "group_by": "model",
+            "scope": "session",
+            "buckets": [],
+            "totals": totals,
+        }
+    return {
+        "group_by": "model",
+        "scope": "session",
+        "buckets": buckets,
+        "totals": totals,
+    }
 
 
 def thread_usage_response(

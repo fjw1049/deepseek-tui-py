@@ -213,6 +213,11 @@ export type ThreadDeltaEvent = {
   seq?: number
 }
 
+export type TurnCompletePayload = {
+  threadId?: string | null
+  usage?: Record<string, unknown> | null
+}
+
 export type ThreadUpdatedPayload = {
   threadId: string
   title?: string | null
@@ -231,7 +236,7 @@ export type ThreadEventSink = {
   onElevation?(req: ElevationRequestPayload): void
   onUserInput(req: UserInputRequestPayload): void
   onUserInputStatus(ev: UserInputStatusPayload): void
-  onTurnComplete(): void
+  onTurnComplete(payload?: TurnCompletePayload): void
   /** Reasoning or assistant live segment finalized on the runtime. */
   onLiveSegmentComplete?(
     kind: 'agent_reasoning' | 'agent_message',

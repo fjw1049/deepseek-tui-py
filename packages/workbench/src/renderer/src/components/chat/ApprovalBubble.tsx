@@ -162,7 +162,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
             <button
               type="button"
               className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-              onClick={() => openSettings('runtime')}
+              onClick={() => openSettings('permissions')}
             >
               {t('approvalOpenSettings')}
             </button>

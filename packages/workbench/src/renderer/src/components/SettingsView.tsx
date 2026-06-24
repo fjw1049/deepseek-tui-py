@@ -12,6 +12,7 @@ import {
 } from '@shared/app-settings'
 import {
   Anchor,
+  Box,
   ChevronDown,
   ChevronLeft,
   Eye,
@@ -24,10 +25,10 @@ import {
   RefreshCw,
   Settings,
   Shield,
-  SlidersHorizontal,
   Sparkles,
   CalendarClock,
   PawPrint,
+  Pencil,
   Trash2,
   X,
   Zap
@@ -52,9 +53,11 @@ import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
 import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
+import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
 import { PetSprite } from './pet/PetSprite'
+import { toModelUsageSummary } from '../lib/session-model-usage'
 
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -132,6 +135,15 @@ export function SettingsView(): ReactElement {
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
+  const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
+  const runtimeConnection = useChatStore((s) => s.runtimeConnection)
+  const sessionModelUsage = useChatStore((s) => s.sessionModelUsage)
+  const composerModel = useChatStore((s) => s.composerModel)
+  const composerModelMeta = useChatStore((s) => s.composerModelMeta)
+  const modelUsageSummary = useMemo(
+    () => toModelUsageSummary(sessionModelUsage),
+    [sessionModelUsage, usageRefreshKey]
+  )
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
@@ -338,11 +350,9 @@ export function SettingsView(): ReactElement {
     void window.dsGui.getLogPath().then((p) => setLogPath(p))
   }, [category])
 
-  // Display the cached runtime-token fingerprint on mount so the user sees
-  // "auto-managed (abc12345…ef01)" instead of just "auto-managed" when there
-  // is already a token on disk. Re-run when the user enters the connection
-  // settings panel.
+  // Display the cached runtime-token fingerprint when entering general settings.
   useEffect(() => {
+    if (category !== 'general') return
     if (typeof window.dsGui?.getRuntimeTokenFingerprint !== 'function') return
     let cancelled = false
     void window.dsGui
@@ -365,7 +375,7 @@ export function SettingsView(): ReactElement {
       (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
     )
     if (!form.deepseek.apiKey?.trim() && !hasCustomKey) {
-      openSettings('runtime')
+      openSettings('models')
     }
   }, [form, openSettings])
 
@@ -677,9 +687,9 @@ export function SettingsView(): ReactElement {
             <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('general')}
           </button>
-          <button type="button" className={catCls('runtime')} onClick={() => openSettings('runtime')}>
-            <SlidersHorizontal className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('runtime')}
+          <button type="button" className={catCls('models')} onClick={() => openSettings('models')}>
+            <Box className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('models')}
           </button>
           <button type="button" className={catCls('mcp')} onClick={() => openSettings('mcp')}>
             <Plug className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
@@ -716,7 +726,7 @@ export function SettingsView(): ReactElement {
 
       <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-10">
         <div className="mx-auto max-w-3xl">
-          {!form.deepseek.apiKey.trim() ? (
+          {!form.deepseek.apiKey.trim() && category === 'models' ? (
             <div className="mb-6 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-5 py-4 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/35 dark:text-amber-100">
               <div className="text-[15px] font-semibold">{t('apiKeyRequiredTitle')}</div>
               <p className="mt-1 text-[13px] leading-6 text-amber-900/90 dark:text-amber-100/90">
@@ -727,7 +737,9 @@ export function SettingsView(): ReactElement {
 
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">{t('title')}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">
+                {category === 'models' ? t('models') : t('title')}
+              </h1>
               <p className="mt-1 text-[14px] text-ds-muted">{t('subtitle')}</p>
             </div>
             <span
@@ -901,6 +913,111 @@ export function SettingsView(): ReactElement {
                 />
               </SettingsCard>
 
+              <SettingsCard title={t('sectionRuntime')} className="mt-6">
+                <SettingRow
+                  title={t('autoStart')}
+                  description={t('autoStartDesc')}
+                  control={
+                    <Toggle
+                      checked={form.deepseek.autoStart}
+                      onChange={(v) => update({ deepseek: { autoStart: v } })}
+                    />
+                  }
+                />
+                <SettingRow
+                  title={t('port')}
+                  description={t('portDesc')}
+                  control={
+                    <div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        className={`w-28 rounded-xl border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:outline-none focus:ring-1 ${
+                          portError
+                            ? 'border-red-400 focus:ring-red-300'
+                            : 'border-ds-border focus:border-accent/40 focus:ring-accent/30'
+                        }`}
+                        value={form.deepseek.port}
+                        onChange={(e) => update({ deepseek: { port: Number(e.target.value) } })}
+                      />
+                      {portError ? (
+                        <p className="mt-1 text-[12px] text-red-700 dark:text-red-300">{portError}</p>
+                      ) : null}
+                    </div>
+                  }
+                />
+                <SettingRow
+                  title={t('deepseekBinary')}
+                  description={t('deepseekBinaryHint')}
+                  controlWidth="medium"
+                  control={
+                    <input
+                      className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                      placeholder={t('deepseekBinaryPlaceholder')}
+                      value={form.deepseek.binaryPath}
+                      onChange={(e) => update({ deepseek: { binaryPath: e.target.value } })}
+                    />
+                  }
+                />
+                <SettingRow
+                  title={t('runtimeToken')}
+                  description={t('runtimeTokenDesc')}
+                  controlWidth="medium"
+                  control={
+                    <div className="flex w-full flex-col gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 font-mono text-[12px] text-ds-ink/70 shadow-sm focus:outline-none"
+                        value={
+                          tokenFingerprint ||
+                          (form.deepseek.runtimeToken
+                            ? `${form.deepseek.runtimeToken.slice(0, 8)}…${form.deepseek.runtimeToken.slice(-4)}`
+                            : t('runtimeTokenAutoManaged'))
+                        }
+                        aria-label={t('runtimeToken')}
+                      />
+                      <button
+                        type="button"
+                        disabled={tokenRegenBusy}
+                        className="inline-flex items-center justify-center gap-1.5 self-start rounded-md border border-ds-border px-2 py-1 text-center text-[12px] leading-none hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-55"
+                        onClick={() => void handleRegenerateRuntimeToken()}
+                      >
+                        {tokenRegenBusy ? (
+                          <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+                        ) : null}
+                        {t('runtimeTokenRegenerate')}
+                      </button>
+                      {tokenRegenError ? (
+                        <p className="text-[12px] text-red-700 dark:text-red-300">{tokenRegenError}</p>
+                      ) : null}
+                    </div>
+                  }
+                />
+                <SettingRow
+                  title={t('corsOrigins')}
+                  description={t('corsOriginsDesc')}
+                  controlWidth="medium"
+                  control={
+                    <input
+                      className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                      value={corsValue}
+                      onChange={(e) =>
+                        update({
+                          deepseek: {
+                            extraCorsOrigins: e.target.value
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean)
+                          }
+                        })
+                      }
+                    />
+                  }
+                />
+              </SettingsCard>
+
               <SettingsCard title={t('logTitle')} className="mt-6">
                 <SettingRow
                   title={t('logEnabled')}
@@ -977,9 +1094,9 @@ export function SettingsView(): ReactElement {
             </>
           )}
 
-          {category === 'runtime' && (
+          {category === 'models' && (
             <>
-              <SettingsCard title={t('runtime')}>
+              <SettingsCard title={t('sectionModels')}>
                   <SettingRow
                     title={t('configFilePath')}
                     description={t('configFilePathDesc')}
@@ -1023,114 +1140,24 @@ export function SettingsView(): ReactElement {
                       />
                     }
                   />
-                  <SettingRow
-                    title={t('autoStart')}
-                    description={t('autoStartDesc')}
-                    control={
-                      <Toggle
-                        checked={form.deepseek.autoStart}
-                        onChange={(v) => update({ deepseek: { autoStart: v } })}
-                      />
-                    }
-                  />
-                  <SettingRow
-                    title={t('port')}
-                    description={t('portDesc')}
-                    control={
-                      <div>
-                        <input
-                          type="number"
-                          min={1}
-                          max={65535}
-                          className={`w-28 rounded-xl border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:outline-none focus:ring-1 ${
-                            portError
-                              ? 'border-red-400 focus:ring-red-300'
-                              : 'border-ds-border focus:border-accent/40 focus:ring-accent/30'
-                          }`}
-                          value={form.deepseek.port}
-                          onChange={(e) => update({ deepseek: { port: Number(e.target.value) } })}
-                        />
-                        {portError ? (
-                          <p className="mt-1 text-[12px] text-red-700 dark:text-red-300">{portError}</p>
-                        ) : null}
-                      </div>
-                    }
-                  />
-                  <SettingRow
-                    title={t('deepseekBinary')}
-                    description={t('deepseekBinaryHint')}
-                    controlWidth="medium"
-                    control={
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                        placeholder={t('deepseekBinaryPlaceholder')}
-                        value={form.deepseek.binaryPath}
-                        onChange={(e) => update({ deepseek: { binaryPath: e.target.value } })}
-                      />
-                    }
-                  />
-                  <SettingRow
-                    title={t('runtimeToken')}
-                    description={t('runtimeTokenDesc')}
-                    controlWidth="medium"
-                    control={
-                      <div className="flex w-full flex-col gap-2">
-                        <input
-                          type="text"
-                          readOnly
-                          className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 font-mono text-[12px] text-ds-ink/70 shadow-sm focus:outline-none"
-                          value={
-                            tokenFingerprint ||
-                            (form.deepseek.runtimeToken
-                              ? `${form.deepseek.runtimeToken.slice(0, 8)}…${form.deepseek.runtimeToken.slice(-4)}`
-                              : t('runtimeTokenAutoManaged'))
-                          }
-                          aria-label={t('runtimeToken')}
-                        />
-                        <button
-                          type="button"
-                          disabled={tokenRegenBusy}
-                          className="inline-flex items-center justify-center gap-1.5 self-start rounded-md border border-ds-border px-2 py-1 text-center text-[12px] leading-none hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-55"
-                          onClick={() => void handleRegenerateRuntimeToken()}
-                        >
-                          {tokenRegenBusy ? (
-                            <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
-                          ) : null}
-                          {t('runtimeTokenRegenerate')}
-                        </button>
-                        {tokenRegenError ? (
-                          <p className="text-[12px] text-red-700 dark:text-red-300">{tokenRegenError}</p>
-                        ) : null}
-                      </div>
-                    }
-                  />
-                  <SettingRow
-                    title={t('corsOrigins')}
-                    description={t('corsOriginsDesc')}
-                    controlWidth="medium"
-                    control={
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                        value={corsValue}
-                        onChange={(e) =>
-                          update({
-                            deepseek: {
-                              extraCorsOrigins: e.target.value
-                                .split(',')
-                                .map((s) => s.trim())
-                                .filter(Boolean)
-                            }
-                          })
-                        }
-                      />
-                    }
-                  />
                 </SettingsCard>
 
                 <SettingsCard title={t('customEndpoints')} className="mt-6">
                   <CustomEndpointsPanel
                     endpoints={form.customEndpoints}
                     onUpdate={(patch) => update(patch)}
+                  />
+                </SettingsCard>
+
+                <SettingsCard title={t('modelUsageSection')} className="mt-6">
+                  <ModelUsagePanel
+                    usage={modelUsageSummary}
+                    loading={false}
+                    loaded
+                    error={null}
+                    runtimeReady={runtimeConnection === 'ready'}
+                    activeModelId={composerModel}
+                    composerModelMeta={composerModelMeta}
                   />
                 </SettingsCard>
             </>
@@ -1777,6 +1804,10 @@ function CustomEndpointsPanel({
   onUpdate: (patch: SettingsPatch) => void
 }): ReactElement {
   const { t } = useTranslation('settings')
+  const pruneSessionModelUsageProvider = useChatStore((s) => s.pruneSessionModelUsageProvider)
+  const pruneSessionModelUsageEndpointModel = useChatStore(
+    (s) => s.pruneSessionModelUsageEndpointModel
+  )
   const [showAdd, setShowAdd] = useState(false)
   const [addName, setAddName] = useState('')
   const [addUrl, setAddUrl] = useState('')
@@ -1784,6 +1815,49 @@ function CustomEndpointsPanel({
   const [addProtocol, setAddProtocol] = useState<EndpointProtocol>('openai')
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({})
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string; testing: boolean }>>({})
+  const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editUrl, setEditUrl] = useState('')
+  const [editKey, setEditKey] = useState('')
+  const [editProtocol, setEditProtocol] = useState<EndpointProtocol>('openai')
+  const [showEditKey, setShowEditKey] = useState(false)
+
+  const cancelEndpointEdit = (): void => {
+    setEditingEndpointId(null)
+    setEditName('')
+    setEditUrl('')
+    setEditKey('')
+    setEditProtocol('openai')
+    setShowEditKey(false)
+  }
+
+  const startEndpointEdit = (endpoint: CustomEndpointV1): void => {
+    setShowAdd(false)
+    setEditingEndpointId(endpoint.id)
+    setEditName(endpoint.name)
+    setEditUrl(endpoint.baseUrl)
+    setEditKey(endpoint.apiKey)
+    setEditProtocol(endpoint.protocol)
+    setShowEditKey(false)
+  }
+
+  const saveEndpointEdit = (index: number): void => {
+    if (!editName.trim() || !editUrl.trim() || !editKey.trim()) return
+    updateEndpoints(
+      endpoints.map((endpoint, i) =>
+        i === index
+          ? {
+              ...endpoint,
+              name: editName.trim(),
+              protocol: editProtocol,
+              baseUrl: editUrl.trim(),
+              apiKey: editKey.trim()
+            }
+          : endpoint
+      )
+    )
+    cancelEndpointEdit()
+  }
 
   const updateEndpoints = (next: CustomEndpointV1[]): void => {
     onUpdate({ customEndpoints: next })
@@ -1817,6 +1891,11 @@ function CustomEndpointsPanel({
   }
 
   const handleRemove = (index: number): void => {
+    const removed = endpoints[index]
+    if (removed) {
+      if (editingEndpointId === removed.id) cancelEndpointEdit()
+      pruneSessionModelUsageProvider(removed.id)
+    }
     updateEndpoints(endpoints.filter((_, i) => i !== index))
   }
 
@@ -1897,11 +1976,13 @@ function CustomEndpointsPanel({
   }
 
   const handleRemoveModel = (endpointIndex: number, modelId: string): void => {
+    const endpoint = endpoints[endpointIndex]
+    if (endpoint) pruneSessionModelUsageEndpointModel(endpoint.id, modelId)
     updateEndpoints(
-      endpoints.map((endpoint, index) =>
+      endpoints.map((item, index) =>
         index === endpointIndex
-          ? { ...endpoint, models: endpoint.models.filter((model) => model.id !== modelId) }
-          : endpoint
+          ? { ...item, models: item.models.filter((model) => model.id !== modelId) }
+          : item
       )
     )
   }
@@ -1912,8 +1993,64 @@ function CustomEndpointsPanel({
         {t('customEndpointsDesc')}
       </p>
 
-      {endpoints.map((ep, index) => (
+      {endpoints.map((ep, index) => {
+        const isEditing = editingEndpointId === ep.id
+        return (
         <div key={ep.id} className="mb-3 rounded-xl border border-ds-border bg-ds-card p-4 shadow-sm">
+          {isEditing ? (
+            <div className="flex flex-col gap-3">
+              <h4 className="text-[14px] font-semibold text-ds-ink">{t('editEndpointTitle')}</h4>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                  placeholder={t('endpointNamePlaceholder')}
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+                <select
+                  className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                  value={editProtocol}
+                  onChange={(e) => setEditProtocol(e.target.value as EndpointProtocol)}
+                >
+                  <option value="openai">OpenAI compatible</option>
+                  <option value="anthropic">Anthropic compatible</option>
+                </select>
+              </div>
+              <input
+                className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                placeholder={t('endpointUrlPlaceholder')}
+                value={editUrl}
+                onChange={(e) => setEditUrl(e.target.value)}
+              />
+              <SecretInput
+                value={editKey}
+                onChange={setEditKey}
+                visible={showEditKey}
+                onToggleVisibility={() => setShowEditKey((value) => !value)}
+                placeholder={t('endpointKeyPlaceholder')}
+                autoComplete="off"
+                showLabel={t('showSecret')}
+                hideLabel={t('hideSecret')}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={cancelEndpointEdit}
+                  className="rounded-xl border border-ds-border px-3 py-1.5 text-[13px] font-medium text-ds-muted hover:bg-ds-hover"
+                >
+                  {t('cancelBtn')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveEndpointEdit(index)}
+                  disabled={!editName.trim() || !editUrl.trim() || !editKey.trim()}
+                  className="rounded-xl bg-ds-userbubble px-3 py-1.5 text-[13px] font-medium text-ds-userbubbleFg disabled:opacity-50"
+                >
+                  {t('saveEndpointBtn')}
+                </button>
+              </div>
+            </div>
+          ) : (
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -1925,9 +2062,19 @@ function CustomEndpointsPanel({
                   {ep.enabled ? t('endpointEnabled') : t('endpointDisabled')}
                 </span>
               </div>
-              <div className="mt-1 truncate font-mono text-[12px] text-ds-muted">{ep.baseUrl}</div>
+              <div className="mt-1 truncate font-mono text-[12px] text-ds-muted" title={ep.baseUrl}>
+                {ep.baseUrl}
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => startEndpointEdit(ep)}
+                className="inline-flex items-center gap-1 rounded-lg border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover"
+              >
+                <Pencil className="h-3 w-3" strokeWidth={2} />
+                {t('editEndpointBtn')}
+              </button>
               <button
                 type="button"
                 onClick={() => handleToggleEndpoint(index)}
@@ -1944,7 +2091,9 @@ function CustomEndpointsPanel({
               </button>
             </div>
           </div>
+          )}
 
+          {!isEditing ? (
           <div className="mt-4 space-y-2">
             {ep.models.map((model) => {
               const testKey = `${ep.id}::${model.id}`
@@ -1994,8 +2143,10 @@ function CustomEndpointsPanel({
               </button>
             </div>
           </div>
+          ) : null}
         </div>
-      ))}
+        )
+      })}
 
       {showAdd ? (
         <div className="mt-3 rounded-xl border border-accent/30 bg-ds-card p-4 shadow-sm">
@@ -2036,6 +2187,7 @@ function CustomEndpointsPanel({
               <button
                 type="button"
                 onClick={() => {
+                  cancelEndpointEdit()
                   setShowAdd(false)
                   setAddName('')
                   setAddUrl('')
@@ -2060,7 +2212,10 @@ function CustomEndpointsPanel({
       ) : (
         <button
           type="button"
-          onClick={() => setShowAdd(true)}
+          onClick={() => {
+            cancelEndpointEdit()
+            setShowAdd(true)
+          }}
           className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-dashed border-ds-border px-3 py-2 text-[13px] font-medium text-ds-muted transition hover:border-accent/40 hover:bg-ds-hover hover:text-ds-ink"
         >
           <Plus className="h-4 w-4" strokeWidth={2} />

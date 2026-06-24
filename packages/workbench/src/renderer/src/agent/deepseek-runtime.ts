@@ -1434,7 +1434,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     sink.onError(new Error(turnError))
                   }
                 }
-                sink.onTurnComplete()
+                sink.onTurnComplete({
+                  threadId:
+                    typeof turn?.thread_id === 'string'
+                      ? turn.thread_id
+                      : typeof payload.thread_id === 'string'
+                        ? payload.thread_id
+                        : undefined,
+                  usage:
+                    turn?.usage && typeof turn.usage === 'object'
+                      ? (turn.usage as Record<string, unknown>)
+                      : null
+                })
                 return
               }
 

@@ -28,6 +28,11 @@ import {
 } from '../lib/thread-title'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
+import {
+  accumulateSessionModelUsage,
+  pruneSessionModelUsageEndpointModel,
+  pruneSessionModelUsageProvider
+} from '../lib/session-model-usage'
 import { emitPetEvent } from '../lib/pet/pet-events'
 import { decodeModelRef } from '@shared/model-ref'
 import type {
@@ -215,7 +220,7 @@ function clearTurnCompletionProbe(): void {
 
 function scheduleTurnCompletionProbe(
   get: () => ChatState,
-  sink: { onTurnComplete(): void }
+  sink: { onTurnComplete(payload?: { threadId?: string | null; usage?: Record<string, unknown> | null }): void }
 ): void {
   clearTurnCompletionProbe()
   const scheduledState = get()
@@ -291,6 +296,11 @@ async function reloadActiveThreadBlocks(
 function shouldOpenSettingsForError(error: unknown): boolean {
   const code = getRuntimeErrorCode(error)
   return code === 'missing_api_key' || code === 'runtime_auth_required'
+}
+
+function settingsSectionForRuntimeError(error: unknown): SettingsRouteSection | null {
+  if (!shouldOpenSettingsForError(error)) return null
+  return getRuntimeErrorCode(error) === 'missing_api_key' ? 'models' : 'general'
 }
 
 async function syncRuntimePendingApprovals(
@@ -924,17 +934,21 @@ function buildThreadEventSink(
           )
         }
       }),
-    onTurnComplete: () => {
+    onTurnComplete: (payload) => {
       clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
       emitPetEvent({ type: 'turn_complete' })
       const completedState = get()
-      const completedThreadId = completedState.activeThreadId
+      const completedThreadId = payload?.threadId ?? completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
       const completedKey = completedState.currentTurnId
         ? `turn:${completedState.currentTurnId}`
         : `active:${completedThreadId ?? 'unknown'}:${completedState.lastSeq}`
+      const threadModel =
+        completedThreadId != null
+          ? completedState.threads.find((thread) => thread.id === completedThreadId)?.model
+          : undefined
       set((s) => {
         const base = flushLiveBlocks(s, {
           ...finalizeTurnTiming(s),
@@ -951,6 +965,13 @@ function buildThreadEventSink(
           const u = { ...s.unreadThreadIds }
           delete u[id]
           base.unreadThreadIds = u
+        }
+        if (payload?.usage && typeof payload.usage === 'object') {
+          base.sessionModelUsage = accumulateSessionModelUsage(
+            s.sessionModelUsage,
+            payload.usage,
+            threadModel?.trim() || 'deepseek-chat'
+          )
         }
         return base
       })
@@ -1025,6 +1046,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadThreadIds: {},
   scrollToBlockId: null,
   usageRefreshKey: 0,
+  sessionModelUsage: {},
+
+  pruneSessionModelUsageProvider: (providerId) =>
+    set((s) => ({
+      sessionModelUsage: pruneSessionModelUsageProvider(s.sessionModelUsage, providerId)
+    })),
+
+  pruneSessionModelUsageEndpointModel: (providerId, modelId) =>
+    set((s) => ({
+      sessionModelUsage: pruneSessionModelUsageEndpointModel(
+        s.sessionModelUsage,
+        providerId,
+        modelId
+      )
+    })),
 
   ...createAppActions({
     set,
@@ -1138,15 +1174,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       const msg = formatRuntimeError(e)
       const detail = runtimeErrorDetail(e)
-      const needsSettings = shouldOpenSettingsForError(e)
+      const section = settingsSectionForRuntimeError(e)
       if (mode === 'user') {
         stopTurnCompletionPoll()
         set({
           runtimeConnection: 'offline',
           error: msg,
           runtimeErrorDetail: detail,
-          ...(needsSettings
-            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+          ...(section
+            ? { route: 'settings' as const, settingsSection: section }
             : {})
         })
       } else if (prev === 'ready') {
@@ -1155,8 +1191,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           runtimeConnection: 'offline',
           error: msg,
           runtimeErrorDetail: detail,
-          ...(needsSettings
-            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+          ...(section
+            ? { route: 'settings' as const, settingsSection: section }
             : {})
         })
       }
@@ -1211,8 +1247,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           runtimeConnection: 'offline',
           initialSetupOpen: false,
           initialSetupMode: 'required',
-          ...(shouldOpenSettingsForError(e)
-            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+          ...(settingsSectionForRuntimeError(e)
+            ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
             : {})
         })
       }
@@ -1341,8 +1377,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
       await get().refreshThreads()
@@ -1393,8 +1429,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         runtimeConnection: 'offline',
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -1441,8 +1477,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -1502,8 +1538,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
       if (state.busy) armBusyWatchdog(set, get)
@@ -1620,8 +1656,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -1697,8 +1733,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             blocks: previousBlocks,
             error: formatRuntimeError(error)
           })
-          if (shouldOpenSettingsForError(error)) {
-            set({ route: 'settings', settingsSection: 'general' })
+          const section = settingsSectionForRuntimeError(error)
+          if (section) {
+            set({ route: 'settings', settingsSection: section })
           }
           return false
         }
@@ -1850,8 +1887,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           turnReasoningLastAtByUserId: previousTurnReasoningLastAtByUserId,
           queuedMessages: previousQueuedMessages,
           error: formatRuntimeError(e),
-          ...(shouldOpenSettingsForError(e)
-            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+          ...(settingsSectionForRuntimeError(e)
+            ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
             : {})
         })
         return false
@@ -1979,8 +2016,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         busy: false,
         currentTurnId: null,
         queuedMessages: previousQueuedMessages,
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
       await get().refreshThreads()
@@ -2002,8 +2039,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -2028,8 +2065,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -2053,8 +2090,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -2078,8 +2115,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -2102,8 +2139,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
       return null
@@ -2145,8 +2182,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         error: formatRuntimeError(e),
         busy: false,
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -2187,8 +2224,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         error: formatRuntimeError(e),
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
     }
@@ -2282,8 +2319,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       set((s) => ({
         error: msg,
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'approval'
@@ -2421,8 +2458,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       set((s) => ({
         error: msg,
-        ...(shouldOpenSettingsForError(e)
-          ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'user_input'
@@ -2466,8 +2503,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else {
         set({
           error: msg,
-          ...(shouldOpenSettingsForError(e)
-            ? { route: 'settings' as const, settingsSection: 'runtime' as const }
+          ...(settingsSectionForRuntimeError(e)
+            ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
             : {})
         })
       }

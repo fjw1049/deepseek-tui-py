@@ -738,6 +738,18 @@ router_threads = APIRouter(prefix="/v1")
 async def thread_usage(request: Request) -> dict[str, Any]:
     mgr = manager(request)
     group_by = request.query_params.get("group_by", "runtime")
+    if group_by == "model":
+        scope = request.query_params.get("scope", "session")
+        if scope != "session":
+            raise api_error(
+                400,
+                f"unsupported usage scope: {scope}",
+                error="validation_error",
+            )
+        try:
+            return await mgr.get_session_model_usage(scope=scope)
+        except ValueError as exc:
+            raise api_error(400, str(exc), error="validation_error") from exc
     if group_by != "thread":
         raise api_error(
             400,
