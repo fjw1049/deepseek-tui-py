@@ -41,9 +41,6 @@ export type UsageLedgerV1 = {
   retentionDays: number
   processedTurnIds: Record<string, string>
   days: Record<string, UsageLedgerDay>
-  lifetime: {
-    models: Record<string, UsageLedgerBucket>
-  }
 }
 
 export type UsageDailyPoint = {
@@ -57,6 +54,8 @@ export type UsageQueryResult = {
   range: UsageRange
   daily: UsageDailyPoint[]
   summary: ModelUsageSummary | null
+  /** Last day included in the window (local YYYY-MM-DD). */
+  asOfDay: string
 }
 
 function usageNumber(value: unknown): number {
@@ -81,8 +80,7 @@ export function emptyUsageLedger(): UsageLedgerV1 {
     updatedAt: new Date().toISOString(),
     retentionDays: USAGE_RETENTION_DAYS,
     processedTurnIds: {},
-    days: {},
-    lifetime: { models: {} }
+    days: {}
   }
 }
 
@@ -98,13 +96,7 @@ export function normalizeUsageLedger(raw: unknown): UsageLedgerV1 {
       parsed.processedTurnIds && typeof parsed.processedTurnIds === 'object'
         ? parsed.processedTurnIds
         : {},
-    days: parsed.days && typeof parsed.days === 'object' ? parsed.days : {},
-    lifetime: {
-      models:
-        parsed.lifetime?.models && typeof parsed.lifetime.models === 'object'
-          ? parsed.lifetime.models
-          : {}
-    }
+    days: parsed.days && typeof parsed.days === 'object' ? parsed.days : {}
   }
 }
 
@@ -115,10 +107,10 @@ function localDayKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-function rangeStartDay(range: UsageRange): string {
+function rangeStartDay(range: UsageRange, referenceDate: Date): string {
   const days =
     range === '7d' ? 6 : range === '30d' ? 29 : USAGE_RETENTION_DAYS - 1
-  const start = new Date()
+  const start = new Date(referenceDate)
   start.setHours(0, 0, 0, 0)
   start.setDate(start.getDate() - days)
   return localDayKey(start)
@@ -156,18 +148,20 @@ function mergeSummaryBucket(target: UsageLedgerBucket, source: UsageLedgerBucket
 export function queryUsageLedger(
   ledger: UsageLedgerV1,
   range: UsageRange,
-  locale = 'en'
+  locale = 'en',
+  referenceDate = new Date()
 ): UsageQueryResult {
-  const startDay = rangeStartDay(range)
+  const anchor = new Date(referenceDate)
+  anchor.setHours(0, 0, 0, 0)
+  const startDay = rangeStartDay(range, anchor)
   const merged: Record<string, UsageLedgerBucket> = {}
   const daily: UsageDailyPoint[] = []
 
   const dayCount =
     range === '7d' ? 7 : range === '30d' ? 30 : USAGE_RETENTION_DAYS
   for (let offset = dayCount - 1; offset >= 0; offset -= 1) {
-    const date = new Date()
-    date.setHours(0, 0, 0, 0)
-    date.setDate(date.getDate() - offset)
+    const date = new Date(anchor)
+    date.setDate(anchor.getDate() - offset)
     const day = localDayKey(date)
     if (day < startDay) continue
     const dayBucket = ledger.days[day]
@@ -197,7 +191,7 @@ export function queryUsageLedger(
     .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model))
 
   if (buckets.length === 0) {
-    return { range, daily, summary: null }
+    return { range, daily, summary: null, asOfDay: localDayKey(anchor) }
   }
 
   const totals = buckets.reduce(
@@ -232,7 +226,8 @@ export function queryUsageLedger(
         costCny: totals.costCny > 0 ? totals.costCny : null,
         turns: totals.turns
       }
-    }
+    },
+    asOfDay: localDayKey(anchor)
   }
 }
 
@@ -247,9 +242,6 @@ export function pruneUsageProvider(ledger: UsageLedgerV1, providerId: string): U
       if (shouldDrop(modelRef)) delete dayBucket.models[modelRef]
     }
   }
-  for (const modelRef of Object.keys(next.lifetime.models)) {
-    if (shouldDrop(modelRef)) delete next.lifetime.models[modelRef]
-  }
   return next
 }
 
@@ -263,6 +255,5 @@ export function pruneUsageEndpointModel(
   for (const dayBucket of Object.values(next.days)) {
     delete dayBucket.models[targetRef]
   }
-  delete next.lifetime.models[targetRef]
   return next
 }

@@ -28,11 +28,6 @@ import {
 } from '../lib/thread-title'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
-import {
-  accumulateSessionModelUsage,
-  pruneSessionModelUsageEndpointModel,
-  pruneSessionModelUsageProvider
-} from '../lib/session-model-usage'
 import { emitPetEvent } from '../lib/pet/pet-events'
 import { decodeModelRef } from '@shared/model-ref'
 import type {
@@ -945,10 +940,6 @@ function buildThreadEventSink(
       const completedKey = completedState.currentTurnId
         ? `turn:${completedState.currentTurnId}`
         : `active:${completedThreadId ?? 'unknown'}:${completedState.lastSeq}`
-      const threadModel =
-        completedThreadId != null
-          ? completedState.threads.find((thread) => thread.id === completedThreadId)?.model
-          : undefined
       set((s) => {
         const base = flushLiveBlocks(s, {
           ...finalizeTurnTiming(s),
@@ -965,13 +956,6 @@ function buildThreadEventSink(
           const u = { ...s.unreadThreadIds }
           delete u[id]
           base.unreadThreadIds = u
-        }
-        if (payload?.usage && typeof payload.usage === 'object') {
-          base.sessionModelUsage = accumulateSessionModelUsage(
-            s.sessionModelUsage,
-            payload.usage,
-            threadModel?.trim() || 'deepseek-chat'
-          )
         }
         return base
       })
@@ -1046,21 +1030,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadThreadIds: {},
   scrollToBlockId: null,
   usageRefreshKey: 0,
-  sessionModelUsage: {},
-
-  pruneSessionModelUsageProvider: (providerId) =>
-    set((s) => ({
-      sessionModelUsage: pruneSessionModelUsageProvider(s.sessionModelUsage, providerId)
-    })),
-
-  pruneSessionModelUsageEndpointModel: (providerId, modelId) =>
-    set((s) => ({
-      sessionModelUsage: pruneSessionModelUsageEndpointModel(
-        s.sessionModelUsage,
-        providerId,
-        modelId
-      )
-    })),
 
   ...createAppActions({
     set,

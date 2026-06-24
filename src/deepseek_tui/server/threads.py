@@ -234,8 +234,6 @@ class RuntimeThreadManager:
             str, asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]]
         ] = {}
         self._pending_user_inputs: dict[str, _PendingUserInputRecord] = {}
-        # Per-model token/cost totals since this runtime process started.
-        self._session_model_usage: dict[str, dict[str, Any]] = {}
         self._session_started_at = datetime.now(timezone.utc)
 
         self.event_bus: AsyncBroadcast[RuntimeEventRecord] = AsyncBroadcast(
@@ -635,6 +633,10 @@ class RuntimeThreadManager:
             for thread_id, state in self._active.items():
                 if state.active_turn is None:
                     continue
+                active_turn_id = state.active_turn.turn_id
+                stored_turn = self.store.load_turn(active_turn_id)
+                if stored_turn.status == RuntimeTurnStatus.COMPLETED:
+                    continue
                 ledger = getattr(state.engine, "turn_usage_ledger", None)
                 if ledger is None or not ledger.items:
                     continue
@@ -655,11 +657,6 @@ class RuntimeThreadManager:
         thread_id: str | None = None,
         ended_at: datetime | None = None,
     ) -> None:
-        accumulate_model_usage_from_turn(
-            self._session_model_usage,
-            turn_usage,
-            fallback_model=fallback_model,
-        )
         if turn_id and thread_id and ended_at and turn_usage:
             from deepseek_tui.server.workbench_usage_ledger import record_turn_usage
 

@@ -50,41 +50,45 @@ export function ModelUsagePanel({
 
   return (
     <div className="px-4 py-5">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ds-subtle text-ds-muted">
-          <BarChart3 className="h-4 w-4" strokeWidth={1.85} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-[14px] font-semibold text-ds-ink">{t('modelUsageTitle')}</h3>
-          <p className="mt-1 text-[13px] leading-6 text-ds-muted">{t('modelUsageDesc')}</p>
-        </div>
-        <div className="inline-flex shrink-0 rounded-full border border-ds-border bg-ds-elevated p-1">
-          {RANGES.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => onRangeChange(item.value)}
-              className={[
-                'rounded-full px-2.5 py-1 text-[11.5px] font-medium transition',
-                range === item.value
-                  ? 'bg-accent text-white shadow-sm'
-                  : 'text-ds-muted hover:text-ds-ink'
-              ].join(' ')}
-            >
-              {t(item.labelKey)}
-            </button>
-          ))}
-        </div>
-        {usage ? (
-          <div className="shrink-0 text-right text-[12px] tabular-nums text-ds-muted">
-            <div>{t('modelUsageTotalTokens', { tokens: formatCompactNumber(usage.totals.totalTokens) })}</div>
-            <div className="mt-0.5">
-              {t('modelUsageTotalCost', {
-                cost: formatCost(usage.totals.costUsd, i18n.language, usage.totals.costCny)
-              })}
-            </div>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ds-subtle text-ds-muted">
+            <BarChart3 className="h-4 w-4" strokeWidth={1.85} />
           </div>
-        ) : null}
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold text-ds-ink">{t('modelUsageTitle')}</h3>
+            <p className="mt-1 text-[13px] leading-6 text-ds-muted">{t('modelUsageDesc')}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-full border border-ds-border bg-ds-elevated p-1">
+            {RANGES.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => onRangeChange(item.value)}
+                className={[
+                  'rounded-full px-2.5 py-1 text-[11.5px] font-medium transition',
+                  range === item.value
+                    ? 'bg-accent text-white shadow-sm'
+                    : 'text-ds-muted hover:text-ds-ink'
+                ].join(' ')}
+              >
+                {t(item.labelKey)}
+              </button>
+            ))}
+          </div>
+          {usage ? (
+            <div className="text-right text-[12px] tabular-nums text-ds-muted">
+              <div>{t('modelUsageTotalTokens', { tokens: formatCompactNumber(usage.totals.totalTokens) })}</div>
+              <div className="mt-0.5">
+                {t('modelUsageTotalCost', {
+                  cost: formatCost(usage.totals.costUsd, i18n.language, usage.totals.costCny)
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {loading && !loaded ? (
@@ -106,9 +110,13 @@ export function ModelUsagePanel({
       {!error && usage && buckets.length > 0 ? (
         <>
           <div className="mt-4 rounded-xl border border-ds-border-muted bg-ds-card/60 px-3 py-3">
-            <ModelUsageTrendChart daily={daily} composerModelMeta={composerModelMeta} />
+            <ModelUsageTrendChart
+              daily={daily}
+              composerModelMeta={composerModelMeta}
+              showYAxis
+            />
           </div>
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 max-h-[min(420px,50vh)] space-y-3 overflow-y-auto pb-3 pr-1">
           {buckets.map((bucket, index) => {
             const label = formatComposerModelLabel(bucket.model, composerModelMeta)
             const widthPct = Math.max(4, (bucket.totalTokens / maxTokens) * 100)

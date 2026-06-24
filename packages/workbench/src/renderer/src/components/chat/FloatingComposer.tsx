@@ -715,8 +715,8 @@ export function FloatingComposer({
 
         <div
           ref={shellRef}
-            className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col gap-2.5 px-4 py-3 transition sm:px-5 ${
-              stageCentered ? 'ds-composer-empty' : ''
+            className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col px-4 transition sm:px-5 ${
+              stageCentered ? 'ds-composer-empty gap-1.5 py-2.5' : 'gap-2.5 py-3'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -742,9 +742,9 @@ export function FloatingComposer({
 
           <textarea
             ref={textareaRef}
-            rows={stageCentered ? 2 : 1}
-            className={`ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 py-2.5 text-[15px] leading-[1.55] text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              stageCentered ? 'min-h-[76px]' : 'min-h-[52px]'
+            rows={stageCentered ? 1 : 1}
+            className={`ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-[15px] leading-[1.5] text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
+              stageCentered ? 'min-h-[48px] py-1.5' : 'min-h-[52px] py-2.5'
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={placeholder}
             value={input}
@@ -796,7 +796,7 @@ export function FloatingComposer({
             }}
           />
 
-          <div className="flex items-center gap-2 px-1 pb-0.5">
+          <div className={`flex items-center gap-2 px-1 ${stageCentered ? 'pb-0' : 'pb-0.5'}`}>
             <div className="relative">
               <button
                 type="button"

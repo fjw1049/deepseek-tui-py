@@ -5,6 +5,7 @@ import {
   queryUsageLedger,
   type UsageLedgerV1
 } from './usage-ledger'
+import { buildMockUsageLedger, mergeUsageLedgers } from './usage-ledger-mock'
 
 describe('usage-ledger', () => {
   it('aggregates daily and model totals for a range', () => {
@@ -35,8 +36,7 @@ describe('usage-ledger', () => {
             turns: 1
           }
         }
-      },
-      lifetime: { models: {} }
+      }
     }
 
     const result = queryUsageLedger(ledger, '7d', 'en')
@@ -78,12 +78,40 @@ describe('usage-ledger', () => {
             turns: 2
           }
         }
-      },
-      lifetime: { models: {} }
+      }
     }
 
     const next = pruneUsageProvider(ledger, 'qingyun')
     expect(next.days['2026-06-24'].models['qingyun::claude-sonnet']).toBeUndefined()
     expect(next.days['2026-06-24'].models['deepseek-chat']).toBeDefined()
+  })
+
+  it('builds mock ledger with uneven model usage arcs', () => {
+    const ledger = buildMockUsageLedger(new Date('2026-06-24T12:00:00'))
+    const result = queryUsageLedger(ledger, '90d', 'en')
+    const buckets = result.summary!.buckets
+
+    expect(result.summary).not.toBeNull()
+    expect(buckets.length).toBeGreaterThanOrEqual(10)
+    expect(buckets.some((b) => b.model === 'deepseek-v4-pro')).toBe(true)
+    expect(buckets.some((b) => b.model === 'qingyun::glm-5.2')).toBe(true)
+    expect(buckets.some((b) => b.model === 'qingyun::doubao-seed-2.0-lite')).toBe(true)
+
+    const maxTokens = buckets[0]?.totalTokens ?? 0
+    const minTokens = buckets[buckets.length - 1]?.totalTokens ?? 0
+    expect(maxTokens / Math.max(minTokens, 1)).toBeGreaterThan(20)
+
+    const activeDays = result.daily.filter((point) => point.totalTokens > 0).length
+    expect(activeDays).toBeGreaterThan(30)
+    expect(activeDays).toBeLessThan(90)
+  })
+
+  it('merges mock overlay onto an existing ledger', () => {
+    const base = emptyUsageLedger()
+    const overlay = buildMockUsageLedger(new Date('2026-06-24T12:00:00'))
+    const merged = mergeUsageLedgers(base, overlay)
+    const result = queryUsageLedger(merged, '7d', 'en')
+
+    expect(result.summary?.totals.totalTokens).toBeGreaterThan(0)
   })
 })

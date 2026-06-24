@@ -7,7 +7,6 @@ import type {
   UserInputAnswer
 } from '../agent/types'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
-import type { SessionModelUsageMap } from '../lib/session-model-usage'
 import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
 export type QueuedUserMessage = {
@@ -81,9 +80,6 @@ export type ChatState = {
   unreadThreadIds: Record<string, boolean>
   scrollToBlockId: string | null
   usageRefreshKey: number
-  sessionModelUsage: SessionModelUsageMap
-  pruneSessionModelUsageProvider: (providerId: string) => void
-  pruneSessionModelUsageEndpointModel: (providerId: string, modelId: string) => void
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void

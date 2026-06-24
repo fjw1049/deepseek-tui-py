@@ -1803,10 +1803,6 @@ function CustomEndpointsPanel({
   onUpdate: (patch: SettingsPatch) => void
 }): ReactElement {
   const { t } = useTranslation('settings')
-  const pruneSessionModelUsageProvider = useChatStore((s) => s.pruneSessionModelUsageProvider)
-  const pruneSessionModelUsageEndpointModel = useChatStore(
-    (s) => s.pruneSessionModelUsageEndpointModel
-  )
   const bumpUsageRefreshKey = (): void => {
     useChatStore.setState((state) => ({ usageRefreshKey: state.usageRefreshKey + 1 }))
   }
@@ -1896,7 +1892,6 @@ function CustomEndpointsPanel({
     const removed = endpoints[index]
     if (removed) {
       if (editingEndpointId === removed.id) cancelEndpointEdit()
-      pruneSessionModelUsageProvider(removed.id)
       void window.dsGui.pruneUsageProvider(removed.id).finally(bumpUsageRefreshKey)
     }
     updateEndpoints(endpoints.filter((_, i) => i !== index))
@@ -1981,7 +1976,6 @@ function CustomEndpointsPanel({
   const handleRemoveModel = (endpointIndex: number, modelId: string): void => {
     const endpoint = endpoints[endpointIndex]
     if (endpoint) {
-      pruneSessionModelUsageEndpointModel(endpoint.id, modelId)
       void window.dsGui
         .pruneUsageEndpointModel(endpoint.id, modelId)
         .finally(bumpUsageRefreshKey)

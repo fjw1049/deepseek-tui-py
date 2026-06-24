@@ -13,6 +13,8 @@ import type { UsageRange } from '@shared/usage-ledger'
 import { useChatStore } from '../../store/chat-store'
 import { usePersistentUsage } from '../../hooks/use-persistent-usage'
 import { ModelUsageHeroPanel } from '../settings/ModelUsageHeroPanel'
+import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import { EmptyStageMarkIcon } from './EmptyStageMarkIcon'
 
 const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
   { value: 'daily', labelKey: 'trendingDaily' },
@@ -20,9 +22,11 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
   { value: 'monthly', labelKey: 'trendingMonthly' }
 ]
 
-const VISIBLE_TOPIC_COUNT = 1
-const TRENDING_REPO_LIMIT = 6
-const TRENDING_SCROLL_VISIBLE_COUNT = 4
+const EMPTY_HERO_PANEL_CLASS = 'h-[460px] max-h-[460px]'
+const TRENDING_REPO_LIMIT = 8
+const VISIBLE_TOPIC_COUNT = 3
+const TRENDING_LOOP_SEC_PER_CARD = 7
+const TRENDING_LOOP_PAUSE_SEC = 15
 const CARD_THEMES = [
   {
     border: 'hover:border-emerald-400/35',
@@ -74,11 +78,11 @@ function RepoTopics({ topics, fallback }: { topics: string[]; fallback: string }
   const labels = visibleTopics.length > 0 ? visibleTopics : [fallback]
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-hidden">
       {labels.map((topic) => (
         <span
           key={topic}
-          className="inline-flex min-w-0 max-w-[96px] shrink-0 items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] font-medium text-ds-muted"
+          className="inline-flex min-w-0 max-w-[112px] shrink-0 items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] font-medium text-ds-muted"
         >
           <span className="shrink-0 font-semibold text-accent">#</span>
           <span className="min-w-0 truncate">{topic}</span>
@@ -101,7 +105,7 @@ function RepoRow({
   return (
     <div
       className={[
-        'group relative flex min-h-[108px] overflow-hidden rounded-[18px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
+        'group relative flex min-h-[118px] overflow-hidden rounded-[18px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
         theme.border
       ].join(' ')}
     >
@@ -109,26 +113,29 @@ function RepoRow({
       <button
         type="button"
         onClick={() => onAnalyze(repo)}
-        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-3 text-left"
+        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2 text-left"
       >
         <div className="flex min-w-0 items-center gap-2">
           <RepoTopics topics={repo.topics} fallback={t('trendingRepoFallbackTopic')} />
+          {repo.isNew ? (
+            <span className="shrink-0 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+              {t('trendingNew')}
+            </span>
+          ) : null}
           <span
             className={[
-              'shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+              'ml-auto shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
               theme.rank
             ].join(' ')}
           >
             #{repo.rank}
           </span>
         </div>
-        <p className="mt-2 line-clamp-2 text-[13px] font-semibold leading-5 text-ds-ink">
+        <p className="mt-1.5 line-clamp-3 text-[13px] font-semibold leading-[1.35] text-ds-ink">
           {repo.description || t('trendingNoDescription')}
         </p>
-        <div className="mt-auto flex min-w-0 items-center gap-2 pt-2">
-          <div className="min-w-0 truncate text-[11.5px] font-semibold text-ds-muted">
-            {repo.name.split('/').pop() || repo.name}
-          </div>
+        <div className="mt-auto flex min-w-0 items-center gap-2 pt-1.5">
+          <div className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-ds-muted">{repo.name}</div>
           <RepoMetrics repo={repo} />
         </div>
       </button>
@@ -137,7 +144,7 @@ function RepoRow({
         title={t('trendingOpenGithub')}
         aria-label={`${t('trendingOpenGithub')}: ${repo.name}`}
         onClick={() => void window.dsGui.openExternal(repo.url)}
-        className="relative flex w-8 shrink-0 items-start justify-center rounded-r-[18px] pt-3 text-ds-faint transition hover:bg-ds-card hover:text-accent"
+        className="relative flex w-8 shrink-0 items-start justify-center rounded-r-[18px] pt-2 text-ds-faint transition hover:bg-ds-card hover:text-accent"
       >
         <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
       </button>
@@ -145,13 +152,70 @@ function RepoRow({
   )
 }
 
+function TrendingRepoScrollList({
+  repos,
+  onAnalyze
+}: {
+  repos: TrendingRepo[]
+  onAnalyze: (repo: TrendingRepo) => void
+}): ReactElement {
+  const canLoop = repos.length > 1
+
+  if (!canLoop) {
+    return (
+      <div className="ds-trending-grid-scroll flex h-full flex-col gap-2 pr-1">
+        {repos.map((repo) => (
+          <RepoRow key={repo.name} repo={repo} onAnalyze={onAnalyze} />
+        ))}
+      </div>
+    )
+  }
+
+  const scrollDurationSec = repos.length * TRENDING_LOOP_SEC_PER_CARD
+  const totalDurationSec = scrollDurationSec + TRENDING_LOOP_PAUSE_SEC
+  const scrollEndPercent = (scrollDurationSec / totalDurationSec) * 100
+  const animationName = `ds-trending-scroll-${repos.length}`
+  const loopRepos = [...repos, ...repos]
+
+  return (
+    <>
+      <style>{`
+        @keyframes ${animationName} {
+          0% { transform: translateY(0); }
+          ${scrollEndPercent}% { transform: translateY(-50%); }
+          100% { transform: translateY(-50%); }
+        }
+        .${animationName} {
+          animation: ${animationName} ${totalDurationSec}s linear infinite;
+          will-change: transform;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .${animationName} {
+            animation: none;
+          }
+        }
+      `}</style>
+      <div className="ds-trending-loop-viewport h-full overflow-hidden pr-1">
+        <div className={`${animationName} flex flex-col gap-2`}>
+          {loopRepos.map((repo, index) => (
+            <div key={`${repo.name}-${index}`} className="shrink-0">
+              <RepoRow repo={repo} onAnalyze={onAnalyze} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
 export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement {
   const { t } = useTranslation('common')
   const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  const [usageTab, setUsageTab] = useState<'overview' | 'models'>('models')
-  const [usageRange, setUsageRange] = useState<UsageRange>('30d')
+  const [usageTab, setUsageTab] = useState<'overview' | 'models'>('overview')
+  const [usageRange, setUsageRange] = useState<UsageRange>('90d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
+  const heatmapUsage = usePersistentUsage('90d', usageRefreshKey)
   const [period, setPeriod] = useState<TrendingPeriod>('daily')
   const [repos, setRepos] = useState<TrendingRepo[]>([])
   const [loading, setLoading] = useState(true)
@@ -191,17 +255,25 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
     onSelectSuggestion?.(t('trendingAnalyzePrompt', { name: repo.name, url: repo.url }))
   }
   const trendingRepos = repos.slice(0, TRENDING_REPO_LIMIT)
-  const hasScrollableRepos = trendingRepos.length > TRENDING_SCROLL_VISIBLE_COUNT
 
   return (
     <div className="ds-no-drag w-full">
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="ds-empty-stage-prompt mb-10 flex items-center gap-3.5 px-0.5">
+        <EmptyStageMarkIcon className="h-12 w-12" />
+        <p className="flex items-baseline font-medium leading-snug tracking-[-0.02em] text-ds-ink">
+          <span className="text-[28px] sm:text-[32px]">:</span>
+          <span className="ml-2.5 text-[22px] sm:ml-3 sm:text-[26px]">{t('emptyStagePrompt')}</span>
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
         <ModelUsageHeroPanel
           summary={persistentUsage.data?.summary ?? null}
           daily={persistentUsage.data?.daily ?? []}
-          loading={persistentUsage.loading}
-          loaded={persistentUsage.loaded}
-          error={persistentUsage.error}
+          heatmapDaily={heatmapUsage.data?.daily ?? []}
+          heatmapAsOfDay={heatmapUsage.data?.asOfDay}
+          loading={persistentUsage.loading || heatmapUsage.loading}
+          loaded={persistentUsage.loaded && heatmapUsage.loaded}
+          error={persistentUsage.error ?? heatmapUsage.error}
           range={usageRange}
           onRangeChange={setUsageRange}
           tab={usageTab}
@@ -209,7 +281,12 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
           composerModelMeta={composerModelMeta}
         />
 
-        <div className="ds-hero-panel ds-glass flex h-full min-h-[420px] flex-col overflow-hidden rounded-[24px] px-4 py-4 sm:px-5 sm:py-5">
+        <div
+          className={[
+            'ds-hero-panel ds-glass flex flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5',
+            EMPTY_HERO_PANEL_CLASS
+          ].join(' ')}
+        >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-ds-ink">
@@ -218,23 +295,12 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
               <p className="mt-1 text-[12.5px] leading-5 text-ds-muted">{t('emptyHeroSubCompact')}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <div className="inline-flex rounded-full border border-ds-border bg-ds-elevated p-0.5">
-                {PERIODS.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => setPeriod(item.value)}
-                    className={[
-                      'rounded-full px-2.5 py-1 text-[11px] font-medium transition',
-                      period === item.value
-                        ? 'bg-accent text-white shadow-sm'
-                        : 'text-ds-muted hover:text-ds-ink'
-                    ].join(' ')}
-                  >
-                    {t(item.labelKey)}
-                  </button>
-                ))}
-              </div>
+              <GlassSegmentedControl
+                value={period}
+                onChange={setPeriod}
+                items={PERIODS.map((item) => ({ value: item.value, label: t(item.labelKey) }))}
+                segmentClassName="px-2.5 py-1 text-[11px]"
+              />
               <button
                 type="button"
                 title={t('trendingRetry')}
@@ -249,11 +315,11 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
           <div className="relative mt-3 min-h-0 flex-1">
             {loading ? (
-              <div className="ds-trending-grid-scroll flex h-full flex-col gap-2.5 overflow-y-auto pr-1">
-                {Array.from({ length: TRENDING_SCROLL_VISIBLE_COUNT }).map((_, index) => (
+              <div className="ds-trending-grid-scroll flex h-full flex-col gap-2 pr-1">
+                {Array.from({ length: 3 }).map((_, index) => (
                   <div
                     key={index}
-                    className="min-h-[108px] animate-pulse rounded-[18px] border border-ds-border bg-ds-card/60"
+                    className="min-h-[118px] animate-pulse rounded-[18px] border border-ds-border bg-ds-card/60"
                   />
                 ))}
               </div>
@@ -263,18 +329,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
                 <p className="mt-1 text-[12px] leading-5 text-ds-muted">{error}</p>
               </div>
             ) : (
-              <>
-                <div className="ds-trending-grid-scroll flex h-full max-h-[340px] flex-col gap-2.5 overflow-y-auto pr-1">
-                  {trendingRepos.map((repo) => (
-                    <RepoRow key={repo.name} repo={repo} onAnalyze={analyzeRepo} />
-                  ))}
-                </div>
-                {hasScrollableRepos ? (
-                  <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--ds-bg-canvas)_92%,transparent)] to-transparent pb-1 pt-5 text-center text-[10.5px] text-ds-faint">
-                    {t('trendingScrollHint')}
-                  </p>
-                ) : null}
-              </>
+              <TrendingRepoScrollList repos={trendingRepos} onAnalyze={analyzeRepo} />
             )}
           </div>
         </div>

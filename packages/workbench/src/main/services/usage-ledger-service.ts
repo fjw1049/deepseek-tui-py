@@ -9,20 +9,27 @@ import {
   pruneUsageEndpointModel,
   pruneUsageProvider,
   queryUsageLedger,
+  USAGE_LEDGER_SCHEMA_VERSION,
   type UsageLedgerV1,
   type UsageQueryResult,
   type UsageRange
 } from '../../shared/usage-ledger'
+import { buildMockUsageLedger, isUsageMockEnabled, mergeUsageLedgers } from '../../shared/usage-ledger-mock'
+import { withUsageLedgerLock } from './usage-ledger-lock'
 
-async function readLedger(path: string): Promise<UsageLedgerV1> {
+async function readLedger(path: string): Promise<{ ledger: UsageLedgerV1; readable: boolean }> {
   try {
     const raw = await readFile(path, 'utf8')
-    return normalizeUsageLedger(JSON.parse(raw) as unknown)
+    const parsed = JSON.parse(raw) as Partial<UsageLedgerV1>
+    if (parsed.schemaVersion !== USAGE_LEDGER_SCHEMA_VERSION) {
+      return { ledger: emptyUsageLedger(), readable: false }
+    }
+    return { ledger: normalizeUsageLedger(parsed), readable: true }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return emptyUsageLedger()
+      return { ledger: emptyUsageLedger(), readable: true }
     }
-    return emptyUsageLedger()
+    return { ledger: emptyUsageLedger(), readable: false }
   }
 }
 
@@ -49,18 +56,30 @@ export class UsageLedgerService {
   }
 
   async query(range: UsageRange, locale = 'en'): Promise<UsageQueryResult> {
-    const ledger = await readLedger(this.path)
-    return queryUsageLedger(ledger, range, locale)
+    return withUsageLedgerLock(this.path, async () => {
+      const { ledger, readable } = await readLedger(this.path)
+      const base = readable ? ledger : emptyUsageLedger()
+      const resolved = isUsageMockEnabled()
+        ? mergeUsageLedgers(base, buildMockUsageLedger())
+        : base
+      return queryUsageLedger(resolved, range, locale)
+    })
   }
 
   async pruneProvider(providerId: string): Promise<void> {
-    const ledger = await readLedger(this.path)
-    await writeLedger(this.path, pruneUsageProvider(ledger, providerId))
+    await withUsageLedgerLock(this.path, async () => {
+      const { ledger, readable } = await readLedger(this.path)
+      if (!readable) return
+      await writeLedger(this.path, pruneUsageProvider(ledger, providerId))
+    })
   }
 
   async pruneEndpointModel(providerId: string, modelId: string): Promise<void> {
-    const ledger = await readLedger(this.path)
-    await writeLedger(this.path, pruneUsageEndpointModel(ledger, providerId, modelId))
+    await withUsageLedgerLock(this.path, async () => {
+      const { ledger, readable } = await readLedger(this.path)
+      if (!readable) return
+      await writeLedger(this.path, pruneUsageEndpointModel(ledger, providerId, modelId))
+    })
   }
 }
 

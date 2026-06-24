@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/dev-env.cjs electron-vite dev",
+    "dev:usage-mock": "DEEPSEEK_USAGE_MOCK=1 node ./scripts/dev-env.cjs electron-vite dev",
+    "seed:usage-mock": "npx vite-node ./scripts/seed-usage-mock.ts",
     "build": "electron-vite build",
     "lint": "eslint .",
     "test": "vitest run",

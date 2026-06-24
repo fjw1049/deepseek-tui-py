@@ -36,6 +36,22 @@ export function formatComposerModelLabel(
   return `${providerName}/${displayId}`
 }
 
+/** Model id only — no provider prefix — for compact usage stats. */
+export function formatUsageModelName(
+  modelId: string,
+  metaMap?: Record<string, ComposerModelMeta>
+): string {
+  const ref = decodeModelRef(modelId)
+  const id = ref.modelId
+  if (!id) return ''
+  const meta = metaMap?.[modelId]
+  if (meta?.label?.trim()) return meta.label.trim()
+  if (ref.providerId === 'deepseek' && id.startsWith('deepseek-')) {
+    return id.slice('deepseek-'.length)
+  }
+  return id
+}
+
 export function filterComposerModelOptions(
   composerModel: string,
   composerPickList: string[]

@@ -19,6 +19,36 @@ function formatAxisLabel(tokens: number): string {
   return String(tokens)
 }
 
+function buildAxisLabelIndices(totalPoints: number, maxLabels: number): number[] {
+  if (totalPoints <= 0) return []
+  if (totalPoints <= maxLabels) {
+    return Array.from({ length: totalPoints }, (_, index) => index)
+  }
+  const indices = new Set<number>([0, totalPoints - 1])
+  const step = Math.ceil((totalPoints - 1) / (maxLabels - 1))
+  for (let index = step; index < totalPoints - 1; index += step) {
+    indices.add(index)
+  }
+  return Array.from(indices).sort((a, b) => a - b)
+}
+
+function axisLabelPosition(
+  pointIndex: number,
+  totalPoints: number
+): { className: string; style?: { left: string } } {
+  if (totalPoints <= 1) {
+    return { className: 'left-1/2 -translate-x-1/2' }
+  }
+  if (pointIndex === 0) {
+    return { className: 'left-0' }
+  }
+  if (pointIndex === totalPoints - 1) {
+    return { className: 'right-0 text-right' }
+  }
+  const leftPct = (pointIndex / (totalPoints - 1)) * 100
+  return { className: '-translate-x-1/2', style: { left: `${leftPct}%` } }
+}
+
 export function ModelUsageTrendChart({
   daily,
   composerModelMeta,
@@ -47,66 +77,90 @@ export function ModelUsageTrendChart({
   }, [daily])
 
   const chartHeight = compact ? 'h-[120px]' : 'h-[112px]'
+  const maxDayLabels = compact ? 5 : 7
+  const displayDaily = useMemo(() => {
+    if (daily.length <= 31) return daily
+    const count = 30
+    return Array.from({ length: count }, (_, index) => {
+      const sourceIndex = Math.round((index / (count - 1)) * (daily.length - 1))
+      return daily[sourceIndex]!
+    })
+  }, [daily])
+  const axisLabelIndices = useMemo(
+    () => buildAxisLabelIndices(displayDaily.length, maxDayLabels),
+    [displayDaily.length, maxDayLabels]
+  )
 
   return (
-    <div className={compact ? 'space-y-2.5' : 'space-y-3'}>
+    <div className={compact ? 'space-y-2' : 'space-y-3'}>
       <div className="flex gap-2">
         {showYAxis ? (
-          <div className={`flex ${chartHeight} w-9 shrink-0 flex-col justify-between py-0.5 text-right`}>
+          <div
+            className={`flex w-9 shrink-0 flex-col justify-between py-0.5 text-right ${chartHeight}`}
+          >
             {yTicks.map((tick) => (
-              <span key={tick} className="text-[10px] tabular-nums text-ds-faint">
+              <span key={tick} className="text-[10px] leading-none tabular-nums text-ds-faint">
                 {formatAxisLabel(tick)}
               </span>
             ))}
           </div>
         ) : null}
-        <div className={['flex min-w-0 flex-1 items-end gap-1', chartHeight].join(' ')}>
-          {daily.map((point, pointIndex) => {
-            const heightPct =
-              point.totalTokens > 0 ? Math.max(8, (point.totalTokens / maxTokens) * 100) : 4
-            const showLabel =
-              !compact ||
-              pointIndex === 0 ||
-              pointIndex === daily.length - 1 ||
-              pointIndex % Math.ceil(daily.length / 5) === 0
-            return (
-              <div
-                key={point.day}
-                className="group flex min-w-0 flex-1 flex-col items-center justify-end"
-                title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
-              >
+        <div className="min-w-0 flex-1">
+          <div className={['flex items-stretch gap-1', chartHeight].join(' ')}>
+            {displayDaily.map((point) => {
+              const heightPct =
+                point.totalTokens > 0 ? Math.max(8, (point.totalTokens / maxTokens) * 100) : 4
+              return (
                 <div
-                  className="flex w-full flex-col justify-end overflow-hidden rounded-[4px] bg-ds-border/35"
-                  style={{
-                    height: `${heightPct}%`,
-                    minHeight: point.totalTokens > 0 ? '6px' : '3px'
-                  }}
+                  key={point.day}
+                  className="group flex min-w-0 flex-1 flex-col justify-end"
+                  title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
                 >
-                  {point.segments.map((segment, index) => {
-                    const share = point.totalTokens > 0 ? segment.tokens / point.totalTokens : 0
-                    return (
-                      <span
-                        key={`${point.day}-${segment.model}`}
-                        className="block w-full"
-                        style={{
-                          height: `${Math.max(share * 100, 0)}%`,
-                          minHeight: segment.tokens > 0 ? '1px' : 0,
-                          backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
-                        }}
-                      />
-                    )
-                  })}
+                  <div
+                    className="flex w-full flex-col justify-end overflow-hidden rounded-[4px] bg-ds-border/35"
+                    style={{
+                      height: `${heightPct}%`,
+                      minHeight: point.totalTokens > 0 ? '6px' : '3px'
+                    }}
+                  >
+                    {point.segments.map((segment, index) => {
+                      const share = point.totalTokens > 0 ? segment.tokens / point.totalTokens : 0
+                      return (
+                        <span
+                          key={`${point.day}-${segment.model}`}
+                          className="block w-full"
+                          style={{
+                            height: `${Math.max(share * 100, 0)}%`,
+                            minHeight: segment.tokens > 0 ? '1px' : 0,
+                            backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
+                          }}
+                        />
+                      )
+                    })}
+                  </div>
                 </div>
-                {showLabel ? (
-                  <span className="mt-1 truncate text-center text-[10px] tabular-nums text-ds-faint">
-                    {point.label}
-                  </span>
-                ) : (
-                  <span className="mt-1 h-[14px]" aria-hidden />
-                )}
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
+          <div className="relative mt-1 h-[14px]">
+            {axisLabelIndices.map((pointIndex) => {
+              const point = displayDaily[pointIndex]
+              if (!point) return null
+              const position = axisLabelPosition(pointIndex, displayDaily.length)
+              return (
+                <span
+                  key={`${point.day}-axis`}
+                  className={[
+                    'absolute top-0 whitespace-nowrap text-[10px] leading-[14px] tabular-nums text-ds-faint',
+                    position.className
+                  ].join(' ')}
+                  style={position.style}
+                >
+                  {point.label}
+                </span>
+              )
+            })}
+          </div>
         </div>
       </div>
       {legendModels.length > 0 && !compact ? (

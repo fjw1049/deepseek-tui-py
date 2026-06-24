@@ -331,7 +331,7 @@
   "customEndpoints": "Custom Model Endpoints",
   "modelUsageSection": "Usage",
   "modelUsageTitle": "Model usage",
-  "modelUsageDesc": "Tracks completed chats, automations, and Claw runs. Saved locally for 90 days under ~/.deepseek/workbench/usage/.",
+  "modelUsageDesc": "Tracks completed chats and automations. Retained locally for 90 days.",
   "modelUsageRange7d": "7d",
   "modelUsageRange30d": "30d",
   "modelUsageRange90d": "90d",
