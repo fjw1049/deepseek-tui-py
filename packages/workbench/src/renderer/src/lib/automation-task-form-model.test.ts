@@ -72,7 +72,7 @@ describe('automation task form model', () => {
       rrule: 'FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=18;BYMINUTE=5',
       cwds: ['/tmp/project'],
       status: 'paused',
-      delivery: { mode: 'email', to: 'me@example.com', best_effort: true }
+      delivery: { mode: 'email', to: 'me@example.com', best_effort: false }
     })
   })
 
@@ -98,7 +98,7 @@ describe('automation task form model', () => {
     expect(payload.delivery).toEqual({
       mode: 'email',
       to: 'me@example.com',
-      best_effort: true
+      best_effort: false
     })
   })
 

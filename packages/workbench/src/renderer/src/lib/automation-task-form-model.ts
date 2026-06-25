@@ -1,7 +1,7 @@
 import type { AutomationStatus, CreateAutomationInput } from './automation-runtime-client'
 
 export type AutomationScheduleKind = 'once' | 'hourly' | 'daily' | 'weekly' | 'custom'
-export type AutomationDeliveryMode = 'none' | 'feishu' | 'email'
+export type AutomationDeliveryMode = 'none' | 'feishu' | 'wecom' | 'email'
 export type WeekdayToken = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU'
 
 export const ALL_WEEKDAYS: WeekdayToken[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
@@ -112,12 +112,16 @@ export function buildCreateAutomationInput(draft: AutomationTaskDraft): CreateAu
     cwds: workspaceRoot ? [workspaceRoot] : [],
     status,
     delivery:
-      draft.deliveryMode === 'none' || !effectiveTarget
+      draft.deliveryMode === 'none'
         ? undefined
-        : {
-            mode: draft.deliveryMode,
-            to: effectiveTarget,
-            best_effort: true
-          }
+        : draft.deliveryMode === 'wecom'
+          ? { mode: 'wecom', best_effort: false }
+          : !effectiveTarget
+            ? undefined
+            : {
+                mode: draft.deliveryMode,
+                to: effectiveTarget,
+                best_effort: false
+              }
   }
 }

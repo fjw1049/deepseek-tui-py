@@ -19,6 +19,7 @@ from deepseek_tui.automation.inbox import (
     default_feishu_chat_id_from_config,
     email_send_text,
     feishu_send_text,
+    wecom_webhook_send_text,
 )
 from deepseek_tui.automation.delivery import (
     DeliveryConfig,
@@ -129,6 +130,19 @@ class _FeishuSink:
         await feishu_send_text(receive_id=chat_id, text=summary)
 
 
+class _WecomSink:
+    async def deliver(
+        self,
+        *,
+        config: DeliveryConfig,
+        automation_name: str,
+        automation_id: str,
+        summary: str,
+    ) -> None:
+        webhook_key = config.to or config.chat_id
+        await wecom_webhook_send_text(text=summary, webhook_key=webhook_key)
+
+
 def _sink_for_mode(
     mode: str,
     *,
@@ -139,6 +153,8 @@ def _sink_for_mode(
         return _EmailSink()
     if key in ("feishu", "announce"):
         return _FeishuSink()
+    if key in ("wecom", "wecom_webhook", "wework"):
+        return _WecomSink()
     if key in ("notify", "proactive"):
         return _LogSink(thread_manager)
     return _SilentSink()

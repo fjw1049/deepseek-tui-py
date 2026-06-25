@@ -197,6 +197,7 @@ from deepseek_tui.automation.inbox import (
     email_send_text,
     feishu_receive_id_type,
     feishu_send_text,
+    wecom_webhook_send_text,
 )
 from deepseek_tui.automation.pipeline import run_feishu_inbound_agent
 
@@ -224,6 +225,10 @@ class EmailTestSendBody(BaseModel):
     to_addr: str | None = None
     subject: str = "DeepSeek email connection test"
     text: str = "This is a test email confirming SMTP works."
+
+
+class WecomTestSendBody(BaseModel):
+    text: str = "DeepSeek WeCom webhook connection test"
 
 
 class TriggerBody(BaseModel):
@@ -375,6 +380,16 @@ async def email_test_send(body: EmailTestSendBody) -> dict[str, Any]:
     except Exception as exc:
         raise api_error(502, str(exc), error="email_send_failed") from exc
     return {"ok": True, "to": to_addr}
+
+
+@ingress_router.post("/wecom/test-send")
+async def wecom_test_send(body: WecomTestSendBody) -> dict[str, Any]:
+    """Send a short text to verify ``[automation.wecom]`` webhook settings."""
+    try:
+        await wecom_webhook_send_text(text=body.text.strip() or "DeepSeek WeCom webhook connection test")
+    except Exception as exc:
+        raise api_error(502, str(exc), error="wecom_send_failed") from exc
+    return {"ok": True}
 
 
 @automations_router.get("")

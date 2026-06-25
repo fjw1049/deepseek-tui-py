@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Info, Loader2, Mail, MessageSquare } from 'lucide-react'
+import { Info, Loader2, Mail, MessageSquare, Users } from 'lucide-react'
 import type { FeishuConfigV1 } from '@shared/ds-gui-api'
 import { FeishuChannelSetup } from './FeishuChannelSetup'
 import { EmailChannelSetup } from './EmailChannelSetup'
+import { WecomChannelSetup } from './WecomChannelSetup'
 import {
   isEmailConfigured,
   normalizePresetEmailConfig,
   parseEmailConfig,
   type EmailChannelConfig
 } from '../../lib/resolve-automation-email-config'
+import { loadWecomChannelState } from '../../lib/resolve-automation-wecom-config'
 import {
   loadChannelPanelState,
   saveChannelPanelState
@@ -32,6 +34,9 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
   const [emailPasswordConfigured, setEmailPasswordConfigured] = useState(false)
   const [emailOpen, setEmailOpen] = useState(initialPanelState.email)
 
+  const [wecomConfigured, setWecomConfigured] = useState(false)
+  const [wecomOpen, setWecomOpen] = useState(initialPanelState.wecom)
+
   const refreshFeishu = useCallback(async () => {
     const feishu = await window.dsGui.getFeishuConfig()
     setFeishuConfig(feishu.config)
@@ -46,11 +51,16 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
     setEmailPasswordConfigured(secretStatus.passwordConfigured)
   }, [])
 
+  const refreshWecom = useCallback(async () => {
+    const wecom = await loadWecomChannelState()
+    setWecomConfigured(wecom.configured)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        await Promise.all([refreshFeishu(), refreshEmail()])
+        await Promise.all([refreshFeishu(), refreshEmail(), refreshWecom()])
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
@@ -60,11 +70,11 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [refreshEmail, refreshFeishu])
+  }, [refreshEmail, refreshFeishu, refreshWecom])
 
   useEffect(() => {
-    saveChannelPanelState({ feishu: feishuOpen, email: emailOpen })
-  }, [emailOpen, feishuOpen])
+    saveChannelPanelState({ feishu: feishuOpen, email: emailOpen, wecom: wecomOpen })
+  }, [emailOpen, feishuOpen, wecomOpen])
 
   const feishuConfigured = Boolean(feishuConfig?.appId?.trim() && feishuConfig?.appSecret?.trim())
   const emailConfigured =
@@ -156,6 +166,34 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
                   <EmailChannelSetup
                     runtimeReady={runtimeReady}
                     onConfigured={() => void refreshEmail()}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="ds-content-card rounded-xl">
+              <div className="flex items-center gap-4 px-5 py-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  <Users className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-[15px] font-semibold text-ds-ink">{t('channelWecomTitle')}</h2>
+                  <p className="mt-0.5 text-[13px] text-ds-muted">{t('channelWecomDesc')}</p>
+                  {wecomConfigured ? (
+                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelConfigured')}</p>
+                  ) : (
+                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelNotConfigured')}</p>
+                  )}
+                </div>
+                <button type="button" onClick={() => setWecomOpen(!wecomOpen)} className={btnClass}>
+                  {wecomOpen ? t('channelBtnCollapse') : t('channelBtnConfigure')}
+                </button>
+              </div>
+              {wecomOpen ? (
+                <div className="border-t border-ds-border-muted px-5 py-4">
+                  <WecomChannelSetup
+                    runtimeReady={runtimeReady}
+                    onConfigured={() => void refreshWecom()}
                   />
                 </div>
               ) : null}

@@ -64,6 +64,18 @@ export type FeishuConfigFileResult = {
 }
 export type FeishuConfigSaveResult = { ok: true; path: string }
 
+export type WecomConfigV1 = {
+  webhookKey: string
+}
+
+export type WecomConfigFileResult = {
+  path: string
+  exists: boolean
+  configured: boolean
+  config: WecomConfigV1
+}
+export type WecomConfigSaveResult = { ok: true; path: string }
+
 export type FeishuRegisterTarget = 'feishu' | 'lark'
 
 export type FeishuRegisterEvent =
@@ -257,6 +269,8 @@ export type DsGuiApi = {
   getFeishuConfig: () => Promise<FeishuConfigFileResult>
   setFeishuConfig: (config: FeishuConfigV1) => Promise<FeishuConfigSaveResult>
   openFeishuConfigDir: () => Promise<PathOpenResult>
+  getWecomConfig: () => Promise<WecomConfigFileResult>
+  setWecomConfig: (config: WecomConfigV1) => Promise<WecomConfigSaveResult>
   startFeishuRegister: (options?: { target?: FeishuRegisterTarget }) => Promise<FeishuRegisterStartResult>
   cancelFeishuRegister: () => Promise<{ ok: true }>
   onFeishuRegisterEvent: (handler: (payload: FeishuRegisterEvent) => void) => () => void

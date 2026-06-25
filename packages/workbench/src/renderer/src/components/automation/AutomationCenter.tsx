@@ -23,15 +23,23 @@ import {
   pauseAutomation,
   resumeAutomation,
   runAutomationNow,
+  updateAutomation,
   type AutomationRecord,
   type AutomationRunRecord
 } from '../../lib/automation-runtime-client'
+import { formatRunDeliveryStatus } from '../../lib/automation-run-display'
 import { ALL_WEEKDAYS } from '../../lib/automation-task-form-model'
 import {
   automationCardPreview,
   automationDeliveryCardHint,
   automationDeliveryDetail
 } from '../../lib/automation-list-display'
+import {
+  loadChannelDeliveryState,
+  resolveDefaultDeliveryFromChannels,
+  templateDeliveryCardHint,
+  type ChannelDeliveryState
+} from '../../lib/resolve-channel-delivery'
 import { AutomationListCard } from './AutomationListCard'
 import { AutomationTaskForm } from './AutomationTaskForm'
 
@@ -126,8 +134,10 @@ export function AutomationCenter({
   const [templateBusy, setTemplateBusy] = useState<string | null>(null)
   const [allRuns, setAllRuns] = useState<AnnotatedRun[]>([])
   const [allRunsLoading, setAllRunsLoading] = useState(false)
+  const [channelDelivery, setChannelDelivery] = useState<ChannelDeliveryState | null>(null)
 
   const selected = rows.find((row) => row.id === selectedId) ?? null
+  const automationById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows])
 
   const templateTaskMap = useMemo(() => {
     const map = new Map<string, AutomationRecord>()
@@ -253,6 +263,20 @@ export function AutomationCenter({
   }, [refresh])
 
   useEffect(() => {
+    let cancelled = false
+    void loadChannelDeliveryState()
+      .then((state) => {
+        if (!cancelled) setChannelDelivery(state)
+      })
+      .catch(() => {
+        if (!cancelled) setChannelDelivery(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     if (selectedId) void refreshRuns(selectedId)
     else setRuns([])
   }, [refreshRuns, selectedId])
@@ -311,15 +335,22 @@ export function AutomationCenter({
     setTemplateBusy(tpl.id)
     setNotice(null)
     try {
+      const state = channelDelivery ?? (await loadChannelDeliveryState())
+      if (!channelDelivery) setChannelDelivery(state)
+      const delivery = resolveDefaultDeliveryFromChannels(state)
       if (existing) {
         if (existing.status !== 'active') await resumeAutomation(existing.id)
+        if (delivery && !existing.delivery?.mode) {
+          await updateAutomation(existing.id, { delivery })
+        }
       } else {
         await createAutomation({
           name: tpl.name,
           prompt: tpl.prompt,
           rrule: tpl.rrule,
           cwds: tpl.useCwd && workspaceRoot ? [workspaceRoot] : [],
-          status: 'active'
+          status: 'active',
+          ...(delivery ? { delivery } : {})
         })
       }
       void refresh()
@@ -487,12 +518,15 @@ export function AutomationCenter({
                   {/* Template cards — only tasks not yet created */}
                   {sortedTemplates.map((tpl) => {
                     const busy = templateBusy === tpl.id
+                    const deliveryHint = templateDeliveryCardHint(channelDelivery, t)
                     return (
                       <AutomationListCard
                         key={tpl.id}
                         title={tpl.name}
                         preview={tpl.desc}
                         schedule={tpl.badge}
+                        deliveryHint={deliveryHint}
+                        deliveryTitle={deliveryHint}
                         leading={<span className="text-[24px] leading-none">{tpl.icon}</span>}
                         primaryAction="button"
                         actionBusy={busy}
@@ -629,7 +663,11 @@ export function AutomationCenter({
                         {formatAutomationWhen(run.started_at)}
                       </span>
                       <span className="text-ds-muted">
-                        {run.delivery_done == null ? '—' : run.delivery_done ? '✓' : '✗'}
+                        {formatRunDeliveryStatus(
+                          run,
+                          automationById.get(run.automation_id),
+                          t
+                        )}
                       </span>
                     </div>
                   ))}
@@ -750,13 +788,10 @@ export function AutomationCenter({
                           {formatAutomationWhen(run.ended_at)}
                         </div>
                       )}
-                      {run.delivery_done != null && (
-                        <div>
-                          {run.delivery_done
-                            ? t('automationRunDelivered')
-                            : t('automationRunNotDelivered')}
-                        </div>
-                      )}
+                      <div>
+                        {t('automationColDelivery')}：
+                        {formatRunDeliveryStatus(run, selected, t)}
+                      </div>
                     </dl>
                     {run.task_id && (
                       <div className="mt-1 truncate font-mono text-[11px] text-ds-faint">

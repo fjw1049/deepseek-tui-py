@@ -131,6 +131,12 @@ class AutomationFeishuConfig(BaseModel):
     chat_id: str | None = None
 
 
+class AutomationWecomConfig(BaseModel):
+    """WeCom group robot webhook (``[automation.wecom]``)."""
+
+    webhook_key: str | None = None
+
+
 class AutomationConfig(BaseModel):
     """Defaults for HTTP triggers / baidu-hotsearch one-shot (``[automation]``)."""
 
@@ -138,6 +144,7 @@ class AutomationConfig(BaseModel):
     feishu_chat_id: str | None = None
     email: AutomationEmailConfig = Field(default_factory=AutomationEmailConfig)
     feishu: AutomationFeishuConfig = Field(default_factory=AutomationFeishuConfig)
+    wecom: AutomationWecomConfig = Field(default_factory=AutomationWecomConfig)
 
 
 class SnapshotConfig(BaseModel):

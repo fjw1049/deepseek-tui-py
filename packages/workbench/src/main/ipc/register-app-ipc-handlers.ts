@@ -16,6 +16,7 @@ import {
   deepseekConfigContentSchema,
   emailSecretPayloadSchema,
   feishuConfigPayloadSchema,
+  wecomConfigPayloadSchema,
   feishuRegisterStartPayloadSchema,
   defaultPathSchema,
   gitBranchPayloadSchema,
@@ -64,6 +65,7 @@ import {
   resolveUserDeepseekDir
 } from '../deepseek-paths'
 import { readFeishuConfigFile, writeFeishuConfigFile } from '../feishu-config'
+import { readWecomConfigFile, writeWecomConfigFile } from '../wecom-config'
 import {
   clearEmailSmtpPassword,
   isEmailSecretStorageAvailable,
@@ -591,6 +593,14 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('feishu:config:write', async (_, payload: unknown) => {
     const config = parseIpcPayload('feishu:config:write', feishuConfigPayloadSchema, payload)
     const { path } = await writeFeishuConfigFile(config)
+    return { ok: true as const, path }
+  })
+
+  ipcMain.handle('wecom:config:read', async () => readWecomConfigFile())
+
+  ipcMain.handle('wecom:config:write', async (_, payload: unknown) => {
+    const config = parseIpcPayload('wecom:config:write', wecomConfigPayloadSchema, payload)
+    const { path } = await writeWecomConfigFile(config)
     return { ok: true as const, path }
   })
 

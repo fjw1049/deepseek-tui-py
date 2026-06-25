@@ -5,19 +5,21 @@ const STORAGE_KEY = 'deepseekgui.channels.panel'
 type ChannelPanelState = {
   feishu: boolean
   email: boolean
+  wecom: boolean
 }
 
 function readState(): ChannelPanelState {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY)
-    if (!raw) return { feishu: false, email: false }
+    if (!raw) return { feishu: false, email: false, wecom: false }
     const parsed = JSON.parse(raw) as Partial<ChannelPanelState>
     return {
       feishu: Boolean(parsed.feishu),
-      email: Boolean(parsed.email)
+      email: Boolean(parsed.email),
+      wecom: Boolean(parsed.wecom)
     }
   } catch {
-    return { feishu: false, email: false }
+    return { feishu: false, email: false, wecom: false }
   }
 }
 

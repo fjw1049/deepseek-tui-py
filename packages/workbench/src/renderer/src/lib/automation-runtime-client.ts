@@ -23,7 +23,7 @@ export type CreateAutomationInput = {
   rrule: string
   cwds?: string[]
   status?: AutomationStatus
-  delivery?: { mode: string; to: string; best_effort?: boolean }
+  delivery?: { mode: string; to?: string; best_effort?: boolean }
   next_run_at?: string | null
 }
 

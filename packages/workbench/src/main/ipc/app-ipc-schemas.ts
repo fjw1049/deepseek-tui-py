@@ -62,6 +62,12 @@ export const feishuConfigPayloadSchema = z
   })
   .strict()
 
+export const wecomConfigPayloadSchema = z
+  .object({
+    webhookKey: z.string().trim().min(1).max(500)
+  })
+  .strict()
+
 export const feishuRegisterStartPayloadSchema = z
   .object({
     target: z.enum(['feishu', 'lark']).optional()

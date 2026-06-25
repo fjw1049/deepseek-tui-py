@@ -23,8 +23,8 @@ import {
   type AutomationScheduleKind,
   type WeekdayToken
 } from '../../lib/automation-task-form-model'
-import { resolveAutomationFeishuChatId } from '../../lib/resolve-automation-feishu-chat-id'
-import { resolveAutomationMailTo } from '../../lib/resolve-automation-mail-to'
+import { loadChannelDeliveryState } from '../../lib/resolve-channel-delivery'
+import { useChatStore } from '../../store/chat-store'
 
 type Props = {
   runtimeReady: boolean
@@ -77,6 +77,7 @@ export function AutomationTaskForm({
   onSaved
 }: Props): ReactElement {
   const { t } = useTranslation('common')
+  const setRoute = useChatStore((s) => s.setRoute)
   const [name, setName] = useState(initialAutomation?.name ?? '')
   const [prompt, setPrompt] = useState(initialAutomation?.prompt ?? '')
   const [scheduleKind, setScheduleKind] = useState<AutomationScheduleKind>(initialAutomation ? 'custom' : 'daily')
@@ -87,7 +88,9 @@ export function AutomationTaskForm({
   const [customRrule, setCustomRrule] = useState(initialAutomation?.rrule ?? '')
   const [workspaceOverride, setWorkspaceOverride] = useState(initialAutomation?.cwds?.[0] ?? workspaceRoot)
   const initialDeliveryMode: AutomationDeliveryMode =
-    initialAutomation?.delivery?.mode === 'feishu' || initialAutomation?.delivery?.mode === 'email'
+    initialAutomation?.delivery?.mode === 'feishu' ||
+    initialAutomation?.delivery?.mode === 'email' ||
+    initialAutomation?.delivery?.mode === 'wecom'
       ? initialAutomation.delivery.mode
       : 'none'
   const [deliveryMode, setDeliveryMode] = useState<AutomationDeliveryMode>(initialDeliveryMode)
@@ -95,6 +98,7 @@ export function AutomationTaskForm({
   const [feishuDefault, setFeishuDefault] = useState('')
   const [emailDefault, setEmailDefault] = useState('')
   const [feishuChannelReady, setFeishuChannelReady] = useState(false)
+  const [wecomChannelReady, setWecomChannelReady] = useState(false)
   const [emailChannelReady, setEmailChannelReady] = useState(false)
   const [createPaused, setCreatePaused] = useState(initialAutomation?.status === 'paused')
   const [submitting, setSubmitting] = useState(false)
@@ -109,21 +113,13 @@ export function AutomationTaskForm({
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const [feishuFile, feishuChat, mail, emailSecret] = await Promise.all([
-        window.dsGui.getFeishuConfig(),
-        resolveAutomationFeishuChatId(),
-        resolveAutomationMailTo(),
-        window.dsGui.getEmailSecretStatus()
-      ])
+      const state = await loadChannelDeliveryState()
       if (cancelled) return
-      const chatId = feishuChat?.trim() || feishuFile.config.chatId?.trim() || ''
-      const mailTo = mail?.trim() ?? ''
-      setFeishuDefault(chatId)
-      setEmailDefault(mailTo)
-      setFeishuChannelReady(
-        Boolean(feishuFile.config.appId?.trim() && feishuFile.config.appSecret?.trim() && chatId)
-      )
-      setEmailChannelReady(Boolean(mailTo && emailSecret.passwordConfigured))
+      setFeishuDefault(state.feishuDefault)
+      setEmailDefault(state.emailDefault)
+      setFeishuChannelReady(state.feishuChannelReady)
+      setWecomChannelReady(state.wecomChannelReady)
+      setEmailChannelReady(state.emailChannelReady)
     })()
     return () => {
       cancelled = true
@@ -135,16 +131,19 @@ export function AutomationTaskForm({
     if (feishuDefault) {
       setDeliveryMode('feishu')
       setDeliveryTarget(feishuDefault)
+    } else if (wecomChannelReady) {
+      setDeliveryMode('wecom')
+      setDeliveryTarget('')
     } else if (emailDefault) {
       setDeliveryMode('email')
       setDeliveryTarget(emailDefault)
     }
-  }, [deliveryMode, deliveryTarget, emailDefault, feishuDefault])
+  }, [deliveryMode, deliveryTarget, emailDefault, feishuDefault, wecomChannelReady])
 
   useEffect(() => {
     if (deliveryMode === 'feishu') setDeliveryTarget((current) => current || feishuDefault)
     if (deliveryMode === 'email') setDeliveryTarget((current) => current || emailDefault)
-    if (deliveryMode === 'none') setDeliveryTarget('')
+    if (deliveryMode === 'wecom' || deliveryMode === 'none') setDeliveryTarget('')
   }, [deliveryMode, emailDefault, feishuDefault])
 
   const scheduleHint = useMemo(() => {
@@ -165,6 +164,10 @@ export function AutomationTaskForm({
     if (!runtimeReady || submitting) return
     if (deliveryMode === 'feishu' && !feishuChannelReady) {
       setNotice({ tone: 'error', message: t('automationDeliveryFeishuNotConfigured') })
+      return
+    }
+    if (deliveryMode === 'wecom' && !wecomChannelReady) {
+      setNotice({ tone: 'error', message: t('automationDeliveryWecomNotConfigured') })
       return
     }
     if (deliveryMode === 'email' && !emailChannelReady) {
@@ -425,12 +428,13 @@ export function AutomationTaskForm({
                       setDeliveryMode(next)
                       if (next === 'feishu' && feishuChannelReady) setDeliveryTarget('')
                       else if (next === 'email' && emailChannelReady) setDeliveryTarget('')
-                      else if (next === 'none') setDeliveryTarget('')
+                      else if (next === 'wecom' || next === 'none') setDeliveryTarget('')
                     }}
                     className="ds-select rounded-2xl border border-ds-border bg-ds-card py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
                   >
                     <option value="none">{t('automationDeliveryNone')}</option>
                     <option value="feishu">{t('automationDeliveryFeishu')}</option>
+                    <option value="wecom">{t('automationDeliveryWecom')}</option>
                     <option value="email">{t('automationDeliveryEmail')}</option>
                   </select>
                 </label>
@@ -443,8 +447,32 @@ export function AutomationTaskForm({
                         {t('automationDeliveryFeishuBoundHint')}
                       </span>
                     ) : (
-                      <span className="text-[13px] text-amber-700 dark:text-amber-300">
-                        {t('automationDeliveryFeishuNotConfigured')}
+                      <span className="flex flex-wrap items-center gap-2 text-[13px] text-amber-700 dark:text-amber-300">
+                        <span>{t('automationDeliveryFeishuNotConfigured')}</span>
+                        <button
+                          type="button"
+                          onClick={() => setRoute('channels')}
+                          className="rounded-md border border-amber-300/70 px-2 py-0.5 text-[12px] font-medium hover:bg-amber-100/60 dark:border-amber-700/60 dark:hover:bg-amber-950/30"
+                        >
+                          {t('automationOpenChannelCenter')}
+                        </button>
+                      </span>
+                    )
+                  ) : deliveryMode === 'wecom' ? (
+                    wecomChannelReady ? (
+                      <span className="text-[13px] text-emerald-700 dark:text-emerald-300">
+                        {t('automationDeliveryWecomBoundHint')}
+                      </span>
+                    ) : (
+                      <span className="flex flex-wrap items-center gap-2 text-[13px] text-amber-700 dark:text-amber-300">
+                        <span>{t('automationDeliveryWecomNotConfigured')}</span>
+                        <button
+                          type="button"
+                          onClick={() => setRoute('channels')}
+                          className="rounded-md border border-amber-300/70 px-2 py-0.5 text-[12px] font-medium hover:bg-amber-100/60 dark:border-amber-700/60 dark:hover:bg-amber-950/30"
+                        >
+                          {t('automationOpenChannelCenter')}
+                        </button>
                       </span>
                     )
                   ) : emailChannelReady ? (
@@ -452,8 +480,15 @@ export function AutomationTaskForm({
                       {t('automationDeliveryEmailBoundHint', { email: emailDefault })}
                     </span>
                   ) : (
-                    <span className="text-[13px] text-amber-700 dark:text-amber-300">
-                      {t('automationDeliveryEmailNotConfigured')}
+                    <span className="flex flex-wrap items-center gap-2 text-[13px] text-amber-700 dark:text-amber-300">
+                      <span>{t('automationDeliveryEmailNotConfigured')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRoute('channels')}
+                        className="rounded-md border border-amber-300/70 px-2 py-0.5 text-[12px] font-medium hover:bg-amber-100/60 dark:border-amber-700/60 dark:hover:bg-amber-950/30"
+                      >
+                        {t('automationOpenChannelCenter')}
+                      </button>
                     </span>
                   )}
                 </div>

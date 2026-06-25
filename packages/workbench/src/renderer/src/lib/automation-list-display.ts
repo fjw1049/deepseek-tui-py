@@ -4,7 +4,8 @@ type Translate = (key: string) => string
 
 const DELIVERY_MODE_I18N: Record<string, string> = {
   email: 'automationDeliveryEmailShort',
-  feishu: 'automationDeliveryFeishuShort'
+  feishu: 'automationDeliveryFeishuShort',
+  wecom: 'automationDeliveryWecomShort'
 }
 
 /** Flatten prompt / summary text for fixed-height list cards (visual clamp in CSS). */
@@ -45,6 +46,9 @@ export function automationDeliveryDetail(row: AutomationRecord, t: Translate): s
   if (mode === 'feishu' && target && isOpaqueDeliveryTarget(target)) {
     return t('automationDeliveryFeishuBound')
   }
+  if (mode === 'wecom') {
+    return t('automationDeliveryWecomBound')
+  }
   return target ? `${label} · ${target}` : label
 }
 
@@ -56,6 +60,9 @@ export function automationDeliveryCardHint(row: AutomationRecord, t: Translate):
   const target = readableDeliveryTarget(mode, row.delivery?.to)
   if (mode === 'feishu' && !target && row.delivery?.to?.trim()) {
     return t('automationDeliveryFeishuBound')
+  }
+  if (mode === 'wecom') {
+    return t('automationDeliveryWecomBound')
   }
   return target ? `${label} · ${target}` : label
 }

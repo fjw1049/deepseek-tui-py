@@ -587,3 +587,83 @@ async def email_send_text(
         subject,
         len(body),
     )
+
+
+WECOM_WEBHOOK_BASE = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+
+
+def _parse_wecom_webhook_key(raw: str) -> str | None:
+    text = raw.strip()
+    if not text:
+        return None
+    import re
+
+    if re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return text
+    if text.startswith("http"):
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(text)
+        if "qyapi.weixin.qq.com" not in parsed.hostname or not parsed.path.endswith("/webhook/send"):
+            return None
+        key = (parse_qs(parsed.query).get("key") or [""])[0].strip()
+        if re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            key,
+            flags=re.IGNORECASE,
+        ):
+            return key
+    return None
+
+
+def default_wecom_webhook_key_from_config() -> str | None:
+    """``[automation.wecom].webhook_key``."""
+    try:
+        from deepseek_tui.config.loader import ConfigLoader
+
+        cfg = ConfigLoader().load()
+        key = cfg.automation.wecom.webhook_key
+        if key and str(key).strip():
+            parsed = _parse_wecom_webhook_key(str(key))
+            return parsed or str(key).strip()
+    except Exception:
+        pass
+    env_key = os.getenv("DEEPSEEK_WECOM_WEBHOOK_KEY", "").strip()
+    if env_key:
+        parsed = _parse_wecom_webhook_key(env_key)
+        return parsed or env_key
+    return None
+
+
+def _resolve_wecom_webhook_key(explicit: str | None = None) -> str:
+    key = (explicit or "").strip()
+    if key:
+        parsed = _parse_wecom_webhook_key(key)
+        if parsed:
+            return parsed
+    fallback = default_wecom_webhook_key_from_config()
+    if fallback:
+        return fallback
+    raise ValueError(
+        "WeCom webhook key missing: set [automation.wecom].webhook_key in config.toml "
+        "or DEEPSEEK_WECOM_WEBHOOK_KEY"
+    )
+
+
+async def wecom_webhook_send_text(*, text: str, webhook_key: str | None = None) -> None:
+    """Send plain text to a WeCom group via robot webhook."""
+    key = _resolve_wecom_webhook_key(webhook_key)
+    body_text = text if len(text) <= 4096 else text[:4093] + "..."
+    payload = {"msgtype": "text", "text": {"content": body_text}}
+    url = f"{WECOM_WEBHOOK_BASE}?key={key}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, json=payload, timeout=30.0)
+        resp.raise_for_status()
+        data = resp.json()
+        if int(data.get("errcode", -1)) != 0:
+            raise RuntimeError(f"WeCom webhook error: {data.get('errmsg', data)}")
+    logger.info("[automation][delivery][wecom] sent len=%d", len(body_text))
