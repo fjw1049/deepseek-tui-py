@@ -12,8 +12,11 @@
   --bg-canvas: #ffffff;
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
-  --font-ui: 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
-  --font-display: 'SF Pro Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --font-ui: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-ui);
+  --font-mono: var(--font-ui);
+  --font-terminal: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
   --surface-1: rgba(255, 255, 255, 0.92);
   --surface-2: rgba(255, 255, 255, 0.98);
   --surface-3: #ffffff;
@@ -320,6 +323,58 @@ html {
   --ds-shadow-chip: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
+:root[data-ui-font='system-native'] {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI',
+    'Microsoft YaHei', sans-serif;
+  --font-display: var(--font-ui);
+}
+
+html,
+#root,
+.ds-app-root {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+/* Primary UI shells: everything inside follows settings → General → UI font. */
+.ds-workbench-shell,
+.ds-workbench-main,
+.ds-workbench-sidebar-wrap,
+.ds-workbench-right-panel,
+.ds-workbench-terminal-wrap,
+.ds-stage-surface,
+.ds-sidebar-shell,
+.ds-settings-page,
+.ds-feature-page,
+.ds-plugin-page,
+.ds-channel-page,
+.ds-automation-page,
+.ds-automation-form,
+.ds-page-scroll,
+.ds-modal-surface,
+.ds-modal-backdrop,
+.ds-glass,
+.ds-tool-panel,
+.ds-terminal-panel,
+.ds-hero-panel,
+.ds-content-card,
+.ds-card-soft,
+.ds-card-strong,
+.ds-card-muted,
+.ds-card-ghost,
+.ds-chat-stage,
+.ds-topbar-surface,
+.ds-composer-shell,
+.ds-composer-command-popover,
+.ds-workbench-topbar,
+.ds-session-header,
+.ds-sidebar-projects-panel {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
 body {
   @apply antialiased;
   position: relative;
@@ -330,6 +385,8 @@ body {
   background-color: var(--ds-bg-main);
   color: var(--ds-text);
   zoom: var(--ds-ui-scale);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 body::before {
@@ -347,8 +404,23 @@ body::after {
 button,
 input,
 select,
-textarea {
-  font: inherit;
+textarea,
+option {
+  font-family: var(--font-ui);
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 * {
@@ -459,6 +531,31 @@ textarea {
   min-height: 48px;
   padding-top: 0.375rem;
   padding-bottom: 0.375rem;
+}
+
+.ds-chat-composer textarea,
+.ds-composer-empty textarea,
+.ds-user-message-edit-textarea,
+.ds-composer-input {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+.ds-composer-input::placeholder {
+  font-family: var(--font-ui);
+  letter-spacing: -0.011em;
+}
+
+.ds-composer-model-label {
+  font-family: var(--font-ui);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 [data-theme='dark'] .ds-user-message-bubble {
@@ -590,6 +687,7 @@ textarea {
   align-items: center;
   padding: 1px 8px;
   border-radius: 9999px;
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 500;
   color: #0ea5e9;
@@ -646,6 +744,11 @@ textarea {
 
 .ds-glass-strong {
   background: var(--glass-bg-strong);
+}
+
+/* Empty-stage hero cards sit flush on the canvas — inset highlight only, no drop shadow. */
+.ds-hero-panel.ds-glass {
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .ds-glass-segment-thumb {
@@ -734,14 +837,31 @@ textarea {
 }
 
 .ds-empty-stage-hero,
-.ds-empty-stage-composer,
-.ds-empty-stage-topbar {
+.ds-empty-stage-composer {
   width: min(940px, calc(100% - 1.5rem));
   max-width: 940px;
 }
 
-.ds-empty-stage-topbar {
-  margin-inline: auto;
+/* Fixed full-width top bar — same edge alignment on home and chat views. */
+.ds-workbench-topbar {
+  width: 100%;
+  min-height: 48px;
+}
+
+.ds-workbench-topbar__inner {
+  padding-inline: 1rem;
+}
+
+@media (min-width: 640px) {
+  .ds-workbench-topbar__inner {
+    padding-inline: 1.25rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .ds-workbench-topbar__inner {
+    padding-inline: 1.5rem;
+  }
 }
 
 .ds-empty-stage-hero {
@@ -932,11 +1052,14 @@ textarea {
 }
 
 .ds-sidebar-section-label {
+  font-family: var(--font-ui);
   font-size: 0.8125rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-tertiary);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 .ds-sidebar-subsection-label {
@@ -958,14 +1081,18 @@ textarea {
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--surface-2) 42%, transparent);
   padding: 0.4rem 0.625rem;
+  font-family: var(--font-ui);
   font-size: 0.8125rem;
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
   transition:
     border-color 0.2s ease,
     background 0.2s ease;
 }
 
 .ds-sidebar-search::placeholder {
+  font-family: var(--font-ui);
   color: var(--text-tertiary);
 }
 
@@ -990,6 +1117,9 @@ textarea {
   border: 1px solid color-mix(in srgb, var(--ds-border-muted) 48%, transparent);
   background: color-mix(in srgb, var(--surface-2) 32%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 [data-theme='dark'] .ds-sidebar-projects-panel {
@@ -1011,9 +1141,9 @@ textarea {
 }
 
 .ds-sidebar-search--inline {
-  min-height: 1.75rem;
-  padding: 0.25rem 0.5rem 0.25rem 1.625rem;
-  font-size: 0.75rem;
+  min-height: 1.625rem;
+  padding: 0.2rem 0.45rem 0.2rem 1.5rem;
+  font-size: 0.6875rem;
 }
 
 .ds-sidebar-link {
@@ -1185,6 +1315,20 @@ textarea {
   transition: opacity 0.2s ease;
 }
 
+.ds-sidebar-empty-copy {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+.ds-session-header-title,
+.ds-session-header-meta,
+.ds-session-header-hint {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
 [data-theme='dark'] .ds-sidebar-link--accent {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
@@ -1260,6 +1404,7 @@ textarea {
 
 .ds-terminal-host {
   background: var(--ds-bg-canvas);
+  font-family: var(--font-terminal);
 }
 
 .ds-terminal-host .xterm,
@@ -1362,8 +1507,14 @@ textarea {
 
 .ds-markdown {
   color: var(--ds-text);
+  font-family: var(--font-ui);
   font-size: 15px;
   line-height: 1.5;
+}
+
+/* Streamdown prose and inline code inherit the configured UI font stack. */
+.ds-markdown [data-streamdown]:not([data-streamdown='code-block']):not([data-streamdown='code-block-actions']) {
+  font-family: inherit;
 }
 
 .ds-markdown .space-y-4 > :not([hidden]) ~ :not([hidden]) {
@@ -1391,7 +1542,7 @@ textarea {
 .ds-markdown h2,
 .ds-markdown h3 {
   margin: 0 0 0.42rem;
-  font-family: 'SF Pro Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.2;
@@ -1468,7 +1619,7 @@ textarea {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-family: var(--font-ui);
   font-size: 0.8em;
   line-height: 1.18;
   vertical-align: baseline;
@@ -1505,7 +1656,7 @@ textarea {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-family: var(--font-ui);
   font-size: 0.78em;
   line-height: 1.12;
   vertical-align: baseline;
@@ -1549,7 +1700,7 @@ textarea {
 
 .ds-markdown .ds-code-block-language {
   min-width: 0;
-  font-family: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-family: var(--font-ui);
   font-size: 10px;
   text-transform: lowercase;
   letter-spacing: 0.02em;
@@ -1756,6 +1907,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
 }
 
 .ds-chat-answer {
+  font-family: var(--font-ui);
   font-size: 15px;
   line-height: 1.6;
 }
@@ -1773,6 +1925,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   background: var(--ds-bubble-user);
   padding: 0.72rem 1.05rem;
   color: var(--ds-bubble-user-fg);
+  font-family: var(--font-ui);
   font-size: 15px;
   font-weight: 500;
   line-height: 1.58;

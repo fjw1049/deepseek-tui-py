@@ -45,7 +45,7 @@ export default function AppShell(): React.ReactElement {
   }, [boot, setStartupPhase])
 
   return (
-    <div className="h-full min-h-0 bg-transparent">
+    <div className="ds-app-root h-full min-h-0 bg-transparent">
       <Suspense fallback={<RouteFallback />}>
         {route === 'settings' ? <SettingsView /> : <Workbench />}
       </Suspense>

@@ -54,7 +54,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   if (compact) {
     return (
       <div
-        className={`ds-no-drag flex min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
+        className={`ds-session-header ds-no-drag flex min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
       >
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-accent/15 bg-accent-soft text-accent shadow-[inset_0_1px_0_rgba(255,255,255,0.62)] dark:border-accent/25 dark:bg-accent-soft dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
           <MessageSquare
@@ -66,12 +66,12 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
         {active ? (
           <div className="min-w-0 flex-1">
             <div
-              className="truncate text-[13px] font-semibold leading-[18px] tracking-[-0.01em] text-ds-ink opacity-95"
+              className="ds-session-header-title truncate text-[13px] font-semibold leading-[18px] tracking-[-0.01em] text-ds-ink opacity-95"
               title={active.title}
             >
               {active.title}
             </div>
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] leading-[15px] text-ds-faint">
+            <div className="ds-session-header-meta flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] leading-[15px] text-ds-faint">
               <span className="max-w-[min(42vw,240px)] truncate">{activeWorkspaceLabel}</span>
               <span className="opacity-70">·</span>
               <span className="shrink-0 capitalize">{active.mode}</span>
@@ -97,11 +97,11 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   }
 
   return (
-    <div className={`ds-no-drag flex min-h-[74px] min-w-0 flex-1 items-center gap-4 px-5 py-4 sm:px-6 ${className}`}>
+    <div className={`ds-session-header ds-no-drag flex min-h-[74px] min-w-0 flex-1 items-center gap-4 px-5 py-4 sm:px-6 ${className}`}>
       {active ? (
         <>
           <div className="min-w-0 flex-1">
-            <div className="mb-1 flex min-w-0 items-center gap-2 text-[12.5px] font-medium text-ds-faint">
+            <div className="ds-session-header-meta mb-1 flex min-w-0 items-center gap-2 text-[12.5px] font-medium text-ds-faint">
               <span>{activeWorkspaceLabel}</span>
               <span>·</span>
               <span className="capitalize">{active.mode}</span>
@@ -111,7 +111,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
             <div className="flex min-w-0 items-center gap-2.5">
               {editing ? (
                 <input
-                  className="min-w-0 flex-1 rounded-2xl border border-ds-border bg-ds-elevated px-3.5 py-2 text-[21px] font-semibold tracking-[-0.02em] text-ds-ink focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/20"
+                  className="ds-session-header-title min-w-0 flex-1 rounded-2xl border border-ds-border bg-ds-elevated px-3.5 py-2 text-[21px] font-semibold tracking-[-0.02em] text-ds-ink focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/20"
                   value={draftTitle}
                   onChange={(e) => setDraftTitle(e.target.value)}
                   onBlur={() => commitTitle()}
@@ -131,7 +131,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
               ) : (
                 <button
                   type="button"
-                  className="min-w-0 truncate text-left text-[22px] font-semibold tracking-[-0.03em] text-ds-ink transition hover:text-accent"
+                  className="ds-session-header-title min-w-0 truncate text-left text-[22px] font-semibold tracking-[-0.03em] text-ds-ink transition hover:text-accent"
                   title={t('renameThreadHint')}
                   onClick={() => setEditing(true)}
                 >
@@ -161,7 +161,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
           <div className={`${showWorkspaceMeta ? 'mt-1' : ''} text-[20px] font-semibold tracking-[-0.02em] text-ds-ink`}>
             {t('newChat')}
           </div>
-          <div className="mt-1 text-[13.5px] text-ds-faint">{t('sessionHeaderHint')}</div>
+          <div className="ds-session-header-hint mt-1 text-[13.5px] text-ds-faint">{t('sessionHeaderHint')}</div>
         </div>
       )}
       {busy ? (

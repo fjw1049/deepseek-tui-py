@@ -126,7 +126,7 @@ export function ChangeInspector({
                             {displayPath ?? t('toolActionFile')}
                           </div>
                           {stats ? (
-                            <div className="mt-0.5 flex gap-2 text-[10px] font-mono">
+                            <div className="mt-0.5 flex gap-2 text-[10px] tabular-nums">
                               <span className="text-ds-diff-added">
                                 +{stats.added}
                               </span>

@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
@@ -98,6 +98,14 @@ export function SidebarProjectsSection({
   const [exportingThreadIds, setExportingThreadIds] = useState<Record<string, boolean>>({})
   const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchExpanded, setSearchExpanded] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchOpen = searchExpanded || searchQuery.trim().length > 0
+
+  useEffect(() => {
+    if (!searchOpen) return
+    searchInputRef.current?.focus()
+  }, [searchOpen])
 
   const groups = useMemo(() => {
     const map = new Map<string, NormalizedThread[]>()
@@ -316,21 +324,51 @@ export function SidebarProjectsSection({
       <div className="ds-sidebar-projects-panel flex min-h-0 flex-1 flex-col">
         <div className="ds-sidebar-projects-toolbar">
           <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
-          <label className="relative min-w-0 flex-1">
-            <Search
-              className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
-              strokeWidth={2}
-              aria-hidden
-            />
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder={t('sidebarSearchProjects')}
-              className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
-            />
-          </label>
+          {searchOpen ? (
+            <label className="relative min-w-0 flex-1">
+              <Search
+                className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
+                strokeWidth={2}
+                aria-hidden
+              />
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onBlur={() => {
+                  if (!searchQuery.trim()) setSearchExpanded(false)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return
+                  event.preventDefault()
+                  if (searchQuery.trim()) {
+                    setSearchQuery('')
+                    return
+                  }
+                  setSearchExpanded(false)
+                  searchInputRef.current?.blur()
+                }}
+                placeholder={t('sidebarSearchProjects')}
+                aria-label={t('sidebarSearchProjects')}
+                className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
+              />
+            </label>
+          ) : (
+            <div className="min-w-0 flex-1" aria-hidden />
+          )}
           <div className="flex shrink-0 items-center gap-0.5">
+            {!searchOpen ? (
+              <button
+                type="button"
+                onClick={() => setSearchExpanded(true)}
+                title={t('sidebarSearchProjects')}
+                aria-label={t('sidebarSearchProjects')}
+                className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+              >
+                <Search className="h-3.5 w-3.5" strokeWidth={1.75} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onImportSession}
@@ -568,7 +606,7 @@ function SidebarEmpty({
   }
 
   return (
-    <div className="mx-2 mt-2 rounded-lg px-2 py-2">
+    <div className="ds-sidebar-empty-copy mx-2 mt-2 rounded-lg px-2 py-2">
       <p className="text-[16px] font-semibold text-ds-ink">{t('sidebarEmptyTitle')}</p>
       <p className="mt-1.5 text-[14px] leading-5 text-ds-muted">
         {runtimeReady ? t('sidebarEmptySub') : t('sidebarEmptySubOffline')}

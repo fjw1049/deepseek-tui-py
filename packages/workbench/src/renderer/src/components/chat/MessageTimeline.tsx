@@ -1126,7 +1126,7 @@ function TurnChangeSummary({
             {title}
           </span>
           {totals ? (
-            <span className="mt-1 block font-mono text-[12px]">
+            <span className="mt-1 block text-[12px] tabular-nums">
               <span className="text-ds-diff-added">+{totals.added}</span>
               <span className="mx-1.5 text-ds-faint">·</span>
               <span className="text-ds-diff-removed">-{totals.removed}</span>
@@ -1168,7 +1168,7 @@ function TurnChangeSummary({
                     </span>
                   </span>
                   {stats ? (
-                    <span className="shrink-0 font-mono text-[12px] tabular-nums">
+                    <span className="shrink-0 text-[12px] tabular-nums">
                       <span className="text-ds-diff-added">+{stats.added}</span>
                       <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
                     </span>
@@ -1823,7 +1823,7 @@ function ProcessPhaseRow({
               return (
                 <div key={block.id} className="truncate">
                   <span className="font-medium text-ds-muted">{verb}</span>
-                  {rest ? <span className="ml-1 font-mono text-[12px]">{rest}</span> : null}
+                  {rest ? <span className="ml-1 tabular-nums text-[12px]">{rest}</span> : null}
                 </div>
               )
             })}
@@ -2118,7 +2118,7 @@ function ProcessEntryRow({
             {verb}
           </span>
           {rest ? (
-            <span className={`ml-1.5 font-mono text-[13px] ${rowActive ? 'ds-shiny-text' : ''}`}>
+            <span className={`ml-1.5 tabular-nums text-[13px] ${rowActive ? 'ds-shiny-text' : ''}`}>
               {rest}
             </span>
           ) : null}
@@ -2532,9 +2532,9 @@ function describeProcessBlock(
 }
 
 /**
- * Tiny mono "via <model>" tag rendered above the user message body. Subtle by
- * design — no pill, no ring, just faint monospaced text right-aligned at the
- * top of the bubble. Hidden when there's no model selection to surface.
+ * Tiny "via <model>" tag rendered above the user message body. Subtle by
+ * design — no pill, no ring, just faint text right-aligned at the top of the
+ * bubble. Hidden when there's no model selection to surface.
  */
 function ModelMetaTag({
   label,
@@ -2550,7 +2550,7 @@ function ModelMetaTag({
       className={`flex min-w-0 text-right ${className}`.trim()}
       title={t('turnModelBadgeTitle', { model: label })}
     >
-      <span className="truncate font-mono text-[12px] tracking-tight text-ds-faint/85">
+      <span className="truncate text-[12px] tracking-tight text-ds-faint/85">
         {label}
       </span>
     </div>
@@ -3164,7 +3164,7 @@ function ToolEntry({ block, nested = false }: { block: ToolBlock; nested?: boole
             ) : null}
             {typeof exitCode === 'number' ? (
               <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-mono ${
+                className={`rounded-full px-2 py-0.5 text-[11px] tabular-nums ${
                   exitCode === 0
                     ? 'bg-ds-success-soft text-ds-success'
                     : 'bg-ds-danger-soft text-ds-danger'
@@ -3174,7 +3174,7 @@ function ToolEntry({ block, nested = false }: { block: ToolBlock; nested?: boole
               </span>
             ) : null}
             {typeof durationMs === 'number' ? (
-              <span className="rounded-full bg-ds-card px-2 py-0.5 text-[11px] font-mono text-ds-muted">
+              <span className="rounded-full bg-ds-card px-2 py-0.5 text-[11px] tabular-nums text-ds-muted">
                 {formatDuration(durationMs)}
               </span>
             ) : null}

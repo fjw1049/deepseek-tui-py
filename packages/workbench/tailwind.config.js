@@ -62,6 +62,12 @@ export default {
         xl: '14px',
         '2xl': '18px',
         '3xl': '22px'
+      },
+      fontFamily: {
+        sans: ['var(--font-ui)'],
+        display: ['var(--font-display)'],
+        mono: ['var(--font-mono)'],
+        ui: ['var(--font-ui)']
       }
     }
   },

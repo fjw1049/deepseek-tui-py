@@ -784,20 +784,10 @@ export function Workbench(): ReactElement {
         )}
 
         <div className="flex min-h-0 flex-1">
-          <div
-            className={`flex min-h-0 min-w-0 flex-1 ${
-              stageCentered ? emptyStageInsetClass : stageInsetClass
-            }`}
-          >
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="relative z-10 flex min-h-[48px] w-full shrink-0 items-center border-b border-ds-border-muted/35 bg-transparent">
-              <div
-                className={`flex w-full min-w-0 items-center justify-between gap-3 py-2 ${
-                  stageCentered
-                    ? 'ds-empty-stage-topbar'
-                    : 'px-3 sm:px-4 md:pl-5 md:pr-2'
-                }`}
-              >
+            <header className="ds-workbench-topbar relative z-10 shrink-0 border-b border-ds-border-muted/35 bg-transparent">
+              <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-3 py-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2.5">
                   {leftSidebarCollapsed ? (
                     <button
@@ -829,6 +819,11 @@ export function Workbench(): ReactElement {
                 </div>
               </div>
             </header>
+            <div
+              className={`flex min-h-0 min-w-0 flex-1 flex-col ${
+                stageCentered ? emptyStageInsetClass : stageInsetClass
+              }`}
+            >
             <div className="flex min-h-0 flex-1">
               {stageCentered ? (
                 <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col">
@@ -928,6 +923,7 @@ export function Workbench(): ReactElement {
                   </div>
                 </div>
               )}
+            </div>
             </div>
           </section>
           </div>

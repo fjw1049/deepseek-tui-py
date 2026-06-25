@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { readTerminalFontFamily } from '../lib/apply-theme'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 
 type SessionState = {
@@ -169,7 +170,7 @@ export function AppTerminalPanel({
       const terminal = new XTerm({
         cursorBlink: true,
         convertEol: true,
-        fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontFamily: readTerminalFontFamily(),
         fontSize: 13,
         lineHeight: 1.35,
         scrollback: 8_000,

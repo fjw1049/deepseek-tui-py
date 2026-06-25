@@ -106,7 +106,7 @@ export function ModelUsageHeroPanel({
               tab === 'overview' ? 'visible' : 'hidden'
             ].join(' ')}
           >
-            <div className="flex min-w-0 flex-col gap-4 pb-1">
+            <div className="flex min-w-0 flex-col gap-4 pb-4">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <StatTile label={t('usageHeroStatTokens')} value={formatCompactNumber(totalTokens)} />
                 <StatTile
@@ -121,7 +121,7 @@ export function ModelUsageHeroPanel({
                   title={topModel ? formatComposerModelLabel(topModel.model, composerModelMeta) : undefined}
                 />
               </div>
-              <div className="min-w-0 overflow-hidden rounded-2xl border border-ds-border/70 bg-ds-card/50 px-3 py-3">
+              <div className="min-w-0 rounded-2xl border border-ds-border/70 bg-ds-card/50 px-3 pt-3 pb-4">
                 <UsageActivityHeatmap daily={heatmapDaily} asOfDay={heatmapAsOfDay} />
               </div>
             </div>

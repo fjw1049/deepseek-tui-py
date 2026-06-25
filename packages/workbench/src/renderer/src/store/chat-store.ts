@@ -18,7 +18,7 @@ import { workflowSnapshotFromToolMeta } from '../lib/workflow-snapshot'
 import { sanitizeReasoningPlaceholders } from '../lib/reasoning-text'
 import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
-import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
+import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import { formatRuntimeError, getRuntimeErrorCode } from '../lib/format-runtime-error'
 import {
@@ -1044,6 +1044,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
     applyTheme,
     applyUiFontScale,
+    applyUiFontFamily,
     workspaceLabelFromPath,
     normalizeWorkspaceRoot: (workspaceRoot) => normalizeWorkspaceRoot(workspaceRoot ?? undefined)
   }),
@@ -1192,6 +1193,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           )
         applyTheme(settings.theme)
         applyUiFontScale(settings.uiFontScale)
+        applyUiFontFamily(settings.uiFontFamily)
         await get().applyI18nFromSettings(settings.locale)
         set({
           route: 'chat',

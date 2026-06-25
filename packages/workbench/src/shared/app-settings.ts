@@ -9,6 +9,7 @@ function normalizeGuiUpdateChannel(value: unknown): GuiUpdateChannel {
 export type ApprovalPolicy = 'on-request' | 'untrusted' | 'never' | 'auto' | 'suggest'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access' | 'external-sandbox'
 export type UiFontScale = 'small' | 'medium' | 'large'
+export type UiFontFamily = 'inter-noto' | 'system-native'
 export type ClawRunMode = 'agent' | 'plan'
 export type ClawImProvider = 'feishu'
 export type ClawScheduleKind = 'manual' | 'interval' | 'daily' | 'at'
@@ -244,6 +245,7 @@ export type AppSettingsV1 = {
   locale: 'en' | 'zh'
   theme: 'system' | 'light' | 'dark'
   uiFontScale: UiFontScale
+  uiFontFamily: UiFontFamily
   agentProvider: 'deepseek-runtime'
   deepseek: DeepseekSettingsV1
   customEndpoints: CustomEndpointV1[]
@@ -938,6 +940,10 @@ export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[]
     })
 }
 
+export function normalizeUiFontFamily(raw: unknown): UiFontFamily {
+  return raw === 'system-native' ? 'system-native' : 'inter-noto'
+}
+
 export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
   const maybeSettings = settings as AppSettingsV1 & {
     notifications?: Partial<NotificationConfigV1>
@@ -949,6 +955,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
   const claw = normalizeClawSettings(maybeSettings.claw)
   return {
     ...settings,
+    uiFontFamily: normalizeUiFontFamily(settings.uiFontFamily),
     deepseek: {
       ...settings.deepseek,
       baseUrl: normalizeDeepseekBaseUrl(settings.deepseek.baseUrl)

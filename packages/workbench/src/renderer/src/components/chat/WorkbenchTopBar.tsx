@@ -158,11 +158,6 @@ export function WorkbenchTopBar({
                 >
                   {renderEditorIcon(editor, 'h-4 w-4')}
                   <span className="min-w-0 flex-1 truncate">{editor.label}</span>
-                  {editor.supportsLine ? (
-                    <span className="shrink-0 rounded-md bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
-                      {t('editorLineBadge')}
-                    </span>
-                  ) : null}
                   {active ? <Check className="h-4 w-4 shrink-0 text-accent" strokeWidth={2} /> : null}
                 </button>
               )

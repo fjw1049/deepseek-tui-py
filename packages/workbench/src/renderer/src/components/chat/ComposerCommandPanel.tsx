@@ -307,7 +307,7 @@ function DiffPanel({ blocks, onOpenDiff }: { blocks: ChatBlock[]; onOpenDiff: ()
       {changes.map((change) => (
         <div key={change.id} className="flex items-center justify-between rounded-xl bg-ds-main/60 px-3 py-2.5">
           <span className="flex min-w-0 items-center gap-2 truncate text-[12px] text-ds-ink"><FileEdit className="h-4 w-4 shrink-0" />{change.path ?? 'Changed file'}</span>
-          {change.stats ? <span className="shrink-0 font-mono text-[10px]"><span className="text-ds-diff-added">+{change.stats.added}</span> <span className="text-ds-diff-removed">-{change.stats.removed}</span></span> : null}
+          {change.stats ? <span className="shrink-0 text-[10px] tabular-nums"><span className="text-ds-diff-added">+{change.stats.added}</span> <span className="text-ds-diff-removed">-{change.stats.removed}</span></span> : null}
         </div>
       ))}
       <button type="button" disabled={changes.length === 0} onClick={onOpenDiff} className={buttonClass}>Open change inspector <ChevronRight className="h-4 w-4" /></button>

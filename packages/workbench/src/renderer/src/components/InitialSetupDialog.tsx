@@ -198,7 +198,7 @@ export function InitialSetupDialog(): ReactElement {
                 value={form.deepseek.apiKey}
                 onChange={(e) => updateForm({ deepseek: { apiKey: e.target.value } })}
                 placeholder="sk-..."
-                className={`${fieldClass} pr-12 font-mono tracking-[0.02em] placeholder:font-sans`}
+                className={`${fieldClass} pr-12 tracking-[0.02em]`}
               />
               <button
                 type="button"

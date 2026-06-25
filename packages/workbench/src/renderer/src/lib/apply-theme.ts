@@ -1,5 +1,6 @@
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type UiFontScale = 'small' | 'medium' | 'large'
+export type UiFontFamily = 'inter-noto' | 'system-native'
 
 let removeSystemListener: (() => void) | null = null
 
@@ -44,4 +45,25 @@ export function applyUiFontScale(scale: UiFontScale): void {
         ? '1'
         : '0.88'
   root.style.setProperty('--ds-ui-scale', factor)
+}
+
+export const UI_FONT_CHANGED_EVENT = 'deepseekgui:ui-font-changed'
+
+export function readUiFontFamily(): string {
+  const family = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim()
+  return family || "'Inter', 'Noto Sans SC', sans-serif"
+}
+
+/** Terminal/xterm must stay monospace — proportional UI fonts break column layout and FitAddon. */
+export function readTerminalFontFamily(): string {
+  const family = getComputedStyle(document.documentElement).getPropertyValue('--font-terminal').trim()
+  return (
+    family ||
+    "'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono', monospace"
+  )
+}
+
+export function applyUiFontFamily(family: UiFontFamily): void {
+  document.documentElement.setAttribute('data-ui-font', family)
+  window.dispatchEvent(new CustomEvent(UI_FONT_CHANGED_EVENT))
 }

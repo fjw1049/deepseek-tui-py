@@ -726,7 +726,7 @@ export function FloatingComposer({
                   key={item.id}
                   className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-ds-border-muted bg-ds-main/80 px-2.5 py-1 text-[12px] text-ds-ink"
                 >
-                  <span className="truncate font-mono">@{item.path}</span>
+                  <span className="truncate">@{item.path}</span>
                   <button
                     type="button"
                     onClick={() => removeAttachment(item.id)}
@@ -743,7 +743,7 @@ export function FloatingComposer({
           <textarea
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
-            className={`ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-[15px] leading-[1.5] text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
+            className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
               stageCentered ? 'min-h-[48px] py-1.5' : 'min-h-[52px] py-2.5'
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={placeholder}
@@ -905,7 +905,7 @@ export function FloatingComposer({
                 className="ds-no-drag inline-flex max-w-[min(100%,280px)] items-center gap-1.5 rounded-full border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
                 title={t('composerModel')}
               >
-                <span className="truncate">{activeModelLabel}</span>
+                <span className="ds-composer-model-label truncate">{activeModelLabel}</span>
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
               </button>
               {modelMenuOpen ? (
@@ -929,7 +929,7 @@ export function FloatingComposer({
                           : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                       }`}
                     >
-                      <span className="truncate whitespace-nowrap">{formatComposerModelLabel(id, composerModelMeta)}</span>
+                      <span className="ds-composer-model-label truncate whitespace-nowrap">{formatComposerModelLabel(id, composerModelMeta)}</span>
                     </button>
                   ))}
                 </div>

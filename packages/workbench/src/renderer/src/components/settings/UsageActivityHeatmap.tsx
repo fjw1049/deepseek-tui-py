@@ -114,20 +114,25 @@ export function UsageActivityHeatmap({ daily, asOfDay }: Props): ReactElement {
           </div>
         </div>
       </div>
-      <div className="mt-2 flex w-full min-w-0 gap-2">
-        <div className="shrink-0" style={{ width: WEEKDAY_LABEL_WIDTH }} aria-hidden />
-        <HeatmapDayDetail
-          cell={selectedCell}
-          locale={i18n.language}
-          hint={t('usageHeroHeatHint')}
-          noUsageLabel={t('usageHeroHeatNoUsage')}
-        />
-      </div>
-      <div className="mt-2 flex justify-end">
-        <HeatLegend
-          lessLabel={t('usageHeroHeatLess')}
-          moreLabel={t('usageHeroHeatMore')}
-        />
+      <div className="mt-3 flex w-full min-w-0 flex-col gap-2.5">
+        <div className="flex w-full min-w-0 gap-2">
+          <div className="shrink-0" style={{ width: WEEKDAY_LABEL_WIDTH }} aria-hidden />
+          <HeatmapDayDetail
+            cell={selectedCell}
+            locale={i18n.language}
+            hint={t('usageHeroHeatHint')}
+            noUsageLabel={t('usageHeroHeatNoUsage')}
+          />
+        </div>
+        <div className="flex w-full min-w-0 gap-2">
+          <div className="shrink-0" style={{ width: WEEKDAY_LABEL_WIDTH }} aria-hidden />
+          <div className="flex min-w-0 flex-1 justify-end">
+            <HeatLegend
+              lessLabel={t('usageHeroHeatLess')}
+              moreLabel={t('usageHeroHeatMore')}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -146,7 +151,7 @@ function HeatmapDayDetail({
 }): ReactElement {
   if (!cell?.day) {
     return (
-      <p className="min-h-[18px] flex-1 text-center text-[12px] text-ds-faint">{hint}</p>
+      <p className="min-h-[20px] flex-1 text-center text-[12px] leading-5 text-ds-faint">{hint}</p>
     )
   }
 
@@ -156,7 +161,7 @@ function HeatmapDayDetail({
     tokens > 0 ? `${formatCompactNumber(tokens)} tokens` : noUsageLabel
 
   return (
-    <p className="min-h-[18px] flex-1 text-center text-[12px] tabular-nums text-ds-muted">
+    <p className="min-h-[20px] flex-1 text-center text-[12px] leading-5 tabular-nums text-ds-muted">
       <span className="font-medium text-ds-ink">{dateLabel}</span>
       <span className="mx-1.5 text-ds-faint">·</span>
       <span>{tokenLabel}</span>

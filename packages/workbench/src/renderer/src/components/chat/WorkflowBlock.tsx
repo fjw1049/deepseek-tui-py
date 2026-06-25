@@ -70,7 +70,7 @@ export function WorkflowBlock({
         <div className={`font-semibold text-sky-800 dark:text-sky-200 ${isRunning ? 'ds-shiny-text' : ''}`}>
           {header}
         </div>
-        <span className="font-mono text-[11px] text-ds-faint">{workflowName}</span>
+        <span className="text-[11px] text-ds-faint">{workflowName}</span>
       </div>
       <p className="mt-1 text-[12px] text-ds-muted">
         ◆ {snapshot.name} ({stateLine})
@@ -97,7 +97,7 @@ export function WorkflowBlock({
                 {agents.map((agent) => (
                   <li
                     key={`${agent.step_id}-${agent.label}`}
-                    className={`truncate font-mono text-[11px] text-ds-ink ${agent.status === 'running' ? 'ds-shiny-text' : ''}`}
+                    className={`truncate text-[11px] text-ds-ink ${agent.status === 'running' ? 'ds-shiny-text' : ''}`}
                     title={agent.result_preview ?? agent.error ?? undefined}
                   >
                     {STATUS_ICON[agent.status] ?? '○'} {agent.label}

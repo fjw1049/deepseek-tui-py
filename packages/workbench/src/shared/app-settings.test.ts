@@ -6,6 +6,7 @@ import {
   mergeMemorySettings,
   normalizeAppSettings,
   normalizeCustomEndpoints,
+  normalizeUiFontFamily,
   unwrapAutomationComposerPromptForDisplay,
   unwrapClawUserPromptForDisplay
 } from './app-settings'
@@ -102,6 +103,7 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
       locale: 'en',
       theme: 'system',
       uiFontScale: 'small',
+      uiFontFamily: 'inter-noto',
       agentProvider: 'deepseek-runtime',
       workspaceRoot: '',
       deepseek: {
@@ -155,5 +157,13 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
     expect(merged.mode).toBe('hybrid')
     expect(merged.smart.enabled).toBe(true)
     expect(merged.smart.recallLimit).toBe(6)
+  })
+})
+
+describe('normalizeUiFontFamily', () => {
+  it('defaults unknown values to inter-noto', () => {
+    expect(normalizeUiFontFamily(undefined)).toBe('inter-noto')
+    expect(normalizeUiFontFamily('invalid')).toBe('inter-noto')
+    expect(normalizeUiFontFamily('system-native')).toBe('system-native')
   })
 })

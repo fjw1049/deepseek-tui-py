@@ -34,7 +34,7 @@ import {
   Zap
 } from 'lucide-react'
 import type { PetManifestEntry } from '@shared/pet-manifest'
-import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
+import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import {
   readPetEnabled,
@@ -185,6 +185,7 @@ export function SettingsView(): ReactElement {
   const draftVersion = useRef(0)
   const formTheme = form?.theme
   const formUiFontScale = form?.uiFontScale
+  const formUiFontFamily = form?.uiFontFamily
   const formWorkspaceRoot = form?.workspaceRoot
   const formPort = form?.deepseek.port
   const formDeepseekBinaryPath = form?.deepseek.binaryPath ?? ''
@@ -337,10 +338,11 @@ export function SettingsView(): ReactElement {
   }, [])
 
   useEffect(() => {
-    if (!formTheme || !formUiFontScale) return
+    if (!formTheme || !formUiFontScale || !formUiFontFamily) return
     applyTheme(formTheme)
     applyUiFontScale(formUiFontScale)
-  }, [formTheme, formUiFontScale])
+    applyUiFontFamily(formUiFontFamily)
+  }, [formTheme, formUiFontScale, formUiFontFamily])
 
   useEffect(() => {
     if (typeof window.dsGui?.getLogPath !== 'function') return
@@ -821,6 +823,23 @@ export function SettingsView(): ReactElement {
                       <option value="small">{t('fontScaleSmall')}</option>
                       <option value="medium">{t('fontScaleMedium')}</option>
                       <option value="large">{t('fontScaleLarge')}</option>
+                    </SettingsSelect>
+                  }
+                />
+                <SettingRow
+                  title={t('fontFamily')}
+                  description={t('fontFamilyDesc')}
+                  control={
+                    <SettingsSelect
+                      value={form.uiFontFamily}
+                      onChange={(e) =>
+                        update({
+                          uiFontFamily: e.target.value as AppSettingsV1['uiFontFamily']
+                        })
+                      }
+                    >
+                      <option value="inter-noto">{t('fontFamilyInterNoto')}</option>
+                      <option value="system-native">{t('fontFamilySystemNative')}</option>
                     </SettingsSelect>
                   }
                 />
