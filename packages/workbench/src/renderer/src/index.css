@@ -2350,6 +2350,21 @@ select:focus-visible,
     inset 0 1px 0 var(--glass-highlight);
 }
 
+.ds-hero-panel.ds-content-card--interactive {
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.ds-hero-panel.ds-content-card--interactive:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--ds-accent) 20%, var(--glass-border));
+  box-shadow:
+    0 20px 44px rgba(45, 58, 78, 0.11),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
 .ds-feature-page input:not([type='checkbox']):not([type='radio']),
 .ds-feature-page textarea,
 .ds-feature-page select,
@@ -2489,6 +2504,7 @@ select:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .ds-content-card--interactive,
+  .ds-hero-panel.ds-content-card--interactive,
   .ds-card-interactive,
   .ds-transition,
   .ds-sidebar-toggle-button,
@@ -2497,6 +2513,7 @@ select:focus-visible,
   }
 
   .ds-content-card--interactive:hover,
+  .ds-hero-panel.ds-content-card--interactive:hover,
   .ds-card-interactive:hover,
   .ds-sidebar-toggle-button:hover,
   .ds-sidebar-expand-droplet:hover {

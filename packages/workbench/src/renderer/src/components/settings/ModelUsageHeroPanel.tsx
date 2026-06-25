@@ -62,7 +62,7 @@ export function ModelUsageHeroPanel({
   ]
 
   return (
-    <div className="ds-hero-panel ds-glass flex h-[460px] max-h-[460px] flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5">
+    <div className="ds-hero-panel ds-glass ds-content-card--interactive flex h-[460px] max-h-[460px] flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5">
       <div className="flex shrink-0 flex-nowrap items-center justify-between gap-3">
         <GlassSegmentedControl
           value={tab}
