@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from 're
 import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
-  Clock,
   Info,
   Loader2,
   MoreHorizontal,
@@ -28,6 +27,12 @@ import {
   type AutomationRunRecord
 } from '../../lib/automation-runtime-client'
 import { ALL_WEEKDAYS } from '../../lib/automation-task-form-model'
+import {
+  automationCardPreview,
+  automationDeliveryCardHint,
+  automationDeliveryDetail
+} from '../../lib/automation-list-display'
+import { AutomationListCard } from './AutomationListCard'
 import { AutomationTaskForm } from './AutomationTaskForm'
 
 type Props = {
@@ -55,23 +60,6 @@ type TaskTemplate = {
 
 const TEMPLATES: TaskTemplate[] = [
   {
-    id: 'daily-git',
-    icon: '📊',
-    name: '每日 Git 工作报告',
-    desc: '自动汇总仓库 24 小时内的 commit、文件变更和代码统计',
-    badge: '每天 09:30',
-    prompt: [
-      '请帮我总结当前 git 仓库最近的变化：',
-      '1. 执行 git log --since="24 hours ago" --oneline 获取最近的提交',
-      '2. 执行 git diff --stat HEAD~5 统计文件变更',
-      '3. 列出最近修改的文件和变更行数',
-      '4. 如果没有变化，简要说明"近 24 小时无新提交"',
-      '5. 将报告格式化为 Markdown，包含标题、时间和详情'
-    ].join('\n'),
-    rrule: `FREQ=WEEKLY;BYDAY=${ALL_WEEKDAYS.join(',')};BYHOUR=9;BYMINUTE=30`,
-    useCwd: true
-  },
-  {
     id: 'daily-downloads',
     icon: '🗂️',
     name: '每日下载文件夹整理建议',
@@ -87,23 +75,6 @@ const TEMPLATES: TaskTemplate[] = [
     ].join('\n'),
     rrule: `FREQ=WEEKLY;BYDAY=${ALL_WEEKDAYS.join(',')};BYHOUR=18;BYMINUTE=0`,
     useCwd: false
-  },
-  {
-    id: 'weekly-deps',
-    icon: '📦',
-    name: '每周项目依赖检查',
-    desc: '检测过时依赖并标注安全补丁，支持 Node/Python/Rust/Go',
-    badge: '每周一 10:00',
-    prompt: [
-      '请帮我检查当前项目的依赖状况：',
-      '1. 检测项目类型（查找 package.json / requirements.txt / Cargo.toml / go.mod）',
-      '2. 如果是 Node 项目，执行 pnpm outdated 或 npm outdated 列出过时依赖',
-      '3. 如果是 Python 项目，读取 requirements.txt 并用 pip index versions <包名> 抽查前 5 个核心依赖的最新版本',
-      '4. 对比当前安装版本与最新版本，标注有大版本差异的包',
-      '5. 给出优先更新建议，重点关注主版本更新和安全补丁'
-    ].join('\n'),
-    rrule: 'FREQ=WEEKLY;BYDAY=MO;BYHOUR=10;BYMINUTE=0',
-    useCwd: true
   },
   {
     id: 'daily-system',
@@ -123,47 +94,6 @@ const TEMPLATES: TaskTemplate[] = [
     useCwd: false
   }
 ]
-
-function Toggle({
-  checked,
-  onChange,
-  disabled
-}: {
-  checked: boolean
-  onChange: () => void
-  disabled?: boolean
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation()
-        onChange()
-      }}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-        checked ? 'bg-emerald-500' : 'bg-ds-faint/30'
-      } ${disabled ? 'opacity-40' : 'cursor-pointer'}`}
-    >
-      <span
-        className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-          checked ? 'translate-x-4' : ''
-        }`}
-      />
-    </button>
-  )
-}
-
-function deliveryLabel(row: AutomationRecord, t: (key: string) => string): string {
-  if (!row.delivery?.mode) return '—'
-  if (row.delivery.mode === 'feishu')
-    return `${t('automationDeliveryFeishuShort')}${row.delivery.to ? ` · ${row.delivery.to}` : ''}`
-  if (row.delivery.mode === 'email')
-    return `${t('automationDeliveryEmailShort')}${row.delivery.to ? ` · ${row.delivery.to}` : ''}`
-  return row.delivery.to || row.delivery.mode
-}
 
 function runTone(status: string): string {
   if (status === 'succeeded' || status === 'success')
@@ -208,38 +138,29 @@ export function AutomationCenter({
     return map
   }, [rows])
 
-  const templateNames = useMemo(() => new Set(TEMPLATES.map((t) => t.name)), [])
-
   const sortedTemplates = useMemo(() => {
-    const list = TEMPLATES.map((tpl) => ({ tpl, task: templateTaskMap.get(tpl.id) }))
-    if (sort === 'active-first') {
-      list.sort((a, b) => {
-        const aActive = a.task?.status === 'active' ? 0 : 1
-        const bActive = b.task?.status === 'active' ? 0 : 1
-        return aActive - bActive
-      })
-    } else {
-      list.sort((a, b) => {
-        const aTime = a.task?.created_at ? new Date(a.task.created_at).getTime() : 0
-        const bTime = b.task?.created_at ? new Date(b.task.created_at).getTime() : 0
-        return bTime - aTime
-      })
-    }
+    const normalized = query.trim().toLowerCase()
+    const list = TEMPLATES.filter((tpl) => !templateTaskMap.has(tpl.id)).filter((tpl) => {
+      if (status === 'paused') return false
+      if (normalized) {
+        const haystack = `${tpl.name} ${tpl.desc}`.toLowerCase()
+        if (!haystack.includes(normalized)) return false
+      }
+      return true
+    })
     return list
-  }, [templateTaskMap, sort])
+  }, [templateTaskMap, query, status])
 
   const customFiltered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    const list = rows
-      .filter((r) => !templateNames.has(r.name))
-      .filter((row) => {
-        if (status !== 'all' && row.status !== status) return false
-        return (
-          !normalized ||
-          row.name.toLowerCase().includes(normalized) ||
-          row.prompt.toLowerCase().includes(normalized)
-        )
-      })
+    const list = rows.filter((row) => {
+      if (status !== 'all' && row.status !== status) return false
+      return (
+        !normalized ||
+        row.name.toLowerCase().includes(normalized) ||
+        row.prompt.toLowerCase().includes(normalized)
+      )
+    })
     if (sort === 'active-first') {
       list.sort((a, b) => {
         const aActive = a.status === 'active' ? 0 : 1
@@ -257,7 +178,7 @@ export function AutomationCenter({
       })
     }
     return list
-  }, [query, rows, status, templateNames, sort])
+  }, [query, rows, status, sort])
 
   const refresh = useCallback(async () => {
     if (!runtimeReady) {
@@ -375,10 +296,10 @@ export function AutomationCenter({
   }
 
   const handleSaved = useCallback(
-    (record: AutomationRecord) => {
+    (_record: AutomationRecord) => {
       setCreating(false)
       setEditing(null)
-      setSelectedId(record.id)
+      setSelectedId(null)
       void refresh()
     },
     [refresh]
@@ -401,24 +322,6 @@ export function AutomationCenter({
           status: 'active'
         })
       }
-      void refresh()
-    } catch (error) {
-      setNotice({
-        tone: 'error',
-        message: error instanceof Error ? error.message : String(error)
-      })
-    } finally {
-      setTemplateBusy(null)
-    }
-  }
-
-  const disableTemplate = async (tpl: TaskTemplate): Promise<void> => {
-    const existing = templateTaskMap.get(tpl.id)
-    if (!existing || existing.status !== 'active') return
-    setTemplateBusy(tpl.id)
-    setNotice(null)
-    try {
-      await pauseAutomation(existing.id)
       void refresh()
     } catch (error) {
       setNotice({
@@ -509,7 +412,7 @@ export function AutomationCenter({
       </div>
 
       {/* Content */}
-      <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
+      <div className="ds-automation-scroll min-h-0 flex-1 overflow-auto px-8 py-6">
         <div className="mx-auto max-w-6xl">
           {!runtimeReady ? (
             <div className="rounded-xl border border-ds-border bg-ds-card px-6 py-12 text-center">
@@ -580,222 +483,113 @@ export function AutomationCenter({
                   {t('automationLoading')}
                 </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {/* Template cards — always visible */}
-                  {sortedTemplates.map(({ tpl, task }) => {
-                    const active = task?.status === 'active'
-                    const busy = templateBusy === tpl.id || (task ? busyId === task.id : false)
+                <div className="grid auto-rows-auto gap-5 sm:grid-cols-2">
+                  {/* Template cards — only tasks not yet created */}
+                  {sortedTemplates.map((tpl) => {
+                    const busy = templateBusy === tpl.id
                     return (
-                      <div
+                      <AutomationListCard
                         key={tpl.id}
-                        className="ds-content-card ds-content-card--interactive group relative rounded-xl p-5"
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className="text-[22px]">{tpl.icon}</span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <button
-                                className="min-w-0 text-left"
-                                onClick={() => task && setSelectedId(task.id)}
-                              >
-                                <h3 className="truncate text-[14px] font-semibold text-ds-ink">
-                                  {tpl.name}
-                                </h3>
-                              </button>
-                              {task && (
-                                <div className="relative shrink-0">
-                                  <button
-                                    title={t('automationCardMenu')}
-                                    onClick={() =>
-                                      setMenuId(menuId === task.id ? null : task.id)
-                                    }
-                                    className="rounded-md p-1 text-ds-faint opacity-0 transition hover:bg-ds-hover hover:text-ds-ink group-hover:opacity-100"
-                                  >
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </button>
-                                  {menuId === task.id && (
-                                    <>
-                                      <div
-                                        className="fixed inset-0 z-50"
-                                        onClick={() => setMenuId(null)}
-                                      />
-                                      <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg">
-                                        <button
-                                          className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
-                                          onClick={() => {
-                                            setEditing(task)
-                                            setMenuId(null)
-                                          }}
-                                        >
-                                          <Pencil className="h-3.5 w-3.5" />
-                                          {t('automationEditAction')}
-                                        </button>
-                                        <button
-                                          className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
-                                          disabled={busy}
-                                          onClick={() => {
-                                            void mutate(task, 'run')
-                                            setMenuId(null)
-                                          }}
-                                        >
-                                          <Zap className="h-3.5 w-3.5" />
-                                          {t('automationRunNowAction')}
-                                        </button>
-                                        <button
-                                          className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20"
-                                          disabled={busy}
-                                          onClick={() => {
-                                            void mutate(task, 'delete')
-                                            setMenuId(null)
-                                          }}
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                          {t('automationDeleteAction')}
-                                        </button>
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                            <p className="mt-1 text-[12px] leading-5 text-ds-muted">
-                              {tpl.desc}
-                            </p>
-                            <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-[11px] leading-[18px] text-ds-faint">
-                              {tpl.prompt}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="mt-4 flex items-center justify-between border-t border-ds-border-muted pt-3">
-                          <span className="flex items-center gap-1.5 text-[12px] text-ds-faint">
-                            <Clock className="h-3.5 w-3.5" />
-                            {tpl.badge}
-                          </span>
-                          {active ? (
-                            <Toggle
-                              checked
-                              disabled={busy}
-                              onChange={() => void disableTemplate(tpl)}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void enableTemplate(tpl)}
-                              className="rounded-lg bg-accent/10 px-3 py-1.5 text-[12px] font-medium text-accent transition hover:bg-accent/20 disabled:opacity-50"
-                            >
-                              {busy
-                                ? t('automationCreatingTemplate')
-                                : t('automationUseTemplate')}
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                        title={tpl.name}
+                        preview={tpl.desc}
+                        schedule={tpl.badge}
+                        leading={<span className="text-[24px] leading-none">{tpl.icon}</span>}
+                        primaryAction="button"
+                        actionBusy={busy}
+                        actionLabel={
+                          busy ? t('automationCreatingTemplate') : t('automationEnableAction')
+                        }
+                        onPrimaryAction={() => void enableTemplate(tpl)}
+                      />
                     )
                   })}
 
-                  {/* Custom (non-template) tasks */}
                   {customFiltered.map((row) => {
                     const active = row.status === 'active'
                     const busy = busyId === row.id
+                    const deliveryHint = automationDeliveryCardHint(row, t)
                     return (
-                      <div
+                      <AutomationListCard
                         key={row.id}
-                        className="ds-content-card ds-content-card--interactive group relative rounded-xl p-5"
-                      >
-                        <div className="flex items-start gap-3">
-                          <Toggle
-                            checked={active}
-                            disabled={busy}
-                            onChange={() => void mutate(row, 'toggle')}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <button
-                                className="min-w-0 text-left"
-                                onClick={() => setSelectedId(row.id)}
-                              >
-                                <h3 className="truncate text-[14px] font-semibold text-ds-ink">
-                                  {row.name}
-                                </h3>
-                              </button>
-                              <div className="relative shrink-0">
-                                <button
-                                  title={t('automationCardMenu')}
-                                  onClick={() =>
-                                    setMenuId(menuId === row.id ? null : row.id)
-                                  }
-                                  className="rounded-md p-1 text-ds-faint opacity-0 transition hover:bg-ds-hover hover:text-ds-ink group-hover:opacity-100"
-                                >
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </button>
-                                {menuId === row.id && (
-                                  <>
-                                    <div
-                                      className="fixed inset-0 z-50"
-                                      onClick={() => setMenuId(null)}
-                                    />
-                                    <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg">
-                                      <button
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
-                                        onClick={() => {
-                                          setEditing(row)
-                                          setMenuId(null)
-                                        }}
-                                      >
-                                        <Pencil className="h-3.5 w-3.5" />
-                                        {t('automationEditAction')}
-                                      </button>
-                                      <button
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
-                                        disabled={busy}
-                                        onClick={() => {
-                                          void mutate(row, 'run')
-                                          setMenuId(null)
-                                        }}
-                                      >
-                                        <Zap className="h-3.5 w-3.5" />
-                                        {t('automationRunNowAction')}
-                                      </button>
-                                      <button
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20"
-                                        disabled={busy}
-                                        onClick={() => {
-                                          void mutate(row, 'delete')
-                                          setMenuId(null)
-                                        }}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                        {t('automationDeleteAction')}
-                                      </button>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <p
-                              className="mt-1 line-clamp-2 cursor-pointer text-[12px] leading-5 text-ds-muted"
-                              onClick={() => setSelectedId(row.id)}
+                        title={row.name}
+                        preview={automationCardPreview(row.prompt)}
+                        schedule={formatAutomationRrule(row.rrule)}
+                        deliveryHint={deliveryHint}
+                        deliveryTitle={automationDeliveryDetail(row, t)}
+                        groupHover
+                        primaryAction="toggle"
+                        active={active}
+                        actionBusy={busy}
+                        onPrimaryAction={() => void mutate(row, 'toggle')}
+                        previewExpandable
+                        onOpenDetails={() => setSelectedId(row.id)}
+                        menu={
+                          <div
+                            className="relative shrink-0"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              title={t('automationCardMenu')}
+                              onClick={() => setMenuId(menuId === row.id ? null : row.id)}
+                              className="rounded-md p-1 text-ds-faint opacity-70 transition hover:bg-ds-hover hover:text-ds-ink hover:opacity-100"
                             >
-                              {row.prompt}
-                            </p>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                            {menuId === row.id && (
+                              <>
+                                <div
+                                  className="fixed inset-0 z-50"
+                                  onClick={() => setMenuId(null)}
+                                />
+                                <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg">
+                                  <button
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
+                                    onClick={() => {
+                                      setSelectedId(row.id)
+                                      setMenuId(null)
+                                    }}
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                    {t('automationDetailsAction')}
+                                  </button>
+                                  <button
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
+                                    onClick={() => {
+                                      setEditing(row)
+                                      setMenuId(null)
+                                    }}
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    {t('automationEditAction')}
+                                  </button>
+                                  <button
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-ds-ink hover:bg-ds-hover"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      void mutate(row, 'run')
+                                      setMenuId(null)
+                                    }}
+                                  >
+                                    <Zap className="h-3.5 w-3.5" />
+                                    {t('automationRunNowAction')}
+                                  </button>
+                                  <button
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      void mutate(row, 'delete')
+                                      setMenuId(null)
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    {t('automationDeleteAction')}
+                                  </button>
+                                </div>
+                              </>
+                            )}
                           </div>
-                        </div>
-                        <div className="mt-3 flex items-center justify-between border-t border-ds-border-muted pt-3">
-                          <span className="flex items-center gap-1.5 text-[12px] text-ds-faint">
-                            <Clock className="h-3.5 w-3.5" />
-                            {formatAutomationRrule(row.rrule)}
-                          </span>
-                          {row.delivery?.mode ? (
-                            <span
-                              className="truncate text-[11px] text-ds-faint"
-                              title={deliveryLabel(row, t)}
-                            >
-                              {deliveryLabel(row, t)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
+                        }
+                      />
                     )
                   })}
                 </div>
@@ -847,24 +641,33 @@ export function AutomationCenter({
       </div>
 
       {/* Detail drawer */}
-      {selected && (
-        <div className="ds-glass ds-glass-strong absolute inset-y-0 right-0 z-40 flex w-[440px] flex-col">
-          <div className="flex items-start justify-between border-b border-ds-border-muted px-5 py-4">
-            <div className="min-w-0">
-              <h2 className="truncate text-[16px] font-semibold text-ds-ink">{selected.name}</h2>
-              <p className="mt-1 text-[12px] text-ds-muted">
-                {formatAutomationRrule(selected.rrule)} ·{' '}
-                {selected.status === 'active' ? t('automationEnabled') : t('automationPaused')}
-              </p>
+      {selected ? (
+        <>
+          <button
+            type="button"
+            aria-label={t('automationCloseDetail')}
+            className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
+            onClick={() => setSelectedId(null)}
+          />
+          <div className="ds-automation-drawer ds-glass ds-glass-strong fixed inset-y-0 right-0 z-[90] flex w-full max-w-[440px] flex-col shadow-2xl">
+            <div className="flex items-start justify-between border-b border-ds-border-muted px-5 py-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-[16px] font-semibold text-ds-ink">{selected.name}</h2>
+                <p className="mt-1 text-[12px] text-ds-muted">
+                  {formatAutomationRrule(selected.rrule)} ·{' '}
+                  {selected.status === 'active' ? t('automationEnabled') : t('automationPaused')}
+                </p>
+              </div>
+              <button
+                type="button"
+                title={t('automationCloseDetail')}
+                onClick={() => setSelectedId(null)}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-ds-border px-2.5 py-1.5 text-[12px] text-ds-muted hover:bg-ds-hover"
+              >
+                <X className="h-3.5 w-3.5" />
+                {t('automationCloseDetail')}
+              </button>
             </div>
-            <button
-              title={t('automationClose')}
-              onClick={() => setSelectedId(null)}
-              className="rounded-md p-1.5 text-ds-muted hover:bg-ds-hover"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
           <div className="min-h-0 flex-1 overflow-auto p-5">
             <button
               type="button"
@@ -895,7 +698,7 @@ export function AutomationCenter({
               </div>
               <div className="col-span-2">
                 <dt className="text-ds-faint">{t('automationColDelivery')}</dt>
-                <dd className="mt-1 text-ds-ink">{deliveryLabel(selected, t)}</dd>
+                <dd className="mt-1 text-ds-ink">{automationDeliveryDetail(selected, t)}</dd>
               </div>
             </dl>
             <div className="mt-5 flex items-center justify-between">
@@ -972,8 +775,9 @@ export function AutomationCenter({
               )}
             </div>
           </div>
-        </div>
-      )}
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

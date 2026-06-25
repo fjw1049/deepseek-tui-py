@@ -10,6 +10,8 @@ import {
   runtimeSpawnCwd,
   runtimeSpawnEnv
 } from './resolve-python-runtime'
+import { applyStoredEmailPasswordToEnv } from './channel-secrets'
+import { readEmailPasswordEnvKey } from './email-automation-config'
 import { resolveDeepseekConfigPath } from './deepseek-config'
 import { getRuntimeBaseUrl } from './settings-store'
 
@@ -343,6 +345,15 @@ export async function reclaimDeepseekPort(
 }
 
 /**
+ * Reload runtime env (e.g. after email secret change) without disturbing a stopped runtime.
+ */
+export async function restartDeepseekChildIfRunning(settings: AppSettingsV1): Promise<void> {
+  if (!isDeepseekChildRunning()) return
+  await stopDeepseekChildAndWait()
+  await startDeepseekChild(settings)
+}
+
+/**
  * Spawn Python `deepseek-tui serve --http` (Workbench) or a custom binary when configured.
  */
 export async function startDeepseekChild(settings: AppSettingsV1): Promise<void> {
@@ -385,6 +396,8 @@ export async function startDeepseekChild(settings: AppSettingsV1): Promise<void>
 
   const env = runtimeSpawnEnv()
   if (settings.deepseek.apiKey) env.DEEPSEEK_API_KEY = settings.deepseek.apiKey
+  const passwordEnvKey = await readEmailPasswordEnvKey()
+  await applyStoredEmailPasswordToEnv(env, passwordEnvKey)
 
   const proc = spawn(launcher.bin, args, {
     env,

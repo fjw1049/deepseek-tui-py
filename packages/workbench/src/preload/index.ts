@@ -44,6 +44,17 @@ const api = {
   getFeishuConfig: () => ipcRenderer.invoke('feishu:config:read'),
   setFeishuConfig: (config) => ipcRenderer.invoke('feishu:config:write', config),
   openFeishuConfigDir: () => ipcRenderer.invoke('feishu:config:open-dir'),
+  startFeishuRegister: (options) => ipcRenderer.invoke('feishu:register-start', options ?? {}),
+  cancelFeishuRegister: () => ipcRenderer.invoke('feishu:register-cancel'),
+  onFeishuRegisterEvent: (handler) => {
+    const wrapped = (_: Electron.IpcRendererEvent, payload: Parameters<typeof handler>[0]) =>
+      handler(payload)
+    ipcRenderer.on('feishu:register-event', wrapped)
+    return () => ipcRenderer.removeListener('feishu:register-event', wrapped)
+  },
+  getEmailSecretStatus: () => ipcRenderer.invoke('email:secret:status'),
+  setEmailSecret: (password) => ipcRenderer.invoke('email:secret:set', { password }),
+  clearEmailSecret: () => ipcRenderer.invoke('email:secret:clear'),
   getDeepseekPaths: () => ipcRenderer.invoke('deepseek:paths:get'),
   openHooksDir: () => ipcRenderer.invoke('deepseek:hooks:open-dir'),
   testEndpoint: (protocol, baseUrl, apiKey, model) =>

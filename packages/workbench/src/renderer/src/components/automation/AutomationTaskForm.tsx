@@ -94,6 +94,8 @@ export function AutomationTaskForm({
   const [deliveryTarget, setDeliveryTarget] = useState(initialAutomation?.delivery?.to ?? '')
   const [feishuDefault, setFeishuDefault] = useState('')
   const [emailDefault, setEmailDefault] = useState('')
+  const [feishuChannelReady, setFeishuChannelReady] = useState(false)
+  const [emailChannelReady, setEmailChannelReady] = useState(false)
   const [createPaused, setCreatePaused] = useState(initialAutomation?.status === 'paused')
   const [submitting, setSubmitting] = useState(false)
   const [runningNow, setRunningNow] = useState(false)
@@ -107,18 +109,37 @@ export function AutomationTaskForm({
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const [feishu, mail] = await Promise.all([
+      const [feishuFile, feishuChat, mail, emailSecret] = await Promise.all([
+        window.dsGui.getFeishuConfig(),
         resolveAutomationFeishuChatId(),
-        resolveAutomationMailTo()
+        resolveAutomationMailTo(),
+        window.dsGui.getEmailSecretStatus()
       ])
       if (cancelled) return
-      setFeishuDefault(feishu ?? '')
-      setEmailDefault(mail ?? '')
+      const chatId = feishuChat?.trim() || feishuFile.config.chatId?.trim() || ''
+      const mailTo = mail?.trim() ?? ''
+      setFeishuDefault(chatId)
+      setEmailDefault(mailTo)
+      setFeishuChannelReady(
+        Boolean(feishuFile.config.appId?.trim() && feishuFile.config.appSecret?.trim() && chatId)
+      )
+      setEmailChannelReady(Boolean(mailTo && emailSecret.passwordConfigured))
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (deliveryMode !== 'none' || deliveryTarget.trim()) return
+    if (feishuDefault) {
+      setDeliveryMode('feishu')
+      setDeliveryTarget(feishuDefault)
+    } else if (emailDefault) {
+      setDeliveryMode('email')
+      setDeliveryTarget(emailDefault)
+    }
+  }, [deliveryMode, deliveryTarget, emailDefault, feishuDefault])
 
   useEffect(() => {
     if (deliveryMode === 'feishu') setDeliveryTarget((current) => current || feishuDefault)
@@ -142,6 +163,14 @@ export function AutomationTaskForm({
 
   const submit = async (): Promise<void> => {
     if (!runtimeReady || submitting) return
+    if (deliveryMode === 'feishu' && !feishuChannelReady) {
+      setNotice({ tone: 'error', message: t('automationDeliveryFeishuNotConfigured') })
+      return
+    }
+    if (deliveryMode === 'email' && !emailChannelReady) {
+      setNotice({ tone: 'error', message: t('automationDeliveryEmailNotConfigured') })
+      return
+    }
     setSubmitting(true)
     setNotice(null)
     try {
@@ -159,6 +188,7 @@ export function AutomationTaskForm({
         },
         deliveryMode,
         deliveryTarget,
+        channelDefaults: { feishu: feishuDefault, email: emailDefault },
         createPaused
       })
       const record = initialAutomation
@@ -393,9 +423,9 @@ export function AutomationTaskForm({
                     onChange={(event) => {
                       const next = event.target.value as AutomationDeliveryMode
                       setDeliveryMode(next)
-                      setDeliveryTarget(
-                        next === 'feishu' ? feishuDefault : next === 'email' ? emailDefault : ''
-                      )
+                      if (next === 'feishu' && feishuChannelReady) setDeliveryTarget('')
+                      else if (next === 'email' && emailChannelReady) setDeliveryTarget('')
+                      else if (next === 'none') setDeliveryTarget('')
                     }}
                     className="ds-select rounded-2xl border border-ds-border bg-ds-card py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
                   >
@@ -404,16 +434,29 @@ export function AutomationTaskForm({
                     <option value="email">{t('automationDeliveryEmail')}</option>
                   </select>
                 </label>
-                <label className="grid gap-2">
-                  <input
-                    value={deliveryTarget}
-                    disabled={deliveryMode === 'none'}
-                    onChange={(event) => setDeliveryTarget(event.target.value)}
-                    placeholder={t('automationDeliveryTargetPlaceholder')}
-                    aria-label={t('automationDeliveryTarget')}
-                    className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60 disabled:opacity-50"
-                  />
-                </label>
+                <div className="flex min-h-[52px] items-center">
+                  {deliveryMode === 'none' ? (
+                    <span className="text-[13px] text-ds-faint">{t('automationDeliveryNoneHint')}</span>
+                  ) : deliveryMode === 'feishu' ? (
+                    feishuChannelReady ? (
+                      <span className="text-[13px] text-emerald-700 dark:text-emerald-300">
+                        {t('automationDeliveryFeishuBoundHint')}
+                      </span>
+                    ) : (
+                      <span className="text-[13px] text-amber-700 dark:text-amber-300">
+                        {t('automationDeliveryFeishuNotConfigured')}
+                      </span>
+                    )
+                  ) : emailChannelReady ? (
+                    <span className="text-[13px] text-ds-muted">
+                      {t('automationDeliveryEmailBoundHint', { email: emailDefault })}
+                    </span>
+                  ) : (
+                    <span className="text-[13px] text-amber-700 dark:text-amber-300">
+                      {t('automationDeliveryEmailNotConfigured')}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 

@@ -16,6 +16,7 @@ import {
   type WorkspaceFilePreviewDetail
 } from '../lib/workspace-file-preview'
 import { Sidebar } from './chat/Sidebar'
+import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
@@ -477,10 +478,19 @@ export function Workbench(): ReactElement {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      const target = e.target as HTMLElement | null
+      const typing = Boolean(target?.closest('input, textarea, [contenteditable="true"]'))
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault()
         setRoute('chat')
         void createThread()
+        return
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b' && !typing) {
+        e.preventDefault()
+        setLeftSidebarCollapsed((current) => !current)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -539,6 +549,12 @@ export function Workbench(): ReactElement {
   const toggleLeftSidebar = (): void => {
     setLeftSidebarCollapsed((current) => !current)
   }
+
+  const expandLeftSidebar = (): void => {
+    setLeftSidebarCollapsed(false)
+  }
+
+  const sidebarWrapWidth = leftSidebarWidth
 
   const toggleTerminalPanel = (): void => {
     if (!workspaceRoot.trim()) return
@@ -663,47 +679,46 @@ export function Workbench(): ReactElement {
   return (
     <div
       ref={shellRef}
-      className="ds-workbench-shell ds-drag flex h-full min-h-0 w-full min-w-0"
+      className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
     >
+      {leftSidebarCollapsed ? <SidebarExpandDroplet onExpand={expandLeftSidebar} /> : null}
       {!leftSidebarCollapsed ? (
-        <>
+        <div
+          className="ds-workbench-sidebar-wrap relative min-h-0 shrink-0"
+          style={{ width: sidebarWrapWidth }}
+        >
+          <Sidebar
+            threads={threads}
+            activeThreadId={activeThreadId}
+            runtimeReady={runtimeConnection === 'ready'}
+            onSelectThread={openThread}
+            onDeleteThread={deleteThread}
+            onForkThread={forkThread}
+            onResumeThread={resumeThread}
+            onCompactThread={async (id) => {
+              if (activeThreadId !== id) {
+                setRoute('chat')
+                await selectThread(id)
+              }
+              await compactActiveThread()
+            }}
+            onExportThread={exportThreadToSession}
+            onNewChat={startNewChat}
+            onNewChatInWorkspace={startNewChatInWorkspace}
+            onImportSession={() => setImportSessionOpen(true)}
+            onOpenSettings={(section) => openSettings(section)}
+            onCollapseSidebar={() => setLeftSidebarCollapsed(true)}
+          />
           <div
-            className="ds-workbench-sidebar-wrap relative min-h-0 shrink-0"
-            style={{ width: leftSidebarWidth }}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('sidebarResize')}
+            className="ds-no-drag group absolute inset-y-0 right-0 z-30 w-2 translate-x-1/2 cursor-col-resize"
+            onPointerDown={beginLeftResize}
           >
-            <Sidebar
-              threads={threads}
-              activeThreadId={activeThreadId}
-              runtimeReady={runtimeConnection === 'ready'}
-              onSelectThread={openThread}
-              onDeleteThread={deleteThread}
-              onForkThread={forkThread}
-              onResumeThread={resumeThread}
-              onCompactThread={async (id) => {
-                if (activeThreadId !== id) {
-                  setRoute('chat')
-                  await selectThread(id)
-                }
-                await compactActiveThread()
-              }}
-              onExportThread={exportThreadToSession}
-              onNewChat={startNewChat}
-              onNewChatInWorkspace={startNewChatInWorkspace}
-              onImportSession={() => setImportSessionOpen(true)}
-              onOpenSettings={(section) => openSettings(section)}
-              onCollapseSidebar={() => setLeftSidebarCollapsed(true)}
-            />
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('sidebarResize')}
-              className="ds-no-drag group absolute inset-y-0 right-0 z-30 w-2 translate-x-1/2 cursor-col-resize"
-              onPointerDown={beginLeftResize}
-            >
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
-            </div>
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
           </div>
-        </>
+        </div>
       ) : null}
 
       <main
@@ -713,21 +728,19 @@ export function Workbench(): ReactElement {
       >
         {WORKBENCH_FEATURES.pluginMarketplace && route === 'plugins' ? (
           <>
-            <div className="ds-no-drag shrink-0 px-4 pt-4">
-              <button
-                type="button"
-                onClick={toggleLeftSidebar}
-                className="ds-sidebar-toggle-button"
-                aria-label={leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')}
-                title={leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')}
-              >
-                {leftSidebarCollapsed ? (
-                  <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
-                ) : (
+            {!leftSidebarCollapsed ? (
+              <div className="ds-no-drag shrink-0 px-4 pt-4">
+                <button
+                  type="button"
+                  onClick={toggleLeftSidebar}
+                  className="ds-sidebar-toggle-button"
+                  aria-label={t('sidebarCollapse')}
+                  title={t('sidebarCollapse')}
+                >
                   <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
-                )}
-              </button>
-            </div>
+                </button>
+              </div>
+            ) : null}
             <Suspense fallback={<div className="h-full bg-transparent" />}>
               <PluginMarketplaceView />
             </Suspense>
@@ -789,17 +802,6 @@ export function Workbench(): ReactElement {
             <header className="ds-workbench-topbar relative z-10 shrink-0 border-b border-ds-border-muted/35 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-3 py-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  {leftSidebarCollapsed ? (
-                    <button
-                      type="button"
-                      onClick={toggleLeftSidebar}
-                      className="ds-sidebar-toggle-button shrink-0"
-                      aria-label={t('sidebarExpand')}
-                      title={t('sidebarExpand')}
-                    >
-                      <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
-                    </button>
-                  ) : null}
                   <SessionHeader compact className="min-w-0 flex-1" />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

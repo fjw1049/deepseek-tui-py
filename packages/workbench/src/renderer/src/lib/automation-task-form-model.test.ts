@@ -76,6 +76,32 @@ describe('automation task form model', () => {
     })
   })
 
+  it('uses channel defaults when delivery target is blank', () => {
+    const payload = buildCreateAutomationInput({
+      name: 'Daily report',
+      prompt: 'Check disk usage',
+      workspaceRoot: '/tmp',
+      schedule: {
+        kind: 'daily',
+        onceAt: '',
+        everyHours: '',
+        timeOfDay: '08:00',
+        weekdays: [],
+        customRrule: ''
+      },
+      deliveryMode: 'email',
+      deliveryTarget: '',
+      channelDefaults: { email: 'me@example.com' },
+      createPaused: false
+    })
+
+    expect(payload.delivery).toEqual({
+      mode: 'email',
+      to: 'me@example.com',
+      best_effort: true
+    })
+  })
+
   it('truncates derived names', () => {
     expect(deriveAutomationName('a'.repeat(60))).toBe(`${'a'.repeat(45)}...`)
   })

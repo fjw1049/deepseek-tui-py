@@ -191,7 +191,13 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 
-from deepseek_tui.automation.inbox import append_feishu_inbound, feishu_send_text
+from deepseek_tui.automation.inbox import (
+    append_feishu_inbound,
+    default_mail_to_from_config,
+    email_send_text,
+    feishu_receive_id_type,
+    feishu_send_text,
+)
 from deepseek_tui.automation.pipeline import run_feishu_inbound_agent
 
 router_automation = APIRouter(tags=["automation"])
@@ -210,8 +216,14 @@ class FeishuInboundBody(BaseModel):
 
 class FeishuTestSendBody(BaseModel):
     receive_id: str = Field(min_length=1)
-    text: str = "DeepSeek 飞书连接测试"
-    receive_id_type: str = "open_id"
+    text: str = "DeepSeek Feishu connection test"
+    receive_id_type: str | None = None
+
+
+class EmailTestSendBody(BaseModel):
+    to_addr: str | None = None
+    subject: str = "DeepSeek email connection test"
+    text: str = "This is a test email confirming SMTP works."
 
 
 class TriggerBody(BaseModel):
@@ -328,15 +340,41 @@ async def feishu_inbound(
 @ingress_router.post("/feishu/test-send")
 async def feishu_test_send(body: FeishuTestSendBody) -> dict[str, Any]:
     """Send a short text to verify ``[automation.feishu]`` in config.toml."""
+    rid_type = (
+        body.receive_id_type.strip()
+        if body.receive_id_type and body.receive_id_type.strip()
+        else feishu_receive_id_type(body.receive_id)
+    )
     try:
         await feishu_send_text(
             receive_id=body.receive_id.strip(),
-            text=body.text.strip() or "DeepSeek 飞书连接测试",
-            receive_id_type=body.receive_id_type.strip() or "open_id",
+            text=body.text.strip() or "DeepSeek Feishu connection test",
+            receive_id_type=rid_type,
         )
     except Exception as exc:
         raise api_error(502, str(exc), error="feishu_send_failed") from exc
     return {"ok": True}
+
+
+@ingress_router.post("/email/test-send")
+async def email_test_send(body: EmailTestSendBody) -> dict[str, Any]:
+    """Send a short message to verify ``[automation.email]`` SMTP settings."""
+    to_addr = (body.to_addr or default_mail_to_from_config() or "").strip()
+    if not to_addr:
+        raise api_error(
+            400,
+            "Recipient address is required (set automation.mail_to or pass to_addr).",
+            error="email_recipient_missing",
+        )
+    try:
+        await email_send_text(
+            to_addr=to_addr,
+            subject=body.subject.strip() or "DeepSeek email connection test",
+            body=body.text.strip() or "This is a test email confirming SMTP works.",
+        )
+    except Exception as exc:
+        raise api_error(502, str(exc), error="email_send_failed") from exc
+    return {"ok": True, "to": to_addr}
 
 
 @automations_router.get("")

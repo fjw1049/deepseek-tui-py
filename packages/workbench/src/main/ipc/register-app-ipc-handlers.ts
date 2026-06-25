@@ -14,7 +14,9 @@ import type {
 } from '../../shared/ds-gui-api'
 import {
   deepseekConfigContentSchema,
+  emailSecretPayloadSchema,
   feishuConfigPayloadSchema,
+  feishuRegisterStartPayloadSchema,
   defaultPathSchema,
   gitBranchPayloadSchema,
   logErrorPayloadSchema,
@@ -62,6 +64,19 @@ import {
   resolveUserDeepseekDir
 } from '../deepseek-paths'
 import { readFeishuConfigFile, writeFeishuConfigFile } from '../feishu-config'
+import {
+  clearEmailSmtpPassword,
+  isEmailSecretStorageAvailable,
+  resolveEmailPasswordStatus,
+  setEmailSmtpPassword
+} from '../channel-secrets'
+import { readEmailPasswordEnvKey } from '../email-automation-config'
+import {
+  cancelFeishuRegisterApp,
+  runFeishuRegisterApp,
+  type FeishuRegisterTarget
+} from '../feishu-register-service'
+import { restartDeepseekChildIfRunning } from '../deepseek-process'
 import {
   expandHomePath,
   listEditorsResult,
@@ -605,6 +620,44 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
         message: error instanceof Error ? error.message : String(error)
       }
     }
+  })
+
+  ipcMain.handle('feishu:register-start', async (event, payload: unknown) => {
+    const request = parseIpcPayload(
+      'feishu:register-start',
+      feishuRegisterStartPayloadSchema,
+      payload
+    )
+    const target: FeishuRegisterTarget = request.target ?? 'feishu'
+    return runFeishuRegisterApp({ target, webContents: event.sender })
+  })
+
+  ipcMain.handle('feishu:register-cancel', async () => {
+    cancelFeishuRegisterApp()
+    return { ok: true as const }
+  })
+
+  ipcMain.handle('email:secret:status', async () => {
+    const passwordEnv = await readEmailPasswordEnvKey()
+    const passwordStatus = await resolveEmailPasswordStatus(passwordEnv)
+    return {
+      secureStorageAvailable: isEmailSecretStorageAvailable(),
+      passwordEnv,
+      ...passwordStatus
+    }
+  })
+
+  ipcMain.handle('email:secret:set', async (_, payload: unknown) => {
+    const { password } = parseIpcPayload('email:secret:set', emailSecretPayloadSchema, payload)
+    await setEmailSmtpPassword(password)
+    const settings = await store.load()
+    await restartDeepseekChildIfRunning(settings)
+    return { ok: true as const }
+  })
+
+  ipcMain.handle('email:secret:clear', async () => {
+    await clearEmailSmtpPassword()
+    return { ok: true as const }
   })
 
   ipcMain.handle('deepseek:paths:get', async () => resolveDeepseekPaths())

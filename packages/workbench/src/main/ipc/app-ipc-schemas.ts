@@ -55,10 +55,22 @@ export const deepseekConfigContentSchema = z.string().max(MAX_CONFIG_FILE_BYTES)
 
 export const feishuConfigPayloadSchema = z
   .object({
-    appId: trimmedString(200),
-    appSecret: trimmedString(500),
-    domain: trimmedString(50),
-    chatId: trimmedString(200)
+    appId: z.string().trim().max(200),
+    appSecret: z.string().trim().max(500),
+    domain: z.string().trim().max(50),
+    chatId: z.string().trim().max(200)
+  })
+  .strict()
+
+export const feishuRegisterStartPayloadSchema = z
+  .object({
+    target: z.enum(['feishu', 'lark']).optional()
+  })
+  .strict()
+
+export const emailSecretPayloadSchema = z
+  .object({
+    password: z.string().trim().min(1).max(500)
   })
   .strict()
 

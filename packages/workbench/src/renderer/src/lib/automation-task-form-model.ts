@@ -22,6 +22,8 @@ export type AutomationTaskDraft = {
   schedule: AutomationScheduleDraft
   deliveryMode: AutomationDeliveryMode
   deliveryTarget: string
+  /** Fallback targets from channel center when deliveryTarget is blank. */
+  channelDefaults?: { feishu?: string; email?: string }
   createPaused: boolean
 }
 
@@ -85,6 +87,14 @@ export function buildAutomationSchedulePayload(
   return { rrule }
 }
 
+export function resolveEffectiveDeliveryTarget(draft: AutomationTaskDraft): string {
+  const explicit = draft.deliveryTarget.trim()
+  if (explicit) return explicit
+  if (draft.deliveryMode === 'feishu') return draft.channelDefaults?.feishu?.trim() ?? ''
+  if (draft.deliveryMode === 'email') return draft.channelDefaults?.email?.trim() ?? ''
+  return ''
+}
+
 export function buildCreateAutomationInput(draft: AutomationTaskDraft): CreateAutomationInput {
   const prompt = draft.prompt.trim()
   if (!prompt) throw new Error('prompt_required')
@@ -92,7 +102,7 @@ export function buildCreateAutomationInput(draft: AutomationTaskDraft): CreateAu
   const schedule = buildAutomationSchedulePayload(draft.schedule)
   const workspaceRoot = draft.workspaceRoot.trim()
   const status: AutomationStatus = draft.createPaused ? 'paused' : 'active'
-  const deliveryTarget = draft.deliveryTarget.trim()
+  const effectiveTarget = resolveEffectiveDeliveryTarget(draft)
 
   return {
     name: draft.name.trim() || deriveAutomationName(prompt),
@@ -102,11 +112,11 @@ export function buildCreateAutomationInput(draft: AutomationTaskDraft): CreateAu
     cwds: workspaceRoot ? [workspaceRoot] : [],
     status,
     delivery:
-      draft.deliveryMode === 'none' || !deliveryTarget
+      draft.deliveryMode === 'none' || !effectiveTarget
         ? undefined
         : {
             mode: draft.deliveryMode,
-            to: deliveryTarget,
+            to: effectiveTarget,
             best_effort: true
           }
   }

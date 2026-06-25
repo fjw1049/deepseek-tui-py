@@ -63,6 +63,33 @@ export type FeishuConfigFileResult = {
   config: FeishuConfigV1
 }
 export type FeishuConfigSaveResult = { ok: true; path: string }
+
+export type FeishuRegisterTarget = 'feishu' | 'lark'
+
+export type FeishuRegisterEvent =
+  | { type: 'qr'; url: string; expireIn: number }
+  | { type: 'status'; status: string; interval?: number }
+
+export type FeishuRegisterStartResult =
+  | {
+      ok: true
+      result: {
+        appId: string
+        appSecret: string
+        domain: FeishuRegisterTarget
+        openId?: string
+        tenantBrand?: 'feishu' | 'lark'
+      }
+    }
+  | { ok: false; message: string }
+
+export type EmailSecretStatusResult = {
+  secureStorageAvailable: boolean
+  passwordEnv: string
+  hasStoredPassword: boolean
+  hasEnvPassword: boolean
+  passwordConfigured: boolean
+}
 export type DeepseekRuntimeDiagnosticIssue = {
   severity: 'info' | 'warning' | 'error'
   code: string
@@ -230,6 +257,12 @@ export type DsGuiApi = {
   getFeishuConfig: () => Promise<FeishuConfigFileResult>
   setFeishuConfig: (config: FeishuConfigV1) => Promise<FeishuConfigSaveResult>
   openFeishuConfigDir: () => Promise<PathOpenResult>
+  startFeishuRegister: (options?: { target?: FeishuRegisterTarget }) => Promise<FeishuRegisterStartResult>
+  cancelFeishuRegister: () => Promise<{ ok: true }>
+  onFeishuRegisterEvent: (handler: (payload: FeishuRegisterEvent) => void) => () => void
+  getEmailSecretStatus: () => Promise<EmailSecretStatusResult>
+  setEmailSecret: (password: string) => Promise<{ ok: true }>
+  clearEmailSecret: () => Promise<{ ok: true }>
   getDeepseekPaths: () => Promise<{
     home: string
     configPath: string
