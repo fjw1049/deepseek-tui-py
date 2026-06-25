@@ -108,7 +108,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const normalized: SettingsRouteSection =
         section === 'agents'
           ? 'models'
-          : section === 'runtime'
+          : section === 'runtime' || section === 'claw'
             ? 'general'
             : section
       set({

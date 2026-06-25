@@ -32,10 +32,9 @@ export type SettingsRouteSection =
   | 'mcp'
   | 'skill'
   | 'hooks'
-  | 'claw'
 
 /** @deprecated Use `models` or `general`; kept for deep-link normalization. */
-export type LegacySettingsRouteSection = SettingsRouteSection | 'agents' | 'runtime'
+export type LegacySettingsRouteSection = SettingsRouteSection | 'agents' | 'runtime' | 'claw'
 export type AppRoute = 'chat' | 'settings' | 'plugins' | 'automation' | 'channels'
 export type PluginHostRoute = 'chat'
 export type ThreadWarmupStatus = 'idle' | 'warming' | 'ready' | 'failed'

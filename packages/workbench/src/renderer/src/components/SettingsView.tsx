@@ -26,7 +26,6 @@ import {
   Settings,
   Shield,
   Sparkles,
-  CalendarClock,
   PawPrint,
   Pencil,
   Trash2,
@@ -52,7 +51,6 @@ import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
-import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
@@ -702,10 +700,6 @@ export function SettingsView(): ReactElement {
             <Anchor className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('hooks')}
           </button>
-          <button type="button" className={catCls('claw')} onClick={() => openSettings('claw')}>
-            <CalendarClock className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('claw')}
-          </button>
           <button type="button" className={catCls('permissions')} onClick={() => openSettings('permissions')}>
             <Shield className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('permissions')}
@@ -1275,13 +1269,6 @@ export function SettingsView(): ReactElement {
                   </div>
                 </SettingsCard>
           )}
-
-          {category === 'claw' && form ? (
-            <ClawSettingsPanel
-              form={form}
-              onClawPatch={(patch) => update({ claw: patch })}
-            />
-          ) : null}
 
           {category === 'hooks' && (
             <SettingsCard title={t('hooks')}>

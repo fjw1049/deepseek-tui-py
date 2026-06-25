@@ -107,6 +107,17 @@ export function SidebarProjectsSection({
     searchInputRef.current?.focus()
   }, [searchOpen])
 
+  useEffect(() => {
+    if (!activeThreadId) return
+    const activeThread = threads.find((thread) => thread.id === activeThreadId)
+    if (!activeThread) return
+    const workspacePath = normalizeWorkspaceRoot(activeThread.workspace)
+    if (!workspacePath) return
+    setCollapsed((current) =>
+      current[workspacePath] === false ? current : { ...current, [workspacePath]: false }
+    )
+  }, [activeThreadId, threads])
+
   const groups = useMemo(() => {
     const map = new Map<string, NormalizedThread[]>()
     const selectedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
@@ -194,7 +205,8 @@ export function SidebarProjectsSection({
 
   const renderWorkspace = ([workspacePath, list]: WorkspaceGroup): ReactElement => {
     const folderName = workspaceLabelFromPath(workspacePath)
-    const isCollapsed = collapsed[workspacePath] === true
+    const searching = searchQuery.trim().length > 0
+    const isCollapsed = searching ? false : collapsed[workspacePath] !== false
     const sortedThreads = [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const workspaceExpanded = expandedWorkspaces[workspacePath] === true
     const hasOverflow = sortedThreads.length > 5
@@ -206,7 +218,10 @@ export function SidebarProjectsSection({
           <button
             type="button"
             onClick={() =>
-              setCollapsed((current) => ({ ...current, [workspacePath]: !current[workspacePath] }))
+              setCollapsed((current) => ({
+                ...current,
+                [workspacePath]: current[workspacePath] === false
+              }))
             }
             className="flex min-h-[36px] min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
           >
