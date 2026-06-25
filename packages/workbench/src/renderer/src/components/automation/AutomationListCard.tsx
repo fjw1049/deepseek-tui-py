@@ -1,5 +1,5 @@
-import { useState, type ReactElement, type ReactNode } from 'react'
-import { ChevronDown, Clock } from 'lucide-react'
+import { type ReactElement, type ReactNode } from 'react'
+import { Clock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 const CARD_CLASS =
@@ -52,7 +52,6 @@ export type AutomationListCardProps = {
   active?: boolean
   actionBusy?: boolean
   actionLabel?: string
-  previewExpandable?: boolean
   onPrimaryAction: () => void
   onOpenDetails?: () => void
 }
@@ -70,14 +69,10 @@ export function AutomationListCard({
   active = false,
   actionBusy = false,
   actionLabel,
-  previewExpandable = false,
   onPrimaryAction,
   onOpenDetails
 }: AutomationListCardProps): ReactElement {
   const { t } = useTranslation('common')
-  const [previewExpanded, setPreviewExpanded] = useState(false)
-  const canExpandPreview =
-    previewExpandable && (preview.trim().length > 56 || preview.includes('\n'))
 
   return (
     <div className={groupHover ? `${CARD_CLASS} group` : CARD_CLASS}>
@@ -100,25 +95,9 @@ export function AutomationListCard({
             )}
             {menu}
           </div>
-          <p
-            className={`mt-2 text-[13px] leading-5 text-ds-muted ${
-              previewExpanded ? 'whitespace-pre-wrap' : 'line-clamp-2 overflow-hidden'
-            }`}
-          >
+          <p className="mt-2 line-clamp-2 overflow-hidden text-[13px] leading-5 text-ds-muted">
             {preview}
           </p>
-          {canExpandPreview ? (
-            <button
-              type="button"
-              onClick={() => setPreviewExpanded((open) => !open)}
-              className="mt-1.5 inline-flex items-center gap-0.5 rounded-md bg-ds-subtle px-2 py-0.5 text-[12px] font-medium text-ds-ink hover:bg-ds-hover"
-            >
-              {previewExpanded ? t('automationCardCollapse') : t('automationCardExpand')}
-              <ChevronDown
-                className={`h-3.5 w-3.5 transition ${previewExpanded ? 'rotate-180' : ''}`}
-              />
-            </button>
-          ) : null}
         </div>
       </div>
       <div className="mt-auto flex items-center gap-2 border-t border-ds-border-muted pt-3.5">

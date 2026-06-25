@@ -493,8 +493,6 @@
   "automationRefresh": "刷新",
   "automationClose": "关闭",
   "automationCloseDetail": "收起详情",
-  "automationCardExpand": "展开",
-  "automationCardCollapse": "收起",
   "automationTabTasks": "我的定时任务",
   "automationTabRuns": "执行记录",
   "automationWakeHint": "定时任务仅在电脑保持唤醒时运行",

@@ -555,7 +555,6 @@ export function AutomationCenter({
                         active={active}
                         actionBusy={busy}
                         onPrimaryAction={() => void mutate(row, 'toggle')}
-                        previewExpandable
                         onOpenDetails={() => setSelectedId(row.id)}
                         menu={
                           <div

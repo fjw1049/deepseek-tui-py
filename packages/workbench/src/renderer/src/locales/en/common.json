@@ -493,8 +493,6 @@
   "automationRefresh": "Refresh",
   "automationClose": "Close",
   "automationCloseDetail": "Close details",
-  "automationCardExpand": "Expand",
-  "automationCardCollapse": "Collapse",
   "automationTabTasks": "My scheduled tasks",
   "automationTabRuns": "Run history",
   "automationWakeHint": "Tasks only run while the computer is awake",
