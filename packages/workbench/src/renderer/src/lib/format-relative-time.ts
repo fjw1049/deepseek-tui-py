@@ -26,6 +26,25 @@ function formatDurationCompact(totalSeconds: number): string {
   return `${Math.floor(days / 30)}mo`
 }
 
+function formatDurationLargestUnit(totalSeconds: number): string {
+  const sec = Math.max(0, Math.floor(totalSeconds))
+  if (sec < 60) return `${sec}s`
+
+  const minutes = Math.floor(sec / 60)
+  if (minutes < 60) return `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d`
+
+  const weeks = Math.floor(days / 7)
+  if (weeks < 5) return `${weeks}w`
+
+  return `${Math.floor(days / 30)}mo`
+}
+
 /** Compact elapsed-time label for narrow sidebars, e.g. `11s`, `3m`, `1h22m3s`. */
 export function formatRelativeTimeCompact(input: string): string {
   const date = new Date(input)
@@ -36,6 +55,18 @@ export function formatRelativeTimeCompact(input: string): string {
   const elapsedSec = Math.floor((Date.now() - date.getTime()) / 1000)
   if (elapsedSec < 0) return '0s'
   return formatDurationCompact(elapsedSec)
+}
+
+/** Sidebar-friendly elapsed-time label using only the largest unit, e.g. `6m`, `1h`, `2d`. */
+export function formatRelativeTimeLargestUnit(input: string): string {
+  const date = new Date(input)
+  if (Number.isNaN(date.getTime())) {
+    return input
+  }
+
+  const elapsedSec = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (elapsedSec < 0) return '0s'
+  return formatDurationLargestUnit(elapsedSec)
 }
 
 export function formatRelativeTime(input: string, locale: string): string {

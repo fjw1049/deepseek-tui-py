@@ -4,20 +4,18 @@ import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
   ChevronRight,
-  Folder,
-  FolderOpen,
   LayoutGrid,
   Loader2,
-  MessageSquare,
   Plus,
   Trash2,
   GitFork,
   RotateCcw,
   Archive,
-  Download
+  Download,
+  Search
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
-import { formatRelativeTimeCompact } from '../../lib/format-relative-time'
+import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 
@@ -43,6 +41,37 @@ type SidebarProjectsSectionProps = {
   t: (k: string, opts?: Record<string, unknown>) => string
 }
 
+type WorkspaceGroup = [string, NormalizedThread[]]
+
+const PROJECT_AVATAR_PALETTE = [
+  'bg-amber-400/18 text-amber-700 dark:text-amber-300',
+  'bg-violet-400/18 text-violet-700 dark:text-violet-300',
+  'bg-sky-400/18 text-sky-700 dark:text-sky-300',
+  'bg-emerald-400/18 text-emerald-700 dark:text-emerald-300',
+  'bg-rose-400/18 text-rose-700 dark:text-rose-300',
+  'bg-orange-400/18 text-orange-700 dark:text-orange-300'
+] as const
+
+function workspaceAvatarClass(path: string): string {
+  let hash = 0
+  for (let i = 0; i < path.length; i += 1) {
+    hash = path.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return PROJECT_AVATAR_PALETTE[Math.abs(hash) % PROJECT_AVATAR_PALETTE.length]
+}
+
+function workspaceAvatarGlyph(label: string): string {
+  const trimmed = label.trim()
+  if (!trimmed) return '#'
+  const first = trimmed[0]?.toUpperCase()
+  return first && /[A-Z0-9]/i.test(first) ? first : '#'
+}
+
+function latestWorkspaceActivity(list: NormalizedThread[]): number {
+  if (list.length === 0) return 0
+  return Math.max(...list.map((thread) => Date.parse(thread.updatedAt)))
+}
+
 export function SidebarProjectsSection({
   threads,
   activeThreadId,
@@ -51,7 +80,6 @@ export function SidebarProjectsSection({
   busy,
   watchTurnCompletion,
   unreadThreadIds,
-  locale,
   onPickWorkspace,
   onRemoveWorkspace,
   onCreateThreadInWorkspace,
@@ -69,6 +97,7 @@ export function SidebarProjectsSection({
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
   const [exportingThreadIds, setExportingThreadIds] = useState<Record<string, boolean>>({})
   const [exportNotice, setExportNotice] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const groups = useMemo(() => {
     const map = new Map<string, NormalizedThread[]>()
@@ -88,12 +117,30 @@ export function SidebarProjectsSection({
       map.set(selectedWorkspace, [])
     }
 
-    return Array.from(map.entries()).sort(([a], [b]) => {
-      if (a === selectedWorkspace && b !== selectedWorkspace) return -1
-      if (b === selectedWorkspace && a !== selectedWorkspace) return 1
-      return a.localeCompare(b)
+    return Array.from(map.entries()).sort(([pathA, listA], [pathB, listB]) => {
+      const activityDiff = latestWorkspaceActivity(listB) - latestWorkspaceActivity(listA)
+      if (activityDiff !== 0) return activityDiff
+      return workspaceLabelFromPath(pathA).localeCompare(workspaceLabelFromPath(pathB))
     })
   }, [threads, workspaceRoot])
+
+  const filteredGroups = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return groups
+
+    const result: WorkspaceGroup[] = []
+    for (const [workspacePath, list] of groups) {
+      const folderName = workspaceLabelFromPath(workspacePath).toLowerCase()
+      const pathMatch = folderName.includes(query) || workspacePath.toLowerCase().includes(query)
+      const matchingThreads = list.filter((thread) => thread.title.toLowerCase().includes(query))
+      if (pathMatch) {
+        result.push([workspacePath, list])
+      } else if (matchingThreads.length > 0) {
+        result.push([workspacePath, matchingThreads])
+      }
+    }
+    return result
+  }, [groups, searchQuery])
 
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
@@ -137,169 +184,188 @@ export function SidebarProjectsSection({
     }
   }
 
+  const renderWorkspace = ([workspacePath, list]: WorkspaceGroup): ReactElement => {
+    const folderName = workspaceLabelFromPath(workspacePath)
+    const isCollapsed = collapsed[workspacePath] === true
+    const sortedThreads = [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    const workspaceExpanded = expandedWorkspaces[workspacePath] === true
+    const hasOverflow = sortedThreads.length > 5
+    const visibleThreads = workspaceExpanded ? sortedThreads : sortedThreads.slice(0, 5)
+
+    return (
+      <div key={workspacePath} className="mb-1">
+        <div className="ds-sidebar-workspace group" title={workspacePath}>
+          <button
+            type="button"
+            onClick={() =>
+              setCollapsed((current) => ({ ...current, [workspacePath]: !current[workspacePath] }))
+            }
+            className="flex min-h-[36px] min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+          >
+            {isCollapsed ? (
+              <ChevronRight className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
+            ) : (
+              <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
+            )}
+            <span
+              className={`ds-sidebar-project-avatar ${workspaceAvatarClass(workspacePath)}`}
+              aria-hidden
+            >
+              {workspaceAvatarGlyph(folderName)}
+            </span>
+            <span className="ds-sidebar-project-label min-w-0 flex-1 truncate">{folderName}</span>
+            <span className="ds-sidebar-project-count">{list.length}</span>
+          </button>
+          <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onCreateThreadInWorkspace(workspacePath)
+              }}
+              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-ds-ink"
+              title={t('sidebarWorkspaceNewThread')}
+              aria-label={t('sidebarWorkspaceNewThread')}
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                void handleRemoveWorkspace(workspacePath)
+              }}
+              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-red-500"
+              title={t('sidebarWorkspaceRemove')}
+              aria-label={t('sidebarWorkspaceRemove')}
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+            </button>
+          </div>
+        </div>
+
+        {!isCollapsed ? (
+          <div className="ds-sidebar-thread-list mt-0.5 space-y-0.5">
+            {sortedThreads.length === 0 ? (
+              <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                <div className="text-[13px] leading-5 text-ds-faint">{t('sidebarWorkspaceEmpty')}</div>
+                <button
+                  type="button"
+                  onClick={() => onCreateThreadInWorkspace(workspacePath)}
+                  className="shrink-0 rounded-md px-2 py-1 text-[12.5px] font-medium text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
+                >
+                  {t('sidebarWorkspaceNewThread')}
+                </button>
+              </div>
+            ) : (
+              visibleThreads.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  active={activeThreadId === thread.id}
+                  deleting={deletingThreadIds[thread.id] === true}
+                  exporting={exportingThreadIds[thread.id] === true}
+                  showRunning={
+                    thread.status?.trim().toLowerCase() === 'running' ||
+                    (activeThreadId === thread.id && busy) ||
+                    watchTurnCompletion[thread.id] === true
+                  }
+                  showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+                  onSelect={() => onSelectThread(thread.id)}
+                  onDelete={() => void handleDeleteThread(thread)}
+                  onFork={() => void onForkThread(thread.id)}
+                  onResume={() => void onResumeThread(thread.id)}
+                  onCompact={() => void onCompactThread(thread.id)}
+                  onExport={() => void handleExportThread(thread.id)}
+                  canCompact={activeThreadId === thread.id && !busy}
+                />
+              ))
+            )}
+            {hasOverflow ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedWorkspaces((current) => ({
+                    ...current,
+                    [workspacePath]: !workspaceExpanded
+                  }))
+                }
+                className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
+              >
+                {workspaceExpanded
+                  ? t('sidebarWorkspaceShowLess')
+                  : t('sidebarWorkspaceShowMore', {
+                      count: sortedThreads.length - 5
+                    })}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
-    <div className="ds-no-drag flex min-h-0 flex-1 flex-col">
+    <div className="ds-no-drag flex min-h-0 flex-1 flex-col px-1">
       {exportNotice ? (
-        <p className="mx-2 mb-2 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2 text-[12px] leading-5 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/35 dark:text-emerald-100">
+        <p className="mx-1 mb-2 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2 text-[12px] leading-5 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/35 dark:text-emerald-100">
           {exportNotice}
         </p>
       ) : null}
-      <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
-        <span className="ds-sidebar-section-label">{t('sidebarProjects')}</span>
-        <div className="flex items-center gap-0.5">
-          <button
-            type="button"
-            onClick={onImportSession}
-            title={t('importSession')}
-            className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-          >
-            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            onClick={onPickWorkspace}
-            title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-            className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
+
+      <div className="ds-sidebar-projects-panel flex min-h-0 flex-1 flex-col">
+        <div className="ds-sidebar-projects-toolbar">
+          <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
+          <label className="relative min-w-0 flex-1">
+            <Search
+              className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
+              strokeWidth={2}
+              aria-hidden
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={t('sidebarSearchProjects')}
+              className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
+            />
+          </label>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={onImportSession}
+              title={t('importSession')}
+              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+            >
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              onClick={onPickWorkspace}
+              title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
+              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-0.5 pb-2 pt-0.5">
-        {groups.length === 0 ? (
-          <SidebarEmpty
-            runtimeReady={runtimeReady}
-            hasWorkspace={!!workspaceRoot}
-            onPickWorkspace={onPickWorkspace}
-            t={t}
-          />
-        ) : null}
-
-        {groups.map(([workspacePath, list]) => {
-          const folderName = workspaceLabelFromPath(workspacePath)
-          const isCollapsed = collapsed[workspacePath] === true
-          const sortedThreads = [...list].sort(
-            (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-          )
-          const workspaceExpanded = expandedWorkspaces[workspacePath] === true
-          const hasOverflow = sortedThreads.length > 5
-          const visibleThreads = workspaceExpanded
-            ? sortedThreads
-            : sortedThreads.slice(0, 5)
-          return (
-            <div key={workspacePath} className="mb-2">
-              <div className="ds-sidebar-workspace group" title={workspacePath}>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCollapsed((current) => ({ ...current, [workspacePath]: !current[workspacePath] }))
-                  }
-                  className="flex min-h-[40px] min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2.5 text-left"
-                >
-                  {isCollapsed ? (
-                    <ChevronRight className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
-                  ) : (
-                    <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
-                  )}
-                  {isCollapsed ? (
-                    <Folder className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.75} />
-                  ) : (
-                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.75} />
-                  )}
-                  <span className="ds-sidebar-project-label min-w-0 flex-1 truncate">{folderName}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onCreateThreadInWorkspace(workspacePath)
-                  }}
-                  className="shrink-0 rounded-md p-1 text-ds-faint opacity-45 transition-all duration-200 hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-                  title={t('sidebarWorkspaceNewThread')}
-                  aria-label={t('sidebarWorkspaceNewThread')}
-                >
-                  <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void handleRemoveWorkspace(workspacePath)
-                  }}
-                  className="mr-1 shrink-0 rounded-md p-1 text-ds-faint opacity-45 transition-all duration-200 hover:bg-ds-hover/80 hover:text-red-500 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-                  title={t('sidebarWorkspaceRemove')}
-                  aria-label={t('sidebarWorkspaceRemove')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-                </button>
-              </div>
-
-              {!isCollapsed ? (
-                <div className="mt-1 space-y-1 pl-2">
-                  {sortedThreads.length === 0 ? (
-                    <div className="flex items-center justify-between gap-2 px-2 py-1">
-                      <div className="text-[13.5px] leading-5 text-ds-faint">
-                        {t('sidebarWorkspaceEmpty')}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => onCreateThreadInWorkspace(workspacePath)}
-                        className="shrink-0 rounded-md px-2 py-1 text-[13px] font-medium text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
-                      >
-                        {t('sidebarWorkspaceNewThread')}
-                      </button>
-                    </div>
-                  ) : (
-                    visibleThreads.map((thread) => (
-                      <ThreadRow
-                        key={thread.id}
-                        thread={thread}
-                        active={activeThreadId === thread.id}
-                        deleting={deletingThreadIds[thread.id] === true}
-                        exporting={exportingThreadIds[thread.id] === true}
-                        locale={locale}
-                        showRunning={
-                          thread.status?.trim().toLowerCase() === 'running' ||
-                          (activeThreadId === thread.id && busy) ||
-                          watchTurnCompletion[thread.id] === true
-                        }
-                        showUnread={
-                          unreadThreadIds[thread.id] === true && activeThreadId !== thread.id
-                        }
-                        onSelect={() => onSelectThread(thread.id)}
-                        onDelete={() => void handleDeleteThread(thread)}
-                        onFork={() => void onForkThread(thread.id)}
-                        onResume={() => void onResumeThread(thread.id)}
-                        onCompact={() => void onCompactThread(thread.id)}
-                        onExport={() => void handleExportThread(thread.id)}
-                        canCompact={activeThreadId === thread.id && !busy}
-                      />
-                    ))
-                  )}
-                  {hasOverflow ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedWorkspaces((current) => ({
-                          ...current,
-                          [workspacePath]: !workspaceExpanded
-                        }))
-                      }
-                      className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13.5px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
-                    >
-                      {workspaceExpanded
-                        ? t('sidebarWorkspaceShowLess')
-                        : t('sidebarWorkspaceShowMore', {
-                            count: sortedThreads.length - 5
-                          })}
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          )
-        })}
+        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 pt-1">
+          {filteredGroups.length === 0 ? (
+            groups.length === 0 ? (
+              <SidebarEmpty
+                runtimeReady={runtimeReady}
+                hasWorkspace={!!workspaceRoot}
+                onPickWorkspace={onPickWorkspace}
+                t={t}
+              />
+            ) : (
+              <div className="px-1 py-3 text-[13px] text-ds-faint">{t('sidebarSearchNoResults')}</div>
+            )
+          ) : (
+            filteredGroups.map(renderWorkspace)
+          )}
+        </div>
       </div>
     </div>
   )
@@ -310,7 +376,6 @@ type ThreadRowProps = {
   active: boolean
   deleting: boolean
   exporting: boolean
-  locale: string
   showRunning: boolean
   showUnread: boolean
   canCompact: boolean
@@ -327,7 +392,6 @@ function ThreadRow({
   active,
   deleting,
   exporting,
-  locale,
   showRunning,
   showUnread,
   canCompact,
@@ -340,25 +404,26 @@ function ThreadRow({
 }: ThreadRowProps): ReactElement {
   const { t } = useTranslation('common')
   const showUnreadDot = showUnread && !showRunning
+  const showStatus = showRunning || showUnreadDot
 
   return (
     <div
-      className={`group relative w-full overflow-hidden rounded-[10px] transition-colors duration-200 ${
+      className={`group relative flex min-w-0 items-center overflow-hidden rounded-lg transition-colors duration-200 ${
         active
-          ? 'bg-black/8 text-ds-ink dark:bg-white/[0.055]'
-          : 'hover:bg-ds-hover/50 dark:hover:bg-white/[0.04]'
+          ? 'bg-black/[0.05] text-ds-ink dark:bg-white/[0.06]'
+          : 'hover:bg-ds-hover/45 dark:hover:bg-white/[0.035]'
       }`}
     >
       <span
         aria-hidden
-        className={`absolute bottom-1 top-1 left-0 w-[2px] rounded-full transition-all duration-200 ${
-          active ? 'bg-accent opacity-100' : 'bg-transparent opacity-0'
+        className={`absolute bottom-1.5 top-1.5 left-0 w-[2px] rounded-full transition-all duration-200 ${
+          active ? 'bg-accent opacity-100' : 'opacity-0'
         }`}
       />
       <button
         type="button"
         onClick={onSelect}
-        className="relative flex w-full items-center gap-2 px-2.5 py-2.5 text-left"
+        className="relative flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2 text-left"
         disabled={deleting || exporting}
         aria-label={
           showRunning
@@ -368,37 +433,32 @@ function ThreadRow({
               : thread.title
         }
       >
-        <span
-          className="flex w-4 shrink-0 flex-col items-center justify-center self-center"
-          aria-hidden={!showRunning && !showUnreadDot}
-        >
-          {showRunning ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" strokeWidth={2} />
-          ) : showUnreadDot ? (
-            <span
-              className="block h-2 w-2 shrink-0 rounded-full bg-accent shadow-[0_0_0_1px_rgba(79,124,255,0.2)]"
-              title={t('sidebarThreadUnread')}
-            />
-          ) : null}
-        </span>
-        <MessageSquare
-          className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-accent' : 'text-ds-faint/90'}`}
-          strokeWidth={1.8}
-        />
+        {showStatus ? (
+          <span className="flex w-3 shrink-0 items-center justify-center self-center">
+            {showRunning ? (
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" strokeWidth={2} />
+            ) : (
+              <span
+                className="block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                title={t('sidebarThreadUnread')}
+              />
+            )}
+          </span>
+        ) : null}
         <span
           className={[
-            'ds-sidebar-thread min-w-0 flex-1 truncate pr-14',
-            active || (showUnreadDot && !active) ? 'ds-sidebar-thread--emphasis' : ''
+            'ds-sidebar-thread min-w-0 flex-1 truncate',
+            active || showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
           ].join(' ')}
           title={thread.title}
         >
           {thread.title}
         </span>
-        <span className="ds-sidebar-thread-meta pointer-events-none absolute right-12 top-1/2 max-w-[4.75rem] -translate-y-1/2 truncate transition-opacity duration-200 group-hover:opacity-0">
-          {formatRelativeTimeCompact(thread.updatedAt)}
+        <span className="ds-sidebar-thread-meta shrink-0 group-hover:hidden">
+          {formatRelativeTimeLargestUnit(thread.updatedAt)}
         </span>
       </button>
-      <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
         {canCompact ? (
           <button
             type="button"
@@ -502,9 +562,7 @@ function SidebarEmpty({
         <span className="ds-sidebar-link__icon text-accent">
           <LayoutGrid className="h-4 w-4 shrink-0" strokeWidth={1.75} />
         </span>
-        <span className="min-w-0 flex-1 truncate">
-          {t('selectWorkspace')}
-        </span>
+        <span className="min-w-0 flex-1 truncate">{t('selectWorkspace')}</span>
       </button>
     )
   }

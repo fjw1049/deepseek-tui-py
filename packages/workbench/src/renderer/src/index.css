@@ -939,6 +939,83 @@ textarea {
   color: var(--text-tertiary);
 }
 
+.ds-sidebar-subsection-label {
+  padding: 0.5rem 0.5rem 0.35rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  opacity: 0.72;
+}
+
+.ds-sidebar-search {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--surface-2) 42%, transparent);
+  padding: 0.4rem 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.ds-sidebar-search::placeholder {
+  color: var(--text-tertiary);
+}
+
+.ds-sidebar-search:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ds-border-muted) 65%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 68%, transparent);
+}
+
+[data-theme='dark'] .ds-sidebar-search {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+[data-theme='dark'] .ds-sidebar-search:focus {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ds-sidebar-projects-panel {
+  min-height: 0;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 48%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 32%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+[data-theme='dark'] .ds-sidebar-projects-panel {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.ds-sidebar-projects-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 35%, transparent);
+}
+
+[data-theme='dark'] .ds-sidebar-projects-toolbar {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.ds-sidebar-search--inline {
+  min-height: 1.75rem;
+  padding: 0.25rem 0.5rem 0.25rem 1.625rem;
+  font-size: 0.75rem;
+}
+
 .ds-sidebar-link {
   display: flex;
   width: 100%;
@@ -1026,7 +1103,7 @@ textarea {
   width: 100%;
   align-items: center;
   gap: 0.125rem;
-  border-radius: 10px;
+  border-radius: 9px;
   font-family: var(--font-ui);
   font-size: 0.875rem;
   font-weight: 500;
@@ -1043,10 +1120,40 @@ textarea {
 .ds-sidebar-project-label {
   font: inherit;
   letter-spacing: inherit;
+  color: var(--text-primary);
 }
 
 .ds-sidebar-workspace:hover {
   background: var(--ds-surface-hover);
+}
+
+.ds-sidebar-project-avatar {
+  display: inline-flex;
+  height: 1.375rem;
+  width: 1.375rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.ds-sidebar-project-count {
+  flex-shrink: 0;
+  min-width: 1rem;
+  padding-inline: 0.125rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.ds-sidebar-thread-list {
+  padding-left: 1.25rem;
 }
 
 .ds-sidebar-thread {
