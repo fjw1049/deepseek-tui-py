@@ -941,6 +941,8 @@ samp {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 .ds-trending-loop-viewport:hover > div {

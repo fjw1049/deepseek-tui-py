@@ -102,28 +102,26 @@ export function ModelUsageHeroPanel({
         <div className="relative mt-4 min-h-0 flex-1 overflow-hidden">
           <div
             className={[
-              'absolute inset-0 overflow-y-auto overscroll-contain',
+              'absolute inset-0 flex min-h-0 flex-col overflow-hidden',
               tab === 'overview' ? 'visible' : 'hidden'
             ].join(' ')}
           >
-            <div className="flex min-w-0 flex-col gap-4 pb-4">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <StatTile label={t('usageHeroStatTokens')} value={formatCompactNumber(totalTokens)} />
-                <StatTile
-                  label={t('usageHeroStatTurns')}
-                  value={String(summary?.totals.turns ?? 0)}
-                />
-                <StatTile label={t('usageHeroStatActiveDays')} value={String(activeDays)} />
-                <StatTile
-                  label={t('usageHeroStatTopModel')}
-                  value={topModelName}
-                  scrollValue
-                  title={topModel ? formatComposerModelLabel(topModel.model, composerModelMeta) : undefined}
-                />
-              </div>
-              <div className="min-w-0 rounded-2xl border border-ds-border/70 bg-ds-card/50 px-3 pt-3 pb-4">
-                <UsageActivityHeatmap daily={heatmapDaily} asOfDay={heatmapAsOfDay} />
-              </div>
+            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatTile label={t('usageHeroStatTokens')} value={formatCompactNumber(totalTokens)} />
+              <StatTile
+                label={t('usageHeroStatTurns')}
+                value={String(summary?.totals.turns ?? 0)}
+              />
+              <StatTile label={t('usageHeroStatActiveDays')} value={String(activeDays)} />
+              <StatTile
+                label={t('usageHeroStatTopModel')}
+                value={topModelName}
+                scrollValue
+                title={topModel ? formatComposerModelLabel(topModel.model, composerModelMeta) : undefined}
+              />
+            </div>
+            <div className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ds-border/70 bg-ds-card/50 px-3 py-3">
+              <UsageActivityHeatmap daily={heatmapDaily} asOfDay={heatmapAsOfDay} fillHeight />
             </div>
           </div>
           <div
@@ -145,7 +143,7 @@ export function ModelUsageHeroPanel({
               <p className="mb-2 shrink-0 text-[12px] font-medium text-ds-muted">
                 {t('usageHeroModelListTitle')}
               </p>
-              <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1">
+              <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-1">
                 {modelBuckets.map((bucket, index) => {
                   const share =
                     totalTokens > 0
@@ -202,17 +200,17 @@ function StatTile({
   title?: string
 }): ReactElement {
   return (
-    <div className="min-w-0 rounded-2xl border border-ds-border/70 bg-ds-card/55 px-3 py-2.5">
-      <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-ds-faint">{label}</p>
+    <div className="min-w-0 rounded-2xl border border-ds-border/70 bg-ds-card/55 px-3 py-2">
+      <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-ds-faint">{label}</p>
       {scrollValue ? (
         <div
           className="mt-1 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]"
           title={title ?? value}
         >
-          <p className="text-[15px] font-semibold tabular-nums text-ds-ink">{value}</p>
+          <p className="text-[14px] font-semibold tabular-nums text-ds-ink">{value}</p>
         </div>
       ) : (
-        <p className="mt-1 text-[15px] font-semibold tabular-nums text-ds-ink">{value}</p>
+        <p className="mt-0.5 text-[14px] font-semibold tabular-nums text-ds-ink">{value}</p>
       )}
     </div>
   )

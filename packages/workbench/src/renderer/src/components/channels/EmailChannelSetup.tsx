@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleHelp, Loader2, Save, Send } from 'lucide-react'
+import { Loader2, Save, Send } from 'lucide-react'
 import { upsertTomlSections } from '@shared/toml-section'
 import {
   DEFAULT_EMAIL_PASSWORD_ENV,
@@ -16,6 +16,7 @@ import {
   resolveSimpleEmailProvider,
   type EmailChannelConfig
 } from '../../lib/resolve-automation-email-config'
+import { FieldHelpPopover } from './FieldHelpPopover'
 
 type Props = {
   runtimeReady: boolean
@@ -49,7 +50,6 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [authHelpOpen, setAuthHelpOpen] = useState(false)
 
   const configured = isEmailConfigured(emailConfig, { passwordConfigured })
   const activeProvider = resolveSimpleEmailProvider(emailConfig)
@@ -228,26 +228,13 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
         <label className="grid gap-1">
           <div className="flex items-center gap-1.5">
             <span className="text-[13px] font-medium text-ds-ink">{t('channelEmailAuthCode')}</span>
-            <button
-              type="button"
-              aria-label={t('channelEmailAuthCodeHelpTitle')}
-              aria-expanded={authHelpOpen}
-              onClick={() => setAuthHelpOpen((open) => !open)}
-              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-            >
-              <CircleHelp className="h-3.5 w-3.5" />
-            </button>
+            <FieldHelpPopover
+              title={t('channelEmailAuthCodeHelpTitle')}
+              intro={t('channelEmailAuthCodeHelpIntro')}
+              steps={authHelpSteps}
+              ariaLabel={t('channelEmailAuthCodeHelpTitle')}
+            />
           </div>
-          {authHelpOpen ? (
-            <div className="rounded-lg border border-ds-border-muted bg-ds-main px-3 py-2.5 text-[12px] leading-5 text-ds-muted">
-              <p className="font-medium text-ds-ink">{t('channelEmailAuthCodeHelpTitle')}</p>
-              <ol className="mt-2 list-decimal space-y-1 pl-4">
-                {authHelpSteps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ol>
-            </div>
-          ) : null}
           <input
             type="password"
             className="rounded-lg border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink outline-none focus:border-accent/60"

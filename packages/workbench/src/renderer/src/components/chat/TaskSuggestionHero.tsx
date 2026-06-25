@@ -283,7 +283,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
         <div
           className={[
-            'ds-hero-panel ds-glass flex flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5',
+            'ds-hero-panel ds-glass ds-content-card--interactive flex flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5',
             EMPTY_HERO_PANEL_CLASS
           ].join(' ')}
         >

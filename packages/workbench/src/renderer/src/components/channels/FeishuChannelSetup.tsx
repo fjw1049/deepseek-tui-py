@@ -155,9 +155,6 @@ export function FeishuChannelSetup({ runtimeReady, onConfigured }: Props): React
       <div className="rounded-xl border border-ds-border-muted bg-ds-subtle/40 px-4 py-3">
         <div className="text-[13px] font-medium text-ds-ink">{t('channelFeishuSimpleTitle')}</div>
         <p className="mt-1 text-[12px] leading-5 text-ds-muted">{t('channelFeishuSimpleDesc')}</p>
-        {configured ? (
-          <p className="mt-2 text-[12px] text-emerald-700 dark:text-emerald-300">{t('channelConfigured')}</p>
-        ) : null}
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-1.5 text-[12px] text-ds-muted">

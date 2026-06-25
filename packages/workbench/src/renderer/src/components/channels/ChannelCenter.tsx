@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Info, Loader2, Mail, MessageSquare, Users } from 'lucide-react'
+import { ChevronDown, Info, Loader2, Mail, MessageSquare, Users } from 'lucide-react'
 import type { FeishuConfigV1 } from '@shared/ds-gui-api'
 import { FeishuChannelSetup } from './FeishuChannelSetup'
 import { EmailChannelSetup } from './EmailChannelSetup'
@@ -18,6 +18,61 @@ import {
 } from '../../lib/channel-panel-state'
 
 type Props = { runtimeReady: boolean }
+
+type ChannelCardProps = {
+  icon: ReactNode
+  title: string
+  description: string
+  configured: boolean
+  open: boolean
+  onToggle: () => void
+  contentClassName?: string
+  children: ReactNode
+}
+
+function ChannelCard({
+  icon,
+  title,
+  description,
+  configured,
+  open,
+  onToggle,
+  contentClassName = 'px-5 py-4',
+  children
+}: ChannelCardProps): ReactElement {
+  const { t } = useTranslation('common')
+
+  return (
+    <div className="ds-content-card ds-content-card--interactive rounded-xl">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full cursor-pointer items-center gap-4 px-5 py-4 text-left"
+      >
+        {icon}
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-semibold text-ds-ink">{title}</h2>
+          <p className="mt-0.5 text-[13px] text-ds-muted">{description}</p>
+          {configured ? (
+            <p className="mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+              {t('channelConfigured')}
+            </p>
+          ) : (
+            <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelNotConfigured')}</p>
+          )}
+        </div>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200 ${
+            open ? 'rotate-180' : ''
+          }`}
+          aria-hidden
+        />
+      </button>
+      {open ? <div className={`border-t border-ds-border-muted ${contentClassName}`}>{children}</div> : null}
+    </div>
+  )
+}
 
 const initialPanelState = loadChannelPanelState()
 
@@ -80,9 +135,6 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
   const emailConfigured =
     emailConfig != null && isEmailConfigured(emailConfig, { passwordConfigured: emailPasswordConfigured })
 
-  const btnClass =
-    'shrink-0 rounded-lg bg-ds-ink px-4 py-1.5 text-[13px] font-medium text-ds-card hover:opacity-80'
-
   return (
     <div className="ds-feature-page ds-channel-page ds-page-scroll ds-no-drag h-full overflow-auto px-8 py-10">
       <div className="mx-auto max-w-3xl">
@@ -115,89 +167,54 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            <div className="ds-content-card rounded-xl">
-              <div className="flex items-center gap-4 px-5 py-4">
+            <ChannelCard
+              icon={
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
                   <MessageSquare className="h-5 w-5" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-[15px] font-semibold text-ds-ink">{t('channelFeishuTitle')}</h2>
-                  <p className="mt-0.5 text-[13px] text-ds-muted">{t('channelFeishuDesc')}</p>
-                  {feishuConfigured ? (
-                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelConfigured')}</p>
-                  ) : (
-                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelNotConfigured')}</p>
-                  )}
-                </div>
-                <button type="button" onClick={() => setFeishuOpen(!feishuOpen)} className={btnClass}>
-                  {feishuOpen ? t('channelBtnCollapse') : t('channelBtnConfigure')}
-                </button>
-              </div>
-              {feishuOpen ? (
-                <div className="border-t border-ds-border-muted px-3 py-4">
-                  <FeishuChannelSetup
-                    runtimeReady={runtimeReady}
-                    onConfigured={() => void refreshFeishu()}
-                  />
-                </div>
-              ) : null}
-            </div>
+              }
+              title={t('channelFeishuTitle')}
+              description={t('channelFeishuDesc')}
+              configured={feishuConfigured}
+              open={feishuOpen}
+              onToggle={() => setFeishuOpen((value) => !value)}
+              contentClassName="px-3 py-4"
+            >
+              <FeishuChannelSetup
+                runtimeReady={runtimeReady}
+                onConfigured={() => void refreshFeishu()}
+              />
+            </ChannelCard>
 
-            <div className="ds-content-card rounded-xl">
-              <div className="flex items-center gap-4 px-5 py-4">
+            <ChannelCard
+              icon={
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
                   <Mail className="h-5 w-5" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-[15px] font-semibold text-ds-ink">{t('channelEmailTitle')}</h2>
-                  <p className="mt-0.5 text-[13px] text-ds-muted">{t('channelEmailDesc')}</p>
-                  {emailConfigured ? (
-                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelConfigured')}</p>
-                  ) : (
-                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelNotConfigured')}</p>
-                  )}
-                </div>
-                <button type="button" onClick={() => setEmailOpen(!emailOpen)} className={btnClass}>
-                  {emailOpen ? t('channelBtnCollapse') : t('channelBtnConfigure')}
-                </button>
-              </div>
-              {emailOpen ? (
-                <div className="border-t border-ds-border-muted px-5 py-4">
-                  <EmailChannelSetup
-                    runtimeReady={runtimeReady}
-                    onConfigured={() => void refreshEmail()}
-                  />
-                </div>
-              ) : null}
-            </div>
+              }
+              title={t('channelEmailTitle')}
+              description={t('channelEmailDesc')}
+              configured={emailConfigured}
+              open={emailOpen}
+              onToggle={() => setEmailOpen((value) => !value)}
+            >
+              <EmailChannelSetup runtimeReady={runtimeReady} onConfigured={() => void refreshEmail()} />
+            </ChannelCard>
 
-            <div className="ds-content-card rounded-xl">
-              <div className="flex items-center gap-4 px-5 py-4">
+            <ChannelCard
+              icon={
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
                   <Users className="h-5 w-5" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-[15px] font-semibold text-ds-ink">{t('channelWecomTitle')}</h2>
-                  <p className="mt-0.5 text-[13px] text-ds-muted">{t('channelWecomDesc')}</p>
-                  {wecomConfigured ? (
-                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelConfigured')}</p>
-                  ) : (
-                    <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelNotConfigured')}</p>
-                  )}
-                </div>
-                <button type="button" onClick={() => setWecomOpen(!wecomOpen)} className={btnClass}>
-                  {wecomOpen ? t('channelBtnCollapse') : t('channelBtnConfigure')}
-                </button>
-              </div>
-              {wecomOpen ? (
-                <div className="border-t border-ds-border-muted px-5 py-4">
-                  <WecomChannelSetup
-                    runtimeReady={runtimeReady}
-                    onConfigured={() => void refreshWecom()}
-                  />
-                </div>
-              ) : null}
-            </div>
+              }
+              title={t('channelWecomTitle')}
+              description={t('channelWecomDesc')}
+              configured={wecomConfigured}
+              open={wecomOpen}
+              onToggle={() => setWecomOpen((value) => !value)}
+            >
+              <WecomChannelSetup runtimeReady={runtimeReady} onConfigured={() => void refreshWecom()} />
+            </ChannelCard>
           </div>
         )}
       </div>

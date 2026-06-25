@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, Save, Send } from 'lucide-react'
 import { isWecomWebhookConfigured, parseWecomWebhookKey } from '@shared/wecom-channel'
 import { loadWecomChannelState, saveWecomWebhookKey } from '../../lib/resolve-automation-wecom-config'
+import { FieldHelpPopover } from './FieldHelpPopover'
 
 type Props = {
   runtimeReady: boolean
@@ -18,6 +19,7 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const webhookHelpSteps = t('channelWecomWebhookHelpSteps').split('\n').filter(Boolean)
 
   const loadState = useCallback(async () => {
     try {
@@ -119,7 +121,15 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
       <p className="text-[13px] leading-6 text-ds-muted">{t('channelWecomSimpleDesc')}</p>
 
       <label className="grid gap-1">
-        <span className="text-[13px] font-medium text-ds-ink">{t('channelWecomWebhook')}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[13px] font-medium text-ds-ink">{t('channelWecomWebhook')}</span>
+          <FieldHelpPopover
+            title={t('channelWecomWebhookHelpTitle')}
+            intro={t('channelWecomWebhookHelpIntro')}
+            steps={webhookHelpSteps}
+            ariaLabel={t('channelWecomWebhookHelpTitle')}
+          />
+        </div>
         <input
           value={webhookInput}
           onChange={(event) => {
