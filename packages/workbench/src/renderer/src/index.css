@@ -2344,6 +2344,17 @@ select:focus-visible,
   font-synthesis: none;
 }
 
+.ds-operation-dock-section-label {
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  font-weight: 800;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
 .ds-change-inspector {
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;

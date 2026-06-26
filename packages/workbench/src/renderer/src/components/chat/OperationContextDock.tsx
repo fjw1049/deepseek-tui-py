@@ -126,7 +126,7 @@ export function OperationContextDock({
 
   return (
     <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[22px] px-4 py-3.5">
-      <div className="text-[14px] font-medium text-ds-ink">{t('operationDockToolsTitle')}</div>
+      <div className="ds-operation-dock-section-label">{t('operationDockToolsTitle')}</div>
 
       <button
         type="button"
@@ -181,7 +181,7 @@ export function OperationContextDock({
 
       <div className="my-2 border-t border-ds-border-muted/55" />
 
-      <div className="text-[14px] font-medium text-ds-ink">{t('operationDockGitTitle')}</div>
+      <div className="ds-operation-dock-section-label">{t('operationDockGitTitle')}</div>
 
       <button
         type="button"
@@ -247,8 +247,8 @@ export function OperationContextDock({
       <div className="my-2 border-t border-ds-border-muted/55" />
 
       <div className="flex items-center gap-2">
-        <span className="text-[14px] font-medium text-ds-ink">{t('contextRailProcess')}</span>
-        <span className="text-[12px] tabular-nums text-ds-faint">
+        <span className="ds-operation-dock-section-label">{t('contextRailProcess')}</span>
+        <span className="text-[11px] tabular-nums text-ds-faint">
           {doneCount}/{totalCount}
         </span>
       </div>
