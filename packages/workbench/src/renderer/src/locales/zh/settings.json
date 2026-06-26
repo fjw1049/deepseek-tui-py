@@ -280,6 +280,8 @@
   "autoApplyBlocked": "修正端口后自动应用",
   "workspaceRoot": "默认工作目录",
   "workspaceRootDesc": "首次启动默认使用 ~/.deepseekgui/default_workspace；你也可以改成别的目录。",
+  "defaultEditor": "默认编辑器",
+  "defaultEditorDesc": "打开工作区文件时使用的编辑器或终端。",
   "workspaceRootPlaceholder": "~/.deepseekgui/default_workspace",
   "restoreWorkspaceDefault": "还原默认",
   "browse": "选择目录",

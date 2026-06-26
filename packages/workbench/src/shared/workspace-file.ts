@@ -23,3 +23,30 @@ export type WorkspaceFileResolveResult =
       path: string
     }
   | { ok: false; message: string }
+
+export type WorkspaceTreeEntry = {
+  name: string
+  path: string
+  kind: 'file' | 'directory'
+}
+
+export type WorkspaceListDirectoryResult =
+  | {
+      ok: true
+      path: string
+      entries: WorkspaceTreeEntry[]
+    }
+  | { ok: false; message: string }
+
+export type WorkspaceFileWriteTarget = {
+  path: string
+  workspaceRoot?: string
+  content: string
+}
+
+export type WorkspaceFileWriteResult =
+  | {
+      ok: true
+      path: string
+    }
+  | { ok: false; message: string }

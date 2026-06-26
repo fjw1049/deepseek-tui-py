@@ -144,6 +144,21 @@ export const terminalLifecyclePayloadSchema = z
   })
   .strict()
 
+export const workspaceFileWritePayloadSchema = z
+  .object({
+    path: trimmedString(MAX_PATH_LENGTH),
+    workspaceRoot: optionalTrimmedString(MAX_PATH_LENGTH),
+    content: z.string().max(MAX_BODY_BYTES)
+  })
+  .strict()
+
+export const workspaceListDirectoryPayloadSchema = z
+  .object({
+    workspaceRoot: trimmedString(MAX_PATH_LENGTH),
+    directoryPath: z.string().trim().max(MAX_PATH_LENGTH).optional()
+  })
+  .strict()
+
 export const workspaceFileTargetPayloadSchema = z
   .object({
     path: trimmedString(MAX_PATH_LENGTH),

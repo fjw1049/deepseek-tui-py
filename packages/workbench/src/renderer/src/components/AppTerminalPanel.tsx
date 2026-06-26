@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { FitAddon } from '@xterm/addon-fit'
@@ -7,13 +7,12 @@ import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { readTerminalFontFamily } from '../lib/apply-theme'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
-
-type SessionState = {
-  id: string
-  cwd: string
-  status: 'running' | 'exited'
-  exitCode?: number
-}
+import {
+  closeTerminalSessionById,
+  createTerminalSessionForWorkspace,
+  useTerminalSessionStore,
+  type TerminalXtermMount
+} from '../store/terminal-session-store'
 
 type TerminalHandle = {
   terminal: XTerm
@@ -23,7 +22,9 @@ type TerminalHandle = {
 
 type Props = {
   workspaceRoot: string
-  onClose: () => void
+  mountSurface: TerminalXtermMount
+  mountActive: boolean
+  onClose?: () => void
   className?: string
 }
 
@@ -63,79 +64,75 @@ function readTerminalTheme(): ITheme {
 
 export function AppTerminalPanel({
   workspaceRoot,
+  mountSurface,
+  mountActive,
   onClose,
   className
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [sessions, setSessions] = useState<SessionState[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [creatingSession, setCreatingSession] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
+  const sessions = useTerminalSessionStore((s) => s.sessions)
+  const activeSessionId = useTerminalSessionStore((s) => s.activeSessionId)
+  const creatingSession = useTerminalSessionStore((s) => s.creatingSession)
+  const createError = useTerminalSessionStore((s) => s.createError)
+  const hasStartedInitialSession = useTerminalSessionStore((s) => s.hasStartedInitialSession)
+  const setActiveSessionId = useTerminalSessionStore((s) => s.setActiveSessionId)
+  const updateSession = useTerminalSessionStore((s) => s.updateSession)
+  const markInitialSessionStarted = useTerminalSessionStore((s) => s.markInitialSessionStarted)
+  const setXtermMount = useTerminalSessionStore((s) => s.setXtermMount)
+
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const sessionNodeRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const terminalHandlesRef = useRef<Map<string, TerminalHandle>>(new Map())
-  const sessionsRef = useRef<SessionState[]>([])
-  const hasStartedInitialSession = useRef(false)
   const fitFrameRef = useRef<number | null>(null)
   const trimmedWorkspaceRoot = workspaceRoot.trim()
-
-  sessionsRef.current = sessions
 
   const baseLabel = useMemo(() => {
     const label = workspaceLabelFromPath(workspaceRoot)
     return label || t('terminalPanelTitle')
   }, [t, workspaceRoot])
 
-  const scheduleFit = (sessionId: string | null): void => {
-    if (!sessionId) return
-    if (fitFrameRef.current !== null) {
-      window.cancelAnimationFrame(fitFrameRef.current)
-    }
-    fitFrameRef.current = window.requestAnimationFrame(() => {
-      const handle = terminalHandlesRef.current.get(sessionId)
-      if (!handle) return
-      handle.fitAddon.fit()
-      if (handle.terminal.cols > 0 && handle.terminal.rows > 0) {
-        void window.dsGui?.resizeTerminalSession?.({
-          sessionId,
-          cols: handle.terminal.cols,
-          rows: handle.terminal.rows
-        })
+  const scheduleFit = useCallback(
+    (sessionId: string | null): void => {
+      if (!sessionId || !mountActive) return
+      if (fitFrameRef.current !== null) {
+        window.cancelAnimationFrame(fitFrameRef.current)
       }
-    })
-  }
+      fitFrameRef.current = window.requestAnimationFrame(() => {
+        const handle = terminalHandlesRef.current.get(sessionId)
+        if (!handle) return
+        handle.fitAddon.fit()
+        if (handle.terminal.cols > 0 && handle.terminal.rows > 0) {
+          void window.dsGui?.resizeTerminalSession?.({
+            sessionId,
+            cols: handle.terminal.cols,
+            rows: handle.terminal.rows
+          })
+        }
+      })
+    },
+    [mountActive]
+  )
 
   const createSession = useCallback(async (): Promise<void> => {
-    const cwd = trimmedWorkspaceRoot
-    if (!cwd || creatingSession || typeof window.dsGui?.createTerminalSession !== 'function') return
-
-    setCreatingSession(true)
-    setCreateError(null)
-    try {
-      const result = await window.dsGui.createTerminalSession({
-        cwd,
-        cols: 120,
-        rows: 32
-      })
-      if (!result.ok) {
-        setCreateError(result.message)
-        return
-      }
-      setSessions((prev) => [...prev, { id: result.session.id, cwd: result.session.cwd, status: 'running' }])
-      setActiveSessionId(result.session.id)
-    } catch (error) {
-      setCreateError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setCreatingSession(false)
-    }
-  }, [creatingSession, trimmedWorkspaceRoot])
+    await createTerminalSessionForWorkspace(trimmedWorkspaceRoot)
+  }, [trimmedWorkspaceRoot])
 
   useEffect(() => {
-    if (!trimmedWorkspaceRoot) return
-    if (hasStartedInitialSession.current) return
-    hasStartedInitialSession.current = true
+    if (mountActive) setXtermMount(mountSurface)
+  }, [mountActive, mountSurface, setXtermMount])
+
+  useEffect(() => {
+    if (!trimmedWorkspaceRoot || !mountActive) return
+    if (hasStartedInitialSession) return
+    markInitialSessionStarted()
     void createSession()
-  }, [createSession, trimmedWorkspaceRoot])
+  }, [
+    createSession,
+    hasStartedInitialSession,
+    markInitialSessionStarted,
+    mountActive,
+    trimmedWorkspaceRoot
+  ])
 
   useEffect(() => {
     if (typeof window.dsGui?.onTerminalData !== 'function' || typeof window.dsGui?.onTerminalExit !== 'function') {
@@ -149,20 +146,18 @@ export function AppTerminalPanel({
     const offExit = window.dsGui.onTerminalExit(({ sessionId, exitCode }) => {
       const handle = terminalHandlesRef.current.get(sessionId)
       handle?.terminal.write(`\r\n${t('terminalExited', { code: exitCode })}\r\n`)
-      setSessions((prev) =>
-        prev.map((session) =>
-          session.id === sessionId ? { ...session, status: 'exited', exitCode } : session
-        )
-      )
+      updateSession(sessionId, { status: 'exited', exitCode })
     })
 
     return () => {
       offData()
       offExit()
     }
-  }, [t])
+  }, [t, updateSession])
 
   useEffect(() => {
+    if (!mountActive) return
+
     for (const session of sessions) {
       const host = sessionNodeRefs.current[session.id]
       if (!host || terminalHandlesRef.current.has(session.id)) continue
@@ -199,44 +194,37 @@ export function AppTerminalPanel({
       terminalHandlesRef.current.delete(sessionId)
       delete sessionNodeRefs.current[sessionId]
     }
-  }, [sessions])
+  }, [mountActive, scheduleFit, sessions])
 
   useEffect(() => {
     scheduleFit(activeSessionId)
-  }, [activeSessionId, sessions.length])
+  }, [activeSessionId, mountActive, scheduleFit, sessions.length])
 
   useEffect(() => {
+    if (!mountActive) return
     const onResize = (): void => scheduleFit(activeSessionId)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [activeSessionId])
+  }, [activeSessionId, mountActive, scheduleFit])
 
   useEffect(() => {
-    if (!viewportRef.current || typeof ResizeObserver === 'undefined') return
+    if (!mountActive || !viewportRef.current || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => scheduleFit(activeSessionId))
     observer.observe(viewportRef.current)
     return () => observer.disconnect()
-  }, [activeSessionId])
+  }, [activeSessionId, mountActive, scheduleFit])
 
   useEffect(() => {
-    const terminalHandles = terminalHandlesRef.current
-    return () => {
-      if (fitFrameRef.current !== null) {
-        window.cancelAnimationFrame(fitFrameRef.current)
-      }
-      for (const session of sessionsRef.current) {
-        void window.dsGui?.closeTerminalSession?.({ sessionId: session.id })
-      }
-      for (const handle of terminalHandles.values()) {
-        handle.inputDisposable.dispose()
-        handle.terminal.dispose()
-      }
-      terminalHandles.clear()
+    if (mountActive) return
+    for (const handle of terminalHandlesRef.current.values()) {
+      handle.inputDisposable.dispose()
+      handle.terminal.dispose()
     }
-  }, [])
+    terminalHandlesRef.current.clear()
+    sessionNodeRefs.current = {}
+  }, [mountActive])
 
   const closeSession = (sessionId: string): void => {
-    void window.dsGui?.closeTerminalSession?.({ sessionId })
     const handle = terminalHandlesRef.current.get(sessionId)
     if (handle) {
       handle.inputDisposable.dispose()
@@ -244,13 +232,11 @@ export function AppTerminalPanel({
       terminalHandlesRef.current.delete(sessionId)
     }
     delete sessionNodeRefs.current[sessionId]
-    setSessions((prev) => {
-      const next = prev.filter((session) => session.id !== sessionId)
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(next.length > 0 ? next[0].id : null)
-      }
-      return next
-    })
+    closeTerminalSessionById(sessionId)
+  }
+
+  if (!mountActive) {
+    return null
   }
 
   return (
@@ -296,13 +282,13 @@ export function AppTerminalPanel({
               </span>
             )
           })}
-            <button
-              type="button"
-              onClick={() => void createSession()}
-              disabled={creatingSession || !trimmedWorkspaceRoot}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-45"
-              aria-label={t('terminalNewTab')}
-              title={t('terminalNewTab')}
+          <button
+            type="button"
+            onClick={() => void createSession()}
+            disabled={creatingSession || !trimmedWorkspaceRoot}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-45"
+            aria-label={t('terminalNewTab')}
+            title={t('terminalNewTab')}
           >
             {creatingSession ? (
               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.9} />
@@ -312,15 +298,17 @@ export function AppTerminalPanel({
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
-          aria-label={t('terminalClose')}
-          title={t('terminalClose')}
-        >
-          <X className="h-4 w-4" strokeWidth={1.85} />
-        </button>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
+            aria-label={t('terminalClose')}
+            title={t('terminalClose')}
+          >
+            <X className="h-4 w-4" strokeWidth={1.85} />
+          </button>
+        ) : null}
       </div>
 
       {createError ? (

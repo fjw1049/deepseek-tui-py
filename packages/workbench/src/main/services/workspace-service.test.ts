@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { readWorkspaceFile, resolveWorkspaceFile } from './workspace-service'
+import { readWorkspaceFile, resolveWorkspaceFile, listWorkspaceDirectory } from './workspace-service'
 
 describe('workspace-service boundary checks', () => {
   let rootDir = ''
@@ -62,6 +62,23 @@ describe('workspace-service boundary checks', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.message).toContain('within the selected workspace')
+    }
+  })
+
+  it('lists the workspace root directory', async () => {
+    await mkdir(join(workspaceRoot, 'packages'), { recursive: true })
+    await writeFile(join(workspaceRoot, 'packages', 'readme.txt'), 'hello', 'utf8')
+
+    const result = await listWorkspaceDirectory(workspaceRoot, '')
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.entries.some((entry) => entry.name === 'inside.txt' && entry.kind === 'file')).toBe(
+        true
+      )
+      expect(result.entries.some((entry) => entry.name === 'packages' && entry.kind === 'directory')).toBe(
+        true
+      )
     }
   })
 })

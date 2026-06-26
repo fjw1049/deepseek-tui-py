@@ -1,7 +1,7 @@
 import { app, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, type Dirent } from 'node:fs'
-import { access, open as openFile, readFile, readdir, realpath, stat, unlink } from 'node:fs/promises'
+import { access, open as openFile, readFile, readdir, realpath, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -15,7 +15,11 @@ import type {
 import type {
   WorkspaceFileReadResult,
   WorkspaceFileResolveResult,
-  WorkspaceFileTarget
+  WorkspaceFileTarget,
+  WorkspaceFileWriteResult,
+  WorkspaceFileWriteTarget,
+  WorkspaceListDirectoryResult,
+  WorkspaceTreeEntry
 } from '../../shared/workspace-file'
 
 const execFileAsync = promisify(execFile)
@@ -51,6 +55,7 @@ type ResolveTargetOptions = {
 
 const DEFAULT_EDITOR_ID = 'system'
 const MAX_FILE_PREVIEW_BYTES = 1_500_000
+const MAX_FILE_WRITE_BYTES = 2_000_000
 const EDITOR_ICON_PX = 18
 const SKIP_SEARCH_DIRS = new Set([
   '.git',
@@ -689,6 +694,96 @@ export async function readWorkspaceFile(payload: WorkspaceFileTarget): Promise<W
     } finally {
       await handle.close()
     }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+function relativePathFromWorkspace(workspaceRoot: string, absolutePath: string): string {
+  const workspacePath = resolve(expandHomePath(workspaceRoot))
+  const relativePath = relative(workspacePath, absolutePath)
+  return relativePath.split('\\').join('/')
+}
+
+export async function listWorkspaceDirectory(
+  workspaceRoot: string,
+  directoryPath = ''
+): Promise<WorkspaceListDirectoryResult> {
+  try {
+    const root = workspaceRoot.trim()
+    if (!root) {
+      return { ok: false, message: 'Workspace root is required.' }
+    }
+
+    const targetPath = directoryPath.trim()
+      ? await resolveOpenTargetPath(directoryPath, root, { allowBasenameFallback: false })
+      : await enforceWorkspaceBoundary(resolve(expandHomePath(root)), root)
+
+    const info = await stat(targetPath)
+    if (!info.isDirectory()) {
+      return { ok: false, message: 'Path is not a directory.' }
+    }
+
+    const dirents = await readdir(targetPath, { withFileTypes: true })
+    const entries: WorkspaceTreeEntry[] = dirents
+      .filter((entry) => entry.name !== '.git')
+      .sort((a, b) => {
+        const aDir = a.isDirectory()
+        const bDir = b.isDirectory()
+        if (aDir !== bDir) return aDir ? -1 : 1
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      })
+      .map((entry) => {
+        const absolute = join(targetPath, entry.name)
+        return {
+          name: entry.name,
+          path: relativePathFromWorkspace(root, absolute),
+          kind: entry.isDirectory() ? 'directory' : 'file'
+        } satisfies WorkspaceTreeEntry
+      })
+      .filter((entry) => {
+        if (entry.kind !== 'directory') return true
+        return !SKIP_SEARCH_DIRS.has(entry.name)
+      })
+
+    return {
+      ok: true,
+      path: relativePathFromWorkspace(root, targetPath),
+      entries
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+export async function writeWorkspaceFile(
+  payload: WorkspaceFileWriteTarget
+): Promise<WorkspaceFileWriteResult> {
+  try {
+    const bytes = Buffer.byteLength(payload.content, 'utf8')
+    if (bytes > MAX_FILE_WRITE_BYTES) {
+      return { ok: false, message: 'File content exceeds the maximum write size.' }
+    }
+    if (Buffer.from(payload.content).includes(0)) {
+      return { ok: false, message: 'Binary content cannot be written through the editor.' }
+    }
+
+    const targetPath = await resolveOpenTargetPath(payload.path, payload.workspaceRoot, {
+      allowBasenameFallback: false
+    })
+    const info = await stat(targetPath)
+    if (info.isDirectory()) {
+      return { ok: false, message: 'Cannot write to a directory.' }
+    }
+
+    await writeFile(targetPath, payload.content, 'utf8')
+    return { ok: true, path: targetPath }
   } catch (error) {
     return {
       ok: false,

@@ -280,6 +280,8 @@
   "autoApplyBlocked": "Fix the port to apply changes",
   "workspaceRoot": "Default working directory",
   "workspaceRootDesc": "First launch uses ~/.deepseekgui/default_workspace by default, and you can change it to another directory.",
+  "defaultEditor": "Default editor",
+  "defaultEditorDesc": "Editor or terminal used when opening workspace files.",
   "workspaceRootPlaceholder": "~/.deepseekgui/default_workspace",
   "restoreWorkspaceDefault": "Restore default",
   "browse": "Browse",

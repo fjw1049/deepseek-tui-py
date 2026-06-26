@@ -78,6 +78,7 @@ export function GitCommitPopover({
   const [submitting, setSubmitting] = useState(false)
   const [generating, setGenerating] = useState(false)
   const dialogRef = useRef<HTMLDivElement | null>(null)
+  const anchorRef = useRef<HTMLDivElement | null>(null)
   const [dialogPos, setDialogPos] = useState<{ x: number; y: number } | null>(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
 
@@ -120,14 +121,35 @@ export function GitCommitPopover({
     setManualRefreshing(false)
   }, [root])
 
-  const centerDialog = useCallback((): void => {
+  const positionDialogNearAnchor = useCallback((): void => {
+    const anchor = anchorRef.current
     const el = dialogRef.current
     const width = el?.offsetWidth ?? 512
     const height = el?.offsetHeight ?? 480
-    setDialogPos({
-      x: Math.max(12, (window.innerWidth - width) / 2),
-      y: Math.max(12, (window.innerHeight - height) / 2)
-    })
+    const margin = 12
+    const gap = 8
+
+    if (!anchor) {
+      setDialogPos({
+        x: Math.max(margin, (window.innerWidth - width) / 2),
+        y: Math.max(margin, (window.innerHeight - height) / 2)
+      })
+      return
+    }
+
+    const rect = anchor.getBoundingClientRect()
+    let x = rect.right - width
+    let y = rect.bottom + gap
+
+    if (y + height > window.innerHeight - margin) {
+      const above = rect.top - height - gap
+      y = above >= margin ? above : Math.max(margin, window.innerHeight - height - margin)
+    }
+
+    x = Math.min(Math.max(margin, x), window.innerWidth - width - margin)
+    y = Math.min(Math.max(margin, y), window.innerHeight - height - margin)
+
+    setDialogPos({ x, y })
   }, [])
 
   useLayoutEffect(() => {
@@ -135,8 +157,14 @@ export function GitCommitPopover({
       setDialogPos(null)
       return
     }
-    centerDialog()
-  }, [centerDialog, open])
+    positionDialogNearAnchor()
+    window.addEventListener('resize', positionDialogNearAnchor)
+    window.addEventListener('scroll', positionDialogNearAnchor, true)
+    return () => {
+      window.removeEventListener('resize', positionDialogNearAnchor)
+      window.removeEventListener('scroll', positionDialogNearAnchor, true)
+    }
+  }, [filesExpanded, open, positionDialogNearAnchor])
 
   const clampDialogPos = useCallback((x: number, y: number): { x: number; y: number } => {
     const el = dialogRef.current
@@ -519,7 +547,7 @@ export function GitCommitPopover({
     ) : null
 
   return (
-    <div className="ds-no-drag relative mt-1">
+    <div ref={anchorRef} className="ds-no-drag relative mt-1">
       <div
         className={`${rowClassName} ${
           enabled

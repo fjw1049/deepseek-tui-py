@@ -3,7 +3,10 @@ import {
   ArrowRight,
   CheckCircle2,
   Circle,
-  FileEdit
+  Code2,
+  FileEdit,
+  Globe2,
+  Terminal
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -24,6 +27,13 @@ import { GitCommitPopover } from './GitCommitPopover'
 
 type Props = {
   onOpenChanges?: () => void
+  onOpenEditor?: () => void
+  previewActive: boolean
+  terminalPanelOpen: boolean
+  terminalPanelEnabled: boolean
+  previewEnabled: boolean
+  onTogglePreview: () => void
+  onToggleTerminalPanel: () => void
 }
 
 function sessionChangePatches(blocks: ChatBlock[]): Array<string | undefined> {
@@ -35,7 +45,16 @@ function sessionChangePatches(blocks: ChatBlock[]): Array<string | undefined> {
 const DOCK_ROW_CLASS =
   'flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-left text-[13px] leading-5 transition'
 
-export function OperationContextDock({ onOpenChanges }: Props): ReactElement | null {
+export function OperationContextDock({
+  onOpenChanges,
+  onOpenEditor,
+  previewActive,
+  terminalPanelOpen,
+  terminalPanelEnabled,
+  previewEnabled,
+  onTogglePreview,
+  onToggleTerminalPanel
+}: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const {
     workspaceRoot,
@@ -107,6 +126,61 @@ export function OperationContextDock({ onOpenChanges }: Props): ReactElement | n
 
   return (
     <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[22px] px-4 py-3.5">
+      <div className="text-[14px] font-medium text-ds-ink">{t('operationDockToolsTitle')}</div>
+
+      <button
+        type="button"
+        onClick={() => onOpenEditor?.()}
+        className={`${DOCK_ROW_CLASS} mt-2 cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink`}
+      >
+        <Code2 className="h-4 w-4 shrink-0" strokeWidth={1.85} />
+        <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onTogglePreview}
+        disabled={!previewEnabled}
+        className={`${DOCK_ROW_CLASS} mt-1 ${
+          previewEnabled
+            ? previewActive
+              ? 'bg-ds-hover/70 text-ds-ink'
+              : 'cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+            : 'cursor-default text-ds-faint opacity-55'
+        }`}
+        aria-pressed={previewActive}
+        title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
+      >
+        <Globe2 className="h-4 w-4 shrink-0" strokeWidth={1.85} />
+        <span className="min-w-0 flex-1 truncate">{t('rightPanelBrowser')}</span>
+        {previewActive ? (
+          <span className="ml-auto shrink-0 text-[12px] text-ds-faint">{t('operationDockToolOpen')}</span>
+        ) : null}
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleTerminalPanel}
+        disabled={!terminalPanelEnabled}
+        className={`${DOCK_ROW_CLASS} mt-1 ${
+          terminalPanelEnabled
+            ? terminalPanelOpen
+              ? 'bg-ds-hover/70 text-ds-ink'
+              : 'cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+            : 'cursor-default text-ds-faint opacity-55'
+        }`}
+        aria-pressed={terminalPanelOpen}
+        title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
+      >
+        <Terminal className="h-4 w-4 shrink-0" strokeWidth={1.85} />
+        <span className="min-w-0 flex-1 truncate">{t('terminalPanelTitle')}</span>
+        {terminalPanelOpen ? (
+          <span className="ml-auto shrink-0 text-[12px] text-ds-faint">{t('operationDockToolOpen')}</span>
+        ) : null}
+      </button>
+
+      <div className="my-2 border-t border-ds-border-muted/55" />
+
       <div className="text-[14px] font-medium text-ds-ink">{t('operationDockGitTitle')}</div>
 
       <button

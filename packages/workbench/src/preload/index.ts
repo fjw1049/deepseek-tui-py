@@ -114,6 +114,20 @@ const api = {
     ipcRenderer.invoke('file:resolve-workspace', options),
   readWorkspaceFile: (options) =>
     ipcRenderer.invoke('file:read-workspace', options),
+  writeWorkspaceFile: (options) =>
+    ipcRenderer.invoke('file:write-workspace', options),
+  listWorkspaceDirectory: async (workspaceRoot, directoryPath) => {
+    const payload = { workspaceRoot, directoryPath }
+    try {
+      return await ipcRenderer.invoke('file:list-workspace', payload)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('No handler registered for')) {
+        return ipcRenderer.invoke('workspace:list-directory', payload)
+      }
+      throw error
+    }
+  },
   startSse: (threadId, sinceSeq, streamId) =>
     ipcRenderer.invoke('runtime:sse:start', { threadId, sinceSeq, streamId }),
   stopSse: (streamId) => ipcRenderer.invoke('runtime:sse:stop', streamId),

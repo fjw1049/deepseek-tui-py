@@ -39,6 +39,8 @@ import {
   usagePruneProviderPayloadSchema,
   usageQueryPayloadSchema,
   workspaceFileTargetPayloadSchema,
+  workspaceFileWritePayloadSchema,
+  workspaceListDirectoryPayloadSchema,
   workspacePickFilesPayloadSchema,
   workspaceRootSchema
 } from './app-ipc-schemas'
@@ -84,11 +86,13 @@ import { restartDeepseekChildIfRunning } from '../deepseek-process'
 import {
   expandHomePath,
   listEditorsResult,
+  listWorkspaceDirectory,
   normalizeSkillFolderName,
   openEditorPath,
   openPathWithShell,
   readWorkspaceFile,
-  resolveWorkspaceFile
+  resolveWorkspaceFile,
+  writeWorkspaceFile
 } from '../services/workspace-service'
 import {
   cacheFeaturedPets,
@@ -985,6 +989,27 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       parseIpcPayload('file:read-workspace', workspaceFileTargetPayloadSchema, payload)
     )
   )
+  ipcMain.handle('file:write-workspace', async (_, payload: unknown) =>
+    writeWorkspaceFile(
+      parseIpcPayload('file:write-workspace', workspaceFileWritePayloadSchema, payload)
+    )
+  )
+  ipcMain.handle('file:list-workspace', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'file:list-workspace',
+      workspaceListDirectoryPayloadSchema,
+      payload
+    )
+    return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '')
+  })
+  ipcMain.handle('workspace:list-directory', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'workspace:list-directory',
+      workspaceListDirectoryPayloadSchema,
+      payload
+    )
+    return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '')
+  })
 
   ipcMain.handle('shell:open-external', async (_, url: unknown) => {
     const validatedUrl = parseIpcPayload('shell:open-external', shellOpenExternalUrlSchema, url)

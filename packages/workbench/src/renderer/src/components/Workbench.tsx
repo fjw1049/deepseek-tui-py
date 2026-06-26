@@ -1,9 +1,8 @@
-import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import type { WorkspaceFileTarget } from '@shared/workspace-file'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
@@ -15,23 +14,33 @@ import {
   WORKSPACE_FILE_PREVIEW_EVENT,
   type WorkspaceFilePreviewDetail
 } from '../lib/workspace-file-preview'
+import {
+  persistRightSidebarCollapsed,
+  persistRightSidebarOpen,
+  persistRightSidebarTab,
+  readStoredRightSidebarCollapsed,
+  readStoredRightSidebarOpen,
+  readStoredRightSidebarTab,
+  type RightSidebarTab
+} from '../lib/right-sidebar-state'
+import { closeAllTerminalSessions } from '../store/terminal-session-store'
+import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
+import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
-import { WorkbenchTopBar, type RightPanelMode } from './chat/WorkbenchTopBar'
+import { OperationContextDock } from './chat/OperationContextDock'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
+import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
 import { ImportSessionDialog } from './ImportSessionDialog'
-import { OperationContextDock } from './chat/OperationContextDock'
+import {
+  RightSidebarToggleButton,
+  WorkbenchRightSidebar
+} from './right-sidebar/WorkbenchRightSidebar'
 
-const ChangeInspector = lazy(() =>
-  import('./ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
-)
-const DevBrowserPanel = lazy(() =>
-  import('./DevBrowserPanel').then((module) => ({ default: module.DevBrowserPanel }))
-)
 const PluginMarketplaceView = lazy(() =>
   import('./PluginMarketplaceView').then((module) => ({ default: module.PluginMarketplaceView }))
 )
@@ -41,34 +50,20 @@ const AutomationCenter = lazy(() =>
 const ChannelCenter = lazy(() =>
   import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter }))
 )
-const WorkspaceFilePreviewPanel = lazy(() =>
-  import('./WorkspaceFilePreviewPanel').then((module) => ({
-    default: module.WorkspaceFilePreviewPanel
-  }))
-)
-const AppTerminalPanel = lazy(() =>
-  import('./AppTerminalPanel').then((module) => ({ default: module.AppTerminalPanel }))
-)
 
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
 const RIGHT_PANEL_WIDTH_KEY = 'deepseekgui.layout.rightInspectorWidth'
-const RIGHT_PANEL_MODE_KEY = 'deepseekgui.layout.rightPanelMode'
-const BOTTOM_PANEL_HEIGHT_KEY = 'deepseekgui.layout.bottomTerminalHeight'
 const LEFT_PANEL_DEFAULT = 272
 const RIGHT_CONTEXT_DEFAULT = 272
-const RIGHT_TOOL_DEFAULT = 360
 const RIGHT_PANEL_DEFAULT = RIGHT_CONTEXT_DEFAULT
-const BOTTOM_PANEL_DEFAULT = 260
+const RIGHT_PANEL_HALF_RATIO = 0.5
 const LEFT_PANEL_MIN = 236
 const LEFT_PANEL_MAX = 500
 const RIGHT_PANEL_MIN = 260
-const RIGHT_PANEL_MAX = 760
-const BOTTOM_PANEL_MIN = 180
-const BOTTOM_PANEL_MAX = 520
-const SIDEBAR_HARD_MIN = 180
 const MAIN_MIN_WIDTH = 560
-const MAIN_MIN_HEIGHT = 240
+const SHELL_ITEM_GAP = 8
+const CHAT_HIDE_THRESHOLD = 48
 
 function clampWidth(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -84,6 +79,80 @@ function readStoredWidth(key: string, fallback: number): number {
   } catch {
     return fallback
   }
+}
+
+function measureMainWidth(
+  shellWidth: number,
+  leftVisible: boolean,
+  leftWidth: number
+): number {
+  const sideGap = leftVisible ? SHELL_ITEM_GAP : 0
+  return Math.max(0, shellWidth - (leftVisible ? leftWidth : 0) - sideGap)
+}
+
+function resolveRightPanelLayout(
+  mainWidth: number,
+  requestedRight: number
+): { rightWidth: number; chatHidden: boolean } {
+  const maxRight = Math.max(RIGHT_PANEL_MIN, mainWidth)
+  const clamped = clampWidth(requestedRight, RIGHT_PANEL_MIN, maxRight)
+  const remainingChat = mainWidth - clamped
+  if (remainingChat <= CHAT_HIDE_THRESHOLD) {
+    return { rightWidth: mainWidth, chatHidden: true }
+  }
+  return { rightWidth: clamped, chatHidden: false }
+}
+
+function resolveLeftPanelWidth(
+  shellWidth: number,
+  requestedLeft: number,
+  rightPanelVisible: boolean
+): number {
+  const maxLeft = rightPanelVisible
+    ? Math.min(
+        LEFT_PANEL_MAX,
+        Math.max(LEFT_PANEL_MIN, shellWidth - SHELL_ITEM_GAP - RIGHT_PANEL_MIN)
+      )
+    : Math.min(LEFT_PANEL_MAX, Math.max(LEFT_PANEL_MIN, shellWidth - SHELL_ITEM_GAP - MAIN_MIN_WIDTH))
+  return clampWidth(requestedLeft, LEFT_PANEL_MIN, maxLeft)
+}
+
+function fitWorkbenchWidths(
+  containerWidth: number,
+  leftWidth: number,
+  rightWidth: number,
+  panels: { leftPanelVisible: boolean; rightPanelVisible: boolean },
+  mainRowWidth?: number | null
+): { left: number; right: number; chatHidden: boolean } {
+  const left = panels.leftPanelVisible
+    ? resolveLeftPanelWidth(containerWidth, leftWidth, panels.rightPanelVisible)
+    : clampWidth(leftWidth, LEFT_PANEL_MIN, LEFT_PANEL_MAX)
+
+  if (!panels.rightPanelVisible) {
+    return { left, right: clampWidth(rightWidth, RIGHT_PANEL_MIN, containerWidth), chatHidden: false }
+  }
+
+  const mainWidth =
+    mainRowWidth ?? measureMainWidth(containerWidth, panels.leftPanelVisible, left)
+  const resolved = resolveRightPanelLayout(mainWidth, rightWidth)
+  return { left, right: resolved.rightWidth, chatHidden: resolved.chatHidden }
+}
+
+function resolveHalfRightWidth(mainWidth: number): number {
+  const maxSplit = Math.max(RIGHT_PANEL_MIN, mainWidth - CHAT_HIDE_THRESHOLD - 1)
+  return clampWidth(Math.round(mainWidth * RIGHT_PANEL_HALF_RATIO), RIGHT_PANEL_MIN, maxSplit)
+}
+
+function readMainRowWidth(
+  shellRef: RefObject<HTMLDivElement | null>,
+  mainRowRef: RefObject<HTMLDivElement | null>,
+  leftVisible: boolean,
+  leftWidth: number
+): number {
+  const measuredMain = mainRowRef.current?.clientWidth ?? null
+  if (measuredMain != null) return measuredMain
+  const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+  return measureMainWidth(containerWidth, leftVisible, leftWidth)
 }
 
 function persistWidth(key: string, width: number): void {
@@ -111,108 +180,6 @@ function persistBoolean(key: string, value: boolean): void {
   } catch {
     /* ignore persistence failures */
   }
-}
-
-function readStoredRightPanelMode(): RightPanelMode {
-  try {
-    const raw = window.localStorage.getItem(RIGHT_PANEL_MODE_KEY)
-    return raw === 'changes' ? raw : null
-  } catch {
-    return null
-  }
-}
-
-function persistRightPanelMode(mode: RightPanelMode): void {
-  try {
-    if (mode === 'changes') {
-      window.localStorage.setItem(RIGHT_PANEL_MODE_KEY, mode)
-    } else {
-      window.localStorage.removeItem(RIGHT_PANEL_MODE_KEY)
-    }
-  } catch {
-    /* ignore persistence failures */
-  }
-}
-
-function clampBottomPanelHeight(containerHeight: number, value: number): number {
-  const maxHeight = Math.min(
-    BOTTOM_PANEL_MAX,
-    Math.max(BOTTOM_PANEL_MIN, containerHeight - MAIN_MIN_HEIGHT)
-  )
-  return clampWidth(value, BOTTOM_PANEL_MIN, maxHeight)
-}
-
-function fitWorkbenchWidths(
-  containerWidth: number,
-  leftWidth: number,
-  rightWidth: number,
-  panels: { leftPanelVisible: boolean; rightPanelVisible: boolean }
-): { left: number; right: number } {
-  if (!panels.leftPanelVisible) {
-    if (!panels.rightPanelVisible) {
-      return {
-        left: clampWidth(leftWidth, LEFT_PANEL_MIN, LEFT_PANEL_MAX),
-        right: clampWidth(rightWidth, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX)
-      }
-    }
-    const safeContainer = Math.max(containerWidth, MAIN_MIN_WIDTH + SIDEBAR_HARD_MIN)
-    const rightFloor =
-      safeContainer - MAIN_MIN_WIDTH >= RIGHT_PANEL_MIN ? RIGHT_PANEL_MIN : SIDEBAR_HARD_MIN
-    const rightCeil = Math.min(
-      RIGHT_PANEL_MAX,
-      Math.max(rightFloor, safeContainer - MAIN_MIN_WIDTH)
-    )
-    return {
-      left: clampWidth(leftWidth, LEFT_PANEL_MIN, LEFT_PANEL_MAX),
-      right: clampWidth(rightWidth, rightFloor, rightCeil)
-    }
-  }
-
-  const safeContainer = Math.max(
-    containerWidth,
-    MAIN_MIN_WIDTH + SIDEBAR_HARD_MIN + (panels.rightPanelVisible ? SIDEBAR_HARD_MIN : 0)
-  )
-  if (!panels.rightPanelVisible) {
-    const leftFloor =
-      safeContainer - MAIN_MIN_WIDTH >= LEFT_PANEL_MIN ? LEFT_PANEL_MIN : SIDEBAR_HARD_MIN
-    const leftCeil = Math.min(
-      LEFT_PANEL_MAX,
-      Math.max(leftFloor, safeContainer - MAIN_MIN_WIDTH)
-    )
-    return {
-      left: clampWidth(leftWidth, leftFloor, leftCeil),
-      right: clampWidth(rightWidth, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX)
-    }
-  }
-
-  const availableSides = Math.max(
-    SIDEBAR_HARD_MIN * 2,
-    safeContainer - MAIN_MIN_WIDTH
-  )
-  const leftFloor =
-    availableSides - SIDEBAR_HARD_MIN >= LEFT_PANEL_MIN ? LEFT_PANEL_MIN : SIDEBAR_HARD_MIN
-  const rightFloor =
-    availableSides - SIDEBAR_HARD_MIN >= RIGHT_PANEL_MIN ? RIGHT_PANEL_MIN : SIDEBAR_HARD_MIN
-
-  let nextLeft = clampWidth(leftWidth, leftFloor, LEFT_PANEL_MAX)
-  let nextRight = clampWidth(rightWidth, rightFloor, RIGHT_PANEL_MAX)
-
-  if (nextLeft + nextRight > availableSides) {
-    const overflow = nextLeft + nextRight - availableSides
-    const rightShrink = Math.min(overflow, nextRight - rightFloor)
-    nextRight -= rightShrink
-    const remaining = overflow - rightShrink
-    if (remaining > 0) {
-      nextLeft = Math.max(leftFloor, nextLeft - remaining)
-    }
-  }
-
-  const maxLeft = Math.min(LEFT_PANEL_MAX, availableSides - rightFloor)
-  nextLeft = clampWidth(nextLeft, leftFloor, Math.max(leftFloor, maxLeft))
-  const maxRight = Math.min(RIGHT_PANEL_MAX, availableSides - nextLeft)
-  nextRight = clampWidth(nextRight, rightFloor, Math.max(rightFloor, maxRight))
-
-  return { left: nextLeft, right: nextRight }
 }
 
 export function Workbench(): ReactElement {
@@ -284,8 +251,10 @@ export function Workbench(): ReactElement {
   )
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<import('./chat/FloatingComposer').ComposerMode>('agent')
-  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(readStoredRightPanelMode)
-  const [filePreviewTarget, setFilePreviewTarget] = useState<WorkspaceFileTarget | null>(null)
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(readStoredRightSidebarOpen)
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(readStoredRightSidebarCollapsed)
+  const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>(readStoredRightSidebarTab)
+  const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
   )
@@ -295,19 +264,16 @@ export function Workbench(): ReactElement {
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )
-  const [terminalPanelVisible, setTerminalPanelVisible] = useState(false)
-  const [terminalPanelMounted, setTerminalPanelMounted] = useState(false)
-  const [terminalPanelHeight, setTerminalPanelHeight] = useState(() =>
-    readStoredWidth(BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_DEFAULT)
-  )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [importSessionOpen, setImportSessionOpen] = useState(false)
+  const [chatColumnHidden, setChatColumnHidden] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
   const conversationInsetClass = 'px-3 md:px-5 lg:px-6 xl:px-8'
   const operationConversationInsetClass = 'pl-3 md:pl-5 lg:pl-6 xl:pl-8 pr-0.5 md:pr-1'
   const emptyStageInsetClass = 'px-2 md:px-3 lg:px-4 xl:px-5'
 
   const shellRef = useRef<HTMLDivElement | null>(null)
+  const mainRowRef = useRef<HTMLDivElement | null>(null)
   const draftByThread = useRef<Record<string, string>>({})
   const prevThreadId = useRef<string | null>(null)
   const previewThreadId = useRef<string | null>(activeThreadId)
@@ -342,9 +308,30 @@ export function Workbench(): ReactElement {
     liveReasoning.trim().length > 0
 
   const stageCentered = !hasStartedConversation
-  const showOperationColumn = route === 'chat' && workspaceRoot.trim().length > 0 && !stageCentered
-  const operationColumnActive = showOperationColumn && rightPanelMode === null
-  const rightPanelVisible = rightPanelMode !== null
+  const activeWorkspaceRoot = useMemo(
+    () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
+    [activeThreadId, threads, workspaceRoot]
+  )
+  const showOperationColumn =
+    route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !stageCentered
+  const showRightSidebarToggle =
+    route === 'chat' &&
+    activeWorkspaceRoot.trim().length > 0 &&
+    (showOperationColumn || rightSidebarOpen)
+  const showDefaultEditorPicker =
+    route === 'chat' && activeWorkspaceRoot.trim().length > 0
+  const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
+  const topbarRightPaddingClass = showTopbarRightActions
+    ? showDefaultEditorPicker && showRightSidebarToggle
+      ? 'pr-[4.75rem] sm:pr-[5.25rem]'
+      : showDefaultEditorPicker
+        ? 'pr-12'
+        : 'pr-9 sm:pr-10'
+    : ''
+  const operationColumnActive = showOperationColumn && !rightSidebarOpen
+  const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
+  const terminalSidebarOpen =
+    rightSidebarOpen && rightSidebarTab === 'terminal' && !rightSidebarCollapsed
   const chatColumnInsetClass = useMemo(() => {
     if (stageCentered) return emptyStageInsetClass
     if (operationColumnActive) return `${operationConversationInsetClass} ds-chat-inset-with-operation`
@@ -364,8 +351,58 @@ export function Workbench(): ReactElement {
   }
 
   const handleComposerOpenDiff = (): void => {
-    setRightPanelMode('changes')
+    setRightSidebarOpen(true)
+    setRightSidebarCollapsed(false)
+    setRightSidebarTab('changes')
   }
+
+  const openRightSidebar = useCallback((tab: RightSidebarTab): void => {
+    setRightSidebarOpen(true)
+    setRightSidebarCollapsed(false)
+    setRightSidebarTab(tab)
+  }, [])
+
+  const openFileInEditor = useCallback(
+    (path: string): void => {
+      openRightSidebar('editor')
+      void openEditorFile(path, activeWorkspaceRoot)
+    },
+    [activeWorkspaceRoot, openEditorFile, openRightSidebar]
+  )
+
+  const closeRightSidebar = useCallback((): void => {
+    setRightSidebarOpen(false)
+    setRightSidebarCollapsed(false)
+  }, [])
+
+  const toggleRightSidebar = useCallback((): void => {
+    if (!rightSidebarOpen) {
+      setRightSidebarOpen(true)
+      setRightSidebarCollapsed(false)
+      return
+    }
+    if (rightSidebarCollapsed) {
+      setRightSidebarCollapsed(false)
+      return
+    }
+    setRightSidebarOpen(false)
+  }, [rightSidebarCollapsed, rightSidebarOpen])
+
+  const toggleRightSidebarMaximize = useCallback((): void => {
+    const mainWidth = readMainRowWidth(
+      shellRef,
+      mainRowRef,
+      !leftSidebarCollapsed,
+      leftSidebarWidth
+    )
+    if (chatColumnHidden) {
+      setRightSidebarWidth(resolveHalfRightWidth(mainWidth))
+      setChatColumnHidden(false)
+      return
+    }
+    setRightSidebarWidth(mainWidth)
+    setChatColumnHidden(true)
+  }, [chatColumnHidden, leftSidebarCollapsed, leftSidebarWidth])
 
   useEffect(() => {
     inputRef.current = input
@@ -384,66 +421,76 @@ export function Workbench(): ReactElement {
   }, [rightSidebarWidth])
 
   useEffect(() => {
-    persistWidth(BOTTOM_PANEL_HEIGHT_KEY, terminalPanelHeight)
-  }, [terminalPanelHeight])
+    persistRightSidebarOpen(rightSidebarOpen)
+  }, [rightSidebarOpen])
 
   useEffect(() => {
-    persistRightPanelMode(rightPanelMode)
-  }, [rightPanelMode])
+    persistRightSidebarTab(rightSidebarTab)
+  }, [rightSidebarTab])
 
-  const prevRightPanelModeRef = useRef<RightPanelMode>(null)
   useEffect(() => {
-    const prev = prevRightPanelModeRef.current
-    prevRightPanelModeRef.current = rightPanelMode
-    if (prev === null && rightPanelMode !== null) {
-      setRightSidebarWidth((current) => (current < RIGHT_TOOL_DEFAULT ? RIGHT_TOOL_DEFAULT : current))
+    persistRightSidebarCollapsed(rightSidebarCollapsed)
+  }, [rightSidebarCollapsed])
+
+  const prevRightSidebarOpenRef = useRef(rightSidebarOpen)
+  useEffect(() => {
+    const prev = prevRightSidebarOpenRef.current
+    prevRightSidebarOpenRef.current = rightSidebarOpen
+    if (!prev && rightSidebarOpen && !rightSidebarCollapsed) {
+      const mainWidth = readMainRowWidth(
+        shellRef,
+        mainRowRef,
+        !leftSidebarCollapsed,
+        leftSidebarWidth
+      )
+      setRightSidebarWidth(resolveHalfRightWidth(mainWidth))
+      setChatColumnHidden(false)
     }
-  }, [rightPanelMode])
+  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarCollapsed, rightSidebarOpen])
 
   useEffect(() => {
     const onPreview = (event: Event): void => {
       const detail = (event as CustomEvent<WorkspaceFilePreviewDetail>).detail
       if (!detail?.path) return
-      setFilePreviewTarget({
-        ...detail,
-        workspaceRoot: detail.workspaceRoot ?? workspaceRoot
-      })
-      setRightPanelMode('file')
+      openRightSidebar('editor')
+      void openEditorFile(
+        detail.path,
+        detail.workspaceRoot ?? activeWorkspaceRoot,
+        detail.line,
+        detail.column
+      )
     }
 
     window.addEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
     return () => window.removeEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
-  }, [workspaceRoot])
+  }, [activeWorkspaceRoot, openEditorFile, openRightSidebar])
 
   useEffect(() => {
-    const onOpenChanges = (): void => setRightPanelMode('changes')
+    const onOpenChanges = (): void => openRightSidebar('changes')
     window.addEventListener('deepseekgui:open-changes-panel', onOpenChanges)
     return () => window.removeEventListener('deepseekgui:open-changes-panel', onOpenChanges)
-  }, [])
+  }, [openRightSidebar])
 
   useEffect(() => {
     if (previewThreadId.current === activeThreadId) return
     previewThreadId.current = activeThreadId
     autoOpenedPreviewUrlRef.current = null
-    if (rightPanelMode === 'browser') setRightPanelMode(null)
-    if (rightPanelMode === 'file') {
-      setRightPanelMode(null)
-      setFilePreviewTarget(null)
+    if (rightSidebarOpen && rightSidebarTab === 'preview') {
+      closeRightSidebar()
     }
-  }, [activeThreadId, rightPanelMode])
+  }, [activeThreadId, closeRightSidebar, rightSidebarOpen, rightSidebarTab])
 
   useEffect(() => {
     if (!latestDevPreviewUrl || route !== 'chat') return
     if (autoOpenedPreviewUrlRef.current === latestDevPreviewUrl) return
     autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
-    setRightPanelMode('browser')
-  }, [latestDevPreviewUrl, route])
+    openRightSidebar('preview')
+  }, [latestDevPreviewUrl, openRightSidebar, route])
 
   useEffect(() => {
-    if (workspaceRoot.trim()) return
-    setTerminalPanelVisible(false)
-    setTerminalPanelMounted(false)
-  }, [workspaceRoot])
+    if (activeWorkspaceRoot.trim()) return
+    closeAllTerminalSessions()
+  }, [activeWorkspaceRoot])
 
   useEffect(() => {
     const prev = prevThreadId.current
@@ -522,6 +569,7 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     const sync = (): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+      const measuredMain = mainRowRef.current?.clientWidth ?? null
       const next = fitWorkbenchWidths(
         containerWidth,
         leftSidebarWidth,
@@ -529,22 +577,19 @@ export function Workbench(): ReactElement {
         {
           leftPanelVisible: !leftSidebarCollapsed,
           rightPanelVisible
-        }
+        },
+        measuredMain
       )
       if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
       if (rightPanelVisible && next.right !== rightSidebarWidth) {
         setRightSidebarWidth(next.right)
       }
-      const containerHeight = shellRef.current?.clientHeight ?? window.innerHeight
-      const nextTerminalHeight = clampBottomPanelHeight(containerHeight, terminalPanelHeight)
-      if (nextTerminalHeight !== terminalPanelHeight) {
-        setTerminalPanelHeight(nextTerminalHeight)
-      }
+      setChatColumnHidden(next.chatHidden)
     }
     sync()
     window.addEventListener('resize', sync)
     return () => window.removeEventListener('resize', sync)
-  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarWidth, rightPanelVisible, terminalPanelHeight])
+  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarWidth, rightPanelVisible])
 
   const openThread = (id: string): void => {
     setRoute('chat')
@@ -561,13 +606,8 @@ export function Workbench(): ReactElement {
     void createThread({ workspaceRoot })
   }
 
-  const toggleRightPanelMode = (nextMode: Exclude<RightPanelMode, null>): void => {
-    setRightPanelMode((current) => (current === nextMode ? null : nextMode))
-  }
-
-  const closeRightPanel = (): void => {
-    setRightPanelMode(null)
-    setFilePreviewTarget(null)
+  const closeRightSidebarPanel = (): void => {
+    closeRightSidebar()
   }
 
   const toggleLeftSidebar = (): void => {
@@ -580,21 +620,28 @@ export function Workbench(): ReactElement {
 
   const sidebarWrapWidth = leftSidebarWidth
 
-  const toggleTerminalPanel = (): void => {
-    if (!workspaceRoot.trim()) return
-    if (terminalPanelVisible) {
-      setTerminalPanelVisible(false)
+  const togglePreviewPanel = (): void => {
+    if (rightSidebarOpen && rightSidebarTab === 'preview' && !rightSidebarCollapsed) {
+      closeRightSidebar()
       return
     }
-    setTerminalPanelMounted(true)
-    setTerminalPanelVisible(true)
+    openRightSidebar('preview')
+  }
+
+  const toggleTerminalPanel = (): void => {
+    if (!activeWorkspaceRoot.trim()) return
+    if (terminalSidebarOpen) {
+      closeRightSidebar()
+      return
+    }
+    openRightSidebar('terminal')
   }
 
   const openDevPreview = (): void => {
     if (latestDevPreviewUrl) {
       autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
     }
-    setRightPanelMode('browser')
+    openRightSidebar('preview')
   }
 
   const beginLeftResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -610,6 +657,7 @@ export function Workbench(): ReactElement {
 
     const onMove = (moveEvent: PointerEvent): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+      const measuredMain = mainRowRef.current?.clientWidth ?? null
       const delta = moveEvent.clientX - startX
       const next = fitWorkbenchWidths(
         containerWidth,
@@ -618,11 +666,13 @@ export function Workbench(): ReactElement {
         {
           leftPanelVisible: true,
           rightPanelVisible
-        }
+        },
+        measuredMain
       )
       setLeftSidebarWidth(next.left)
-      if (rightPanelMode !== null && next.right !== rightSidebarWidth) {
-        setRightSidebarWidth(next.right)
+      if (rightPanelVisible) {
+        if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
+        setChatColumnHidden(next.chatHidden)
       }
     }
 
@@ -650,6 +700,7 @@ export function Workbench(): ReactElement {
 
     const onMove = (moveEvent: PointerEvent): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+      const measuredMain = mainRowRef.current?.clientWidth ?? null
       const delta = moveEvent.clientX - startX
       const next = fitWorkbenchWidths(
         containerWidth,
@@ -658,37 +709,12 @@ export function Workbench(): ReactElement {
         {
           leftPanelVisible: !leftSidebarCollapsed,
           rightPanelVisible: true
-        }
+        },
+        measuredMain
       )
       if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
       setRightSidebarWidth(next.right)
-    }
-
-    const onUp = (): void => {
-      document.body.style.cursor = prevCursor
-      document.body.style.userSelect = prevUserSelect
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
-
-  const beginBottomResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0 || !terminalPanelVisible) return
-    event.preventDefault()
-    const startY = event.clientY
-    const startHeight = terminalPanelHeight
-    const prevCursor = document.body.style.cursor
-    const prevUserSelect = document.body.style.userSelect
-    document.body.style.cursor = 'row-resize'
-    document.body.style.userSelect = 'none'
-
-    const onMove = (moveEvent: PointerEvent): void => {
-      const containerHeight = shellRef.current?.clientHeight ?? window.innerHeight
-      const delta = startY - moveEvent.clientY
-      setTerminalPanelHeight(clampBottomPanelHeight(containerHeight, startHeight + delta))
+      setChatColumnHidden(next.chatHidden)
     }
 
     const onUp = (): void => {
@@ -775,7 +801,7 @@ export function Workbench(): ReactElement {
           <Suspense fallback={<div className="h-full bg-transparent" />}>
             <AutomationCenter
               runtimeReady={runtimeConnection === 'ready'}
-              workspaceRoot={workspaceRoot}
+              workspaceRoot={activeWorkspaceRoot}
               onOpenRuntimeSettings={() => openSettings('general')}
             />
           </Suspense>
@@ -830,24 +856,29 @@ export function Workbench(): ReactElement {
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className={`flex shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
                   <ConnectionStatusBar compact />
                   {busy ? (
                     <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
                       {t('running')}
                     </span>
                   ) : null}
-                  <WorkbenchTopBar
-                    rightPanelMode={rightPanelMode}
-                    onToggleRightPanelMode={toggleRightPanelMode}
-                    terminalPanelOpen={terminalPanelVisible}
-                    terminalPanelEnabled={workspaceRoot.trim().length > 0}
-                    onToggleTerminalPanel={toggleTerminalPanel}
-                  />
                 </div>
               </div>
+              {showTopbarRightActions ? (
+                <div className="ds-workbench-topbar__right-actions ds-no-drag">
+                  {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
+                  {showRightSidebarToggle ? (
+                    <RightSidebarToggleButton
+                      open={rightSidebarOpen}
+                      onClick={toggleRightSidebar}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
             </header>
-            <div className="flex min-h-0 min-w-0 flex-1">
+            <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1">
+              {!chatColumnHidden ? (
               <div
                 className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${chatColumnInsetClass}`}
               >
@@ -929,6 +960,20 @@ export function Workbench(): ReactElement {
                         ) : null
                       }
                     />
+                    {showOperationColumn ? (
+                      <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
+                        <OperationContextDock
+                          onOpenChanges={handleComposerOpenDiff}
+                          onOpenEditor={() => openRightSidebar('editor')}
+                          previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
+                          terminalPanelOpen={terminalSidebarOpen}
+                          terminalPanelEnabled={activeWorkspaceRoot.trim().length > 0}
+                          previewEnabled={activeWorkspaceRoot.trim().length > 0}
+                          onTogglePreview={togglePreviewPanel}
+                          onToggleTerminalPanel={toggleTerminalPanel}
+                        />
+                      </div>
+                    ) : null}
                     <div className="flex shrink-0 pb-3 pt-0">
                       <ComposerStage
                         input={input}
@@ -956,7 +1001,16 @@ export function Workbench(): ReactElement {
                   </div>
                   <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex">
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
-                      <OperationContextDock onOpenChanges={handleComposerOpenDiff} />
+                      <OperationContextDock
+                        onOpenChanges={handleComposerOpenDiff}
+                        onOpenEditor={() => openRightSidebar('editor')}
+                        previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
+                        terminalPanelOpen={terminalSidebarOpen}
+                        terminalPanelEnabled={activeWorkspaceRoot.trim().length > 0}
+                        previewEnabled={activeWorkspaceRoot.trim().length > 0}
+                        onTogglePreview={togglePreviewPanel}
+                        onToggleTerminalPanel={toggleTerminalPanel}
+                      />
                     </div>
                   </aside>
                 </div>
@@ -1010,72 +1064,30 @@ export function Workbench(): ReactElement {
               )}
             </div>
             </div>
-            {rightPanelMode ? (
-              <div
-                className="ds-workbench-right-panel relative h-full min-h-0 shrink-0"
-                style={{ width: rightSidebarWidth }}
-              >
-                <div
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label={t('rightPanelResize')}
-                  className="ds-no-drag group absolute inset-y-0 left-0 z-30 w-2 -translate-x-1/2 cursor-col-resize"
-                  onPointerDown={beginRightResize}
-                >
-                  <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
-                </div>
-                <Suspense fallback={<div className="h-full w-full bg-ds-sidebar" />}>
-                  {rightPanelMode === 'changes' ? (
-                    <ChangeInspector
-                      blocks={blocks}
-                      className="h-full max-h-full w-full flex-col"
-                      onCollapse={closeRightPanel}
-                    />
-                  ) : rightPanelMode === 'browser' ? (
-                    <DevBrowserPanel
-                      blocks={devPreviewBlocks}
-                      preferredUrl={latestDevPreviewUrl}
-                      className="h-full max-h-full w-full flex-col"
-                      onCollapse={closeRightPanel}
-                    />
-                  ) : (
-                    <WorkspaceFilePreviewPanel
-                      target={filePreviewTarget}
-                      workspaceRoot={workspaceRoot}
-                      className="h-full max-h-full w-full"
-                      onClose={closeRightPanel}
-                    />
-                  )}
-                </Suspense>
-              </div>
-            ) : null}
+              ) : null}
+            <WorkbenchRightSidebar
+              open={rightSidebarOpen}
+              collapsed={rightSidebarCollapsed}
+              tab={rightSidebarTab}
+              width={rightSidebarWidth}
+              workspaceRoot={activeWorkspaceRoot}
+              blocks={blocks}
+              devPreviewBlocks={devPreviewBlocks}
+              latestDevPreviewUrl={latestDevPreviewUrl}
+              onTabChange={setRightSidebarTab}
+              onToggleCollapsed={() => setRightSidebarCollapsed((current) => !current)}
+              onClose={closeRightSidebarPanel}
+              onToggleMaximize={toggleRightSidebarMaximize}
+              maximized={chatColumnHidden}
+              onBeginResize={beginRightResize}
+              onOpenFileInEditor={openFileInEditor}
+              fillWidth={chatColumnHidden}
+            />
             </div>
           </section>
           </div>
 
         </div>
-
-        {terminalPanelMounted ? (
-          <div className={terminalPanelVisible ? '' : 'hidden'}>
-            <div
-              role="separator"
-              aria-orientation="horizontal"
-              className="ds-no-drag group relative z-20 h-2 shrink-0 cursor-row-resize"
-              onPointerDown={beginBottomResize}
-            >
-              <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-ds-border-muted/70 transition group-hover:bg-ds-border-strong" />
-            </div>
-            <div className="ds-workbench-terminal-wrap min-h-0 shrink-0" style={{ height: terminalPanelHeight }}>
-              <Suspense fallback={<div className="h-full w-full bg-ds-sidebar" />}>
-                <AppTerminalPanel
-                  workspaceRoot={workspaceRoot}
-                  className="h-full w-full"
-                  onClose={() => setTerminalPanelVisible(false)}
-                />
-              </Suspense>
-            </div>
-          </div>
-        ) : null}
           </>
         )}
       </main>

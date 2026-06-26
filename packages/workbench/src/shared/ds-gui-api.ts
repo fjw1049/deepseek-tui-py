@@ -21,7 +21,10 @@ import type {
 import type {
   WorkspaceFileReadResult,
   WorkspaceFileResolveResult,
-  WorkspaceFileTarget
+  WorkspaceFileTarget,
+  WorkspaceFileWriteResult,
+  WorkspaceFileWriteTarget,
+  WorkspaceListDirectoryResult
 } from './workspace-file'
 import type { UsageQueryResult, UsageRange } from './usage-ledger'
 
@@ -324,6 +327,11 @@ export type DsGuiApi = {
   onTerminalExit: (handler: (payload: TerminalExitPayload) => void) => () => void
   resolveWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileResolveResult>
   readWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileReadResult>
+  writeWorkspaceFile: (options: WorkspaceFileWriteTarget) => Promise<WorkspaceFileWriteResult>
+  listWorkspaceDirectory: (
+    workspaceRoot: string,
+    directoryPath?: string
+  ) => Promise<WorkspaceListDirectoryResult>
   startSse: (threadId: string, sinceSeq: number, streamId?: string) => Promise<{ streamId: string }>
   stopSse: (streamId: string) => Promise<boolean>
   regenerateRuntimeToken: () => Promise<RuntimeTokenRegenerateResult>
