@@ -20,6 +20,8 @@ import {
   feishuRegisterStartPayloadSchema,
   defaultPathSchema,
   gitBranchPayloadSchema,
+  gitCommitPayloadSchema,
+  gitCommitPathsPayloadSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
   openEditorPathPayloadSchema,
@@ -49,7 +51,7 @@ import {
   resolveEffectiveRuntimeToken,
   runtimeTokenFilePath
 } from '../deepseek-process'
-import { createAndSwitchGitBranch, getGitBranches, getGitWorkingChanges, switchGitBranch } from '../services/git-service'
+import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
@@ -888,6 +890,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('git:branches', async (_, workspaceRoot: unknown) =>
     getGitBranches(parseIpcPayload('git:branches', workspaceRootSchema, workspaceRoot))
   )
+  ipcMain.handle('git:log', async (_, workspaceRoot: unknown) =>
+    getGitLog(parseIpcPayload('git:log', workspaceRootSchema, workspaceRoot))
+  )
   ipcMain.handle('git:working-changes', async (_, workspaceRoot: unknown) => {
     const root = parseIpcPayload('git:working-changes', workspaceRootSchema, workspaceRoot)
     const payload = await getGitWorkingChanges(root)
@@ -918,6 +923,22 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       return createAndSwitchGitBranch(request.workspaceRoot, request.branch)
     }
   )
+  ipcMain.handle('git:commit', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:commit', gitCommitPayloadSchema, payload)
+    const result = await commitGitChanges(request.workspaceRoot, request.message, request.paths)
+    if (!result.ok) {
+      logError('git-commit', 'Failed to commit Git changes', {
+        reason: result.reason,
+        message: result.message,
+        workspaceRoot: request.workspaceRoot
+      })
+    }
+    return result
+  })
+  ipcMain.handle('git:suggest-commit-message', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:suggest-commit-message', gitCommitPathsPayloadSchema, payload)
+    return suggestGitCommitMessage(request.workspaceRoot, request.paths)
+  })
 
   ipcMain.handle('workspace:suggestions', async (_, workspaceRoot: unknown) =>
     getWorkspaceSuggestions(parseIpcPayload('workspace:suggestions', workspaceRootSchema, workspaceRoot))

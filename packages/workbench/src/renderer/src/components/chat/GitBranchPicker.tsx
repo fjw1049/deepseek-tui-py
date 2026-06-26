@@ -9,9 +9,10 @@ import {
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertCircle, Check, ChevronDown, GitBranch, Loader2, Plus, Search } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, GitBranch, History, Loader2, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
+import { GitLogDialog } from './GitLogDialog'
 
 type Props = {
   workspaceRoot: string
@@ -31,6 +32,7 @@ export function GitBranchPicker({
   const { t } = useTranslation('common')
   const root = workspaceRoot.trim()
   const [open, setOpen] = useState(false)
+  const [logOpen, setLogOpen] = useState(false)
   const [query, setQuery] = useState('')
   const { result, loading, reload, setResult } = useGitBranches(root)
   const [actingBranch, setActingBranch] = useState<string | null>(null)
@@ -43,6 +45,7 @@ export function GitBranchPicker({
 
   useEffect(() => {
     setOpen(false)
+    setLogOpen(false)
     setQuery('')
     setError(null)
     setActingBranch(null)
@@ -136,8 +139,6 @@ export function GitBranchPicker({
     return branches.filter((branch) => branch.name.toLowerCase().includes(q))
   }, [branches, query])
 
-  const exactBranchExists = branches.some((branch) => branch.name === query.trim())
-  const canCreate = query.trim().length > 0 && !exactBranchExists
   const currentBranch = result?.ok ? result.currentBranch : null
   const label =
     currentBranch ||
@@ -166,25 +167,14 @@ export function GitBranchPicker({
     }
   }
 
-  const createBranch = async (): Promise<void> => {
-    const branch = query.trim()
-    if (!root || !branch) return
-    setActingBranch(branch)
-    setError(null)
-    try {
-      const next = await window.dsGui.createAndSwitchGitBranch(root, branch)
-      setResult(next)
-      if (!next.ok) {
-        setError(next.message)
-        return
-      }
-      setOpen(false)
-      setQuery('')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setActingBranch(null)
-    }
+  const openCommitLog = (): void => {
+    setOpen(false)
+    setLogOpen(true)
+  }
+
+  const closeCommitLog = (): void => {
+    setLogOpen(false)
+    setOpen(true)
   }
 
   if (!root) return null
@@ -206,10 +196,6 @@ export function GitBranchPicker({
             if (e.key === 'Escape') {
               e.preventDefault()
               setOpen(false)
-            }
-            if (e.key === 'Enter' && canCreate) {
-              e.preventDefault()
-              void createBranch()
             }
           }}
           placeholder={t('gitSearchBranches')}
@@ -267,18 +253,12 @@ export function GitBranchPicker({
       <div className="border-t border-ds-border-muted px-3 py-3">
         <button
           type="button"
-          disabled={!canCreate || actingBranch != null}
+          disabled={actingBranch != null || !result?.ok}
           className="flex w-full items-center gap-3 rounded-lg px-1 py-2 text-left text-[14px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
-          onClick={() => void createBranch()}
+          onClick={openCommitLog}
         >
-          {actingBranch === query.trim() ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-ds-muted" strokeWidth={2} />
-          ) : (
-            <Plus className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.9} />
-          )}
-          <span className="min-w-0 truncate">
-            {query.trim() ? t('gitCreateNamedBranch', { branch: query.trim() }) : t('gitCreateBranch')}
-          </span>
+          <History className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.9} />
+          <span className="min-w-0 truncate">{t('gitLogOpen')}</span>
         </button>
       </div>
     </div>
@@ -309,6 +289,12 @@ export function GitBranchPicker({
       {usePortal && typeof document !== 'undefined'
         ? createPortal(menu, document.body)
         : menu}
+      <GitLogDialog
+        workspaceRoot={root}
+        currentBranch={currentBranch}
+        open={logOpen}
+        onClose={closeCommitLog}
+      />
     </div>
   )
 }

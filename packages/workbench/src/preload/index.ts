@@ -72,12 +72,17 @@ const api = {
     ipcRenderer.invoke('usage:prune-endpoint-model', { providerId, modelId }),
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
+  getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),
   getGitWorkingChanges: (workspaceRoot) =>
     ipcRenderer.invoke('git:working-changes', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   createAndSwitchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:create-and-switch-branch', { workspaceRoot, branch }),
+  commitGitChanges: (workspaceRoot, message, paths) =>
+    ipcRenderer.invoke('git:commit', { workspaceRoot, message, paths }),
+  suggestGitCommitMessage: (workspaceRoot, paths) =>
+    ipcRenderer.invoke('git:suggest-commit-message', { workspaceRoot, paths }),
   listEditors: () => ipcRenderer.invoke('editor:list'),
   openEditorPath: (options) =>
     ipcRenderer.invoke('editor:open-path', options),

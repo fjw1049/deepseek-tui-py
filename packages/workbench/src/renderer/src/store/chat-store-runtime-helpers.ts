@@ -311,6 +311,8 @@ export function clearedThreadSelection(): Pick<
   | 'turnReasoningFirstAtByUserId'
   | 'turnReasoningLastAtByUserId'
   | 'inspectorSelectedId'
+  | 'gitCommitSelectionKey'
+  | 'gitCommitSelectedPaths'
   | 'queuedMessages'
   | 'scrollToBlockId'
 > {
@@ -329,6 +331,8 @@ export function clearedThreadSelection(): Pick<
     turnReasoningFirstAtByUserId: {},
     turnReasoningLastAtByUserId: {},
     inspectorSelectedId: null,
+    gitCommitSelectionKey: null,
+    gitCommitSelectedPaths: [],
     queuedMessages: [],
     scrollToBlockId: null
   }

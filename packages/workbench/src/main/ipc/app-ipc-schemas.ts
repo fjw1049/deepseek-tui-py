@@ -5,6 +5,8 @@ const MAX_PATH_LENGTH = 4_096
 const MAX_URL_LENGTH = 4_096
 const MAX_ID_LENGTH = 256
 const MAX_BRANCH_LENGTH = 255
+const MAX_COMMIT_MESSAGE_LENGTH = 5_000
+const MAX_GIT_PATHS = 500
 const MAX_EDITOR_ID_LENGTH = 64
 const MAX_NOTIFICATION_TITLE_LENGTH = 200
 const MAX_NOTIFICATION_BODY_LENGTH = 5_000
@@ -85,6 +87,21 @@ export const gitBranchPayloadSchema = z
   .object({
     workspaceRoot: workspaceRootSchema,
     branch: trimmedString(MAX_BRANCH_LENGTH)
+  })
+  .strict()
+
+export const gitCommitPayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    message: trimmedString(MAX_COMMIT_MESSAGE_LENGTH),
+    paths: z.array(trimmedString(MAX_PATH_LENGTH)).max(MAX_GIT_PATHS).optional()
+  })
+  .strict()
+
+export const gitCommitPathsPayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    paths: z.array(trimmedString(MAX_PATH_LENGTH)).max(MAX_GIT_PATHS).optional()
   })
   .strict()
 

@@ -826,14 +826,14 @@ export function Workbench(): ReactElement {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar relative z-10 shrink-0 border-b border-ds-border-muted/35 bg-transparent">
-              <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-3 py-2">
-                <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  <SessionHeader compact className="min-w-0 flex-1" />
+              <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <SessionHeader compact className="min-w-0" />
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <ConnectionStatusBar compact />
                   {busy ? (
-                    <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-2.5 py-1 text-[11.5px] font-semibold text-amber-950 dark:text-amber-100">
+                    <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
                       {t('running')}
                     </span>
                   ) : null}

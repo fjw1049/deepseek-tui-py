@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import { useEffect, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
 import { formatRelativeTimeCompact } from '../lib/format-relative-time'
@@ -54,24 +54,21 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   if (compact) {
     return (
       <div
-        className={`ds-session-header ds-no-drag flex min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
+        className={`ds-session-header ds-no-drag flex min-h-0 min-w-0 flex-1 items-center gap-1 text-left ${className}`}
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-accent/15 bg-accent-soft text-accent shadow-[inset_0_1px_0_rgba(255,255,255,0.62)] dark:border-accent/25 dark:bg-accent-soft dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-          <MessageSquare
-            className="h-[14px] w-[14px] shrink-0 opacity-95"
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border border-ds-border-muted/70 bg-ds-elevated/45 text-ds-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/5 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+          <Info
+            className="h-2.5 w-2.5 shrink-0 opacity-90"
             strokeWidth={2}
             aria-hidden
           />
         </span>
         {active ? (
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 overflow-hidden">
             <div
-              className="ds-session-header-title truncate text-[13px] font-semibold leading-[18px] tracking-[-0.01em] text-ds-ink opacity-95"
+              className="ds-session-header-meta flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0 text-[9.5px] leading-3 text-ds-faint"
               title={active.title}
             >
-              {active.title}
-            </div>
-            <div className="ds-session-header-meta flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px] leading-[15px] text-ds-faint">
               <span className="max-w-[min(42vw,240px)] truncate">{activeWorkspaceLabel}</span>
               <span className="opacity-70">·</span>
               <span className="shrink-0 capitalize">{active.mode}</span>
@@ -82,16 +79,10 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
             </div>
           </div>
         ) : showWorkspaceMeta ? (
-          <div className="min-w-0">
-            <div className="truncate text-[12.5px] font-medium text-ds-faint">{workspaceLabel}</div>
+          <div className="min-w-0 overflow-hidden">
+            <div className="truncate text-[9.5px] leading-3 font-medium text-ds-faint">{workspaceLabel}</div>
           </div>
-        ) : (
-          <div className="min-w-0">
-            <div className="truncate text-[13px] font-semibold leading-8 tracking-[-0.01em] text-ds-ink opacity-90">
-              {t('newChat')}
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
     )
   }

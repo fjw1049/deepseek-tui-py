@@ -1,3 +1,5 @@
+export type GitWorkingChangeStage = 'staged' | 'unstaged' | 'partial'
+
 export type GitWorkingChangeStatus =
   | 'modified'
   | 'added'
@@ -9,6 +11,7 @@ export type GitWorkingChangeStatus =
 export type GitWorkingChangeFile = {
   path: string
   status: GitWorkingChangeStatus
+  stage: GitWorkingChangeStage
   patch: string
 }
 

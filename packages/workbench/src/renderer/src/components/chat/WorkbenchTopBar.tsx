@@ -113,7 +113,7 @@ export function WorkbenchTopBar({
   }
 
   const toolButtonBase =
-    'inline-flex h-8 shrink-0 items-center justify-center rounded-full border shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
+    'inline-flex h-6 shrink-0 items-center justify-center rounded-full border shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
   const toolButtonIdle =
     'border-transparent bg-ds-elevated/45 text-ds-faint opacity-90 hover:border-ds-border-muted hover:bg-ds-elevated/70 hover:text-ds-ink hover:opacity-100 dark:bg-white/4 dark:hover:bg-white/8'
   const toolButtonActive =
@@ -134,8 +134,8 @@ export function WorkbenchTopBar({
               : t('editorPickerTitle')
           }
         >
-          {renderEditorIcon(selectedEditor, 'h-4 w-4')}
-          <ChevronDown className="h-3 w-3 opacity-60" strokeWidth={1.9} />
+          {renderEditorIcon(selectedEditor, 'h-3.5 w-3.5')}
+          <ChevronDown className="h-2.5 w-2.5 opacity-60" strokeWidth={1.9} />
         </button>
 
         {editorMenuOpen ? (
@@ -170,14 +170,14 @@ export function WorkbenchTopBar({
         type="button"
         onClick={onToggleTerminalPanel}
         disabled={!terminalPanelEnabled}
-        className={`${toolButtonBase} w-8 disabled:cursor-not-allowed disabled:opacity-45 ${
+        className={`${toolButtonBase} w-6 disabled:cursor-not-allowed disabled:opacity-45 ${
           terminalPanelOpen ? toolButtonActive : toolButtonIdle
         }`}
         aria-label={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
         aria-pressed={terminalPanelOpen}
         title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
       >
-        <Terminal className="h-4 w-4" strokeWidth={1.75} />
+        <Terminal className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
 
       {items.map((item) => {
@@ -188,12 +188,12 @@ export function WorkbenchTopBar({
             key={item.mode}
             type="button"
             onClick={() => onToggleRightPanelMode(item.mode)}
-            className={`${toolButtonBase} w-8 ${active ? toolButtonActive : toolButtonIdle}`}
+            className={`${toolButtonBase} w-6 ${active ? toolButtonActive : toolButtonIdle}`}
             aria-label={item.label}
             aria-pressed={active}
             title={item.label}
           >
-            <Icon className="h-4 w-4" strokeWidth={1.75} />
+            <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
         )
       })}

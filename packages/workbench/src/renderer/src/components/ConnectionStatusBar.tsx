@@ -7,13 +7,22 @@ type Props = {
   compact?: boolean
 }
 
-export function ConnectionStatusBar({ compact = false }: Props): ReactElement {
+export function ConnectionStatusBar({ compact = false }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
   const startupPhase = useChatStore((s) => s.startupPhase)
   const activeThreadWarmup = useChatStore((s) => s.activeThreadWarmup)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
+
+  const warmingThread =
+    runtimeConnection === 'ready' &&
+    activeThreadId !== null &&
+    activeThreadWarmup.threadId === activeThreadId &&
+    activeThreadWarmup.status === 'warming'
+
+  // Steady "ready" needs no chrome — composer, sidebar, and empty-state already reflect it.
+  if (runtimeConnection === 'ready' && !warmingThread) return null
 
   const startupLabel =
     startupPhase?.phase === 'settings'
@@ -31,11 +40,6 @@ export function ConnectionStatusBar({ compact = false }: Props): ReactElement {
                 : startupPhase?.phase === 'thread-api'
                   ? t('startupThreadApi')
                   : null
-  const warmingThread =
-    runtimeConnection === 'ready' &&
-    activeThreadId !== null &&
-    activeThreadWarmup.threadId === activeThreadId &&
-    activeThreadWarmup.status === 'warming'
   const label =
     warmingThread
       ? t('startupWorkspacePreparing')
@@ -74,10 +78,10 @@ export function ConnectionStatusBar({ compact = false }: Props): ReactElement {
   if (compact) {
     return (
       <div
-        className={`ds-no-drag inline-flex h-8 max-w-[min(190px,30vw)] shrink-0 items-center gap-1.5 ${barTone}`}
+        className={`ds-no-drag inline-flex h-6 max-w-[min(190px,30vw)] shrink-0 items-center gap-1 ${barTone}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} aria-hidden />
-        <span className="truncate text-[11.5px] font-medium tabular-nums">{label}</span>
+        <span className="truncate text-[10px] font-medium tabular-nums">{label}</span>
         {showRetry ? (
           <button
             type="button"

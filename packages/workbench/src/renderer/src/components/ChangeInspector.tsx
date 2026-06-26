@@ -10,7 +10,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { FileEdit, PanelRightClose } from 'lucide-react'
-import type { GitWorkingChangeFile } from '@shared/git-working-changes'
+import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
@@ -36,6 +36,8 @@ type InspectorChangeItem = {
   filePath?: string
   detail: string
   status: 'running' | 'success' | 'error'
+  committable?: boolean
+  gitStage?: GitWorkingChangeStage
 }
 
 function readStoredListHeight(): number {
@@ -86,7 +88,9 @@ function gitChangeItems(files: GitWorkingChangeFile[]): InspectorChangeItem[] {
     id: `git:${file.path}`,
     filePath: file.path,
     detail: file.patch,
-    status: 'success' as const
+    status: 'success' as const,
+    committable: true,
+    gitStage: file.stage
   }))
 }
 
@@ -123,6 +127,10 @@ export function ChangeInspector({
   const { t } = useTranslation('common')
   const selectedId = useChatStore((s) => s.inspectorSelectedId)
   const selectInspectorItem = useChatStore((s) => s.selectInspectorItem)
+  const gitCommitSelectedPaths = useChatStore((s) => s.gitCommitSelectedPaths)
+  const syncGitCommitSelection = useChatStore((s) => s.syncGitCommitSelection)
+  const toggleGitCommitPath = useChatStore((s) => s.toggleGitCommitPath)
+  const setGitCommitSelectedPaths = useChatStore((s) => s.setGitCommitSelectedPaths)
   const { workspaceRoot, activeThreadId, threads } = useChatStore(
     useShallow((s) => ({
       workspaceRoot: s.workspaceRoot,
@@ -132,6 +140,10 @@ export function ChangeInspector({
   )
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
   const { result: gitChanges, loading: gitLoading } = useGitWorkingChanges(root)
+  const gitFilePaths = useMemo(
+    () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
+    [gitChanges]
+  )
   const splitContainerRef = useRef<HTMLDivElement>(null)
   const [listHeight, setListHeight] = useState(readStoredListHeight)
 
@@ -145,6 +157,16 @@ export function ChangeInspector({
     () => sumDiffStats(fileChanges.map((item) => item.detail)),
     [fileChanges]
   )
+
+  useEffect(() => {
+    if (gitChanges == null || !gitChanges.ok) return
+    syncGitCommitSelection(gitFilePaths)
+  }, [gitChanges, gitFilePaths, syncGitCommitSelection])
+
+  const selectedCommitCount = useMemo(() => {
+    const allowed = new Set(gitFilePaths)
+    return gitCommitSelectedPaths.filter((path) => allowed.has(path)).length
+  }, [gitCommitSelectedPaths, gitFilePaths])
 
   useEffect(() => {
     if (fileChanges.length === 0) {
@@ -202,6 +224,12 @@ export function ChangeInspector({
   const active =
     fileChanges.find((item) => item.id === selectedId) ?? fileChanges[fileChanges.length - 1]
 
+  const gitStageLabel = (stage: GitWorkingChangeStage): string => {
+    if (stage === 'staged') return t('gitStageStaged')
+    if (stage === 'partial') return t('gitStagePartial')
+    return t('gitStageUnstaged')
+  }
+
   return (
     <aside
       className={`ds-change-inspector ds-tool-panel ds-no-drag flex flex-col ${className ?? ''}`}
@@ -250,6 +278,33 @@ export function ChangeInspector({
           </div>
         ) : (
           <div ref={splitContainerRef} className="flex min-h-0 flex-1 flex-col">
+            {gitFilePaths.length > 0 ? (
+              <div className="flex shrink-0 items-center gap-2 border-b border-ds-border-muted/60 px-4 py-2 text-[12px] text-ds-faint">
+                <span className="min-w-0 flex-1 truncate">
+                  {t('gitCommitSelectionSummary', {
+                    selected: selectedCommitCount,
+                    total: gitFilePaths.length
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 text-ds-muted transition hover:text-ds-ink"
+                  onClick={() => setGitCommitSelectedPaths([...gitFilePaths])}
+                >
+                  {t('gitCommitSelectAll')}
+                </button>
+                <span aria-hidden className="text-ds-border-strong">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 text-ds-muted transition hover:text-ds-ink"
+                  onClick={() => setGitCommitSelectedPaths([])}
+                >
+                  {t('gitCommitSelectNone')}
+                </button>
+              </div>
+            ) : null}
             <div
               className="min-h-0 shrink-0 overflow-y-auto py-2"
               style={{ height: listHeight }}
@@ -258,39 +313,64 @@ export function ChangeInspector({
                 {fileChanges.map((item) => {
                   const stats = countDiffStats(item.detail)
                   const displayPath = formatFilePathForDisplay(item.filePath, root || workspaceRoot)
+                  const commitSelected = Boolean(
+                    item.committable &&
+                      item.filePath &&
+                      gitCommitSelectedPaths.includes(item.filePath)
+                  )
                   return (
                     <li key={item.id}>
-                      <button
-                        type="button"
-                        onClick={() => selectInspectorItem(item.id)}
-                        className={`flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition ${
+                      <div
+                        className={`flex w-full items-start gap-2.5 px-4 py-2.5 transition ${
                           active?.id === item.id
                             ? 'bg-ds-hover text-ds-ink'
                             : 'text-ds-ink hover:bg-ds-hover/70'
                         }`}
                       >
-                        <FileEdit
-                          className={`mt-0.5 h-4 w-4 shrink-0 ${
-                            item.status === 'error' ? 'text-red-700' : 'text-ds-muted'
-                          }`}
-                          strokeWidth={1.75}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] text-ds-ink">
-                            {displayPath ?? t('toolActionFile')}
-                          </div>
-                          {stats ? (
-                            <div className="mt-0.5">
-                              <ChangeDiffStatsLabel stats={stats} size="sm" />
+                        {item.committable && item.filePath ? (
+                          <input
+                            type="checkbox"
+                            checked={commitSelected}
+                            aria-label={t('gitCommitIncludeFile', { file: displayPath ?? item.filePath })}
+                            className="mt-1 shrink-0"
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={() => toggleGitCommitPath(item.filePath!, gitFilePaths)}
+                          />
+                        ) : (
+                          <FileEdit
+                            className={`mt-0.5 h-4 w-4 shrink-0 ${
+                              item.status === 'error' ? 'text-red-700' : 'text-ds-muted'
+                            }`}
+                            strokeWidth={1.75}
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => selectInspectorItem(item.id)}
+                          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[13px] text-ds-ink">
+                              {displayPath ?? t('toolActionFile')}
                             </div>
+                            {stats ? (
+                              <div className="mt-0.5">
+                                <ChangeDiffStatsLabel stats={stats} size="sm" />
+                              </div>
+                            ) : null}
+                          </div>
+                          {item.gitStage ? (
+                            <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium text-ds-muted">
+                              {gitStageLabel(item.gitStage)}
+                            </span>
                           ) : null}
-                        </div>
-                        {item.status === 'running' ? (
-                          <span className="rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
-                            {t('inspectorStatusRunning')}
-                          </span>
-                        ) : null}
-                      </button>
+                          {item.status === 'running' ? (
+                            <span className="rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
+                              {t('inspectorStatusRunning')}
+                            </span>
+                          ) : null}
+                        </button>
+                      </div>
                     </li>
                   )
                 })}

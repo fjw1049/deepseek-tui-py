@@ -1,11 +1,9 @@
-import { useMemo, type ReactElement } from 'react'
+import { useCallback, useMemo, useEffect, type ReactElement } from 'react'
 import {
   ArrowRight,
   CheckCircle2,
   Circle,
-  FileEdit,
-  GitCommitHorizontal,
-  MoreHorizontal
+  FileEdit
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -15,9 +13,14 @@ import { useGitBranches } from '../../hooks/use-git-branches'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { sumDiffStats } from '../../lib/diff-stats'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
+import {
+  isExplicitGitCommitSelectionNone,
+  resolveGitCommitPaths
+} from '../../lib/git-commit-selection'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
+import { GitCommitPopover } from './GitCommitPopover'
 
 type Props = {
   onOpenChanges?: () => void
@@ -34,17 +37,28 @@ const DOCK_ROW_CLASS =
 
 export function OperationContextDock({ onOpenChanges }: Props): ReactElement | null {
   const { t } = useTranslation('common')
-  const { workspaceRoot, blocks, activeThreadId, threads } = useChatStore(
+  const {
+    workspaceRoot,
+    blocks,
+    activeThreadId,
+    threads,
+    gitCommitSelectionKey,
+    gitCommitSelectedPaths,
+    syncGitCommitSelection
+  } = useChatStore(
     useShallow((s) => ({
       workspaceRoot: s.workspaceRoot,
       blocks: s.blocks,
       activeThreadId: s.activeThreadId,
-      threads: s.threads
+      threads: s.threads,
+      gitCommitSelectionKey: s.gitCommitSelectionKey,
+      gitCommitSelectedPaths: s.gitCommitSelectedPaths,
+      syncGitCommitSelection: s.syncGitCommitSelection
     }))
   )
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
-  const { result: gitResult, loading: gitLoading } = useGitBranches(root)
-  const { result: gitChanges } = useGitWorkingChanges(root)
+  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
+  const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
   const openTodos = todos.filter((item) => item.status !== 'completed')
@@ -55,8 +69,34 @@ export function OperationContextDock({ onOpenChanges }: Props): ReactElement | n
     return sumDiffStats([...sessionChangePatches(blocks), ...gitPatches])
   }, [blocks, gitChanges])
   const gitDirtyCount = gitResult?.ok ? gitResult.dirtyCount : 0
-  const hasChanges = changeStats !== null || gitDirtyCount > 0
   const gitReady = gitResult?.ok ?? false
+  const gitFilePaths = useMemo(
+    () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
+    [gitChanges]
+  )
+  useEffect(() => {
+    if (gitChanges == null || !gitChanges.ok) return
+    syncGitCommitSelection(gitFilePaths)
+  }, [gitChanges, gitFilePaths, syncGitCommitSelection])
+  const commitFilePaths = useMemo(
+    () =>
+      resolveGitCommitPaths(gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root),
+    [gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root]
+  )
+  const explicitSelectNone = isExplicitGitCommitSelectionNone(
+    gitCommitSelectionKey,
+    gitCommitSelectedPaths,
+    gitFilePaths,
+    root
+  )
+  const canCommit = gitReady && gitDirtyCount > 0 && !explicitSelectNone
+  const hasGitChanges = gitDirtyCount > 0 || gitFilePaths.length > 0
+  const hasChanges = changeStats !== null || hasGitChanges
+
+  const refreshGitState = useCallback((): void => {
+    void reloadGitBranches()
+    void reloadGitChanges()
+  }, [reloadGitBranches, reloadGitChanges])
 
   const openChangesPanel = (): void => {
     if (!hasChanges) return
@@ -106,17 +146,23 @@ export function OperationContextDock({ onOpenChanges }: Props): ReactElement | n
               menuPlacement="below"
             />
           </div>
-          <button
-            type="button"
-            disabled
-            aria-disabled
-            className={`${DOCK_ROW_CLASS} mt-1 cursor-not-allowed text-ds-muted opacity-55`}
-            title={t('operationDockCommitSoon')}
-          >
-            <GitCommitHorizontal className="h-4 w-4 shrink-0" strokeWidth={1.85} />
-            <span className="min-w-0 flex-1 truncate">{t('operationDockCommit')}</span>
-            <MoreHorizontal className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.9} />
-          </button>
+          <GitCommitPopover
+            workspaceRoot={root}
+            currentBranch={gitResult?.ok ? gitResult.currentBranch : null}
+            gitFiles={gitChanges?.ok ? gitChanges.files : []}
+            gitFilesLoading={gitChangesLoading}
+            gitDirtyCount={gitDirtyCount}
+            enabled={canCommit}
+            rowClassName={DOCK_ROW_CLASS}
+            onOpenChanges={hasChanges ? openChangesPanel : undefined}
+            onRefreshGit={refreshGitState}
+            onCommitted={refreshGitState}
+          />
+          {hasChanges && !hasGitChanges ? (
+            <p className="mt-1 px-1 text-[12px] leading-5 text-ds-faint">
+              {t('operationDockCommitSessionOnly')}
+            </p>
+          ) : null}
         </>
       ) : gitLoading && !gitResult ? (
         <p className="mt-2 text-[13px] leading-5 text-ds-faint">{t('gitBranchLoading')}</p>

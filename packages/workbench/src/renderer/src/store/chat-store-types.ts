@@ -71,6 +71,8 @@ export type ChatState = {
   turnReasoningFirstAtByUserId: Record<string, number>
   turnReasoningLastAtByUserId: Record<string, number>
   inspectorSelectedId: string | null
+  gitCommitSelectionKey: string | null
+  gitCommitSelectedPaths: string[]
   composerModel: string
   composerPickList: string[]
   composerModelMeta: Record<string, ComposerModelMeta>
@@ -121,6 +123,9 @@ export type ChatState = {
     action: { kind: 'submit'; answers: UserInputAnswer[] } | { kind: 'cancel' }
   ) => Promise<void>
   selectInspectorItem: (id: string | null) => void
+  syncGitCommitSelection: (allPaths: string[]) => void
+  toggleGitCommitPath: (path: string, allPaths: string[]) => void
+  setGitCommitSelectedPaths: (paths: string[]) => void
   applyI18nFromSettings: (locale: 'en' | 'zh') => Promise<void>
   reloadUiSettings: () => Promise<void>
 }

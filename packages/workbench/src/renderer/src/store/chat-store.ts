@@ -1022,6 +1022,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   turnReasoningFirstAtByUserId: {},
   turnReasoningLastAtByUserId: {},
   inspectorSelectedId: null,
+  gitCommitSelectionKey: null,
+  gitCommitSelectedPaths: [],
   composerModel: 'deepseek-v4-pro',
   composerPickList: mergeComposerPickList(false, []),
   composerModelMeta: {},

@@ -3,6 +3,12 @@ import type { AppSettingsV1 } from '@shared/app-settings'
 import { encodeModelRef } from '@shared/model-ref'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
+import {
+  syncGitCommitSelection as mergeGitCommitSelection,
+  toggleGitCommitPath as toggleGitCommitPathSelection,
+  workspaceKey
+} from '../lib/git-commit-selection'
+import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, LegacySettingsRouteSection, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
 type CreateAppActionsOptions = {
@@ -32,6 +38,9 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
   | 'openInitialSetup'
   | 'closeInitialSetup'
   | 'selectInspectorItem'
+  | 'syncGitCommitSelection'
+  | 'toggleGitCommitPath'
+  | 'setGitCommitSelectedPaths'
   | 'applyI18nFromSettings'
   | 'reloadUiSettings'
 > {
@@ -131,6 +140,51 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     closeInitialSetup: () => set({ initialSetupOpen: false, initialSetupMode: 'required' }),
 
     selectInspectorItem: (id) => set({ inspectorSelectedId: id }),
+
+    syncGitCommitSelection: (allPaths) => {
+      const state = get()
+      const root = resolveActiveThreadWorkspace(
+        state.activeThreadId,
+        state.threads,
+        state.workspaceRoot
+      )
+      const next = mergeGitCommitSelection(
+        state.gitCommitSelectionKey,
+        state.gitCommitSelectedPaths,
+        root,
+        allPaths
+      )
+      set({ gitCommitSelectionKey: next.key, gitCommitSelectedPaths: next.paths })
+    },
+
+    toggleGitCommitPath: (path, allPaths) => {
+      const state = get()
+      const root = resolveActiveThreadWorkspace(
+        state.activeThreadId,
+        state.threads,
+        state.workspaceRoot
+      )
+      const key = workspaceKey(root) || null
+      set({
+        gitCommitSelectionKey: key,
+        gitCommitSelectedPaths: toggleGitCommitPathSelection(
+          state.gitCommitSelectedPaths,
+          path,
+          allPaths
+        )
+      })
+    },
+
+    setGitCommitSelectedPaths: (paths) => {
+      const state = get()
+      const root = resolveActiveThreadWorkspace(
+        state.activeThreadId,
+        state.threads,
+        state.workspaceRoot
+      )
+      const key = workspaceKey(root) || null
+      set({ gitCommitSelectionKey: key, gitCommitSelectedPaths: paths })
+    },
 
     applyI18nFromSettings: async (locale) => {
       await i18n.changeLanguage(locale)
