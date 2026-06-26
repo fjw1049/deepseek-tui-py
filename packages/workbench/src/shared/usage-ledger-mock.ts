@@ -187,6 +187,109 @@ const MODEL_ARCS: ModelUsageArc[] = [
     salt: 79,
     spikeDaysAgo: [3, 9],
     spikeMultiplier: 2.0
+  },
+  // Doubao 2.0 Code — agentic coding sprint (composer list).
+  {
+    model: 'qingyun::doubao-seed-2.0-code',
+    fromDaysAgo: 24,
+    toDaysAgo: 0,
+    activeRate: 0.56,
+    inputPerActiveDay: 132_000,
+    outputRatio: 0.115,
+    turnsPerActiveDay: 10,
+    costUsdPer1k: 0.0014,
+    costCnyPer1k: 0.01,
+    salt: 83,
+    spikeDaysAgo: [1, 5, 12, 19],
+    spikeMultiplier: 2.5
+  },
+  // GPT-4o — early OpenAI period before leaning on DeepSeek.
+  {
+    model: 'qingyun::gpt-4o',
+    fromDaysAgo: 82,
+    toDaysAgo: 38,
+    activeRate: 0.54,
+    inputPerActiveDay: 48_000,
+    outputRatio: 0.038,
+    turnsPerActiveDay: 5,
+    costUsdPer1k: 0.005,
+    costCnyPer1k: 0.036,
+    salt: 87,
+    spikeDaysAgo: [72, 58, 45],
+    spikeMultiplier: 2.6
+  },
+  // GPT-3.5-turbo — legacy quick pings, faded out.
+  {
+    model: 'qingyun::gpt-3.5-turbo',
+    fromDaysAgo: 89,
+    toDaysAgo: 55,
+    activeRate: 0.24,
+    inputPerActiveDay: 9_800,
+    outputRatio: 0.075,
+    turnsPerActiveDay: 5,
+    costUsdPer1k: 0.0005,
+    costCnyPer1k: 0.0035,
+    salt: 91
+  },
+  // Claude 3.5 Sonnet — steady secondary for writing and review.
+  {
+    model: 'qingyun::claude-3-5-sonnet',
+    fromDaysAgo: 68,
+    toDaysAgo: 0,
+    activeRate: 0.44,
+    inputPerActiveDay: 68_000,
+    outputRatio: 0.041,
+    turnsPerActiveDay: 4,
+    costUsdPer1k: 0.003,
+    costCnyPer1k: 0.022,
+    salt: 95,
+    spikeDaysAgo: [6, 17, 33, 52],
+    spikeMultiplier: 2.1
+  },
+  // Claude 3 Opus — rare deep-reasoning nights.
+  {
+    model: 'qingyun::claude-3-opus',
+    fromDaysAgo: 56,
+    toDaysAgo: 14,
+    activeRate: 0.17,
+    inputPerActiveDay: 192_000,
+    outputRatio: 0.034,
+    turnsPerActiveDay: 2,
+    costUsdPer1k: 0.015,
+    costCnyPer1k: 0.11,
+    salt: 97,
+    spikeDaysAgo: [42, 28, 19],
+    spikeMultiplier: 3.0
+  },
+  // Gemini 1.5 Pro — short evaluation window.
+  {
+    model: 'qingyun::gemini-1.5-pro',
+    fromDaysAgo: 40,
+    toDaysAgo: 20,
+    activeRate: 0.38,
+    inputPerActiveDay: 92_000,
+    outputRatio: 0.039,
+    turnsPerActiveDay: 3,
+    costUsdPer1k: 0.0035,
+    costCnyPer1k: 0.025,
+    salt: 101,
+    spikeDaysAgo: [32, 24],
+    spikeMultiplier: 2.2
+  },
+  // Llama 3 70B — recent open-weight experiment.
+  {
+    model: 'qingyun::llama-3-70b',
+    fromDaysAgo: 19,
+    toDaysAgo: 2,
+    activeRate: 0.34,
+    inputPerActiveDay: 38_000,
+    outputRatio: 0.058,
+    turnsPerActiveDay: 3,
+    costUsdPer1k: 0.0009,
+    costCnyPer1k: 0.0065,
+    salt: 103,
+    spikeDaysAgo: [8, 14],
+    spikeMultiplier: 1.8
   }
 ]
 
@@ -249,6 +352,96 @@ const HANDCRAFTED_SESSIONS: Array<{
     turns: 2,
     costUsdPer1k: 0.0018,
     costCnyPer1k: 0.013
+  },
+  // Late March: GPT-4o before switching defaults to DeepSeek.
+  {
+    daysAgo: 78,
+    model: 'qingyun::gpt-4o',
+    input: 548_000,
+    output: 21_400,
+    turns: 4,
+    costUsdPer1k: 0.005,
+    costCnyPer1k: 0.036
+  },
+  // Early April: GPT-3.5 batch tagging job.
+  {
+    daysAgo: 68,
+    model: 'qingyun::gpt-3.5-turbo',
+    input: 124_000,
+    output: 9_600,
+    turns: 18,
+    costUsdPer1k: 0.0005,
+    costCnyPer1k: 0.0035
+  },
+  // Mid April: Claude Opus architecture review.
+  {
+    daysAgo: 52,
+    model: 'qingyun::claude-3-opus',
+    input: 920_000,
+    output: 32_800,
+    turns: 1,
+    costUsdPer1k: 0.015,
+    costCnyPer1k: 0.11
+  },
+  // May: Claude Sonnet documentation sprint.
+  {
+    daysAgo: 44,
+    model: 'qingyun::claude-3-5-sonnet',
+    input: 336_000,
+    output: 14_100,
+    turns: 5,
+    costUsdPer1k: 0.003,
+    costCnyPer1k: 0.022
+  },
+  // Late May: Gemini multimodal eval.
+  {
+    daysAgo: 28,
+    model: 'qingyun::gemini-1.5-pro',
+    input: 268_000,
+    output: 10_500,
+    turns: 3,
+    costUsdPer1k: 0.0035,
+    costCnyPer1k: 0.025
+  },
+  // This week: Doubao 2.0 Code agent refactor.
+  {
+    daysAgo: 2,
+    model: 'qingyun::doubao-seed-2.0-code',
+    input: 215_000,
+    output: 27_800,
+    turns: 7,
+    costUsdPer1k: 0.0014,
+    costCnyPer1k: 0.01
+  },
+  // Llama proxy smoke test.
+  {
+    daysAgo: 11,
+    model: 'qingyun::llama-3-70b',
+    input: 82_000,
+    output: 5_900,
+    turns: 2,
+    costUsdPer1k: 0.0009,
+    costCnyPer1k: 0.0065
+  },
+  // Weekend spike: v4-pro long agent run (fills recent chart).
+  {
+    daysAgo: 6,
+    model: 'deepseek-v4-pro',
+    input: 612_000,
+    output: 19_400,
+    turns: 3,
+    costUsdPer1k: 0.002,
+    costCnyPer1k: 0.014
+  },
+  // Doubao pro sprint peak (historical).
+  {
+    daysAgo: 47,
+    model: 'qingyun::doubao-seed-2.0-pro',
+    input: 485_000,
+    output: 24_200,
+    turns: 6,
+    costUsdPer1k: 0.0025,
+    costCnyPer1k: 0.018
   }
 ]
 
@@ -424,5 +617,6 @@ export function buildMockUsageLedger(now = new Date()): UsageLedgerV1 {
 }
 
 export function isUsageMockEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.DEEPSEEK_USAGE_MOCK === '0') return false
   return env.DEEPSEEK_USAGE_MOCK === '1'
 }

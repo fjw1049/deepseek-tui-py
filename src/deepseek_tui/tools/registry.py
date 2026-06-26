@@ -491,7 +491,6 @@ from deepseek_tui.tools.git import (
 from deepseek_tui.tools.knowledge import (
     NoteTool,
     PlanUpdateTool,
-    ReviewTool,
     SkillLoadTool,
 )
 from deepseek_tui.tools.mcp import (
@@ -681,8 +680,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # Engine-intercepted special tools (always active)
     registry.register(MultiToolUseParallelTool())
     registry.register(RequestUserInputTool())
-    if cfg.features.web_search:
-        registry.register(ReviewTool(config=cfg))
 
     registry.register(ValidateDataTool())
     registry.register(RunTestsTool())

@@ -832,16 +832,58 @@ samp {
   margin-inline: auto;
 }
 
-/* Empty chat: hero upper; composer in the lower band, centered horizontally. */
-.ds-empty-stage {
-  min-height: 0;
-  align-items: center;
+.ds-chat-stage .ds-chat-stage {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding-inline: 0;
 }
 
-.ds-empty-stage-hero,
+/* Empty home: wide shell with light outer inset; hero gap grows with available width. */
+.ds-empty-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  overflow: hidden;
+}
+
+.ds-empty-stage-frame {
+  container-type: inline-size;
+  container-name: empty-stage;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: min(100%, 68rem);
+  margin-inline: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.ds-empty-stage .ds-chat-stage {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.ds-empty-stage-hero {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: clamp(1.25rem, 4vh, 2.5rem);
+}
+
 .ds-empty-stage-composer {
-  width: min(940px, calc(100% - 1.5rem));
-  max-width: 940px;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.ds-empty-hero-panel {
+  height: 28.75rem;
+  max-height: 28.75rem;
+  min-height: 28.75rem;
 }
 
 /* Fixed full-width top bar — same edge alignment on home and chat views. */
@@ -866,13 +908,23 @@ samp {
   }
 }
 
-.ds-empty-stage-hero {
-  padding-top: clamp(1.25rem, 4vh, 2.5rem);
+.ds-empty-hero-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(0.75rem, 2.75cqi, 1.75rem);
+}
+
+@container empty-stage (max-width: 639px) {
+  .ds-empty-hero-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ds-empty-stage-prompt {
   width: 100%;
   perspective: 480px;
+  margin-bottom: clamp(1.75rem, 4.5vh, 2.5rem);
 }
 
 .ds-empty-stage-mark {
@@ -933,6 +985,10 @@ samp {
   margin-top: auto;
   padding-top: clamp(2.5rem, 7vh, 4.5rem);
   padding-bottom: clamp(1rem, 2.5vh, 1.75rem);
+}
+
+.ds-empty-stage .ds-composer-shell {
+  padding-inline: 0;
 }
 
 .ds-trending-grid-scroll {
@@ -2257,6 +2313,145 @@ select:focus-visible,
     inset 0 1px 0 var(--glass-highlight);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.ds-context-rail {
+  background: transparent;
+}
+
+.ds-operation-dock {
+  pointer-events: auto;
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+.ds-change-inspector {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+.ds-change-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ds-change-stats--sm {
+  font-size: 0.75rem;
+}
+
+.ds-change-stats--md {
+  font-size: 0.8125rem;
+}
+
+.ds-change-stats--lg {
+  font-size: 0.875rem;
+}
+
+.ds-change-stats__added {
+  color: var(--ds-diff-added);
+}
+
+.ds-change-stats__removed {
+  color: var(--ds-diff-removed);
+}
+
+.ds-change-inspector__split-handle {
+  touch-action: none;
+}
+
+.ds-change-inspector__code {
+  font-family: var(--font-terminal);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+/* Same lift as home hero cards, but keep inset-only glass (no drop shadow). */
+.ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--ds-accent) 20%, var(--glass-border));
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.ds-operation-rail {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 clamp(12.5rem, 26cqi, 20.5rem);
+  width: clamp(12.5rem, 26cqi, 20.5rem);
+  flex-direction: column;
+  background: transparent;
+}
+
+.ds-chat-main-track {
+  min-width: 0;
+}
+
+.ds-chat-inset-with-operation {
+  container-type: inline-size;
+  container-name: chat-main;
+  --ds-operation-stack-offset: 0.875rem;
+}
+
+/*
+ * Shared dialogue column: timeline + composer are the same width, flex with the pane.
+ * Dock width scales via cqi; dialogue fills everything to its left.
+ */
+.ds-chat-operation-band {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+}
+
+.ds-dialogue-gutter {
+  padding-inline: 0 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .ds-dialogue-gutter {
+    padding-inline: 0 1.5rem;
+  }
+}
+
+.ds-chat-operation-band__dialogue {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ds-chat-operation-band__dialogue .ds-chat-stage {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding-inline: 0;
+}
+
+.ds-chat-operation-band__dialogue .ds-composer-shell {
+  padding-inline: 0;
+}
+
+.ds-chat-operation-band__dialogue > .flex.shrink-0 {
+  width: 100%;
+}
+
+.ds-chat-operation-band__dialogue > .flex.shrink-0 > .flex.w-full.flex-col {
+  align-items: stretch;
+  width: 100%;
+}
+
+.ds-operation-rail__scroll {
+  width: 100%;
+}
+
+.ds-timeline-with-operation {
+  padding-top: calc(var(--ds-operation-stack-offset) + 0.625rem);
 }
 
 .ds-workbench-terminal-wrap {

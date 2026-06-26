@@ -24,6 +24,7 @@ import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
 import { ImportSessionDialog } from './ImportSessionDialog'
+import { OperationContextDock } from './chat/OperationContextDock'
 
 const ChangeInspector = lazy(() =>
   import('./ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
@@ -54,12 +55,14 @@ const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
 const RIGHT_PANEL_WIDTH_KEY = 'deepseekgui.layout.rightInspectorWidth'
 const RIGHT_PANEL_MODE_KEY = 'deepseekgui.layout.rightPanelMode'
 const BOTTOM_PANEL_HEIGHT_KEY = 'deepseekgui.layout.bottomTerminalHeight'
-const LEFT_PANEL_DEFAULT = 288
-const RIGHT_PANEL_DEFAULT = 360
+const LEFT_PANEL_DEFAULT = 272
+const RIGHT_CONTEXT_DEFAULT = 272
+const RIGHT_TOOL_DEFAULT = 360
+const RIGHT_PANEL_DEFAULT = RIGHT_CONTEXT_DEFAULT
 const BOTTOM_PANEL_DEFAULT = 260
 const LEFT_PANEL_MIN = 236
 const LEFT_PANEL_MAX = 500
-const RIGHT_PANEL_MIN = 280
+const RIGHT_PANEL_MIN = 260
 const RIGHT_PANEL_MAX = 760
 const BOTTOM_PANEL_MIN = 180
 const BOTTOM_PANEL_MAX = 520
@@ -290,7 +293,7 @@ export function Workbench(): ReactElement {
     readStoredBoolean(LEFT_PANEL_COLLAPSED_KEY, false)
   )
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
-    readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_PANEL_DEFAULT)
+    readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )
   const [terminalPanelVisible, setTerminalPanelVisible] = useState(false)
   const [terminalPanelMounted, setTerminalPanelMounted] = useState(false)
@@ -300,7 +303,9 @@ export function Workbench(): ReactElement {
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [importSessionOpen, setImportSessionOpen] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
-  const emptyStageInsetClass = 'px-4 sm:px-6 md:px-8'
+  const conversationInsetClass = 'px-3 md:px-5 lg:px-6 xl:px-8'
+  const operationConversationInsetClass = 'pl-3 md:pl-5 lg:pl-6 xl:pl-8 pr-0.5 md:pr-1'
+  const emptyStageInsetClass = 'px-2 md:px-3 lg:px-4 xl:px-5'
 
   const shellRef = useRef<HTMLDivElement | null>(null)
   const draftByThread = useRef<Record<string, string>>({})
@@ -337,6 +342,14 @@ export function Workbench(): ReactElement {
     liveReasoning.trim().length > 0
 
   const stageCentered = !hasStartedConversation
+  const showOperationColumn = route === 'chat' && workspaceRoot.trim().length > 0 && !stageCentered
+  const operationColumnActive = showOperationColumn && rightPanelMode === null
+  const rightPanelVisible = rightPanelMode !== null
+  const chatColumnInsetClass = useMemo(() => {
+    if (stageCentered) return emptyStageInsetClass
+    if (operationColumnActive) return `${operationConversationInsetClass} ds-chat-inset-with-operation`
+    return conversationInsetClass
+  }, [conversationInsetClass, emptyStageInsetClass, operationColumnActive, operationConversationInsetClass, stageCentered])
 
   const handleSend = (text: string): void => {
     const v = text.trim()
@@ -376,6 +389,15 @@ export function Workbench(): ReactElement {
 
   useEffect(() => {
     persistRightPanelMode(rightPanelMode)
+  }, [rightPanelMode])
+
+  const prevRightPanelModeRef = useRef<RightPanelMode>(null)
+  useEffect(() => {
+    const prev = prevRightPanelModeRef.current
+    prevRightPanelModeRef.current = rightPanelMode
+    if (prev === null && rightPanelMode !== null) {
+      setRightSidebarWidth((current) => (current < RIGHT_TOOL_DEFAULT ? RIGHT_TOOL_DEFAULT : current))
+    }
   }, [rightPanelMode])
 
   useEffect(() => {
@@ -506,11 +528,13 @@ export function Workbench(): ReactElement {
         rightSidebarWidth,
         {
           leftPanelVisible: !leftSidebarCollapsed,
-          rightPanelVisible: rightPanelMode !== null
+          rightPanelVisible
         }
       )
       if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
-      if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
+      if (rightPanelVisible && next.right !== rightSidebarWidth) {
+        setRightSidebarWidth(next.right)
+      }
       const containerHeight = shellRef.current?.clientHeight ?? window.innerHeight
       const nextTerminalHeight = clampBottomPanelHeight(containerHeight, terminalPanelHeight)
       if (nextTerminalHeight !== terminalPanelHeight) {
@@ -520,7 +544,7 @@ export function Workbench(): ReactElement {
     sync()
     window.addEventListener('resize', sync)
     return () => window.removeEventListener('resize', sync)
-  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarWidth, rightPanelMode, terminalPanelHeight])
+  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarWidth, rightPanelVisible, terminalPanelHeight])
 
   const openThread = (id: string): void => {
     setRoute('chat')
@@ -593,11 +617,13 @@ export function Workbench(): ReactElement {
         startRight,
         {
           leftPanelVisible: true,
-          rightPanelVisible: rightPanelMode !== null
+          rightPanelVisible
         }
       )
       setLeftSidebarWidth(next.left)
-      if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
+      if (rightPanelMode !== null && next.right !== rightSidebarWidth) {
+        setRightSidebarWidth(next.right)
+      }
     }
 
     const onUp = (): void => {
@@ -612,7 +638,7 @@ export function Workbench(): ReactElement {
   }
 
   const beginRightResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0 || rightPanelMode === null) return
+    if (event.button !== 0 || !rightPanelVisible) return
     event.preventDefault()
     const startX = event.clientX
     const startLeft = leftSidebarWidth
@@ -821,15 +847,67 @@ export function Workbench(): ReactElement {
                 </div>
               </div>
             </header>
-            <div
-              className={`flex min-h-0 min-w-0 flex-1 flex-col ${
-                stageCentered ? emptyStageInsetClass : stageInsetClass
-              }`}
-            >
-            <div className="flex min-h-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1">
+              <div
+                className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${chatColumnInsetClass}`}
+              >
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {stageCentered ? (
-                <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col">
-                  <div className="ds-chat-stage ds-empty-stage-hero shrink-0">
+                <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <div className="ds-empty-stage-frame flex min-h-0 min-w-0 flex-1 flex-col">
+                    <div className="ds-chat-stage ds-empty-stage-hero min-h-0 flex-1 overflow-y-auto">
+                      <MessageTimeline
+                        blocks={blocks}
+                        liveReasoning={liveReasoning}
+                        live={liveAssistant}
+                        activeThreadId={activeThreadId}
+                        runtimeConnection={runtimeConnection}
+                        stageCentered={stageCentered}
+                        useChatStageWidth={false}
+                        onRetryConnection={() => void probeRuntime('user')}
+                        onOpenSettings={() => openSettings('general')}
+                        onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                        onSelectSuggestion={(text) => setInput(text)}
+                        devPreviewCard={
+                          showDevPreviewCard ? (
+                            <DevPreviewLaunchCard
+                              url={latestDevPreviewUrl}
+                              onOpen={openDevPreview}
+                            />
+                          ) : null
+                        }
+                      />
+                    </div>
+                    <div className="ds-chat-stage ds-empty-stage-composer mt-auto shrink-0">
+                      <ComposerStage
+                        input={input}
+                        setInput={setInput}
+                        mode={mode}
+                        setMode={setMode}
+                        busy={busy}
+                        runtimeReady={runtimeConnection === 'ready'}
+                        hasActiveThread={Boolean(activeThreadId)}
+                        stageCentered={stageCentered}
+                        useChatStageWidth={false}
+                        composerModel={composerModel}
+                        composerPickList={composerPickList}
+                        onComposerModelChange={(modelId) => {
+                          setComposerModel(modelId)
+                        }}
+                        onSend={handleSend}
+                        onCompact={compactActiveThread}
+                        onFork={handleComposerFork}
+                        onOpenDiff={handleComposerOpenDiff}
+                        queuedMessages={queuedMessages}
+                        onRemoveQueuedMessage={removeQueuedMessage}
+                        onInterrupt={() => void interrupt()}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : operationColumnActive ? (
+                <div className="ds-chat-operation-band min-h-0 min-w-0 flex-1">
+                  <div className="ds-chat-operation-band__dialogue ds-dialogue-gutter flex min-h-0 min-w-0 flex-1 flex-col">
                     <MessageTimeline
                       blocks={blocks}
                       liveReasoning={liveReasoning}
@@ -837,7 +915,7 @@ export function Workbench(): ReactElement {
                       activeThreadId={activeThreadId}
                       runtimeConnection={runtimeConnection}
                       stageCentered={stageCentered}
-                      useChatStageWidth={false}
+                      withOperationColumn
                       onRetryConnection={() => void probeRuntime('user')}
                       onOpenSettings={() => openSettings('general')}
                       onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
@@ -851,35 +929,39 @@ export function Workbench(): ReactElement {
                         ) : null
                       }
                     />
+                    <div className="flex shrink-0 pb-3 pt-0">
+                      <ComposerStage
+                        input={input}
+                        setInput={setInput}
+                        mode={mode}
+                        setMode={setMode}
+                        busy={busy}
+                        runtimeReady={runtimeConnection === 'ready'}
+                        hasActiveThread={Boolean(activeThreadId)}
+                        useChatStageWidth={false}
+                        composerModel={composerModel}
+                        composerPickList={composerPickList}
+                        onComposerModelChange={(modelId) => {
+                          setComposerModel(modelId)
+                        }}
+                        onSend={handleSend}
+                        onCompact={compactActiveThread}
+                        onFork={handleComposerFork}
+                        onOpenDiff={handleComposerOpenDiff}
+                        queuedMessages={queuedMessages}
+                        onRemoveQueuedMessage={removeQueuedMessage}
+                        onInterrupt={() => void interrupt()}
+                      />
+                    </div>
                   </div>
-                  <div className="ds-chat-stage ds-empty-stage-composer mt-auto shrink-0">
-                    <ComposerStage
-                      input={input}
-                      setInput={setInput}
-                      mode={mode}
-                      setMode={setMode}
-                      busy={busy}
-                      runtimeReady={runtimeConnection === 'ready'}
-                      hasActiveThread={Boolean(activeThreadId)}
-                      stageCentered={stageCentered}
-                      useChatStageWidth={false}
-                      composerModel={composerModel}
-                      composerPickList={composerPickList}
-                      onComposerModelChange={(modelId) => {
-                        setComposerModel(modelId)
-                      }}
-                      onSend={handleSend}
-                      onCompact={compactActiveThread}
-                      onFork={handleComposerFork}
-                      onOpenDiff={handleComposerOpenDiff}
-                      queuedMessages={queuedMessages}
-                      onRemoveQueuedMessage={removeQueuedMessage}
-                      onInterrupt={() => void interrupt()}
-                    />
-                  </div>
+                  <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex">
+                    <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
+                      <OperationContextDock onOpenChanges={handleComposerOpenDiff} />
+                    </div>
+                  </aside>
                 </div>
               ) : (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="ds-chat-stage ds-dialogue-gutter mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col">
                   <MessageTimeline
                     blocks={blocks}
                     liveReasoning={liveReasoning}
@@ -900,7 +982,7 @@ export function Workbench(): ReactElement {
                       ) : null
                     }
                   />
-                  <div className="flex shrink-0 justify-center pb-3 pt-0">
+                  <div className="flex shrink-0 pb-3 pt-0">
                     <ComposerStage
                       input={input}
                       setInput={setInput}
@@ -909,6 +991,7 @@ export function Workbench(): ReactElement {
                       busy={busy}
                       runtimeReady={runtimeConnection === 'ready'}
                       hasActiveThread={Boolean(activeThreadId)}
+                      useChatStageWidth={false}
                       composerModel={composerModel}
                       composerPickList={composerPickList}
                       onComposerModelChange={(modelId) => {
@@ -927,10 +1010,7 @@ export function Workbench(): ReactElement {
               )}
             </div>
             </div>
-          </section>
-          </div>
-
-          {rightPanelMode ? (
+            {rightPanelMode ? (
               <div
                 className="ds-workbench-right-panel relative h-full min-h-0 shrink-0"
                 style={{ width: rightSidebarWidth }}
@@ -968,7 +1048,11 @@ export function Workbench(): ReactElement {
                   )}
                 </Suspense>
               </div>
-          ) : null}
+            ) : null}
+            </div>
+          </section>
+          </div>
+
         </div>
 
         {terminalPanelMounted ? (

@@ -110,7 +110,7 @@ export function DiffView({
           copied={copied}
         />
         <pre
-          className={`min-w-0 overflow-auto whitespace-pre p-3 font-mono text-[11.5px] leading-6 text-ds-ink ${
+          className={`ds-change-inspector__code min-w-0 overflow-auto whitespace-pre p-3 text-ds-ink ${
             fillParent ? 'min-h-0 flex-1' : ''
           }`}
           style={fillParent ? undefined : { maxHeight }}
@@ -167,7 +167,7 @@ export function DiffView({
         copied={copied}
       />
       <div
-        className={`min-w-0 font-mono text-[11.5px] leading-6 ${
+        className={`ds-change-inspector__code min-w-0 ${
           fillParent
             ? 'min-h-0 flex-1 overflow-x-auto overflow-y-auto'
             : 'overflow-x-auto overflow-y-auto'
@@ -218,11 +218,11 @@ function DiffHeader({
       >
         {badge.label}
       </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-medium text-ds-ink" title={name ?? ''}>
+      <span className="min-w-0 flex-1 truncate font-medium text-[13px] text-ds-ink" title={name ?? ''}>
         {name ?? 'patch'}
       </span>
       {added != null || removed != null ? (
-        <span className="shrink-0 font-mono text-[11px] tabular-nums">
+        <span className="shrink-0 text-[12px] tabular-nums">
           {(added ?? 0) > 0 ? (
             <span className="text-ds-diff-added">+{added}</span>
           ) : null}

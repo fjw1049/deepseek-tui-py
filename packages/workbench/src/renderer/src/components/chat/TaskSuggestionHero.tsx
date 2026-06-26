@@ -22,7 +22,7 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
   { value: 'monthly', labelKey: 'trendingMonthly' }
 ]
 
-const EMPTY_HERO_PANEL_CLASS = 'h-[460px] max-h-[460px]'
+const EMPTY_HERO_PANEL_CLASS = 'ds-empty-hero-panel'
 const TRENDING_REPO_LIMIT = 8
 const VISIBLE_TOPIC_COUNT = 3
 const TRENDING_LOOP_SEC_PER_CARD = 7
@@ -258,14 +258,14 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
   return (
     <div className="ds-no-drag w-full">
-      <div className="ds-empty-stage-prompt mb-10 flex items-center gap-3.5 px-0.5">
+      <div className="ds-empty-stage-prompt flex items-center gap-3.5 px-0.5">
         <EmptyStageMarkIcon className="h-12 w-12" />
         <p className="flex items-baseline font-medium leading-snug tracking-[-0.02em] text-ds-ink">
           <span className="text-[28px] sm:text-[32px]">:</span>
           <span className="ml-2.5 text-[22px] sm:ml-3 sm:text-[26px]">{t('emptyStagePrompt')}</span>
         </p>
       </div>
-      <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+      <div className="ds-empty-hero-grid grid">
         <ModelUsageHeroPanel
           summary={persistentUsage.data?.summary ?? null}
           daily={persistentUsage.data?.daily ?? []}

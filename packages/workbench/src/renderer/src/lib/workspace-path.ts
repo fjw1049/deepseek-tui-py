@@ -31,3 +31,14 @@ export function normalizeWorkspaceRoot(path?: string): string {
   if (isInternalTemporaryWorkspace(trimmed)) return ''
   return trimmed
 }
+
+export function resolveActiveThreadWorkspace(
+  activeThreadId: string | null | undefined,
+  threads: ReadonlyArray<{ id: string; workspace?: string }>,
+  fallbackWorkspaceRoot?: string | null
+): string {
+  const activeThreadWorkspace = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)?.workspace
+    : undefined
+  return normalizeWorkspaceRoot(activeThreadWorkspace) || normalizeWorkspaceRoot(fallbackWorkspaceRoot)
+}

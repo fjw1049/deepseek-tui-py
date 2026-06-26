@@ -1,6 +1,7 @@
 import type { AppSettingsPatch, AppSettingsV1, EndpointProtocol } from './app-settings'
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
+import type { GitWorkingChangesResult } from './git-working-changes'
 import type {
   PetFeaturedCacheResult,
   PetManifestFetchResult,
@@ -298,6 +299,7 @@ export type DsGuiApi = {
   pruneUsageProvider: (providerId: string) => Promise<{ ok: true }>
   pruneUsageEndpointModel: (providerId: string, modelId: string) => Promise<{ ok: true }>
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
+  getGitWorkingChanges: (workspaceRoot: string) => Promise<GitWorkingChangesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   listEditors: () => Promise<EditorListResult>

@@ -72,6 +72,8 @@ const api = {
     ipcRenderer.invoke('usage:prune-endpoint-model', { providerId, modelId }),
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
+  getGitWorkingChanges: (workspaceRoot) =>
+    ipcRenderer.invoke('git:working-changes', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   createAndSwitchGitBranch: (workspaceRoot, branch) =>

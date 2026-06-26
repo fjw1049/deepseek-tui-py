@@ -66,6 +66,7 @@ type Props = {
   devPreviewCard?: ReactElement | null
   stageCentered?: boolean
   useChatStageWidth?: boolean
+  withOperationColumn?: boolean
 }
 
 type Turn = {
@@ -114,7 +115,8 @@ export function MessageTimeline({
   onSelectSuggestion,
   devPreviewCard,
   stageCentered = false,
-  useChatStageWidth = true
+  useChatStageWidth = true,
+  withOperationColumn = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -265,7 +267,7 @@ export function MessageTimeline({
   return (
     <div
       ref={containerRef}
-      className={`ds-no-drag flex flex-col overflow-x-hidden ${
+      className={`ds-no-drag flex min-w-0 flex-col overflow-x-hidden ${
         stageCentered && showEmptyHeroOnly
           ? 'shrink-0 overflow-visible'
           : 'min-h-0 flex-1 overflow-y-auto'
@@ -274,7 +276,7 @@ export function MessageTimeline({
       <div
         className={`flex w-full min-w-0 flex-col gap-6 ${
           useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
-        } ${showEmptyHeroOnly ? 'pb-0 pt-0' : 'pb-8 pt-2'}`}
+        } ${showEmptyHeroOnly ? 'pb-0 pt-0' : withOperationColumn ? 'ds-timeline-with-operation pb-8' : 'pb-8 pt-2'}`}
       >
         {!activeThreadId && (
           <EmptyHero

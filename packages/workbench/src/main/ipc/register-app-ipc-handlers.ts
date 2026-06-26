@@ -49,7 +49,7 @@ import {
   resolveEffectiveRuntimeToken,
   runtimeTokenFilePath
 } from '../deepseek-process'
-import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
+import { createAndSwitchGitBranch, getGitBranches, getGitWorkingChanges, switchGitBranch } from '../services/git-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
@@ -888,6 +888,18 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('git:branches', async (_, workspaceRoot: unknown) =>
     getGitBranches(parseIpcPayload('git:branches', workspaceRootSchema, workspaceRoot))
   )
+  ipcMain.handle('git:working-changes', async (_, workspaceRoot: unknown) => {
+    const root = parseIpcPayload('git:working-changes', workspaceRootSchema, workspaceRoot)
+    const payload = await getGitWorkingChanges(root)
+    if (!payload.ok) {
+      logError('git-working-changes', 'Failed to load Git working changes', {
+        reason: payload.reason,
+        message: payload.message,
+        workspaceRoot: root
+      })
+    }
+    return payload
+  })
   ipcMain.handle(
     'git:switch-branch',
     async (_, payload: unknown) => {

@@ -1,25 +1,19 @@
-"""Review, recall, plan, note, and skill_load tools.
+"""Plan, note, and skill_load tools.
 
-Mirrors Rust tools at ``crates/tui/src/tools/{review,recall_archive}.rs``
-and ``crates/tui/src/commands/{note,review}.rs``.
+Mirrors Rust tools at ``crates/tui/src/tools/{recall_archive}.rs``
+and ``crates/tui/src/commands/{note}.rs``.
 """
 
 from __future__ import annotations
 
 
 
-import json
 import os
-import re
-import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
-
-if TYPE_CHECKING:
-    from deepseek_tui.config.models import Config
 
 # ===========================================================================
 # note — quick note tool (Rust commands/note.rs, ~60 LOC)
@@ -69,112 +63,6 @@ class NoteTool(ToolSpec):
 # ===========================================================================
 # review — code review tool (Rust tools/review.rs, 540 LOC)
 # ===========================================================================
-
-REVIEW_SYSTEM_PROMPT = (
-    "You are a senior code reviewer. Return ONLY valid JSON with the following schema:\n"
-    '{\n  "summary": "short overview",\n'
-    '  "issues": [\n    {\n      "severity": "error|warning|info",\n'
-    '      "title": "issue title",\n      "description": "details and impact",\n'
-    '      "path": "relative/file/path or null",\n      "line": 123\n    }\n  ],\n'
-    '  "suggestions": [\n    {\n      "path": "relative/file/path or null",\n'
-    '      "line": 123,\n      "suggestion": "actionable improvement"\n    }\n  ],\n'
-    '  "overall_assessment": "final assessment"\n}\n'
-    "If a field is unknown, use an empty string or null. "
-    "Prioritize correctness and missing tests."
-)
-
-DEFAULT_MAX_CHARS = 200_000
-
-
-class ReviewTool(ToolSpec):
-    """Perform structured code review via LLM."""
-
-    def __init__(self, config: Config | None = None) -> None:
-        self._config = config
-
-    def name(self) -> str:
-        return "review"
-
-    def description(self) -> str:
-        return (
-            "Analyze code (file, diff, or PR) and produce a structured review "
-            "with issues, suggestions, and an overall assessment."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "File path, 'git diff', or 'pr:<number>' to review.",
-                },
-                "focus": {
-                    "type": "string",
-                    "description": "Optional focus area (e.g. 'security', 'performance').",
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Max chars of content to send for review.",
-                },
-            },
-            "required": ["target"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.NETWORK]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        target = _require_string(input_data, "target")
-        focus = _optional_string(input_data, "focus")
-        max_chars = _optional_int(input_data, "max_chars") or DEFAULT_MAX_CHARS
-
-        content = _gather_review_content(target, context, max_chars)
-        user_prompt = f"Review the following code:\n\n```\n{content}\n```"
-        if focus:
-            user_prompt += f"\n\nFocus especially on: {focus}"
-
-        from deepseek_tui.client.factory import build_llm_client
-        from deepseek_tui.config.loader import ConfigLoader
-        from deepseek_tui.config.models import Config
-        from deepseek_tui.protocol.messages import Message
-
-        config = self._config
-        if config is None:
-            try:
-                config = ConfigLoader().load()
-            except Exception:
-                config = Config()
-        client = build_llm_client(config)
-
-        from deepseek_tui.protocol.messages import MessageRequest
-
-        request = MessageRequest(
-            model="deepseek-chat",
-            messages=[Message.user(user_prompt)],
-            system_prompt=REVIEW_SYSTEM_PROMPT,
-            max_tokens=2048,
-        )
-
-        result_text: list[str] = []
-        from deepseek_tui.protocol.responses import StreamTextDelta
-
-        async for event in client.stream_with_retry(request):
-            if isinstance(event, StreamTextDelta):
-                result_text.append(event.text)
-
-        output = "".join(result_text)
-        try:
-            parsed = json.loads(output)
-        except json.JSONDecodeError:
-            parsed = {"raw": output}
-
-        return ToolResult(
-            success=True,
-            content=output,
-            metadata={"target": target, "parsed": parsed},
-        )
-
 
 # ===========================================================================
 # plan_update — update the agent's plan (Rust 406 LOC)
@@ -467,17 +355,6 @@ def _optional_string(input_data: dict[str, object], key: str) -> str | None:
     return value
 
 
-def _optional_int(input_data: dict[str, object], key: str) -> int | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value == int(value):
-        return int(value)
-    raise ToolError(f"'{key}' must be an integer")
-
-
 def _notes_path(context: ToolContext) -> Path:
     """``~/.deepseek/notes.txt`` — user scratch notes (Rust .txt format).
 
@@ -492,36 +369,3 @@ def _notes_path(context: ToolContext) -> Path:
     return user_notes_path()
 
 
-def _gather_review_content(target: str, context: ToolContext, max_chars: int) -> str:
-    if target.startswith("git diff") or target == "diff":
-        try:
-            result = subprocess.run(
-                ["git", "diff", "HEAD"],
-                capture_output=True,
-                text=True,
-                cwd=str(context.working_directory),
-                timeout=30,
-            )
-            return result.stdout[:max_chars]
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            raise ToolError(f"Failed to run git diff: {e}") from e
-
-    if target.startswith("pr:"):
-        try:
-            pr_num = target[3:].strip()
-            result = subprocess.run(
-                ["gh", "pr", "diff", pr_num],
-                capture_output=True,
-                text=True,
-                cwd=str(context.working_directory),
-                timeout=30,
-            )
-            return result.stdout[:max_chars]
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            raise ToolError(f"Failed to get PR diff: {e}") from e
-
-    file_path = (context.working_directory / target).resolve()
-    if not file_path.exists():
-        raise ToolError(f"File not found: {target}")
-    content = file_path.read_text(encoding="utf-8", errors="replace")
-    return content[:max_chars]

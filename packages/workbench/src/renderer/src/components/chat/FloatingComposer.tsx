@@ -36,7 +36,7 @@ import {
   filterComposerModelOptions,
   formatComposerModelLabel
 } from '../../lib/composer-model-label'
-import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash-commands'
 import {
   isUnknownComposerSlashCommand,
@@ -158,10 +158,7 @@ export function FloatingComposer({
     id: ComposerActionCommandId
     args: string
   } | null>(null)
-  const activeThreadWorkspace = activeThreadId
-    ? threads.find((thread) => thread.id === activeThreadId)?.workspace
-    : ''
-  const effectiveWorkspaceRoot = normalizeWorkspaceRoot(activeThreadWorkspace || workspaceRoot)
+  const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
 
   const pendingApprovalCount = countPendingApprovals(blocks)
   const firstPendingApprovalId = blocks.find(
@@ -967,7 +964,14 @@ export function FloatingComposer({
       </div>
       <div className="mt-2 grid min-h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
         <div className="min-w-0">
-          <GitBranchPicker workspaceRoot={effectiveWorkspaceRoot} />
+          {stageCentered ? (
+            <GitBranchPicker
+              key={effectiveWorkspaceRoot}
+              workspaceRoot={effectiveWorkspaceRoot}
+              usePortal
+              menuPlacement="above"
+            />
+          ) : null}
         </div>
         <span />
         <div className="min-w-0 justify-self-end">

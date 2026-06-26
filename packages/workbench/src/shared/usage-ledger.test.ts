@@ -92,10 +92,13 @@ describe('usage-ledger', () => {
     const buckets = result.summary!.buckets
 
     expect(result.summary).not.toBeNull()
-    expect(buckets.length).toBeGreaterThanOrEqual(10)
+    expect(buckets.length).toBeGreaterThanOrEqual(16)
     expect(buckets.some((b) => b.model === 'deepseek-v4-pro')).toBe(true)
     expect(buckets.some((b) => b.model === 'qingyun::glm-5.2')).toBe(true)
     expect(buckets.some((b) => b.model === 'qingyun::doubao-seed-2.0-lite')).toBe(true)
+    expect(buckets.some((b) => b.model === 'qingyun::gpt-4o')).toBe(true)
+    expect(buckets.some((b) => b.model === 'qingyun::claude-3-5-sonnet')).toBe(true)
+    expect(buckets.some((b) => b.model === 'qingyun::doubao-seed-2.0-code')).toBe(true)
 
     const maxTokens = buckets[0]?.totalTokens ?? 0
     const minTokens = buckets[buckets.length - 1]?.totalTokens ?? 0

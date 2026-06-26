@@ -1,5 +1,4 @@
-import type { ComponentProps, ReactElement } from 'react'
-import { useMemo } from 'react'
+import { useMemo, type ComponentProps, type ReactElement } from 'react'
 import { PawPrint } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -33,9 +32,9 @@ export function ComposerStage(props: Props): ReactElement {
   }
 
   return (
-    <div className="flex w-full flex-col items-center">
-      <div className="ds-chat-stage flex items-end gap-3 px-3 sm:px-4">
-        <div className="ds-no-drag min-w-0 flex-1 self-end pb-1">
+    <div className="flex w-full flex-col items-stretch">
+      <div className="ds-chat-stage flex w-full items-end gap-3 px-3 sm:px-4">
+        <div className="ds-no-drag min-w-0 flex-1">
           <ProcessTray />
         </div>
         <PetMascotDock

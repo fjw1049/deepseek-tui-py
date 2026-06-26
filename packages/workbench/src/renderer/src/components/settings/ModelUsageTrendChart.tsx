@@ -4,7 +4,20 @@ import { formatComposerModelLabel } from '../../lib/composer-model-label'
 import type { ComposerModelMeta } from '../../lib/composer-model-label'
 import { formatCompactNumber } from '../../hooks/use-model-usage'
 
-const BAR_COLORS = ['#6f8cff', '#52b788', '#f2b56b', '#c69bd3', '#8b7cf6', '#67b7dc']
+const BAR_COLORS = [
+  '#6f8cff',
+  '#52b788',
+  '#f2b56b',
+  '#c69bd3',
+  '#8b7cf6',
+  '#67b7dc',
+  '#e07a7a',
+  '#7bc8a4',
+  '#d4a574',
+  '#9b8cff',
+  '#5cafff',
+  '#f284b6'
+]
 
 type Props = {
   daily: UsageDailyPoint[]
@@ -109,34 +122,34 @@ export function ModelUsageTrendChart({
           <div className={['flex items-stretch gap-1', chartHeight].join(' ')}>
             {displayDaily.map((point) => {
               const heightPct =
-                point.totalTokens > 0 ? Math.max(8, (point.totalTokens / maxTokens) * 100) : 4
+                point.totalTokens > 0 ? Math.max(12, (point.totalTokens / maxTokens) * 100) : 6
               return (
                 <div
                   key={point.day}
-                  className="group flex min-w-0 flex-1 flex-col justify-end"
+                  className="group flex h-full min-w-0 flex-1 flex-col justify-end"
                   title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
                 >
                   <div
                     className="flex w-full flex-col justify-end overflow-hidden rounded-[4px] bg-ds-border/35"
                     style={{
                       height: `${heightPct}%`,
-                      minHeight: point.totalTokens > 0 ? '6px' : '3px'
+                      minHeight: point.totalTokens > 0 ? '8px' : '4px'
                     }}
                   >
-                    {point.segments.map((segment, index) => {
-                      const share = point.totalTokens > 0 ? segment.tokens / point.totalTokens : 0
-                      return (
+                    {point.totalTokens <= 0 ? null : (
+                      point.segments.map((segment, index) => (
                         <span
                           key={`${point.day}-${segment.model}`}
-                          className="block w-full"
+                          className="block w-full shrink-0"
                           style={{
-                            height: `${Math.max(share * 100, 0)}%`,
-                            minHeight: segment.tokens > 0 ? '1px' : 0,
+                            flexGrow: segment.tokens,
+                            flexBasis: 0,
+                            minHeight: 2,
                             backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
                           }}
                         />
-                      )
-                    })}
+                      ))
+                    )}
                   </div>
                 </div>
               )

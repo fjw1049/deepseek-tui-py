@@ -27,6 +27,10 @@ if (!env.DEEPSEEK_PYTHON?.trim() && existsSync(venvPython)) {
 }
 
 env.DEEPSEEK_SKIP_KEYRING = '1'
+// Overlay rich usage mock in local dev unless explicitly disabled.
+if (env.DEEPSEEK_USAGE_MOCK !== '0') {
+  env.DEEPSEEK_USAGE_MOCK = '1'
+}
 delete env.ELECTRON_RUN_AS_NODE
 
 const result = spawnSync(process.argv[2], process.argv.slice(3), {

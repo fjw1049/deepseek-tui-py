@@ -14,7 +14,7 @@ import {
   type UsageQueryResult,
   type UsageRange
 } from '../../shared/usage-ledger'
-import { buildMockUsageLedger, isUsageMockEnabled, mergeUsageLedgers } from '../../shared/usage-ledger-mock'
+import { buildMockUsageLedger, isUsageMockEnabled } from '../../shared/usage-ledger-mock'
 import { withUsageLedgerLock } from './usage-ledger-lock'
 
 async function readLedger(path: string): Promise<{ ledger: UsageLedgerV1; readable: boolean }> {
@@ -57,12 +57,12 @@ export class UsageLedgerService {
 
   async query(range: UsageRange, locale = 'en'): Promise<UsageQueryResult> {
     return withUsageLedgerLock(this.path, async () => {
+      if (isUsageMockEnabled()) {
+        return queryUsageLedger(buildMockUsageLedger(), range, locale)
+      }
       const { ledger, readable } = await readLedger(this.path)
       const base = readable ? ledger : emptyUsageLedger()
-      const resolved = isUsageMockEnabled()
-        ? mergeUsageLedgers(base, buildMockUsageLedger())
-        : base
-      return queryUsageLedger(resolved, range, locale)
+      return queryUsageLedger(base, range, locale)
     })
   }
 
