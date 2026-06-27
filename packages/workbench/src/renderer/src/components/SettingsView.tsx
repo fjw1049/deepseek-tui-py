@@ -6,6 +6,7 @@ import {
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
+  type AsrSettingsV1,
   type CustomEndpointV1,
   type EndpointProtocol,
   type SandboxMode
@@ -140,11 +141,14 @@ export function SettingsView(): ReactElement {
   const [usageRange, setUsageRange] = useState<UsageRange>('30d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
+  const [asrForm, setAsrForm] = useState<AsrSettingsV1>({ apiKey: '', model: 'glm-asr-2512' })
+  const [asrConfigPath, setAsrConfigPath] = useState('~/.deepseek/config.toml')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [showAsrKey, setShowAsrKey] = useState(false)
   const [showRuntimeToken, setShowRuntimeToken] = useState(false)
   const [tokenFingerprint, setTokenFingerprint] = useState('')
   const [tokenRegenBusy, setTokenRegenBusy] = useState(false)
@@ -179,6 +183,7 @@ export function SettingsView(): ReactElement {
   const [hooksNotice, setHooksNotice] = useState<InlineNotice | null>(null)
   const initializedCategory = useRef(false)
   const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const asrSaveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const statusTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const draftVersion = useRef(0)
   const formTheme = form?.theme
@@ -321,6 +326,17 @@ export function SettingsView(): ReactElement {
       })
       .catch((e: unknown) => {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
+      })
+    void window.dsGui
+      .getAsrConfig?.()
+      .then((result) => {
+        if (!cancelled) {
+          setAsrForm(result.config)
+          setAsrConfigPath(result.path)
+        }
+      })
+      .catch(() => {
+        /* optional until preload is updated */
       })
     if (typeof window.dsGui?.getDeepseekPaths === 'function') {
       void window.dsGui.getDeepseekPaths().then((paths) => {
@@ -552,6 +568,31 @@ export function SettingsView(): ReactElement {
     }
   }
 
+  const persistAsrConfig = async (snapshot: AsrSettingsV1): Promise<void> => {
+    if (typeof window.dsGui?.setAsrConfig !== 'function') return
+    try {
+      const result = await window.dsGui.setAsrConfig(snapshot)
+      setAsrConfigPath(result.path)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+      setSaveStatus('error')
+    }
+  }
+
+  const scheduleAsrSave = (next: AsrSettingsV1): void => {
+    if (asrSaveTimer.current) window.clearTimeout(asrSaveTimer.current)
+    asrSaveTimer.current = window.setTimeout(() => {
+      asrSaveTimer.current = null
+      void persistAsrConfig(next)
+    }, 450)
+  }
+
+  const updateAsr = (partial: Partial<AsrSettingsV1>): void => {
+    const next = { ...asrForm, ...partial }
+    setAsrForm(next)
+    scheduleAsrSave(next)
+  }
+
   const scheduleSave = (next: AppSettingsV1): void => {
     draftVersion.current += 1
     const version = draftVersion.current
@@ -588,6 +629,11 @@ export function SettingsView(): ReactElement {
     }
 
     await persistSettings(form, version)
+    if (asrSaveTimer.current) {
+      window.clearTimeout(asrSaveTimer.current)
+      asrSaveTimer.current = null
+    }
+    await persistAsrConfig(asrForm)
   }
 
   const goBack = (): void => {
@@ -879,6 +925,35 @@ export function SettingsView(): ReactElement {
                     <Toggle
                       checked={form.notifications.turnComplete}
                       onChange={(v) => update({ notifications: { turnComplete: v } })}
+                    />
+                  }
+                />
+                <SettingRow
+                  layout="stacked"
+                  title={t('asrApiKey')}
+                  description={t('asrApiKeyDesc', { path: asrConfigPath })}
+                  control={
+                    <SecretInput
+                      value={asrForm.apiKey}
+                      onChange={(value) => updateAsr({ apiKey: value })}
+                      visible={showAsrKey}
+                      onToggleVisibility={() => setShowAsrKey((value) => !value)}
+                      placeholder={t('asrApiKeyPlaceholder')}
+                      autoComplete="off"
+                      showLabel={t('showSecret')}
+                      hideLabel={t('hideSecret')}
+                    />
+                  }
+                />
+                <SettingRow
+                  title={t('asrModel')}
+                  description={t('asrModelDesc')}
+                  control={
+                    <input
+                      className="w-full max-w-sm rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                      value={asrForm.model}
+                      onChange={(e) => updateAsr({ model: e.target.value })}
+                      placeholder="glm-asr-2512"
                     />
                   }
                 />

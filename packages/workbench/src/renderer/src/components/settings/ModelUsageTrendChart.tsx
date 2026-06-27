@@ -37,12 +37,41 @@ function buildAxisLabelIndices(totalPoints: number, maxLabels: number): number[]
   if (totalPoints <= maxLabels) {
     return Array.from({ length: totalPoints }, (_, index) => index)
   }
-  const indices = new Set<number>([0, totalPoints - 1])
-  const step = Math.ceil((totalPoints - 1) / (maxLabels - 1))
-  for (let index = step; index < totalPoints - 1; index += step) {
-    indices.add(index)
+  // Evenly distribute ticks including first and last so gaps stay uniform —
+  // a ceil-based step leaves an uneven (cramped) final gap.
+  const ticks = Math.max(2, maxLabels)
+  const indices = new Set<number>()
+  for (let i = 0; i < ticks; i += 1) {
+    indices.add(Math.round((i * (totalPoints - 1)) / (ticks - 1)))
   }
   return Array.from(indices).sort((a, b) => a - b)
+}
+
+function aggregateDailyToWeeks(daily: UsageDailyPoint[]): UsageDailyPoint[] {
+  const weeks: UsageDailyPoint[] = []
+  // Chunk from the end so the most recent (partial) week aligns to the last day.
+  for (let end = daily.length; end > 0; end -= 7) {
+    const start = Math.max(0, end - 7)
+    const chunk = daily.slice(start, end)
+    const tokensByModel = new Map<string, number>()
+    let totalTokens = 0
+    for (const point of chunk) {
+      totalTokens += point.totalTokens
+      for (const segment of point.segments) {
+        tokensByModel.set(segment.model, (tokensByModel.get(segment.model) ?? 0) + segment.tokens)
+      }
+    }
+    const segments = Array.from(tokensByModel, ([model, tokens]) => ({ model, tokens })).sort(
+      (a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model)
+    )
+    weeks.unshift({
+      day: chunk[0]!.day,
+      label: chunk[0]!.label,
+      totalTokens,
+      segments
+    })
+  }
+  return weeks
 }
 
 function axisLabelPosition(
@@ -68,9 +97,15 @@ export function ModelUsageTrendChart({
   compact = false,
   showYAxis = false
 }: Props): ReactElement {
-  const maxTokens = useMemo(
-    () => Math.max(...daily.map((point) => point.totalTokens), 1),
+  // Long ranges (90d) aggregate into weekly bars so every bar is meaningful,
+  // instead of sampling isolated single days and dropping the rest.
+  const displayDaily = useMemo(
+    () => (daily.length > 45 ? aggregateDailyToWeeks(daily) : daily),
     [daily]
+  )
+  const maxTokens = useMemo(
+    () => Math.max(...displayDaily.map((point) => point.totalTokens), 1),
+    [displayDaily]
   )
   const yTicks = useMemo(() => {
     if (!showYAxis) return []
@@ -91,14 +126,6 @@ export function ModelUsageTrendChart({
 
   const chartHeight = compact ? 'h-[120px]' : 'h-[112px]'
   const maxDayLabels = compact ? 5 : 7
-  const displayDaily = useMemo(() => {
-    if (daily.length <= 31) return daily
-    const count = 30
-    return Array.from({ length: count }, (_, index) => {
-      const sourceIndex = Math.round((index / (count - 1)) * (daily.length - 1))
-      return daily[sourceIndex]!
-    })
-  }, [daily])
   const axisLabelIndices = useMemo(
     () => buildAxisLabelIndices(displayDaily.length, maxDayLabels),
     [displayDaily.length, maxDayLabels]

@@ -94,8 +94,3 @@ export function applyEditorDiffHighlights(
     })
   }
 }
-
-export function addedLineNumbersFromPatch(patch: string | undefined): number[] {
-  if (!patch?.trim()) return []
-  return parseUnifiedDiffForEditor(patch).addedLines
-}

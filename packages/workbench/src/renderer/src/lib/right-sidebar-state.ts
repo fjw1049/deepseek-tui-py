@@ -26,21 +26,33 @@ function persistBoolean(key: string, value: boolean): void {
   }
 }
 
-function migrateLegacyTab(): RightSidebarTab | null {
+function runLegacyMigrationOnce(): void {
   try {
     const legacy = window.localStorage.getItem(LEGACY_PANEL_MODE_KEY)
-    if (legacy === 'changes') return 'changes'
-    if (legacy === 'browser') return 'preview'
-    if (legacy === 'file') return 'editor'
+    if (legacy === null) return
+
+    let tab: RightSidebarTab | null = null
+    if (legacy === 'changes') tab = 'changes'
+    else if (legacy === 'browser') tab = 'preview'
+    else if (legacy === 'file') tab = 'editor'
+
+    window.localStorage.removeItem(LEGACY_PANEL_MODE_KEY)
+
+    if (!tab) return
+    if (window.localStorage.getItem(TAB_KEY) === null) {
+      window.localStorage.setItem(TAB_KEY, tab)
+    }
+    if (window.localStorage.getItem(OPEN_KEY) === null) {
+      window.localStorage.setItem(OPEN_KEY, 'true')
+    }
   } catch {
     /* ignore */
   }
-  return null
 }
 
+runLegacyMigrationOnce()
+
 export function readStoredRightSidebarOpen(): boolean {
-  const migrated = migrateLegacyTab()
-  if (migrated) return true
   return readBoolean(OPEN_KEY, false)
 }
 
@@ -49,8 +61,6 @@ export function persistRightSidebarOpen(open: boolean): void {
 }
 
 export function readStoredRightSidebarTab(): RightSidebarTab {
-  const migrated = migrateLegacyTab()
-  if (migrated) return migrated
   try {
     const raw = window.localStorage.getItem(TAB_KEY)
     if (raw && VALID_TABS.has(raw as RightSidebarTab)) return raw as RightSidebarTab

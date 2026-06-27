@@ -1,31 +1,26 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Pencil, Save, X } from 'lucide-react'
-import Editor from '@monaco-editor/react'
-import type { editor as MonacoEditor } from 'monaco-editor'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
-import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
-import { ensureMonacoConfigured, languageForPath } from '../../lib/monaco-editor-setup'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import {
   buildWorkspaceChangePatchMap,
   lookupPatchForPath
 } from '../../lib/workspace-change-patches'
-import { useWorkspaceEditorStore, type EditorTab } from '../../store/workspace-editor-store'
+import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
+
+const LazyWorkspaceEditorSurface = lazy(() =>
+  import('./WorkspaceEditorSurface').then((module) => ({
+    default: module.WorkspaceEditorSurface
+  }))
+)
 
 type Props = {
   workspaceRoot: string
   blocks: ChatBlock[]
-}
-
-type EditorSurfaceProps = {
-  tab: EditorTab
-  patch?: string
-  readOnly: boolean
-  onChange: (content: string) => void
 }
 
 const TREE_WIDTH_KEY = 'deepseekgui.layout.workspaceEditorTreeWidth'
@@ -53,105 +48,10 @@ function fileNameFromPath(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).pop() ?? path
 }
 
-function readMonacoTheme(): 'vs-dark' | 'vs' {
-  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs'
-}
-
-function EditorSurface({ tab, patch, readOnly, onChange }: EditorSurfaceProps): ReactElement {
-  const hostRef = useRef<HTMLDivElement>(null)
-  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
-  const [editorReady, setEditorReady] = useState(false)
-
-  const syncHighlights = useCallback((): void => {
-    cleanupRef.current?.()
-    cleanupRef.current = null
-    const editor = editorRef.current
-    if (!editor) return
-    cleanupRef.current = applyEditorDiffHighlights(editor, patch)
-    editor.layout()
-  }, [patch])
-
-  useEffect(() => {
-    setEditorReady(false)
-    cleanupRef.current?.()
-    cleanupRef.current = null
-  }, [tab.id])
-
-  useEffect(() => {
-    editorRef.current?.updateOptions({ readOnly })
-  }, [readOnly])
-
-  useEffect(() => {
-    const node = hostRef.current
-    if (!node) return
-
-    const layoutEditor = (): void => {
-      editorRef.current?.layout()
-    }
-
-    layoutEditor()
-    const observer = new ResizeObserver(() => layoutEditor())
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [tab.id])
-
-  useEffect(() => {
-    if (!editorReady || tab.loading) return
-    const frame = window.requestAnimationFrame(() => syncHighlights())
-    return () => {
-      window.cancelAnimationFrame(frame)
-      cleanupRef.current?.()
-      cleanupRef.current = null
-    }
-  }, [editorReady, syncHighlights, tab.loading, patch])
-
+function EditorSurfaceFallback(): ReactElement {
   return (
-    <div ref={hostRef} className="relative min-h-0 flex-1 overflow-hidden bg-ds-sidebar">
-      <Editor
-        key={tab.id}
-        height="100%"
-        width="100%"
-        wrapperProps={{ className: 'absolute inset-0 overflow-hidden' }}
-        theme={readMonacoTheme()}
-        language={languageForPath(tab.path)}
-        value={tab.content}
-        onChange={readOnly ? undefined : (value) => onChange(value ?? '')}
-        onMount={(editor) => {
-          editorRef.current = editor
-          editor.updateOptions({ readOnly })
-          setEditorReady(true)
-          editor.layout()
-        }}
-        loading={
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-ds-faint" strokeWidth={1.8} />
-          </div>
-        }
-        options={{
-          readOnly,
-          domReadOnly: readOnly,
-          minimap: { enabled: false },
-          overviewRulerLanes: 0,
-          hideCursorInOverviewRuler: true,
-          overviewRulerBorder: false,
-          glyphMargin: false,
-          lineDecorationsWidth: 0,
-          fontSize: 13,
-          lineHeight: 20,
-          scrollBeyondLastLine: false,
-          automaticLayout: false,
-          wordWrap: 'off',
-          padding: { top: 8 },
-          scrollbar: {
-            vertical: 'auto',
-            horizontal: 'auto',
-            verticalScrollbarSize: 10,
-            horizontalScrollbarSize: 10,
-            useShadows: false
-          }
-        }}
-      />
+    <div className="flex min-h-0 flex-1 items-center justify-center bg-ds-sidebar">
+      <Loader2 className="h-5 w-5 animate-spin text-ds-faint" strokeWidth={1.8} />
     </div>
   )
 }
@@ -171,10 +71,37 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
 
   const [treeWidth, setTreeWidth] = useState(readStoredTreeWidth)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const endPointerDragRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    return () => {
+      endPointerDragRef.current?.()
+    }
+  }, [])
+
+  // Rebuild patchMap only when the actual set of file_change tool blocks or
+  // git working changes shifts — not on every streaming delta (which swaps
+  // the blocks array identity ~60x/s and would otherwise rebuild the Map each
+  // frame while the editor sits idle).
+  const gitFiles = gitChanges?.ok ? gitChanges.files : null
+  const changeSignature = useMemo(() => {
+    const toolSig = blocks
+      .filter(
+        (block): block is typeof block & { id: string; status: string; detail?: string; filePath?: string } =>
+          block.kind === 'tool' && block.toolKind === 'file_change'
+      )
+      .map((block) => `${block.id}|${block.status}|${block.filePath ?? ''}|${block.detail?.length ?? 0}`)
+      .join('\n')
+    const gitSig = gitFiles
+      ? gitFiles.map((file) => `${file.path}|${file.status ?? ''}|${file.patch?.length ?? 0}`).join('\n')
+      : ''
+    return `${toolSig}\n---\n${gitSig}`
+  }, [blocks, gitFiles])
 
   const patchMap = useMemo(
-    () => buildWorkspaceChangePatchMap(blocks, gitChanges?.ok ? gitChanges.files : null),
-    [blocks, gitChanges]
+    () => buildWorkspaceChangePatchMap(blocks, gitFiles),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [changeSignature]
   )
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
@@ -187,10 +114,6 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
       ),
     [tabs]
   )
-
-  useEffect(() => {
-    ensureMonacoConfigured()
-  }, [])
 
   useEffect(() => {
     resetForWorkspace(trimmedRoot)
@@ -217,6 +140,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   const beginTreeResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
     event.preventDefault()
+    endPointerDragRef.current?.()
+
     const startX = event.clientX
     const startWidth = treeWidth
     const prevCursor = document.body.style.cursor
@@ -228,11 +153,16 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
       setTreeWidth(clampTreeWidth(startWidth + (moveEvent.clientX - startX)))
     }
 
-    const onUp = (): void => {
+    const endDrag = (): void => {
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      endPointerDragRef.current = null
+    }
+
+    const onUp = (): void => {
+      endDrag()
       setTreeWidth((current) => {
         try {
           window.localStorage.setItem(TREE_WIDTH_KEY, String(current))
@@ -243,6 +173,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
       })
     }
 
+    endPointerDragRef.current = endDrag
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
@@ -374,16 +305,16 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                 </div>
               ) : null}
               {activeTab.loading ? (
-                <div className="flex min-h-0 flex-1 items-center justify-center">
-                  <Loader2 className="h-5 w-5 animate-spin text-ds-faint" strokeWidth={1.8} />
-                </div>
+                <EditorSurfaceFallback />
               ) : (
-                <EditorSurface
-                  tab={activeTab}
-                  patch={activePatch}
-                  readOnly={!isEditing}
-                  onChange={(content) => updateTabContent(activeTab.id, content)}
-                />
+                <Suspense fallback={<EditorSurfaceFallback />}>
+                  <LazyWorkspaceEditorSurface
+                    tab={activeTab}
+                    patch={activePatch}
+                    readOnly={!isEditing}
+                    onChange={(content) => updateTabContent(activeTab.id, content)}
+                  />
+                </Suspense>
               )}
             </div>
           ) : (

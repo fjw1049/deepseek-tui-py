@@ -196,6 +196,8 @@ type RuntimeExecutionFlags = {
 
 const TOOL_ITEM_KINDS = new Set(['tool_call', 'command_execution', 'file_change'])
 const REQUEST_USER_INPUT_TOOL = 'request_user_input'
+/** Cap in-memory tool detail; full text is lazy-loaded via fetchItemDetail. ~8KB. */
+const TOOL_DETAIL_MAX_CHARS = 8192
 
 function titleFromThread(t: ThreadRecordJson): string {
   const raw = t.title?.trim()
@@ -440,7 +442,11 @@ function shouldAutoDenyApprovals(settings: AppSettingsV1): boolean {
 
 function toolBlockFromItem(item: TurnItemJson): ToolBlock {
   const status = statusFromString(item.status)
-  const detail = typeof item.detail === 'string' && item.detail.trim() ? item.detail : undefined
+  const rawDetail = typeof item.detail === 'string' && item.detail.trim() ? item.detail : undefined
+  // Truncate to keep blocks[] bounded: full detail is lazy-loaded via
+  // fetchItemDetail when the user expands a tool block.
+  const detail = rawDetail
+  const detailTruncated = rawDetail != null && rawDetail.length > TOOL_DETAIL_MAX_CHARS
   const meta = (item.metadata ?? undefined) as Record<string, unknown> | undefined
   return {
     kind: 'tool',
@@ -449,7 +455,8 @@ function toolBlockFromItem(item: TurnItemJson): ToolBlock {
     summary: item.summary || item.kind,
     status,
     toolKind: toToolKind(item.kind),
-    detail,
+    detail: detailTruncated ? rawDetail!.slice(0, TOOL_DETAIL_MAX_CHARS) : detail,
+    detailTruncated: detailTruncated || undefined,
     filePath: deriveFilePath(item),
     meta
   }
@@ -1030,6 +1037,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
+  async fetchItemDetail(itemId: string): Promise<{ detail: string | null }> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/items/${encodeURIComponent(itemId)}`,
+      'GET'
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `failed to load item ${itemId}`))
+    }
+    const item = JSON.parse(r.body) as { detail?: string | null }
+    return { detail: item.detail ?? null }
+  }
+
   async sendUserMessage(
     threadId: string,
     text: string,
@@ -1407,13 +1426,17 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     ev === 'item.failed' || statusFromString(it.status) === 'error'
                       ? 'error'
                       : 'success'
+                  const liveDetail =
+                    typeof it.detail === 'string' && it.detail.trim() ? it.detail : undefined
+                  const liveTruncated =
+                    liveDetail != null && liveDetail.length > TOOL_DETAIL_MAX_CHARS
                   sink.onTool({
                     itemId: it.id,
                     summary: it.summary || (status === 'error' ? 'tool failed' : 'tool'),
                     status,
                     toolKind: toToolKind(it.kind),
-                    detail:
-                      typeof it.detail === 'string' && it.detail.trim() ? it.detail : undefined,
+                    detail: liveTruncated ? liveDetail!.slice(0, TOOL_DETAIL_MAX_CHARS) : liveDetail,
+                    detailTruncated: liveTruncated || undefined,
                     filePath: deriveFilePath(it),
                     meta: (it.metadata ?? undefined) as Record<string, unknown> | undefined
                   })

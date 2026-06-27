@@ -95,6 +95,11 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.inherit.plist',
+    // Voice input needs microphone access; macOS requires a usage description.
+    extendInfo: {
+      NSMicrophoneUsageDescription:
+        'DeepSeek GUI uses the microphone for voice-to-text input in the composer.'
+    },
     icon: './src/asset/img/deepseek.png',
     // arm64 (Apple Silicon) + x64 (Intel). On M 系列 Mac 本地打包会各出一组 dmg/zip。
     target: [

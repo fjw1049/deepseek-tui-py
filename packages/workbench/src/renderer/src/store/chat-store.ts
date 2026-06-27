@@ -587,6 +587,7 @@ function buildThreadEventSink(
             status: ev.status,
             toolKind: ev.toolKind ?? cur.toolKind,
             detail: ev.detail ?? cur.detail,
+            detailTruncated: ev.detailTruncated ?? (ev.detail != null ? cur.detailTruncated : undefined),
             filePath: ev.filePath ?? cur.filePath,
             meta: ev.meta ?? cur.meta
           }
@@ -611,6 +612,7 @@ function buildThreadEventSink(
           status: ev.status,
           toolKind: ev.toolKind,
           detail: ev.detail,
+          detailTruncated: ev.detailTruncated,
           filePath: ev.filePath,
           meta: ev.meta
         }

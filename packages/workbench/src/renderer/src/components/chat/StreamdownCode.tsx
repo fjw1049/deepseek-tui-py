@@ -202,6 +202,16 @@ type MarkdownNode = {
 let shikiPromise: Promise<typeof import('shiki')> | null = null
 const highlightCache = new Map<string, string>()
 const inflightHighlights = new Map<string, Promise<string>>()
+/** Cap cached Shiki HTML — unbounded growth during streaming O(n²) blew multi‑GB heaps. */
+const HIGHLIGHT_CACHE_MAX = 48
+
+function trimHighlightCache(): void {
+  while (highlightCache.size > HIGHLIGHT_CACHE_MAX) {
+    const oldest = highlightCache.keys().next().value
+    if (oldest === undefined) break
+    highlightCache.delete(oldest)
+  }
+}
 
 function loadShiki(): Promise<typeof import('shiki')> {
   shikiPromise ??= import('shiki')
@@ -270,6 +280,7 @@ async function highlightCodeHtml(code: string, language: string): Promise<string
     if (!normalized) {
       const fallback = renderFallbackHtml(code)
       highlightCache.set(cacheKey, fallback)
+      trimHighlightCache()
       return fallback
     }
 
@@ -280,10 +291,12 @@ async function highlightCodeHtml(code: string, language: string): Promise<string
         themes: SHIKI_THEMES
       })
       highlightCache.set(cacheKey, html)
+      trimHighlightCache()
       return html
     } catch {
       const fallback = renderFallbackHtml(code)
       highlightCache.set(cacheKey, fallback)
+      trimHighlightCache()
       return fallback
     }
   })()
@@ -386,6 +399,10 @@ function CodeBlock({
   language: string
 }): ReactNode {
   const { isAnimating } = useContext(StreamdownContext)
+  // Shiki is expensive (WASM + grammar parse). Disable it entirely while the
+  // agent is mid-turn: every streaming delta would otherwise re-run highlight
+  // on the growing code text, producing O(n²) cache entries and multi-GB heaps.
+  const busy = useChatStore((s) => s.busy)
   const trimmedCode = useMemo(() => code.replace(TRAILING_NEWLINES_REGEX, ''), [code])
   const [html, setHtml] = useState(() => renderFallbackHtml(trimmedCode))
   const [isCopied, setIsCopied] = useState(false)
@@ -396,6 +413,16 @@ function CodeBlock({
 
   useEffect(() => {
     let cancelled = false
+
+    // While the turn is live, never invoke Shiki — show plain fallback so the
+    // heap stays flat. Highlighting runs once after busy flips back to false.
+    if (busy) {
+      setHtml(renderFallbackHtml(trimmedCode))
+      return () => {
+        cancelled = true
+      }
+    }
+
     setHtml(renderFallbackHtml(trimmedCode))
 
     void highlightCodeHtml(trimmedCode, language).then((nextHtml) => {
@@ -405,7 +432,7 @@ function CodeBlock({
     return () => {
       cancelled = true
     }
-  }, [trimmedCode, language])
+  }, [busy, trimmedCode, language])
 
   useEffect(() => {
     const el = bodyRef.current

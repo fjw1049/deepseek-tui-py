@@ -568,6 +568,19 @@ async def stream_events(request: Request, thread_id: str) -> StreamingResponse:
     return StreamingResponse(generator, media_type="text/event-stream")
 
 
+# GET /v1/items/{item_id} — fetch a single turn item by id.
+# Used for lazy-loading full tool detail after the renderer truncates it to
+# keep the in-memory blocks[] bounded.
+@router_events.get("/items/{item_id}")
+async def get_item(request: Request, item_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        item = mgr.store.load_item(item_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="item_not_found") from exc
+    return item.model_dump(mode="json")
+
+
 # GET /health and /healthz — connection probes.
 from fastapi import APIRouter, Request
 

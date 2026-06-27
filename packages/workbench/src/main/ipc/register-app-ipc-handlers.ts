@@ -42,6 +42,8 @@ import {
   workspaceFileWritePayloadSchema,
   workspaceListDirectoryPayloadSchema,
   workspacePickFilesPayloadSchema,
+  asrTranscribePayloadSchema,
+  asrConfigPayloadSchema,
   workspaceRootSchema
 } from './app-ipc-schemas'
 import type { JsonSettingsStore } from '../settings-store'
@@ -57,6 +59,8 @@ import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, 
 import { getTrendingRepos } from '../services/trending-repos'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
+import { transcribeAudio } from '../services/asr-transcription-service'
+import { readAsrConfigFile, writeAsrConfigFile } from '../asr-config'
 import {
   parseSessionsProbe,
   parseSkillsProbe,
@@ -369,6 +373,29 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       parseIpcPayload('settings:set', settingsPatchSchema, partial) as AppSettingsPatch
     )
   )
+
+  ipcMain.handle('asr:transcribe', async (_, payload: unknown) => {
+    const request = parseIpcPayload('asr:transcribe', asrTranscribePayloadSchema, payload)
+    const { config } = await readAsrConfigFile()
+    const audio =
+      request.audio instanceof ArrayBuffer
+        ? Buffer.from(request.audio)
+        : Buffer.from(request.audio.buffer, request.audio.byteOffset, request.audio.byteLength)
+    return transcribeAudio({
+      apiKey: config.apiKey,
+      model: config.model,
+      audio,
+      mimeType: request.mimeType ?? 'audio/wav',
+      fileName: request.fileName ?? 'recording.wav'
+    })
+  })
+
+  ipcMain.handle('asr:config:read', async () => readAsrConfigFile())
+
+  ipcMain.handle('asr:config:write', async (_, payload: unknown) => {
+    const config = parseIpcPayload('asr:config:write', asrConfigPayloadSchema, payload)
+    return writeAsrConfigFile(config)
+  })
 
   ipcMain.handle('runtime:request', async (_, payload: unknown) => {
     const request = parseIpcPayload('runtime:request', runtimeRequestPayloadSchema, payload)
@@ -997,14 +1024,6 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('file:list-workspace', async (_, payload: unknown) => {
     const request = parseIpcPayload(
       'file:list-workspace',
-      workspaceListDirectoryPayloadSchema,
-      payload
-    )
-    return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '')
-  })
-  ipcMain.handle('workspace:list-directory', async (_, payload: unknown) => {
-    const request = parseIpcPayload(
-      'workspace:list-directory',
       workspaceListDirectoryPayloadSchema,
       payload
     )

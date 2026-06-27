@@ -71,6 +71,13 @@ export type NotificationConfigV1 = {
   turnComplete: boolean
 }
 
+export const DEFAULT_ASR_MODEL = 'glm-asr-2512'
+
+export type AsrSettingsV1 = {
+  apiKey: string
+  model: string
+}
+
 export type ClawSkillSettingsV1 = {
   defaultNames: string[]
   extraDirs: string[]

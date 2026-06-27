@@ -12,6 +12,7 @@ type Props = {
   spritesheetSrc: string
   scale?: number
   roamOffset?: number
+  motionPaused?: boolean
 }
 
 export function PetMascotDock({
@@ -20,7 +21,8 @@ export function PetMascotDock({
   stateId,
   spritesheetSrc,
   scale = 0.23,
-  roamOffset = 0
+  roamOffset = 0,
+  motionPaused = false
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
 
@@ -39,6 +41,7 @@ export function PetMascotDock({
             roamOffset={roamOffset}
             label={t('petMascotLabel')}
             className="pet-mascot-dock__sprite pointer-events-none"
+            motionPaused={motionPaused}
           />
         </div>
       </div>

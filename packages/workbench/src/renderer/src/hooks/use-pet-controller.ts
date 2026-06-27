@@ -29,7 +29,7 @@ export type PetMascotStatus = 'ready' | 'fallback' | 'hidden'
 const ROAM_MIN = -70
 const ROAM_MAX = 70
 const ROAM_STEP = 0.85
-const ROAM_TICK_MS = 48
+const ROAM_TICK_MS = 100
 const FAILED_HOLD_MS = 2200
 const RESOLVED_BURST_MS = 700
 const REASONING_HOLD_MS = 1200
@@ -80,6 +80,17 @@ export function usePetController() {
   const [selectedSlug, setSelectedSlug] = useState(() => readPetSlug())
   const [spritesheetSrc, setSpritesheetSrc] = useState(demoSpritesheet)
   const [roam, setRoam] = useState({ offset: 0, direction: 1 as 1 | -1 })
+  const [pageVisible, setPageVisible] = useState(() =>
+    typeof document === 'undefined' ? true : !document.hidden
+  )
+
+  useEffect(() => {
+    const onVisibilityChange = (): void => {
+      setPageVisible(!document.hidden)
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [])
   const revokeRef = useRef<(() => void) | null>(null)
   const [burst, setBurstState] = useState<PetBurst | null>(null)
   const [activityOverride, setActivityOverride] = useState<PetActivityOverride | null>(null)
@@ -279,7 +290,7 @@ export function usePetController() {
       : 'ready'
     : 'hidden'
   const canRoam =
-    visibleStatus !== 'hidden' && stateId === 'idle' && burst == null && !busy
+    pageVisible && visibleStatus !== 'hidden' && stateId === 'idle' && burst == null && !busy
 
   useEffect(() => {
     if (!canRoam) {
@@ -334,6 +345,7 @@ export function usePetController() {
     selectedSlug,
     setEnabled,
     handlePetSlash,
-    roamOffset: canRoam ? roam.offset : 0
+    roamOffset: canRoam ? roam.offset : 0,
+    motionPaused: !pageVisible
   }
 }

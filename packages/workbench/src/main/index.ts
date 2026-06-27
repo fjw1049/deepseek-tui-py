@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -131,6 +131,18 @@ function installDevPreviewWebviewGuards(): void {
       if (contents.getType() !== 'webview') return { action: 'allow' }
       return isAllowedDevPreviewUrl(url) ? { action: 'allow' } : { action: 'deny' }
     })
+  })
+}
+
+function installMediaPermissionHandler(): void {
+  // Voice input calls getUserMedia({ audio: true }). macOS gates the microphone
+  // behind the audio-input entitlement + NSMicrophoneUsageDescription (see
+  // electron-builder.config.cjs); Electron also routes the `media` permission
+  // through this handler. Grant requests explicitly so mic capture works
+  // regardless of Electron's default, while keeping all other permission
+  // requests at their previous (granted) behavior.
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(true)
   })
 }
 
@@ -800,6 +812,7 @@ app.whenReady().then(async () => {
 
   traceStartup('install webview guards:start')
   installDevPreviewWebviewGuards()
+  installMediaPermissionHandler()
   traceStartup('install webview guards:done')
 
   if (process.platform === 'darwin' && !appIcon.isEmpty()) {

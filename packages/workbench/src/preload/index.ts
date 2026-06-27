@@ -15,6 +15,9 @@ const api = {
   },
   setSettings: (partial) =>
     ipcRenderer.invoke('settings:set', partial),
+  transcribeAudio: (payload) => ipcRenderer.invoke('asr:transcribe', payload),
+  getAsrConfig: () => ipcRenderer.invoke('asr:config:read'),
+  setAsrConfig: (config) => ipcRenderer.invoke('asr:config:write', config),
   runtimeRequest: (path, method, body) =>
     ipcRenderer.invoke('runtime:request', { path, method, body }),
   fetchUpstreamModels: () => ipcRenderer.invoke('upstream:models'),
@@ -116,18 +119,8 @@ const api = {
     ipcRenderer.invoke('file:read-workspace', options),
   writeWorkspaceFile: (options) =>
     ipcRenderer.invoke('file:write-workspace', options),
-  listWorkspaceDirectory: async (workspaceRoot, directoryPath) => {
-    const payload = { workspaceRoot, directoryPath }
-    try {
-      return await ipcRenderer.invoke('file:list-workspace', payload)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (message.includes('No handler registered for')) {
-        return ipcRenderer.invoke('workspace:list-directory', payload)
-      }
-      throw error
-    }
-  },
+  listWorkspaceDirectory: (workspaceRoot, directoryPath) =>
+    ipcRenderer.invoke('file:list-workspace', { workspaceRoot, directoryPath }),
   startSse: (threadId, sinceSeq, streamId) =>
     ipcRenderer.invoke('runtime:sse:start', { threadId, sinceSeq, streamId }),
   stopSse: (streamId) => ipcRenderer.invoke('runtime:sse:stop', streamId),

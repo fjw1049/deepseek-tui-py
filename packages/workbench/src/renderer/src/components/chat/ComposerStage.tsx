@@ -1,4 +1,4 @@
-import { useMemo, type ComponentProps, type ReactElement } from 'react'
+import { useMemo, useState, type ComponentProps, type ReactElement } from 'react'
 import { PawPrint } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -13,6 +13,7 @@ type Props = ComponentProps<typeof FloatingComposer>
 export function ComposerStage(props: Props): ReactElement {
   const { t } = useTranslation('common')
   const pet = usePetController()
+  const [composerNotice, setComposerNotice] = useState<string | null>(null)
 
   const petSlashCommands = useMemo(
     () =>
@@ -43,10 +44,19 @@ export function ComposerStage(props: Props): ReactElement {
           stateId={pet.stateId}
           spritesheetSrc={pet.spritesheetSrc}
           roamOffset={pet.roamOffset}
+          motionPaused={pet.motionPaused}
         />
       </div>
+      {composerNotice ? (
+        <div className="ds-chat-stage mb-1.5 flex w-full justify-center px-3 sm:px-4">
+          <p className="max-w-[min(100%,560px)] text-center text-[12px] leading-5 text-ds-faint">
+            {composerNotice}
+          </p>
+        </div>
+      ) : null}
       <FloatingComposer
         {...props}
+        onNoticeChange={setComposerNotice}
         onSend={handleSend}
         petSlashCommands={petSlashCommands}
         onApplyPetSlashCommand={pet.handlePetSlash}

@@ -37,8 +37,7 @@ export function parseUnifiedDiffForEditor(patch: string): EditorDiffHighlight {
     }
 
     if (
-      rawLine.startsWith('+++') ||
-      rawLine.startsWith('---') ||
+      /^(\+\+\+|---) /.test(rawLine) ||
       rawLine.startsWith('diff ') ||
       rawLine.startsWith('index ')
     ) {

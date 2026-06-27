@@ -187,10 +187,3 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     return true
   }
 }))
-
-export function activeEditorTabIsDirty(): boolean {
-  const { activeTabId, tabs } = useWorkspaceEditorStore.getState()
-  if (!activeTabId) return false
-  const tab = tabs.find((entry) => entry.id === activeTabId)
-  return tab ? isDirty(tab) : false
-}

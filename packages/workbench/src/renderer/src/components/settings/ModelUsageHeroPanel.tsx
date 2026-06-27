@@ -126,7 +126,7 @@ export function ModelUsageHeroPanel({
           </div>
           <div
             className={[
-              'absolute inset-0 flex min-h-0 flex-col overflow-hidden',
+              'absolute inset-0 flex min-h-0 flex-col',
               tab === 'models' ? 'visible' : 'hidden'
             ].join(' ')}
           >
@@ -139,47 +139,45 @@ export function ModelUsageHeroPanel({
                 showYAxis
               />
             </div>
-            <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
-              <p className="mb-2 shrink-0 text-[12px] font-medium text-ds-muted">
-                {t('usageHeroModelListTitle')}
-              </p>
-              <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-1">
-                {modelBuckets.map((bucket, index) => {
-                  const share =
-                    totalTokens > 0
-                      ? ((bucket.totalTokens / totalTokens) * 100).toFixed(1)
-                      : '0.0'
-                  const shortName = formatUsageModelName(bucket.model, composerModelMeta)
-                  const fullName = formatComposerModelLabel(bucket.model, composerModelMeta)
-                  return (
-                    <div
-                      key={bucket.model}
-                      className="flex items-center gap-2 rounded-xl px-2 py-2 text-[12.5px] hover:bg-ds-elevated/70"
+            <p className="mb-2 mt-3 shrink-0 text-[12px] font-medium text-ds-muted">
+              {t('usageHeroModelListTitle')}
+            </p>
+            <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {modelBuckets.map((bucket, index) => {
+                const share =
+                  totalTokens > 0
+                    ? ((bucket.totalTokens / totalTokens) * 100).toFixed(1)
+                    : '0.0'
+                const shortName = formatUsageModelName(bucket.model, composerModelMeta)
+                const fullName = formatComposerModelLabel(bucket.model, composerModelMeta)
+                return (
+                  <div
+                    key={bucket.model}
+                    className="flex items-center gap-2 rounded-xl px-2 py-2 text-[12.5px] hover:bg-ds-elevated/70"
+                  >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                      style={{
+                        backgroundColor:
+                          MODEL_USAGE_BAR_COLORS[index % MODEL_USAGE_BAR_COLORS.length]
+                      }}
+                    />
+                    <span
+                      className="min-w-0 flex-1 truncate font-medium text-ds-ink"
+                      title={fullName}
                     >
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                        style={{
-                          backgroundColor:
-                            MODEL_USAGE_BAR_COLORS[index % MODEL_USAGE_BAR_COLORS.length]
-                        }}
-                      />
-                      <span
-                        className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-medium text-ds-ink [scrollbar-width:thin]"
-                        title={fullName}
-                      >
-                        {shortName}
-                      </span>
-                      <span className="hidden shrink-0 tabular-nums text-ds-faint sm:inline">
-                        {formatCompactNumber(bucket.inputTokens)} in ·{' '}
-                        {formatCompactNumber(bucket.outputTokens)} out
-                      </span>
-                      <span className="w-12 shrink-0 text-right tabular-nums text-ds-muted">
-                        {share}%
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
+                      {shortName}
+                    </span>
+                    <span className="hidden shrink-0 tabular-nums text-ds-faint sm:inline">
+                      {formatCompactNumber(bucket.inputTokens)} in ·{' '}
+                      {formatCompactNumber(bucket.outputTokens)} out
+                    </span>
+                    <span className="w-12 shrink-0 text-right tabular-nums text-ds-muted">
+                      {share}%
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>

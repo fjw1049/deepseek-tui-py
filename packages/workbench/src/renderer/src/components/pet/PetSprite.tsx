@@ -9,6 +9,7 @@ type Props = {
   roamOffset?: number
   label?: string
   className?: string
+  motionPaused?: boolean
 }
 
 function PetSpriteImpl({
@@ -17,13 +18,14 @@ function PetSpriteImpl({
   scale = 1,
   roamOffset = 0,
   label,
-  className = ''
+  className = '',
+  motionPaused = false
 }: Props) {
   const animation = getPetStateDef(stateId)
 
   return (
     <div
-      className={`pet-sprite-frame ${className}`}
+      className={`pet-sprite-frame ${motionPaused ? 'pet-sprite-frame--paused' : ''} ${className}`}
       role="img"
       aria-label={label ?? 'Pet animation'}
       style={
@@ -34,7 +36,7 @@ function PetSpriteImpl({
       }
     >
       <div
-        className="pet-sprite"
+        className={`pet-sprite ${motionPaused ? 'pet-sprite--paused' : ''}`}
         style={
           {
             '--sprite-url': `url("${src.replace(/"/g, '\\"')}")`,

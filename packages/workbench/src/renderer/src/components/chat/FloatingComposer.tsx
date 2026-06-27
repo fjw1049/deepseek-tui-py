@@ -26,6 +26,7 @@ import {
   Shrink,
   Square,
   Gauge,
+  Mic,
   Workflow,
   X
 } from 'lucide-react'
@@ -45,7 +46,18 @@ import {
 } from '../../lib/composer-slash-commands'
 import { ContextUsageMeter } from './ContextUsageMeter'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
+import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
 import { GitBranchPicker } from './GitBranchPicker'
+import {
+  joinSpeechText,
+  useAudioRecorder,
+  type RecordedAudio
+} from '../../hooks/use-audio-recorder'
+import {
+  isComposerVoiceBridgeReady,
+  isMediaCaptureSupported,
+  loadComposerAsrConfig
+} from '../../lib/load-composer-asr-config'
 
 export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
 
@@ -88,6 +100,7 @@ type Props = {
   }>
   onApplyPetSlashCommand?: (command: string) => boolean
   filterPetSlashCommands?: (query: string) => PetSlashMenuItem[]
+  onNoticeChange?: (notice: string | null) => void
 }
 
 type SlashCommandId = ComposerMode | ComposerActionCommandId
@@ -137,9 +150,10 @@ export function FloatingComposer({
   useChatStageWidth = true,
   petSlashCommands = [],
   onApplyPetSlashCommand,
-  filterPetSlashCommands
+  filterPetSlashCommands,
+  onNoticeChange
 }: Props): ReactElement {
-  const { t, i18n } = useTranslation('common')
+  const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
@@ -149,6 +163,9 @@ export function FloatingComposer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
   const composingRef = useRef(false)
+  const speechBaseRef = useRef('')
+  const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
+  const [asrConfigured, setAsrConfigured] = useState(false)
   const [focused, setFocused] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -204,7 +221,7 @@ export function FloatingComposer({
       : busy
         ? t('composerQueuePlaceholder')
         : t('composerDefaultPlaceholder')
-  const primaryActionDisabled = !canSend
+  const primaryActionDisabled = !canSend || voicePhase !== 'idle'
 
   const slashCommands = useMemo<SlashCommand[]>(() => {
     const commands: SlashCommand[] = [
@@ -443,6 +460,142 @@ export function FloatingComposer({
     setAttachNotice(null)
   }
 
+  const handleTranscribeRef = useRef<(audio: RecordedAudio | null) => void>(() => {})
+
+  const audioRecorder = useAudioRecorder({
+    maxDurationMs: 30_000,
+    onAutoStop: (audio) => handleTranscribeRef.current(audio)
+  })
+  const cancelRecordingRef = useRef(audioRecorder.cancel)
+  cancelRecordingRef.current = audioRecorder.cancel
+  const stopRecordingRef = useRef(audioRecorder.stop)
+  stopRecordingRef.current = audioRecorder.stop
+  const startRecordingRef = useRef(audioRecorder.start)
+  startRecordingRef.current = audioRecorder.start
+
+  const resetVoiceSession = useCallback((): void => {
+    cancelRecordingRef.current()
+    setVoicePhase('idle')
+  }, [])
+
+  const transcribeRecordedAudio = async (audio: RecordedAudio): Promise<void> => {
+    if (typeof window.dsGui === 'undefined' || typeof window.dsGui.transcribeAudio !== 'function') {
+      resetVoiceSession()
+      setAttachNotice(t('composerVoiceNeedRestart'))
+      return
+    }
+    setVoicePhase('transcribing')
+    const buffer = await audio.blob.arrayBuffer()
+    const result = await window.dsGui.transcribeAudio({
+      audio: buffer,
+      mimeType: audio.mimeType,
+      fileName: audio.fileName
+    })
+    resetVoiceSession()
+    if (!result.ok) {
+      setAttachNotice(result.message)
+      return
+    }
+    setInput(joinSpeechText(speechBaseRef.current, result.text))
+    focusComposer()
+  }
+
+  const handleTranscribe = (audio: RecordedAudio | null): void => {
+    if (!audio) {
+      resetVoiceSession()
+      setAttachNotice(t('composerVoiceEmpty'))
+      return
+    }
+    void transcribeRecordedAudio(audio)
+  }
+
+  handleTranscribeRef.current = handleTranscribe
+
+  const handleStopAndTranscribe = (): void => {
+    void stopRecordingRef.current().then((audio) => handleTranscribeRef.current(audio))
+  }
+
+  useEffect(() => {
+    void loadComposerAsrConfig()
+      .then((config) => {
+        setAsrConfigured(!!config?.apiKey.trim())
+      })
+      .catch(() => {
+        setAsrConfigured(false)
+      })
+  }, [])
+
+  useEffect(() => {
+    const refreshAsrConfigured = (): void => {
+      void loadComposerAsrConfig()
+        .then((config) => setAsrConfigured(!!config?.apiKey.trim()))
+        .catch(() => setAsrConfigured(false))
+    }
+    window.addEventListener('focus', refreshAsrConfigured)
+    return () => window.removeEventListener('focus', refreshAsrConfigured)
+  }, [])
+
+  const handleMicClick = async (): Promise<void> => {
+    if (voicePhase !== 'idle') return
+    if (!canCompose) return
+
+    if (!isMediaCaptureSupported()) {
+      setAttachNotice(t('composerVoiceErrorUnavailable'))
+      return
+    }
+
+    if (!isComposerVoiceBridgeReady()) {
+      setAttachNotice(t('composerVoiceNeedRestart'))
+      return
+    }
+
+    let config: Awaited<ReturnType<typeof loadComposerAsrConfig>>
+    try {
+      config = await loadComposerAsrConfig()
+    } catch {
+      setAttachNotice(t('composerVoiceNeedsKey'))
+      return
+    }
+
+    const configured = !!config?.apiKey.trim()
+    setAsrConfigured(configured)
+    if (!configured) {
+      setAttachNotice(t('composerVoiceNeedsKey'))
+      return
+    }
+
+    speechBaseRef.current = input
+    setPlusMenuOpen(false)
+    setModelMenuOpen(false)
+    clearAttachNotice()
+    const started = await startRecordingRef.current()
+    if (!started.ok) {
+      setAttachNotice(
+        started.reason === 'denied'
+          ? t('composerVoiceErrorNotAllowed')
+          : t('composerVoiceErrorDevice')
+      )
+      return
+    }
+    setVoicePhase('recording')
+  }
+
+  const handleVoiceCancel = (): void => {
+    resetVoiceSession()
+  }
+
+  const voiceActive = voicePhase !== 'idle'
+  const voiceButtonTitle =
+    voicePhase === 'recording'
+      ? t('composerVoiceConfirm')
+      : asrConfigured
+        ? t('composerVoiceInput')
+        : t('composerVoiceNeedsKey')
+
+  useEffect(() => {
+    resetVoiceSession()
+  }, [activeThreadId, resetVoiceSession])
+
   const pickAttachments = async (imagesOnly: boolean): Promise<void> => {
     clearAttachNotice()
     if (!effectiveWorkspaceRoot) {
@@ -484,7 +637,16 @@ export function FloatingComposer({
     setAttachments((prev) => prev.filter((item) => item.id !== id))
   }
 
+  useEffect(() => {
+    onNoticeChange?.(attachNotice)
+  }, [attachNotice, onNoticeChange])
+
+  useEffect(() => {
+    return () => onNoticeChange?.(null)
+  }, [onNoticeChange])
+
   const handlePrimaryAction = (): void => {
+    if (voiceActive) return
     if (petSlashQuery != null) {
       const trimmed = input.trim()
       if (/^\/pet\s*$/i.test(trimmed)) {
@@ -745,8 +907,11 @@ export function FloatingComposer({
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={placeholder}
             value={input}
-            disabled={!canCompose}
-            onChange={(e) => setInput(e.target.value)}
+            disabled={!canCompose || voicePhase === 'transcribing'}
+            onChange={(e) => {
+              setInput(e.target.value)
+              if (voiceActive) resetVoiceSession()
+            }}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onCompositionStart={() => {
@@ -761,6 +926,11 @@ export function FloatingComposer({
               const composing =
                 e.nativeEvent.isComposing || composingRef.current || e.keyCode === 229
 
+              if (!composing && e.key === 'Escape' && voiceActive) {
+                e.preventDefault()
+                resetVoiceSession()
+                return
+              }
               if (!composing && (slashQuery != null || petSlashQuery != null)) {
                 if (e.key === 'ArrowDown' && activeSlashMenu.length > 0) {
                   e.preventDefault()
@@ -790,6 +960,19 @@ export function FloatingComposer({
 
               e.preventDefault()
               handlePrimaryAction()
+            }}
+          />
+
+          <ComposerVoiceBar
+            phase={voicePhase}
+            levels={audioRecorder.levels}
+            elapsedMs={audioRecorder.elapsedMs}
+            maxDurationMs={audioRecorder.maxDurationMs}
+            onCancel={handleVoiceCancel}
+            labels={{
+              recording: t('composerVoiceRecording'),
+              transcribing: t('composerVoiceTranscribing'),
+              cancel: t('composerVoiceCancel')
             }}
           />
 
@@ -945,6 +1128,31 @@ export function FloatingComposer({
               </button>
             ) : null}
 
+            {isMediaCaptureSupported() ? (
+              <button
+                type="button"
+                disabled={voicePhase === 'transcribing' || (voicePhase === 'idle' && !canCompose)}
+                onClick={() =>
+                  voicePhase === 'recording' ? handleStopAndTranscribe() : void handleMicClick()
+                }
+                aria-label={voiceButtonTitle}
+                title={voiceButtonTitle}
+                className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  voicePhase === 'recording'
+                    ? 'border-red-500/45 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
+                    : asrConfigured
+                      ? 'border-ds-border bg-ds-card text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                      : 'border-amber-500/35 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-200'
+                }`}
+              >
+                {voicePhase === 'recording' ? (
+                  <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
+                ) : (
+                  <Mic className="h-4 w-4" strokeWidth={2} />
+                )}
+              </button>
+            ) : null}
+
             <button
               type="button"
               disabled={primaryActionDisabled}
@@ -956,10 +1164,6 @@ export function FloatingComposer({
               <Send className="h-4 w-4" strokeWidth={2.2} />
             </button>
           </div>
-
-          {attachNotice ? (
-            <p className="px-2 pb-1 text-[12px] text-amber-700 dark:text-amber-200">{attachNotice}</p>
-          ) : null}
         </div>
       </div>
       <div className="mt-2 grid min-h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">

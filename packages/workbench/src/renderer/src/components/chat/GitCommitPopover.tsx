@@ -79,6 +79,7 @@ export function GitCommitPopover({
   const [generating, setGenerating] = useState(false)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const anchorRef = useRef<HTMLDivElement | null>(null)
+  const endPointerDragRef = useRef<(() => void) | null>(null)
   const [dialogPos, setDialogPos] = useState<{ x: number; y: number } | null>(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
 
@@ -120,6 +121,16 @@ export function GitCommitPopover({
     setDialogPos(null)
     setManualRefreshing(false)
   }, [root])
+
+  useEffect(() => {
+    return () => {
+      endPointerDragRef.current?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!open) endPointerDragRef.current?.()
+  }, [open])
 
   const positionDialogNearAnchor = useCallback((): void => {
     const anchor = anchorRef.current
@@ -182,6 +193,8 @@ export function GitCommitPopover({
     if (target instanceof Element && target.closest('button')) return
 
     event.preventDefault()
+    endPointerDragRef.current?.()
+
     const startX = event.clientX
     const startY = event.clientY
     const origin = dialogPos ?? clampDialogPos(startX, startY)
@@ -196,13 +209,19 @@ export function GitCommitPopover({
       )
     }
 
-    const onUp = (): void => {
+    const endDrag = (): void => {
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      endPointerDragRef.current = null
     }
 
+    const onUp = (): void => {
+      endDrag()
+    }
+
+    endPointerDragRef.current = endDrag
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }

@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
   ChevronRight,
+  Folder,
+  FolderOpen,
   LayoutGrid,
   Loader2,
   Plus,
@@ -43,28 +45,21 @@ type SidebarProjectsSectionProps = {
 
 type WorkspaceGroup = [string, NormalizedThread[]]
 
-const PROJECT_AVATAR_PALETTE = [
-  'bg-amber-400/18 text-amber-700 dark:text-amber-300',
-  'bg-violet-400/18 text-violet-700 dark:text-violet-300',
-  'bg-sky-400/18 text-sky-700 dark:text-sky-300',
-  'bg-emerald-400/18 text-emerald-700 dark:text-emerald-300',
-  'bg-rose-400/18 text-rose-700 dark:text-rose-300',
-  'bg-orange-400/18 text-orange-700 dark:text-orange-300'
+const PROJECT_ICON_TINTS = [
+  'text-sky-500/85 dark:text-sky-400/85',
+  'text-violet-500/85 dark:text-violet-400/85',
+  'text-emerald-500/85 dark:text-emerald-400/85',
+  'text-amber-500/90 dark:text-amber-400/85',
+  'text-rose-500/85 dark:text-rose-400/85',
+  'text-cyan-500/85 dark:text-cyan-400/85'
 ] as const
 
-function workspaceAvatarClass(path: string): string {
+function workspaceIconTint(path: string): string {
   let hash = 0
   for (let i = 0; i < path.length; i += 1) {
     hash = path.charCodeAt(i) + ((hash << 5) - hash)
   }
-  return PROJECT_AVATAR_PALETTE[Math.abs(hash) % PROJECT_AVATAR_PALETTE.length]
-}
-
-function workspaceAvatarGlyph(label: string): string {
-  const trimmed = label.trim()
-  if (!trimmed) return '#'
-  const first = trimmed[0]?.toUpperCase()
-  return first && /[A-Z0-9]/i.test(first) ? first : '#'
+  return PROJECT_ICON_TINTS[Math.abs(hash) % PROJECT_ICON_TINTS.length]
 }
 
 function latestWorkspaceActivity(list: NormalizedThread[]): number {
@@ -230,12 +225,19 @@ export function SidebarProjectsSection({
             ) : (
               <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
             )}
-            <span
-              className={`ds-sidebar-project-avatar ${workspaceAvatarClass(workspacePath)}`}
-              aria-hidden
-            >
-              {workspaceAvatarGlyph(folderName)}
-            </span>
+            {isCollapsed ? (
+              <Folder
+                className={`h-4 w-4 shrink-0 ${workspaceIconTint(workspacePath)}`}
+                strokeWidth={1.85}
+                aria-hidden
+              />
+            ) : (
+              <FolderOpen
+                className={`h-4 w-4 shrink-0 ${workspaceIconTint(workspacePath)}`}
+                strokeWidth={1.85}
+                aria-hidden
+              />
+            )}
             <span className="ds-sidebar-project-label min-w-0 flex-1 truncate">{folderName}</span>
             <span className="ds-sidebar-project-count">{list.length}</span>
           </button>
@@ -461,18 +463,12 @@ function ThreadRow({
 
   return (
     <div
-      className={`group relative flex min-w-0 items-center overflow-hidden rounded-lg transition-colors duration-200 ${
+      className={`group relative flex min-w-0 items-center overflow-hidden rounded-[10px] transition-colors duration-200 ${
         active
-          ? 'bg-black/[0.05] text-ds-ink dark:bg-white/[0.06]'
-          : 'hover:bg-ds-hover/45 dark:hover:bg-white/[0.035]'
+          ? 'bg-black/[0.045] text-ds-ink dark:bg-white/[0.055]'
+          : 'hover:bg-ds-hover/40 dark:hover:bg-white/[0.03]'
       }`}
     >
-      <span
-        aria-hidden
-        className={`absolute bottom-1.5 top-1.5 left-0 w-[2px] rounded-full transition-all duration-200 ${
-          active ? 'bg-accent opacity-100' : 'opacity-0'
-        }`}
-      />
       <button
         type="button"
         onClick={onSelect}

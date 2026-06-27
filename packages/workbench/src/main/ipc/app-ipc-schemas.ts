@@ -64,6 +64,13 @@ export const feishuConfigPayloadSchema = z
   })
   .strict()
 
+export const asrConfigPayloadSchema = z
+  .object({
+    apiKey: z.string().trim().max(500),
+    model: z.string().trim().min(1).max(128)
+  })
+  .strict()
+
 export const wecomConfigPayloadSchema = z
   .object({
     webhookKey: z.string().trim().min(1).max(500)
@@ -235,3 +242,24 @@ export const usagePruneEndpointModelPayloadSchema = z
     modelId: trimmedString(MAX_ID_LENGTH)
   })
   .strict()
+
+const MAX_ASR_AUDIO_BYTES = 8_000_000
+
+export const asrTranscribePayloadSchema = z
+  .object({
+    audio: z.union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)]),
+    mimeType: z.string().trim().min(1).max(128).optional(),
+    fileName: z.string().trim().min(1).max(256).optional()
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const byteLength =
+      value.audio instanceof ArrayBuffer ? value.audio.byteLength : value.audio.byteLength
+    if (byteLength <= 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Audio payload is empty.' })
+      return
+    }
+    if (byteLength > MAX_ASR_AUDIO_BYTES) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Audio payload is too large.' })
+    }
+  })

@@ -236,6 +236,21 @@ export type TrendingRepo = {
   isNew: boolean
   url: string
 }
+export type AsrTranscribeResult =
+  | { ok: true; text: string }
+  | { ok: false; message: string }
+
+export type AsrConfigFileResult = {
+  path: string
+  exists: boolean
+  config: {
+    apiKey: string
+    model: string
+  }
+}
+
+export type AsrConfigSaveResult = { path: string }
+
 export type TrendingPeriod = 'daily' | 'weekly' | 'monthly'
 export type TrendingResult =
   | { ok: true; repos: TrendingRepo[]; period: TrendingPeriod; cachedAt: number }
@@ -249,6 +264,13 @@ export type DsGuiApi = {
   getStartupPhase: () => Promise<StartupPhasePayload | null>
   onStartupPhase: (handler: (payload: StartupPhasePayload) => void) => () => void
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
+  transcribeAudio: (payload: {
+    audio: ArrayBuffer
+    mimeType?: string
+    fileName?: string
+  }) => Promise<AsrTranscribeResult>
+  getAsrConfig: () => Promise<AsrConfigFileResult>
+  setAsrConfig: (config: AsrConfigFileResult['config']) => Promise<AsrConfigSaveResult>
   runtimeRequest: (path: string, method?: string, body?: string) => Promise<RuntimeRequestResult>
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>
   deepseekSpawnIfNeeded: () => Promise<DeepseekSpawnResult>

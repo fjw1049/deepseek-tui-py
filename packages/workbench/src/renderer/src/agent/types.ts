@@ -44,6 +44,8 @@ export type ToolBlock = {
   toolKind?: ToolItemKind
   /** Full text content from runtime: stdout/stderr or unified patch text */
   detail?: string
+  /** True when detail was truncated to keep blocks[] bounded; full text via fetchItemDetail */
+  detailTruncated?: boolean
   /** Resolved file path for file_change items, when known */
   filePath?: string
   /** Optional structured metadata, e.g. { exit_code, duration_ms, command } */
@@ -166,6 +168,7 @@ export type ToolEventPayload = {
   status: 'running' | 'success' | 'error'
   toolKind?: ToolItemKind
   detail?: string
+  detailTruncated?: boolean
   filePath?: string
   meta?: Record<string, unknown>
 }
@@ -279,6 +282,8 @@ export interface AgentProvider {
     latestTurnId?: string
     latestUserMessageId?: string
   }>
+  /** Runtime HTTP: GET /v1/items/{id} — lazy-load full tool detail after truncation. */
+  fetchItemDetail?(itemId: string): Promise<{ detail: string | null }>
   sendUserMessage(
     threadId: string,
     text: string,

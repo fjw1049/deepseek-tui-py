@@ -1017,6 +1017,11 @@ samp {
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
+  /* Promote to its own compositing layer + isolate paints so scrolling does not
+     force the ancestor glass backdrop-filter to re-rasterize every frame
+     (which causes the "content paints a frame late / janky" feel). */
+  transform: translateZ(0);
+  contain: paint;
 }
 
 .ds-trending-loop-viewport:hover > div {
@@ -1131,10 +1136,9 @@ samp {
 
 .ds-sidebar-section-label {
   font-family: var(--font-ui);
-  font-size: 0.8125rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--text-tertiary);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
@@ -1191,31 +1195,17 @@ samp {
 
 .ds-sidebar-projects-panel {
   min-height: 0;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 48%, transparent);
-  background: color-mix(in srgb, var(--surface-2) 32%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  background: transparent;
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
-}
-
-[data-theme='dark'] .ds-sidebar-projects-panel {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.025);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .ds-sidebar-projects-toolbar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.625rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 35%, transparent);
-}
-
-[data-theme='dark'] .ds-sidebar-projects-toolbar {
-  border-bottom-color: rgba(255, 255, 255, 0.06);
+  padding: 0.35rem 0.5rem 0.5rem;
 }
 
 .ds-sidebar-search--inline {
@@ -1328,25 +1318,11 @@ samp {
 .ds-sidebar-project-label {
   font: inherit;
   letter-spacing: inherit;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .ds-sidebar-workspace:hover {
   background: var(--ds-surface-hover);
-}
-
-.ds-sidebar-project-avatar {
-  display: inline-flex;
-  height: 1.375rem;
-  width: 1.375rem;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  font-size: 0.625rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1;
 }
 
 .ds-sidebar-project-count {
@@ -1368,9 +1344,9 @@ samp {
   font-family: var(--font-ui);
   font-size: 0.875rem;
   font-weight: 400;
-  line-height: 1.45;
+  line-height: 1.5;
   letter-spacing: -0.012em;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   transition:
@@ -1379,6 +1355,7 @@ samp {
 
 .ds-sidebar-thread--emphasis {
   font-weight: 500;
+  color: var(--text-primary);
 }
 
 .ds-sidebar-thread-meta {
@@ -2156,7 +2133,10 @@ summary,
   contain: layout paint;
   transform: translateX(var(--pet-roam-offset));
   transition: transform 80ms linear;
-  will-change: transform;
+}
+
+.pet-sprite-frame--paused {
+  will-change: auto;
 }
 
 .pet-sprite {
@@ -2173,8 +2153,11 @@ summary,
   image-rendering: pixelated;
   transform: scale(var(--pet-scale)) translateZ(0);
   transform-origin: top left;
-  will-change: background-position;
   animation: pet-state var(--sprite-duration) steps(var(--sprite-frames)) infinite;
+}
+
+.pet-sprite--paused {
+  animation-play-state: paused;
 }
 
 @keyframes pet-state {
