@@ -11,16 +11,22 @@ from deepseek_tui.server.phase_bridge import usable_preface as phase_usable_pref
 
 
 def test_extract_terminal_display_text_prefers_text() -> None:
-    assert extract_terminal_display_text(text="hello", thinking="hidden") == "hello"
+    text, fallback = extract_terminal_display_text(text="hello", thinking="hidden")
+    assert text == "hello"
+    assert fallback is False
 
 
 def test_extract_terminal_display_text_uses_thinking_when_no_text() -> None:
-    assert extract_terminal_display_text(text=None, thinking="final answer") == "final answer"
+    text, fallback = extract_terminal_display_text(text=None, thinking="final answer")
+    assert text == "final answer"
+    assert fallback is True
 
 
 def test_extract_terminal_display_text_splits_reasoning_omitted_marker() -> None:
     raw = "internal plan\n(reasoning omitted)\n用户可见正文"
-    assert extract_terminal_display_text(text=None, thinking=raw) == "用户可见正文"
+    text, fallback = extract_terminal_display_text(text=None, thinking=raw)
+    assert text == "用户可见正文"
+    assert fallback is False
 
 
 def test_assistant_thinking_text_collects_thinking_blocks() -> None:

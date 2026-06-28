@@ -163,6 +163,7 @@ class ThreadForkParams(BaseModel):
     base_instructions: str | None = None
     developer_instructions: str | None = None
     persist_extended_history: bool = False
+    through_item_id: str | None = None
 
 
 class ThreadListParams(BaseModel):

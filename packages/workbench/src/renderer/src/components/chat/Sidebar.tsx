@@ -21,10 +21,7 @@ type Props = {
   runtimeReady: boolean
   onSelectThread: (id: string) => void
   onDeleteThread: (id: string) => Promise<void>
-  onForkThread: (id: string) => Promise<void>
-  onResumeThread: (id: string) => Promise<void>
   onCompactThread: (id: string) => Promise<void>
-  onExportThread: (id: string) => Promise<{ path: string } | null>
   onNewChat: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onImportSession: () => void
@@ -38,10 +35,7 @@ export function Sidebar({
   runtimeReady,
   onSelectThread,
   onDeleteThread,
-  onForkThread,
-  onResumeThread,
   onCompactThread,
-  onExportThread,
   onNewChat,
   onNewChatInWorkspace,
   onImportSession,
@@ -141,10 +135,7 @@ export function Sidebar({
         onImportSession={onImportSession}
         onSelectThread={onSelectThread}
         onDeleteThread={onDeleteThread}
-        onForkThread={onForkThread}
-        onResumeThread={onResumeThread}
         onCompactThread={onCompactThread}
-        onExportThread={onExportThread}
         t={t}
       />
 

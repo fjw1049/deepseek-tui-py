@@ -1179,10 +1179,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async forkThread(threadId: string): Promise<NormalizedThread> {
+  async forkThread(threadId: string, throughItemId?: string): Promise<NormalizedThread> {
+    const body =
+      throughItemId != null && throughItemId.trim().length > 0
+        ? JSON.stringify({ through_item_id: throughItemId })
+        : undefined
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/fork`,
-      'POST'
+      'POST',
+      body
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'fork thread failed'))
     const t = JSON.parse(r.body) as ThreadRecordJson

@@ -12,6 +12,7 @@ import {
   Copy,
   FileEdit,
   FolderOpen,
+  GitFork,
   Loader2,
   PencilLine,
   Terminal,
@@ -516,6 +517,16 @@ function groupTurns(blocks: ChatBlock[]): Turn[] {
   let current: Turn | null = null
 
   for (const block of blocks) {
+    // System events (context compaction, turn errors) are not part of any
+    // dialogue turn — render them as standalone dividers between turns,
+    // otherwise they get embedded inside an adjacent turn (e.g. between a
+    // user message and the assistant reply), which reads as an interruption.
+    if (block.kind === 'system') {
+      if (current) turns.push(current)
+      current = null
+      turns.push({ blocks: [block] })
+      continue
+    }
     if (block.kind === 'user') {
       if (current) turns.push(current)
       current = { user: block, blocks: [] }
@@ -752,8 +763,9 @@ function MessageTurn({
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
   const subagentSummary = useMemo(() => buildSubagentSummaryForTurn(turn.blocks), [turn.blocks])
 
-  const { processBlocks, assistantContentBlocks, turnFileChanges } = useMemo(() => {
+  const { processBlocks, assistantContentBlocks, turnFileChanges, systemBlocks } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
+    const nextSystemBlocks: Array<Extract<ChatBlock, { kind: 'system' }>> = []
     const nextAssistantContentBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
     const hasExplicitFinalAnswer = turn.blocks.some(isFinalAnswerAssistantBlock)
     const trailingAssistantContentStart = isProcessing
@@ -781,6 +793,10 @@ function MessageTurn({
             nextAssistantContentBlocks
           )
         }
+        continue
+      }
+      if (block.kind === 'system') {
+        nextSystemBlocks.push(block)
         continue
       }
       if (isProcessBlock(block)) {
@@ -821,71 +837,107 @@ function MessageTurn({
           nextAssistantContentBlocks.length > 0 || !fallbackAnswer
             ? nextAssistantContentBlocks
             : [fallbackAnswer],
-        turnFileChanges: nextTurnFileChanges
+        turnFileChanges: nextTurnFileChanges,
+        systemBlocks: nextSystemBlocks
       }
     }
 
     return {
       processBlocks: nextProcessBlocks,
       assistantContentBlocks: nextAssistantContentBlocks,
-      turnFileChanges: nextTurnFileChanges
+      turnFileChanges: nextTurnFileChanges,
+      systemBlocks: nextSystemBlocks
     }
   }, [turn.blocks, isProcessing, liveProcessText, workspaceRoot])
 
   const showLiveAssistant = !isProcessing && !!liveContent.trim()
 
-  const hasProcess = isProcessing || processBlocks.length > 0
+  const isSystemOnlyTurn =
+    !turn.user &&
+    systemBlocks.length > 0 &&
+    processBlocks.length === 0 &&
+    assistantContentBlocks.length === 0
+
+  const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {turn.user ? <MessageBubble block={turn.user} /> : null}
 
-      {hasProcess ? (
-        <div className="flex flex-col gap-1 pb-2">
-          <WorkMetaRow
-            processing={isProcessing}
-            stepCount={processBlocks.length}
-            liveStartedAt={liveStartedAt}
-            durationMs={durationMs}
-            reasoningDurationMs={reasoningDurationMs}
-            expanded={workExpanded}
-            onToggle={() => setWorkExpanded((value) => !value)}
-            activeWorkflowName={processBlocks.find((b): b is ChatBlock & { kind: 'workflow'; workflowName: string } => b.kind === 'workflow' && b.status === 'running')?.workflowName}
-            activeActionLabel={activeRunningActionLabel(processBlocks)}
-          />
-          {workExpanded ? (
-            <ProcessStream
-              blocks={processBlocks}
-              processing={isProcessing}
-              todoSession={todoSession}
-              todoEvents={todoEvents}
-              subagentSummary={subagentSummary}
+      {isSystemOnlyTurn ? (
+        <div className="flex flex-col items-center gap-1 py-1">
+          {systemBlocks.map((b) => (
+            <div
+              key={b.id}
+              className="max-w-full rounded-full border border-ds-border-muted bg-ds-card/60 px-3 py-1 text-center text-[12px] text-ds-faint"
+            >
+              {b.text}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          {hasProcess ? (
+            <div className="flex flex-col gap-1 pb-2">
+              <WorkMetaRow
+                processing={isProcessing}
+                stepCount={processBlocks.length}
+                liveStartedAt={liveStartedAt}
+                durationMs={durationMs}
+                reasoningDurationMs={reasoningDurationMs}
+                expanded={workExpanded}
+                onToggle={() => setWorkExpanded((value) => !value)}
+                activeWorkflowName={processBlocks.find((b): b is ChatBlock & { kind: 'workflow'; workflowName: string } => b.kind === 'workflow' && b.status === 'running')?.workflowName}
+                activeActionLabel={activeRunningActionLabel(processBlocks)}
+              />
+              {workExpanded ? (
+                <ProcessStream
+                  blocks={processBlocks}
+                  processing={isProcessing}
+                  todoSession={todoSession}
+                  todoEvents={todoEvents}
+                  subagentSummary={subagentSummary}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {systemBlocks.length > 0 ? (
+            <div className="flex flex-col gap-1">
+              {systemBlocks.map((b) => (
+                <div
+                  key={b.id}
+                  className="rounded-md border border-ds-border-muted bg-ds-card/60 px-3 py-1.5 text-[12px] text-ds-faint"
+                >
+                  {b.text}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {!workExpanded && todoSession ? (
+            <InlineTodoBlock
+              session={todoSession}
+              active={isProcessing && !todoSession.isComplete}
+              className="pb-1"
             />
           ) : null}
-        </div>
-      ) : null}
 
-      {!workExpanded && todoSession ? (
-        <InlineTodoBlock
-          session={todoSession}
-          active={isProcessing && !todoSession.isComplete}
-          className="pb-1"
-        />
-      ) : null}
+          {assistantContentBlocks.map((block) => (
+            <MessageBubble key={block.id} block={block} />
+          ))}
 
-      {assistantContentBlocks.map((block) => (
-        <MessageBubble key={block.id} block={block} />
-      ))}
+          {showLiveAssistant ? (
+            <MessageBubble block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }} />
+          ) : null}
 
-      {showLiveAssistant ? (
-        <MessageBubble block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }} />
-      ) : null}
+          {!isProcessing && devPreviewCard ? devPreviewCard : null}
 
-      {!isProcessing && devPreviewCard ? devPreviewCard : null}
-
-      {!isProcessing && turnFileChanges.length > 0 ? (
-        <TurnChangeSummary changes={turnFileChanges} viewportRef={viewportRef} />
-      ) : null}
+          {!isProcessing && turnFileChanges.length > 0 ? (
+            <TurnChangeSummary changes={turnFileChanges} viewportRef={viewportRef} />
+          ) : null}
+        </>
+      )}
     </div>
   )
 }
@@ -1927,6 +1979,51 @@ function CopyFeedbackButton({
   )
 }
 
+/**
+ * "Fork from here" — branch a new thread containing the conversation up to and
+ * including this message's item. Sits next to the copy button on each user and
+ * assistant message footer. Disabled while a turn is running or when no thread
+ * is active. The backend truncates the fork at ``through_item_id``.
+ */
+function ForkFromHereButton({ itemId }: { itemId: string }): ReactElement {
+  const { t } = useTranslation('common')
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const forkThread = useChatStore((s) => s.forkThread)
+  const busy = useChatStore((s) => s.busy)
+  const runtimeConnection = useChatStore((s) => s.runtimeConnection)
+  const [pending, setPending] = useState(false)
+
+  const disabled = !activeThreadId || busy || pending || runtimeConnection !== 'ready'
+
+  const handleClick = async (): Promise<void> => {
+    if (disabled || !activeThreadId) return
+    setPending(true)
+    try {
+      await forkThread(activeThreadId, itemId)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const label = t('forkFromHere')
+  return (
+    <button
+      type="button"
+      onClick={() => void handleClick()}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className="flex shrink-0 items-center rounded-md p-1 text-ds-faint transition hover:bg-ds-hover hover:text-ds-muted disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {pending ? (
+        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+      ) : (
+        <GitFork className="h-4 w-4" strokeWidth={1.8} />
+      )}
+    </button>
+  )
+}
+
 function subagentStatusLabel(
   status: Extract<ChatBlock, { kind: 'subagent' }>['status'],
   t: (key: string) => string
@@ -2215,7 +2312,10 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
         {!streaming ? (
           <div className="mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>
-            <CopyFeedbackButton text={block.text} />
+            <div className="flex items-center gap-1.5">
+              <ForkFromHereButton itemId={block.id} />
+              <CopyFeedbackButton text={block.text} iconOnly />
+            </div>
           </div>
         ) : null}
       </div>

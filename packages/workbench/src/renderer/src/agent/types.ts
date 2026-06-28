@@ -293,7 +293,7 @@ export interface AgentProvider {
   interruptTurn(threadId: string, turnId: string): Promise<void>
   renameThread(threadId: string, title: string): Promise<void>
   deleteThread(threadId: string): Promise<void>
-  forkThread?(threadId: string): Promise<NormalizedThread>
+  forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
   resumeThread?(threadId: string): Promise<void>
   compactThread?(threadId: string, reason?: string): Promise<void>
   subscribeThreadEvents(

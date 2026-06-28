@@ -854,6 +854,7 @@
   "copyMessage": "Copy message",
   "copySuccess": "Copied",
   "copyFailed": "Copy failed",
+  "forkFromHere": "Fork from here",
   "interrupt": "Stop",
   "connecting": "Connecting…",
   "runtimeOffline": "Runtime unavailable. Check settings or start `deepseek serve --http`.",

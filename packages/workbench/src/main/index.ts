@@ -596,6 +596,13 @@ function createWindow(): void {
     console.error(`[deepseek-gui] failed to load preload ${preloadPath}:`, error)
     logError('preload', 'Failed to load preload script', { preloadPath, message })
   })
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const tag = level === 'error' ? '[renderer-error]' : `[renderer-log:${level}]`
+    console.log(`${tag} ${message} (${sourceId}:${line})`)
+  })
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[deepseek-gui] render-process-gone:', details)
+  })
   const showWindow = (): void => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return
     mainWindow.show()

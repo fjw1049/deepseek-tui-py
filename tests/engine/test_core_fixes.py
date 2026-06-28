@@ -188,7 +188,11 @@ async def test_successful_stream_unaffected():
 
 
 @pytest.mark.asyncio
-async def test_glm_default_output_limit_fits_provider_cap():
+async def test_glm_gets_reasoning_output_headroom():
+    """GLM-5.2 streams large reasoning_content; the legacy 4096 default was
+    exhausted by reasoning alone, truncating the round before any answer
+    content was produced. It must request enough output headroom to finish
+    thinking *and* emit the answer."""
     client = _ScriptedClient([[StreamDone(usage=None)]])
     loop = TurnLoop(client)
 
@@ -202,4 +206,4 @@ async def test_glm_default_output_limit_fits_provider_cap():
         tools=None,
     )
 
-    assert client.requests[0].max_tokens == 4096
+    assert client.requests[0].max_tokens == 32_768

@@ -1340,6 +1340,16 @@ class SubAgentManager:
                 return snapshots
             await asyncio.sleep(min(0.05, remaining))
 
+    def known_agent_ids(self) -> set[str]:
+        """Snapshot the ids of every agent currently tracked.
+
+        Used by a turn's monitor at start-up to tag pre-existing agents as
+        *foreign*: turns are serial per thread, so any agent already present
+        when a turn begins was spawned by an earlier turn and must not have
+        its mailbox events re-attributed to the new turn.
+        """
+        return set(self._agents)
+
     async def shutdown(self) -> None:
         """Cancel and join every running agent."""
         async with self._lock:

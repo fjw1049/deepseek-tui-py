@@ -100,6 +100,7 @@ from deepseek_tui.server.agent_segments import (
     AGENT_SEGMENT_KEY,
     FINAL_ANSWER,
     MID_TURN_PREFACE,
+    REASONING_FALLBACK_NOTICE,
     extract_terminal_display_text,
 )
 from deepseek_tui.server.phase_bridge import (
@@ -760,7 +761,9 @@ class RuntimeThreadManager:
             "latest_updated_at": latest_ts.isoformat() if latest_ts else None,
         }
 
-    async def fork_thread(self, thread_id: str) -> ThreadRecord:
+    async def fork_thread(
+        self, thread_id: str, *, through_item_id: str | None = None
+    ) -> ThreadRecord:
         source = self.store.load_thread(thread_id)
         now = datetime.now(timezone.utc)
         forked = source.model_copy(
@@ -775,7 +778,27 @@ class RuntimeThreadManager:
         self.store.save_thread(forked)
 
         source_turns = self.store.list_turns_for_thread(source.id)
-        for source_turn in source_turns:
+
+        # When ``through_item_id`` is given, resolve the cutoff turn and the
+        # position of the item within that turn's ``item_ids``. The forked
+        # thread then contains all turns before the cutoff turn (in full), the
+        # cutoff turn truncated at and including that item, and nothing after.
+        cutoff_turn_index: int | None = None
+        if through_item_id is not None:
+            for idx, turn in enumerate(source_turns):
+                if through_item_id in turn.item_ids:
+                    cutoff_turn_index = idx
+                    break
+            if cutoff_turn_index is None:
+                raise ValueError(
+                    f"through_item_id not found in thread: {through_item_id}"
+                )
+
+        last_cloned_turn_id: str | None = None
+        for idx, source_turn in enumerate(source_turns):
+            if cutoff_turn_index is not None and idx > cutoff_turn_index:
+                break
+
             cloned_turn = source_turn.model_copy(
                 update={
                     "id": f"turn_{uuid.uuid4().hex[:8]}",
@@ -785,27 +808,57 @@ class RuntimeThreadManager:
             )
             self.store.save_turn(cloned_turn)
 
-            items = self.store.list_items_for_turn(source_turn.id)
-            for item in items:
-                cloned_item = item.model_copy(
-                    update={
-                        "id": f"item_{uuid.uuid4().hex[:8]}",
-                        "turn_id": cloned_turn.id,
-                    }
-                )
-                self.store.save_item(cloned_item)
-                cloned_turn.item_ids.append(cloned_item.id)
+            if cutoff_turn_index is not None and idx == cutoff_turn_index:
+                # Truncate at the cutoff item, iterating ``item_ids`` directly
+                # so missing-on-disk items earlier in the turn cannot shift
+                # the cutoff position.
+                for source_item_id in source_turn.item_ids:
+                    try:
+                        item = self.store.load_item(source_item_id)
+                    except FileNotFoundError:
+                        continue
+                    cloned_item = item.model_copy(
+                        update={
+                            "id": f"item_{uuid.uuid4().hex[:8]}",
+                            "turn_id": cloned_turn.id,
+                        }
+                    )
+                    self.store.save_item(cloned_item)
+                    cloned_turn.item_ids.append(cloned_item.id)
+                    if source_item_id == through_item_id:
+                        break
+            else:
+                for item in self.store.list_items_for_turn(source_turn.id):
+                    cloned_item = item.model_copy(
+                        update={
+                            "id": f"item_{uuid.uuid4().hex[:8]}",
+                            "turn_id": cloned_turn.id,
+                        }
+                    )
+                    self.store.save_item(cloned_item)
+                    cloned_turn.item_ids.append(cloned_item.id)
+
             self.store.save_turn(cloned_turn)
-            forked.latest_turn_id = cloned_turn.id
+            if cloned_turn.item_ids:
+                last_cloned_turn_id = cloned_turn.id
+
+        if last_cloned_turn_id is not None:
+            forked.latest_turn_id = last_cloned_turn_id
             forked.updated_at = now
             self.store.save_thread(forked)
 
+        event_payload: dict[str, Any] = {
+            "thread": forked.model_dump(mode="json"),
+            "source_thread_id": source.id,
+        }
+        if through_item_id is not None:
+            event_payload["through_item_id"] = through_item_id
         await self._emit_event(
             forked.id,
             None,
             None,
             "thread.forked",
-            {"thread": forked.model_dump(mode="json"), "source_thread_id": source.id},
+            event_payload,
         )
         return forked
 
@@ -1524,7 +1577,11 @@ class RuntimeThreadManager:
         )
 
     async def _flush_pending_subagent_mailbox(
-        self, thread_id: str, turn_id: str, engine: Engine | None
+        self,
+        thread_id: str,
+        turn_id: str,
+        engine: Engine | None,
+        skip_ids: set[str] | None = None,
     ) -> None:
         """Drain any sub-agent mailbox events the activity coordinator has not
         consumed yet before the turn closes.
@@ -1551,9 +1608,50 @@ class RuntimeThreadManager:
         except Exception:  # noqa: BLE001 — best-effort flush at turn close
             return
         for envelope in envelopes:
+            if skip_ids and envelope.message.agent_id in skip_ids:
+                continue  # leftover from a prior turn — do not leak its card
             await self._persist_subagent_mailbox(
                 thread_id, turn_id, envelope.seq, envelope.message
             )
+
+    async def _cancel_orphan_subagents(
+        self,
+        thread_id: str,
+        turn_id: str,
+        engine: Engine | None,
+        agent_ids: set[str],
+    ) -> None:
+        """Cancel this turn's sub-agents that are still running at turn close.
+
+        Sub-agents are in-turn entities and must not outlive the turn that
+        spawned them. When the main agent ends the turn without awaiting them
+        (premature completion), the orphans keep running on the shared
+        per-engine manager and bleed their mailbox envelopes into the next
+        turn. Cancelling here scopes each turn's sub-agents to that turn: the
+        card lands as ``cancelled`` under the owning turn (honestly exposing
+        the missing wait) and no stale work survives into the next turn.
+
+        Idempotent: agents already terminal are skipped, so a turn that
+        properly awaited everything cancels nothing.
+        """
+        if engine is None or not agent_ids:
+            return
+        from deepseek_tui.tools.subagent import SubAgentStatusKind
+
+        manager = engine.tool_context.subagent_manager
+        if manager is None:
+            return
+        for agent_id in agent_ids:
+            try:
+                snap = await manager.get_result(agent_id)
+            except Exception:  # noqa: BLE001 — unknown/evicted agent
+                continue
+            if snap.status.kind is not SubAgentStatusKind.RUNNING:
+                continue
+            try:
+                await manager.cancel(agent_id)
+            except Exception:  # noqa: BLE001 — best-effort cleanup at turn close
+                continue
 
     async def _reconcile_subagent_cards(
         self,
@@ -1916,6 +2014,21 @@ class RuntimeThreadManager:
             name=f"turn-watchdog-{turn_id}",
         )
 
+        # Sub-agents are in-turn entities: any agent already tracked when this
+        # turn starts belongs to a prior turn (turns are serial per thread). If
+        # such an orphan keeps emitting after its turn ended, this monitor must
+        # not re-attribute those envelopes to the new turn (which would leak a
+        # stray card with a lost agent_type). Tag them foreign and drop them.
+        foreign_subagent_ids: set[str] = set()
+        async with self._active_lock:
+            _state = self._active.get(thread_id)
+            _engine = _state.engine if _state is not None else None
+        if _engine is not None:
+            _mgr = _engine.tool_context.subagent_manager
+            _known = getattr(_mgr, "known_agent_ids", None)
+            if callable(_known):
+                foreign_subagent_ids = _known()
+
         async for event in handle.events():
             if self._cancel_event.is_set():
                 turn_status = RuntimeTurnStatus.INTERRUPTED
@@ -2253,6 +2366,8 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, SubAgentMailboxEvent):
+                if event.message.agent_id in foreign_subagent_ids:
+                    continue  # leftover from a prior turn — do not leak its card
                 seen_subagent_ids.add(event.message.agent_id)
                 await self._persist_subagent_mailbox(
                     thread_id, turn_id, event.seq, event.message
@@ -2297,11 +2412,26 @@ class RuntimeThreadManager:
                 segment = await finalize_open_reasoning()
                 if not event.tool_calls:
                     last_completed_reasoning = None
-                    display = extract_terminal_display_text(
+                    display, is_raw_fallback = extract_terminal_display_text(
                         text=event.preface_text,
                         thinking=event.round_thinking,
                     )
                     preface = (event.preface_text or "").strip()
+                    # Raw reasoning fallback: the round produced no answer
+                    # `content` AND the thinking doesn't use the
+                    # "(reasoning omitted)" protocol. This typically means the
+                    # output budget was too small and reasoning was
+                    # length-truncated before the model could emit its answer.
+                    # Prepend a visible notice so it isn't mistaken for a clean
+                    # reply (see max_output_tokens_for_model).
+                    if display and is_raw_fallback:
+                        logger.warning(
+                            "terminal_reasoning_fallback turn=%s thinking_chars=%d "
+                            "— no answer content, showing reasoning as final answer",
+                            turn_id,
+                            len(display),
+                        )
+                        display = f"{REASONING_FALLBACK_NOTICE}\n\n{display}"
                     if display and segment is not None and not preface:
                         await promote_reasoning_to_final_answer(segment, display)
                     elif display and current_message_item_id is not None:
@@ -2324,8 +2454,11 @@ class RuntimeThreadManager:
                 async with self._active_lock:
                     engine = self._active.get(thread_id)
                     active_engine = engine.engine if engine is not None else None
+                await self._cancel_orphan_subagents(
+                    thread_id, turn_id, active_engine, seen_subagent_ids
+                )
                 await self._flush_pending_subagent_mailbox(
-                    thread_id, turn_id, active_engine
+                    thread_id, turn_id, active_engine, skip_ids=foreign_subagent_ids
                 )
                 await self._reconcile_subagent_cards(
                     thread_id, turn_id, active_engine, seen_subagent_ids
@@ -3214,6 +3347,17 @@ class UpdateThreadRequest(BaseModel):
     archived: bool | None = None
     title: str | None = None
     memory_mode: str | None = None
+
+
+class ForkThreadRequest(BaseModel):
+    """Optional cutoff for fork-from-a-point.
+
+    When ``through_item_id`` is omitted the whole thread is forked (legacy
+    behavior). When provided, the forked thread contains the conversation up
+    to and including that turn item.
+    """
+
+    through_item_id: str | None = None
 
 
 class StartTurnRequest(BaseModel):

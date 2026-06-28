@@ -793,6 +793,7 @@ from fastapi.responses import JSONResponse
 
 from deepseek_tui.server.threads import (
     CreateThreadRequest,
+    ForkThreadRequest,
     UpdateThreadRequest,
 )
 from deepseek_tui.server.sessions import ImportTuiSessionRequest
@@ -932,10 +933,14 @@ async def update_thread(request: Request, thread_id: str) -> dict[str, Any]:
 @router_threads.post("/threads/{thread_id}/fork", status_code=201)
 async def fork_thread(request: Request, thread_id: str) -> JSONResponse:
     mgr = manager(request)
+    payload = await body(request)
+    req = ForkThreadRequest.model_validate(payload)
     try:
-        forked = await mgr.fork_thread(thread_id)
+        forked = await mgr.fork_thread(thread_id, through_item_id=req.through_item_id)
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_request") from exc
     return JSONResponse(status_code=201, content=forked.model_dump(mode="json"))
 
 

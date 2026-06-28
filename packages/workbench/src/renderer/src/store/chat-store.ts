@@ -2061,7 +2061,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  forkThread: async (threadId) => {
+  forkThread: async (threadId, throughItemId) => {
     const targetId = threadId.trim()
     if (!targetId) return
     if (get().runtimeConnection !== 'ready') {
@@ -2074,7 +2074,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
     try {
-      const forked = await p.forkThread(targetId)
+      const forked = await p.forkThread(targetId, throughItemId)
       await get().refreshThreads()
       await get().selectThread(forked.id)
     } catch (e) {

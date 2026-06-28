@@ -854,6 +854,7 @@
   "copyMessage": "复制消息",
   "copySuccess": "已复制",
   "copyFailed": "复制失败",
+  "forkFromHere": "从此处分叉新会话",
   "interrupt": "停止",
   "connecting": "连接中…",
   "runtimeOffline": "运行时不可用。请在设置中检查或先启动 `deepseek serve --http`。",

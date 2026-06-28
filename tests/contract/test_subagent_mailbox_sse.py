@@ -77,6 +77,110 @@ async def test_monitor_turn_emits_subagent_mailbox(runtime_app: object) -> None:
 
 
 @pytest.mark.asyncio
+async def test_monitor_turn_drops_foreign_subagent(runtime_app: object) -> None:
+    """Leftover sub-agents from a prior turn must not leak into the next turn.
+
+    Turns are serial per thread, so any agent already tracked when a turn
+    starts was spawned by an earlier turn. If such an orphan keeps emitting,
+    the new turn's monitor must drop its envelopes (otherwise a stray card
+    with a lost ``agent_type`` appears). A freshly spawned agent must still
+    pass through.
+    """
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(
+        TurnRecord(
+            id=turn_id,
+            thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test",
+            created_at=now,
+            started_at=now,
+        )
+    )
+
+    fake_manager = SimpleNamespace(
+        mailbox=None,
+        known_agent_ids=lambda: {"agent_prev"},
+    )
+    stub_engine = SimpleNamespace(
+        tool_context=ToolContext(
+            working_directory=manager.workspace,
+            subagent_manager=fake_manager,
+        )
+    )
+    engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    async def pump() -> None:
+        # Leftover orphan from a prior turn — already known to the manager.
+        await handle.emit(
+            SubAgentMailboxEvent(
+                seq=1, message=MailboxMessage.completed("agent_prev", "leftover")
+            )
+        )
+        # Freshly spawned agent for THIS turn.
+        await handle.emit(
+            SubAgentMailboxEvent(
+                seq=2, message=MailboxMessage.started("agent_new", "explore")
+            )
+        )
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+    finally:
+        await pump_task
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+
+    events = manager.events_since(thread.id, 0)
+    mailbox_events = [e for e in events if e.event == "subagent.mailbox"]
+    agent_ids = {e.payload["message"]["agent_id"] for e in mailbox_events}
+    assert "agent_prev" not in agent_ids
+    assert "agent_new" in agent_ids
+
+
+@pytest.mark.asyncio
+async def test_cancel_orphan_subagents_cancels_only_running(runtime_app: object) -> None:
+    """At turn close, still-running sub-agents are cancelled; terminal ones are left."""
+    from deepseek_tui.tools.subagent import SubAgentStatusKind
+
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    cancelled: list[str] = []
+    running = SimpleNamespace(status=SimpleNamespace(kind=SubAgentStatusKind.RUNNING))
+    done = SimpleNamespace(status=SimpleNamespace(kind=SubAgentStatusKind.COMPLETED))
+
+    async def _get_result(agent_id: str) -> object:
+        return running if agent_id == "agent_running" else done
+
+    async def _cancel(agent_id: str) -> None:
+        cancelled.append(agent_id)
+
+    fake_manager = SimpleNamespace(get_result=_get_result, cancel=_cancel)
+    stub_engine = SimpleNamespace(
+        tool_context=ToolContext(
+            working_directory=manager.workspace,
+            subagent_manager=fake_manager,
+        )
+    )
+
+    await manager._cancel_orphan_subagents(
+        "thread_x", "turn_x", stub_engine, {"agent_running", "agent_done"}
+    )
+
+    assert cancelled == ["agent_running"]
+
+
+@pytest.mark.asyncio
 async def test_monitor_turn_reconciles_dropped_terminal(runtime_app: object) -> None:
     """A dropped live ``completed`` envelope must still converge the card.
 

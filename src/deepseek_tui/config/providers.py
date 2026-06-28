@@ -501,7 +501,17 @@ def max_output_tokens_for_model(model: str) -> int:
         or model_lower == "deepseek-v4flash"
         or model_lower == "deepseek-v4"
     )
-    return 262_144 if (is_v4_pro or is_v4_flash) else 4096
+    if is_v4_pro or is_v4_flash:
+        return 262_144
+    # GLM (e.g. GLM-5.2) streams large reasoning_content. The legacy 4096 cap
+    # is exhausted by reasoning alone, so the round is length-truncated before
+    # any answer `content` is produced — the engine then falls back to dumping
+    # raw (truncated) reasoning as the final answer. Give it room to finish
+    # thinking *and* emit the answer. context_input_budget clamps the output
+    # reservation to window//4, so a larger cap never starves the input budget.
+    if "glm" in model_lower:
+        return 32_768
+    return 4096
 
 
 # ---------------------------------------------------------------------------

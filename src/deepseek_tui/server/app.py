@@ -202,10 +202,14 @@ def build_router() -> APIRouter:
         manager = _get_thread_manager(request)
         if manager is None:
             return {"ok": False, "error": "runtime thread manager not configured"}
+        payload = await _body(request)
+        through_item_id = payload.get("through_item_id") if isinstance(payload, dict) else None
         try:
-            forked = await manager.fork_thread(thread_id)
+            forked = await manager.fork_thread(thread_id, through_item_id=through_item_id)
         except FileNotFoundError:
             return {"ok": False, "error": f"thread not found: {thread_id}"}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         return {"ok": True, "thread": forked.model_dump(mode="json")}
 
     @router.post("/threads/{thread_id}/turns")
