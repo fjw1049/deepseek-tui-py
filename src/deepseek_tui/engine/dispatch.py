@@ -287,8 +287,12 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from collections.abc import Awaitable, Callable
+
 from deepseek_tui.engine.events import (
+    AgentRoundCompleteEvent,
     ErrorEvent,
+    ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     UserInputRequiredEvent,
@@ -313,15 +317,79 @@ def _is_cron_task(prompt: str) -> bool:
     return prompt.lstrip().startswith(CRON_PROMPT_MARKER)
 
 
+# Primary argument shown next to a tool name in the task run log, so a line
+# reads like ``read_file · src/x.py`` instead of a bare, cryptic tool name.
+_TOOL_PRIMARY_ARG: dict[str, str] = {
+    "read_file": "path",
+    "write_file": "path",
+    "edit_file": "path",
+    "list_dir": "path",
+    "apply_patch": "path",
+    "exec_shell": "command",
+    "exec_shell_interact": "input",
+    "grep_files": "pattern",
+    "file_search": "pattern",
+    "web_search": "query",
+    "fetch_url": "url",
+    "git_show": "ref",
+    "load_skill": "name",
+    "task_create": "prompt",
+    "agent_spawn": "prompt",
+    "delegate_to_agent": "prompt",
+}
+
+
+def _tool_primary_arg(name: str, args: dict[str, Any]) -> str:
+    """Pick the most descriptive scalar argument for *name* (best-effort)."""
+    value: Any = None
+    key = _TOOL_PRIMARY_ARG.get(name)
+    if key is not None:
+        value = args.get(key)
+    if not isinstance(value, str) or not value.strip():
+        value = next(
+            (v for v in args.values() if isinstance(v, str) and v.strip()), None
+        )
+    if not isinstance(value, str):
+        return ""
+    collapsed = " ".join(value.split())
+    return collapsed[:120]
+
+
+def _describe_tool_call(
+    name: str, args: dict[str, Any], success: bool, content: str
+) -> str:
+    """Build one readable run-log line for a finished tool call."""
+    arg = _tool_primary_arg(name, args)
+    label = f"{name} · {arg}" if arg else name
+    if success:
+        return label
+    reason = " ".join((content or "").split())[:160]
+    return f"{label} — {reason}" if reason else label
+
+
 async def _collect_turn_events(
     handle: EngineHandle,
     cancel: asyncio.Event,
+    on_tool_event: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> tuple[str, str | None]:
-    """Drain events until turn end. Returns (final_assistant_text, error_message)."""
+    """Drain events until turn end. Returns (final_assistant_text, error_message).
+
+    When ``on_tool_event`` is provided, the task's "run log" is streamed as
+    ``(kind, summary)`` pairs that read like a mini conversation:
+
+    * ``("text", ...)`` — the model's own narration for a round (what it is
+      about to do / reasoning), taken from the round's preface text.
+    * ``("tool", ...)`` / ``("tool_error", ...)`` — a single readable line per
+      tool call, e.g. ``read_file · src/x.py`` or ``exec_shell · pytest -q``,
+      with the failure reason appended on error.
+    """
     from deepseek_tui.automation.delivery import assistant_message_text
 
     final_text = ""
     error_msg: str | None = None
+    # tool_call_id -> arguments, captured at round-complete so the result
+    # event (which omits arguments) can be rendered with its key parameter.
+    pending_args: dict[str, dict[str, Any]] = {}
 
     async for event in handle.events():
         if cancel.is_set():
@@ -330,6 +398,21 @@ async def _collect_turn_events(
 
         if isinstance(event, ErrorEvent):
             error_msg = event.message
+        elif isinstance(event, AgentRoundCompleteEvent):
+            for call in event.tool_calls:
+                pending_args[call.id] = dict(call.arguments or {})
+            if on_tool_event is not None:
+                narration = (event.preface_text or "").strip()
+                if narration:
+                    await on_tool_event("text", narration)
+        elif isinstance(event, ToolResultEvent):
+            if on_tool_event is not None:
+                args = pending_args.pop(event.tool_call_id, {})
+                kind = "tool" if event.success else "tool_error"
+                summary = _describe_tool_call(
+                    event.tool_name, args, event.success, event.content
+                )
+                await on_tool_event(kind, summary)
         elif isinstance(event, UserInputRequiredEvent):
             future = handle.pending_user_inputs.get(event.tool_call_id)
             if future and not future.done():
@@ -399,9 +482,21 @@ async def _run_task_engine_turn(
     engine.tool_context.active_task_id = task.id
     engine.tool_context.metadata["task_id"] = task.id
 
+    async def _record_tool_event(kind: str, summary: str) -> None:
+        manager = getattr(task, "task_manager", None)
+        recorder = getattr(manager, "record_tool_timeline", None)
+        if recorder is None:
+            return
+        try:
+            await recorder(task.id, kind, summary)
+        except Exception:  # noqa: BLE001 -- progress logging must never break the task
+            logger.debug("task_tool_timeline_record_failed id=%s", task.id, exc_info=True)
+
     try:
         await engine.run_single_turn(task.prompt, model=task.model)
-        result_text, error_msg = await _collect_turn_events(handle, cancel)
+        result_text, error_msg = await _collect_turn_events(
+            handle, cancel, on_tool_event=_record_tool_event
+        )
         if error_msg:
             return TaskExecutionResult(
                 summary=result_text or "Task failed",

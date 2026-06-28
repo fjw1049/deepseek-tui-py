@@ -2,17 +2,24 @@ import { describe, expect, it } from 'vitest'
 
 import type { ChatBlock } from '../../agent/types'
 import {
-  buildSubagentInfrastructureToolIds,
   findFallbackFinalAnswer,
   isSubagentOrchestrationToolName,
   placeAssistantContentBlock,
-  processPhaseHeadingParts,
-  processPhaseReasoningDetailText,
   reasoningDetailTextFromBlocks,
   reasoningNarrationFromBlocks,
-  shouldDefaultExpandProcessSection,
   splitThink
 } from './MessageTimeline'
+import {
+  buildToolRenderContext,
+  resolveToolRenderer,
+  toolRendererRegistry,
+  registerToolRenderers,
+  type ToolRenderContext
+} from './tool'
+import type { ToolBlock } from '../../agent/types'
+
+// Register the built-in renderers once for these tests.
+registerToolRenderers()
 
 describe('splitThink', () => {
   it('separates closed think tags from visible content', () => {
@@ -56,45 +63,6 @@ describe('splitThink', () => {
   })
 })
 
-describe('shouldDefaultExpandProcessSection', () => {
-  it('collapses completed execution sections by default', () => {
-    expect(
-      shouldDefaultExpandProcessSection({
-        kind: 'execution',
-        active: false,
-        hasAttention: false
-      })
-    ).toBe(false)
-  })
-
-  it('expands active or attention-needed execution sections', () => {
-    expect(
-      shouldDefaultExpandProcessSection({
-        kind: 'execution',
-        active: true,
-        hasAttention: false
-      })
-    ).toBe(true)
-    expect(
-      shouldDefaultExpandProcessSection({
-        kind: 'execution',
-        active: false,
-        hasAttention: true
-      })
-    ).toBe(true)
-  })
-
-  it('only expands reasoning while it is active', () => {
-    expect(
-      shouldDefaultExpandProcessSection({
-        kind: 'reasoning',
-        active: false,
-        hasAttention: true
-      })
-    ).toBe(false)
-  })
-})
-
 describe('isSubagentOrchestrationToolName', () => {
   it('recognizes subagent orchestration tools', () => {
     expect(isSubagentOrchestrationToolName('agent_spawn')).toBe(true)
@@ -107,60 +75,6 @@ describe('isSubagentOrchestrationToolName', () => {
     expect(isSubagentOrchestrationToolName('read_file')).toBe(false)
     expect(isSubagentOrchestrationToolName('exec_shell')).toBe(false)
     expect(isSubagentOrchestrationToolName(undefined)).toBe(false)
-  })
-})
-
-describe('buildSubagentInfrastructureToolIds', () => {
-  it('hides only successful setup tools before the subagent summary anchor', () => {
-    const blocks: ChatBlock[] = [
-      {
-        kind: 'tool',
-        id: 'setup-success',
-        summary: 'List dir',
-        status: 'success'
-      },
-      {
-        kind: 'tool',
-        id: 'setup-error',
-        summary: 'Read file',
-        status: 'error'
-      },
-      {
-        kind: 'tool',
-        id: 'setup-running',
-        summary: 'Search files',
-        status: 'running'
-      },
-      {
-        kind: 'subagent',
-        id: 'subagent-a',
-        cardKind: 'delegate',
-        agentId: 'agent_a',
-        agentType: 'explore',
-        status: 'running'
-      },
-      {
-        kind: 'tool',
-        id: 'after-subagent',
-        summary: 'Read file',
-        status: 'success'
-      }
-    ]
-
-    const ids = buildSubagentInfrastructureToolIds(blocks, {
-      anchorBlockId: 'subagent-a',
-      blockIds: ['subagent-a'],
-      blocks: [blocks[3] as Extract<ChatBlock, { kind: 'subagent' }>],
-      total: 1,
-      toolFailed: 0,
-      pending: 0,
-      running: 1,
-      completed: 0,
-      failed: 0,
-      cancelled: 0
-    })
-
-    expect([...ids]).toEqual(['setup-success'])
   })
 })
 
@@ -277,68 +191,64 @@ describe('reasoningDetailTextFromBlocks', () => {
   })
 })
 
-describe('processPhaseHeadingParts', () => {
-  it('uses localized narration as the primary phase heading', () => {
-    expect(
-      processPhaseHeadingParts({
-        label: '网络搜索',
-        toolCount: 3,
-        narration: '先获取仓库基础信息和 README',
-        hasLiveReasoning: false
-      })
-    ).toEqual({
-      primary: '先获取仓库基础信息和 README',
-      meta: '网络搜索 · 3 个工具'
-    })
+describe('ToolRendererRegistry', () => {
+  function block(overrides: Partial<ToolBlock> = {}): ToolBlock {
+    return {
+      kind: 'tool',
+      id: 'tool_1',
+      summary: 'read_file: path="src/foo.ts"',
+      status: 'success',
+      toolKind: 'tool_call',
+      ...overrides
+    }
+  }
+
+  it('resolves a registered tool by exact name', () => {
+    const ctx = buildToolRenderContext(block())
+    const renderer = resolveToolRenderer(ctx)
+    expect(renderer).not.toBeNull()
   })
 
-  it('uses a deterministic topic sentence when narration is missing', () => {
-    expect(
-      processPhaseHeadingParts({
-        label: '网络搜索',
-        toolCount: 2,
-        narration: '',
-        hasLiveReasoning: false
-      })
-    ).toEqual({
-      primary: '正在通过网络搜索补充信息',
-      meta: '网络搜索 · 2 个工具'
-    })
+  it('resolves shell tools to the streaming renderer', () => {
+    const ctx = buildToolRenderContext(
+      block({ summary: 'exec_shell: ls', toolKind: 'command_execution' })
+    )
+    const renderer = resolveToolRenderer(ctx)
+    expect(renderer).not.toBeNull()
+    expect(renderer?.renderWhenPending).toBe(true)
   })
 
-  it('falls back to a generic topic for unknown tool categories', () => {
-    expect(
-      processPhaseHeadingParts({
-        label: '工具调用',
-        toolCount: 1,
-        narration: '',
-        hasLiveReasoning: false
-      })
-    ).toEqual({
-      primary: '正在调用工具推进任务',
-      meta: '工具调用 · 1 个工具'
-    })
-  })
-})
-
-describe('processPhaseReasoningDetailText', () => {
-  it('hides raw reasoning for tool-backed phases', () => {
-    const blocks: ChatBlock[] = [
-      {
-        kind: 'reasoning',
-        id: 'item_r1',
-        text: 'Now I have enough context. Let me fetch more files.'
-      }
-    ]
-
-    expect(processPhaseReasoningDetailText(blocks, 2)).toBe('')
+  it('resolves file mutation tools to the diff renderer', () => {
+    const ctx = buildToolRenderContext(
+      block({ summary: 'edit_file: path="src/foo.ts"', toolKind: 'file_change' })
+    )
+    const renderer = resolveToolRenderer(ctx)
+    expect(renderer).not.toBeNull()
+    expect(renderer?.fullBleed).toBe(true)
   })
 
-  it('keeps raw reasoning for pure reasoning fallback', () => {
-    const blocks: ChatBlock[] = [
-      { kind: 'reasoning', id: 'item_r1', text: '正在整理最终回复。' }
-    ]
+  it('returns null for an unknown tool', () => {
+    const ctx = buildToolRenderContext(block({ summary: 'mystery_tool: x' }))
+    // Unknown tools fall through to the registry's default (null), so the
+    // ToolCard host renders its built-in header/output.
+    expect(resolveToolRenderer(ctx)).toBeNull()
+  })
 
-    expect(processPhaseReasoningDetailText(blocks, 0)).toBe('正在整理最终回复。')
+  it('extracts tool name, label, and descriptor from the summary', () => {
+    const ctx = buildToolRenderContext(block({ summary: 'read_file: path="src/foo.ts"' }))
+    expect(ctx.toolName).toBe('read_file')
+    expect(ctx.shortName).toBe('read_file')
+    expect(ctx.label).toBe('读取文件')
+    expect(ctx.description).toBe('src/foo.ts')
+  })
+
+  it('maps runtime status to the renderer state', () => {
+    const running = buildToolRenderContext(block({ status: 'running' }))
+    const failed = buildToolRenderContext(block({ status: 'error' }))
+    const done = buildToolRenderContext(block({ status: 'success' }))
+    expect(running.state).toBe('running')
+    expect(failed.state).toBe('error')
+    expect(done.state).toBe('success')
   })
 })
+

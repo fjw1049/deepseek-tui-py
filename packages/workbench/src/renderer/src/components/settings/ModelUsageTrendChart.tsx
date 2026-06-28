@@ -24,6 +24,13 @@ type Props = {
   composerModelMeta: Record<string, ComposerModelMeta>
   compact?: boolean
   showYAxis?: boolean
+  /**
+   * Group daily points into N-day bars and align each bar's axis label to its
+   * center. Pass 1 for daily bars (no bucketing). When unset, the chart keeps
+   * its default behavior (weekly bars for ranges over 45 days, otherwise
+   * daily bars with evenly distributed axis labels).
+   */
+  segmentDays?: number
 }
 
 function formatAxisLabel(tokens: number): string {
@@ -47,11 +54,14 @@ function buildAxisLabelIndices(totalPoints: number, maxLabels: number): number[]
   return Array.from(indices).sort((a, b) => a - b)
 }
 
-function aggregateDailyToWeeks(daily: UsageDailyPoint[]): UsageDailyPoint[] {
-  const weeks: UsageDailyPoint[] = []
-  // Chunk from the end so the most recent (partial) week aligns to the last day.
-  for (let end = daily.length; end > 0; end -= 7) {
-    const start = Math.max(0, end - 7)
+function aggregateDailyToBuckets(
+  daily: UsageDailyPoint[],
+  segmentDays: number
+): UsageDailyPoint[] {
+  const buckets: UsageDailyPoint[] = []
+  // Chunk from the end so the most recent (partial) bucket aligns to the last day.
+  for (let end = daily.length; end > 0; end -= segmentDays) {
+    const start = Math.max(0, end - segmentDays)
     const chunk = daily.slice(start, end)
     const tokensByModel = new Map<string, number>()
     let totalTokens = 0
@@ -64,45 +74,32 @@ function aggregateDailyToWeeks(daily: UsageDailyPoint[]): UsageDailyPoint[] {
     const segments = Array.from(tokensByModel, ([model, tokens]) => ({ model, tokens })).sort(
       (a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model)
     )
-    weeks.unshift({
+    buckets.unshift({
       day: chunk[0]!.day,
       label: chunk[0]!.label,
       totalTokens,
       segments
     })
   }
-  return weeks
-}
-
-function axisLabelPosition(
-  pointIndex: number,
-  totalPoints: number
-): { className: string; style?: { left: string } } {
-  if (totalPoints <= 1) {
-    return { className: 'left-1/2 -translate-x-1/2' }
-  }
-  if (pointIndex === 0) {
-    return { className: 'left-0' }
-  }
-  if (pointIndex === totalPoints - 1) {
-    return { className: 'right-0 text-right' }
-  }
-  const leftPct = (pointIndex / (totalPoints - 1)) * 100
-  return { className: '-translate-x-1/2', style: { left: `${leftPct}%` } }
+  return buckets
 }
 
 export function ModelUsageTrendChart({
   daily,
   composerModelMeta,
   compact = false,
-  showYAxis = false
+  showYAxis = false,
+  segmentDays
 }: Props): ReactElement {
-  // Long ranges (90d) aggregate into weekly bars so every bar is meaningful,
+  // When segmented (hero), bucket daily points into N-day bars so every bar is
+  // meaningful; otherwise (settings) keep weekly aggregation for long ranges
   // instead of sampling isolated single days and dropping the rest.
-  const displayDaily = useMemo(
-    () => (daily.length > 45 ? aggregateDailyToWeeks(daily) : daily),
-    [daily]
-  )
+  const displayDaily = useMemo(() => {
+    if (segmentDays !== undefined) {
+      return segmentDays > 1 ? aggregateDailyToBuckets(daily, segmentDays) : daily
+    }
+    return daily.length > 45 ? aggregateDailyToBuckets(daily, 7) : daily
+  }, [daily, segmentDays])
   const maxTokens = useMemo(
     () => Math.max(...displayDaily.map((point) => point.totalTokens), 1),
     [displayDaily]
@@ -125,11 +122,14 @@ export function ModelUsageTrendChart({
   }, [daily])
 
   const chartHeight = compact ? 'h-[120px]' : 'h-[112px]'
-  const maxDayLabels = compact ? 5 : 7
+  // In segmented mode (hero), label every bar when there are few enough; 7d
+  // has 7 daily bars and should show all dates. Otherwise cap the tick count.
+  const maxDayLabels = segmentDays !== undefined ? 7 : compact ? 5 : 7
   const axisLabelIndices = useMemo(
     () => buildAxisLabelIndices(displayDaily.length, maxDayLabels),
     [displayDaily.length, maxDayLabels]
   )
+  const labeledIndices = useMemo(() => new Set(axisLabelIndices), [axisLabelIndices])
 
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
@@ -182,24 +182,28 @@ export function ModelUsageTrendChart({
               )
             })}
           </div>
+          {/*
+            Label row mirrors the bar row's flex layout (same gap-1 + flex-1
+            tracks), so each label centers exactly on its bar instead of being
+            spaced evenly across the whole width. Unlabeled bars keep an empty
+            track so the labeled ones stay aligned.
+          */}
           <div className="relative mt-1 h-[14px]">
-            {axisLabelIndices.map((pointIndex) => {
-              const point = displayDaily[pointIndex]
-              if (!point) return null
-              const position = axisLabelPosition(pointIndex, displayDaily.length)
-              return (
-                <span
-                  key={`${point.day}-axis`}
-                  className={[
-                    'absolute top-0 whitespace-nowrap text-[10px] leading-[14px] tabular-nums text-ds-faint',
-                    position.className
-                  ].join(' ')}
-                  style={position.style}
-                >
-                  {point.label}
-                </span>
-              )
-            })}
+            <div className="flex h-full gap-1">
+              {displayDaily.map((point, pointIndex) => {
+                if (!labeledIndices.has(pointIndex)) {
+                  return <div key={`${point.day}-axis-empty`} className="h-full flex-1" />
+                }
+                return (
+                  <span
+                    key={`${point.day}-axis`}
+                    className="flex h-full flex-1 items-center justify-center whitespace-nowrap text-[10px] leading-[14px] tabular-nums text-ds-faint"
+                  >
+                    {point.label}
+                  </span>
+                )
+              })}
+            </div>
           </div>
         </div>
       </div>

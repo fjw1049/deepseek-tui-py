@@ -558,12 +558,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         DiagnosticsTool(),
         ProjectMapTool(),
         RetrieveToolResultTool(),
-        # Register both legacy ``todo_list`` and canonical ``checklist_list``
-        # under the same singleton class (mirrors Rust ``with_todo_tool``
-        # in ``crates/tui/src/tools/registry.rs`` which registers all 8
-        # names against one ``SharedTodoList``).
         TodoListTool(),
-        TodoListTool(canonical=True),
     ]:
         registry.register(tool)
 
@@ -572,11 +567,8 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             WriteFileTool(),
             EditFileTool(),
             TodoWriteTool(),
-            TodoWriteTool(canonical=True),
             TodoAddTool(),
-            TodoAddTool(canonical=True),
             TodoUpdateTool(),
-            TodoUpdateTool(canonical=True),
         ]:
             registry.register(tool)
 

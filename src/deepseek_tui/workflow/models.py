@@ -603,7 +603,6 @@ ANALYSIS_ONLY_TOOLS: frozenset[str] = frozenset(
         "project_map",
         "retrieve_tool_result",
         "checklist_list",
-        "todo_list",
         "web_search",
         "fetch_url",
     }

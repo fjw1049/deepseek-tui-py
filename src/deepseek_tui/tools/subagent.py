@@ -712,6 +712,11 @@ DEFAULT_MAX_STEPS = 100
 DEFAULT_MAX_AGENTS = 10
 DEFAULT_MAX_SPAWN_DEPTH = 3
 _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
+# Upper bound for the final result we surface on the Workbench sub-agent card.
+# The previous 500-char cap chopped real reports mid-sentence; the card detail
+# dialog is the user's only window onto a sub-agent's deliverable, so keep it
+# generous while still bounding pathological outputs.
+_MAX_CARD_RESULT_CHARS = 16_000
 DEFAULT_RESULT_TIMEOUT_MS = 180_000
 MIN_WAIT_TIMEOUT_MS = 30_000
 MAX_RESULT_TIMEOUT_MS = 3_600_000
@@ -1424,7 +1429,7 @@ class SubAgentManager:
             if agent.status.kind is SubAgentStatusKind.CANCELLED:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
             else:
-                summary = (agent.result or "")[:500] if agent.result else ""
+                summary = (agent.result or "")[:_MAX_CARD_RESULT_CHARS] if agent.result else ""
                 self._mailbox.send(MailboxMessage.completed(agent.id, summary))
 
         self._notify_parent_completion(agent)
@@ -1651,6 +1656,45 @@ def _structured_output_contract() -> str:
     )
 
 
+_SUBAGENT_FINAL_REPORT_NUDGE = (
+    "You have gathered enough information. Stop exploring and do NOT call any "
+    "more tools. Write your final report now as your message: summarize your "
+    "findings, conclusions, and any recommendations in full prose."
+)
+
+
+def _assistant_text_and_thinking(message: Any | None) -> tuple[str, str]:
+    """Split an assistant message into its visible text and reasoning text.
+
+    Reasoning models (DeepSeek V4/R1) routinely emit their final answer in the
+    thinking channel with an empty text block on the terminal round. Harvesting
+    only text blocks then completes the sub-agent with an empty result, so the
+    caller falls back to reasoning to guarantee a usable deliverable.
+    """
+    from deepseek_tui.protocol.messages import TextBlock, ThinkingBlock
+
+    if message is None:
+        return "", ""
+    text_parts: list[str] = []
+    think_parts: list[str] = []
+    for block in message.content:
+        if isinstance(block, TextBlock):
+            text_parts.append(block.text)
+        elif isinstance(block, ThinkingBlock):
+            if block.thinking.strip():
+                think_parts.append(block.thinking)
+    thinking = "\n".join(think_parts).strip()
+    # Drop "(reasoning omitted)" placeholder lines so they never surface as a
+    # sub-agent's result (mirrors the renderer's sanitizeReasoningPlaceholders).
+    if thinking:
+        thinking = "\n".join(
+            line
+            for line in thinking.splitlines()
+            if line.strip().lower() != "(reasoning omitted)"
+        ).strip()
+    return "".join(text_parts).strip(), thinking
+
+
 async def run_subagent_loop(
     agent: SubAgent,
     runtime: SubAgentRuntime,
@@ -1706,9 +1750,11 @@ async def run_subagent_loop(
 
     turn_loop = TurnLoop(runtime.client)
     final_text = ""
+    last_thinking = ""
     structured_value: Any | None = None
     steps = 0
     last_usage: object | None = None
+    force_summary = False
 
     async def _noop_emit(_event: object) -> None:
         return None
@@ -1720,12 +1766,15 @@ async def run_subagent_loop(
         steps += 1
         agent.steps_taken = steps
 
+        # On a forced-summary round we strip tools so the model has no choice
+        # but to emit its final report as text.
+        round_tools = [] if force_summary else api_tools
         request = MessageRequest(
             model=agent.model,
             messages=messages,
             system_prompt=system_prompt,
-            tools=api_tools,
-            tool_choice={"type": "auto"} if api_tools else None,
+            tools=round_tools,
+            tool_choice={"type": "auto"} if round_tools else None,
             max_tokens=4096,
             stream=True,
         )
@@ -1733,7 +1782,7 @@ async def run_subagent_loop(
             request,
             _noop_emit,
             cancel,
-            tools=api_tools,
+            tools=round_tools,
         )
 
         if result.usage is not None:
@@ -1745,15 +1794,28 @@ async def run_subagent_loop(
         if result.assistant_message is not None:
             messages.append(result.assistant_message)
 
-        text_parts: list[str] = []
-        if result.assistant_message is not None:
-            for block in result.assistant_message.content:
-                if block.type == "text":
-                    text_parts.append(block.text)
-        if text_parts:
-            final_text = "".join(text_parts).strip()
+        round_text, round_thinking = _assistant_text_and_thinking(
+            result.assistant_message
+        )
+        if round_text:
+            final_text = round_text
+        if round_thinking:
+            last_thinking = round_thinking
 
         if not result.tool_calls:
+            if round_text:
+                # Genuine prose final answer.
+                break
+            # No text and no tool calls: the model stalled on a reasoning-only
+            # round (e.g. "let me also look at ..." with nothing actionable).
+            # Nudge it once, tools off, to produce a real report before we fall
+            # back to surfacing raw reasoning as the deliverable.
+            if not force_summary and structured_value is None:
+                force_summary = True
+                messages.append(Message.user(_SUBAGENT_FINAL_REPORT_NUDGE))
+                continue
+            if round_thinking:
+                final_text = round_thinking
             break
 
         from deepseek_tui.protocol.messages import ToolUseBlock
@@ -1819,6 +1881,10 @@ async def run_subagent_loop(
     agent.steps_taken = steps
     if agent.output_schema and structured_value is None:
         raise RuntimeError("sub-agent did not return structured_output")
+    # Last-resort fallback: a sub-agent that ran out of steps (or whose terminal
+    # text was empty) still owes the parent *something* to read back.
+    if not final_text and last_thinking:
+        final_text = last_thinking
     return AgentRunOutput(text=final_text, structured=structured_value)
 
 

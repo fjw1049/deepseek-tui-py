@@ -47,6 +47,9 @@ export function ModelUsagePanel({
     () => Math.max(...buckets.map((bucket) => bucket.totalTokens), 1),
     [buckets]
   )
+  // This panel is wider than the hero, so it segments finer: daily bars for
+  // 7d/30d, and 2-day bars for 90d.
+  const segmentDays = range === '90d' ? 2 : 1
 
   return (
     <div className="px-4 py-5">
@@ -114,6 +117,7 @@ export function ModelUsagePanel({
               daily={daily}
               composerModelMeta={composerModelMeta}
               showYAxis
+              segmentDays={segmentDays}
             />
           </div>
           <div className="mt-4 max-h-[min(420px,50vh)] space-y-3 overflow-y-auto pb-3 pr-1">

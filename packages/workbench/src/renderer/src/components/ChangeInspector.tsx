@@ -1,7 +1,7 @@
 import { useEffect, useMemo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronRight, FileEdit, PanelRightClose } from 'lucide-react'
+import { ChevronRight, FileEdit } from 'lucide-react'
 import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
@@ -83,12 +83,10 @@ function mergeChangeItems(
 export function ChangeInspector({
   blocks,
   className,
-  onCollapse,
   onOpenFileInEditor
 }: {
   blocks: ChatBlock[]
   className?: string
-  onCollapse: () => void
   onOpenFileInEditor: (path: string) => void
 }): ReactElement {
   const { t } = useTranslation('common')
@@ -161,15 +159,6 @@ export function ChangeInspector({
       className={`ds-change-inspector ds-tool-panel ds-no-drag flex flex-col ${className ?? ''}`}
     >
       <div className="flex min-h-[58px] shrink-0 items-center gap-3 border-b border-ds-border-muted px-3 py-3">
-        <button
-          type="button"
-          onClick={onCollapse}
-          className="ds-sidebar-toggle-button shrink-0"
-          aria-label={t('rightPanelCollapse')}
-          title={t('rightPanelCollapse')}
-        >
-          <PanelRightClose className="h-4 w-4" strokeWidth={1.85} />
-        </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <div className="text-[13px] font-semibold tracking-wide text-ds-muted">

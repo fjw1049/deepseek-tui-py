@@ -101,7 +101,7 @@ def test_gate_allows_explore_read_on_phase_transition() -> None:
     ) == "compute"
 
 
-def test_gate_compute_for_first_explore_dir() -> None:
+def test_gate_uses_model_preface_when_usable() -> None:
     state = TurnNarrationState()
     tools = (_tool("list_dir", path="src"),)
     preface = "先从项目结构入手，了解整体模块划分"
@@ -110,6 +110,23 @@ def test_gate_compute_for_first_explore_dir() -> None:
         segment=_segment(),
         tool_calls=tools,
         preface_text=preface,
+        narrated_ids=set(),
+        min_chars=200,
+        has_tool_error=False,
+        locale="zh",
+    )
+    assert decision == "use_preface"
+    assert immediate == preface
+
+
+def test_gate_computes_when_no_usable_preface() -> None:
+    state = TurnNarrationState()
+    tools = (_tool("list_dir", path="src"),)
+    decision, immediate = decide_and_prepare(
+        state=state,
+        segment=_segment(),
+        tool_calls=tools,
+        preface_text=None,
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,

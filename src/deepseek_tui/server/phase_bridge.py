@@ -570,7 +570,14 @@ def decide_and_prepare(
     locale: str = "zh",
     max_published: int = MAX_PUBLISHED_PER_TURN,
 ) -> tuple[GateDecision, str | None]:
-    """Return gate decision and optional immediate display text (preface path)."""
+    """Return gate decision and optional immediate display text (preface path).
+
+    When the gate decides to narrate and the model already wrote a usable,
+    locale-matching preface for this batch, surface the model's own words
+    (``use_preface``) instead of regenerating a competing line via the flash
+    model. The mid-turn preface is otherwise discarded by the UI, so this is
+    the model's narration finally reaching the user.
+    """
     decision = gate_decision(
         state=state,
         segment=segment,
@@ -583,6 +590,9 @@ def decide_and_prepare(
         locale=locale,
         max_published=max_published,
     )
-    if decision == "use_preface":
-        return "compute", None
-    return decision, None
+    if decision == "skip":
+        return "skip", None
+    preface = locale_preface(preface_text, locale)
+    if preface is not None:
+        return "use_preface", preface
+    return "compute", None

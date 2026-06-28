@@ -5,6 +5,7 @@ dist/
 .cache/
 .deepseek/
 *.log
+*.tsbuildinfo
 .DS_Store
 
 ### Local environment

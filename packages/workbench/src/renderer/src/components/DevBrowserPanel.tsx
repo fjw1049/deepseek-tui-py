@@ -9,7 +9,6 @@ import {
   Loader2,
   Maximize2,
   MoreVertical,
-  PanelRightClose,
   Plus,
   RefreshCw,
   Send,
@@ -108,13 +107,11 @@ type LoadOptions = {
 export function DevBrowserPanel({
   blocks,
   preferredUrl,
-  className,
-  onCollapse
+  className
 }: {
   blocks: ChatBlock[]
   preferredUrl?: string | null
   className?: string
-  onCollapse: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const webviewRef = useRef<DevWebviewTag | null>(null)
@@ -345,15 +342,6 @@ export function DevBrowserPanel({
     >
       <div className="shrink-0 border-b border-ds-border-muted bg-transparent">
         <div className="flex h-12 min-w-0 items-center gap-2 px-3">
-          <button
-            type="button"
-            onClick={onCollapse}
-            className="ds-sidebar-toggle-button shrink-0"
-            aria-label={t('rightPanelCollapse')}
-            title={t('rightPanelCollapse')}
-          >
-            <PanelRightClose className="h-4 w-4" strokeWidth={1.85} />
-          </button>
           <div className="flex min-w-0 max-w-[240px] items-center gap-2 rounded-[12px] bg-ds-surface-subtle px-3 py-1.5 dark:bg-white/8">
             <Globe2 className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.75} />
             <span className="min-w-0 truncate text-[13px] font-medium text-ds-ink">

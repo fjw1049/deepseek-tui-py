@@ -1,18 +1,15 @@
 """Todo / checklist tools — Python port of Rust ``crates/tui/src/tools/todo.rs``.
 
-This module exposes a single 4-tool family — ``write`` / ``add`` /
-``update`` / ``list`` — under **two** sets of names:
+This module exposes a single 4-tool family — ``checklist_write`` /
+``checklist_add`` / ``checklist_update`` / ``checklist_list`` — operating on
+one in-memory ``TodoList`` (kept on ``ToolContext.metadata['todos']``).
 
-- ``checklist_*`` — the canonical names referenced by every system
-  prompt (``base.md``, ``agent.md``, ``plan.md``, ``subagent``…).
-- ``todo_*``      — legacy aliases preserved for backward compatibility
-  with prior conversation transcripts and tests.
-
-Both name sets share the same in-memory ``TodoList`` (kept on
-``ToolContext.metadata['todos']``) so calls through either family read
-and write the same data — mirroring Rust ``ToolRegistry::with_todo_tool``
-which constructs all eight ``ToolSpec`` instances against one
-``SharedTodoList``.
+History note: these tools were previously registered twice, under both the
+canonical ``checklist_*`` names and legacy ``todo_*`` aliases. Exposing two
+identical tools in the model's catalog made models flail between them, so the
+aliases were dropped. Historical transcripts that recorded ``todo_*`` calls
+still render fine — the renderer matches both name families by regex and does
+not require the tool to still exist.
 
 Each write/add/update call returns a structured snapshot under
 ``ToolResult.metadata['task_updates']['checklist']``. When the tool
@@ -177,8 +174,7 @@ def _build_result_metadata(store: dict[str, Any], *, tool_name: str) -> dict[str
     snap = _snapshot(store)
     return {
         "count": len(store["items"]),
-        "canonical_tool": tool_name.replace("todo_", "checklist_"),
-        "compat_alias": tool_name.startswith("todo_"),
+        "canonical_tool": tool_name,
         "items": [dict(it) for it in snap["items"]],
         "task_updates": {"checklist": snap},
     }
@@ -219,10 +215,8 @@ def _forward_to_task_manager(
 class TodoWriteTool(ToolSpec):
     """Replace the active checklist.
 
-    Registered twice in the catalog: as ``todo_write`` (legacy alias)
-    and ``checklist_write`` (canonical name, matching Rust ``todo.rs``
-    ``TodoWriteTool::checklist``). Both names point at the same
-    in-memory store via the shared :class:`ToolContext.metadata` dict.
+    Matches Rust ``todo.rs`` ``TodoWriteTool::checklist``. Operates on the
+    shared in-memory store via :class:`ToolContext.metadata`.
 
     Schema accepts two shapes:
 
@@ -231,19 +225,14 @@ class TodoWriteTool(ToolSpec):
       a pending todo.
     """
 
-    def __init__(self, *, canonical: bool = False) -> None:
-        self._canonical = canonical
-
     def name(self) -> str:
-        return "checklist_write" if self._canonical else "todo_write"
+        return "checklist_write"
 
     def description(self) -> str:
-        if self._canonical:
-            return (
-                "Replace the active thread/task checklist. Durable tasks remain "
-                "the real executable work object; this is granular progress."
-            )
-        return "Compatibility alias for checklist_write. Replace the active checklist."
+        return (
+            "Replace the active thread/task checklist. Durable tasks remain "
+            "the real executable work object; this is granular progress."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -328,21 +317,13 @@ class TodoWriteTool(ToolSpec):
 
 
 class TodoAddTool(ToolSpec):
-    """Append one item to the active checklist.
-
-    Registered twice (canonical ``checklist_add`` + legacy ``todo_add``).
-    """
-
-    def __init__(self, *, canonical: bool = False) -> None:
-        self._canonical = canonical
+    """Append one item to the active checklist."""
 
     def name(self) -> str:
-        return "checklist_add" if self._canonical else "todo_add"
+        return "checklist_add"
 
     def description(self) -> str:
-        if self._canonical:
-            return "Add one checklist item on the active thread/task."
-        return "Compatibility alias for checklist_add."
+        return "Add one checklist item on the active thread/task."
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -400,21 +381,15 @@ class TodoAddTool(ToolSpec):
 class TodoUpdateTool(ToolSpec):
     """Update one checklist item's content or status.
 
-    Registered twice (canonical ``checklist_update`` + legacy ``todo_update``).
     Schema accepts both new ``status: "pending|in_progress|completed"``
     and legacy ``done: bool`` (mapped to ``completed`` / ``pending``).
     """
 
-    def __init__(self, *, canonical: bool = False) -> None:
-        self._canonical = canonical
-
     def name(self) -> str:
-        return "checklist_update" if self._canonical else "todo_update"
+        return "checklist_update"
 
     def description(self) -> str:
-        if self._canonical:
-            return "Update one checklist item's content or status by id."
-        return "Compatibility alias for checklist_update."
+        return "Update one checklist item's content or status by id."
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -487,21 +462,13 @@ class TodoUpdateTool(ToolSpec):
 
 
 class TodoListTool(ToolSpec):
-    """Render the active checklist.
-
-    Registered twice (canonical ``checklist_list`` + legacy ``todo_list``).
-    """
-
-    def __init__(self, *, canonical: bool = False) -> None:
-        self._canonical = canonical
+    """Render the active checklist."""
 
     def name(self) -> str:
-        return "checklist_list" if self._canonical else "todo_list"
+        return "checklist_list"
 
     def description(self) -> str:
-        if self._canonical:
-            return "List the active checklist with status + completion percentage."
-        return "Compatibility alias for checklist_list."
+        return "List the active checklist with status + completion percentage."
 
     def input_schema(self) -> dict[str, object]:
         return {"type": "object", "properties": {}}

@@ -37,8 +37,16 @@ class TaskCreateTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Create/enqueue a durable background task through TaskManager. "
-            "Durable tasks are restart-aware executable work, distinct from sub-agents."
+            "Create/enqueue a durable, restart-aware background task that runs "
+            "DETACHED from this conversation. Fire-and-forget: returns a task id "
+            "immediately, runs in a background worker, and its result lands in the "
+            "TASKS panel (read later via task_read) — it does NOT come back into "
+            "this turn. Use ONLY for long-running work the user will not wait for "
+            "here. If you need to WAIT for the result, AGGREGATE several results, "
+            "or report back in this reply (e.g. 'benchmark X and Y and summarize'), "
+            "use sub-agents instead (agent_spawn + agent_wait, or delegate_to_agent). "
+            "Never split one combined-report request into multiple tasks — they run "
+            "independently and are never aggregated."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -68,6 +76,7 @@ class TaskCreateTool(ToolSpec):
     ) -> ToolResult:
         manager = _require_manager(context)
         prompt = _require_string(input_data, "prompt")
+        origin_thread = context.metadata.get("runtime_thread_id")
         req = NewTaskRequest(
             prompt=prompt,
             model=_optional_string(input_data, "model"),
@@ -76,6 +85,7 @@ class TaskCreateTool(ToolSpec):
             allow_shell=_optional_bool(input_data, "allow_shell"),
             trust_mode=_optional_bool(input_data, "trust_mode"),
             auto_approve=_optional_bool(input_data, "auto_approve"),
+            thread_id=origin_thread if isinstance(origin_thread, str) else None,
         )
         try:
             task = await manager.add_task(req)
@@ -1237,6 +1247,7 @@ class NewTaskRequest:
     allow_shell: bool | None = None
     trust_mode: bool | None = None
     auto_approve: bool | None = None
+    thread_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -1438,6 +1449,7 @@ class TaskManager:
             auto_approve=req.auto_approve if req.auto_approve is not None else False,
             status=TaskStatus.QUEUED,
             created_at=now,
+            thread_id=req.thread_id,
             timeline=[
                 TaskTimelineEntry(
                     timestamp=now, kind="queued", summary="Task queued"
@@ -1733,6 +1745,27 @@ class TaskManager:
                     ),
                 )
             )
+
+    async def record_tool_timeline(
+        self, task_id: str, kind: str, summary: str
+    ) -> None:
+        """Append a live progress entry for an in-flight task and persist it.
+
+        Called by the background executor for each tool call start/finish so the
+        UI can poll ``timeline`` and show what a running task is currently doing.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return
+            task.timeline.append(
+                TaskTimelineEntry(
+                    timestamp=_utc_now_iso(),
+                    kind=kind,
+                    summary=_summarize_text(summary, TIMELINE_SUMMARY_LIMIT),
+                )
+            )
+            self._persist_task_locked(task)
 
     async def counts(self) -> TaskCounts:
         async with self._lock:

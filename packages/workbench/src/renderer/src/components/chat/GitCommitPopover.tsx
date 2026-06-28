@@ -566,7 +566,7 @@ export function GitCommitPopover({
     ) : null
 
   return (
-    <div ref={anchorRef} className="ds-no-drag relative mt-1">
+    <div ref={anchorRef} className="ds-no-drag relative">
       <div
         className={`${rowClassName} ${
           enabled

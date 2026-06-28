@@ -6,6 +6,7 @@ from httpx import AsyncClient
 from deepseek_tui.server.threads import (
     file_change_completion_detail,
     tool_item_metadata,
+    tool_started_metadata,
 )
 
 
@@ -16,6 +17,29 @@ def test_tool_item_metadata_edit_file() -> None:
 
 def test_tool_item_metadata_non_file_tool() -> None:
     assert tool_item_metadata("grep", {"pattern": "foo"}) is None
+
+
+def test_tool_started_metadata_persists_tool_input_for_read_tools() -> None:
+    # Without this, list_dir/grep rows lose their descriptor after a reload.
+    assert tool_started_metadata("list_dir", {"path": "src"}) == {
+        "tool_input": {"path": "src"}
+    }
+    assert tool_started_metadata("grep", {"pattern": "TODO"}) == {
+        "tool_input": {"pattern": "TODO"}
+    }
+
+
+def test_tool_started_metadata_merges_file_path_with_tool_input() -> None:
+    assert tool_started_metadata("edit_file", {"path": "src/main.py"}) == {
+        "path": "src/main.py",
+        "tool_input": {"path": "src/main.py"},
+    }
+
+
+def test_tool_started_metadata_handles_json_string_args() -> None:
+    assert tool_started_metadata("read_file", '{"path": "a.py"}') == {
+        "tool_input": {"path": "a.py"}
+    }
 
 
 def test_file_change_completion_detail_edit_file() -> None:

@@ -257,6 +257,22 @@ function deriveFilePath(item: TurnItemJson): string | undefined {
   return extractDiffFilePath(item.detail ?? item.summary)
 }
 
+/**
+ * Fold a tool call's input arguments into its metadata as `tool_input` so the
+ * UI can build a descriptor ("browse dir src/", "grep TODO"). The runtime emits
+ * these args on item.started/completed under `payload.tool.input`, but they were
+ * previously dropped — leaving rows that said only "browse dir" with no target.
+ */
+function metaWithToolInput(
+  metadata: Record<string, unknown> | undefined,
+  input: unknown
+): Record<string, unknown> | undefined {
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return metadata
+  }
+  return { ...(metadata ?? {}), tool_input: input as Record<string, unknown> }
+}
+
 function deriveTurnId(item: TurnItemJson): string | undefined {
   if (typeof item.turn_id === 'string' && item.turn_id.trim()) return item.turn_id.trim()
   const meta = (item.metadata ?? undefined) as Record<string, unknown> | undefined
@@ -1343,7 +1359,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     status: 'running',
                     toolKind: toToolKind(it.kind),
                     filePath: deriveFilePath(it),
-                    meta: (it.metadata ?? undefined) as Record<string, unknown> | undefined
+                    meta: metaWithToolInput(
+                      it.metadata as Record<string, unknown> | undefined,
+                      tool?.input
+                    )
                   })
                 }
                 return
@@ -1430,6 +1449,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     typeof it.detail === 'string' && it.detail.trim() ? it.detail : undefined
                   const liveTruncated =
                     liveDetail != null && liveDetail.length > TOOL_DETAIL_MAX_CHARS
+                  const completedTool = readPayloadTool(payload)
                   sink.onTool({
                     itemId: it.id,
                     summary: it.summary || (status === 'error' ? 'tool failed' : 'tool'),
@@ -1438,7 +1458,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     detail: liveTruncated ? liveDetail!.slice(0, TOOL_DETAIL_MAX_CHARS) : liveDetail,
                     detailTruncated: liveTruncated || undefined,
                     filePath: deriveFilePath(it),
-                    meta: (it.metadata ?? undefined) as Record<string, unknown> | undefined
+                    meta: metaWithToolInput(
+                      it.metadata as Record<string, unknown> | undefined,
+                      completedTool?.input
+                    )
                   })
                 }
                 return

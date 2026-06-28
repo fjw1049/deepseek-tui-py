@@ -31,6 +31,57 @@ describe('subagent-mailbox', () => {
     }
   })
 
+  it('bootstraps a delegate card when the first message is not started', () => {
+    // Mid-stream join (SSE reconnect past the `started` seq): the first message
+    // the UI sees is a tool call, which must still surface a card.
+    const toolStart: MailboxMessageJson = {
+      kind: 'tool_call_started',
+      agent_id: 'agent_late',
+      tool_name: 'read_file',
+      step: 2
+    }
+    let cards = applyMailboxMessage({}, toolStart)
+    const card = cards.agent_late
+    expect(card?.cardKind).toBe('delegate')
+    if (card?.cardKind === 'delegate') {
+      expect(card.status).toBe('running')
+      expect(card.actions.some((a) => a.includes('read_file'))).toBe(true)
+    }
+
+    const done: MailboxMessageJson = {
+      kind: 'completed',
+      agent_id: 'agent_late',
+      summary: 'done'
+    }
+    cards = applyMailboxMessage(cards, done)
+    const finished = cards.agent_late
+    if (finished?.cardKind === 'delegate') {
+      expect(finished.status).toBe('completed')
+      expect(finished.summary).toBe('done')
+    }
+  })
+
+  it('routes worker progress to the owning fanout instead of a stray card', () => {
+    const cards = applyMailboxMessage(
+      {
+        fanout_1: {
+          cardKind: 'fanout',
+          agentId: 'fanout_1',
+          dispatchKind: 'rlm',
+          workers: [{ id: 'w1', status: 'pending' }]
+        }
+      },
+      { kind: 'tool_call_started', agent_id: 'w1', tool_name: 'grep', step: 1 }
+    )
+    // No standalone delegate for the worker…
+    expect(cards.w1).toBeUndefined()
+    // …and the fanout marks it running.
+    const card = cards.fanout_1
+    if (card?.cardKind === 'fanout') {
+      expect(card.workers.find((w) => w.id === 'w1')?.status).toBe('running')
+    }
+  })
+
   it('creates fanout card for rlm agent type', () => {
     const started: MailboxMessageJson = {
       kind: 'started',

@@ -61,6 +61,10 @@ export function ModelUsageHeroPanel({
     { value: '7d', labelKey: 'usageHeroRange7d' }
   ]
 
+  // Segment the trend chart by range: 7d shows every day, 30d groups into
+  // 2-day bars, 90d groups into 3-day bars.
+  const segmentDays = range === '7d' ? 1 : range === '30d' ? 2 : 3
+
   return (
     <div className="ds-hero-panel ds-glass ds-content-card--interactive ds-empty-hero-panel flex flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5">
       <div className="flex shrink-0 flex-nowrap items-center justify-between gap-3">
@@ -137,6 +141,7 @@ export function ModelUsageHeroPanel({
                 composerModelMeta={composerModelMeta}
                 compact
                 showYAxis
+                segmentDays={segmentDays}
               />
             </div>
             <p className="mb-2 mt-3 shrink-0 text-[12px] font-medium text-ds-muted">

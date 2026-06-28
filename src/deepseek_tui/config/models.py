@@ -50,7 +50,7 @@ class ProviderConfig(BaseModel):
 class ProcessNarrationConfig(BaseModel):
     enabled: bool = True
     model: str | None = None
-    min_chars: int = 200
+    min_chars: int = 80
     min_interval_s: float = 3.0
     flash_timeout_s: float = 8.0
     turn_wait_s: float = 6.0

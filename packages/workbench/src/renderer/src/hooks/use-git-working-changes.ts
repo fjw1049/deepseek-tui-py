@@ -25,7 +25,15 @@ export function useGitWorkingChanges(workspaceRoot: string): {
       const next = await window.dsGui.getGitWorkingChanges(requestRoot)
       if (rootRef.current !== requestRoot) return
       setResult(next)
-      if (!next.ok && typeof window.dsGui?.logError === 'function') {
+      // `not_git_repo` / `no_workspace` are expected, benign states — skip them
+      // so polling doesn't flood the log. The main process applies the same
+      // filter for its own copy of this event.
+      if (
+        !next.ok &&
+        next.reason !== 'not_git_repo' &&
+        next.reason !== 'no_workspace' &&
+        typeof window.dsGui?.logError === 'function'
+      ) {
         void window.dsGui.logError('git-working-changes', next.message, {
           reason: next.reason,
           workspaceRoot: requestRoot

@@ -1,5 +1,6 @@
 import type { ReactElement, RefObject } from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
@@ -41,6 +42,12 @@ import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
 import { WorkflowBlock } from './WorkflowBlock'
+import { ToolCard, registerToolRenderers, buildToolRenderContext } from './tool'
+import { ToolCopyButton } from './tool/primitives'
+
+// Register the built-in tool renderers once at module load. Idempotent: the
+// registry overwrites prior entries, so re-imports are safe.
+registerToolRenderers()
 import {
   buildTodoEventsForTurn,
   buildTodoSessionForTurn,
@@ -86,21 +93,87 @@ type AssistantMarkdownProps = {
   className?: string
 }
 
+/**
+ * Above this many characters a single Markdown block is parsed/rendered behind a
+ * "show full" toggle. A multi-MB payload in one node can lock up the render
+ * thread (the parser + the resulting DOM are both O(n)); collapsing by default
+ * keeps the timeline responsive while leaving the full text one click away.
+ * Live streams are never truncated — they are bounded by the model's output and
+ * the user is actively watching them grow.
+ */
+const INLINE_MARKDOWN_MAX_CHARS = 80_000
+
+function useBoundedText(
+  text: string,
+  streaming: boolean
+): { shown: string; overLimit: boolean; expanded: boolean; remaining: number; toggle: () => void } {
+  const [expanded, setExpanded] = useState(false)
+  const overLimit = !streaming && text.length > INLINE_MARKDOWN_MAX_CHARS
+  const shown = overLimit && !expanded ? text.slice(0, INLINE_MARKDOWN_MAX_CHARS) : text
+  const toggle = useCallback(() => setExpanded((v) => !v), [])
+  return {
+    shown,
+    overLimit,
+    expanded,
+    remaining: Math.max(0, text.length - INLINE_MARKDOWN_MAX_CHARS),
+    toggle
+  }
+}
+
+function ShowFullToggle({
+  expanded,
+  remaining,
+  onToggle
+}: {
+  expanded: boolean
+  remaining: number
+  onToggle: () => void
+}): ReactElement {
+  const { t } = useTranslation('common')
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="mt-1 w-fit rounded-md border border-ds-border-muted bg-ds-card/90 px-2 py-0.5 text-[11px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+    >
+      {expanded ? t('inlineTextCollapse') : t('inlineTextShowFull', { count: remaining })}
+    </button>
+  )
+}
+
 function AssistantMarkdown({
   text,
   streaming,
   className
 }: AssistantMarkdownProps): ReactElement {
+  const { shown, overLimit, expanded, remaining, toggle } = useBoundedText(text, streaming)
   return (
-    <Suspense
-      fallback={
-        <div className={className}>
-          {text}
-        </div>
-      }
-    >
-      <LazyStreamdownAssistant text={text} streaming={streaming} className={className} />
-    </Suspense>
+    <>
+      <Suspense
+        fallback={
+          <div className={className}>
+            {shown}
+          </div>
+        }
+      >
+        <LazyStreamdownAssistant text={shown} streaming={streaming} className={className} />
+      </Suspense>
+      {overLimit ? (
+        <ShowFullToggle expanded={expanded} remaining={remaining} onToggle={toggle} />
+      ) : null}
+    </>
+  )
+}
+
+function BoundedReasoningMarkdown({ text }: { text: string }): ReactElement {
+  const { shown, overLimit, expanded, remaining, toggle } = useBoundedText(text, false)
+  return (
+    <>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown}</ReactMarkdown>
+      {overLimit ? (
+        <ShowFullToggle expanded={expanded} remaining={remaining} onToggle={toggle} />
+      ) : null}
+    </>
   )
 }
 
@@ -271,13 +344,13 @@ export function MessageTimeline({
       className={`ds-no-drag flex min-w-0 flex-col overflow-x-hidden ${
         stageCentered && showEmptyHeroOnly
           ? 'shrink-0 overflow-visible'
-          : 'min-h-0 flex-1 overflow-y-auto'
+          : 'min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
       }`}
     >
       <div
         className={`flex w-full min-w-0 flex-col gap-6 ${
           useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
-        } ${showEmptyHeroOnly ? 'pb-0 pt-0' : withOperationColumn ? 'ds-timeline-with-operation pb-8' : 'pb-8 pt-2'}`}
+        } ${showEmptyHeroOnly ? 'pb-0 pt-0' : withOperationColumn ? 'ds-timeline-with-operation pb-4' : 'pb-4 pt-2'}`}
       >
         {!activeThreadId && (
           <EmptyHero
@@ -591,129 +664,6 @@ export function placeAssistantContentBlock(
   }
 }
 
-type ProcessSection = {
-  id: string
-  kind: 'reasoning' | 'execution' | 'output'
-  blocks: ChatBlock[]
-}
-
-function groupProcessSections(blocks: ChatBlock[]): ProcessSection[] {
-  const sections: ProcessSection[] = []
-
-  for (const block of blocks) {
-    const kind =
-      block.kind === 'reasoning'
-        ? 'reasoning'
-        : block.kind === 'assistant'
-          ? 'output'
-          : 'execution'
-    const last = sections[sections.length - 1]
-    if (last && last.kind === kind) {
-      last.blocks.push(block)
-      continue
-    }
-    sections.push({
-      id: `${kind}-${block.id}`,
-      kind,
-      blocks: [block]
-    })
-  }
-
-  return sections
-}
-
-// ── Phase grouping: merge reasoning→execution pairs into phases ──────
-
-type ProcessPhase = {
-  id: string
-  label: string
-  reasoningBlocks: ChatBlock[]
-  executionBlocks: ChatBlock[]
-  outputBlocks: ChatBlock[]
-  hasLiveReasoning: boolean
-}
-
-function classifyPhaseLabel(executionBlocks: ChatBlock[]): string {
-  const toolBlocks = executionBlocks.filter((b) => b.kind === 'tool') as ToolBlock[]
-  if (toolBlocks.length === 0) return '整理回复'
-
-  const names = toolBlocks.map((b) => toolNameFromProcessBlock(b))
-  const hasListDir = names.some((n) => /^list_dir$/.test(n))
-  const hasRead = names.some((n) => /^(read_file|file_search)$/.test(n))
-  const hasGrep = names.some((n) => /^grep/.test(n))
-  const hasMutate = toolBlocks.some((b) => b.toolKind === 'file_change')
-  const hasShell = toolBlocks.some((b) => b.toolKind === 'command_execution')
-  const hasWebSearch = names.some((n) => /^(web_search|fetch_url)$/.test(n))
-
-  if (hasMutate) return '实施修改'
-  if (hasShell && !hasRead && !hasGrep && !hasListDir) return '执行命令'
-  if (hasWebSearch) return '网络搜索'
-  if (hasListDir && !hasRead && !hasGrep) return '浏览结构'
-  if (hasGrep && hasRead) return '代码探索'
-  if (hasGrep) return '搜索代码'
-  if (hasRead && hasListDir) return '代码探索'
-  if (hasRead) return '阅读代码'
-  if (hasListDir) return '浏览结构'
-  return '工具调用'
-}
-
-function groupProcessPhases(sections: ProcessSection[]): ProcessPhase[] {
-  const phases: ProcessPhase[] = []
-  let currentPhase: ProcessPhase | null = null
-
-  for (const section of sections) {
-    if (section.kind === 'reasoning') {
-      // Start a new phase on each reasoning section
-      if (currentPhase) phases.push(currentPhase)
-      currentPhase = {
-        id: section.id,
-        label: '',
-        reasoningBlocks: [...section.blocks],
-        executionBlocks: [],
-        outputBlocks: [],
-        hasLiveReasoning: section.blocks.some((b) => b.id === 'live-reasoning')
-      }
-    } else if (section.kind === 'execution') {
-      if (!currentPhase) {
-        currentPhase = {
-          id: section.id,
-          label: '',
-          reasoningBlocks: [],
-          executionBlocks: [],
-          outputBlocks: [],
-          hasLiveReasoning: false
-        }
-      }
-      currentPhase.executionBlocks.push(...section.blocks)
-    } else if (section.kind === 'output') {
-      if (!currentPhase) {
-        currentPhase = {
-          id: section.id,
-          label: '',
-          reasoningBlocks: [],
-          executionBlocks: [],
-          outputBlocks: [],
-          hasLiveReasoning: false
-        }
-      }
-      currentPhase.outputBlocks.push(...section.blocks)
-    }
-  }
-  if (currentPhase) phases.push(currentPhase)
-
-  // Assign labels based on execution block content
-  for (const phase of phases) {
-    phase.label = classifyPhaseLabel(phase.executionBlocks)
-  }
-
-  return phases
-}
-
-function getReasoningSectionText(section: ProcessSection): string {
-  if (section.kind !== 'reasoning') return ''
-  return reasoningDetailTextFromBlocks(section.blocks)
-}
-
 export function reasoningDetailTextFromBlocks(blocks: ChatBlock[]): string {
   if (reasoningNarrationFromBlocks(blocks)) return ''
   return blocks
@@ -732,54 +682,6 @@ export function reasoningNarrationFromBlocks(blocks: ChatBlock[]): string {
     }
   }
   return ''
-}
-
-export function processPhaseHeadingParts({
-  label,
-  toolCount,
-  narration,
-  hasLiveReasoning
-}: {
-  label: string
-  toolCount: number
-  narration: string
-  hasLiveReasoning: boolean
-}): { primary: string; meta: string } {
-  const displayLabel = (toolCount === 0 && hasLiveReasoning) ? '思考中…' : label
-  const toolSuffix = toolCount > 0 ? ` · ${toolCount} 个工具` : ''
-  const toolLabel = `${displayLabel}${toolSuffix}`
-  const primary = narration.trim()
-  if (primary) return { primary, meta: toolLabel }
-  if (toolCount === 0 && hasLiveReasoning) return { primary: displayLabel, meta: '' }
-  return { primary: processPhaseFallbackHeading(label), meta: toolLabel }
-}
-
-function processPhaseFallbackHeading(label: string): string {
-  switch (label) {
-    case '网络搜索':
-      return '正在通过网络搜索补充信息'
-    case '执行命令':
-      return '正在执行命令收集结果'
-    case '浏览结构':
-      return '正在浏览项目结构'
-    case '代码探索':
-      return '正在梳理代码结构'
-    case '搜索代码':
-      return '正在定位相关实现'
-    case '阅读代码':
-      return '正在阅读关键文件'
-    case '实施修改':
-      return '正在实施代码修改'
-    case '整理回复':
-      return '正在整理回复'
-    default:
-      return '正在调用工具推进任务'
-  }
-}
-
-export function processPhaseReasoningDetailText(blocks: ChatBlock[], toolCount: number): string {
-  if (toolCount > 0) return ''
-  return reasoningDetailTextFromBlocks(blocks)
 }
 
 export function findFallbackFinalAnswer(
@@ -813,52 +715,6 @@ export function findFallbackFinalAnswer(
     }
   }
   return null
-}
-
-function sectionHasDetails(
-  section: ProcessSection,
-  t: (key: string, opts?: Record<string, unknown>) => string
-): boolean {
-  if (section.kind === 'reasoning') {
-    return getReasoningSectionText(section).length > 0
-  }
-  if (section.kind === 'output') {
-    return section.blocks.some(
-      (block) => getProcessDetail(block, describeProcessBlock(block, t)).kind === 'assistant'
-    )
-  }
-  if (section.blocks.length > 1) return true
-  const [block] = section.blocks
-  return block ? getProcessDetail(block, describeProcessBlock(block, t)).kind !== 'none' : false
-}
-
-function isProcessSectionActive(
-  section: ProcessSection,
-  processing: boolean,
-  hasLiveAssistantStream = false
-): boolean {
-  if (!processing) return false
-  if (section.kind === 'reasoning') {
-    return (
-      !hasLiveAssistantStream &&
-      section.blocks.some((block) => block.id === 'live-reasoning')
-    )
-  }
-  if (section.kind === 'output') {
-    return section.blocks.some((block) => block.id === 'live-assistant')
-  }
-  return section.blocks.some(
-    (block) => block.id === 'live-assistant' || blockHasPendingRuntimeWork(block)
-  )
-}
-
-export function shouldDefaultExpandProcessSection(args: {
-  kind: ProcessSection['kind']
-  active: boolean
-  hasAttention: boolean
-}): boolean {
-  if (args.kind === 'reasoning') return args.active
-  return args.active || args.hasAttention
 }
 
 function MessageTurn({
@@ -895,10 +751,6 @@ function MessageTurn({
   const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
   const subagentSummary = useMemo(() => buildSubagentSummaryForTurn(turn.blocks), [turn.blocks])
-  const subagentInfrastructureToolIds = useMemo(
-    () => buildSubagentInfrastructureToolIds(turn.blocks, subagentSummary),
-    [turn.blocks, subagentSummary]
-  )
 
   const { processBlocks, assistantContentBlocks, turnFileChanges } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
@@ -980,24 +832,7 @@ function MessageTurn({
     }
   }, [turn.blocks, isProcessing, liveProcessText, workspaceRoot])
 
-  const processSections = useMemo(
-    () => (workExpanded || isProcessing ? groupProcessSections(processBlocks) : []),
-    [processBlocks, workExpanded, isProcessing]
-  )
-  const processPhases = useMemo(
-    () => (workExpanded || isProcessing ? groupProcessPhases(processSections) : []),
-    [processSections, workExpanded, isProcessing]
-  )
-  const reasoningSectionCount = useMemo(
-    () => processSections.filter((section) => section.kind === 'reasoning').length,
-    [processSections]
-  )
   const showLiveAssistant = !isProcessing && !!liveContent.trim()
-
-  // The work process keeps the full chronological trace, including assistant
-  // text output. The final assistant answer is also rendered below as the
-  // normal message body, but we keep it in the timeline so reopening
-  // "processed" still shows the real sequence.
 
   const hasProcess = isProcessing || processBlocks.length > 0
 
@@ -1016,22 +851,16 @@ function MessageTurn({
             expanded={workExpanded}
             onToggle={() => setWorkExpanded((value) => !value)}
             activeWorkflowName={processBlocks.find((b): b is ChatBlock & { kind: 'workflow'; workflowName: string } => b.kind === 'workflow' && b.status === 'running')?.workflowName}
+            activeActionLabel={activeRunningActionLabel(processBlocks)}
           />
-          {workExpanded && processPhases.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {processPhases.map((phase) => (
-                <ProcessPhaseRow
-                  key={phase.id}
-                  phase={phase}
-                  processing={isProcessing}
-                  viewportRef={viewportRef}
-                  todoSession={todoSession}
-                  todoEvents={todoEvents}
-                  subagentSummary={subagentSummary}
-                  subagentInfrastructureToolIds={subagentInfrastructureToolIds}
-                />
-              ))}
-            </div>
+          {workExpanded ? (
+            <ProcessStream
+              blocks={processBlocks}
+              processing={isProcessing}
+              todoSession={todoSession}
+              todoEvents={todoEvents}
+              subagentSummary={subagentSummary}
+            />
           ) : null}
         </div>
       ) : null}
@@ -1203,6 +1032,28 @@ function TurnChangeSummary({
   )
 }
 
+/**
+ * Live one-liner for the currently-running tool, e.g. "读取文件 src/foo.ts".
+ * Surfaced on the collapsed work-process header so the user knows what the
+ * agent is doing right now without expanding the trace (cursor/codex pattern).
+ */
+function activeRunningActionLabel(blocks: ChatBlock[]): string | undefined {
+  // Skip sub-agent orchestration tools (agent_spawn/agent_wait/…): a blocking
+  // agent_wait would otherwise hijack the header for minutes. Sub-agent progress
+  // is surfaced by the SubagentSummaryPanel instead.
+  const running = blocks.find(
+    (b): b is ToolBlock =>
+      b.kind === 'tool' &&
+      b.status === 'running' &&
+      !isSubagentOrchestrationToolName(toolNameFromProcessBlock(b))
+  )
+  if (!running) return undefined
+  const ctx = buildToolRenderContext(running)
+  const label = [ctx.label || ctx.shortName, ctx.description].filter(Boolean).join(' ').trim()
+  if (!label) return undefined
+  return label.length > 56 ? `${label.slice(0, 55).trimEnd()}…` : label
+}
+
 /** Turn-level work-process summary. It auto-collapses when the turn finishes. */
 function WorkMetaRow({
   processing,
@@ -1212,7 +1063,8 @@ function WorkMetaRow({
   reasoningDurationMs,
   expanded,
   onToggle,
-  activeWorkflowName
+  activeWorkflowName,
+  activeActionLabel
 }: {
   processing: boolean
   stepCount: number
@@ -1222,6 +1074,7 @@ function WorkMetaRow({
   expanded: boolean
   onToggle: () => void
   activeWorkflowName?: string
+  activeActionLabel?: string
 }): ReactElement {
   const { t } = useTranslation('common')
   const [tickNow, setTickNow] = useState(() => Date.now())
@@ -1238,12 +1091,17 @@ function WorkMetaRow({
       ? Math.max(0, tickNow - liveStartedAt)
       : durationMs
 
+  const durationText =
+    typeof displayDurationMs === 'number' ? formatDuration(displayDurationMs) : undefined
+  const liveActionText = processing && !activeWorkflowName ? activeActionLabel : undefined
   const mainLabel = processing
-    ? typeof displayDurationMs === 'number'
-      ? `${t('processing')} ${formatDuration(displayDurationMs)}`
-      : t('processing')
-    : typeof displayDurationMs === 'number'
-      ? `${t('processed')} ${formatDuration(displayDurationMs)}`
+    ? liveActionText
+      ? liveActionText
+      : durationText
+        ? `${t('processing')} ${durationText}`
+        : t('processing')
+    : durationText
+      ? `${t('processed')} ${durationText}`
       : t('processSteps', { count: stepCount })
 
   const showThoughtSuffix =
@@ -1267,7 +1125,12 @@ function WorkMetaRow({
           )}
         </span>
       ) : null}
-      <span className={`tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>{mainLabel}</span>
+      <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
+        {mainLabel}
+      </span>
+      {liveActionText && durationText ? (
+        <span className="shrink-0 text-ds-faint">· {durationText}</span>
+      ) : null}
       {activeWorkflowName ? (
         <span className="ds-workflow-tag">⚡ {activeWorkflowName}</span>
       ) : null}
@@ -1285,42 +1148,6 @@ function WorkMetaRow({
         />
       )}
     </button>
-  )
-}
-
-function renderInlineTodoAtBlock(
-  block: ChatBlock,
-  todoSession: TodoTurnSession | null,
-  processing: boolean
-): ReactElement | null {
-  if (!todoSession || !isTodoToolBlock(block)) return null
-  if (block.id !== todoSession.anchorBlockId) return null
-  return (
-    <InlineTodoBlock
-      session={todoSession}
-      active={processing && !todoSession.isComplete}
-    />
-  )
-}
-
-function renderTodoEventAtBlock(
-  block: ChatBlock,
-  todoSession: TodoTurnSession | null,
-  todoEvents: TodoTurnEvent[]
-): ReactElement | null {
-  if (!todoSession || !isTodoToolBlock(block)) return null
-  const events = todoEvents.filter((event) => event.blockId === block.id)
-  if (events.length === 0) return null
-  return (
-    <div className="flex flex-col gap-1">
-      {events.map((event) => (
-        <TodoEventRow
-          key={`${event.blockId}-${event.item.id}`}
-          event={event}
-          anchorBlockId={todoSession.anchorBlockId}
-        />
-      ))}
-    </div>
   )
 }
 
@@ -1367,7 +1194,6 @@ type SubagentTurnSummary = {
   blockIds: string[]
   blocks: SubagentBlock[]
   total: number
-  toolFailed: number
   pending: number
   running: number
   completed: number
@@ -1382,10 +1208,6 @@ function addSubagentStatus(
   counts[status] += 1
 }
 
-function subagentBlockHasToolFailure(block: SubagentBlock): boolean {
-  return !!block.actions?.some((action) => /\bfailed\b/i.test(action))
-}
-
 function buildSubagentSummaryForTurn(blocks: ChatBlock[]): SubagentTurnSummary | null {
   const subagentBlocks = blocks.filter(
     (block): block is SubagentBlock => block.kind === 'subagent'
@@ -1393,7 +1215,6 @@ function buildSubagentSummaryForTurn(blocks: ChatBlock[]): SubagentTurnSummary |
   if (subagentBlocks.length === 0) return null
 
   const counts = {
-    toolFailed: 0,
     pending: 0,
     running: 0,
     completed: 0,
@@ -1411,12 +1232,7 @@ function buildSubagentSummaryForTurn(blocks: ChatBlock[]): SubagentTurnSummary |
       continue
     }
     total += 1
-    if (subagentBlockHasToolFailure(block)) {
-      counts.toolFailed += 1
-      counts.failed += 1
-    } else {
-      addSubagentStatus(counts, block.status)
-    }
+    addSubagentStatus(counts, block.status)
   }
 
   return {
@@ -1426,14 +1242,6 @@ function buildSubagentSummaryForTurn(blocks: ChatBlock[]): SubagentTurnSummary |
     total,
     ...counts
   }
-}
-
-function renderSubagentSummaryAtBlock(
-  block: ChatBlock,
-  summary: SubagentTurnSummary | null
-): ReactElement | null {
-  if (!summary || block.kind !== 'subagent' || block.id !== summary.anchorBlockId) return null
-  return <SubagentSummaryPanel summary={summary} />
 }
 
 function shouldHideSubagentBlock(block: ChatBlock, summary: SubagentTurnSummary | null): boolean {
@@ -1449,46 +1257,17 @@ function shouldHideSubagentToolBlock(block: ChatBlock, summary: SubagentTurnSumm
   return isSubagentOrchestrationToolName(toolNameFromProcessBlock(block))
 }
 
-export function buildSubagentInfrastructureToolIds(
-  blocks: ChatBlock[],
-  summary: SubagentTurnSummary | null
-): Set<string> {
-  if (!summary) return new Set()
-  const ids = new Set<string>()
-  const firstSubagentIndex = blocks.findIndex(
-    (block) => block.kind === 'subagent' && block.id === summary.anchorBlockId
-  )
-  if (firstSubagentIndex < 0) return ids
-
-  for (let index = 0; index < firstSubagentIndex; index += 1) {
-    const block = blocks[index]
-    if (block?.kind === 'tool' && block.status === 'success') {
-      ids.add(block.id)
-    }
-  }
-  return ids
-}
-
-function shouldHideSubagentInfrastructureToolBlock(
-  block: ChatBlock,
-  infrastructureToolIds: Set<string>
-): boolean {
-  return block.kind === 'tool' && infrastructureToolIds.has(block.id)
-}
-
 function visibleExecutionBlocks(
   blocks: ChatBlock[],
   todoSession: TodoTurnSession | null,
-  subagentSummary: SubagentTurnSummary | null,
-  subagentInfrastructureToolIds: Set<string>
+  subagentSummary: SubagentTurnSummary | null
 ): ChatBlock[] {
   return blocks.filter(
     (block) =>
       !shouldHideTodoToolBlock(block, todoSession) &&
       (!shouldHideSubagentBlock(block, subagentSummary) ||
         isSubagentSummaryAnchor(block, subagentSummary)) &&
-      !shouldHideSubagentToolBlock(block, subagentSummary) &&
-      !shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)
+      !shouldHideSubagentToolBlock(block, subagentSummary)
   )
 }
 
@@ -1497,7 +1276,7 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
   const [expanded, setExpanded] = useState(true)
   const [detailBlock, setDetailBlock] = useState<SubagentBlock | null>(null)
   const active = summary.running > 0 || summary.pending > 0
-  const hasFailure = summary.failed > 0 || summary.toolFailed > 0
+  const hasFailure = summary.failed > 0
   const countParts = [
     summary.running > 0 ? t('subagentSummaryRunning', { count: summary.running }) : '',
     summary.completed > 0 ? t('subagentSummaryCompleted', { count: summary.completed }) : '',
@@ -1578,14 +1357,11 @@ function SubagentSummaryRow({
   onOpen: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
-  const toolFailed = subagentBlockHasToolFailure(block)
-  const statusLabel = toolFailed
-    ? t('subagentStatusToolFailed')
-    : subagentStatusLabel(block.status, t)
+  const statusLabel = subagentStatusLabel(block.status, t)
+  const isActive = block.status === 'running' || block.status === 'pending'
+  const isTerminal = !isActive
   const statusTone =
-    toolFailed
-      ? 'text-red-700 dark:text-red-300'
-      : block.status === 'completed'
+    block.status === 'completed'
       ? 'text-emerald-700 dark:text-emerald-300'
       : block.status === 'failed'
         ? 'text-red-700 dark:text-red-300'
@@ -1605,12 +1381,18 @@ function SubagentSummaryRow({
             ? t('subagentFanoutTitle', { kind: block.agentType })
             : t('subagentDelegateTitle', { type: block.agentType })}
         </span>
-        {block.status === 'running' || block.status === 'pending' ? (
+        {isActive ? (
           <Loader2 className="h-3 w-3 animate-spin text-amber-700 dark:text-amber-200" strokeWidth={2} />
         ) : null}
         <span className={`font-medium ${statusTone}`}>{statusLabel}</span>
         <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
-        <span className="ml-auto text-[11px] text-ds-faint opacity-0 transition group-hover:opacity-100">
+        <span
+          className={`ml-auto text-[11px] transition ${
+            isTerminal
+              ? 'text-violet-600 dark:text-violet-300'
+              : 'text-ds-faint opacity-0 group-hover:opacity-100'
+          }`}
+        >
           {t('subagentDetails')}
         </span>
       </div>
@@ -1651,31 +1433,40 @@ function SubagentDetailDialog({
     block.cardKind === 'fanout'
       ? t('subagentFanoutTitle', { kind: block.agentType })
       : t('subagentDelegateTitle', { type: block.agentType })
-  const toolFailed = subagentBlockHasToolFailure(block)
-  const statusLabel = toolFailed ? t('subagentStatusToolFailed') : subagentStatusLabel(block.status, t)
+  const statusLabel = subagentStatusLabel(block.status, t)
   const resultTitle =
-    toolFailed || block.status === 'failed'
-      ? t('subagentFailureReason')
-      : t('subagentFinalResult')
+    block.status === 'failed' ? t('subagentFailureReason') : t('subagentFinalResult')
+  const resultText = block.summary?.trim() ?? ''
+  const hasResult = resultText.length > 0
   const finalText =
-    block.summary?.trim() ||
+    resultText ||
     (block.status === 'running' || block.status === 'pending'
       ? t('subagentDetailNoResultRunning')
       : t('subagentDetailNoResult'))
 
-  return (
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  if (typeof document === 'undefined') return <></>
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label={title}
       onClick={onClose}
     >
       <div
-        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-[22px] border border-ds-border bg-ds-panel shadow-[0_24px_80px_rgba(15,23,42,0.22)]"
+        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-[22px] border border-ds-border bg-ds-elevated shadow-[0_24px_80px_rgba(15,23,42,0.35)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start gap-3 border-b border-ds-border-muted/70 px-5 py-4">
+        <div className="flex shrink-0 items-start gap-3 border-b border-ds-border-muted/70 bg-ds-elevated px-5 py-4">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300">
             <Bot className="h-4 w-4" strokeWidth={1.8} />
           </div>
@@ -1686,6 +1477,7 @@ function SubagentDetailDialog({
             </div>
             <div className="mt-0.5 font-mono text-[11px] text-ds-faint">{block.agentId}</div>
           </div>
+          {hasResult ? <ToolCopyButton text={resultText} className="!opacity-100" /> : null}
           <button
             type="button"
             onClick={onClose}
@@ -1696,7 +1488,7 @@ function SubagentDetailDialog({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-auto bg-ds-elevated px-5 py-4">
           <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ds-faint">
             {resultTitle}
           </div>
@@ -1705,844 +1497,137 @@ function SubagentDetailDialog({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
-function ProcessPhaseRow({
-  phase,
+/**
+ * Chronological work-process stream. Replaces the old phase-grouper: blocks
+ * render in the exact order the runtime emitted them, with no client-side
+ * regrouping or canned labels.
+ *
+ * Per-block dispatch:
+ *  - tool            → ToolCard (registry-resolved renderer)
+ *  - reasoning       → narration line if present (model's own承上启下),
+ *                      else collapsed raw reasoning
+ *  - assistant       → mid-turn preface shown inline as narration
+ *  - approval/elev/etc→ existing Bubble/Block components, never hidden
+ *
+ * The 4 `shouldHide*` patches are gone: todo/subagent were never wrong-blocked
+ * because we no longer group reasoning+tools into phases that misplace them.
+ */
+function ProcessStream({
+  blocks,
   processing,
-  viewportRef,
   todoSession = null,
   todoEvents = [],
-  subagentSummary = null,
-  subagentInfrastructureToolIds = new Set()
+  subagentSummary = null
 }: {
-  phase: ProcessPhase
+  blocks: ChatBlock[]
   processing: boolean
-  viewportRef: RefObject<HTMLDivElement | null>
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
-  subagentInfrastructureToolIds?: Set<string>
-}): ReactElement | null {
-  const { t } = useTranslation('common')
-  const [expanded, setExpanded] = useState(true)
-  const isActive = phase.hasLiveReasoning || phase.executionBlocks.some(blockHasPendingRuntimeWork)
-
-  const filteredTools = visibleExecutionBlocks(
-    phase.executionBlocks,
-    todoSession,
-    subagentSummary,
-    subagentInfrastructureToolIds
-  )
-  const toolCount = filteredTools.length
-  const hasError = filteredTools.some(
-    (block) =>
-      (block.kind === 'tool' && block.status === 'error') ||
-      (block.kind === 'subagent' && (block.status === 'failed' || block.status === 'cancelled'))
-  )
-
-  // Extract narration from reasoning blocks in this phase
-  const narration = useMemo(
-    () => reasoningNarrationFromBlocks(phase.reasoningBlocks),
-    [phase.reasoningBlocks]
-  )
-
-  const heading = processPhaseHeadingParts({
-    label: phase.label,
-    toolCount,
-    narration,
-    hasLiveReasoning: phase.hasLiveReasoning
-  })
-
-  // Skip phases with no tools (pure reasoning without action — the final
-  // thinking round before the answer). Also skip truly empty phases.
-  if (toolCount === 0 && !phase.hasLiveReasoning) {
-    return null
-  }
+}): ReactElement {
+  const visible = visibleExecutionBlocks(blocks, todoSession, subagentSummary)
 
   return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className={`group flex w-fit max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[14px] font-medium transition hover:opacity-85 ${
-          hasError ? 'text-red-600 dark:text-red-300' : 'text-ds-muted'
-        }`}
-      >
-        {isActive ? (
-          <span className="mr-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-            <Bot className="h-3.5 w-3.5 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
-          </span>
-        ) : null}
-        <span className={isActive ? 'ds-shiny-text' : ''}>{heading.primary}</span>
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-55" strokeWidth={1.8} />
-        )}
-      </button>
-
-      {heading.meta ? (
-        <p className="mt-0.5 pl-1 text-[12.5px] leading-5 text-ds-faint">{heading.meta}</p>
-      ) : null}
-
-      {expanded ? (
-        <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
-          {(() => {
-            const reasoningText = processPhaseReasoningDetailText(phase.reasoningBlocks, toolCount)
-            if (!reasoningText) return null
-            return (
-              <div className="ds-markdown mb-1 text-[13.5px] leading-6 text-ds-muted">
-                <div className="line-clamp-3">
-                  <AssistantMarkdown text={reasoningText} streaming={isActive && processing} />
-                </div>
-              </div>
-            )
-          })()}
-          <div className="flex flex-col gap-0.5">
-            {filteredTools.map((block) => {
-              const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
-              if (inlineTodo) return <div key={`todo-${block.id}`}>{inlineTodo}</div>
-              const todoEvent = renderTodoEventAtBlock(block, todoSession, todoEvents)
-              if (todoEvent) return <div key={`todo-event-${block.id}`}>{todoEvent}</div>
-              if (shouldHideTodoToolBlock(block, todoSession)) return null
-              const subagentNode = renderSubagentSummaryAtBlock(block, subagentSummary)
-              if (subagentNode) return <div key={`sa-${block.id}`}>{subagentNode}</div>
-              if (shouldHideSubagentBlock(block, subagentSummary)) return null
-              if (shouldHideSubagentToolBlock(block, subagentSummary)) return null
-              if (shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)) return null
-              return <ProcessEntryRow key={block.id} block={block} processing={processing} />
-            })}
-          </div>
-        </div>
-      ) : (
-        toolCount > 0 ? (
-          <div className="mt-0.5 pl-1 text-[13px] text-ds-faint">
-            {filteredTools.slice(0, 3).map((block) => {
-              const desc = describeProcessBlock(block, t)
-              const { verb, rest } = splitVerb(desc)
-              return (
-                <div key={block.id} className="truncate">
-                  <span className="font-medium text-ds-muted">{verb}</span>
-                  {rest ? <span className="ml-1 tabular-nums text-[12px]">{rest}</span> : null}
-                </div>
-              )
-            })}
-            {toolCount > 3 ? (
-              <div className="text-ds-faint/70">… {toolCount - 3} more</div>
-            ) : null}
-          </div>
-        ) : null
-      )}
+    <div className="ds-process-rail flex flex-col gap-1.5 pt-1">
+      {visible.map((block) => (
+        <ProcessStreamEntry
+          key={block.id}
+          block={block}
+          processing={processing}
+          todoSession={todoSession}
+          todoEvents={todoEvents}
+          subagentSummary={subagentSummary}
+        />
+      ))}
     </div>
   )
 }
 
-function ProcessSectionRow({
-  section,
+function ProcessStreamEntry({
+  block,
   processing,
-  hasLiveAssistantStream,
-  reasoningDurationMs,
-  singleReasoningSection,
-  viewportRef,
   todoSession = null,
   todoEvents = [],
-  subagentSummary = null,
-  subagentInfrastructureToolIds = new Set()
+  subagentSummary = null
 }: {
-  section: ProcessSection
+  block: ChatBlock
   processing: boolean
-  hasLiveAssistantStream: boolean
-  reasoningDurationMs?: number
-  singleReasoningSection: boolean
-  viewportRef: RefObject<HTMLDivElement | null>
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
-  subagentInfrastructureToolIds?: Set<string>
 }): ReactElement | null {
-  const { t } = useTranslation('common')
-  const [userExpanded, setUserExpanded] = useState<boolean | null>(null)
-  const visibleBlocks =
-    section.kind === 'execution'
-      ? visibleExecutionBlocks(
-          section.blocks,
-          todoSession,
-          subagentSummary,
-          subagentInfrastructureToolIds
-        )
-      : section.blocks
-  const assistantBlocks =
-    section.kind === 'output'
-      ? section.blocks.filter(
-          (block): block is Extract<ChatBlock, { kind: 'assistant' }> => block.kind === 'assistant'
-        )
-      : []
-  const hasDetails = sectionHasDetails(section, t)
-  const active =
-    section.kind === 'execution'
-      ? visibleBlocks.some(
-          (block) => block.id === 'live-assistant' || blockHasPendingRuntimeWork(block)
-        )
-      : isProcessSectionActive(section, processing, hasLiveAssistantStream)
-  const hasError = visibleBlocks.some(
-    (block) =>
-      (block.kind === 'tool' && block.status === 'error') ||
-      (block.kind === 'approval' && block.status === 'error') ||
-      (block.kind === 'user_input' && block.status === 'error') ||
-      (block.kind === 'subagent' && (block.status === 'failed' || block.status === 'cancelled')) ||
-      (block.kind === 'workflow' && (block.status === 'failed' || block.status === 'cancelled'))
-  )
-  const hasAttention = visibleBlocks.some(blockNeedsAttention)
-  const defaultExpanded = shouldDefaultExpandProcessSection({
-    kind: section.kind,
-    active,
-    hasAttention
-  })
-  const expanded = hasDetails && (userExpanded ?? defaultExpanded)
-  const title = describeProcessSection(section, t, {
-    processing,
-    hasLiveAssistantStream,
-    reasoningDurationMs,
-    singleReasoningSection,
-    todoSession,
-    subagentSummary,
-    subagentInfrastructureToolIds
-  })
-  const reasoningText = section.kind === 'reasoning' ? getReasoningSectionText(section) : ''
-  const reasoningNarration =
-    section.kind === 'reasoning' ? reasoningNarrationFromBlocks(section.blocks) : ''
-  const canToggleSection = hasDetails
-  const { ref: deferredDetailRef, shouldRender: shouldRenderDetail } = useDeferredRender<HTMLDivElement>({
-    enabled: expanded,
-    immediate: active,
-    root: viewportRef
-  })
-
-  if (section.kind === 'execution' && visibleBlocks.length === 0) {
-    return null
+  // Inline todo card at its anchor block.
+  if (todoSession && isTodoToolBlock(block) && block.id === todoSession.anchorBlockId) {
+    return (
+      <InlineTodoBlock
+        session={todoSession}
+        active={processing && !todoSession.isComplete}
+      />
+    )
   }
-
-  if (section.kind === 'reasoning') {
-    const isLiveReasoning = section.blocks.some((block) => block.id === 'live-reasoning')
-    if (!reasoningNarration && !isLiveReasoning) {
-      return null
-    }
-  }
-
-  if (section.kind === 'execution' && visibleBlocks.length === 1) {
-    const [block] = visibleBlocks
-    if (block) {
-      const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
-      if (inlineTodo) return inlineTodo
-      const todoEvent = renderTodoEventAtBlock(block, todoSession, todoEvents)
-      if (todoEvent) return todoEvent
-      if (shouldHideTodoToolBlock(block, todoSession)) return <></>
-      const subagentSummaryNode = renderSubagentSummaryAtBlock(block, subagentSummary)
-      if (subagentSummaryNode) return subagentSummaryNode
-      if (shouldHideSubagentBlock(block, subagentSummary)) return <></>
-      if (shouldHideSubagentToolBlock(block, subagentSummary)) return <></>
-      if (shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)) return <></>
-      return <ProcessEntryRow block={block} processing={processing} />
-    }
-  }
-
-  if (section.kind === 'output') {
-    return hasDetails ? (
-      <div className="min-w-0">
-        <div className="flex flex-col gap-2">
-          {assistantBlocks.map((block) => (
-            <ProcessEntryDetail
-              key={block.id}
-              block={block}
-              detail={getProcessDetail(block)}
-              processing={processing}
+  // Todo progress chips emitted alongside todo tool calls.
+  if (todoSession) {
+    const events = todoEvents.filter((event) => event.blockId === block.id)
+    if (events.length > 0) {
+      return (
+        <div className="flex flex-col gap-1">
+          {events.map((event) => (
+            <TodoEventRow
+              key={`${event.blockId}-${event.item.id}`}
+              event={event}
+              anchorBlockId={todoSession.anchorBlockId}
             />
           ))}
         </div>
-      </div>
-    ) : (
-      <></>
-    )
-  }
-
-  return (
-    <div className="flex flex-col">
-      {canToggleSection ? (
-        <button
-          type="button"
-          onClick={() => setUserExpanded(!(userExpanded ?? defaultExpanded))}
-          className={`group flex w-fit max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[14px] font-medium transition hover:opacity-85 ${
-            hasError ? 'text-red-600 dark:text-red-300' : 'text-ds-muted'
-          }`}
-        >
-          {active ? (
-            <span className="mr-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-              <Bot
-                className={`h-3.5 w-3.5 ${
-                  hasError ? 'text-red-500 dark:text-red-300' : 'text-ds-faint ds-work-logo-pulse'
-                }`}
-                strokeWidth={1.8}
-              />
-            </span>
-          ) : null}
-          <span className={active && !hasError ? 'ds-shiny-text' : ''}>{title}</span>
-          {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-55" strokeWidth={1.8} />
-          )}
-        </button>
-      ) : (
-        <div
-          className={`flex w-fit max-w-full items-center gap-1.5 py-0.5 text-[14px] font-medium ${
-            hasError ? 'text-red-600 dark:text-red-300' : 'text-ds-muted'
-          }`}
-        >
-          {active ? (
-            <span className="mr-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-              <Bot
-                className={`h-3.5 w-3.5 ${
-                  hasError ? 'text-red-500 dark:text-red-300' : 'text-ds-faint ds-work-logo-pulse'
-                }`}
-                strokeWidth={1.8}
-              />
-            </span>
-          ) : null}
-          <span className={active && !hasError ? 'ds-shiny-text' : ''}>{title}</span>
-        </div>
-      )}
-
-      {section.kind === 'reasoning' && reasoningNarration ? (
-        <p className="mt-1 text-[13.5px] leading-6 text-ds-muted/90">{reasoningNarration}</p>
-      ) : null}
-
-      {expanded ? (
-        <div
-          ref={deferredDetailRef}
-          className="mt-1 border-l-2 border-ds-border-muted/35 pl-3"
-          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 220px' }}
-        >
-          {shouldRenderDetail ? (
-            section.kind === 'reasoning' ? (
-            <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
-              <AssistantMarkdown text={reasoningText} streaming={active && processing} />
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1">
-              {visibleBlocks.map((block) => {
-                const inlineTodo = renderInlineTodoAtBlock(block, todoSession, processing)
-                if (inlineTodo) {
-                  return <div key={`todo-${block.id}`}>{inlineTodo}</div>
-                }
-                const todoEvent = renderTodoEventAtBlock(block, todoSession, todoEvents)
-                if (todoEvent) {
-                  return <div key={`todo-event-${block.id}`}>{todoEvent}</div>
-                }
-                if (shouldHideTodoToolBlock(block, todoSession)) return null
-                const subagentSummaryNode = renderSubagentSummaryAtBlock(block, subagentSummary)
-                if (subagentSummaryNode) {
-                  return <div key={`subagent-summary-${block.id}`}>{subagentSummaryNode}</div>
-                }
-                if (shouldHideSubagentBlock(block, subagentSummary)) return null
-                if (shouldHideSubagentToolBlock(block, subagentSummary)) return null
-                if (shouldHideSubagentInfrastructureToolBlock(block, subagentInfrastructureToolIds)) {
-                  return null
-                }
-                return <ProcessEntryRow key={block.id} block={block} processing={processing} />
-              })}
-            </div>
-          )
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-/** One line inside an execution section. */
-function ProcessEntryRow({
-  block,
-  processing
-}: {
-  block: ChatBlock
-  processing: boolean
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const [userOpen, setUserOpen] = useState(false)
-  const summary = describeProcessBlock(block, t)
-  const detail = getProcessDetail(block, summary)
-  const canExpand = detail.kind !== 'none'
-  const isAssistantProcessText = block.kind === 'assistant'
-  const isRunningToolOrPending =
-    processing &&
-    ((block.kind === 'tool' && block.status === 'running') ||
-      (block.kind === 'approval' && block.status === 'pending') ||
-      (block.kind === 'user_input' && block.status === 'pending'))
-  const isStreamingAssistant = processing && block.kind === 'assistant' && block.id === 'live-assistant'
-  const isError =
-    (block.kind === 'tool' && block.status === 'error') ||
-    (block.kind === 'approval' && block.status === 'error') ||
-    (block.kind === 'user_input' && block.status === 'error')
-  const open =
-    canExpand && (isAssistantProcessText || isRunningToolOrPending || isStreamingAssistant || userOpen)
-
-  const { verb, rest } = splitVerb(summary)
-  const rowActive = isRunningToolOrPending || isStreamingAssistant
-  const wrapSummary = (block.kind === 'system' && !canExpand) || isAssistantProcessText
-
-  return (
-    <div id={`block-${block.id}`} className="flex flex-col">
-      <button
-        type="button"
-        onClick={canExpand && !isRunningToolOrPending ? () => setUserOpen((v) => !v) : undefined}
-        disabled={!canExpand}
-        className={`group flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-[13.5px] leading-[1.55] transition ${
-          isError
-            ? 'text-red-600 dark:text-red-300'
-            : 'text-ds-faint hover:text-ds-ink'
-        } ${
-          canExpand && !isRunningToolOrPending && !isAssistantProcessText
-            ? 'cursor-pointer hover:bg-ds-hover/70'
-            : 'cursor-default'
-        }`}
-      >
-        {isRunningToolOrPending ? (
-          <Loader2 className="mt-1 h-3 w-3 shrink-0 animate-spin opacity-75" strokeWidth={2} />
-        ) : null}
-        <span
-          className={`min-w-0 flex-1 ${wrapSummary ? 'whitespace-pre-wrap break-words' : 'truncate'}`}
-        >
-          <span
-            className={`font-medium ${isError ? '' : rowActive ? 'ds-shiny-text' : 'text-ds-muted'}`}
-          >
-            {verb}
-          </span>
-          {rest ? (
-            <span className={`ml-1.5 tabular-nums text-[13px] ${rowActive ? 'ds-shiny-text' : ''}`}>
-              {rest}
-            </span>
-          ) : null}
-        </span>
-        {canExpand ? (
-          open ? (
-            <ChevronDown className="mt-1 h-3 w-3 shrink-0 opacity-40" strokeWidth={2} />
-          ) : (
-            <ChevronRight className="mt-1 h-3 w-3 shrink-0 opacity-0 transition group-hover:opacity-45" strokeWidth={2} />
-          )
-        ) : null}
-      </button>
-      {canExpand && open ? (
-        detail.kind === 'assistant' ? (
-          <div className="mt-1">
-            <ProcessEntryDetail block={block} detail={detail} processing={processing} />
-          </div>
-        ) : (
-          <div className="ds-work-timeline-detail">
-            <ProcessEntryDetail block={block} detail={detail} processing={processing} />
-          </div>
-        )
-      ) : null}
-    </div>
-  )
-}
-
-function describeProcessSection(
-  section: ProcessSection,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-  opts: {
-    processing: boolean
-    hasLiveAssistantStream: boolean
-    reasoningDurationMs?: number
-    singleReasoningSection: boolean
-    todoSession?: TodoTurnSession | null
-    subagentSummary?: SubagentTurnSummary | null
-    subagentInfrastructureToolIds?: Set<string>
-  }
-): string {
-  if (section.kind === 'reasoning') {
-    if (
-      opts.processing &&
-      isProcessSectionActive(section, true, opts.hasLiveAssistantStream)
-    ) {
-      return t('thinkingNow')
-    }
-    if (
-      opts.singleReasoningSection &&
-      typeof opts.reasoningDurationMs === 'number' &&
-      opts.reasoningDurationMs >= 1000
-    ) {
-      return t('thoughtFor', { duration: formatDuration(opts.reasoningDurationMs) })
-    }
-    return section.blocks.length > 1
-      ? t('thoughtSteps', { count: section.blocks.length })
-      : t('thinkingLabel')
-  }
-
-  if (section.kind === 'output') {
-    return t('processTextLabel')
-  }
-
-  const summaryBlocks = visibleExecutionBlocks(
-    section.blocks,
-    opts.todoSession ?? null,
-    opts.subagentSummary ?? null,
-    opts.subagentInfrastructureToolIds ?? new Set()
-  )
-  if (summaryBlocks.length === 0) {
-    return t('processSteps', { count: section.blocks.length })
-  }
-  if (summaryBlocks.length === 1) {
-    return describeProcessBlock(summaryBlocks[0]!, t)
-  }
-
-  return summarizeExecutionSection(summaryBlocks, t)
-}
-
-function summarizeExecutionSection(
-  blocks: ChatBlock[],
-  t: (key: string, opts?: Record<string, unknown>) => string
-): string {
-  let fileCount = 0
-  let commandCount = 0
-  let toolCount = 0
-  let approvalCount = 0
-
-  for (const block of blocks) {
-    if (block.kind === 'approval') {
-      approvalCount += 1
-      continue
-    }
-    if (block.kind !== 'tool') continue
-    if (block.toolKind === 'file_change') {
-      fileCount += 1
-    } else if (block.toolKind === 'command_execution') {
-      commandCount += 1
-    } else {
-      toolCount += 1
-    }
-  }
-
-  const parts: string[] = []
-  if (fileCount > 0) {
-    parts.push(
-      fileCount === 1 ? t('groupEditedFile') : t('groupEditedFiles', { count: fileCount })
-    )
-  }
-  if (commandCount > 0) {
-    parts.push(
-      commandCount === 1
-        ? t('groupRanCommand')
-        : t('groupRanCommands', { count: commandCount })
-    )
-  }
-  if (toolCount > 0) {
-    parts.push(toolCount === 1 ? t('groupUsedTool') : t('groupUsedTools', { count: toolCount }))
-  }
-  if (approvalCount > 0) {
-    parts.push(
-      approvalCount === 1 ? t('groupApproval') : t('groupApprovals', { count: approvalCount })
-    )
-  }
-
-  if (parts.length > 0) return parts.join(' · ')
-  return t('processSteps', { count: blocks.length })
-}
-
-function splitVerb(summary: string): { verb: string; rest: string } {
-  const trimmed = summary.trim()
-  if (!trimmed) return { verb: '', rest: '' }
-  const space = trimmed.search(/\s/)
-  if (space < 0) return { verb: trimmed, rest: '' }
-  return { verb: trimmed.slice(0, space), rest: trimmed.slice(space + 1).trim() }
-}
-
-type ProcessDetail =
-  | { kind: 'none' }
-  | { kind: 'reasoning'; text: string }
-  | { kind: 'assistant'; text: string }
-  | { kind: 'tool'; text: string; isPatch: boolean; isError: boolean; filePath?: string }
-  | { kind: 'approval' }
-  | { kind: 'user_input' }
-  | { kind: 'subagent' }
-  | { kind: 'workflow' }
-  | { kind: 'text'; text: string }
-
-function summarizeProcessText(text: string, max = 96): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim()
-  if (!oneLine) return ''
-  if (oneLine.length <= max) return oneLine
-  return `${oneLine.slice(0, max - 1).trimEnd()}…`
-}
-
-// Tool summaries sometimes carry their raw JSON args/result inline, e.g.
-// "list_dir: [ { \"name\": ... } ]". Drop the JSON payload so the row shows a
-// clean human-readable label instead of a truncated blob of JSON.
-function stripInlineJsonPayload(text: string): string {
-  const match = text.match(/\s*[[{]\s*["{[]/)
-  if (match && match.index !== undefined) {
-    return text.slice(0, match.index).trim()
-  }
-  return text.trim()
-}
-
-const TOOL_NAME_LABELS: Record<string, string> = {
-  apply_patch: '应用补丁',
-  edit_file: '编辑文件',
-  exec_shell: '执行命令',
-  exec_shell_interact: '交互命令',
-  exec_shell_wait: '等待命令',
-  fetch_url: '获取网页',
-  file_search: '搜索文件',
-  github_issue_context: '读取 GitHub 上下文',
-  glob_file_search: '搜索文件',
-  grep: '搜索代码',
-  grep_files: '搜索文件',
-  list_dir: '浏览目录',
-  read_file: '读取文件',
-  run_terminal_cmd: '执行命令',
-  search_files: '搜索文件',
-  web_search: '网络搜索',
-  write_file: '写入文件'
-}
-
-function humanizeToolName(name: string): string {
-  const canonical = name.trim().toLowerCase()
-  const mapped = TOOL_NAME_LABELS[canonical]
-  if (mapped) return mapped
-  const trimmed = canonical.replace(/[_-]+/g, ' ')
-  if (!trimmed) return ''
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
-}
-
-function extractToolName(summary: string): string {
-  const match = summary.trim().match(/^([a-z0-9_-]+)\s*:/i)
-  return match?.[1] ?? ''
-}
-
-function extractQuotedField(text: string, field: string): string | undefined {
-  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const attr = new RegExp(`${escaped}="([^"]+)"`, 'i').exec(text)
-  if (attr?.[1]) return attr[1]
-  const json = new RegExp(`"${escaped}"\\s*:\\s*"([^"]+)"`, 'i').exec(text)
-  if (json?.[1]) return json[1]
-  return undefined
-}
-
-function readMetaString(meta: Record<string, unknown> | undefined, key: string): string | undefined {
-  if (!meta) return undefined
-  const value = meta[key]
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function summarizeToolBlock(
-  block: ToolBlock,
-  t: (key: string, opts?: Record<string, unknown>) => string
-): string {
-  const rawSummary = block.summary?.trim() ?? ''
-  const toolName = extractToolName(rawSummary)
-  const label = humanizeToolName(toolName) || formatToolTitle(block, t)
-  const sourceText = [rawSummary, block.detail ?? ''].filter(Boolean).join('\n')
-  const filePath =
-    block.filePath ||
-    extractQuotedField(sourceText, 'path') ||
-    extractQuotedField(sourceText, 'file_path') ||
-    extractQuotedField(sourceText, 'file')
-  const pattern =
-    extractQuotedField(sourceText, 'pattern') ||
-    extractQuotedField(sourceText, 'query') ||
-    readMetaString(block.meta, 'pattern')
-  const command = readMetaString(block.meta, 'command')
-
-  if (toolName === 'read_file' && filePath) {
-    return `${label} ${filePath}`
-  }
-  if ((toolName === 'grep_files' || toolName === 'search_files') && pattern) {
-    return filePath ? `${label} ${pattern} · ${filePath}` : `${label} ${pattern}`
-  }
-  if (command && block.toolKind === 'command_execution') {
-    return `${formatToolTitle(block, t)} ${summarizeProcessText(command, 72)}`
-  }
-  if (filePath) {
-    return `${label} ${filePath}`
-  }
-  if (pattern) {
-    return `${label} ${pattern}`
-  }
-  if (rawSummary) {
-    const withoutPrefix = toolName ? rawSummary.replace(/^([a-z0-9_-]+)\s*:\s*/i, '') : rawSummary
-    const compact = stripInlineJsonPayload(withoutPrefix)
-    const summary = summarizeProcessText(compact, 72)
-    return summary ? `${label} ${summary}` : label
-  }
-  return label
-}
-
-function normalizeProcessText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().toLowerCase()
-}
-
-function getProcessDetail(block: ChatBlock, summaryText?: string): ProcessDetail {
-  if (block.kind === 'reasoning') {
-    return block.text.trim() ? { kind: 'reasoning', text: block.text } : { kind: 'none' }
-  }
-  if (block.kind === 'assistant') {
-    const split = splitThink(block.text)
-    const text = split.content || split.think
-    return text.trim() ? { kind: 'assistant', text } : { kind: 'none' }
-  }
-  if (block.kind === 'tool') {
-    const detailText = block.detail?.trim() ?? ''
-    if (!detailText) return { kind: 'none' }
-    if (summaryText && normalizeProcessText(detailText) === normalizeProcessText(summaryText)) {
-      return { kind: 'none' }
-    }
-    const isError = block.status === 'error'
-    const isPatch =
-      block.toolKind === 'file_change' && !isError && looksLikeUnifiedDiff(detailText)
-    return {
-      kind: 'tool',
-      text: block.detail!,
-      isPatch,
-      isError,
-      filePath: block.filePath
-    }
-  }
-  if (block.kind === 'approval') return { kind: 'approval' }
-  if (block.kind === 'user_input') return { kind: 'user_input' }
-  if (block.kind === 'subagent') return { kind: 'subagent' }
-  if (block.kind === 'workflow') return { kind: 'workflow' }
-  if (block.kind === 'system' && block.text.trim()) {
-    // Short system messages already fit in the summary line — skip the
-    // expand affordance so we don't duplicate the same string.
-    if (block.text.length <= 140) return { kind: 'none' }
-    return { kind: 'text', text: block.text }
-  }
-  return { kind: 'none' }
-}
-
-function useFullToolDetail(
-  itemId: string | undefined,
-  truncated: boolean | undefined
-): { loading: boolean; detail: string | null; expand: () => void } {
-  const [state, setState] = useState<{ loading: boolean; detail: string | null }>({
-    loading: false,
-    detail: null
-  })
-  const expand = useCallback((): void => {
-    if (!itemId || state.loading || state.detail !== null) return
-    const providerId = useChatStore.getState().providerId
-    const provider = getProvider(providerId)
-    if (typeof provider.fetchItemDetail !== 'function') return
-    setState({ loading: true, detail: null })
-    void provider
-      .fetchItemDetail(itemId)
-      .then((result) => setState({ loading: false, detail: result.detail ?? '' }))
-      .catch(() => setState({ loading: false, detail: '' }))
-  }, [itemId, state.detail, state.loading])
-  // Reset when the underlying item changes.
-  useEffect(() => {
-    setState({ loading: false, detail: null })
-  }, [itemId])
-  // If nothing is truncated, there's nothing to fetch.
-  if (!truncated) return { loading: false, detail: null, expand: () => {} }
-  return { loading: state.loading, detail: state.detail, expand }
-}
-
-function LazyToolDetail({
-  text,
-  truncated,
-  itemId
-}: {
-  text: string
-  truncated?: boolean
-  itemId?: string
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const { loading, detail, expand } = useFullToolDetail(itemId, truncated)
-  const display = detail !== null ? detail : text
-  return (
-    <div className="relative">
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-ds-ink">
-        {display}
-      </pre>
-      {truncated && detail === null ? (
-        <button
-          type="button"
-          onClick={expand}
-          disabled={loading}
-          className="absolute bottom-1 right-1 rounded-md border border-ds-border-muted bg-ds-card/90 px-2 py-0.5 text-[11px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
-        >
-          {loading ? '…' : t('toolDetailExpandFull')}
-        </button>
-      ) : null}
-    </div>
-  )
-}
-
-function ProcessEntryDetail({
-  block,
-  detail,
-  processing
-}: {
-  block: ChatBlock
-  detail: ProcessDetail
-  processing: boolean
-}): ReactElement | null {
-  if (detail.kind === 'reasoning') {
-    const streamReason = block.id === 'live-reasoning' && processing
-    return (
-      <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
-        <AssistantMarkdown text={detail.text} streaming={streamReason} />
-      </div>
-    )
-  }
-  if (detail.kind === 'assistant') {
-    return (
-      <div className="ds-markdown text-[13.5px] leading-6 text-ds-ink">
-        <AssistantMarkdown
-          text={detail.text}
-          streaming={processing && block.kind === 'assistant' && block.id === 'live-assistant'}
-        />
-      </div>
-    )
-  }
-  if (detail.kind === 'tool') {
-    const truncated = block.kind === 'tool' ? block.detailTruncated : undefined
-    if (detail.isPatch) {
-      return <DiffView patch={detail.text} filePath={detail.filePath} />
-    }
-    if (detail.isError) {
-      return (
-        <div className="overflow-hidden rounded-[10px] border border-red-200/80 bg-red-50/80 dark:border-red-800/40 dark:bg-red-500/10">
-          {detail.filePath ? (
-            <div className="border-b border-red-200/70 bg-red-100/50 px-3 py-1.5 font-mono text-[12px] text-red-700 dark:border-red-800/40 dark:bg-red-500/15 dark:text-red-300">
-              {detail.filePath}
-            </div>
-          ) : null}
-          <LazyToolDetail text={detail.text} truncated={truncated} itemId={block.id} />
-        </div>
       )
     }
+  }
+  // Hide todo tool blocks once their session is rendered inline above.
+  if (todoSession && isTodoToolBlock(block) && todoSession.todoBlockIds.includes(block.id)) {
+    return null
+  }
+
+  // Subagent summary card replaces the orchestration tool calls around it.
+  if (subagentSummary && block.kind === 'subagent' && block.id === subagentSummary.anchorBlockId) {
+    return <SubagentSummaryPanel summary={subagentSummary} />
+  }
+  if (subagentSummary && block.kind === 'subagent' && subagentSummary.blockIds.includes(block.id)) {
+    return null
+  }
+  if (subagentSummary && block.kind === 'tool' && block.status !== 'error' && isSubagentOrchestrationToolName(toolNameFromProcessBlock(block))) {
+    return null
+  }
+
+  // The actual content blocks.
+  if (block.kind === 'tool') {
+    return <ToolCard block={block} />
+  }
+  if (block.kind === 'reasoning') {
+    return <ReasoningEntry block={block} processing={processing} />
+  }
+  if (block.kind === 'assistant') {
+    // Assistant content that landed in the work trace (interstitial
+    // final-answer segments). Mid-turn prefaces are dropped upstream in
+    // placeAssistantContentBlock; the model's 承上启下 line surfaces as
+    // reasoning narration instead.
     return (
-      <LazyToolDetail text={detail.text} truncated={truncated} itemId={block.id} />
+      <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
+        <AssistantMarkdown text={block.text} streaming={processing} />
+      </div>
     )
   }
-  if (detail.kind === 'text') {
-    return <p className="whitespace-pre-wrap text-[13.5px] leading-6 text-ds-muted">{detail.text}</p>
-  }
-  if (detail.kind === 'approval' && block.kind === 'approval') {
-    return <MessageBubble block={block} nested />
-  }
-  if (detail.kind === 'user_input' && block.kind === 'user_input') {
-    return <MessageBubble block={block} nested />
-  }
-  if (detail.kind === 'subagent' && block.kind === 'subagent') {
-    return <MessageBubble block={block} nested />
-  }
-  if (detail.kind === 'workflow' && block.kind === 'workflow') {
+  // Data events: route to their dedicated components, never hidden.
+  if (block.kind === 'approval') return <ApprovalBubble block={block} />
+  if (block.kind === 'elevation') return <ElevationBubble block={block} />
+  if (block.kind === 'evolution') return <EvolutionBubble block={block} />
+  if (block.kind === 'user_input') return <UserInputBubble block={block} />
+  if (block.kind === 'subagent') return <SubagentBubble block={block} />
+  if (block.kind === 'workflow') {
     return (
       <WorkflowBlock
         workflowName={block.workflowName}
@@ -2551,43 +1636,70 @@ function ProcessEntryDetail({
       />
     )
   }
+  if (block.kind === 'system') {
+    return <p className="text-[12px] text-ds-faint">{block.text}</p>
+  }
   return null
 }
 
-function describeProcessBlock(
-  block: ChatBlock,
-  t: (key: string, opts?: Record<string, unknown>) => string
-): string {
-  if (block.kind === 'reasoning') {
-    return t('thinkingLabel')
+/**
+ * A reasoning block. Shows the model's narration line (承上启下) when present;
+ * otherwise collapses the raw reasoning trace behind a toggle so the timeline
+ * stays calm but the detail remains one click away.
+ */
+function ReasoningEntry({
+  block,
+  processing
+}: {
+  block: Extract<ChatBlock, { kind: 'reasoning' }>
+  processing: boolean
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const [expanded, setExpanded] = useState(false)
+  const narration = block.narration?.trim()
+  const text = block.text.trim()
+  const isLive = block.id === 'live-reasoning'
+
+  // Narration is the user-facing line — show it directly, no toggle.
+  if (narration) {
+    return (
+      <div className="flex items-start gap-1.5 py-0.5">
+        {isLive || processing ? (
+          <Bot className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
+        ) : null}
+        <p className="text-[13.5px] leading-6 text-ds-muted">{narration}</p>
+      </div>
+    )
   }
-  if (block.kind === 'assistant') {
-    return t('processTextLabel')
-  }
-  if (block.kind === 'tool') {
-    return summarizeToolBlock(block, t)
-  }
-  if (block.kind === 'approval') {
-    return block.summary || t('approvalTitle')
-  }
-  if (block.kind === 'user_input') {
-    return t('userInputTitle')
-  }
-  if (block.kind === 'subagent') {
-    return block.cardKind === 'fanout'
-      ? t('subagentFanoutTitle', { kind: block.agentType })
-      : t('subagentDelegateTitle', { type: block.agentType })
-  }
-  if (block.kind === 'workflow') {
-    return t('workflowProcessTitle', {
-      defaultValue: 'workflow: {{name}}',
-      name: block.workflowName
-    })
-  }
-  if (block.kind === 'system') {
-    return block.text
-  }
-  return 'text' in block ? block.text : t('processed')
+
+  // No narration: collapsible raw reasoning.
+  if (!text) return <></>
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="group flex w-fit items-center gap-1.5 py-0.5 text-left text-[14px] font-medium text-ds-muted transition hover:opacity-85"
+      >
+        {isLive || processing ? (
+          <Bot className="h-3.5 w-3.5 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
+        ) : null}
+        <span className={isLive ? 'ds-shiny-text' : ''}>{t('thinkingLabel')}</span>
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-55" strokeWidth={1.8} />
+        )}
+      </button>
+      {expanded ? (
+        <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
+          <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
+            <AssistantMarkdown text={text} streaming={isLive && processing} />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 /**
@@ -2852,18 +1964,6 @@ function SubagentBubble({
         <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
       </div>
       <p className="mt-1 text-[12px] text-ds-muted">{statusLabel}</p>
-      {block.cardKind === 'delegate' && block.actions && block.actions.length > 0 ? (
-        <ul className="mt-2 space-y-1 text-[12px] text-ds-muted">
-          {block.truncated ? (
-            <li className="text-ds-faint">…</li>
-          ) : null}
-          {block.actions.map((action, index) => (
-            <li key={`${block.id}-action-${index}`} className="truncate">
-              {action}
-            </li>
-          ))}
-        </ul>
-      ) : null}
       {block.cardKind === 'fanout' && block.workers && block.workers.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {block.workers.map((worker) => (
@@ -3097,7 +2197,7 @@ function formatMessageDateTime(input: string, locale: string): string {
   }).format(date)
 }
 
-function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: boolean }): ReactElement {
+function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
   const { t, i18n } = useTranslation('common')
   if (block.kind === 'user') {
     return <UserMessageBubble block={block} />
@@ -3125,13 +2225,13 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
     return (
       <div id={`block-${block.id}`} className="ds-card-soft rounded-[20px] px-4 py-3 text-[13.5px] leading-6 text-ds-muted">
         <div className="ds-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+          <BoundedReasoningMarkdown text={block.text} />
         </div>
       </div>
     )
   }
   if (block.kind === 'tool') {
-    return <ToolEntry block={block} nested={nested} />
+    return <ToolCard block={block} />
   }
   if (block.kind === 'user_input') {
     return <UserInputBubble block={block} />
@@ -3162,122 +2262,6 @@ function MessageBubble({ block, nested = false }: { block: ChatBlock; nested?: b
       {block.text}
     </div>
   )
-}
-
-function ToolEntry({ block, nested = false }: { block: ToolBlock; nested?: boolean }): ReactElement {
-  const { t } = useTranslation('common')
-  const [open, setOpen] = useState(() => block.status === 'error' || block.status === 'running')
-
-  useEffect(() => {
-    if (block.status === 'running') {
-      setOpen(true)
-    }
-  }, [block.status, block.id])
-
-  const effectiveOpen = block.status === 'running' ? true : open
-
-  const tone =
-    block.status === 'error'
-      ? 'border-red-300/80 bg-red-500/10 text-red-950 dark:border-red-800/60 dark:bg-red-950/35 dark:text-red-100'
-      : block.status === 'running'
-        ? 'border-amber-300/80 bg-amber-500/10 text-amber-950 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100'
-        : 'border-ds-border bg-ds-subtle text-ds-ink'
-
-  const Icon = block.toolKind === 'file_change' ? FileEdit : block.toolKind === 'command_execution' ? Terminal : Wrench
-  const kindLabel =
-    block.toolKind === 'file_change'
-      ? t('toolKindFile')
-      : block.toolKind === 'command_execution'
-        ? t('toolKindCommand')
-        : t('toolKindTool')
-
-  const exitCode = readNumber(block.meta, 'exit_code')
-  const durationMs = readNumber(block.meta, 'duration_ms')
-
-  const hasDetail = !!(block.detail && block.detail.trim().length > 0)
-  const isPatch = block.toolKind === 'file_change' && hasDetail
-  const canExpand = hasDetail || block.status === 'running'
-
-  return (
-    <div className={`rounded-[22px] border shadow-[0_12px_30px_rgba(86,103,136,0.04)] ${tone}`}>
-      <button
-        type="button"
-        onClick={() => {
-          if (!canExpand || block.status === 'running') return
-          setOpen((v) => !v)
-        }}
-        className={`flex w-full items-start gap-2 px-4 py-3 text-left text-[13.5px] leading-6 ${
-          canExpand && block.status !== 'running' ? 'cursor-pointer' : 'cursor-default'
-        }`}
-      >
-        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-80" strokeWidth={1.75} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold uppercase tracking-[0.12em] text-[11px] opacity-75">
-              {kindLabel}
-            </span>
-            {block.status === 'running' ? (
-              <span className="rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
-                {t('inspectorStatusRunning')}
-              </span>
-            ) : null}
-            {typeof exitCode === 'number' ? (
-              <span
-                className={`rounded-full px-2 py-0.5 text-[11px] tabular-nums ${
-                  exitCode === 0
-                    ? 'bg-ds-success-soft text-ds-success'
-                    : 'bg-ds-danger-soft text-ds-danger'
-                }`}
-              >
-                exit {exitCode}
-              </span>
-            ) : null}
-            {typeof durationMs === 'number' ? (
-              <span className="rounded-full bg-ds-card px-2 py-0.5 text-[11px] tabular-nums text-ds-muted">
-                {formatDuration(durationMs)}
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-0.5 break-words">
-            {block.filePath ? (
-              <span className="font-mono text-[12px] opacity-90">{block.filePath} — </span>
-            ) : null}
-            <span>{block.summary}</span>
-          </div>
-        </div>
-        {canExpand ? (
-          effectiveOpen ? (
-            <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
-          ) : (
-            <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} />
-          )
-        ) : null}
-      </button>
-      {effectiveOpen && hasDetail ? (
-        <div className="ds-panel-strip min-w-0 border-t border-ds-border-muted/60 px-4 py-3">
-          {isPatch ? (
-            <DiffView patch={block.detail!} filePath={block.filePath} />
-          ) : (
-            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-ds-ink">
-              {block.detail}
-            </pre>
-          )}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function readNumber(meta: Record<string, unknown> | undefined, key: string): number | undefined {
-  if (!meta) return undefined
-  const v = meta[key]
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
-}
-
-function formatToolTitle(block: ToolBlock, t: (key: string) => string): string {
-  if (block.toolKind === 'file_change') return t('toolActionFile')
-  if (block.toolKind === 'command_execution') return t('toolActionCommand')
-  return t('toolActionTool')
 }
 
 function formatDuration(ms: number): string {

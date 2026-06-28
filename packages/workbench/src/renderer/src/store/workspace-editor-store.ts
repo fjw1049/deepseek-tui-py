@@ -27,8 +27,8 @@ function normalizeWorkspaceKey(workspaceRoot: string): string {
   return workspaceRoot.trim().replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
-function tabIdForPath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/^\/+/, '')
+export function normalizeEditorPathForTab(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
 function isDirty(tab: EditorTab): boolean {
@@ -67,7 +67,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     const root = normalizeWorkspaceKey(workspaceRoot)
     if (!root) return
 
-    const normalizedPath = tabIdForPath(path)
+    const normalizedPath = normalizeEditorPathForTab(path)
     if (!normalizedPath) return
 
     const id = normalizedPath
@@ -180,7 +180,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     set((state) => ({
       tabs: state.tabs.map((entry) =>
         entry.id === tab.id
-          ? { ...entry, savedContent: entry.content, error: null, path: tabIdForPath(entry.path) }
+          ? { ...entry, savedContent: entry.content, error: null, path: normalizeEditorPathForTab(entry.path) }
           : entry
       )
     }))

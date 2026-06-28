@@ -1061,21 +1061,33 @@ def _dotted_get(data: Any, key: str) -> Any:
 
 def _task_summary_to_dict(summary: Any) -> dict[str, Any]:
     """Best-effort serialisation for TaskSummary."""
-    fields = (
-        "id",
-        "title",
-        "status",
-        "created_at",
-        "updated_at",
-        "agent_type",
-        "model",
-    )
-    return {f: getattr(summary, f, None) for f in fields}
+    status = getattr(summary, "status", None)
+    return {
+        "id": getattr(summary, "id", None),
+        "status": status.value if hasattr(status, "value") else status,
+        "prompt": getattr(summary, "prompt_summary", None),
+        "model": getattr(summary, "model", None),
+        "mode": getattr(summary, "mode", None),
+        "created_at": getattr(summary, "created_at", None),
+        "started_at": getattr(summary, "started_at", None),
+        "ended_at": getattr(summary, "ended_at", None),
+        "duration_ms": getattr(summary, "duration_ms", None),
+        "error": getattr(summary, "error", None),
+        "thread_id": getattr(summary, "thread_id", None),
+        "turn_id": getattr(summary, "turn_id", None),
+    }
 
 
 def _task_record_to_dict(record: Any) -> dict[str, Any]:
     """Best-effort serialisation for TaskRecord."""
     base = _task_summary_to_dict(record)
+    # TaskRecord carries the full prompt and result; TaskSummary only has a
+    # truncated ``prompt_summary``. Prefer the record's richer fields here.
+    full_prompt = getattr(record, "prompt", None)
+    if full_prompt:
+        base["prompt"] = full_prompt
+    base["result_summary"] = getattr(record, "result_summary", None)
+    base["result_detail_path"] = getattr(record, "result_detail_path", None)
     timeline: list[Any] = []
     for ev in getattr(record, "timeline", []) or []:
         dump = getattr(ev, "model_dump", None)

@@ -269,7 +269,7 @@ export function Workbench(): ReactElement {
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
   const conversationInsetClass = 'px-3 md:px-5 lg:px-6 xl:px-8'
-  const operationConversationInsetClass = 'pl-3 md:pl-5 lg:pl-6 xl:pl-8 pr-0.5 md:pr-1'
+  const operationConversationInsetClass = 'pl-3 md:pl-5 lg:pl-6 xl:pl-8 pr-0'
   const emptyStageInsetClass = 'px-2 md:px-3 lg:px-4 xl:px-5'
 
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -974,7 +974,7 @@ export function Workbench(): ReactElement {
                         />
                       </div>
                     ) : null}
-                    <div className="flex shrink-0 pb-3 pt-0">
+                    <div className="mx-auto flex w-full max-w-[860px] shrink-0 pb-1 pt-0">
                       <ComposerStage
                         input={input}
                         setInput={setInput}
@@ -1036,7 +1036,7 @@ export function Workbench(): ReactElement {
                       ) : null
                     }
                   />
-                  <div className="flex shrink-0 pb-3 pt-0">
+                  <div className="mx-auto flex w-full max-w-[860px] shrink-0 pb-1 pt-0">
                     <ComposerStage
                       input={input}
                       setInput={setInput}

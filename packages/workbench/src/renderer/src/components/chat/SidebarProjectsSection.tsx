@@ -17,6 +17,9 @@ import {
   Search
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
+import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
+import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
+import { useChatStore } from '../../store/chat-store'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
@@ -96,6 +99,15 @@ export function SidebarProjectsSection({
   const [searchExpanded, setSearchExpanded] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchOpen = searchExpanded || searchQuery.trim().length > 0
+  const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
+  // The active conversation's task ids come straight from its loaded message
+  // blocks, so it can light up even for tasks created before thread_id wiring
+  // existed (no backend restart required).
+  const activeThreadBlocks = useChatStore((s) => s.blocks)
+  const activeThreadHasTask = useMemo(() => {
+    if (!activeThreadId) return false
+    return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
+  }, [activeThreadId, activeThreadBlocks, activeTaskIds])
 
   useEffect(() => {
     if (!searchOpen) return
@@ -296,6 +308,10 @@ export function SidebarProjectsSection({
                     watchTurnCompletion[thread.id] === true
                   }
                   showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+                  hasBackgroundTask={
+                    threadsWithActiveTasks.has(thread.id) ||
+                    (activeThreadId === thread.id && activeThreadHasTask)
+                  }
                   onSelect={() => onSelectThread(thread.id)}
                   onDelete={() => void handleDeleteThread(thread)}
                   onFork={() => void onForkThread(thread.id)}
@@ -433,6 +449,7 @@ type ThreadRowProps = {
   exporting: boolean
   showRunning: boolean
   showUnread: boolean
+  hasBackgroundTask: boolean
   canCompact: boolean
   onSelect: () => void
   onDelete: () => void
@@ -449,6 +466,7 @@ function ThreadRow({
   exporting,
   showRunning,
   showUnread,
+  hasBackgroundTask,
   canCompact,
   onSelect,
   onDelete,
@@ -458,8 +476,11 @@ function ThreadRow({
   onExport
 }: ThreadRowProps): ReactElement {
   const { t } = useTranslation('common')
-  const showUnreadDot = showUnread && !showRunning
-  const showStatus = showRunning || showUnreadDot
+  // A detached background task counts as activity even when the chat turn is
+  // idle; only fall back to the blue unread dot when nothing is in flight.
+  const showTaskDot = hasBackgroundTask && !showRunning
+  const showUnreadDot = showUnread && !showRunning && !showTaskDot
+  const showStatus = showRunning || showTaskDot || showUnreadDot
 
   return (
     <div
@@ -469,31 +490,38 @@ function ThreadRow({
           : 'hover:bg-ds-hover/40 dark:hover:bg-white/[0.03]'
       }`}
     >
+      {showStatus ? (
+        <span className="pointer-events-none absolute left-1 top-1/2 z-[1] flex h-3 w-3 -translate-y-1/2 items-center justify-center">
+          {showRunning ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" strokeWidth={2} />
+          ) : showTaskDot ? (
+            <span
+              className="block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-500 dark:bg-amber-400"
+              title={t('sidebarThreadTaskRunning')}
+            />
+          ) : (
+            <span
+              className="block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+              title={t('sidebarThreadUnread')}
+            />
+          )}
+        </span>
+      ) : null}
       <button
         type="button"
         onClick={onSelect}
-        className="relative flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2 text-left"
+        className="relative flex min-w-0 flex-1 items-center gap-1.5 py-2 pl-[1.125rem] pr-2.5 text-left"
         disabled={deleting || exporting}
         aria-label={
           showRunning
             ? `${thread.title} — ${t('sidebarThreadRunning')}`
-            : showUnreadDot
-              ? `${thread.title} — ${t('sidebarThreadUnread')}`
-              : thread.title
+            : showTaskDot
+              ? `${thread.title} — ${t('sidebarThreadTaskRunning')}`
+              : showUnreadDot
+                ? `${thread.title} — ${t('sidebarThreadUnread')}`
+                : thread.title
         }
       >
-        {showStatus ? (
-          <span className="flex w-3 shrink-0 items-center justify-center self-center">
-            {showRunning ? (
-              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" strokeWidth={2} />
-            ) : (
-              <span
-                className="block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-                title={t('sidebarThreadUnread')}
-              />
-            )}
-          </span>
-        ) : null}
         <span
           className={[
             'ds-sidebar-thread min-w-0 flex-1 truncate',

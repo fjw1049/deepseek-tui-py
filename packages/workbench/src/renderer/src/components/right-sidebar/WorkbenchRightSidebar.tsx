@@ -132,7 +132,6 @@ export function WorkbenchRightSidebar({
         <ChangeInspector
           blocks={blocks}
           className="h-full max-h-full w-full flex-col"
-          onCollapse={onClose}
           onOpenFileInEditor={onOpenFileInEditor}
         />
       </Suspense>
@@ -153,7 +152,6 @@ export function WorkbenchRightSidebar({
           blocks={devPreviewBlocks}
           preferredUrl={latestDevPreviewUrl}
           className="h-full max-h-full w-full flex-col"
-          onCollapse={onClose}
         />
       </Suspense>
     )
@@ -199,11 +197,16 @@ export function WorkbenchRightSidebar({
             aria-pressed={maximized}
             title={maximized ? t('rightSidebarRestoreHalf') : t('rightSidebarMaximize')}
           >
-            {maximized ? (
-              <ChevronsRight className="h-4 w-4" strokeWidth={1.85} />
-            ) : (
-              <ChevronsLeft className="h-4 w-4" strokeWidth={1.85} />
-            )}
+            <ChevronsLeft className="h-4 w-4" strokeWidth={1.85} />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
+            aria-label={t('rightSidebarCollapse')}
+            title={t('rightSidebarCollapse')}
+          >
+            <ChevronsRight className="h-4 w-4" strokeWidth={1.85} />
           </button>
         </div>
 

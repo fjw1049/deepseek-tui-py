@@ -729,6 +729,31 @@ samp {
   padding: 0.65rem 0.85rem;
 }
 
+/* Work-process "storyline" rail: a single quiet vertical thread linking every
+   step of a turn so the trace reads as one sequence instead of a stack of
+   detached cards (cursor/codex pattern). Spine-only — no per-item dots — so it
+   never misaligns across rows of different heights. */
+.ds-process-rail {
+  position: relative;
+  padding-left: 1.1rem;
+}
+
+.ds-process-rail::before {
+  content: '';
+  position: absolute;
+  left: 0.28rem;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--ds-border-muted) 90%, transparent) 8%,
+    color-mix(in srgb, var(--ds-border-muted) 90%, transparent) 92%,
+    transparent
+  );
+}
+
 .ds-frosted {
   backdrop-filter: blur(18px);
 }
@@ -2103,7 +2128,7 @@ summary,
 }
 
 .pet-mascot-dock {
-  height: 66px;
+  height: 48px;
   overflow: hidden;
   position: relative;
 }
@@ -2329,9 +2354,9 @@ select:focus-visible,
 
 .ds-operation-dock-section-label {
   font-family: var(--font-ui);
-  font-size: 0.875rem;
-  font-weight: 800;
-  letter-spacing: 0.045em;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.085em;
   text-transform: uppercase;
   color: var(--text-tertiary);
   -webkit-font-smoothing: antialiased;
@@ -2393,8 +2418,8 @@ select:focus-visible,
 .ds-operation-rail {
   position: relative;
   z-index: 2;
-  flex: 0 0 clamp(12.5rem, 26cqi, 20.5rem);
-  width: clamp(12.5rem, 26cqi, 20.5rem);
+  flex: 0 0 clamp(13.5rem, 30cqi, 23rem);
+  width: clamp(13.5rem, 30cqi, 23rem);
   flex-direction: column;
   background: transparent;
 }
@@ -2663,6 +2688,22 @@ select:focus-visible,
   box-shadow:
     0 38px 110px rgba(0, 0, 0, 0.68),
     inset 0 1px 0 var(--glass-highlight);
+}
+
+/* Opaque variant for content-heavy panels (e.g. the task run log) where the
+   heavy frosted glass makes text read as foggy. Solid surface, no blur, so
+   text stays crisp. */
+.ds-modal-surface--solid {
+  background: var(--ds-surface-elevated);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Lighter scrim for those panels: keep a subtle dim of the page behind but
+   drop the heavy 16px blur so the backdrop no longer reads as foggy. */
+.ds-modal-backdrop--soft {
+  backdrop-filter: blur(2px) saturate(105%);
+  -webkit-backdrop-filter: blur(2px) saturate(105%);
 }
 
 .ds-channel-page > div,

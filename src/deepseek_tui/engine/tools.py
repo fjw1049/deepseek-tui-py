@@ -50,7 +50,6 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         MULTI_TOOL_PARALLEL_NAME,
         "update_plan",
         "checklist_write",
-        "todo_write",
         "task_create",
         "task_list",
         "task_read",

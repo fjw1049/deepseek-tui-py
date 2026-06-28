@@ -1490,6 +1490,119 @@ class RuntimeThreadManager:
             thread_id, turn_id, item_id, "item.delta", payload
         )
 
+    async def _persist_subagent_mailbox(
+        self,
+        thread_id: str,
+        turn_id: str,
+        seq: int,
+        message: MailboxMessage,
+    ) -> None:
+        """Persist one sub-agent mailbox envelope and stream it to the UI."""
+        import json as _json
+
+        mailbox_payload = {
+            "seq": seq,
+            "message": _mailbox_message_payload(message),
+        }
+        now = datetime.now(timezone.utc)
+        item_id = f"item_{uuid.uuid4().hex[:8]}"
+        item = TurnItemRecord(
+            id=item_id,
+            turn_id=turn_id,
+            kind=TurnItemKind.STATUS,
+            status=TurnItemLifecycleStatus.COMPLETED,
+            summary=f"subagent:{message.agent_id}",
+            detail=_json.dumps(mailbox_payload, default=str),
+            metadata={"subagent_mailbox": True},
+            started_at=now,
+            ended_at=now,
+        )
+        self.store.save_item(item)
+        self._attach_item_to_turn(turn_id, item_id)
+        await self._emit_event(
+            thread_id, turn_id, None, "subagent.mailbox", mailbox_payload
+        )
+
+    async def _flush_pending_subagent_mailbox(
+        self, thread_id: str, turn_id: str, engine: Engine | None
+    ) -> None:
+        """Drain any sub-agent mailbox events the activity coordinator has not
+        consumed yet before the turn closes.
+
+        A sub-agent flips its status to terminal and ``manager.wait`` returns
+        (0.05s poll) before the coordinator's next 0.4s mailbox drain, so the
+        turn can complete with the terminal ``completed``/``failed`` envelope
+        still queued. Without this flush that envelope is never persisted and the
+        card is reconstructed stuck at "running" forever.
+        """
+        if engine is None:
+            return
+        mailbox = None
+        runtime = getattr(engine, "tool_runtime", None)
+        if runtime is not None and getattr(runtime, "mailbox", None) is not None:
+            mailbox = runtime.mailbox
+        else:
+            mgr = engine.tool_context.subagent_manager
+            mailbox = mgr.mailbox if mgr is not None else None
+        if mailbox is None:
+            return
+        try:
+            envelopes = await mailbox.drain_available()
+        except Exception:  # noqa: BLE001 — best-effort flush at turn close
+            return
+        for envelope in envelopes:
+            await self._persist_subagent_mailbox(
+                thread_id, turn_id, envelope.seq, envelope.message
+            )
+
+    async def _reconcile_subagent_cards(
+        self,
+        thread_id: str,
+        turn_id: str,
+        engine: Engine | None,
+        agent_ids: set[str],
+    ) -> None:
+        """Re-assert terminal state for every sub-agent touched this turn.
+
+        Live ``subagent.mailbox`` events ride ``handle.try_emit``, which drops
+        silently when the shared event queue saturates under a busy turn. A
+        dropped terminal envelope leaves the card stuck at "running". Draining
+        the mailbox cannot recover an already-dropped event, so at turn close we
+        read the authoritative manager snapshot and re-emit a terminal envelope
+        for any agent that is done. Idempotent (re-applying ``completed`` is a
+        no-op on the card) and scoped to this turn's agents, so it never leaks a
+        stray card into another turn.
+        """
+        if engine is None or not agent_ids:
+            return
+        from deepseek_tui.tools.subagent import (
+            _MAX_CARD_RESULT_CHARS,
+            MailboxMessage,
+            SubAgentStatusKind,
+        )
+
+        manager = engine.tool_context.subagent_manager
+        if manager is None:
+            return
+        for agent_id in agent_ids:
+            try:
+                snap = await manager.get_result(agent_id)
+            except Exception:  # noqa: BLE001 — unknown/evicted agent
+                continue
+            kind = snap.status.kind
+            if kind is SubAgentStatusKind.RUNNING:
+                continue
+            if kind is SubAgentStatusKind.COMPLETED:
+                summary = (snap.result or "").strip()[:_MAX_CARD_RESULT_CHARS]
+                message = MailboxMessage.completed(agent_id, summary)
+            elif kind is SubAgentStatusKind.CANCELLED:
+                message = MailboxMessage.cancelled(agent_id)
+            else:
+                message = MailboxMessage.failed(
+                    agent_id, snap.status.message or "failed"
+                )
+            await self._persist_subagent_mailbox(thread_id, turn_id, 0, message)
+
     async def _monitor_turn(
         self,
         thread_id: str,
@@ -1508,6 +1621,7 @@ class RuntimeThreadManager:
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
         workflow_items: dict[str, str] = {}  # tool_call_id -> item_id (workflow progress)
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
+        seen_subagent_ids: set[str] = set()  # agents touched this turn (for reconcile)
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
@@ -1726,8 +1840,27 @@ class RuntimeThreadManager:
                 return
             narrated_reasoning_ids.add(segment.item_id)
             last_completed_reasoning = None
-            recent = recent_tool_summaries[-narration_cfg.include_recent_tool_results :]
             tc_tuple = tuple(tool_calls)
+
+            if decision == "use_preface" and immediate:
+                # The model already narrated this batch in its own words; surface
+                # it directly instead of regenerating via the flash model.
+                preface_line = immediate
+
+                async def persist_preface() -> None:
+                    await persist_segment_narration(
+                        segment, preface_line, batch_kind, tc_tuple
+                    )
+
+                narration_compute_tasks.append(
+                    asyncio.create_task(
+                        persist_preface(),
+                        name=f"phase-bridge-preface-{segment.item_id}",
+                    )
+                )
+                return
+
+            recent = recent_tool_summaries[-narration_cfg.include_recent_tool_results :]
 
             async def run_and_persist() -> None:
                 try:
@@ -1870,7 +2003,7 @@ class RuntimeThreadManager:
                 tool_call_args[tc.id] = tc.arguments
                 kind = tool_kind_for_name(tc.name)
                 now = datetime.now(timezone.utc)
-                metadata = tool_item_metadata(tc.name, tc.arguments)
+                metadata = tool_started_metadata(tc.name, tc.arguments)
                 item = TurnItemRecord(
                     id=item_id,
                     turn_id=turn_id,
@@ -1939,6 +2072,14 @@ class RuntimeThreadManager:
                     )
                     if refreshed:
                         item.metadata = {**item.metadata, **refreshed}
+                    task_refreshed = task_tool_metadata_from_result(
+                        event.tool_name,
+                        tool_args,
+                        event.metadata,
+                        item.metadata if isinstance(item.metadata, dict) else None,
+                    )
+                    if task_refreshed:
+                        item.metadata = {**item.metadata, **task_refreshed}
                     self.store.save_item(item)
                     if event.success and item.summary:
                         recent_tool_summaries.append(item.summary)
@@ -2112,33 +2253,9 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, SubAgentMailboxEvent):
-                import json as _json
-
-                mailbox_payload = {
-                    "seq": event.seq,
-                    "message": _mailbox_message_payload(event.message),
-                }
-                now = datetime.now(timezone.utc)
-                item_id = f"item_{uuid.uuid4().hex[:8]}"
-                item = TurnItemRecord(
-                    id=item_id,
-                    turn_id=turn_id,
-                    kind=TurnItemKind.STATUS,
-                    status=TurnItemLifecycleStatus.COMPLETED,
-                    summary=f"subagent:{event.message.agent_id}",
-                    detail=_json.dumps(mailbox_payload, default=str),
-                    metadata={"subagent_mailbox": True},
-                    started_at=now,
-                    ended_at=now,
-                )
-                self.store.save_item(item)
-                self._attach_item_to_turn(turn_id, item_id)
-                await self._emit_event(
-                    thread_id,
-                    turn_id,
-                    None,
-                    "subagent.mailbox",
-                    mailbox_payload,
+                seen_subagent_ids.add(event.message.agent_id)
+                await self._persist_subagent_mailbox(
+                    thread_id, turn_id, event.seq, event.message
                 )
 
             elif isinstance(event, ErrorEvent):
@@ -2207,6 +2324,12 @@ class RuntimeThreadManager:
                 async with self._active_lock:
                     engine = self._active.get(thread_id)
                     active_engine = engine.engine if engine is not None else None
+                await self._flush_pending_subagent_mailbox(
+                    thread_id, turn_id, active_engine
+                )
+                await self._reconcile_subagent_cards(
+                    thread_id, turn_id, active_engine, seen_subagent_ids
+                )
                 turn_usage = turn_usage_from_engine_or_event(
                     engine=active_engine,
                     event=event,
@@ -3677,6 +3800,71 @@ def todo_tool_metadata_from_result(
     return from_args or (base if base.get("items") else None)
 
 
+_TASK_TOOL_NAMES = frozenset(
+    {"task_create", "task_list", "task_read", "task_cancel"}
+)
+
+
+def _is_task_tool_name(tool_name: str) -> bool:
+    return tool_name in _TASK_TOOL_NAMES
+
+
+def _normalize_task_entry(entry: Any) -> dict[str, Any] | None:
+    """Coerce a task summary dict into the Workbench sidebar shape."""
+    if not isinstance(entry, dict):
+        return None
+    task_id = entry.get("id") or entry.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return None
+    status = entry.get("status")
+    status = status.strip().lower() if isinstance(status, str) else "queued"
+    prompt = entry.get("prompt_summary") or entry.get("prompt") or ""
+    return {
+        "id": task_id.strip(),
+        "status": status,
+        "prompt": str(prompt).strip(),
+    }
+
+
+def task_tool_metadata_from_result(
+    tool_name: str,
+    arguments: Any,
+    result_metadata: dict[str, Any] | None,
+    existing_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Expose durable-task payloads to the Workbench TASKS sidebar section.
+
+    ``task_list`` returns ``metadata["tasks"]`` (a list of summaries);
+    ``task_create`` / ``task_read`` / ``task_cancel`` return a single task's
+    ``task_id`` / ``status`` / ``prompt_summary``. Both shapes are normalised
+    into ``metadata["tasks"]`` so the frontend reads one consistent field.
+    """
+    if not _is_task_tool_name(tool_name):
+        return None
+    if not isinstance(result_metadata, dict):
+        return None
+
+    entries: list[dict[str, Any]] = []
+    raw_tasks = result_metadata.get("tasks")
+    if isinstance(raw_tasks, list):
+        for item in raw_tasks:
+            normalized = _normalize_task_entry(item)
+            if normalized:
+                entries.append(normalized)
+    else:
+        normalized = _normalize_task_entry(result_metadata)
+        if normalized:
+            entries.append(normalized)
+
+    if not entries:
+        return None
+
+    base: dict[str, Any] = dict(existing_metadata) if existing_metadata else {}
+    base["tool_name"] = tool_name
+    base["tasks"] = entries
+    return base
+
+
 def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
     """Extract file path metadata for Workbench Diff / ChangeInspector."""
     todo_meta = todo_tool_metadata(tool_name, arguments)
@@ -3692,6 +3880,22 @@ def tool_item_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
         if isinstance(value, str) and value.strip():
             return {"path": value.strip()}
     return None
+
+
+def tool_started_metadata(tool_name: str, arguments: Any) -> dict[str, Any] | None:
+    """Metadata persisted on a tool item at start.
+
+    Combines file-path / todo metadata (``tool_item_metadata``) with the raw
+    call args under ``tool_input``. The live UI reads the args from the SSE
+    event, but a thread reload reads only stored metadata — without this, read
+    and search tool rows lose their descriptor ("browse dir src/", "grep TODO")
+    after restore.
+    """
+    metadata = tool_item_metadata(tool_name, arguments)
+    parsed = _parse_tool_arguments(arguments)
+    if parsed:
+        metadata = {**(metadata or {}), "tool_input": parsed}
+    return metadata
 
 
 def _looks_like_unified_diff(text: str) -> bool:

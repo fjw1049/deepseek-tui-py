@@ -183,16 +183,55 @@ export function applyMailboxToFanout(
   return next
 }
 
+// Lifecycle/progress kinds that may bootstrap a delegate card on their own. We
+// can join a sub-agent's mailbox stream mid-flight (SSE reconnect with
+// `since_seq` past the `started` event), so requiring `started` to create a card
+// would silently drop every later message and the card would never appear.
+const CARD_BOOTSTRAP_KINDS = new Set([
+  'started',
+  'progress',
+  'tool_call_started',
+  'tool_call_completed',
+  'completed',
+  'failed',
+  'cancelled'
+])
+
+function findOwningFanoutId(
+  cards: Record<string, SubagentCardState>,
+  agentId: string
+): string | null {
+  for (const [id, card] of Object.entries(cards)) {
+    if (card.cardKind === 'fanout' && card.workers.some((w) => w.id === agentId)) {
+      return id
+    }
+  }
+  return null
+}
+
 export function applyMailboxMessage(
   cards: Record<string, SubagentCardState>,
   msg: MailboxMessageJson
 ): Record<string, SubagentCardState> {
   const agentId = msg.agent_id
   let card = cards[agentId]
-  if (!card && msg.kind === 'started') {
-    card = isFanoutAgentType(msg.agent_type)
-      ? createFanoutCard(agentId, msg.agent_type ?? 'fanout')
-      : createDelegateCard(agentId, msg.agent_type ?? 'general')
+  // Route worker-level messages to the fanout that already owns them so they
+  // update the parent card instead of spawning a stray standalone delegate.
+  if (!card) {
+    const ownerId = findOwningFanoutId(cards, agentId)
+    if (ownerId) {
+      const updated = applyMailboxToFanout(cards[ownerId] as FanoutCardState, msg)
+      return updated ? { ...cards, [ownerId]: updated } : cards
+    }
+  }
+  if (!card && CARD_BOOTSTRAP_KINDS.has(msg.kind)) {
+    if (isFanoutAgentType(msg.agent_type)) {
+      card = createFanoutCard(agentId, msg.agent_type ?? 'fanout')
+    } else {
+      // Bootstrapped mid-stream cards start as running; a terminal first message
+      // (completed/failed/cancelled) is corrected by applyMailboxToDelegate below.
+      card = { ...createDelegateCard(agentId, msg.agent_type ?? 'general'), status: 'running' }
+    }
   }
   if (!card) {
     if (msg.kind === 'child_spawned' && msg.parent_id) {

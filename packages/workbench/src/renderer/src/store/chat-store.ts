@@ -87,7 +87,7 @@ let composerModelLoadPromise: Promise<void> | null = null
 let bootPromise: Promise<void> | null = null
 let threadWarmupSeq = 0
 let threadWarmupTask: { threadId: string; promise: Promise<void> } | null = null
-const BUSY_WATCHDOG_MS = 180_000
+const BUSY_WATCHDOG_MS = 60_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
@@ -285,6 +285,39 @@ async function reloadActiveThreadBlocks(
     })
   } catch {
     /* keep in-memory blocks if reload fails */
+  }
+}
+
+/**
+ * After loading a thread that *looks* busy, confirm with the lightweight active
+ * check. The runtime may have restarted (turn already marked interrupted) while
+ * the persisted thread snapshot still reads "running" — in that case the turn is
+ * dead and the UI must not stay stuck in "processing". This clears busy fast
+ * instead of waiting for the busy watchdog.
+ */
+async function reconcileStaleBusy(
+  get: () => ChatState,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+  threadId: string
+): Promise<void> {
+  const provider = getProvider(get().providerId)
+  if (typeof provider.isThreadTurnActive !== 'function') return
+  try {
+    const active = await provider.isThreadTurnActive(threadId)
+    if (active) return
+    const s = get()
+    if (!s.busy || s.activeThreadId !== threadId) return
+    clearBusyWatchdog()
+    set((snap) =>
+      flushLiveBlocks(snap, {
+        ...finalizeTurnTiming(snap),
+        busy: false,
+        currentTurnId: null,
+        error: null
+      })
+    )
+  } catch {
+    /* keep busy; the watchdog remains as a fallback */
   }
 }
 
@@ -589,7 +622,10 @@ function buildThreadEventSink(
             detail: ev.detail ?? cur.detail,
             detailTruncated: ev.detailTruncated ?? (ev.detail != null ? cur.detailTruncated : undefined),
             filePath: ev.filePath ?? cur.filePath,
-            meta: ev.meta ?? cur.meta
+            // Shallow-merge so descriptor args captured at item.started
+            // (meta.tool_input) survive a completed event whose metadata only
+            // carries exit_code/duration.
+            meta: ev.meta ? { ...cur.meta, ...ev.meta } : cur.meta
           }
           const nextBlocks = [...blocks]
           nextBlocks[idx] = next
@@ -1503,6 +1539,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       void p.subscribeThreadEvents(activeThreadId, latestSeq, sink, ac.signal)
       if (busy) {
         armBusyWatchdog(set, get)
+        void reconcileStaleBusy(get, set, activeThreadId)
       } else {
         resetBusyRecoveryAttempts()
         if (get().queuedMessages.length > 0) {
@@ -1626,7 +1663,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const ac = sseAbort = new AbortController()
       const sink = buildThreadEventSink(set, get)
       void p.subscribeThreadEvents(id, latestSeq, sink, ac.signal)
-      if (busy) armBusyWatchdog(set, get)
+      if (busy) {
+        armBusyWatchdog(set, get)
+        void reconcileStaleBusy(get, set, id)
+      }
       if (!busy) void get().warmActiveThread(id)
     } catch (e) {
       set({
@@ -2448,7 +2488,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   interrupt: async () => {
     const { activeThreadId, currentTurnId, providerId } = get()
-    if (!activeThreadId || !currentTurnId) return
+    if (!activeThreadId) return
+    // No live turn id to interrupt (e.g. busy was restored after a runtime
+    // restart whose turn is already dead). Force-clear the local busy state so
+    // the UI doesn't stay stuck in "processing" with an unresponsive stop key.
+    if (!currentTurnId) {
+      clearBusyWatchdog()
+      set((s) =>
+        flushLiveBlocks(s, {
+          ...finalizeTurnTiming(s),
+          busy: false,
+          currentTurnId: null
+        })
+      )
+      return
+    }
     const p = getProvider(providerId)
     try {
       await p.interruptTurn(activeThreadId, currentTurnId)
