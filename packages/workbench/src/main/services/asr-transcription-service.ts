@@ -1,8 +1,9 @@
-const ASR_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions'
+import { DEFAULT_ASR_BASE_URL } from '../../shared/app-settings'
 
 export type TranscribeAudioInput = {
   apiKey: string
   model: string
+  baseUrl?: string
   audio: Buffer
   fileName: string
   mimeType: string
@@ -21,6 +22,8 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
     return { ok: false, message: 'Recording is empty.' }
   }
 
+  const endpoint = (input.baseUrl?.trim() || DEFAULT_ASR_BASE_URL).replace(/\/+$/, '')
+
   const form = new FormData()
   form.append('model', input.model.trim() || 'glm-asr-2512')
   form.append('stream', 'false')
@@ -28,7 +31,7 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
 
   let response: Response
   try {
-    response = await fetch(ASR_ENDPOINT, {
+    response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`

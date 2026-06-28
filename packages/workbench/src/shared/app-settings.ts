@@ -72,10 +72,12 @@ export type NotificationConfigV1 = {
 }
 
 export const DEFAULT_ASR_MODEL = 'glm-asr-2512'
+export const DEFAULT_ASR_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions'
 
 export type AsrSettingsV1 = {
   apiKey: string
   model: string
+  baseUrl: string
 }
 
 export type ClawSkillSettingsV1 = {

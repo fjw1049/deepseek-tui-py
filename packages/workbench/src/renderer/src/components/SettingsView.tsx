@@ -56,6 +56,7 @@ import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
 import { PetSprite } from './pet/PetSprite'
+import { FieldHelpPopover } from './channels/FieldHelpPopover'
 import type { UsageRange } from '@shared/usage-ledger'
 import { usePersistentUsage } from '../hooks/use-persistent-usage'
 
@@ -141,7 +142,11 @@ export function SettingsView(): ReactElement {
   const [usageRange, setUsageRange] = useState<UsageRange>('30d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
-  const [asrForm, setAsrForm] = useState<AsrSettingsV1>({ apiKey: '', model: 'glm-asr-2512' })
+  const [asrForm, setAsrForm] = useState<AsrSettingsV1>({
+    apiKey: '',
+    model: 'glm-asr-2512',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions'
+  })
   const [asrConfigPath, setAsrConfigPath] = useState('~/.deepseek/config.toml')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
@@ -930,35 +935,6 @@ export function SettingsView(): ReactElement {
                 />
                 <SettingRow
                   layout="stacked"
-                  title={t('asrApiKey')}
-                  description={t('asrApiKeyDesc', { path: asrConfigPath })}
-                  control={
-                    <SecretInput
-                      value={asrForm.apiKey}
-                      onChange={(value) => updateAsr({ apiKey: value })}
-                      visible={showAsrKey}
-                      onToggleVisibility={() => setShowAsrKey((value) => !value)}
-                      placeholder={t('asrApiKeyPlaceholder')}
-                      autoComplete="off"
-                      showLabel={t('showSecret')}
-                      hideLabel={t('hideSecret')}
-                    />
-                  }
-                />
-                <SettingRow
-                  title={t('asrModel')}
-                  description={t('asrModelDesc')}
-                  control={
-                    <input
-                      className="w-full max-w-sm rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                      value={asrForm.model}
-                      onChange={(e) => updateAsr({ model: e.target.value })}
-                      placeholder="glm-asr-2512"
-                    />
-                  }
-                />
-                <SettingRow
-                  layout="stacked"
                   title={t('workspaceRoot')}
                   description={t('workspaceRootDesc')}
                   control={
@@ -1184,7 +1160,9 @@ export function SettingsView(): ReactElement {
               <SettingsCard title={t('sectionModels')}>
                   <SettingRow
                     title={t('configFilePath')}
-                    description={t('configFilePathDesc')}
+                    help={
+                      <FieldHelpPopover title={t('configFilePath')} intro={t('configFilePathDesc')} />
+                    }
                     controlWidth="medium"
                     control={
                       <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
@@ -1196,7 +1174,7 @@ export function SettingsView(): ReactElement {
                   />
                   <SettingRow
                     title={t('apiKey')}
-                    description={t('apiKeyDesc')}
+                    help={<FieldHelpPopover title={t('apiKey')} intro={t('apiKeyDesc')} />}
                     controlWidth="medium"
                     control={
                       <SecretInput
@@ -1214,7 +1192,7 @@ export function SettingsView(): ReactElement {
                   />
                   <SettingRow
                     title={t('baseUrl')}
-                    description={t('baseUrlDesc')}
+                    help={<FieldHelpPopover title={t('baseUrl')} intro={t('baseUrlDesc')} />}
                     controlWidth="medium"
                     control={
                       <input
@@ -1222,6 +1200,65 @@ export function SettingsView(): ReactElement {
                         placeholder={t('baseUrlPlaceholder')}
                         value={form.deepseek.baseUrl}
                         onChange={(e) => update({ deepseek: { baseUrl: e.target.value } })}
+                      />
+                    }
+                  />
+                  <div className="mt-2 flex items-center gap-3 px-4 pt-4">
+                    <span className="text-[12px] font-semibold uppercase tracking-wide text-ds-faint">
+                      {t('asrGroupLabel')}
+                    </span>
+                    <span className="h-px flex-1 bg-ds-border/70" />
+                  </div>
+                  <SettingRow
+                    title={t('asrBaseUrl')}
+                    help={
+                      <FieldHelpPopover
+                        title={t('asrBaseUrl')}
+                        intro={t('asrBaseUrlDesc', { path: asrConfigPath })}
+                      />
+                    }
+                    controlWidth="medium"
+                    control={
+                      <input
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        value={asrForm.baseUrl}
+                        onChange={(e) => updateAsr({ baseUrl: e.target.value })}
+                        placeholder={t('asrBaseUrlPlaceholder')}
+                      />
+                    }
+                  />
+                  <SettingRow
+                    title={t('asrApiKey')}
+                    help={
+                      <FieldHelpPopover
+                        title={t('asrApiKey')}
+                        intro={t('asrApiKeyDesc', { path: asrConfigPath })}
+                      />
+                    }
+                    controlWidth="medium"
+                    control={
+                      <SecretInput
+                        value={asrForm.apiKey}
+                        onChange={(value) => updateAsr({ apiKey: value })}
+                        visible={showAsrKey}
+                        onToggleVisibility={() => setShowAsrKey((value) => !value)}
+                        placeholder={t('asrApiKeyPlaceholder')}
+                        autoComplete="off"
+                        showLabel={t('showSecret')}
+                        hideLabel={t('hideSecret')}
+                      />
+                    }
+                  />
+                  <SettingRow
+                    title={t('asrModel')}
+                    help={<FieldHelpPopover title={t('asrModel')} intro={t('asrModelDesc')} />}
+                    controlWidth="medium"
+                    control={
+                      <input
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        value={asrForm.model}
+                        onChange={(e) => updateAsr({ model: e.target.value })}
+                        placeholder="glm-asr-2512"
                       />
                     }
                   />
@@ -1511,6 +1548,7 @@ const settingControlWidthClass = {
 function SettingRow({
   title,
   description,
+  help,
   control,
   wideControl = false,
   relaxed = false,
@@ -1520,6 +1558,7 @@ function SettingRow({
 }: {
   title: string
   description?: ReactNode
+  help?: ReactNode
   control: ReactNode
   wideControl?: boolean
   relaxed?: boolean
@@ -1548,11 +1587,18 @@ function SettingRow({
       </div>
     ) : null
 
+  const titleNode = (
+    <div className="flex items-center gap-1 text-[14px] font-semibold text-ds-ink">
+      <span>{title}</span>
+      {help}
+    </div>
+  )
+
   if (layout === 'stacked') {
     return (
       <div className="flex flex-col gap-4 px-4 py-5">
         <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
+          {titleNode}
           {descriptionNode}
         </div>
         <div className="w-full min-w-0">{control}</div>
@@ -1582,7 +1628,7 @@ function SettingRow({
               : 'flex-1'
         }`}
       >
-        <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
+        {titleNode}
         {descriptionNode}
       </div>
       <div

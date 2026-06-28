@@ -67,7 +67,8 @@ export const feishuConfigPayloadSchema = z
 export const asrConfigPayloadSchema = z
   .object({
     apiKey: z.string().trim().max(500),
-    model: z.string().trim().min(1).max(128)
+    model: z.string().trim().min(1).max(128),
+    baseUrl: z.string().trim().max(500)
   })
   .strict()
 

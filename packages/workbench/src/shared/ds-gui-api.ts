@@ -246,6 +246,7 @@ export type AsrConfigFileResult = {
   config: {
     apiKey: string
     model: string
+    baseUrl: string
   }
 }
 

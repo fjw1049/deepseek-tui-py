@@ -384,6 +384,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     return transcribeAudio({
       apiKey: config.apiKey,
       model: config.model,
+      baseUrl: config.baseUrl,
       audio,
       mimeType: request.mimeType ?? 'audio/wav',
       fileName: request.fileName ?? 'recording.wav'
@@ -927,7 +928,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('git:working-changes', async (_, workspaceRoot: unknown) => {
     const root = parseIpcPayload('git:working-changes', workspaceRootSchema, workspaceRoot)
     const payload = await getGitWorkingChanges(root)
-    if (!payload.ok) {
+    // `not_git_repo` / `no_workspace` are expected, benign states (the folder
+    // simply isn't a Git repo), not failures — logging them spams the log on
+    // every poll. Only surface genuine Git failures.
+    if (!payload.ok && payload.reason !== 'not_git_repo' && payload.reason !== 'no_workspace') {
       logError('git-working-changes', 'Failed to load Git working changes', {
         reason: payload.reason,
         message: payload.message,

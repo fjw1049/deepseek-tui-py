@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises'
-import { DEFAULT_ASR_MODEL, type AsrSettingsV1 } from '../shared/app-settings'
+import { DEFAULT_ASR_BASE_URL, DEFAULT_ASR_MODEL, type AsrSettingsV1 } from '../shared/app-settings'
 import { parseAsrSettingsFromToml } from '../shared/asr-config'
 import { upsertTomlSections } from '../shared/toml-section'
 import { resolveDeepseekConfigPath } from './deepseek-paths'
@@ -7,7 +7,8 @@ import { resolveDeepseekConfigPath } from './deepseek-paths'
 function emptyAsrConfig(): AsrSettingsV1 {
   return {
     apiKey: '',
-    model: DEFAULT_ASR_MODEL
+    model: DEFAULT_ASR_MODEL,
+    baseUrl: DEFAULT_ASR_BASE_URL
   }
 }
 
@@ -35,10 +36,12 @@ async function writeConfigAt(path: string, config: AsrSettingsV1): Promise<void>
 
   const apiKey = config.apiKey.trim()
   const model = config.model.trim() || DEFAULT_ASR_MODEL
+  const baseUrl = config.baseUrl.trim() || DEFAULT_ASR_BASE_URL
   const next = upsertTomlSections(content, {
     asr: {
       api_key: apiKey,
-      model
+      model,
+      base_url: baseUrl
     }
   })
 
