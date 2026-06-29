@@ -1,4 +1,4 @@
-export { ToolCard, type ToolCardProps } from './tool-card'
+export { ToolCard, type ToolCardProps, SHELL_TOOL_NAMES } from './tool-card'
 export {
   buildToolRenderContext,
   type ToolRenderContext,

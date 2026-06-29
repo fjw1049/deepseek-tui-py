@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../../agent/types'
 import {
   findFallbackFinalAnswer,
+  groupProcessRows,
   isSubagentOrchestrationToolName,
   placeAssistantContentBlock,
   reasoningDetailTextFromBlocks,
@@ -79,7 +80,7 @@ describe('isSubagentOrchestrationToolName', () => {
 })
 
 describe('placeAssistantContentBlock', () => {
-  it('hides mid-turn prefaces from the work trace when a final answer exists', () => {
+  it('keeps mid-turn prefaces in the work trace of a finished turn', () => {
     const processBlocks: ChatBlock[] = []
     const answerBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
     const preface = {
@@ -120,8 +121,35 @@ describe('placeAssistantContentBlock', () => {
       answerBlocks
     )
 
-    expect(processBlocks).toHaveLength(0)
+    expect(processBlocks).toEqual([preface])
     expect(answerBlocks).toEqual([finalBlock])
+  })
+
+  it('shows mid-turn prefaces in the work trace while the turn is processing', () => {
+    const processBlocks: ChatBlock[] = []
+    const answerBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
+    const preface = {
+      kind: 'assistant' as const,
+      id: 'preface',
+      text: '开始探索代码库结构。',
+      agentSegment: 'mid_turn_preface' as const
+    }
+
+    placeAssistantContentBlock(
+      preface,
+      preface,
+      {
+        hasExplicitFinalAnswer: false,
+        isProcessing: true,
+        index: 0,
+        trailingAssistantContentStart: 99
+      },
+      processBlocks,
+      answerBlocks
+    )
+
+    expect(processBlocks).toEqual([preface])
+    expect(answerBlocks).toHaveLength(0)
   })
 })
 
@@ -249,6 +277,105 @@ describe('ToolRendererRegistry', () => {
     expect(running.state).toBe('running')
     expect(failed.state).toBe('error')
     expect(done.state).toBe('success')
+  })
+})
+
+describe('groupProcessRows', () => {
+  function toolBlock(id: string, name: string, overrides: Partial<ToolBlock> = {}): ToolBlock {
+    return {
+      kind: 'tool',
+      id,
+      summary: `${name}: x`,
+      status: 'success',
+      toolKind: 'tool_call',
+      ...overrides
+    }
+  }
+
+  it('folds a run of consecutive same-name read-only probes into one batch', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file'),
+      toolBlock('t3', 'read_file'),
+      toolBlock('t4', 'read_file'),
+      toolBlock('t5', 'read_file')
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'read_file' })
+    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(5)
+  })
+
+  it('keeps a lone probe as a plain block row', () => {
+    const rows = groupProcessRows([toolBlock('t1', 'read_file')])
+    expect(rows).toEqual([{ type: 'block', block: expect.objectContaining({ id: 't1' }) }])
+  })
+
+  it('breaks the batch on a different tool name', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file'),
+      toolBlock('t3', 'list_dir'),
+      toolBlock('t4', 'list_dir')
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'read_file' })
+    expect(rows[1]).toMatchObject({ type: 'tool_batch', toolName: 'list_dir' })
+  })
+
+  it('breaks the batch on an error block and keeps the error on its own row', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file'),
+      toolBlock('t3', 'read_file', { status: 'error' }),
+      toolBlock('t4', 'read_file')
+    ]
+    const rows = groupProcessRows(blocks)
+    // batch(t1,t2) + error block(t3) + lone block(t4)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch' })
+    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(2)
+    expect(rows[1]).toMatchObject({ type: 'block' })
+    expect(rows[1]!.type === 'block' && rows[1].block.id).toBe('t3')
+    expect(rows[2]).toMatchObject({ type: 'block' })
+    expect(rows[2]!.type === 'block' && rows[2].block.id).toBe('t4')
+  })
+
+  it('never folds file changes or shell commands', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'write_file', { toolKind: 'file_change' }),
+      toolBlock('t2', 'write_file', { toolKind: 'file_change' }),
+      toolBlock('t3', 'exec_shell', { toolKind: 'command_execution' }),
+      toolBlock('t4', 'exec_shell', { toolKind: 'command_execution' })
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows).toHaveLength(4)
+    expect(rows.every((row) => row.type === 'block')).toBe(true)
+  })
+
+  it('keeps non-tool blocks as block rows and uses them as batch boundaries', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file'),
+      { kind: 'reasoning', id: 'r1', text: 'thinking' },
+      toolBlock('t3', 'read_file'),
+      toolBlock('t4', 'read_file')
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch' })
+    expect(rows[1]).toMatchObject({ type: 'block', block: { kind: 'reasoning' } })
+    expect(rows[2]).toMatchObject({ type: 'tool_batch' })
+  })
+
+  it('excludes subagent orchestration tools from batching', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'agent_spawn'),
+      toolBlock('t2', 'agent_spawn')
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows.every((row) => row.type === 'block')).toBe(true)
   })
 })
 

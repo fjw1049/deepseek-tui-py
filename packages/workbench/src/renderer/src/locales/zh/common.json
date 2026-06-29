@@ -935,6 +935,7 @@
   "subagentStatusFailed": "失败",
   "subagentStatusCancelled": "已取消",
   "subagentStatusToolFailed": "工具失败",
+  "toolBatchTitle": "{{label}} · {{count}} 项",
   "subagentSummaryTitle": "Subagent {{count}} 个",
   "subagentSummaryRunning": "{{count}} 个运行中",
   "subagentSummaryCompleted": "{{count}} 个完成",

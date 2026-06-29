@@ -88,6 +88,7 @@ import {
 } from '../feishu-register-service'
 import { restartDeepseekChildIfRunning } from '../deepseek-process'
 import {
+  canonicalPath,
   expandHomePath,
   listEditorsResult,
   listWorkspaceDirectory,
@@ -432,11 +433,11 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     if (result.canceled) {
       return { ok: true as const, paths: [] as const }
     }
-    const resolvedRoot = resolve(workspaceRoot)
+    const resolvedRoot = await canonicalPath(resolve(workspaceRoot))
     const paths: string[] = []
     const skipped: string[] = []
     for (const picked of result.filePaths) {
-      const abs = resolve(picked)
+      const abs = await canonicalPath(resolve(picked))
       const rel = relative(resolvedRoot, abs)
       if (!rel || rel.startsWith('..') || rel.startsWith('/')) {
         skipped.push(picked)

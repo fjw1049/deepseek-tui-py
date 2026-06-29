@@ -10,6 +10,12 @@ describe('sanitizeReasoningPlaceholders', () => {
     ).toBe('before\nafter')
   })
 
+  it('strips an inline placeholder that prefixes real text', () => {
+    expect(sanitizeReasoningPlaceholders('(reasoning omitted)现在看起来已经完成了')).toBe(
+      '现在看起来已经完成了'
+    )
+  })
+
   it('keeps normal text intact', () => {
     expect(sanitizeReasoningPlaceholders('real reasoning\nwith details')).toBe(
       'real reasoning\nwith details'

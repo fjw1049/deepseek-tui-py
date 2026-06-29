@@ -15,7 +15,7 @@ export interface ToolCardProps {
 
 const LazyFullOutput = lazy(() => import('./lazy-full-output'))
 
-const SHELL_TOOL_NAMES = new Set([
+export const SHELL_TOOL_NAMES = new Set([
   'exec_shell',
   'exec_shell_wait',
   'exec_shell_interact',

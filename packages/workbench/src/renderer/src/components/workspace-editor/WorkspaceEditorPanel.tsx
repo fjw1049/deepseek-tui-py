@@ -287,18 +287,6 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                   )}
                 </div>
               </div>
-              {activePatch ? (
-                <div className="flex shrink-0 items-center gap-3 border-b border-ds-border-muted/30 px-3 py-1 text-[11px] text-ds-faint">
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-sm bg-[var(--ds-diff-added-soft)] ring-1 ring-[var(--ds-diff-added)]" />
-                    {t('workspaceEditorDiffAddedLegend')}
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-sm bg-[var(--ds-diff-removed-soft)] ring-1 ring-[var(--ds-diff-removed)]" />
-                    {t('workspaceEditorDiffRemovedLegend')}
-                  </span>
-                </div>
-              ) : null}
               {activeTab.error ? (
                 <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
                   {activeTab.error}

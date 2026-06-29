@@ -191,7 +191,8 @@ function appendLiveAssistantBlock(
   blocks: ChatBlock[],
   text: string,
   itemId?: string,
-  createdAt?: string
+  createdAt?: string,
+  agentSegment?: 'mid_turn_preface' | 'final_answer'
 ): ChatBlock[] {
   if (!text.trim()) return blocks
   const now = Date.now()
@@ -201,7 +202,8 @@ function appendLiveAssistantBlock(
       kind: 'assistant' as const,
       id: itemId ?? `a-${now}`,
       createdAt: createdAt ?? new Date(now).toISOString(),
-      text
+      text,
+      ...(agentSegment ? { agentSegment } : {})
     }
   ]
 }
@@ -922,9 +924,20 @@ function buildThreadEventSink(
           }
         }
         if (kind === 'agent_message' && s.liveAssistant.trim()) {
-          // Mid-turn model prefaces are persisted server-side only; phase_bridge
-          // narration is patched onto reasoning via onPhaseNarration.
-          return { liveAssistant: '' }
+          // Any agent_message reaching here is a mid-turn preface (final answers
+          // route through onFinalAnswer). Persist it inline so it renders above
+          // its tool batch in real time. Use the real itemId so the server-side
+          // copy replaces it cleanly on reload.
+          return {
+            blocks: appendLiveAssistantBlock(
+              s.blocks,
+              s.liveAssistant,
+              itemId,
+              createdAt,
+              'mid_turn_preface'
+            ),
+            liveAssistant: ''
+          }
         }
         return {}
       })
@@ -946,18 +959,32 @@ function buildThreadEventSink(
           (block) => block.kind === 'reasoning' && block.id === reasoningItemId
         )
         if (!hasBlock) {
-          return {
-            blocks: [
-              ...s.blocks,
-              {
-                kind: 'reasoning' as const,
-                id: reasoningItemId,
-                createdAt: new Date().toISOString(),
-                text: '',
-                narration: trimmed
-              }
-            ]
+          // The narration is the "承上启下" intro for the batch of tools this
+          // phase runs. It arrives from a phase_bridge event that the backend
+          // emits at phase *close*, so by now the phase's tool rows may have
+          // already streamed in and been appended. Appending the narration at
+          // the end would render it *below* its own tools. Instead, insert it
+          // just before the trailing run of tool/workflow blocks so the line
+          // always sits above the tools it introduces.
+          const narrationBlock = {
+            kind: 'reasoning' as const,
+            id: reasoningItemId,
+            createdAt: new Date().toISOString(),
+            text: '',
+            narration: trimmed
           }
+          let insertAt = s.blocks.length
+          while (insertAt > 0) {
+            const prev = s.blocks[insertAt - 1]
+            if (prev.kind === 'tool' || prev.kind === 'workflow') {
+              insertAt -= 1
+              continue
+            }
+            break
+          }
+          const blocks = s.blocks.slice()
+          blocks.splice(insertAt, 0, narrationBlock)
+          return { blocks }
         }
         return {
           blocks: s.blocks.map((block) =>

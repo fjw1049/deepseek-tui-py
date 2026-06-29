@@ -935,6 +935,7 @@
   "subagentStatusFailed": "Failed",
   "subagentStatusCancelled": "Cancelled",
   "subagentStatusToolFailed": "Tool failed",
+  "toolBatchTitle": "{{label}} × {{count}}",
   "subagentSummaryTitle": "Subagents {{count}}",
   "subagentSummaryRunning": "{{count}} running",
   "subagentSummaryCompleted": "{{count}} done",

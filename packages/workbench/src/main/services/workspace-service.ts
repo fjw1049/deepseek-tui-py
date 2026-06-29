@@ -515,7 +515,7 @@ async function findUniqueFileByBasename(root: string, fileName: string): Promise
   return matches[0] ?? null
 }
 
-async function canonicalPath(targetPath: string): Promise<string> {
+export async function canonicalPath(targetPath: string): Promise<string> {
   try {
     return await realpath(targetPath)
   } catch {

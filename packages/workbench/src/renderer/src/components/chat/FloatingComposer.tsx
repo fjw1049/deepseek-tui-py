@@ -205,14 +205,33 @@ export function FloatingComposer({
         : mode === 'workflow'
           ? t('composerModeWorkflow')
           : t('composerModeAgent')
-  const ModeIcon =
-    mode === 'plan'
-      ? ListTodo
-      : mode === 'ask'
-        ? MessageCircleQuestion
-        : mode === 'workflow'
-          ? Workflow
-          : Bot
+  const modeBadge = {
+    agent: {
+      Icon: Bot,
+      icon: '#4f7cff',
+      gradient: 'linear-gradient(135deg, rgba(79,124,255,0.16), rgba(79,124,255,0.05))',
+      border: 'rgba(79,124,255,0.28)'
+    },
+    plan: {
+      Icon: ListTodo,
+      icon: '#f59e0b',
+      gradient: 'linear-gradient(135deg, rgba(245,158,11,0.18), rgba(245,158,11,0.05))',
+      border: 'rgba(245,158,11,0.30)'
+    },
+    ask: {
+      Icon: MessageCircleQuestion,
+      icon: '#14b8a6',
+      gradient: 'linear-gradient(135deg, rgba(20,184,166,0.18), rgba(20,184,166,0.05))',
+      border: 'rgba(20,184,166,0.30)'
+    },
+    workflow: {
+      Icon: Workflow,
+      icon: '#8b5cf6',
+      gradient: 'linear-gradient(135deg, rgba(139,92,246,0.18), rgba(139,92,246,0.05))',
+      border: 'rgba(139,92,246,0.30)'
+    }
+  }[mode]
+  const ModeBadgeIcon = modeBadge.Icon
 
   const placeholder = !runtimeReady
     ? t('runtimeActionNeedsConnection')
@@ -875,7 +894,7 @@ export function FloatingComposer({
         <div
           ref={shellRef}
             className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col px-4 transition sm:px-5 ${
-              stageCentered ? 'ds-composer-empty gap-1.5 py-2.5' : 'gap-2.5 py-3'
+              stageCentered ? 'ds-composer-empty gap-1.5 py-2.5' : 'gap-1.5 py-2.5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -903,7 +922,7 @@ export function FloatingComposer({
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
             className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              stageCentered ? 'min-h-[48px] py-1.5' : 'min-h-[52px] py-2.5'
+              stageCentered ? 'min-h-[48px] py-1.5' : 'min-h-[48px] py-1.5'
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={placeholder}
             value={input}
@@ -976,7 +995,7 @@ export function FloatingComposer({
             }}
           />
 
-          <div className={`flex items-center gap-2 px-1 ${stageCentered ? 'pb-0' : 'pb-0.5'}`}>
+          <div className={`flex items-center gap-2 pl-6 pr-1 ${stageCentered ? 'pb-0' : 'pb-0'}`}>
             <div className="relative">
               <button
                 type="button"
@@ -1054,21 +1073,19 @@ export function FloatingComposer({
               ) : null}
             </div>
 
-            <button
-              type="button"
-              disabled={!canCompose}
-              onClick={() => {
-                setModelMenuOpen(false)
-                clearAttachNotice()
-                setPlusMenuOpen((open) => !open)
-              }}
-              className="ds-no-drag inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-ds-border bg-ds-card px-3 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
-              title={t('composerModeSection')}
+            <div
+              className="ds-no-drag inline-flex h-8 shrink-0 select-none items-center gap-1.5 rounded-full border px-2.5 text-[13px] font-semibold text-ds-ink"
+              style={{ background: modeBadge.gradient, borderColor: modeBadge.border }}
+              title={modeLabel}
             >
-              <ModeIcon className="h-4 w-4 text-ds-muted" strokeWidth={1.85} />
+              <ModeBadgeIcon
+                className="h-4 w-4 shrink-0"
+                style={{ color: modeBadge.icon }}
+                strokeWidth={2}
+                aria-hidden
+              />
               <span>{modeLabel}</span>
-              <ChevronDown className="h-3.5 w-3.5 text-ds-faint" strokeWidth={1.8} />
-            </button>
+            </div>
 
             <div className="min-w-0 flex-1" />
 
@@ -1116,18 +1133,6 @@ export function FloatingComposer({
               ) : null}
             </div>
 
-            {busy ? (
-              <button
-                type="button"
-                onClick={onInterrupt}
-                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
-                aria-label={t('interrupt')}
-                title={t('interrupt')}
-              >
-                <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
-              </button>
-            ) : null}
-
             {isMediaCaptureSupported() ? (
               <button
                 type="button"
@@ -1153,16 +1158,28 @@ export function FloatingComposer({
               </button>
             ) : null}
 
-            <button
-              type="button"
-              disabled={primaryActionDisabled}
-              onClick={handlePrimaryAction}
-              className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none"
-              aria-label={primaryActionLabel}
-              title={primaryActionLabel}
-            >
-              <Send className="h-4 w-4" strokeWidth={2.2} />
-            </button>
+            {busy && !activeHighlightedSlashCommand && voicePhase === 'idle' ? (
+              <button
+                type="button"
+                onClick={onInterrupt}
+                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
+                aria-label={t('interrupt')}
+                title={t('interrupt')}
+              >
+                <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={primaryActionDisabled}
+                onClick={handlePrimaryAction}
+                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none"
+                aria-label={primaryActionLabel}
+                title={primaryActionLabel}
+              >
+                <Send className="h-4 w-4" strokeWidth={2.2} />
+              </button>
+            )}
           </div>
         </div>
       </div>

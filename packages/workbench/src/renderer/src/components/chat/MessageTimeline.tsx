@@ -1,4 +1,5 @@
 import type { ReactElement, RefObject } from 'react'
+import type { LucideIcon } from 'lucide-react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
@@ -11,10 +12,12 @@ import {
   ChevronRight,
   Copy,
   FileEdit,
+  FileText,
   FolderOpen,
   GitFork,
   Loader2,
   PencilLine,
+  Search,
   Terminal,
   Wrench,
   X
@@ -43,7 +46,13 @@ import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
 import { WorkflowBlock } from './WorkflowBlock'
-import { ToolCard, registerToolRenderers, buildToolRenderContext } from './tool'
+import {
+  ToolCard,
+  registerToolRenderers,
+  buildToolRenderContext,
+  humanizeToolName,
+  SHELL_TOOL_NAMES
+} from './tool'
 import { ToolCopyButton } from './tool/primitives'
 
 // Register the built-in tool renderers once at module load. Idempotent: the
@@ -652,9 +661,11 @@ export function placeAssistantContentBlock(
   nextProcessBlocks: ChatBlock[],
   nextAssistantContentBlocks: AssistantContentBlock[]
 ): void {
-  // Mid-turn model prefaces are persisted for debugging but not shown in the
-  // work trace; phase_bridge narration under reasoning is the user-facing line.
+  // Mid-turn model prefaces are the storyline the user follows while tools
+  // execute. Keep them in the work trace for finished turns too, so reopening
+  // history shows the same throughline the user saw live.
   if (block.agentSegment === 'mid_turn_preface') {
+    nextProcessBlocks.push(contentBlock)
     return
   }
   if (options.hasExplicitFinalAnswer) {
@@ -808,6 +819,17 @@ function MessageTurn({
       nextProcessBlocks.push({ kind: 'reasoning', id: 'live-reasoning', text: liveProcessText })
     }
 
+    // The in-flight `agent_message` streams into `liveContent` for BOTH a
+    // mid-turn preface and the final answer (deltas carry no item id, and the
+    // backend itself only classifies the segment at completion). Stream it live
+    // inside the work trace in the small process style. When the segment
+    // settles, the store clears `liveAssistant`: a preface persists as a small
+    // trace row, and a final answer arrives through `onFinalAnswer` to render as
+    // the big bubble below (`showLiveAssistant`).
+    if (hasLiveAssistantStream) {
+      nextProcessBlocks.push({ kind: 'assistant', id: 'live-assistant', text: liveContent })
+    }
+
     const nextTurnFileChanges = !isProcessing
       ? turn.blocks.flatMap((block): ToolBlock[] => {
           if (
@@ -848,7 +870,7 @@ function MessageTurn({
       turnFileChanges: nextTurnFileChanges,
       systemBlocks: nextSystemBlocks
     }
-  }, [turn.blocks, isProcessing, liveProcessText, workspaceRoot])
+  }, [turn.blocks, isProcessing, liveProcessText, hasLiveAssistantStream, liveContent, workspaceRoot])
 
   const showLiveAssistant = !isProcessing && !!liveContent.trim()
 
@@ -1323,6 +1345,66 @@ function visibleExecutionBlocks(
   )
 }
 
+type ToolProcessBlock = Extract<ChatBlock, { kind: 'tool' }>
+
+/**
+ * Whether a process block is a successful read-only probe (read_file, list_dir,
+ * grep…) that can be folded into a batch. Mirrors the `!isHeavy` rule in
+ * tool-card.tsx: running / error / file mutations / shell commands stay on their
+ * own row. Todo and subagent-orchestration tool calls are excluded so their
+ * dedicated panels keep working.
+ */
+function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
+  if (block.kind !== 'tool') return false
+  if (block.status !== 'success') return false
+  if (block.toolKind === 'file_change' || block.toolKind === 'command_execution') return false
+  const name = toolNameFromProcessBlock(block)
+  if (SHELL_TOOL_NAMES.has(name)) return false
+  if (isTodoToolBlock(block)) return false
+  if (isSubagentOrchestrationToolName(name)) return false
+  return true
+}
+
+export type RenderRow =
+  | { type: 'block'; block: ChatBlock }
+  | { type: 'tool_batch'; toolName: string; blocks: ToolProcessBlock[] }
+
+/**
+ * Fold the visible execution blocks into render rows, collapsing runs of ≥2
+ * consecutive same-name read-only probes into a single `tool_batch`. A run of
+ * one stays a plain block row, and any non-mergeable block (or a different tool
+ * name) ends the current run.
+ */
+export function groupProcessRows(visible: ChatBlock[]): RenderRow[] {
+  const rows: RenderRow[] = []
+  let buffer: ToolProcessBlock[] = []
+  let bufferName = ''
+
+  const flush = (): void => {
+    if (buffer.length >= 2) {
+      rows.push({ type: 'tool_batch', toolName: bufferName, blocks: buffer })
+    } else if (buffer.length === 1) {
+      rows.push({ type: 'block', block: buffer[0]! })
+    }
+    buffer = []
+    bufferName = ''
+  }
+
+  for (const block of visible) {
+    if (isMergeableProbeBlock(block)) {
+      const name = toolNameFromProcessBlock(block)
+      if (buffer.length > 0 && name !== bufferName) flush()
+      bufferName = name
+      buffer.push(block)
+      continue
+    }
+    flush()
+    rows.push({ type: 'block', block })
+  }
+  flush()
+  return rows
+}
+
 function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(true)
@@ -1398,6 +1480,70 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         <SubagentDetailDialog block={detailBlock} onClose={() => setDetailBlock(null)} />
       ) : null}
     </section>
+  )
+}
+
+function pickToolBatchIcon(toolName: string): LucideIcon {
+  if (toolName === 'list_dir') return FolderOpen
+  if (
+    toolName === 'grep' ||
+    toolName === 'grep_files' ||
+    toolName === 'search_files' ||
+    toolName === 'glob_file_search' ||
+    toolName === 'file_search'
+  ) {
+    return Search
+  }
+  if (toolName === 'read_file') return FileText
+  return Wrench
+}
+
+/**
+ * A folded batch of consecutive same-name read-only probes (e.g. "读取文件 · 5
+ * 项"). Collapsed by default with neutral styling so the work trace stays calm;
+ * expanding reveals each call as its regular lightweight `ToolCard` row.
+ */
+function ToolBatchPanel({
+  toolName,
+  blocks
+}: {
+  toolName: string
+  blocks: ToolProcessBlock[]
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const [expanded, setExpanded] = useState(false)
+  const Icon = pickToolBatchIcon(toolName)
+  const label = humanizeToolName(toolName) || toolName
+
+  return (
+    <div className="overflow-hidden rounded-[12px] border border-ds-border-muted/50 bg-ds-card/40">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="group flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-ds-hover/40"
+      >
+        <Icon className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+        <span className="min-w-0 flex-1 text-[13.5px] leading-6 text-ds-muted">
+          {t('toolBatchTitle', { label, count: blocks.length })}
+        </span>
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+        ) : (
+          <ChevronRight
+            className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
+            strokeWidth={1.8}
+          />
+        )}
+      </button>
+      {expanded ? (
+        <div className="flex flex-col gap-1.5 border-t border-ds-border-muted/40 px-2.5 py-2">
+          {blocks.map((block) => (
+            <ToolCard key={block.id} block={block} />
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1583,19 +1729,28 @@ function ProcessStream({
   subagentSummary?: SubagentTurnSummary | null
 }): ReactElement {
   const visible = visibleExecutionBlocks(blocks, todoSession, subagentSummary)
+  const rows = groupProcessRows(visible)
 
   return (
     <div className="ds-process-rail flex flex-col gap-1.5 pt-1">
-      {visible.map((block) => (
-        <ProcessStreamEntry
-          key={block.id}
-          block={block}
-          processing={processing}
-          todoSession={todoSession}
-          todoEvents={todoEvents}
-          subagentSummary={subagentSummary}
-        />
-      ))}
+      {rows.map((row) =>
+        row.type === 'tool_batch' ? (
+          <ToolBatchPanel
+            key={`batch-${row.blocks[0]!.id}`}
+            toolName={row.toolName}
+            blocks={row.blocks}
+          />
+        ) : (
+          <ProcessStreamEntry
+            key={row.block.id}
+            block={row.block}
+            processing={processing}
+            todoSession={todoSession}
+            todoEvents={todoEvents}
+            subagentSummary={subagentSummary}
+          />
+        )
+      )}
     </div>
   )
 }
@@ -1663,10 +1818,22 @@ function ProcessStreamEntry({
     return <ReasoningEntry block={block} processing={processing} />
   }
   if (block.kind === 'assistant') {
-    // Assistant content that landed in the work trace (interstitial
-    // final-answer segments). Mid-turn prefaces are dropped upstream in
-    // placeAssistantContentBlock; the model's 承上启下 line surfaces as
-    // reasoning narration instead.
+    // The model's 承上启下 storyline line written before a tool batch. Render
+    // it like the reasoning narration line (Bot + muted text) so it reads as
+    // the throughline the user follows while tools execute.
+    if (block.agentSegment === 'mid_turn_preface') {
+      return (
+        <div className="flex items-start gap-1.5 py-0.5">
+          <Bot
+            className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse"
+            strokeWidth={1.8}
+          />
+          <p className="text-[13.5px] leading-6 text-ds-muted">{block.text}</p>
+        </div>
+      )
+    }
+    // Other assistant content that landed in the work trace (interstitial
+    // final-answer segments).
     return (
       <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
         <AssistantMarkdown text={block.text} streaming={processing} />

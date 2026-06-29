@@ -48,7 +48,7 @@ class ProviderConfig(BaseModel):
 
 
 class ProcessNarrationConfig(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
     model: str | None = None
     min_chars: int = 80
     min_interval_s: float = 3.0
