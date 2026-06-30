@@ -14,12 +14,14 @@ import type { NormalizedThread } from '../../agent/types'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { SidebarProjectsSection } from './SidebarProjectsSection'
+import { SidebarChatsSection } from './SidebarChatsSection'
 
 type Props = {
   threads: NormalizedThread[]
   activeThreadId: string | null
   runtimeReady: boolean
   onSelectThread: (id: string) => void
+  onOpenThreadTerminal: (id: string) => Promise<void>
   onDeleteThread: (id: string) => Promise<void>
   onCompactThread: (id: string) => Promise<void>
   onNewChat: () => void
@@ -34,6 +36,7 @@ export function Sidebar({
   activeThreadId,
   runtimeReady,
   onSelectThread,
+  onOpenThreadTerminal,
   onDeleteThread,
   onCompactThread,
   onNewChat,
@@ -52,6 +55,8 @@ export function Sidebar({
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
+  const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
+  const togglePin = useChatStore((s) => s.togglePin)
   const chatActive = route === 'chat'
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
@@ -128,14 +133,27 @@ export function Sidebar({
         busy={busy}
         watchTurnCompletion={watchTurnCompletion}
         unreadThreadIds={unreadThreadIds}
+        pinnedThreadIds={pinnedThreadIds}
         locale={i18n.language}
+        onTogglePin={togglePin}
         onPickWorkspace={() => void chooseWorkspace()}
         onRemoveWorkspace={deleteWorkspace}
         onCreateThreadInWorkspace={onNewChatInWorkspace}
         onImportSession={onImportSession}
         onSelectThread={onSelectThread}
+        onOpenThreadTerminal={onOpenThreadTerminal}
         onDeleteThread={onDeleteThread}
         onCompactThread={onCompactThread}
+        t={t}
+      />
+
+      <SidebarChatsSection
+        onNewChat={onNewChat}
+        onSelectThread={onSelectThread}
+        onOpenThreadTerminal={onOpenThreadTerminal}
+        onDeleteThread={onDeleteThread}
+        onCompactThread={onCompactThread}
+        onTogglePin={togglePin}
         t={t}
       />
 

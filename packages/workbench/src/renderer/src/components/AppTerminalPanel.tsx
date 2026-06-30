@@ -6,7 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { readTerminalFontFamily } from '../lib/apply-theme'
-import { workspaceLabelFromPath } from '../lib/workspace-label'
+import { terminalLabelFromPath } from '../lib/workspace-label'
 import {
   closeTerminalSessionById,
   createTerminalSessionForWorkspace,
@@ -87,7 +87,7 @@ export function AppTerminalPanel({
   const trimmedWorkspaceRoot = workspaceRoot.trim()
 
   const baseLabel = useMemo(() => {
-    const label = workspaceLabelFromPath(workspaceRoot)
+    const label = terminalLabelFromPath(workspaceRoot)
     return label || t('terminalPanelTitle')
   }, [t, workspaceRoot])
 

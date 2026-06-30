@@ -1,4 +1,5 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
+import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
@@ -30,6 +31,7 @@ import {
   rootPathSchema,
   runtimeRequestPayloadSchema,
   shellOpenExternalUrlSchema,
+  shellOpenTerminalPathSchema,
   skillSaveFilePayloadSchema,
   terminalCreateOptionsSchema,
   terminalInputPayloadSchema,
@@ -141,6 +143,27 @@ function parseIpcPayload<T>(channel: string, schema: z.ZodType<T>, payload: unkn
 }
 
 const settingsPatchSchema = z.object({}).passthrough()
+
+/**
+ * Open the platform terminal at the given filesystem path. macOS uses
+ * `open -a Terminal`; Windows opens a cmd window in the directory; Linux is
+ * best-effort via `x-terminal-emulator`. Errors are swallowed so a missing
+ * terminal never crashes the IPC call.
+ */
+async function openTerminalAtPath(target: string): Promise<void> {
+  await new Promise<void>((resolveSpawn) => {
+    const done = (): void => resolveSpawn()
+    if (process.platform === 'darwin') {
+      execFile('open', ['-a', 'Terminal', target], done)
+      return
+    }
+    if (process.platform === 'win32') {
+      execFile('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${target}"`], done)
+      return
+    }
+    execFile('x-terminal-emulator', ['--working-directory', target], done)
+  })
+}
 
 function trimDiagnosticBody(body: string, max = 2_000): string {
   const text = body.trim()
@@ -1030,6 +1053,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('shell:open-external', async (_, url: unknown) => {
     const validatedUrl = parseIpcPayload('shell:open-external', shellOpenExternalUrlSchema, url)
     await shell.openExternal(validatedUrl)
+  })
+  ipcMain.handle('shell:open-terminal', async (_, path: unknown) => {
+    const target = parseIpcPayload('shell:open-terminal', shellOpenTerminalPathSchema, path)
+    await openTerminalAtPath(target)
   })
   ipcMain.handle('notification:turn-complete', async (_, payload: unknown) =>
     showTurnCompleteNotification(

@@ -8,6 +8,9 @@ import { decodeModelRef } from '@shared/model-ref'
 
 const COMPOSER_MODEL_STORAGE_KEY = 'deepseekgui.composerModel'
 const TURN_MODEL_STORAGE_KEY = 'deepseekgui.turnModelLabel'
+const PINNED_THREADS_STORAGE_KEY = 'deepseekgui.pinnedThreads'
+
+export const PINNED_THREADS_LIMIT = 10
 
 export function readStoredComposerModel(allowedIds: readonly string[]): string {
   try {
@@ -99,6 +102,26 @@ function loadTurnModelMap(): Record<string, string> {
 function saveTurnModelMap(map: Record<string, string>): void {
   try {
     localStorage.setItem(TURN_MODEL_STORAGE_KEY, JSON.stringify(map))
+  } catch {
+    /* localStorage may be unavailable (private window, quota) */
+  }
+}
+
+export function loadPinnedThreadIds(): string[] {
+  try {
+    const raw = localStorage.getItem(PINNED_THREADS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((id): id is string => typeof id === 'string' && id.length > 0)
+  } catch {
+    return []
+  }
+}
+
+export function savePinnedThreadIds(ids: string[]): void {
+  try {
+    localStorage.setItem(PINNED_THREADS_STORAGE_KEY, JSON.stringify(ids))
   } catch {
     /* localStorage may be unavailable (private window, quota) */
   }

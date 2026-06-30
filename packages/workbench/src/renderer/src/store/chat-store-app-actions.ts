@@ -9,7 +9,7 @@ import {
   workspaceKey
 } from '../lib/git-commit-selection'
 import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
-import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, LegacySettingsRouteSection, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
+import type { ChatState, ChatStoreGet, ChatStoreSet, LegacySettingsRouteSection, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
 type CreateAppActionsOptions = {
   set: ChatStoreSet
@@ -35,7 +35,6 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
   | 'setRoute'
   | 'openSettings'
   | 'openPlugins'
-  | 'openInitialSetup'
   | 'closeInitialSetup'
   | 'selectInspectorItem'
   | 'syncGitCommitSelection'
@@ -134,10 +133,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       })
     },
 
-    openInitialSetup: (mode: InitialSetupMode = 'required') =>
-      set({ initialSetupOpen: true, initialSetupMode: mode }),
-
-    closeInitialSetup: () => set({ initialSetupOpen: false, initialSetupMode: 'required' }),
+    closeInitialSetup: () => set({ initialSetupOpen: false }),
 
     selectInspectorItem: (id) => set({ inspectorSelectedId: id }),
 

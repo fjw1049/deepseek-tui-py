@@ -25,7 +25,7 @@ import {
 } from '../lib/right-sidebar-state'
 import { closeAllTerminalSessions } from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
-import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { isChatsWorkspace, resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
@@ -569,7 +569,23 @@ export function Workbench(): ReactElement {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault()
         setRoute('chat')
-        void createThread()
+        // Mirror the New Agent button: project-active → inherit; else → chats.
+        // Temp chats live in default_workspace (non-empty), so test isChats.
+        const state = useChatStore.getState()
+        const activeThread = state.activeThreadId
+          ? state.threads.find((thread) => thread.id === state.activeThreadId)
+          : undefined
+        const root = resolveActiveThreadWorkspace(
+          state.activeThreadId,
+          state.threads,
+          state.workspaceRoot
+        )
+        if (root.trim().length > 0 && !isChatsWorkspace(activeThread?.workspace)) {
+          void createThread({ workspaceRoot: root })
+        } else {
+          state.setChatsCollapsed(false)
+          void createThread({ chats: true })
+        }
         return
       }
 
@@ -612,9 +628,31 @@ export function Workbench(): ReactElement {
     void selectThread(id)
   }
 
+  const openThreadTerminal = async (id: string): Promise<void> => {
+    setRoute('chat')
+    if (activeThreadId !== id) await selectThread(id)
+    openRightSidebar('terminal')
+  }
+
   const startNewChat = (): void => {
     setRoute('chat')
-    void createThread()
+    // Context-aware New Agent: when a real project is active the new agent
+    // belongs to that project (inherit its workspace); otherwise it is a
+    // temporary (Chats) thread. Reveal the Chats section so the new temporary
+    // thread is visible even if it was collapsed.
+    // Note: a temporary chat's workspace is `~/.deepseekgui/default_workspace`,
+    // which is non-empty, so test `isChatsWorkspace` (not just an empty root).
+    const activeThread = activeThreadId
+      ? threads.find((thread) => thread.id === activeThreadId)
+      : undefined
+    const inProject =
+      activeWorkspaceRoot.trim().length > 0 && !isChatsWorkspace(activeThread?.workspace)
+    if (inProject) {
+      void createThread({ workspaceRoot: activeWorkspaceRoot })
+    } else {
+      useChatStore.getState().setChatsCollapsed(false)
+      void createThread({ chats: true })
+    }
   }
 
   const startNewChatInWorkspace = (workspaceRoot: string): void => {
@@ -760,6 +798,7 @@ export function Workbench(): ReactElement {
             activeThreadId={activeThreadId}
             runtimeReady={runtimeConnection === 'ready'}
             onSelectThread={openThread}
+            onOpenThreadTerminal={openThreadTerminal}
             onDeleteThread={deleteThread}
             onCompactThread={async (id) => {
               if (activeThreadId !== id) {

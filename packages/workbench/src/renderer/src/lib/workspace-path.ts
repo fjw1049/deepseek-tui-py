@@ -18,6 +18,13 @@ export function isInternalTemporaryWorkspace(path?: string): boolean {
   )
 }
 
+export function isChatsWorkspace(path?: string): boolean {
+  const trimmed = path?.trim() ?? ''
+  if (!trimmed) return true
+  if (isInternalTemporaryWorkspace(trimmed)) return true
+  return normalizePathForMatch(trimmed).endsWith('/.deepseekgui/default_workspace')
+}
+
 export function isClawWorkspacePath(path?: string): boolean {
   const trimmed = path?.trim() ?? ''
   if (!trimmed) return false

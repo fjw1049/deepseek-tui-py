@@ -29,3 +29,18 @@ export function workspaceLabelFromPath(path: string): string {
   const base = parts[parts.length - 1]
   return base || i18n.t('common:workingDirectory')
 }
+
+/**
+ * Terminal tabs show the concrete directory name even for the default
+ * workspace (so temporary chats read "default_workspace" instead of the
+ * generic "工作目录" used in compact chrome). Falls back to the generic title
+ * only when there is no path at all.
+ */
+export function terminalLabelFromPath(path: string): string {
+  const p = path?.trim() ?? ''
+  if (!p) return i18n.t('common:workingDirectory')
+  const normalized = p.replace(/[/\\]+$/, '')
+  const parts = normalized.split(/[/\\]/)
+  const base = parts[parts.length - 1]
+  return base || i18n.t('common:workingDirectory')
+}

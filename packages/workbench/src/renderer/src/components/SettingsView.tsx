@@ -131,7 +131,6 @@ export function SettingsView(): ReactElement {
   const setRoute = useChatStore((s) => s.setRoute)
   const settingsSection = useChatStore((s) => s.settingsSection)
   const openSettings = useChatStore((s) => s.openSettings)
-  const openInitialSetup = useChatStore((s) => s.openInitialSetup)
   const category: SettingsCategory = settingsSection
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
@@ -649,13 +648,6 @@ export function SettingsView(): ReactElement {
     })()
   }
 
-  const openOnboardingPreview = (): void => {
-    void (async () => {
-      await flushPendingSave()
-      openInitialSetup('preview')
-    })()
-  }
-
   if (loadError) {
     const msg =
       loadError === 'PRELOAD_BRIDGE' ? t('preloadBridgeError') : t('loadFailed', { message: loadError })
@@ -838,19 +830,6 @@ export function SettingsView(): ReactElement {
                       <option value="light">{t('themeLight')}</option>
                       <option value="dark">{t('themeDark')}</option>
                     </SettingsSelect>
-                  }
-                />
-                <SettingRow
-                  title={t('onboardingPreview')}
-                  description={t('onboardingPreviewDesc')}
-                  control={
-                    <button
-                      type="button"
-                      onClick={openOnboardingPreview}
-                      className={`${settingsBlockButtonClass()} text-[14px]`}
-                    >
-                      {t('onboardingPreviewOpen')}
-                    </button>
                   }
                 />
                 <SettingRow

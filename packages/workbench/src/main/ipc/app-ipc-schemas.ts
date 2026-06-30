@@ -181,6 +181,8 @@ export const shellOpenExternalUrlSchema = trimmedString(MAX_URL_LENGTH).refine(
   { message: 'Only http, https, and mailto URLs are allowed.' }
 )
 
+export const shellOpenTerminalPathSchema = trimmedString(MAX_PATH_LENGTH)
+
 export const notificationPayloadSchema = z
   .object({
     threadId: optionalTrimmedString(MAX_ID_LENGTH),

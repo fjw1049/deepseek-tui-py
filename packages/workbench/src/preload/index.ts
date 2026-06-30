@@ -151,6 +151,7 @@ const api = {
     return () => ipcRenderer.removeListener('runtime:sse-error', wrapped)
   },
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
+  openTerminal: (path) => ipcRenderer.invoke('shell:open-terminal', path),
   showTurnCompleteNotification: (payload) => ipcRenderer.invoke('notification:turn-complete', payload),
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   logError: (category, message, detail) =>

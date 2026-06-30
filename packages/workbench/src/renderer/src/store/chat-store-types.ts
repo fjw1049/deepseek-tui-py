@@ -24,7 +24,6 @@ export type SendMessageOverrides = {
   displayText?: string
 }
 
-export type InitialSetupMode = 'required' | 'preview'
 export type SettingsRouteSection =
   | 'general'
   | 'models'
@@ -48,7 +47,6 @@ export type ChatState = {
   pluginHostRoute: PluginHostRoute
   settingsSection: SettingsRouteSection
   initialSetupOpen: boolean
-  initialSetupMode: InitialSetupMode
   providerId: AgentProviderId
   workspaceRoot: string
   workspaceLabel: string
@@ -79,6 +77,9 @@ export type ChatState = {
   queuedMessages: QueuedUserMessage[]
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
+  pinnedThreadIds: string[]
+  sidebarSearchQuery: string
+  chatsCollapsed: boolean
   scrollToBlockId: string | null
   usageRefreshKey: number
   setError: (message: string | null) => void
@@ -89,7 +90,6 @@ export type ChatState = {
   openCode: () => Promise<void>
   openSettings: (section?: SettingsRouteSection) => void
   openPlugins: (host?: PluginHostRoute) => void
-  openInitialSetup: (mode?: InitialSetupMode) => void
   closeInitialSetup: () => void
   boot: () => Promise<void>
   probeRuntime: (mode?: 'user' | 'background') => Promise<void>
@@ -97,7 +97,7 @@ export type ChatState = {
   clearWorkspace: () => Promise<void>
   deleteWorkspace: (workspacePath: string) => Promise<void>
   refreshThreads: () => Promise<void>
-  createThread: (options?: { workspaceRoot?: string }) => Promise<void>
+  createThread: (options?: { workspaceRoot?: string; chats?: boolean }) => Promise<void>
   selectThread: (id: string) => Promise<void>
   warmActiveThread: (threadId?: string) => Promise<void>
   recoverActiveTurn: () => Promise<boolean>
@@ -107,7 +107,12 @@ export type ChatState = {
   rewindAndResend: (userBlockId: string, newText: string) => Promise<void>
   interrupt: () => Promise<void>
   renameActiveThread: (title: string) => Promise<void>
+  renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+  markThreadUnread: (threadId: string) => void
+  togglePin: (threadId: string) => void
+  setSidebarSearchQuery: (query: string) => void
+  setChatsCollapsed: (collapsed: boolean) => void
   forkThread: (threadId: string, throughItemId?: string) => Promise<void>
   resumeThread: (threadId: string) => Promise<void>
   compactActiveThread: () => Promise<void>

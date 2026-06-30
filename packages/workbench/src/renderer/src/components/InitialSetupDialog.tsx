@@ -19,7 +19,6 @@ const DEEPSEEK_USAGE_URL = 'https://platform.deepseek.com/usage'
 
 export function InitialSetupDialog(): ReactElement {
   const { t } = useTranslation('settings')
-  const initialSetupMode = useChatStore((s) => s.initialSetupMode)
   const closeInitialSetup = useChatStore((s) => s.closeInitialSetup)
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
@@ -29,7 +28,6 @@ export function InitialSetupDialog(): ReactElement {
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const isPreview = initialSetupMode === 'preview'
 
   useEffect(() => {
     let cancelled = false
@@ -119,7 +117,7 @@ export function InitialSetupDialog(): ReactElement {
           <div className="flex items-center justify-between gap-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent/10 px-3.5 py-1.5 text-[13px] font-semibold text-accent">
               <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} />
-              {t(isPreview ? 'firstRunPreviewBadge' : 'firstRunBadge')}
+              {t('firstRunBadge')}
             </div>
             <button
               type="button"
@@ -263,7 +261,7 @@ export function InitialSetupDialog(): ReactElement {
           </div>
 
           <p className="text-center text-[12.5px] leading-6 text-ds-faint">
-            {t(isPreview ? 'firstRunPreviewHint' : 'firstRunChangeLater')}
+            {t('firstRunChangeLater')}
           </p>
         </div>
       </div>

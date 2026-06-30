@@ -1,13 +1,20 @@
-import type { ReactElement } from 'react'
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Folder,
+  FolderClosed,
   FolderOpen,
+  GitBranch,
   LayoutGrid,
   Loader2,
+  MessageSquare,
+  Pin,
+  PinOff,
   Plus,
   Trash2,
   Archive,
@@ -20,7 +27,14 @@ import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
-import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import {
+  isChatsWorkspace,
+  isClawWorkspacePath,
+  isInternalTemporaryWorkspace,
+  normalizeWorkspaceRoot
+} from '../../lib/workspace-path'
+import { ThreadContextMenu, type ThreadContextMenuAction } from './ThreadContextMenu'
+import { HoverInfoCard } from './ThreadHoverCard'
 
 type SidebarProjectsSectionProps = {
   threads: NormalizedThread[]
@@ -30,12 +44,15 @@ type SidebarProjectsSectionProps = {
   busy: boolean
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
+  pinnedThreadIds: string[]
   locale: string
+  onTogglePin: (threadId: string) => void
   onPickWorkspace: () => void
   onRemoveWorkspace: (workspacePath: string) => Promise<void>
   onCreateThreadInWorkspace: (workspacePath: string) => void
   onImportSession: () => void
   onSelectThread: (threadId: string) => void
+  onOpenThreadTerminal: (threadId: string) => Promise<void>
   onDeleteThread: (threadId: string) => Promise<void>
   onCompactThread: (threadId: string) => Promise<void>
   t: (k: string, opts?: Record<string, unknown>) => string
@@ -73,11 +90,14 @@ export function SidebarProjectsSection({
   busy,
   watchTurnCompletion,
   unreadThreadIds,
+  pinnedThreadIds,
+  onTogglePin,
   onPickWorkspace,
   onRemoveWorkspace,
   onCreateThreadInWorkspace,
   onImportSession,
   onSelectThread,
+  onOpenThreadTerminal,
   onDeleteThread,
   onCompactThread,
   t
@@ -85,8 +105,21 @@ export function SidebarProjectsSection({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
-  const [searchQuery, setSearchQuery] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
+  const [folderHover, setFolderHover] = useState<{ path: string; anchor: DOMRect } | null>(null)
+  const folderHoverTimerRef = useRef<number | null>(null)
+  // Folder card self-dismisses after a few seconds of cursor inactivity, same as
+  // the thread hover card — it is auxiliary info and should not linger.
+  const folderAutoHideTimerRef = useRef<number | null>(null)
+  // Branch is fetched lazily only while the folder hover card is open, keyed by
+  // path. `branch === null` means "loaded, but not a git repo / no branch".
+  const [folderBranch, setFolderBranch] = useState<{
+    path: string
+    loading: boolean
+    branch: string | null
+  } | null>(null)
+  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
+  const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchOpen = searchExpanded || searchQuery.trim().length > 0
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
@@ -115,6 +148,17 @@ export function SidebarProjectsSection({
     )
   }, [activeThreadId, threads])
 
+  const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
+
+  // Pinned threads, ordered by pin time (the pinnedThreadIds array order).
+  // Dropped ids whose thread no longer exists are skipped.
+  const pinnedThreads = useMemo(() => {
+    const byId = new Map(threads.map((thread) => [thread.id, thread]))
+    return pinnedThreadIds
+      .map((id) => byId.get(id))
+      .filter((thread): thread is NormalizedThread => thread !== undefined)
+  }, [threads, pinnedThreadIds])
+
   const groups = useMemo(() => {
     const map = new Map<string, NormalizedThread[]>()
     const selectedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
@@ -122,6 +166,8 @@ export function SidebarProjectsSection({
     for (const th of threads) {
       if (isInternalTemporaryWorkspace(th.workspace)) continue
       if (isClawWorkspacePath(th.workspace)) continue
+      if (isChatsWorkspace(th.workspace)) continue
+      if (pinnedSet.has(th.id)) continue
       const key = normalizeWorkspaceRoot(th.workspace)
       if (!key) continue
       const arr = map.get(key) ?? []
@@ -129,7 +175,7 @@ export function SidebarProjectsSection({
       map.set(key, arr)
     }
 
-    if (selectedWorkspace && !map.has(selectedWorkspace)) {
+    if (selectedWorkspace && !isChatsWorkspace(selectedWorkspace) && !map.has(selectedWorkspace)) {
       map.set(selectedWorkspace, [])
     }
 
@@ -138,7 +184,7 @@ export function SidebarProjectsSection({
       if (activityDiff !== 0) return activityDiff
       return workspaceLabelFromPath(pathA).localeCompare(workspaceLabelFromPath(pathB))
     })
-  }, [threads, workspaceRoot])
+  }, [threads, workspaceRoot, pinnedSet])
 
   const filteredGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -157,6 +203,12 @@ export function SidebarProjectsSection({
     }
     return result
   }, [groups, searchQuery])
+
+  const filteredPinnedThreads = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return pinnedThreads
+    return pinnedThreads.filter((thread) => thread.title.toLowerCase().includes(query))
+  }, [pinnedThreads, searchQuery])
 
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
@@ -181,6 +233,101 @@ export function SidebarProjectsSection({
     await onRemoveWorkspace(workspacePath)
   }
 
+  const renderThreadRow = (
+    thread: NormalizedThread,
+    options?: { variant?: ThreadRowVariant; sourceLabel?: string }
+  ): ReactElement => {
+    const variant = options?.variant ?? 'project'
+    return (
+      <ThreadRow
+        key={thread.id}
+        thread={thread}
+        variant={variant}
+        active={activeThreadId === thread.id}
+        deleting={deletingThreadIds[thread.id] === true}
+        showRunning={
+          thread.status?.trim().toLowerCase() === 'running' ||
+          (activeThreadId === thread.id && busy) ||
+          watchTurnCompletion[thread.id] === true
+        }
+        showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+        hasBackgroundTask={
+          threadsWithActiveTasks.has(thread.id) ||
+          (activeThreadId === thread.id && activeThreadHasTask)
+        }
+        pinned={pinnedSet.has(thread.id)}
+        sourceLabel={options?.sourceLabel}
+        onSelect={() => onSelectThread(thread.id)}
+        onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
+        onDelete={() => void handleDeleteThread(thread)}
+        onCompact={() => void onCompactThread(thread.id)}
+        onTogglePin={() => onTogglePin(thread.id)}
+        canCompact={activeThreadId === thread.id && !busy}
+      />
+    )
+  }
+
+  const pinnedSourceLabel = (thread: NormalizedThread): string => {
+    if (isChatsWorkspace(thread.workspace)) return t('sidebarChatBadge')
+    return workspaceLabelFromPath(normalizeWorkspaceRoot(thread.workspace))
+  }
+
+  const clearFolderHoverTimer = (): void => {
+    if (folderHoverTimerRef.current != null) {
+      window.clearTimeout(folderHoverTimerRef.current)
+      folderHoverTimerRef.current = null
+    }
+  }
+
+  const clearFolderAutoHide = (): void => {
+    if (folderAutoHideTimerRef.current != null) {
+      window.clearTimeout(folderAutoHideTimerRef.current)
+      folderAutoHideTimerRef.current = null
+    }
+  }
+
+  const armFolderAutoHide = (): void => {
+    clearFolderAutoHide()
+    folderAutoHideTimerRef.current = window.setTimeout(() => setFolderHover(null), 4000)
+  }
+
+  useEffect(
+    () => () => {
+      clearFolderHoverTimer()
+      clearFolderAutoHide()
+    },
+    []
+  )
+
+  // Lazily resolve the git branch for whichever folder card is currently open.
+  useEffect(() => {
+    const path = folderHover?.path
+    if (!path) {
+      setFolderBranch(null)
+      return
+    }
+    if (typeof window.dsGui?.getGitBranches !== 'function') return
+    let cancelled = false
+    setFolderBranch({ path, loading: true, branch: null })
+    void window.dsGui
+      .getGitBranches(path)
+      .then((result) => {
+        if (cancelled) return
+        setFolderBranch({
+          path,
+          loading: false,
+          branch: result.ok ? result.currentBranch : null
+        })
+      })
+      .catch(() => {
+        if (cancelled) return
+        setFolderBranch({ path, loading: false, branch: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [folderHover?.path])
+
   const renderWorkspace = ([workspacePath, list]: WorkspaceGroup): ReactElement => {
     const folderName = workspaceLabelFromPath(workspacePath)
     const searching = searchQuery.trim().length > 0
@@ -192,7 +339,25 @@ export function SidebarProjectsSection({
 
     return (
       <div key={workspacePath} className="mb-1">
-        <div className="ds-sidebar-workspace group" title={workspacePath}>
+        <div
+          className="ds-sidebar-workspace group"
+          onMouseEnter={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            clearFolderHoverTimer()
+            folderHoverTimerRef.current = window.setTimeout(() => {
+              setFolderHover({ path: workspacePath, anchor: rect })
+              armFolderAutoHide()
+            }, 500)
+          }}
+          onMouseMove={() => {
+            if (folderHover?.path === workspacePath) armFolderAutoHide()
+          }}
+          onMouseLeave={() => {
+            clearFolderHoverTimer()
+            clearFolderAutoHide()
+            setFolderHover((current) => (current?.path === workspacePath ? null : current))
+          }}
+        >
           <button
             type="button"
             onClick={() =>
@@ -266,28 +431,7 @@ export function SidebarProjectsSection({
                 </button>
               </div>
             ) : (
-              visibleThreads.map((thread) => (
-                <ThreadRow
-                  key={thread.id}
-                  thread={thread}
-                  active={activeThreadId === thread.id}
-                  deleting={deletingThreadIds[thread.id] === true}
-                  showRunning={
-                    thread.status?.trim().toLowerCase() === 'running' ||
-                    (activeThreadId === thread.id && busy) ||
-                    watchTurnCompletion[thread.id] === true
-                  }
-                  showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
-                  hasBackgroundTask={
-                    threadsWithActiveTasks.has(thread.id) ||
-                    (activeThreadId === thread.id && activeThreadHasTask)
-                  }
-                  onSelect={() => onSelectThread(thread.id)}
-                  onDelete={() => void handleDeleteThread(thread)}
-                  onCompact={() => void onCompactThread(thread.id)}
-                  canCompact={activeThreadId === thread.id && !busy}
-                />
-              ))
+              visibleThreads.map((thread) => renderThreadRow(thread))
             )}
             {hasOverflow ? (
               <button
@@ -313,8 +457,24 @@ export function SidebarProjectsSection({
     )
   }
 
+  const noProjectsAndPinned = groups.length === 0 && pinnedThreads.length === 0
+  const noVisible = filteredPinnedThreads.length === 0 && filteredGroups.length === 0
+
   return (
     <div className="ds-no-drag flex min-h-0 flex-1 flex-col px-1">
+      {filteredPinnedThreads.length > 0 ? (
+        <div className="mb-1">
+          <div className="ds-sidebar-projects-toolbar">
+            <span className="ds-sidebar-section-label shrink-0">{t('sidebarPinned')}</span>
+          </div>
+          <div className="ds-sidebar-thread-list space-y-0.5 px-1.5">
+            {filteredPinnedThreads.map((thread) =>
+              renderThreadRow(thread, { variant: 'pinned', sourceLabel: pinnedSourceLabel(thread) })
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div className="ds-sidebar-projects-panel flex min-h-0 flex-1 flex-col">
         <div className="ds-sidebar-projects-toolbar">
           <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
@@ -383,8 +543,12 @@ export function SidebarProjectsSection({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 pt-1">
-          {filteredGroups.length === 0 ? (
-            groups.length === 0 ? (
+          {filteredGroups.length > 0 ? (
+            <div className="mb-1">{filteredGroups.map(renderWorkspace)}</div>
+          ) : null}
+
+          {noVisible ? (
+            noProjectsAndPinned ? (
               <SidebarEmpty
                 runtimeReady={runtimeReady}
                 hasWorkspace={!!workspaceRoot}
@@ -394,76 +558,222 @@ export function SidebarProjectsSection({
             ) : (
               <div className="px-1 py-3 text-[13px] text-ds-faint">{t('sidebarSearchNoResults')}</div>
             )
-          ) : (
-            filteredGroups.map(renderWorkspace)
-          )}
+          ) : null}
         </div>
       </div>
+      {folderHover ? (
+        <HoverInfoCard
+          anchor={folderHover.anchor}
+          titleIcon={Folder}
+          title={workspaceLabelFromPath(folderHover.path)}
+          rows={[
+            {
+              icon: MessageSquare,
+              text: t('sidebarProjectThreadCount', {
+                count: groups.find(([path]) => path === folderHover.path)?.[1].length ?? 0
+              })
+            },
+            ...(folderBranch?.path === folderHover.path &&
+            (folderBranch.loading || folderBranch.branch)
+              ? [
+                  {
+                    icon: GitBranch,
+                    text: folderBranch.loading
+                      ? t('sidebarProjectBranchLoading')
+                      : (folderBranch.branch as string)
+                  }
+                ]
+              : []),
+            { icon: FolderClosed, text: folderHover.path, divider: true }
+          ]}
+        />
+      ) : null}
     </div>
   )
 }
 
+export type ThreadRowVariant = 'project' | 'pinned' | 'chats'
+
 type ThreadRowProps = {
   thread: NormalizedThread
+  variant: ThreadRowVariant
   active: boolean
   deleting: boolean
   showRunning: boolean
   showUnread: boolean
   hasBackgroundTask: boolean
+  pinned: boolean
+  sourceLabel?: string
   canCompact: boolean
   onSelect: () => void
+  onOpenTerminal: () => void
   onDelete: () => void
   onCompact: () => void
+  onTogglePin: () => void
 }
 
-function ThreadRow({
+export function ThreadRow({
   thread,
+  variant,
   active,
   deleting,
   showRunning,
   showUnread,
   hasBackgroundTask,
+  pinned,
+  sourceLabel,
   canCompact,
   onSelect,
+  onOpenTerminal,
   onDelete,
-  onCompact
+  onCompact,
+  onTogglePin
 }: ThreadRowProps): ReactElement {
   const { t } = useTranslation('common')
+  const renameThread = useChatStore((s) => s.renameThread)
+  const markThreadUnread = useChatStore((s) => s.markThreadUnread)
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
+  // Inline rename: Electron's renderer has no window.prompt, so the row turns
+  // into an editable input (mirrors the title editor in SessionHeader).
+  const [renaming, setRenaming] = useState(false)
+  const [draftTitle, setDraftTitle] = useState(thread.title)
+  const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
+  const hoverTimerRef = useRef<number | null>(null)
+  // The hover card is auxiliary info: once shown it self-dismisses after a few
+  // seconds of cursor inactivity so it does not linger over the sidebar/content.
+  const autoHideTimerRef = useRef<number | null>(null)
   // A detached background task counts as activity even when the chat turn is
   // idle; only fall back to the blue unread dot when nothing is in flight.
   const showTaskDot = hasBackgroundTask && !showRunning
   const showUnreadDot = showUnread && !showRunning && !showTaskDot
-  const showStatus = showRunning || showTaskDot || showUnreadDot
+
+  // All rows surface thread completion: green check for completed/idle.
+  const status = thread.status?.trim().toLowerCase()
+  const showCompleted = !showRunning && (status === 'completed' || status === 'idle')
+
+  const threadPath = normalizeWorkspaceRoot(thread.workspace)
+  const hasPath = threadPath.length > 0 && !isInternalTemporaryWorkspace(thread.workspace)
+  const projectLabel = isChatsWorkspace(thread.workspace)
+    ? t('sidebarChatBadge')
+    : workspaceLabelFromPath(threadPath)
+
+  const clearHoverTimer = (): void => {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+  }
+
+  const clearAutoHideTimer = (): void => {
+    if (autoHideTimerRef.current != null) {
+      window.clearTimeout(autoHideTimerRef.current)
+      autoHideTimerRef.current = null
+    }
+  }
+
+  // Restart the 4s inactivity countdown; called when the card first appears and
+  // on every cursor move over the row so an actively-read card stays open.
+  const armAutoHide = (): void => {
+    clearAutoHideTimer()
+    autoHideTimerRef.current = window.setTimeout(() => setHoverAnchor(null), 4000)
+  }
+
+  useEffect(
+    () => () => {
+      clearHoverTimer()
+      clearAutoHideTimer()
+    },
+    []
+  )
+
+  const handleRowMouseEnter = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    clearHoverTimer()
+    hoverTimerRef.current = window.setTimeout(() => {
+      setHoverAnchor(rect)
+      armAutoHide()
+    }, 500)
+  }
+
+  const handleRowMouseMove = (): void => {
+    // Only matters once the card is visible; reset its inactivity countdown.
+    if (hoverAnchor) armAutoHide()
+  }
+
+  const handleRowMouseLeave = (): void => {
+    clearHoverTimer()
+    clearAutoHideTimer()
+    setHoverAnchor(null)
+  }
+
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    clearHoverTimer()
+    clearAutoHideTimer()
+    setHoverAnchor(null)
+    setMenuPos({ x: event.clientX, y: event.clientY })
+  }
+
+  const commitRename = (): void => {
+    const next = draftTitle.trim()
+    if (next && next !== thread.title) void renameThread(thread.id, next)
+    setRenaming(false)
+  }
+
+  const cancelRename = (): void => {
+    setDraftTitle(thread.title)
+    setRenaming(false)
+  }
+
+  const handleMenuAction = (action: ThreadContextMenuAction): void => {
+    switch (action) {
+      case 'rename':
+        // Electron's renderer has no window.prompt; edit the title inline.
+        setDraftTitle(thread.title)
+        setRenaming(true)
+        break
+      case 'toggle-pin':
+        onTogglePin()
+        break
+      case 'mark-unread':
+        markThreadUnread(thread.id)
+        break
+      case 'copy-path':
+        if (threadPath) void navigator.clipboard?.writeText(threadPath)
+        break
+      case 'open-terminal':
+        // Open the built-in right-side terminal panel (cd'd to this thread's
+        // workspace), not the OS terminal.
+        onOpenTerminal()
+        break
+      case 'copy-thread-id':
+        void navigator.clipboard?.writeText(thread.id)
+        break
+      case 'delete':
+        onDelete()
+        break
+    }
+  }
 
   return (
     <div
+      onContextMenu={handleContextMenu}
+      onMouseEnter={handleRowMouseEnter}
+      onMouseMove={handleRowMouseMove}
+      onMouseLeave={handleRowMouseLeave}
       className={`group relative flex min-w-0 items-center overflow-hidden rounded-[10px] transition-colors duration-200 ${
-        active
-          ? 'bg-black/[0.045] text-ds-ink dark:bg-white/[0.055]'
-          : 'hover:bg-ds-hover/40 dark:hover:bg-white/[0.03]'
+        renaming
+          ? ''
+          : active
+            ? 'bg-black/[0.045] text-ds-ink dark:bg-white/[0.055]'
+            : 'hover:bg-ds-hover/40 dark:hover:bg-white/[0.03]'
       }`}
     >
-      {showStatus ? (
-        <span className="pointer-events-none absolute left-1 top-1/2 z-[1] flex h-3 w-3 -translate-y-1/2 items-center justify-center">
-          {showRunning ? (
-            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" strokeWidth={2} />
-          ) : showTaskDot ? (
-            <span
-              className="block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-500 dark:bg-amber-400"
-              title={t('sidebarThreadTaskRunning')}
-            />
-          ) : (
-            <span
-              className="block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-              title={t('sidebarThreadUnread')}
-            />
-          )}
-        </span>
-      ) : null}
       <button
         type="button"
-        onClick={onSelect}
-        className="relative flex min-w-0 flex-1 items-center gap-1.5 py-2 pl-[1.125rem] pr-2.5 text-left"
+        onClick={renaming ? undefined : onSelect}
+        className="relative flex min-w-0 flex-1 items-center gap-1.5 py-2 pl-2.5 pr-2.5 text-left"
         disabled={deleting}
         aria-label={
           showRunning
@@ -475,20 +785,86 @@ function ThreadRow({
                 : thread.title
         }
       >
-        <span
-          className={[
-            'ds-sidebar-thread min-w-0 flex-1 truncate',
-            active || showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
-          ].join(' ')}
-          title={thread.title}
-        >
-          {thread.title}
+        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-ds-faint">
+          {showRunning ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2} />
+          ) : showTaskDot ? (
+            <span
+              className="block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 dark:bg-amber-400"
+              title={t('sidebarThreadTaskRunning')}
+            />
+          ) : showUnreadDot ? (
+            <span
+              className="block h-1.5 w-1.5 rounded-full bg-accent"
+              title={t('sidebarThreadUnread')}
+            />
+          ) : (
+            <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+          )}
         </span>
-        <span className="ds-sidebar-thread-meta shrink-0 group-hover:hidden">
-          {formatRelativeTimeLargestUnit(thread.updatedAt)}
-        </span>
+        {renaming ? (
+          <input
+            value={draftTitle}
+            onChange={(event) => setDraftTitle(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commitRename()
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                cancelRename()
+              }
+            }}
+            autoFocus
+            onFocus={(event) => event.currentTarget.select()}
+            className="ds-sidebar-thread min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-ds-ink caret-accent outline-none"
+          />
+        ) : (
+          <span
+            className={[
+              'ds-sidebar-thread min-w-0 flex-1 truncate',
+              showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
+            ].join(' ')}
+          >
+            {thread.title}
+          </span>
+        )}
+        {showCompleted ? (
+          <span
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-emerald-500 group-hover:hidden dark:text-emerald-400"
+            title={t('sidebarThreadCompleted')}
+            aria-hidden
+          >
+            <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
+          </span>
+        ) : (
+          <span className="ds-sidebar-thread-meta shrink-0 truncate group-hover:hidden" title={sourceLabel}>
+            {sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt)}
+          </span>
+        )}
       </button>
       <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onTogglePin()
+          }}
+          disabled={deleting}
+          className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink ${
+            pinned ? 'text-accent' : 'text-ds-faint'
+          }`}
+          title={pinned ? t('sidebarUnpinThread') : t('sidebarPinThread')}
+          aria-label={pinned ? t('sidebarUnpinThread') : t('sidebarPinThread')}
+        >
+          {pinned ? (
+            <PinOff className="h-3.5 w-3.5" strokeWidth={1.9} />
+          ) : (
+            <Pin className="h-3.5 w-3.5" strokeWidth={1.9} />
+          )}
+        </button>
         {canCompact ? (
           <button
             type="button"
@@ -522,6 +898,30 @@ function ThreadRow({
           )}
         </button>
       </div>
+      {hoverAnchor && !menuPos ? (
+        <HoverInfoCard
+          anchor={hoverAnchor}
+          titleIcon={MessageSquare}
+          title={thread.title}
+          rows={[
+            { icon: Clock, text: formatRelativeTimeLargestUnit(thread.updatedAt) },
+            ...(projectLabel ? [{ icon: FolderClosed, text: projectLabel, divider: true }] : [])
+          ]}
+        />
+      ) : null}
+      {menuPos ? (
+        <ThreadContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          openUp={variant === 'chats'}
+          pinned={pinned}
+          canMarkUnread={activeThreadId !== thread.id}
+          hasPath={hasPath}
+          onAction={handleMenuAction}
+          onClose={() => setMenuPos(null)}
+          t={t}
+        />
+      ) : null}
     </div>
   )
 }

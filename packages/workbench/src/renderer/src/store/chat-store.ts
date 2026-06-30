@@ -33,7 +33,6 @@ import { decodeModelRef } from '@shared/model-ref'
 import type {
   AppRoute,
   ChatState,
-  InitialSetupMode,
   PluginHostRoute,
   QueuedUserMessage,
   SendMessageOverrides,
@@ -42,11 +41,14 @@ import type {
 import { createAppActions } from './chat-store-app-actions'
 import {
   hydrateBlockModelLabels,
+  loadPinnedThreadIds,
   mergeComposerPickList,
   optimisticUserModelLabel,
   persistComposerModel,
+  PINNED_THREADS_LIMIT,
   readStoredComposerModel,
-  rememberTurnModel
+  rememberTurnModel,
+  savePinnedThreadIds
 } from './chat-store-helpers'
 import {
   clearedThreadSelection,
@@ -73,6 +75,11 @@ import {
 } from './chat-store-schedulers'
 
 export type { AppRoute, SettingsRouteSection } from './chat-store-types'
+
+// Literal default-workspace path for Chats (temporary) threads. Main expands
+// the leading "~"; this keeps a brand-new chat from inheriting the active
+// project workspace.
+const DEFAULT_CHATS_WORKSPACE_ROOT = '~/.deepseekgui/default_workspace'
 
 let sseAbort: AbortController | null = null
 const sseAbortRef = {
@@ -1064,7 +1071,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pluginHostRoute: 'chat',
   settingsSection: 'general',
   initialSetupOpen: false,
-  initialSetupMode: 'required',
   providerId: 'deepseek-runtime',
   workspaceRoot: '',
   workspaceLabel: i18n.t('common:workingDirectory'),
@@ -1095,6 +1101,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   queuedMessages: [],
   watchTurnCompletion: {},
   unreadThreadIds: {},
+  pinnedThreadIds: loadPinnedThreadIds(),
+  sidebarSearchQuery: '',
+  chatsCollapsed: false,
   scrollToBlockId: null,
   usageRefreshKey: 0,
 
@@ -1247,8 +1256,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ),
             runtimeConnection: 'offline',
             runtimeErrorDetail: 'Preload bridge missing (window.dsGui). Restart the app or check BrowserWindow preload path.',
-            initialSetupOpen: false,
-            initialSetupMode: 'required'
+            initialSetupOpen: false
           })
           return
         }
@@ -1265,7 +1273,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({
           route: 'chat',
           initialSetupOpen: needsInitialSetup,
-          initialSetupMode: 'required',
           providerId: settings.agentProvider,
           workspaceRoot,
           workspaceLabel: workspaceLabelFromPath(workspaceRoot),
@@ -1284,7 +1291,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           runtimeErrorDetail: runtimeErrorDetail(e),
           runtimeConnection: 'offline',
           initialSetupOpen: false,
-          initialSetupMode: 'required',
           ...(settingsSectionForRuntimeError(e)
             ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
             : {})
@@ -1387,12 +1393,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           delete u[tid]
           clearWatchedCompletionNotification(tid)
         }
+        const nextPinned = s.pinnedThreadIds.filter((id) => !removeIds.has(id))
+        if (nextPinned.length !== s.pinnedThreadIds.length) savePinnedThreadIds(nextPinned)
         return {
           threads: s.threads.filter(
             (thread) => !threadBelongsToWorkspace(thread, normalizedPath)
           ),
           watchTurnCompletion: w,
           unreadThreadIds: u,
+          pinnedThreadIds: nextPinned,
           ...(deletingActive ? clearedThreadSelection() : {}),
           error: null
         }
@@ -1486,12 +1495,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const activeThread = get().activeThreadId
         ? get().threads.find((thread) => thread.id === get().activeThreadId)
         : null
-      const workspaceRoot =
-        normalizeWorkspaceRoot(options.workspaceRoot) ||
-        (activeThread && !isInternalTemporaryWorkspace(activeThread.workspace)
-          ? normalizeWorkspaceRoot(activeThread.workspace)
-          : '') ||
-        normalizeWorkspaceRoot(settings.workspaceRoot)
+      // A Chats (temporary) thread must land in the default workspace and never
+      // inherit the active project; main expands the leading "~".
+      const workspaceRoot = options.chats
+        ? DEFAULT_CHATS_WORKSPACE_ROOT
+        : normalizeWorkspaceRoot(options.workspaceRoot) ||
+          (activeThread && !isInternalTemporaryWorkspace(activeThread.workspace)
+            ? normalizeWorkspaceRoot(activeThread.workspace)
+            : '') ||
+          normalizeWorkspaceRoot(settings.workspaceRoot)
       if (!workspaceRoot) {
         await get().chooseWorkspace({ createThreadAfter: true })
         return
@@ -2088,6 +2100,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  renameThread: async (threadId, title) => {
+    const targetId = threadId.trim()
+    const nextTitle = title.trim()
+    if (!targetId || !nextTitle) return
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    const p = getProvider(get().providerId)
+    try {
+      await p.renameThread(targetId, nextTitle)
+      await get().refreshThreads()
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
+          : {})
+      })
+    }
+  },
+
+  markThreadUnread: (threadId) => {
+    const targetId = threadId.trim()
+    // Marking the active thread unread would be cleared immediately by
+    // selectThread, so ignore it.
+    if (!targetId || get().activeThreadId === targetId) return
+    set((state) => ({
+      unreadThreadIds: { ...state.unreadThreadIds, [targetId]: true }
+    }))
+  },
+
   forkThread: async (threadId, throughItemId) => {
     const targetId = threadId.trim()
     if (!targetId) return
@@ -2254,10 +2298,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         clearWatchedCompletionNotification(targetId)
         const u = { ...s.unreadThreadIds }
         delete u[targetId]
+        const nextPinned = s.pinnedThreadIds.filter((id) => id !== targetId)
+        if (nextPinned.length !== s.pinnedThreadIds.length) savePinnedThreadIds(nextPinned)
         return {
           threads: s.threads.filter((thread) => thread.id !== targetId),
           watchTurnCompletion: w,
           unreadThreadIds: u,
+          pinnedThreadIds: nextPinned,
           ...(deletingActive ? clearedThreadSelection() : {}),
           error: null
         }
@@ -2272,6 +2319,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     }
   },
+
+  togglePin: (threadId) => {
+    const targetId = threadId.trim()
+    if (!targetId) return
+    const current = get().pinnedThreadIds
+    if (current.includes(targetId)) {
+      const next = current.filter((id) => id !== targetId)
+      savePinnedThreadIds(next)
+      set({ pinnedThreadIds: next })
+      return
+    }
+    if (current.length >= PINNED_THREADS_LIMIT) {
+      set({ error: i18n.t('common:sidebarPinLimitReached', { count: PINNED_THREADS_LIMIT }) })
+      return
+    }
+    const next = [...current, targetId]
+    savePinnedThreadIds(next)
+    set({ pinnedThreadIds: next, error: null })
+  },
+
+  setSidebarSearchQuery: (query) => set({ sidebarSearchQuery: query }),
+  setChatsCollapsed: (collapsed) => set({ chatsCollapsed: collapsed }),
 
   rewindAndResend: async (userBlockId, newText) => {
     const trimmed = newText.trim()
