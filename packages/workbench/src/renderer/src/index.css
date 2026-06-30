@@ -1313,14 +1313,12 @@ samp {
 
 .ds-sidebar-link--accent {
   color: var(--text-primary);
-  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 55%, transparent);
-  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  border: 1px solid transparent;
+  background: var(--ds-surface-hover);
 }
 
 .ds-sidebar-link--accent:not(:disabled):hover {
-  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
-  border-color: var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-surface-hover) 160%, transparent);
 }
 
 .ds-sidebar-link--plain {
@@ -1344,14 +1342,12 @@ samp {
 
 .ds-sidebar-link--active {
   color: var(--text-primary);
-  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 55%, transparent);
-  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  border: 1px solid transparent;
+  background: var(--ds-surface-hover);
 }
 
 .ds-sidebar-link--active:not(:disabled):hover {
-  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
-  border-color: var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-surface-hover) 160%, transparent);
 }
 
 .ds-sidebar-link:disabled {
@@ -1460,23 +1456,21 @@ samp {
 }
 
 [data-theme='dark'] .ds-sidebar-link--accent {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 [data-theme='dark'] .ds-sidebar-link--accent:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 [data-theme='dark'] .ds-sidebar-link--active {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 [data-theme='dark'] .ds-sidebar-link--active:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .ds-sidebar-toggle-button {

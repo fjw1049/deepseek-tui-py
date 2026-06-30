@@ -840,7 +840,7 @@ export function ThreadRow({
             <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
         ) : (
-          <span className="ds-sidebar-thread-meta shrink-0 truncate group-hover:hidden" title={sourceLabel}>
+          <span className="ds-sidebar-thread-meta hidden shrink-0 truncate" title={sourceLabel}>
             {sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt)}
           </span>
         )}
