@@ -124,65 +124,83 @@ export function ModelUsageHeroPanel({
                 title={topModel ? formatComposerModelLabel(topModel.model, composerModelMeta) : undefined}
               />
             </div>
-            <div className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ds-border/70 bg-ds-card/50 px-3 py-3">
+            <div className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3.5 py-3">
               <UsageActivityHeatmap daily={heatmapDaily} asOfDay={heatmapAsOfDay} fillHeight />
             </div>
           </div>
           <div
             className={[
-              'absolute inset-0 flex min-h-0 flex-col',
+              'absolute inset-0 flex min-h-0 flex-col gap-3',
               tab === 'models' ? 'visible' : 'hidden'
             ].join(' ')}
           >
-            <div className="shrink-0 rounded-2xl border border-ds-border/70 bg-ds-card/50 px-3 py-3">
-              <p className="mb-3 text-[12px] font-medium text-ds-muted">{t('usageHeroChartTitle')}</p>
-              <ModelUsageTrendChart
-                daily={daily}
-                composerModelMeta={composerModelMeta}
-                compact
-                showYAxis
-                segmentDays={segmentDays}
-              />
+            <div className="flex min-h-0 flex-[1.15] flex-col overflow-hidden rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3.5 py-3">
+              <p className="mb-2.5 shrink-0 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
+                {t('usageHeroChartTitle')}
+              </p>
+              <div className="min-h-0 flex-1">
+                <ModelUsageTrendChart
+                  daily={daily}
+                  composerModelMeta={composerModelMeta}
+                  compact
+                  showYAxis
+                  segmentDays={segmentDays}
+                />
+              </div>
             </div>
-            <p className="mb-2 mt-3 shrink-0 text-[12px] font-medium text-ds-muted">
-              {t('usageHeroModelListTitle')}
-            </p>
-            <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-1 pr-1">
-              {modelBuckets.map((bucket, index) => {
-                const share =
-                  totalTokens > 0
-                    ? ((bucket.totalTokens / totalTokens) * 100).toFixed(1)
-                    : '0.0'
-                const shortName = formatUsageModelName(bucket.model, composerModelMeta)
-                const fullName = formatComposerModelLabel(bucket.model, composerModelMeta)
-                return (
-                  <div
-                    key={bucket.model}
-                    className="flex items-center gap-2 rounded-xl px-2 py-2 text-[12.5px] hover:bg-ds-elevated/70"
-                  >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                      style={{
-                        backgroundColor:
-                          MODEL_USAGE_BAR_COLORS[index % MODEL_USAGE_BAR_COLORS.length]
-                      }}
-                    />
-                    <span
-                      className="min-w-0 flex-1 truncate font-medium text-ds-ink"
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3.5 py-3">
+              <p className="mb-2 shrink-0 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
+                {t('usageHeroModelListTitle')}
+              </p>
+              <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-2 pr-0.5">
+                {modelBuckets.map((bucket, index) => {
+                  const share =
+                    totalTokens > 0
+                      ? ((bucket.totalTokens / totalTokens) * 100).toFixed(1)
+                      : '0.0'
+                  const sharePct = totalTokens > 0 ? (bucket.totalTokens / totalTokens) * 100 : 0
+                  const shortName = formatUsageModelName(bucket.model, composerModelMeta)
+                  const fullName = formatComposerModelLabel(bucket.model, composerModelMeta)
+                  const color = MODEL_USAGE_BAR_COLORS[index % MODEL_USAGE_BAR_COLORS.length]
+                  return (
+                    <div
+                      key={bucket.model}
+                      className="group relative overflow-hidden rounded-xl border border-ds-border/65 bg-ds-card/70 px-3 py-2.5 transition-[background-color,border-color,box-shadow] hover:border-ds-border hover:bg-ds-elevated/85 hover:shadow-[0_1px_0_rgba(15,23,42,0.04)]"
                       title={fullName}
                     >
-                      {shortName}
-                    </span>
-                    <span className="hidden shrink-0 tabular-nums text-ds-faint sm:inline">
-                      {formatCompactNumber(bucket.inputTokens)} in ·{' '}
-                      {formatCompactNumber(bucket.outputTokens)} out
-                    </span>
-                    <span className="w-12 shrink-0 text-right tabular-nums text-ds-muted">
-                      {share}%
-                    </span>
-                  </div>
-                )
-              })}
+                      <span
+                        aria-hidden
+                        className="absolute inset-y-2 left-0 w-[3px] rounded-r-full opacity-0 transition-opacity group-hover:opacity-100"
+                        style={{ backgroundColor: color }}
+                      />
+                      <div className="flex items-center gap-2.5 text-[12.5px]">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-[3px] ring-1 ring-black/5"
+                          style={{ backgroundColor: color }}
+                        />
+                        <span className="min-w-0 flex-1 truncate font-medium text-ds-ink">
+                          {shortName}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-ds-muted">
+                          {formatCompactNumber(bucket.totalTokens)}
+                        </span>
+                        <span className="w-11 shrink-0 text-right tabular-nums font-medium text-ds-ink/75">
+                          {share}%
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ds-border/55">
+                        <span
+                          className="block h-full rounded-full transition-[width] duration-300"
+                          style={{
+                            width: `${Math.max(sharePct, sharePct > 0 ? 2 : 0)}%`,
+                            backgroundColor: color
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -203,7 +221,7 @@ function StatTile({
   title?: string
 }): ReactElement {
   return (
-    <div className="min-w-0 rounded-2xl border border-ds-border/70 bg-ds-card/55 px-3 py-2">
+    <div className="min-w-0 rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3 py-2">
       <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-ds-faint">{label}</p>
       {scrollValue ? (
         <div

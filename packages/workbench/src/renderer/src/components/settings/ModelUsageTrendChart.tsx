@@ -5,18 +5,18 @@ import type { ComposerModelMeta } from '../../lib/composer-model-label'
 import { formatCompactNumber } from '../../hooks/use-model-usage'
 
 const BAR_COLORS = [
-  '#6f8cff',
-  '#52b788',
-  '#f2b56b',
-  '#c69bd3',
-  '#8b7cf6',
-  '#67b7dc',
-  '#e07a7a',
-  '#7bc8a4',
-  '#d4a574',
-  '#9b8cff',
-  '#5cafff',
-  '#f284b6'
+  '#5b8def',
+  '#3dba8c',
+  '#e8a44a',
+  '#a78bfa',
+  '#38bdf8',
+  '#f472b6',
+  '#84cc16',
+  '#fb7185',
+  '#22d3ee',
+  '#fbbf24',
+  '#818cf8',
+  '#34d399'
 ]
 
 type Props = {
@@ -121,7 +121,7 @@ export function ModelUsageTrendChart({
     return models.slice(0, 6)
   }, [daily])
 
-  const chartHeight = compact ? 'h-[120px]' : 'h-[112px]'
+  const chartHeight = compact ? 'h-[132px]' : 'h-[112px]'
   // In segmented mode (hero), label every bar when there are few enough; 7d
   // has 7 daily bars and should show all dates. Otherwise cap the tick count.
   const maxDayLabels = segmentDays !== undefined ? 7 : compact ? 5 : 7
@@ -132,7 +132,7 @@ export function ModelUsageTrendChart({
   const labeledIndices = useMemo(() => new Set(axisLabelIndices), [axisLabelIndices])
 
   return (
-    <div className={compact ? 'space-y-2' : 'space-y-3'}>
+    <div className={compact ? 'space-y-2.5' : 'space-y-3'}>
       <div className="flex gap-2">
         {showYAxis ? (
           <div
@@ -145,11 +145,27 @@ export function ModelUsageTrendChart({
             ))}
           </div>
         ) : null}
-        <div className="min-w-0 flex-1">
-          <div className={['flex items-stretch gap-1', chartHeight].join(' ')}>
+        <div className="relative min-w-0 flex-1">
+          {showYAxis ? (
+            <div
+              className={['pointer-events-none absolute inset-x-0 top-0 flex flex-col justify-between', chartHeight].join(
+                ' '
+              )}
+              aria-hidden
+            >
+              {yTicks.slice(0, -1).map((tick) => (
+                <div key={tick} className="h-px w-full bg-ds-border/45" />
+              ))}
+            </div>
+          ) : null}
+          <div className={['relative flex items-stretch gap-[3px]', chartHeight].join(' ')}>
             {displayDaily.map((point) => {
               const heightPct =
-                point.totalTokens > 0 ? Math.max(12, (point.totalTokens / maxTokens) * 100) : 6
+                point.totalTokens > 0 ? Math.max(3, (point.totalTokens / maxTokens) * 100) : 0
+              const visibleSegments =
+                point.totalTokens <= 0
+                  ? []
+                  : point.segments.filter((segment) => segment.tokens > 0)
               return (
                 <div
                   key={point.day}
@@ -157,26 +173,27 @@ export function ModelUsageTrendChart({
                   title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
                 >
                   <div
-                    className="flex w-full flex-col justify-end overflow-hidden rounded-[4px] bg-ds-border/35"
+                    className="flex w-full flex-col justify-end overflow-hidden rounded-t-[3px] bg-ds-border/25"
                     style={{
-                      height: `${heightPct}%`,
-                      minHeight: point.totalTokens > 0 ? '8px' : '4px'
+                      height: point.totalTokens > 0 ? `${heightPct}%` : '2px',
+                      minHeight: point.totalTokens > 0 ? '3px' : '2px'
                     }}
                   >
-                    {point.totalTokens <= 0 ? null : (
-                      point.segments.map((segment, index) => (
+                    {visibleSegments.map((segment, index) => {
+                      const isTop = index === visibleSegments.length - 1
+                      return (
                         <span
                           key={`${point.day}-${segment.model}`}
-                          className="block w-full shrink-0"
+                          className={['block w-full shrink-0', isTop ? 'rounded-t-[3px]' : ''].join(' ')}
                           style={{
                             flexGrow: segment.tokens,
                             flexBasis: 0,
-                            minHeight: 2,
+                            minHeight: 1,
                             backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
                           }}
                         />
-                      ))
-                    )}
+                      )
+                    })}
                   </div>
                 </div>
               )
@@ -189,7 +206,7 @@ export function ModelUsageTrendChart({
             track so the labeled ones stay aligned.
           */}
           <div className="relative mt-1 h-[14px]">
-            <div className="flex h-full gap-1">
+            <div className="flex h-full gap-[3px]">
               {displayDaily.map((point, pointIndex) => {
                 if (!labeledIndices.has(pointIndex)) {
                   return <div key={`${point.day}-axis-empty`} className="h-full flex-1" />
@@ -207,15 +224,18 @@ export function ModelUsageTrendChart({
           </div>
         </div>
       </div>
-      {legendModels.length > 0 && !compact ? (
-        <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+      {legendModels.length > 0 ? (
+        <div className={compact ? 'flex flex-wrap gap-x-2.5 gap-y-1' : 'flex flex-wrap gap-x-3 gap-y-1.5'}>
           {legendModels.map((model, index) => (
             <span
               key={model}
-              className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-[11px] text-ds-muted"
+              className={[
+                'inline-flex min-w-0 max-w-full items-center gap-1.5 text-ds-muted',
+                compact ? 'text-[10px]' : 'text-[11px]'
+              ].join(' ')}
             >
               <span
-                className="h-2 w-2 shrink-0 rounded-full"
+                className={['shrink-0 rounded-[2px]', compact ? 'h-1.5 w-1.5' : 'h-2 w-2 rounded-full'].join(' ')}
                 style={{ backgroundColor: BAR_COLORS[index % BAR_COLORS.length] }}
               />
               <span className="truncate">{formatComposerModelLabel(model, composerModelMeta)}</span>

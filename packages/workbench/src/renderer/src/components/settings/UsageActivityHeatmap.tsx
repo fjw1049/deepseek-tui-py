@@ -49,7 +49,9 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
   if (grid.cells.length === 0) {
     return (
       <div className={fillHeight ? 'flex min-h-0 flex-1 flex-col' : undefined}>
-        <p className="mb-2 text-[12px] font-medium text-ds-muted">{t('usageHeroActivity')}</p>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
+          {t('usageHeroActivity')}
+        </p>
       </div>
     )
   }
@@ -60,19 +62,23 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
 
   return (
     <div className={rootClass}>
-      <p className="mb-2 shrink-0 text-[12px] font-medium text-ds-muted">{t('usageHeroActivity')}</p>
-      <div className={fillHeight ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : 'min-w-0 w-full overflow-hidden'}>
+      <p className="mb-2.5 shrink-0 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
+        {t('usageHeroActivity')}
+      </p>
+      <div
+        className={[
+          fillHeight ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : 'min-w-0 w-full overflow-hidden',
+          'rounded-xl border border-ds-border/55 bg-ds-elevated/20 px-2.5 py-2.5'
+        ].join(' ')}
+      >
         <div className={['flex w-full min-w-0 items-stretch gap-2', fillHeight ? 'min-h-0 flex-1' : ''].join(' ')}>
-          <div
-            className="flex shrink-0 flex-col"
-            style={{ width: WEEKDAY_LABEL_WIDTH }}
-          >
-            <div className="mb-1 h-3.5 shrink-0" aria-hidden />
+          <div className="flex shrink-0 flex-col" style={{ width: WEEKDAY_LABEL_WIDTH }}>
+            <div className="mb-1.5 h-3.5 shrink-0" aria-hidden />
             <div className="relative min-h-0 flex-1">
               {grid.weekdayLabels.map((label, index) => (
                 <span
                   key={`${label}-${index}`}
-                  className="absolute left-0 -translate-y-1/2 text-[10px] leading-none text-ds-faint"
+                  className="absolute left-0 -translate-y-1/2 text-[10px] font-medium leading-none text-ds-faint"
                   style={{ top: `${((index + 0.5) / HEATMAP_ROWS) * 100}%` }}
                 >
                   {label}
@@ -81,11 +87,11 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
             </div>
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="relative mb-1 h-3.5 w-full shrink-0">
+            <div className="relative mb-1.5 h-3.5 w-full shrink-0">
               {grid.monthLabels.map((marker) => (
                 <span
                   key={`${marker.weekIndex}-${marker.label}`}
-                  className="absolute top-0 whitespace-nowrap text-[10px] leading-none text-ds-faint"
+                  className="absolute top-0 whitespace-nowrap text-[10px] font-medium leading-none text-ds-faint"
                   style={{
                     left: `${(marker.weekIndex / Math.max(grid.weekCount, 1)) * 100}%`
                   }}
@@ -97,10 +103,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
             <div
               role="group"
               aria-label={t('usageHeroActivity')}
-              className={[
-                'grid w-full max-w-full gap-[3px]',
-                fillHeight ? 'min-h-0 flex-1' : ''
-              ].join(' ')}
+              className={['grid w-full max-w-full gap-[3px]', fillHeight ? 'min-h-0 flex-1' : ''].join(' ')}
               style={{
                 gridAutoFlow: 'column',
                 gridTemplateRows: fillHeight
@@ -125,7 +128,12 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
           </div>
         </div>
       </div>
-      <div className={['mt-2 flex w-full min-w-0 shrink-0 items-center gap-2', fillHeight ? 'justify-between' : 'flex-col gap-2.5'].join(' ')}>
+      <div
+        className={[
+          'mt-2.5 flex w-full min-w-0 shrink-0 items-center gap-2 rounded-xl border border-ds-border/65 bg-ds-card/70 px-3 py-2',
+          fillHeight ? 'justify-between' : 'flex-col gap-2.5 border-ds-border/55 bg-ds-card/55 py-2.5'
+        ].join(' ')}
+      >
         {fillHeight ? (
           <>
             <HeatmapDayDetail
@@ -134,11 +142,9 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
               hint={t('usageHeroHeatHint')}
               noUsageLabel={t('usageHeroHeatNoUsage')}
               compact
+              highlighted={Boolean(selectedCell?.day)}
             />
-            <HeatLegend
-              lessLabel={t('usageHeroHeatLess')}
-              moreLabel={t('usageHeroHeatMore')}
-            />
+            <HeatLegend lessLabel={t('usageHeroHeatLess')} moreLabel={t('usageHeroHeatMore')} />
           </>
         ) : (
           <>
@@ -149,15 +155,13 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
                 locale={i18n.language}
                 hint={t('usageHeroHeatHint')}
                 noUsageLabel={t('usageHeroHeatNoUsage')}
+                highlighted={Boolean(selectedCell?.day)}
               />
             </div>
             <div className="flex w-full min-w-0 gap-2">
               <div className="shrink-0" style={{ width: WEEKDAY_LABEL_WIDTH }} aria-hidden />
               <div className="flex min-w-0 flex-1 justify-end">
-                <HeatLegend
-                  lessLabel={t('usageHeroHeatLess')}
-                  moreLabel={t('usageHeroHeatMore')}
-                />
+                <HeatLegend lessLabel={t('usageHeroHeatLess')} moreLabel={t('usageHeroHeatMore')} />
               </div>
             </div>
           </>
@@ -172,42 +176,53 @@ function HeatmapDayDetail({
   locale,
   hint,
   noUsageLabel,
-  compact = false
+  compact = false,
+  highlighted = false
 }: {
   cell: HeatmapGridCell | null
   locale: string
   hint: string
   noUsageLabel: string
   compact?: boolean
+  highlighted?: boolean
 }): ReactElement {
   const textClass = compact
-    ? 'min-w-0 flex-1 truncate text-left text-[11px] leading-5 text-ds-faint'
-    : 'min-h-[20px] flex-1 text-center text-[12px] leading-5 text-ds-faint'
+    ? 'min-w-0 flex-1 truncate text-left text-[11px] leading-5'
+    : 'min-h-[20px] flex-1 text-center text-[12px] leading-5'
 
   if (!cell?.day) {
-    return <p className={textClass}>{hint}</p>
+    return <p className={[textClass, 'text-ds-faint'].join(' ')}>{hint}</p>
   }
 
   const tokens = cell.point?.totalTokens ?? 0
   const dateLabel = formatHeatmapDayLabel(cell.day, locale)
-  const tokenLabel =
-    tokens > 0 ? `${formatCompactNumber(tokens)} tokens` : noUsageLabel
+  const tokenLabel = tokens > 0 ? `${formatCompactNumber(tokens)} tokens` : noUsageLabel
 
   if (compact) {
     return (
-      <p className="min-w-0 flex-1 truncate text-left text-[11px] leading-5 tabular-nums text-ds-muted">
-        <span className="font-medium text-ds-ink">{dateLabel}</span>
-        <span className="mx-1 text-ds-faint">·</span>
-        <span>{tokenLabel}</span>
+      <p
+        className={[
+          'min-w-0 flex-1 truncate text-left text-[11px] leading-5 tabular-nums',
+          highlighted ? 'text-ds-ink' : 'text-ds-muted'
+        ].join(' ')}
+      >
+        <span className="font-semibold">{dateLabel}</span>
+        <span className="mx-1.5 text-ds-faint">·</span>
+        <span className={tokens > 0 ? 'font-medium text-ds-ink/85' : ''}>{tokenLabel}</span>
       </p>
     )
   }
 
   return (
-    <p className="min-h-[20px] flex-1 text-center text-[12px] leading-5 tabular-nums text-ds-muted">
-      <span className="font-medium text-ds-ink">{dateLabel}</span>
+    <p
+      className={[
+        'min-h-[20px] flex-1 text-center text-[12px] leading-5 tabular-nums',
+        highlighted ? 'text-ds-ink' : 'text-ds-muted'
+      ].join(' ')}
+    >
+      <span className="font-semibold">{dateLabel}</span>
       <span className="mx-1.5 text-ds-faint">·</span>
-      <span>{tokenLabel}</span>
+      <span className={tokens > 0 ? 'font-medium text-ds-ink/85' : ''}>{tokenLabel}</span>
     </p>
   )
 }
@@ -239,16 +254,14 @@ function HeatCell({
   if (!cell.inRange || !cell.day) {
     return (
       <div
-        className={`${sizeClass} rounded-[4px]`}
-        style={{ backgroundColor: fill }}
+        className={`${sizeClass} rounded-[3px] bg-ds-border/30`}
         aria-hidden
       />
     )
   }
 
   const dateLabel = formatHeatmapDayLabel(cell.day, locale)
-  const tokenLabel =
-    tokens > 0 ? `${formatCompactNumber(tokens)} tokens` : noUsageLabel
+  const tokenLabel = tokens > 0 ? `${formatCompactNumber(tokens)} tokens` : noUsageLabel
   const ariaLabel = `${dateLabel}, ${tokenLabel}`
 
   return (
@@ -260,9 +273,12 @@ function HeatCell({
       onClick={() => onSelect(cell.day!)}
       className={[
         sizeClass,
-        'cursor-pointer rounded-[4px] border-0 p-0 transition',
-        'hover:brightness-95',
-        selected ? 'ring-2 ring-inset ring-ds-accent' : ''
+        'cursor-pointer rounded-[3px] border-0 p-0 transition-[box-shadow,transform,filter] duration-150',
+        'hover:z-[1] hover:brightness-[0.97] hover:ring-1 hover:ring-ds-border/80',
+        'focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70',
+        selected
+          ? 'z-[2] ring-2 ring-accent ring-offset-1 ring-offset-ds-card brightness-100'
+          : ''
       ].join(' ')}
       style={{ backgroundColor: fill }}
     />
@@ -277,13 +293,13 @@ function HeatLegend({
   moreLabel: string
 }): ReactElement {
   return (
-    <div className="flex items-center gap-1.5 text-[10px] text-ds-faint">
+    <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-ds-faint">
       <span>{lessLabel}</span>
-      <div className="flex gap-[3px]">
+      <div className="flex gap-[3px] rounded-md bg-ds-elevated/50 p-1">
         {[0, 1, 2, 3, 4].map((level) => (
           <span
             key={level}
-            className="rounded-[3px]"
+            className="rounded-[3px] ring-1 ring-black/[0.04]"
             style={{
               width: LEGEND_CELL_PX,
               height: LEGEND_CELL_PX,
