@@ -277,9 +277,9 @@ export type DsGuiApi = {
   deepseekSpawnIfNeeded: () => Promise<DeepseekSpawnResult>
   prepareDeepseekBinary: () => Promise<{ ok: true; path: string } | { ok: false; message: string }>
   pickWorkspaceDirectory: (defaultPath?: string) => Promise<WorkspacePickResult>
-  pickWorkspaceFiles: (options: {
-    workspaceRoot: string
-    imagesOnly?: boolean
+  pickWorkspaceFiles: (options?: {
+    defaultPath?: string
+    workspaceRoot?: string
   }) => Promise<WorkspacePickFilesResult>
   listTuiSessions: () => Promise<ListTuiSessionsResult>
   pickTuiSessionFile: (defaultPath?: string) => Promise<TuiSessionPickResult>

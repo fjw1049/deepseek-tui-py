@@ -354,7 +354,7 @@ export function MessageTimeline({
       className={`ds-no-drag flex min-w-0 flex-col overflow-x-hidden ${
         stageCentered && showEmptyHeroOnly
           ? 'shrink-0 overflow-visible'
-          : 'min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+          : 'ds-scroll-surface min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
       }`}
     >
       <div

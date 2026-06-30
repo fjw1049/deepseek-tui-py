@@ -215,8 +215,8 @@ export const streamIdSchema = trimmedString(MAX_ID_LENGTH)
 
 export const workspacePickFilesPayloadSchema = z
   .object({
-    workspaceRoot: workspaceRootSchema,
-    imagesOnly: z.boolean().optional()
+    defaultPath: defaultPathSchema,
+    workspaceRoot: optionalTrimmedString(MAX_PATH_LENGTH)
   })
   .strict()
 

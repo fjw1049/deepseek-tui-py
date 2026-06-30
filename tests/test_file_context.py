@@ -47,6 +47,18 @@ class TestParse:
 
 
 class TestResolve:
+    def test_absolute_path_outside_workspace(self, workspace: Path, tmp_path: Path) -> None:
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside content", encoding="utf-8")
+        raw = f"@{outside}\nread"
+        out = process_turn_input(
+            UserTurnInput(raw_text=raw),
+            workspace=workspace,
+            cwd=workspace,
+        )
+        assert out.references[0].kind == "file"
+        assert "outside content" in out.model_text
+
     def test_missing_file(self, workspace: Path) -> None:
         raw = "@missing.py\nhelp"
         out = process_turn_input(

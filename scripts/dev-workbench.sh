@@ -42,13 +42,84 @@ if [[ -z "${ELECTRON_MIRROR:-}" ]]; then
   export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 fi
 
-if [[ ! -d node_modules/electron/dist ]]; then
-  echo "[workbench] npm install (first run — downloads Electron ~150MB, then compiles node-pty)"
+electron_binary_ready() {
+  local path_file="node_modules/electron/path.txt"
+  [[ -f "$path_file" ]] || return 1
+  local rel
+  rel="$(tr -d '\n\r' < "$path_file")"
+  [[ -n "$rel" && -x "node_modules/electron/dist/$rel" ]]
+}
+
+install_electron_binary() {
+  if [[ ! -f node_modules/electron/install.js ]]; then
+    echo "[workbench] electron package missing — run npm install in packages/workbench first" >&2
+    exit 1
+  fi
+  echo "[workbench] downloading Electron binary (~150MB) via ELECTRON_MIRROR=${ELECTRON_MIRROR}"
+  node node_modules/electron/install.js || true
+  if electron_binary_ready; then
+    return 0
+  fi
+
+  # extract-zip@2.0.1 (used by electron/install.js) can stop after the first
+  # archive entry on newer Node — fall back to the system unzip.
+  echo "[workbench] electron install.js incomplete — extracting with unzip..."
+  local zip
+  zip="$(node -e "
+    const { downloadArtifact } = require('@electron/get');
+    const { version } = require('./node_modules/electron/package');
+    const platform = process.env.npm_config_platform || process.platform;
+    let arch = process.env.npm_config_arch || process.arch;
+    downloadArtifact({ version, artifactName: 'electron', platform, arch })
+      .then((p) => { console.log(p); })
+      .catch((err) => { console.error(err); process.exit(1); });
+  ")"
+  rm -rf node_modules/electron/dist
+  mkdir -p node_modules/electron/dist
+  unzip -q -o "$zip" -d node_modules/electron/dist
+  node -e "
+    const fs = require('fs');
+    const os = require('os');
+    const platform = process.env.npm_config_platform || os.platform();
+    const rel = platform === 'win32'
+      ? 'electron.exe'
+      : (platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron');
+    fs.writeFileSync('node_modules/electron/path.txt', rel);
+  "
+}
+
+normalize_electron_path_txt() {
+  node -e "
+    const fs = require('fs');
+    const p = 'node_modules/electron/path.txt';
+    if (!fs.existsSync(p)) process.exit(0);
+    fs.writeFileSync(p, fs.readFileSync(p, 'utf8').trim());
+  "
+}
+
+ensure_node_modules() {
+  if [[ -d node_modules \
+    && -f node_modules/cac/dist/index.mjs \
+    && -f node_modules/@larksuiteoapi/node-sdk/package.json \
+    && -f node_modules/@larksuiteoapi/node-sdk/lib/index.js ]]; then
+    echo "[workbench] node_modules ready (skip npm install)"
+    return 0
+  fi
+  if [[ -d node_modules ]]; then
+    echo "[workbench] node_modules incomplete — running npm ci..."
+  else
+    echo "[workbench] npm ci (first run — downloads deps + Electron ~150MB)"
+  fi
   echo "[workbench] using ELECTRON_MIRROR=${ELECTRON_MIRROR}"
-  npm install
-else
-  echo "[workbench] node_modules ready (skip npm install)"
-fi
+  if ! npm ci; then
+    echo "[workbench] npm ci failed — retrying with registry.npmjs.org (npmmirror may be down)" >&2
+    npm ci --registry https://registry.npmjs.org
+  fi
+}
+
+ensure_node_modules
+install_electron_binary
+normalize_electron_path_txt
 
 echo "[workbench] starting Electron + Vite dev server (UI: http://127.0.0.1:5173)"
 echo "[workbench] Python runtime API will auto-start on port ${DEEPSEEK_RUNTIME_PORT:-7878} when the GUI connects"

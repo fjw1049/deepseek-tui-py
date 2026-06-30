@@ -1,4 +1,5 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
+import { homedir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
@@ -410,21 +411,18 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
 
   ipcMain.handle('workspace:pick-files', async (_, payload: unknown) => {
     const request = parseIpcPayload('workspace:pick-files', workspacePickFilesPayloadSchema, payload)
-    const workspaceRoot = expandHomePath(request.workspaceRoot)
-    if (!workspaceRoot) {
-      return { ok: false as const, message: 'Workspace root is required.', paths: [] as const }
-    }
+    const workspaceRoot = request.workspaceRoot ? expandHomePath(request.workspaceRoot) : ''
+    const dialogDefaultPath =
+      expandHomePath(request.defaultPath) || workspaceRoot || homedir()
     const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic']
     const options: Electron.OpenDialogOptions = {
-      title: request.imagesOnly ? 'Select images' : 'Select files',
-      defaultPath: workspaceRoot,
+      title: 'Select attachments',
+      defaultPath: dialogDefaultPath,
       properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
-      filters: request.imagesOnly
-        ? [{ name: 'Images', extensions: imageExtensions }]
-        : [
-            { name: 'All files', extensions: ['*'] },
-            { name: 'Images', extensions: imageExtensions }
-          ]
+      filters: [
+        { name: 'All files', extensions: ['*'] },
+        { name: 'Images', extensions: imageExtensions }
+      ]
     }
     const mainWindow = getMainWindow()
     const result = mainWindow
@@ -433,24 +431,18 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     if (result.canceled) {
       return { ok: true as const, paths: [] as const }
     }
-    const resolvedRoot = await canonicalPath(resolve(workspaceRoot))
+    const resolvedRoot = workspaceRoot ? await canonicalPath(resolve(workspaceRoot)) : null
     const paths: string[] = []
-    const skipped: string[] = []
     for (const picked of result.filePaths) {
       const abs = await canonicalPath(resolve(picked))
-      const rel = relative(resolvedRoot, abs)
-      if (!rel || rel.startsWith('..') || rel.startsWith('/')) {
-        skipped.push(picked)
-        continue
+      if (resolvedRoot) {
+        const rel = relative(resolvedRoot, abs)
+        if (rel && !rel.startsWith('..') && !rel.startsWith('/')) {
+          paths.push(rel.split('\\').join('/'))
+          continue
+        }
       }
-      paths.push(rel.split('\\').join('/'))
-    }
-    if (paths.length === 0 && skipped.length > 0) {
-      return {
-        ok: false as const,
-        message: 'Selected files must be inside the current workspace.',
-        paths: [] as const
-      }
+      paths.push(abs.split('\\').join('/'))
     }
     return { ok: true as const, paths }
   })

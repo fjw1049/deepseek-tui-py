@@ -434,8 +434,8 @@ samp {
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
 }
 
 *::-webkit-scrollbar-track {
@@ -443,7 +443,7 @@ samp {
 }
 
 *::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+  border: 1.5px solid transparent;
   border-radius: 999px;
   background: var(--ds-scrollbar-thumb);
   background-clip: padding-box;
@@ -452,6 +452,13 @@ samp {
 *::-webkit-scrollbar-thumb:hover {
   background: var(--ds-scrollbar-thumb-hover);
   background-clip: padding-box;
+}
+
+/* Slimmer scrollbar inside the "/" composer command popover. */
+.ds-composer-command-popover ::-webkit-scrollbar,
+.ds-composer-command-popover::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
 }
 
 .ds-shell {
@@ -991,7 +998,8 @@ samp {
     drop-shadow(0 -0.7px 0.6px #000)
     drop-shadow(0.45px 0.45px 0.45px #000)
     drop-shadow(-0.45px -0.45px 0.45px #000);
-  animation: ds-empty-stage-mark-spin-y 1.4s linear infinite;
+  /* DIAGNOSTIC(scroll-jank): infinite 3D spin disabled to test if this mark is
+     what starves main-screen scrolling. */
 }
 
 [data-theme='dark'] .ds-empty-stage-mark {
@@ -1012,6 +1020,16 @@ samp {
   .ds-empty-stage-mark {
     animation: none;
   }
+}
+
+/* Scroll perf: the home-screen mark spins forever (1.4s linear infinite) through
+   9 stacked drop-shadow filters + a 3D rotateY. That perpetually pins the
+   compositor, starving every scroll on this screen (trending list, model popover,
+   etc.). Pause its animation while anything is scrolling — the mark visibly stops
+   only mid-scroll and resumes ~160ms after scroll ends. */
+.ds-workbench-shell.is-scrolling .ds-empty-stage-mark {
+  animation-play-state: paused;
+  filter: none !important;
 }
 
 @keyframes ds-empty-stage-mark-spin-y {
@@ -1049,8 +1067,40 @@ samp {
   contain: paint;
 }
 
-.ds-trending-loop-viewport:hover > div {
-  animation-play-state: paused;
+/* Shared scroll isolation: any scroll region nested inside a glass surface
+   (backdrop-filter ancestor) should carry this so wheel/drag scrolling does not
+   re-rasterize the ancestor blur every frame, and so over-scroll never chains
+   up to an outer (often scrollbar-hidden) container and "jumps to the bottom".
+   Apply ONLY to the scrolling element itself — never to a shell that needs to
+   paint a drop shadow outside its box, since `contain: paint` clips it. */
+.ds-scroll-surface {
+  overscroll-behavior: contain;
+  transform: translateZ(0);
+  contain: paint;
+}
+
+/* Scroll perf: while any surface is actively scrolling (.is-scrolling flagged
+   on the shell by Workbench.tsx), drop the expensive backdrop-filter blur.
+   Chromium re-rasterizes every blur layer per frame when content scrolls
+   beneath glass — measured 25x GPU-busy and 6x main-thread frame time on long
+   chat threads. Each glass surface already paints a translucent solid
+   background underneath, so the only visible change is loss of blur —
+   imperceptible mid-scroll, restored ~160ms after scrolling stops. */
+.ds-workbench-shell.is-scrolling .ds-chat-composer,
+.ds-workbench-shell.is-scrolling .ds-frosted,
+.ds-workbench-shell.is-scrolling .ds-glass,
+.ds-workbench-shell.is-scrolling .ds-glass-segment-thumb,
+.ds-workbench-shell.is-scrolling .ds-topbar-surface,
+.ds-workbench-shell.is-scrolling .ds-sidebar-shell,
+.ds-workbench-shell.is-scrolling .ds-sidebar-expand-droplet,
+.ds-workbench-shell.is-scrolling .ds-composer-command-popover,
+.ds-workbench-shell.is-scrolling .ds-workbench-right-panel,
+.ds-workbench-shell.is-scrolling .ds-feature-page,
+.ds-workbench-shell.is-scrolling .ds-settings-page > .ds-page-scroll,
+.ds-workbench-shell.is-scrolling .ds-modal-backdrop,
+.ds-workbench-shell.is-scrolling .ds-modal-surface {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .ds-chat-stage-stack {
@@ -1766,6 +1816,65 @@ samp {
   border-radius: 14px;
   background: var(--ds-pre-bg);
   box-sizing: border-box;
+}
+
+.ds-markdown .ds-mermaid-block {
+  margin: 0 0 0.48rem;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-border);
+  border-radius: 14px;
+  background: var(--ds-pre-bg);
+  box-sizing: border-box;
+}
+
+.ds-markdown .ds-mermaid-block-label {
+  padding: 0.42rem 0.75rem;
+  border-bottom: 1px solid var(--ds-border-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ds-text-faint);
+}
+
+.ds-markdown .ds-mermaid-svg {
+  overflow-x: auto;
+  padding: 0.75rem 1rem 1rem;
+}
+
+.ds-markdown .ds-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.ds-markdown .ds-mermaid-loading {
+  padding: 1.5rem 1rem;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ds-text-faint);
+}
+
+.ds-markdown .ds-mermaid-block--error .ds-mermaid-error {
+  margin: 0;
+  padding: 0.75rem 1rem 0;
+  font-size: 13px;
+  color: var(--ds-danger);
+}
+
+.ds-markdown .ds-mermaid-source {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 1rem 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ds-text-muted);
+  white-space: pre-wrap;
 }
 
 .ds-markdown .ds-code-block-header {
@@ -2601,6 +2710,11 @@ select:focus-visible,
 .ds-channel-page,
 .ds-automation-form {
   overflow-y: auto;
+  /* These elements are themselves the scrolling surface AND paint an outer
+     drop shadow (--ds-material-shadow). Use overscroll containment (stops
+     scroll-chaining) but NOT `contain: paint`, which would clip the shadow. */
+  overscroll-behavior: contain;
+  transform: translateZ(0);
 }
 
 .ds-settings-page {
@@ -2614,6 +2728,10 @@ select:focus-visible,
 
 .ds-settings-page > .ds-page-scroll {
   overflow: auto;
+  /* Scrolling shell that also paints an outer drop shadow — same as
+     .ds-feature-page.ds-page-scroll: contain overscroll, but no `contain: paint`. */
+  overscroll-behavior: contain;
+  transform: translateZ(0);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-shell);
   background: var(--ds-material-page);

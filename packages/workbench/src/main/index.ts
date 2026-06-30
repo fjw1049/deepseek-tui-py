@@ -85,6 +85,11 @@ function emitStartupPhase(phase: StartupPhase, detail?: string): void {
 
 traceStartup('main module evaluated')
 
+// TEMP(scroll-jank diagnostics): remote debugging port for live GPU trace. Remove after.
+if (process.env.ELECTRON_RENDERER_URL) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222')
+}
+
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID)
 }

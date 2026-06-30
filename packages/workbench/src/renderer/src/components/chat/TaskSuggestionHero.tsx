@@ -25,8 +25,6 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
 const EMPTY_HERO_PANEL_CLASS = 'ds-empty-hero-panel'
 const TRENDING_REPO_LIMIT = 8
 const VISIBLE_TOPIC_COUNT = 3
-const TRENDING_LOOP_SEC_PER_CARD = 7
-const TRENDING_LOOP_PAUSE_SEC = 15
 const CARD_THEMES = [
   {
     border: 'hover:border-emerald-400/35',
@@ -159,52 +157,12 @@ function TrendingRepoScrollList({
   repos: TrendingRepo[]
   onAnalyze: (repo: TrendingRepo) => void
 }): ReactElement {
-  const canLoop = repos.length > 1
-
-  if (!canLoop) {
-    return (
-      <div className="ds-trending-grid-scroll flex h-full flex-col gap-2 pr-1">
-        {repos.map((repo) => (
-          <RepoRow key={repo.name} repo={repo} onAnalyze={onAnalyze} />
-        ))}
-      </div>
-    )
-  }
-
-  const scrollDurationSec = repos.length * TRENDING_LOOP_SEC_PER_CARD
-  const totalDurationSec = scrollDurationSec + TRENDING_LOOP_PAUSE_SEC
-  const scrollEndPercent = (scrollDurationSec / totalDurationSec) * 100
-  const animationName = `ds-trending-scroll-${repos.length}`
-  const loopRepos = [...repos, ...repos]
-
   return (
-    <>
-      <style>{`
-        @keyframes ${animationName} {
-          0% { transform: translateY(0); }
-          ${scrollEndPercent}% { transform: translateY(-50%); }
-          100% { transform: translateY(-50%); }
-        }
-        .${animationName} {
-          animation: ${animationName} ${totalDurationSec}s linear infinite;
-          will-change: transform;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .${animationName} {
-            animation: none;
-          }
-        }
-      `}</style>
-      <div className="ds-trending-loop-viewport h-full overflow-hidden pr-1">
-        <div className={`${animationName} flex flex-col gap-2`}>
-          {loopRepos.map((repo, index) => (
-            <div key={`${repo.name}-${index}`} className="shrink-0">
-              <RepoRow repo={repo} onAnalyze={onAnalyze} />
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
+    <div className="ds-trending-grid-scroll ds-scroll-surface flex h-full flex-col gap-2 overflow-y-auto overscroll-contain pr-1">
+      {repos.map((repo) => (
+        <RepoRow key={repo.name} repo={repo} onAnalyze={onAnalyze} />
+      ))}
+    </div>
   )
 }
 
@@ -262,7 +220,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
         <EmptyStageMarkIcon className="h-12 w-12" />
         <p className="flex items-baseline font-medium leading-snug tracking-[-0.02em] text-ds-ink">
           <span className="text-[28px] sm:text-[32px]">:</span>
-          <span className="ml-2.5 text-[22px] sm:ml-3 sm:text-[26px]">{t('emptyStagePrompt')}</span>
+          <span className="ml-2.5 text-[26px] sm:ml-3 sm:text-[30px]">{t('emptyStagePrompt')}</span>
         </p>
       </div>
       <div className="ds-empty-hero-grid grid">

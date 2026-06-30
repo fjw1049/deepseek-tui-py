@@ -12,12 +12,11 @@ import {
   ChevronDown,
   Clock3,
   FileDiff,
-  FileImage,
-  FileText,
   GitFork,
   ListTodo,
   MessageCircleQuestion,
   Package,
+  Paperclip,
   Plus,
   Plug,
   Send,
@@ -123,8 +122,12 @@ function getSlashQuery(input: string): string | null {
   return trimmed.slice(1).toLowerCase()
 }
 
+function formatAttachmentMention(path: string): string {
+  return /\s/.test(path) ? `@"${path}"` : `@${path}`
+}
+
 function buildOutboundMessage(attachments: ComposerAttachment[], input: string): string {
-  const mentionLines = attachments.map((item) => `@${item.path}`)
+  const mentionLines = attachments.map((item) => formatAttachmentMention(item.path))
   return [...mentionLines, input.trim()].filter(Boolean).join('\n')
 }
 
@@ -615,12 +618,8 @@ export function FloatingComposer({
     resetVoiceSession()
   }, [activeThreadId, resetVoiceSession])
 
-  const pickAttachments = async (imagesOnly: boolean): Promise<void> => {
+  const pickAttachments = async (): Promise<void> => {
     clearAttachNotice()
-    if (!effectiveWorkspaceRoot) {
-      setAttachNotice(t('composerAttachNeedsWorkspace'))
-      return
-    }
     if (typeof window.dsGui === 'undefined') {
       setAttachNotice(t('preloadBridgeMissing'))
       return
@@ -630,8 +629,8 @@ export function FloatingComposer({
       return
     }
     const result = await window.dsGui.pickWorkspaceFiles({
-      workspaceRoot: effectiveWorkspaceRoot,
-      imagesOnly
+      defaultPath: effectiveWorkspaceRoot || undefined,
+      workspaceRoot: effectiveWorkspaceRoot || undefined
     })
     if (!result.ok) {
       setAttachNotice(result.message ?? t('composerAttachFailed'))
@@ -795,7 +794,7 @@ export function FloatingComposer({
             </div>
             {petSlashQuery != null ? (
               filteredPetSlashCommands.length > 0 ? (
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="ds-scroll-surface min-h-0 flex-1 overflow-y-auto">
                   {filteredPetSlashCommands.map((command) => {
                     const active = highlightedPetSlashCommand?.command === command.command
                     return (
@@ -838,7 +837,7 @@ export function FloatingComposer({
                 </div>
               )
             ) : filteredSlashCommands.length > 0 ? (
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="ds-scroll-surface min-h-0 flex-1 overflow-y-auto">
                 {filteredSlashCommands.map((command) => {
                   const active = highlightedSlashCommand?.id === command.id
                   return (
@@ -1014,9 +1013,6 @@ export function FloatingComposer({
               </button>
               {plusMenuOpen ? (
                 <div className="ds-glass absolute bottom-full left-0 z-40 mb-2 min-w-[220px] overflow-hidden rounded-2xl p-1.5">
-                  <div className="flex w-full justify-center px-2 py-1 text-center text-[11px] font-medium uppercase tracking-wide text-ds-faint">
-                    {t('composerModeSection')}
-                  </div>
                   {(
                     [
                       { id: 'agent' as const, label: t('composerModeAgent'), icon: Bot },
@@ -1046,28 +1042,15 @@ export function FloatingComposer({
                     </button>
                   ))}
                   <div className="my-1 border-t border-ds-border-muted" />
-                  <div className="flex w-full items-center justify-center px-2 py-1 text-center text-[11px] font-medium uppercase tracking-wide text-ds-faint">
-                    {t('composerPlusAttachSection')}
-                  </div>
                   <button
                     type="button"
                     disabled={!canCompose}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => void pickAttachments(false)}
+                    onClick={() => void pickAttachments()}
                     className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
                   >
-                    <FileText className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                    <span>{t('composerAttachFiles')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!canCompose}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => void pickAttachments(true)}
-                    className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
-                  >
-                    <FileImage className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                    <span>{t('composerAttachImages')}</span>
+                    <Paperclip className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                    <span>{t('composerAttachNew')}</span>
                   </button>
                 </div>
               ) : null}

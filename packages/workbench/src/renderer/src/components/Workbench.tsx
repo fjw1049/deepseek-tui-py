@@ -404,6 +404,26 @@ export function Workbench(): ReactElement {
     inputRef.current = input
   }, [input])
 
+  // Scroll perf: flag the shell while any surface is actively scrolling so CSS
+  // can drop the expensive backdrop-filter blur (re-rasterized every frame in
+  // Electron). Capture-phase catches every scroll container at once; the blur
+  // is restored ~160ms after scrolling stops.
+  useEffect(() => {
+    const shell = shellRef.current
+    if (!shell) return
+    let timer: number | null = null
+    const onScroll = (): void => {
+      shell.classList.add('is-scrolling')
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => shell.classList.remove('is-scrolling'), 160)
+    }
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    return () => {
+      document.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [])
+
   useEffect(() => {
     persistWidth(LEFT_PANEL_WIDTH_KEY, leftSidebarWidth)
   }, [leftSidebarWidth])

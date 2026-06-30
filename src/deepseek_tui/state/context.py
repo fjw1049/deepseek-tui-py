@@ -360,10 +360,11 @@ def _resolve_mention(token: str, workspace: Path, cwd: Path) -> tuple[Path, str]
                 resolved = (workspace / candidate).resolve()
     except OSError:
         return None
-    try:
-        resolved.relative_to(workspace)
-    except ValueError:
-        return None
+    if not candidate.is_absolute():
+        try:
+            resolved.relative_to(workspace)
+        except ValueError:
+            return None
     display = _display_path(resolved, workspace)
     return resolved, display
 

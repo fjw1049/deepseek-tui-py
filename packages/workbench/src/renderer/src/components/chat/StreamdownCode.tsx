@@ -28,6 +28,7 @@ import { useValidatedFileReference } from '../../lib/file-reference-validation'
 import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
 import { useChatStore } from '../../store/chat-store'
+import { StreamdownMermaidBlock } from './StreamdownMermaidBlock'
 
 const LANGUAGE_REGEX = /language-([^\s]+)/
 const TRAILING_NEWLINES_REGEX = /\n+$/
@@ -575,6 +576,10 @@ function CodeComponent({ node, className, children, ...props }: CodeProps) {
   const match = className?.match(LANGUAGE_REGEX)
   const language = match?.[1] ?? ''
   const code = extractText(children)
+
+  if (language === 'mermaid') {
+    return <StreamdownMermaidBlock chart={code} />
+  }
 
   return <CodeBlock code={code} language={language} />
 }

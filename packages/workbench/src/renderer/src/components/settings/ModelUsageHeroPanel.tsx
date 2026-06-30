@@ -147,7 +147,7 @@ export function ModelUsageHeroPanel({
             <p className="mb-2 mt-3 shrink-0 text-[12px] font-medium text-ds-muted">
               {t('usageHeroModelListTitle')}
             </p>
-            <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="ds-trending-grid-scroll min-h-0 flex-1 space-y-1 pr-1">
               {modelBuckets.map((bucket, index) => {
                 const share =
                   totalTokens > 0
