@@ -2110,7 +2110,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   color: var(--ds-bubble-user-fg);
   font-family: var(--font-ui);
   font-size: 15px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.58;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.05);
 }
