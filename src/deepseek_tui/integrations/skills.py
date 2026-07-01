@@ -95,6 +95,14 @@ class Skill:
     description: str
     body: str
     path: Path
+    allowed_tools: tuple[str, ...] | None = None
+    """Optional focus-mode tool whitelist from the ``allowed-tools``
+    frontmatter key. When set, overrides ``FOCUS_MODE_TOOLS`` for this
+    skill. ``None`` means "not declared" (fall back to the fixed set).
+
+    Deviation from Rust ``Skill`` (which has no such field) — approved
+    for the focus-mode feature; mirrors workflow ``allowed_tools`` semantics.
+    """
 
 
 @dataclass(slots=True)
@@ -165,14 +173,27 @@ def _parse_skill_file(path: Path) -> Skill:
     """
     content = path.read_text(encoding="utf-8")
     meta: dict[str, str] = {}
+    allowed_tools: tuple[str, ...] | None = None
     body = content
 
     match = _FRONTMATTER_RE.match(content)
     if match:
-        for line in match.group(1).splitlines():
-            if ":" in line:
-                key, _, value = line.partition(":")
-                meta[key.strip().lower()] = value.strip()
+        fm_lines = match.group(1).splitlines()
+        idx = 0
+        while idx < len(fm_lines):
+            line = fm_lines[idx]
+            if ":" not in line:
+                idx += 1
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip().lower()
+            value = value.strip()
+            if key == "allowed-tools":
+                allowed_tools, consumed = _parse_allowed_tools(value, fm_lines, idx)
+                idx += consumed
+                continue
+            meta[key] = value
+            idx += 1
         body = content[match.end():]
 
     name = meta.get("name", path.parent.name)
@@ -183,7 +204,49 @@ def _parse_skill_file(path: Path) -> Skill:
         description=description,
         body=body.strip(),
         path=path,
+        allowed_tools=allowed_tools,
     )
+
+
+def _parse_allowed_tools(
+    value: str, fm_lines: list[str], idx: int
+) -> tuple[tuple[str, ...] | None, int]:
+    """Parse the ``allowed-tools`` frontmatter value.
+
+    Supports three shapes (returns a ``(tools, lines_consumed)`` tuple):
+
+    - Inline array:      ``allowed-tools: [read_file, grep]``
+    - Comma string:      ``allowed-tools: read_file, grep``
+    - YAML block list:    ``allowed-tools:`` then ``  - read_file`` lines
+
+    Empty / whitespace-only declarations yield ``None`` (treated as
+    "not declared" so focus mode falls back to ``FOCUS_MODE_TOOLS``).
+    """
+    value = value.strip()
+
+    # Inline array or comma string on the same line.
+    if value:
+        if value.startswith("[") and value.endswith("]"):
+            value = value[1:-1]
+        items = [tok.strip().strip("'\"") for tok in value.split(",")]
+        tools = tuple(t for t in items if t)
+        return (tools or None, 1)
+
+    # Empty value → look for a following block list.
+    tools_list: list[str] = []
+    consumed = 1
+    for follow in fm_lines[idx + 1:]:
+        stripped = follow.strip()
+        if stripped.startswith("- "):
+            item = stripped[2:].strip().strip("'\"")
+            if item:
+                tools_list.append(item)
+            consumed += 1
+        elif stripped == "":
+            consumed += 1
+        else:
+            break
+    return (tuple(tools_list) or None, consumed)
 
 
 # ── Workspace discovery ──────────────────────────────────────────────────

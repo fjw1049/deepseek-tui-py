@@ -23,6 +23,7 @@ import {
   Settings2,
   ShieldAlert,
   Shrink,
+  Sparkles,
   Square,
   Gauge,
   Mic,
@@ -174,6 +175,10 @@ export function FloatingComposer({
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  // Focus-mode skill picked from the `/skills` panel. Held out of the input
+  // text (rendered as an inline chip) and prepended as `/name ` only on send,
+  // so the runtime's leading-token focus detection still works unchanged.
+  const [focusSkill, setFocusSkill] = useState<string | null>(null)
   const [activeCommand, setActiveCommand] = useState<{
     id: ComposerActionCommandId
     args: string
@@ -188,7 +193,9 @@ export function FloatingComposer({
   const canCompose = runtimeReady && (hasActiveThread || !!effectiveWorkspaceRoot)
   const canChangeModel = canCompose && !busy
   const outboundPreview = buildOutboundMessage(attachments, input)
-  const canSend = canCompose && outboundPreview.length > 0
+  // A picked skill alone is enough to send (the runtime just runs it), even
+  // with no typed request yet.
+  const canSend = canCompose && (outboundPreview.length > 0 || focusSkill != null)
   const petSlashQuery = getPetSlashQuery(input)
   const slashQuery = petSlashQuery == null ? getSlashQuery(input) : null
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -471,6 +478,16 @@ export function FloatingComposer({
     focusComposer()
   }
 
+  const handlePickSkill = (name: string): void => {
+    // Hold the skill as an inline chip (not in the input text). The input is
+    // cleared so the caret lands at the start, ready for the user's request;
+    // `/name ` is prepended only at send time.
+    setFocusSkill(name)
+    setInput('')
+    setActiveCommand(null)
+    focusComposer()
+  }
+
   const applyPetSlashCommand = (command: string): void => {
     if (onApplyPetSlashCommand?.(command)) {
       setInput('')
@@ -699,10 +716,14 @@ export function FloatingComposer({
       setAttachNotice(t('composerCommandUnknown'))
       return
     }
-    const payload = buildOutboundMessage(attachments, input)
+    const body = buildOutboundMessage(attachments, input)
+    // Prepend the focus-mode skill as a leading `/name` token so the runtime
+    // detects it (the inline chip is UI-only; the wire format is unchanged).
+    const payload = focusSkill ? `/${focusSkill} ${body}`.trim() : body
     if (!payload.trim()) return
     setAttachments([])
     setInput('')
+    setFocusSkill(null)
     onSend(payload)
   }
 
@@ -786,6 +807,7 @@ export function FloatingComposer({
               setActiveCommand(null)
             }}
             onClose={() => setActiveCommand(null)}
+            onPickSkill={handlePickSkill}
           />
         ) : (slashQuery != null || petSlashQuery != null) ? (
           <div className="ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-30 flex max-h-[min(420px,50vh)] w-[calc(100%_-_24px)] max-w-[620px] -translate-x-1/2 flex-col overflow-hidden rounded-t-[22px] rounded-b-[14px] p-1.5 shadow-[0_20px_55px_rgba(15,23,42,0.16)]">
@@ -914,6 +936,27 @@ export function FloatingComposer({
                   </button>
                 </div>
               ))}
+            </div>
+          ) : null}
+
+          {focusSkill ? (
+            <div className="flex flex-wrap gap-2 px-1 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusSkill(null)
+                  focusComposer()
+                }}
+                title={t('composerSkillFocus', { name: focusSkill })}
+                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(79,124,255,0.4)] bg-[rgba(79,124,255,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#4f7cff] transition hover:bg-[rgba(79,124,255,0.22)]"
+              >
+                <Sparkles className="h-3 w-3 shrink-0" strokeWidth={2} />
+                <span className="truncate">{focusSkill}</span>
+                <X
+                  className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
+                  strokeWidth={2}
+                />
+              </button>
             </div>
           ) : null}
 

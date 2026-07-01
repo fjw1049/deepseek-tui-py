@@ -43,6 +43,7 @@ type Props = {
   onFork: () => Promise<void>
   onOpenDiff: () => void
   onClose: () => void
+  onPickSkill?: (name: string) => void
 }
 
 const buttonClass =
@@ -107,7 +108,13 @@ export function ComposerCommandPanel(props: Props): ReactElement {
         {command === 'context' ? <ContextPanel {...props} /> : null}
         {command === 'compact' ? <CompactPanel {...props} /> : null}
         {command === 'mcp' ? <McpPanel runtimeReady={props.runtimeReady} /> : null}
-        {command === 'skills' ? <SkillsPanel runtimeReady={props.runtimeReady} /> : null}
+        {command === 'skills' ? (
+          <SkillsPanel
+            runtimeReady={props.runtimeReady}
+            onPickSkill={props.onPickSkill}
+            onClose={onClose}
+          />
+        ) : null}
         {command === 'diff' ? <DiffPanel blocks={props.blocks} onOpenDiff={props.onOpenDiff} /> : null}
         {command === 'fork' ? <ForkPanel {...props} /> : null}
         {command === 'hooks' ? <HooksPanel /> : null}
@@ -271,7 +278,15 @@ function McpPanel({ runtimeReady }: { runtimeReady: boolean }): ReactElement {
   )
 }
 
-function SkillsPanel({ runtimeReady }: { runtimeReady: boolean }): ReactElement {
+function SkillsPanel({
+  runtimeReady,
+  onPickSkill,
+  onClose
+}: {
+  runtimeReady: boolean
+  onPickSkill?: (name: string) => void
+  onClose: () => void
+}): ReactElement {
   const [skills, setSkills] = useState<Array<{ name: string; description?: string }>>([])
   const [loading, setLoading] = useState(true)
   useEffect(() => {
@@ -284,13 +299,25 @@ function SkillsPanel({ runtimeReady }: { runtimeReady: boolean }): ReactElement 
     }).finally(() => setLoading(false))
   }, [runtimeReady])
   if (loading) return <Loader2 className="h-4 w-4 animate-spin text-ds-muted" />
+  // Picking a skill fills `/name ` into the composer and closes the panel,
+  // triggering the runtime's focus mode for the next turn (the composer's
+  // skill chip lights up once the input becomes `/name `).
+  const pick = (name: string): void => {
+    onPickSkill?.(name)
+    onClose()
+  }
   return (
     <div className="space-y-2">
       {skills.map((skill) => (
-        <div key={skill.name} className="rounded-xl bg-ds-main/60 px-3 py-2.5">
+        <button
+          key={skill.name}
+          type="button"
+          onClick={() => pick(skill.name)}
+          className="block w-full rounded-xl bg-ds-main/60 px-3 py-2.5 text-left transition hover:bg-ds-hover"
+        >
           <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Package className="h-4 w-4" />{skill.name}</div>
           {skill.description ? <div className="mt-1 text-[11px] text-ds-faint">{skill.description}</div> : null}
-        </div>
+        </button>
       ))}
       {skills.length === 0 ? <div className="text-[12px] text-ds-faint">No skills discovered.</div> : null}
     </div>

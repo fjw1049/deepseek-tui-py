@@ -112,6 +112,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Skill 聚焦模式：当用户以 `/<skill-name>` 指定单个 skill 时，本 turn 只暴露
+# 这套最小工具集，屏蔽无关工具的干扰。load_skill 必须在内，否则模型无法读取
+# 聚焦 skill 的正文。
+FOCUS_MODE_TOOLS = frozenset(
+    {"read_file", "list_dir", "grep", "load_skill", "write_file", "edit_file"}
+)
+
+
+def _detect_focus_skill(text: str, registry: object | None) -> object | None:
+    """解析形如 `/data-extract ...` 的前缀，命中已发现 skill 时返回该 Skill。
+
+    仅识别整条消息**首个** token 为 `/<name>` 的情形；`<name>` 用 registry 的
+    大小写不敏感查找（``SkillRegistry.get``）。未命中 / 无 registry 返回
+    ``None``，调用方即回退到全量逻辑（把 `/xxx` 当普通文本，与现状一致）。
+    """
+    if registry is None:
+        return None
+    stripped = (text or "").lstrip()
+    if not stripped.startswith("/"):
+        return None
+    first = stripped[1:].split(maxsplit=1)[0] if len(stripped) > 1 else ""
+    if not first:
+        return None
+    return registry.get(first)
+
 
 def _resolve_app_mode(mode: str) -> _AppMode:
     """Convert a mode string to AppMode, falling back to AGENT."""
@@ -350,6 +375,10 @@ class Engine:
         self.approval_cache = ApprovalCache()
         # Skills integration — renders available skills into system prompt
         self.skill_registry = skill_registry
+        # Skill 聚焦模式：per-turn 工具白名单。None = 全量（默认）；置位时
+        # ``_get_tools_with_mcp`` 只返回交集。由 ``_handle_send_message_inner``
+        # 在 try/finally 中设置与复位，不跨 turn 保留。
+        self._focus_tool_whitelist: frozenset[str] | None = None
         # Per-tool snapshots for /undo (mirrors Rust pre_tool_snapshot, #384).
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
@@ -457,6 +486,16 @@ class Engine:
                     list(native_tools), list(mcp_tools), self.mode
                 )
                 result = filter_tools_for_profile(combined, profile)
+
+        # 聚焦模式：收窄到最小工具白名单。在 catalog 层直接裁剪（而非依赖
+        # defer_loading），确保模型无法经 tool-search 调回被屏蔽的工具。
+        if self._focus_tool_whitelist is not None:
+            whitelist = self._focus_tool_whitelist
+            result = [
+                t
+                for t in result
+                if (t.get("function", t) or {}).get("name") in whitelist
+            ]
 
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
@@ -612,13 +651,24 @@ class Engine:
 
 
 
-    def _render_skills_context(self) -> str | None:
-        """Render skills context for system prompt injection."""
+    def _render_skills_context(self, only: object | None = None) -> str | None:
+        """Render skills context for system prompt injection.
+
+        ``only`` 为聚焦模式的目标 Skill：传入时只把这一个 skill 列进
+        ``## Skills`` 段（用临时单-skill registry，不改 ``self.skill_registry``）；
+        为 ``None`` 时渲染全量（默认）。
+        """
         if self.skill_registry is None:
             return None
-        from deepseek_tui.integrations.skills import render_available_skills_context
+        from deepseek_tui.integrations.skills import (
+            SkillRegistry,
+            render_available_skills_context,
+        )
 
-        return render_available_skills_context(self.skill_registry) or None
+        registry = self.skill_registry
+        if only is not None:
+            registry = SkillRegistry(skills=[only])
+        return render_available_skills_context(registry) or None
 
     def _accrue_child_token_cost_from_metadata(
         self, metadata: dict[str, Any] | None
@@ -958,6 +1008,15 @@ class Engine:
 
         reset_host_timeouts(self.tool_context)
 
+        # Skill 聚焦模式：若用户以 `/<skill-name>` 指定了一个已发现的 skill，
+        # 本 turn 只列该 skill、只放最小工具集。未命中则 focus_skill 为 None，
+        # 走原有全量逻辑（`/xxx` 当普通文本）。基于用户实际输入文本解析。
+        focus_skill = _detect_focus_skill(
+            processed.display_text or op.content or "", self.skill_registry
+        )
+        if focus_skill is not None:
+            logger.info("skill_focus_mode skill=%s", getattr(focus_skill, "name", "?"))
+
         user_message = Message.user(processed.model_text)
 
         prior_count = len(self.session_messages)
@@ -1007,6 +1066,17 @@ class Engine:
             )
 
         try:
+            # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
+            # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
+            # skill 声明 ``allowed-tools`` 则完全覆盖固定白名单；否则回退到
+            # ``FOCUS_MODE_TOOLS``。
+            if focus_skill is not None:
+                declared = getattr(focus_skill, "allowed_tools", None)
+                self._focus_tool_whitelist = (
+                    frozenset(declared) if declared else FOCUS_MODE_TOOLS
+                )
+            else:
+                self._focus_tool_whitelist = None
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
@@ -1018,7 +1088,7 @@ class Engine:
             sys_prompt = build_system_prompt(
                 op.system_prompt,
                 mode=_resolve_app_mode(self.mode),
-                skills_context=self._render_skills_context(),
+                skills_context=self._render_skills_context(only=focus_skill),
                 working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,
                 locale_tag=_detect_locale(processed.display_text or ""),
@@ -1157,6 +1227,8 @@ class Engine:
                 self._user_turn_index += 1
         finally:
             self.handle.clear_response_id()
+            # 复位聚焦模式白名单，确保不跨 turn 保留。
+            self._focus_tool_whitelist = None
 
     def _enqueue_subagent_completion(self, completion: SubAgentCompletion) -> None:
         """Thread-safe enqueue from sub-agent driver tasks (#756)."""
