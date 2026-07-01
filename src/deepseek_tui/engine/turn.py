@@ -19,6 +19,7 @@ from deepseek_tui.client.base import LLMClient
 from deepseek_tui.config.providers import max_output_tokens_for_model
 from deepseek_tui.engine.context import (
     context_input_budget,
+    estimate_tokens,
     estimated_input_tokens,
     is_context_length_error_message,
 )
@@ -244,12 +245,12 @@ class TurnLoop:
                     # also consume input tokens.
                     estimated_input = estimated_input_tokens(request.messages)
                     if request.system_prompt:
-                        estimated_input += len(request.system_prompt) // 4
+                        estimated_input += estimate_tokens(request.system_prompt)
                     if active_tools:
                         import json as _json
 
-                        estimated_input += (
-                            len(_json.dumps(active_tools, ensure_ascii=False)) // 4
+                        estimated_input += estimate_tokens(
+                            _json.dumps(active_tools, ensure_ascii=False)
                         )
                     if estimated_input > input_budget:
                         logger.warning(

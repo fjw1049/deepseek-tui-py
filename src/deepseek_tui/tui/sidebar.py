@@ -689,7 +689,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from deepseek_tui.config.providers import context_window_for_model
-from deepseek_tui.engine.context import estimate_input_tokens_conservative
+from deepseek_tui.engine.context import (
+    estimate_input_tokens_conservative,
+    estimate_tokens,
+)
 from deepseek_tui.protocol.messages import Message
 
 WORKING_SET_MARKER: str = "## Repo Working Set"
@@ -787,12 +790,12 @@ def _context_usage(snapshot: InspectorSnapshot) -> tuple[int, int, float]:
     estimated = estimate_input_tokens_conservative(
         snapshot.api_messages, snapshot.system_prompt
     )
-    chars = sum(
-        len(getattr(block, "text", "") or "")
+    text_blob = "".join(
+        getattr(block, "text", "") or ""
         for msg in snapshot.api_messages
         for block in msg.content
     )
-    used = max(estimated, chars // 4)
+    used = max(estimated, estimate_tokens(text_blob))
     percent = min(100.0, max(0.0, (used / max_window) * 100.0)) if max_window else 0.0
     return used, max_window, percent
 

@@ -8,6 +8,7 @@ streaming turn loop, capacity flow, and engine session maintenance code.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 from typing import Any
@@ -282,8 +283,59 @@ def append_working_set_summary(
 # --- Token estimation (Rust context.rs:341-378) --------------------------
 
 
+@functools.lru_cache(maxsize=1)
+def _tiktoken_encoder() -> Any:
+    """Lazily load and cache the o200k_base encoder (None if unavailable).
+
+    ``get_encoding`` reads a multi-MB vocab file, so ``lru_cache`` loads it
+    once and reuses it (a None result is cached too, so a missing package or
+    offline vocab download isn't retried per estimate). Callers fall back to
+    the char-split estimate when this returns None.
+    """
+    try:
+        import tiktoken
+
+        return tiktoken.get_encoding("o200k_base")
+    except Exception:  # noqa: BLE001 — missing pkg or offline vocab download
+        return None
+
+
+def _estimate_tokens_char_split(text: str) -> int:
+    """Char-based fallback estimate, split by script.
+
+    A single global divisor (``/3``) undercounts CJK badly: a Han character is
+    often ~1 token, whereas Latin/code/JSON runs ~3.8 chars/token. Coefficients
+    are empirical. Used only when the tiktoken encoder is unavailable.
+    """
+    cjk = sum(
+        1
+        for c in text
+        if "一" <= c <= "鿿"  # CJK Unified Ideographs
+        or "぀" <= c <= "ヿ"  # Hiragana + Katakana
+        or "가" <= c <= "힯"  # Hangul syllables
+    )
+    return max(0, math.ceil(cjk / 1.7 + (len(text) - cjk) / 3.8))
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count for a text (o200k_base, char-split fallback).
+
+    Prefers tiktoken's ``o200k_base`` — the most balanced approximation of the
+    provider's tokenizer across CN/EN/code (see bench). Falls back to a
+    script-split char estimate when tiktoken is unavailable. Only used where
+    the provider's real ``input_tokens`` is missing — first turn, metadata,
+    pressure control; later turns calibrate against the real total.
+    """
+    if not text:
+        return 0
+    enc = _tiktoken_encoder()
+    if enc is not None:
+        return len(enc.encode(text))
+    return _estimate_tokens_char_split(text)
+
+
 def _estimate_text_tokens_conservative(text: str) -> int:
-    return math.ceil(len(text) / 3)
+    return estimate_tokens(text)
 
 
 def estimate_input_tokens_conservative(
@@ -354,17 +406,16 @@ def is_context_length_error_message(message: str) -> bool:
 def estimated_input_tokens(messages: list[Message]) -> int:
     """Rough estimate of input tokens from message list (legacy).
 
-    Uses ``// 3`` to match the conservative coefficient used by the other
-    breakdown buckets (``_estimate_text_tokens_conservative``). The old
-    ``// 4`` mixed two coefficients in the same total — system/tools used
-    ``/3`` while conversation used ``/4``, biasing the breakdown. This is
-    only the fallback path when ``real_input_tokens`` is unavailable; the
-    primary path back-derives conversation from the provider's real total.
+    Uses :func:`estimate_tokens` (script-split) to match the other breakdown
+    buckets. The old flat ``// 3`` undercounted CJK; splitting by script keeps
+    Chinese-heavy sessions accurate without over-counting the JSON framing.
+    This is only the fallback path when ``real_input_tokens`` is unavailable;
+    the primary path back-derives conversation from the provider's real total.
     """
-    total_chars = 0
+    total = 0
     for m in messages:
-        total_chars += len(json.dumps(m.model_dump()))
-    return max(1, total_chars // 3)
+        total += estimate_tokens(json.dumps(m.model_dump()))
+    return max(1, total)
 
 
 def _api_tool_name(tool: dict[str, Any]) -> str:

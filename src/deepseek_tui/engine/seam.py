@@ -24,13 +24,11 @@ DEFAULT_L1_THRESHOLD = 192_000
 DEFAULT_L2_THRESHOLD = 384_000
 DEFAULT_L3_THRESHOLD = 576_000
 DEFAULT_CYCLE_THRESHOLD = 768_000
-VERBATIM_WINDOW_TURNS = 16
+VERBATIM_WINDOW_TURNS = 5
 
 L1_MAX_TOKENS = 3_200
 L2_MAX_TOKENS = 2_400
 L3_MAX_TOKENS = 1_600
-
-APPROX_CHARS_PER_TOKEN = 4
 
 
 @dataclass(slots=True)
@@ -118,8 +116,10 @@ class SeamManager:
 
         import time
 
+        from deepseek_tui.engine.context import estimate_tokens
+
         timestamp = time.time()
-        token_estimate = len(summary) // APPROX_CHARS_PER_TOKEN
+        token_estimate = estimate_tokens(summary)
 
         async with self._lock:
             self._active_seams.append(
@@ -205,8 +205,10 @@ class SeamManager:
 
         import time
 
+        from deepseek_tui.engine.context import estimate_tokens
+
         timestamp = time.time()
-        token_estimate = len(summary) // APPROX_CHARS_PER_TOKEN
+        token_estimate = estimate_tokens(summary)
 
         async with self._lock:
             self._active_seams.append(

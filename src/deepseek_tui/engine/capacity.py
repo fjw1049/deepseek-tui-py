@@ -360,16 +360,16 @@ def build_observation(
             if hasattr(block, "id"):
                 unique_refs.add(str(block.id))
 
-    total_chars = sum(
-        sum(
-            len(str(getattr(b, attr, "")))
-            for attr in ("text", "content", "input")
-            if hasattr(b, attr)
-        )
+    from deepseek_tui.engine.context import estimate_tokens
+
+    text_blob = "".join(
+        str(getattr(b, attr, ""))
         for msg in messages
         for b in msg.content
+        for attr in ("text", "content", "input")
+        if hasattr(b, attr)
     )
-    estimated_tokens = max(1, total_chars // 4)
+    estimated_tokens = max(1, estimate_tokens(text_blob))
     # Use the model's actual context window, not a hardcoded 128K. The old
     # constant made context_used_ratio ~8x too low on V4 (1M window), so
     # the controller never saw "high pressure" even near the real limit.
@@ -661,21 +661,21 @@ def _extract_paths_from_tool_input(
 
 def _estimate_tokens_for_message(msg: Message, include_thinking: bool = True) -> int:
     """Estimate token count for a message (conservative)."""
-    total_chars = 0
+    from deepseek_tui.engine.context import estimate_tokens
 
+    parts: list[str] = []
     for block in msg.content:
         # Handle block as object (ContentBlock union types)
         if hasattr(block, "text"):
-            total_chars += len(str(getattr(block, "text", "")))
+            parts.append(str(getattr(block, "text", "")))
         if hasattr(block, "input"):
-            total_chars += len(str(getattr(block, "input", "")))
+            parts.append(str(getattr(block, "input", "")))
         if hasattr(block, "content"):
-            total_chars += len(str(getattr(block, "content", "")))
+            parts.append(str(getattr(block, "content", "")))
         if hasattr(block, "thinking") and include_thinking:
-            total_chars += len(str(getattr(block, "thinking", "")))
+            parts.append(str(getattr(block, "thinking", "")))
 
-    # Conservative estimate: ~4 characters per token
-    return max(1, total_chars // 4)
+    return max(1, estimate_tokens("".join(parts)))
 
 
 def plan_compaction(

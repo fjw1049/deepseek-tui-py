@@ -1458,12 +1458,12 @@ class Engine:
                 messages,
                 compact_fn=self._emergency_compact,
             )
+            # 层级压缩；L1 = 192K、L2 = 384K、L3 = 576K
+            # 发请求前,用真实 token 数判断是否越过 L1/L2/L3 阈值;若越过且该级未产出过,
+            # 就用便宜的 Flash 模型把"逐字窗口之前的旧消息"(或已有接缝)压成一段浓缩摘要,
+            # 插入(而非删除)到逐字窗口边界上——既省 token 又保住前缀缓存,
+            # 还给 LLM 留了一座读懂历史的桥。失败则静默降级,不影响主请求。
             await self._maybe_layered_context_checkpoint(messages, model)
-            # Hard cap: force compaction when message count is excessive,
-            # as a memory safety net. The token-based threshold handles
-            # normal compaction; this catches pathological cases where many
-            # small messages accumulate without hitting the token floor.
-            # The hard cap ignores the failure cooldown — it's a safety net.
             hard_cap_hit = len(messages) > 500
             should_trigger = hard_cap_hit or (
                 self._compact_cooldown_rounds <= 0
@@ -2552,7 +2552,12 @@ class Engine:
     async def _maybe_layered_context_checkpoint(
         self, messages: list[Message], model: str
     ) -> None:
-        """Pre-request soft seam — mirrors ``layered_context_checkpoint`` (#159)."""
+        """Pre-request soft seam — mirrors ``layered_context_checkpoint`` (#159).
+        阈值分级(seam.py:23-31),按当前输入 token 递进,每级只触发一次、且必须按序:
+
+        L1 = 192K、L2 = 384K、L3 = 576K
+        对应产物字数上限逐级收紧:800 / 600 / 400 词
+        """
         seam = self.seam_manager
         if seam is None or not seam.config.enabled:
             return
@@ -2777,13 +2782,15 @@ class Engine:
             # Continue without briefing — still better than crashing
 
         # Assemble seed messages for the new cycle
+        from deepseek_tui.engine.context import estimate_tokens
+
         briefing_obj = None
         if briefing_text:
             briefing_obj = CycleBriefing(
                 cycle=self._cycle_n,
                 timestamp=int(time.time()),
                 briefing_text=briefing_text,
-                token_estimate=len(briefing_text) // 4,
+                token_estimate=estimate_tokens(briefing_text),
             )
 
         seed_dicts = build_seed_messages(
@@ -2830,7 +2837,7 @@ class Engine:
             "cycle_advanced new_cycle=%d seed_msgs=%d briefing_tokens=%d",
             self._cycle_n,
             len(messages),
-            len(briefing_text) // 4 if briefing_text else 0,
+            estimate_tokens(briefing_text) if briefing_text else 0,
         )
 
     # --- Engine-intercepted special tools --------------------------------
