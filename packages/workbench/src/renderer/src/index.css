@@ -2455,10 +2455,9 @@ select:focus-visible,
 
 .ds-operation-dock-section-label {
   font-family: var(--font-ui);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
-  letter-spacing: 0.085em;
-  text-transform: uppercase;
+  letter-spacing: -0.005em;
   color: var(--text-tertiary);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;

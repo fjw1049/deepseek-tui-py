@@ -731,7 +731,7 @@ export function FloatingComposer({
     <div
       className={`pointer-events-auto w-full ${
         useChatStageWidth ? 'ds-chat-stage px-3 pb-2 pt-0 sm:px-4' : 'max-w-none px-0 pb-2 pt-0'
-      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-4 pt-1'}`}
+      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-0 pt-1'}`}
     >
       {pendingApprovalCount > 0 ? (
         <div className="mb-2 rounded-[22px] border border-accent/30 bg-[linear-gradient(180deg,rgba(79,124,255,0.08),rgba(79,124,255,0.14))] px-4 py-3 shadow-sm backdrop-blur-xl">
@@ -1209,7 +1209,7 @@ export function FloatingComposer({
           </div>
         </div>
       </div>
-      <div className="mt-2 grid min-h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
+      <div className="mt-0 grid min-h-6 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
         <div className="min-w-0">
           {stageCentered ? (
             <GitBranchPicker

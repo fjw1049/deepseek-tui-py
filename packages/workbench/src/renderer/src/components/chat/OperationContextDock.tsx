@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useEffect, useState, type ReactElement } from 'react'
 import {
-  CheckCircle2,
+  Check,
   ChevronRight,
-  Circle,
   Code2,
   FileEdit,
   Globe2,
@@ -94,13 +93,15 @@ function SectionHeader({
       aria-expanded={!collapsed}
       className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-faint transition hover:text-ds-muted"
     >
-      <span className="ds-operation-dock-section-label flex-1">{label}</span>
-      {trailing}
       <ChevronRight
-        className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${collapsed ? '' : 'rotate-90'}`}
+        className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${
+          collapsed ? '' : 'rotate-90'
+        }`}
         strokeWidth={2}
         aria-hidden
       />
+      <span className="ds-operation-dock-section-label flex-1">{label}</span>
+      {trailing}
     </button>
   )
 }
@@ -377,60 +378,98 @@ export function OperationContextDock({
 
       <div className="my-2 border-t border-ds-border-muted/40" />
 
-      <SectionHeader
-        label={t('contextRailProcess')}
-        collapsed={collapsed.process}
-        onToggle={() => toggle('process')}
-        trailing={
-          totalCount > 0 ? (
-            <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">
+      <button
+        type="button"
+        onClick={() => toggle('process')}
+        aria-expanded={!collapsed.process}
+        className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-faint transition hover:text-ds-muted"
+      >
+        <ChevronRight
+          className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${
+            collapsed.process ? '' : 'rotate-90'
+          }`}
+          strokeWidth={2}
+          aria-hidden
+        />
+        <span className="ds-operation-dock-section-label flex-1">{t('contextRailProcess')}</span>
+        {totalCount > 0 ? (
+          <span className="flex shrink-0 items-center gap-2">
+            <span className="flex items-center gap-[2px]" aria-hidden>
+              {todos.map((item) => (
+                <span
+                  key={item.id}
+                  className={`h-3.5 w-[3px] rounded-full ${
+                    item.status === 'completed'
+                      ? 'bg-emerald-500'
+                      : item.status === 'in_progress'
+                        ? 'bg-accent'
+                        : 'bg-ds-border-muted'
+                  }`}
+                />
+              ))}
+            </span>
+            <span className="text-[11px] tabular-nums text-ds-faint">
               {doneCount}/{totalCount}
             </span>
-          ) : undefined
-        }
-      />
+          </span>
+        ) : null}
+      </button>
 
       {!collapsed.process ? (
         totalCount > 0 ? (
-          <ul className="mt-1.5 max-h-[min(36vh,240px)] space-y-0.5 overflow-y-auto overflow-x-hidden">
-            {todos.map((item) => {
+          <ul className="mt-2 flex max-h-[min(36vh,240px)] flex-col gap-0.5 overflow-y-auto overflow-x-hidden rounded-[14px] bg-ds-card/55 p-1.5 dark:bg-white/[0.03]">
+            {todos.map((item, index) => {
               const completed = item.status === 'completed'
               const inProgress = item.status === 'in_progress'
+              const step = index + 1
               return (
                 <li
                   key={`${item.id}-${item.content}`}
                   className={[
-                    'flex items-start gap-2.5 rounded-[9px] px-1.5 py-1 transition-colors',
-                    inProgress ? 'bg-accent/[0.07]' : ''
+                    'flex items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 transition-colors',
+                    inProgress ? 'bg-ds-hover/60' : ''
                   ].join(' ')}
                 >
-                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
+                  <span
+                    className="flex h-5 w-5 shrink-0 items-center justify-center"
+                    aria-hidden
+                  >
                     {completed ? (
-                      <CheckCircle2
-                        className="h-4 w-4 text-emerald-600/85 dark:text-emerald-400/85"
-                        strokeWidth={1.9}
-                      />
-                    ) : inProgress ? (
-                      <span className="relative flex h-3.5 w-3.5 items-center justify-center">
-                        <span className="absolute inline-flex h-3.5 w-3.5 animate-ping rounded-full bg-accent/30" />
-                        <span className="relative inline-flex h-[7px] w-[7px] rounded-full bg-accent" />
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">
+                        <Check className="h-3 w-3" strokeWidth={3} />
                       </span>
                     ) : (
-                      <Circle className="h-4 w-4 text-ds-faint/80" strokeWidth={1.85} />
+                      <span
+                        className={[
+                          'flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums',
+                          inProgress
+                            ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                            : 'bg-ds-subtle text-ds-faint'
+                        ].join(' ')}
+                      >
+                        {step}
+                      </span>
                     )}
                   </span>
                   <span
                     className={[
-                      'min-w-0 break-words text-[13px] leading-5',
+                      'min-w-0 flex-1 break-words text-[13px] leading-5',
                       completed
                         ? 'text-ds-faint line-through decoration-ds-faint/55'
                         : inProgress
-                          ? 'ds-shiny-text font-medium text-ds-ink'
+                          ? 'font-semibold text-ds-ink'
                           : 'text-ds-muted'
                     ].join(' ')}
                   >
                     {item.content}
                   </span>
+                  {!completed ? (
+                    <ChevronRight
+                      className="h-3.5 w-3.5 shrink-0 text-ds-faint/70"
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                  ) : null}
                 </li>
               )
             })}

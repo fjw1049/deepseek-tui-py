@@ -220,26 +220,27 @@ export function ContextUsageMeter({
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
             style={panelStyle}
-            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-ds-border bg-ds-elevated px-4 py-3.5 text-[12px] leading-[1.45] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-[20px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="mb-2.5 flex items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-[13px] font-medium text-ds-ink">
+                <div className="text-[13px] font-medium tracking-[-0.005em] text-ds-ink">
                   {t('contextBreakdownTitle')}
                 </div>
-                <div className="mt-2 text-[12px] text-ds-muted">
+                <div className="mt-1 text-[11.5px] tabular-nums text-ds-faint">
                   {t('contextBreakdownFull', { percent: Math.round(usage.percent) })}
                 </div>
               </div>
-              <div className="mt-8 shrink-0 text-right text-[12px] tabular-nums text-ds-muted">
+              <div className="shrink-0 pt-0.5 text-right text-[11.5px] tabular-nums text-ds-faint">
                 {t('contextBreakdownTokenSummary', {
                   used: formatTokenCount(usage.usedTokens),
                   max: formatTokenCount(usage.maxTokens)
                 })}
               </div>
             </div>
-            <div className="mb-4 flex h-2 overflow-hidden rounded-full bg-ds-border/70">
+
+            <div className="mt-3.5 flex h-1.5 overflow-hidden rounded-full bg-ds-border-muted/50">
               {rows.map((row) => {
                 const pct = windowTokens > 0 ? (row.tokens / windowTokens) * 100 : 0
                 if (pct <= 0) return null
@@ -248,31 +249,33 @@ export function ContextUsageMeter({
                     key={row.key}
                     className="h-full shrink-0"
                     style={{
-                      width: `${Math.max(0.8, pct)}%`,
+                      width: `${Math.max(0.6, pct)}%`,
                       backgroundColor: row.color
                     }}
                   />
                 )
               })}
             </div>
-            <ul className="space-y-2.5">
+
+            <ul className="mt-3.5 divide-y divide-ds-border-muted/30">
               {rows.map((row) => (
-                <li key={row.key} className="flex items-center gap-3">
+                <li key={row.key} className="flex items-center gap-3 py-2.5">
                   <span
-                    className="h-3.5 w-3.5 shrink-0 rounded-[3px]"
+                    className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
                     style={{ backgroundColor: row.color }}
                   />
                   <span className="min-w-0 flex-1 truncate text-ds-muted">
                     {row.label}
                   </span>
-                  <span className="shrink-0 tabular-nums text-ds-muted">
+                  <span className="shrink-0 tabular-nums text-ds-ink">
                     {formatTokenCount(row.tokens)}
                   </span>
                 </li>
               ))}
             </ul>
+
             {!liveBreakdown ? (
-              <p className="mt-2 font-sans text-[10.5px] leading-4 text-ds-faint">
+              <p className="mt-3 border-t border-ds-border-muted/40 pt-2.5 text-[10.5px] leading-4 text-ds-faint">
                 {t('contextBreakdownEstimateNote')}
               </p>
             ) : null}

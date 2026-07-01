@@ -641,7 +641,7 @@
   "todoSidebarTitle": "Todos",
   "todoSidebarEmpty": "No todos yet. They appear here after the agent uses todo_write or checklist tools.",
   "todoSidebarMore": "{{count}} more",
-  "contextRailProcess": "TODOS",
+  "contextRailProcess": "Todos",
   "contextRailTasks": "TASKS",
   "contextRailEmptyTasks": "No tasks yet",
   "contextRailTaskLoading": "Loading…",

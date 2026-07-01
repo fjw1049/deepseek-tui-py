@@ -1026,7 +1026,7 @@ export function Workbench(): ReactElement {
                         />
                       </div>
                     ) : null}
-                    <div className="mx-auto flex w-full shrink-0 pb-1 pt-2">
+                    <div className="mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
                       <ComposerStage
                         input={input}
                         setInput={setInput}
@@ -1088,7 +1088,7 @@ export function Workbench(): ReactElement {
                       ) : null
                     }
                   />
-                  <div className="mx-auto flex w-full shrink-0 pb-1 pt-2">
+                  <div className="mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
                     <ComposerStage
                       input={input}
                       setInput={setInput}
