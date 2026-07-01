@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 
@@ -71,26 +71,26 @@ export function HoverInfoCard({
     <div
       ref={cardRef}
       style={style}
-      className="ds-no-drag pointer-events-none overflow-hidden rounded-2xl border border-ds-border bg-ds-elevated p-1.5 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+      className="ds-no-drag pointer-events-none flex flex-col gap-0.5 overflow-hidden rounded-2xl border border-ds-border bg-ds-elevated p-1.5 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
     >
-      <div className="flex h-8 items-center gap-2.5 rounded-lg px-2.5">
+      <div className="flex h-6 items-center gap-2.5 rounded-lg px-2.5">
         {TitleIcon ? (
           <TitleIcon className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
         ) : null}
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium leading-none text-ds-ink">
+        <span className="min-w-0 flex-1 truncate text-[13.5px] leading-none text-ds-ink">
           {title}
         </span>
       </div>
       {rows.map((row, index) => {
         const Icon = row.icon
         return (
-          <div key={`${index}-${row.text}`}>
-            {row.divider ? <div className="mx-1 my-1 h-px bg-ds-border-muted/50" /> : null}
-            <div className="flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-none text-ds-muted">
+          <Fragment key={`${index}-${row.text}`}>
+            {row.divider ? <div className="mx-1 h-px bg-ds-border-muted/50" /> : null}
+            <div className="flex h-6 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-none text-ds-muted">
               <Icon className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
               <span className="min-w-0 truncate">{row.text}</span>
             </div>
-          </div>
+          </Fragment>
         )
       })}
     </div>

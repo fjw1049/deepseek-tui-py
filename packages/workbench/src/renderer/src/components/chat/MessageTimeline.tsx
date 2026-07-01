@@ -67,7 +67,7 @@ import {
 } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
 import { QueryTrail } from './QueryTrail'
-import { deriveQueryTrailItems } from './queryTrail.logic'
+import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -222,6 +222,7 @@ export function MessageTimeline({
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const prependInFlightRef = useRef(false)
   const scrollFrameRef = useRef<number | null>(null)
+  const jumpAnimRef = useRef<number | null>(null)
   const turns = useMemo(() => groupTurns(blocks), [blocks])
   const shouldCollapseHistory = turns.length > AUTO_COLLAPSE_THRESHOLD
   const [visibleTurnCount, setVisibleTurnCount] = useState(() =>
@@ -300,9 +301,35 @@ export function MessageTimeline({
   useEffect(() => {
     if (!scrollToBlockId) return
     const target = document.getElementById(`block-${scrollToBlockId}`)
-    if (target) {
+    const container = containerRef.current
+    if (target && container) {
       stickToBottomRef.current = false
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Land the query near the top (≈20% from the top, like synara's
+      // viewPosition:0.2) rather than centred, and drive the scroll manually
+      // with an ease-out rAF so the animation is consistent and not at the
+      // mercy of scrollIntoView's multi-ancestor easing.
+      if (jumpAnimRef.current !== null) {
+        cancelAnimationFrame(jumpAnimRef.current)
+        jumpAnimRef.current = null
+      }
+      const targetTop = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      const viewH = container.clientHeight
+      const goal = Math.max(0, targetTop - viewH * 0.2)
+      const start = container.scrollTop
+      const distance = goal - start
+      const duration = 420
+      const startTime = performance.now()
+      const easeOut = (t: number): number => 1 - Math.pow(1 - t, 3)
+      const step = (now: number): void => {
+        const t = Math.min(1, (now - startTime) / duration)
+        container.scrollTop = start + distance * easeOut(t)
+        if (t < 1) {
+          jumpAnimRef.current = requestAnimationFrame(step)
+        } else {
+          jumpAnimRef.current = null
+        }
+      }
+      jumpAnimRef.current = requestAnimationFrame(step)
     }
     clearScrollTarget()
   }, [clearScrollTarget, scrollToBlockId])
@@ -351,69 +378,86 @@ export function MessageTimeline({
     (!activeThreadId || (activeThreadId && !hasContent)) && hiddenTurnCount === 0
 
   const trailItems = useMemo(() => deriveQueryTrailItems(blocks), [blocks])
-  const [activeQueryId, setActiveQueryId] = useState<string | null>(null)
-  const [visibleQueryIds, setVisibleQueryIds] = useState<string[]>([])
-  // The rail must hug the sidebar/chat divider, not the centered 960px stage it
-  // lives inside. Portal it into `.ds-chat-main-row` — the flex row that starts
-  // exactly on the divider (right edge of the sidebar) with no left padding — so
-  // `left-0` lands on the divider and follows the chat area's left edge when the
-  // sidebar toggles. Resolve that ancestor once the timeline mounts.
-  const [trailPortalTarget, setTrailPortalTarget] = useState<HTMLElement | null>(null)
+  // Trail highlights live in an external store (not React state) so scroll-spy
+  // can update the rail without re-rendering this heavy timeline. Created once.
+  const activeTrailStoreRef = useRef<ReturnType<typeof createActiveTrailStore> | null>(null)
+  if (activeTrailStoreRef.current === null) {
+    activeTrailStoreRef.current = createActiveTrailStore()
+  }
+  // Cached block positions in scroll-content space (top = offset from content
+  // origin; refresh only on layout/items change — never per scroll frame).
+  const blockCacheRef = useRef<Map<string, { top: number; height: number }>>(new Map())
 
   // Track reading highlights off the transcript's own scroll:
   //  - currentId : the last query bubble at or above the viewport top (the turn
   //    you're reading, even when the user bubble scrolled above a long reply).
   //  - visibleIds: every query bubble intersecting the viewport (brightened).
-  // Reuses the existing `#block-${id}` anchors; recomputed in a coalesced rAF.
+  // Block rects are cached once per layout change; the scroll hot path reads
+  // only `scrollTop`/`clientHeight` (no getBoundingClientRect) and writes to the
+  // external store, so the timeline never re-renders on scroll.
+  const refreshBlockCache = useCallback(() => {
+    const el = containerRef.current
+    if (!el || trailItems.length === 0) {
+      blockCacheRef.current = new Map()
+      return
+    }
+    const containerRect = el.getBoundingClientRect()
+    const scrollTop = el.scrollTop
+    const map = new Map<string, { top: number; height: number }>()
+    for (const item of trailItems) {
+      const node = document.getElementById(`block-${item.id}`)
+      if (!node) continue
+      const r = node.getBoundingClientRect()
+      map.set(item.id, { top: r.top - containerRect.top + scrollTop, height: r.height })
+    }
+    blockCacheRef.current = map
+  }, [trailItems])
+
   useEffect(() => {
     const el = containerRef.current
     if (!el || trailItems.length === 0) {
-      setActiveQueryId(null)
-      setVisibleQueryIds([])
+      activeTrailStoreRef.current?.set({ currentId: null, visibleIds: [] })
       return
     }
     let frame: number | null = null
     const recompute = (): void => {
       frame = null
-      const rect = el.getBoundingClientRect()
-      const viewTop = rect.top
-      const viewBottom = rect.bottom
+      const cache = blockCacheRef.current
+      if (cache.size === 0) return
+      const scrollTop = el.scrollTop
+      const viewH = el.clientHeight
       let current: string | null = trailItems[0]?.id ?? null
       const nextVisible: string[] = []
       for (const item of trailItems) {
-        const node = document.getElementById(`block-${item.id}`)
-        if (!node) continue
-        const nodeRect = node.getBoundingClientRect()
-        if (nodeRect.top - viewTop <= 8) current = item.id
-        if (nodeRect.bottom > viewTop && nodeRect.top < viewBottom) nextVisible.push(item.id)
+        const c = cache.get(item.id)
+        if (!c) continue
+        if (c.top - scrollTop <= 8) current = item.id
+        if (c.top + c.height > scrollTop && c.top < scrollTop + viewH) nextVisible.push(item.id)
       }
-      setActiveQueryId((prev) => (prev === current ? prev : current))
-      setVisibleQueryIds((prev) =>
-        prev.length === nextVisible.length && prev.every((id, i) => id === nextVisible[i])
-          ? prev
-          : nextVisible
-      )
+      activeTrailStoreRef.current?.set({ currentId: current, visibleIds: nextVisible })
     }
     const onScroll = (): void => {
       if (frame !== null) return
       frame = window.requestAnimationFrame(recompute)
     }
+    // Refresh cache + resolve initial highlight after layout settles.
+    refreshBlockCache()
     recompute()
     el.addEventListener('scroll', onScroll, { passive: true })
+    // Keep the cache honest when the scroll content reflows (mermaid render,
+    // image load, streaming append) — observe the inner content wrapper.
+    const contentEl = el.firstElementChild as HTMLElement | null
+    const ro = new ResizeObserver(() => {
+      refreshBlockCache()
+      if (frame === null) frame = window.requestAnimationFrame(recompute)
+    })
+    if (contentEl) ro.observe(contentEl)
     return () => {
       el.removeEventListener('scroll', onScroll)
       if (frame !== null) window.cancelAnimationFrame(frame)
+      ro.disconnect()
     }
-  }, [trailItems, visibleTurnCount])
-
-  // Resolve the chat main row (`.ds-chat-main-row`) that starts on the sidebar
-  // divider (no left padding) — it's already `relative`, so the portalled rail's
-  // `left-0` lands on the divider instead of the centered stage's left edge.
-  useEffect(() => {
-    setTrailPortalTarget(
-      containerRef.current?.closest<HTMLElement>('.ds-chat-main-row') ?? null
-    )
-  }, [showEmptyHeroOnly])
+  }, [trailItems, visibleTurnCount, refreshBlockCache])
 
   const timeline = (
     <div
@@ -540,20 +584,17 @@ export function MessageTimeline({
 
   if (showEmptyHeroOnly) return timeline
 
+  // The rail is a sibling of the scroll container inside one `relative` box, so
+  // its `inset-y-0` matches the scroll viewport's height (not the whole main row
+  // including the composer) and `left-0` sits in the dialogue gutter — matching
+  // synara's mount. No portal: useSyncExternalStore isolates rail re-renders.
   return (
-    <>
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {timeline}
-      {trailItems.length > 0 && trailPortalTarget
-        ? createPortal(
-            <QueryTrail
-              items={trailItems}
-              currentId={activeQueryId}
-              visibleIds={visibleQueryIds}
-            />,
-            trailPortalTarget
-          )
-        : null}
-    </>
+      {trailItems.length > 0 ? (
+        <QueryTrail items={trailItems} activeStore={activeTrailStoreRef.current!} />
+      ) : null}
+    </div>
   )
 }
 

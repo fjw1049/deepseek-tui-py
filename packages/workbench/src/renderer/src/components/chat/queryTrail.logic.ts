@@ -21,6 +21,54 @@ export interface QueryTrailItem {
   responsePreview: string
 }
 
+/** Snapshot of which trail tick is the reading anchor and which are in view. */
+export interface ActiveTrailSnapshot {
+  currentId: string | null
+  visibleIds: readonly string[]
+}
+
+const EMPTY_ACTIVE_TRAIL_SNAPSHOT: ActiveTrailSnapshot = { currentId: null, visibleIds: [] }
+
+function areActiveTrailSnapshotsEqual(
+  a: ActiveTrailSnapshot,
+  b: ActiveTrailSnapshot
+): boolean {
+  if (a.currentId !== b.currentId) return false
+  if (a.visibleIds === b.visibleIds) return true
+  if (a.visibleIds.length !== b.visibleIds.length) return false
+  for (let i = 0; i < a.visibleIds.length; i += 1) {
+    if (a.visibleIds[i] !== b.visibleIds[i]) return false
+  }
+  return true
+}
+
+/** External store for trail highlights so scroll-spy can update only the rail, not the timeline. */
+export interface ActiveTrailStore {
+  get: () => ActiveTrailSnapshot
+  set: (value: ActiveTrailSnapshot | null) => void
+  subscribe: (listener: () => void) => () => void
+}
+
+export function createActiveTrailStore(): ActiveTrailStore {
+  let current: ActiveTrailSnapshot = EMPTY_ACTIVE_TRAIL_SNAPSHOT
+  const listeners = new Set<() => void>()
+  return {
+    get: () => current,
+    set: (value) => {
+      const next = value ?? EMPTY_ACTIVE_TRAIL_SNAPSHOT
+      if (areActiveTrailSnapshotsEqual(next, current)) return
+      current = next
+      for (const listener of listeners) listener()
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    }
+  }
+}
+
 /** Hard cap so a pathological paste can't bloat the hover-card payload. */
 const MAX_PREVIEW_LENGTH = 280
 

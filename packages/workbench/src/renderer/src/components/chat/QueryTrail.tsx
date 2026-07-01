@@ -14,6 +14,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -29,6 +30,7 @@ import {
   computeSigma,
   computeTickStyles,
   computeTrailGeometry,
+  type ActiveTrailStore,
   type QueryTrailItem,
   type TickStyle,
   type TrailGeometry
@@ -36,24 +38,24 @@ import {
 
 type Props = {
   items: QueryTrailItem[]
-  /** Id of the query whose turn is currently being read (drives the anchor tick). */
-  currentId: string | null
-  /** Ids of every query whose bubble is inside the viewport (brightened mid-tone). */
-  visibleIds: readonly string[]
+  /** External store carrying the active/visible trail highlights (scroll-spy writes here). */
+  activeStore: ActiveTrailStore
 }
 
 // Fixed rail box. Ticks grow rightward inside it (left-aligned, like the Dock).
 const RAIL_WIDTH_PX = 56
 const RAIL_MAX_HEIGHT_RATIO = 0.8
-const TICK_LEFT_PAD_PX = 2
-const TICK_HEIGHT_PX = 2
-const TICK_BASE_W = 6
-const TICK_MAX_W = 30
+const TICK_LEFT_PAD_PX = 3
+const TICK_HEIGHT_PX = 3
+const TICK_BASE_W = 3
+const TICK_MAX_W = 22
 const TICK_SPACING_PX = 10
-// Three fixed brightness tiers (opacity is a per-state colour, never a gradient).
-const TICK_REST_OPACITY = 0.22
-const TICK_VISIBLE_OPACITY = 0.52
-const TICK_ANCHOR_OPACITY = 0.9
+// Decorative coloured ticks: faint at rest (discoverable but not loud), brightening
+// for visible / anchor / focus states. Coloured with the accent so they read as
+// decoration rather than stray rendering artifacts.
+const TICK_REST_OPACITY = 0.2
+const TICK_VISIBLE_OPACITY = 0.45
+const TICK_ANCHOR_OPACITY = 0.8
 const TICK_FOCUS_OPACITY = 1
 const TOOLTIP_ESTIMATED_H_PX = 56
 const TOOLTIP_OFFSET_X_PX = 8
@@ -66,8 +68,13 @@ function readUiScale(): number {
   )
 }
 
-export function QueryTrail({ items, currentId, visibleIds }: Props): React.ReactElement | null {
+export function QueryTrail({ items, activeStore }: Props): React.ReactElement | null {
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
+  // Subscribe to scroll-spy highlights via an external store so the heavy
+  // timeline never re-renders when the active tick changes on scroll.
+  const snapshot = useSyncExternalStore(activeStore.subscribe, activeStore.get)
+  const currentId = snapshot.currentId
+  const visibleIds = snapshot.visibleIds
 
   const rootRef = useRef<HTMLElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -346,15 +353,24 @@ export function QueryTrail({ items, currentId, visibleIds }: Props): React.React
     }
   }, [scheduleFrame])
 
-  // Big hit-area: clicking anywhere on the rail jumps to the nearest tick.
-  const handleClick = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
+  // Full-height hit area: clicking anywhere on the rail (the whole nav column,
+  // not just the centred tick band) jumps to the nearest tick — like a scrollbar.
+  // The tick band is centred in the nav via `justify-center`, so map the nav-relative
+  // click Y into the band's content space (accounting for the centred offset and any
+  // inner viewport scroll) before resolving the nearest tick.
+  const handleNavClick = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
       const geometryValue = geometryRef.current
+      const nav = rootRef.current
       const viewport = viewportRef.current
-      if (!geometryValue || !viewport) return
+      if (!geometryValue || !nav) return
       const scale = readUiScale()
-      const offset = (event.clientY - viewport.getBoundingClientRect().top) / scale
-      const contentY = offset + viewport.scrollTop
+      const navRect = nav.getBoundingClientRect()
+      const navHeight = navRect.height / scale
+      const viewportHeight = viewport?.clientHeight ?? geometryValue.contentHeight
+      const bandTop = (navHeight - viewportHeight) / 2
+      const yInNav = (event.clientY - navRect.top) / scale
+      const contentY = yInNav - bandTop + (viewport?.scrollTop ?? 0)
       const index = computeFocusedIndex(contentY, geometryValue)
       const item = itemsRef.current[index]
       if (item) scrollToBlock(item.id)
@@ -440,20 +456,21 @@ export function QueryTrail({ items, currentId, visibleIds }: Props): React.React
       aria-hidden={!visible}
       onKeyDown={handleKeyDown}
       onBlur={handleRailBlur}
+      onClick={handleNavClick}
       className={`absolute inset-y-0 left-0 z-20 hidden flex-col justify-center transition-opacity duration-200 sm:flex ${
         visible ? 'opacity-100' : 'pointer-events-none opacity-0'
       }`}
       style={{ width: RAIL_WIDTH_PX }}
     >
       {/* Capped, centered, scrollable viewport. Pointer handlers live here (like the
-          synara source) — the ticks read as one close centred stack. */}
+          synara source) — the ticks read as one close centred stack. Click is on the
+          nav wrapper so the whole column is the hit area, not just this band. */}
       <div
         ref={viewportRef}
         onPointerEnter={handlePointerEnter}
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onScroll={handleScroll}
-        onClick={handleClick}
         className={`relative w-full overflow-y-auto overscroll-contain [contain:layout] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
           visible ? 'pointer-events-auto' : 'pointer-events-none'
         }`}
@@ -483,7 +500,7 @@ export function QueryTrail({ items, currentId, visibleIds }: Props): React.React
                     : visibleIndexSet.has(index)
                       ? TICK_VISIBLE_OPACITY
                       : TICK_REST_OPACITY,
-                backgroundColor: 'var(--ds-text)',
+                backgroundColor: 'var(--ds-accent)',
                 willChange: 'width, opacity'
               }}
             />
