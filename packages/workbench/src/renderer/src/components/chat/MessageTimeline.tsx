@@ -66,6 +66,8 @@ import {
   type TodoTurnSession
 } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
+import { QueryTrail } from './QueryTrail'
+import { deriveQueryTrailItems } from './queryTrail.logic'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -348,7 +350,72 @@ export function MessageTimeline({
   const showEmptyHeroOnly =
     (!activeThreadId || (activeThreadId && !hasContent)) && hiddenTurnCount === 0
 
-  return (
+  const trailItems = useMemo(() => deriveQueryTrailItems(blocks), [blocks])
+  const [activeQueryId, setActiveQueryId] = useState<string | null>(null)
+  const [visibleQueryIds, setVisibleQueryIds] = useState<string[]>([])
+  // The rail must hug the sidebar/chat divider, not the centered 960px stage it
+  // lives inside. Portal it into `.ds-chat-main-row` — the flex row that starts
+  // exactly on the divider (right edge of the sidebar) with no left padding — so
+  // `left-0` lands on the divider and follows the chat area's left edge when the
+  // sidebar toggles. Resolve that ancestor once the timeline mounts.
+  const [trailPortalTarget, setTrailPortalTarget] = useState<HTMLElement | null>(null)
+
+  // Track reading highlights off the transcript's own scroll:
+  //  - currentId : the last query bubble at or above the viewport top (the turn
+  //    you're reading, even when the user bubble scrolled above a long reply).
+  //  - visibleIds: every query bubble intersecting the viewport (brightened).
+  // Reuses the existing `#block-${id}` anchors; recomputed in a coalesced rAF.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || trailItems.length === 0) {
+      setActiveQueryId(null)
+      setVisibleQueryIds([])
+      return
+    }
+    let frame: number | null = null
+    const recompute = (): void => {
+      frame = null
+      const rect = el.getBoundingClientRect()
+      const viewTop = rect.top
+      const viewBottom = rect.bottom
+      let current: string | null = trailItems[0]?.id ?? null
+      const nextVisible: string[] = []
+      for (const item of trailItems) {
+        const node = document.getElementById(`block-${item.id}`)
+        if (!node) continue
+        const nodeRect = node.getBoundingClientRect()
+        if (nodeRect.top - viewTop <= 8) current = item.id
+        if (nodeRect.bottom > viewTop && nodeRect.top < viewBottom) nextVisible.push(item.id)
+      }
+      setActiveQueryId((prev) => (prev === current ? prev : current))
+      setVisibleQueryIds((prev) =>
+        prev.length === nextVisible.length && prev.every((id, i) => id === nextVisible[i])
+          ? prev
+          : nextVisible
+      )
+    }
+    const onScroll = (): void => {
+      if (frame !== null) return
+      frame = window.requestAnimationFrame(recompute)
+    }
+    recompute()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (frame !== null) window.cancelAnimationFrame(frame)
+    }
+  }, [trailItems, visibleTurnCount])
+
+  // Resolve the chat main row (`.ds-chat-main-row`) that starts on the sidebar
+  // divider (no left padding) — it's already `relative`, so the portalled rail's
+  // `left-0` lands on the divider instead of the centered stage's left edge.
+  useEffect(() => {
+    setTrailPortalTarget(
+      containerRef.current?.closest<HTMLElement>('.ds-chat-main-row') ?? null
+    )
+  }, [showEmptyHeroOnly])
+
+  const timeline = (
     <div
       ref={containerRef}
       className={`ds-no-drag flex min-w-0 flex-col overflow-x-hidden ${
@@ -469,6 +536,24 @@ export function MessageTimeline({
         <div ref={endRef} aria-hidden className="h-px w-full shrink-0" />
       </div>
     </div>
+  )
+
+  if (showEmptyHeroOnly) return timeline
+
+  return (
+    <>
+      {timeline}
+      {trailItems.length > 0 && trailPortalTarget
+        ? createPortal(
+            <QueryTrail
+              items={trailItems}
+              currentId={activeQueryId}
+              visibleIds={visibleQueryIds}
+            />,
+            trailPortalTarget
+          )
+        : null}
+    </>
   )
 }
 

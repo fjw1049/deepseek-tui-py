@@ -929,7 +929,7 @@ export function Workbench(): ReactElement {
                 </div>
               ) : null}
             </header>
-            <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1">
+            <div ref={mainRowRef} className="ds-chat-main-row relative flex min-h-0 min-w-0 flex-1">
               {!chatColumnHidden ? (
               <div
                 className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${chatColumnInsetClass}`}
