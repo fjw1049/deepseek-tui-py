@@ -2552,6 +2552,7 @@ select:focus-visible,
   width: clamp(13.5rem, 30cqi, 23rem);
   flex-direction: column;
   background: transparent;
+  padding-right: clamp(0.75rem, 2cqi, 2rem);
 }
 
 .ds-chat-main-track {
@@ -2597,6 +2598,9 @@ select:focus-visible,
   flex: 1 1 0%;
   min-width: 0;
   min-height: 0;
+  /* Symmetric inset so the message list and composer both pull away from the
+     column edges by the same amount (overrides the asymmetric ds-dialogue-gutter). */
+  padding-inline: clamp(1rem, 4cqi, 4rem);
 }
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {

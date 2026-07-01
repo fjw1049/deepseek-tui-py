@@ -520,10 +520,7 @@ class Engine:
         mcp_manager: object | None = None,
     ) -> Engine:
         """Construct an Engine with a freshly-wired :class:`ToolRuntime`.
-
-        This is the integration-complete path: all managers (task/subagent),
-        the full registry, and the ToolContext are created together so that
-        tools can actually reach the managers at dispatch time.
+        归一 config → 起/复用工具运行时 → 发现 skills → 修正工作区 context(踩坑补丁) → 造实例 → 包计费 → 建 TurnLoop → 装容量/实验特性 → 同步沙箱 → 接线子代理 → 返回。
         """
         from deepseek_tui.config.models import Config
         from deepseek_tui.integrations.skills import discover_in_workspace
@@ -978,6 +975,11 @@ class Engine:
     async def _handle_send_message_inner(
         self, op: SendMessageOp, turn_id: str
     ) -> None:
+        """
+        同步沙箱策略、预处理用户输入、探测工具 profile / skill 聚焦模式 / 语言,
+        把用户消息拼进会话历史并按模式(plan/workflow/中文)追加临时 hint,
+        最后设置每轮工具白名单、发出 TurnStartedEvent 并存崩溃检查点,为下游真正跑 LLM 循环铺好前置状态
+        """
         from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
 
         sync_execution_sandbox_policy(
@@ -1363,6 +1365,11 @@ class Engine:
         system_prompt: str,
         max_tokens: int | None,
     ) -> TurnResult:
+        """
+        是单个 turn 的核心工具循环——最多跑 max_tool_round_trips+1 轮,
+        每轮先做各种上下文维护(cycle 归档、drain 中途转向的 steer 消息、容量预检查、超阈值就压缩历史、刷 LSP 诊断),
+        再带上工具向 LLM 发一次请求;若模型回工具调用就执行工具、把结果塞回消息列表进入下一轮,直到模型给出最终答案(或触发取消/错误上限),返回 TurnResult
+        """
         tools = await self._get_tools_with_mcp()
         self.turn_counter += 1
         step_error_count = 0

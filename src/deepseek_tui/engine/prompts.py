@@ -175,7 +175,7 @@ def build_system_prompt(
         if snippet:
             full_prompt += "\n\n" + snippet
 
-    # Compaction handoff template
+    # 模型在做上下文压缩(compaction)时应该输出什么格式
     full_prompt += "\n\n" + COMPACT_TEMPLATE()
 
     # ── Volatile-content boundary ──
