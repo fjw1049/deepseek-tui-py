@@ -46,6 +46,11 @@ class ProviderConfig(BaseModel):
     # real window (e.g. 1_000_000) to override. See
     # ``config.providers.register_provider_context_windows``.
     context_window: int | None = None
+    # Per-model context windows for multi-model endpoints, written by the
+    # Workbench custom-endpoint settings UI as ``[providers.X.context_windows]``
+    # (model id → tokens). Takes precedence over ``context_window`` for the
+    # models it names.
+    context_windows: dict[str, int] = Field(default_factory=dict)
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
 

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { AppSettingsV1 } from '../shared/app-settings'
+import { normalizeCustomModelContextWindow } from '../shared/app-settings'
 import { upsertTomlSections } from '../shared/toml-section'
 import {
   resolveDeepseekConfigPath,
@@ -148,8 +149,19 @@ async function syncCustomEndpointConfig(
       .map((endpoint) => `providers.${endpoint.id}`)
       .filter((section) => !currentSectionNames.has(section))
   )
+  for (const section of [...removedSectionNames]) {
+    removedSectionNames.add(`${section}.context_windows`)
+  }
+  // Per-model window tables are rewritten wholesale each sync (upsert can't
+  // delete keys of removed models), so drop the current ones first too.
+  for (const section of currentSectionNames) {
+    removedSectionNames.add(`${section}.context_windows`)
+  }
   content = removeTomlSections(content, removedSectionNames)
-  const sections: Record<string, Record<string, string | boolean | undefined>> = {}
+  const sections: Record<
+    string,
+    Record<string, string | number | boolean | undefined>
+  > = {}
   for (const endpoint of settings.customEndpoints) {
     if (!endpoint.enabled) continue
     const defaultModel = endpoint.models.find((model) => model.enabled)?.id
@@ -158,6 +170,18 @@ async function syncCustomEndpointConfig(
       base_url: endpoint.baseUrl,
       api_key: endpoint.apiKey,
       model: defaultModel
+    }
+    // Context window per model (tokens), consumed by the Python runtime's
+    // register_provider_context_windows. Model ids need quoting — they may
+    // contain characters invalid in TOML bare keys (e.g. "glm-5.2").
+    const windows: Record<string, number> = {}
+    for (const model of endpoint.models) {
+      if (!model.enabled || !model.id) continue
+      windows[`"${model.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`] =
+        normalizeCustomModelContextWindow(model.contextWindow)
+    }
+    if (Object.keys(windows).length > 0) {
+      sections[`providers.${endpoint.id}.context_windows`] = windows
     }
   }
   const next = upsertTomlSections(content, sections)

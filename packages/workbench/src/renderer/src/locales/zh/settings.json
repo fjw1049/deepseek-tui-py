@@ -416,5 +416,7 @@
   "modelTestPassed": "工具兼容",
   "modelTestFailed": "测试失败",
   "modelUntested": "未测试",
+  "modelContextWindowLabel": "上下文",
+  "modelContextWindowHint": "上下文窗口（token 数，默认 500,000，最大 1,000,000）。用于上下文用量显示和压缩阈值。",
   "testAndAddModelBtn": "测试并添加"
 }

@@ -46,12 +46,28 @@ export type DeepseekSettingsV1 = {
 
 export type EndpointProtocol = 'openai' | 'anthropic'
 
+/** Context-window bounds for custom endpoint models (tokens). */
+export const CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT = 500_000
+export const CUSTOM_MODEL_CONTEXT_WINDOW_MIN = 1_000
+export const CUSTOM_MODEL_CONTEXT_WINDOW_MAX = 1_000_000
+
+export function normalizeCustomModelContextWindow(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT
+  return Math.min(
+    CUSTOM_MODEL_CONTEXT_WINDOW_MAX,
+    Math.max(CUSTOM_MODEL_CONTEXT_WINDOW_MIN, Math.floor(parsed))
+  )
+}
+
 export type CustomEndpointModelV1 = {
   /** Wire model identifier sent to the provider. */
   id: string
   /** Optional friendly label shown beside the wire identifier. */
   label?: string
   enabled: boolean
+  /** Context window in tokens (default 500K, max 1M). Synced to config.toml. */
+  contextWindow: number
   testStatus: 'untested' | 'passed' | 'failed'
   toolCalling?: boolean
   lastTestedAt?: string
@@ -938,6 +954,7 @@ export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[]
           id: typeof model.id === 'string' ? model.id.trim() : '',
           label: typeof model.label === 'string' && model.label.trim() ? model.label.trim() : undefined,
           enabled: model.enabled !== false,
+          contextWindow: normalizeCustomModelContextWindow(model.contextWindow),
           testStatus: model.testStatus === 'passed' || model.testStatus === 'failed'
             ? model.testStatus
             : 'untested',

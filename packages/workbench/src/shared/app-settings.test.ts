@@ -36,6 +36,7 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
             id: 'claude-sonnet',
             label: undefined,
             enabled: true,
+            contextWindow: 500_000,
             testStatus: 'untested',
             toolCalling: undefined,
             lastTestedAt: undefined
@@ -63,6 +64,26 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
 
     expect(endpoint.protocol).toBe('anthropic')
     expect(endpoint.models.map((model) => model.id)).toEqual(['model-a', 'model-b'])
+  })
+
+  it('defaults and clamps custom model context windows', () => {
+    const [endpoint] = normalizeCustomEndpoints([
+      {
+        id: 'ark',
+        name: 'Ark',
+        baseUrl: 'https://ark.example',
+        apiKey: 'k',
+        models: [
+          { id: 'default-window' },
+          { id: 'kept', contextWindow: 200_000 },
+          { id: 'clamped-up', contextWindow: 12 },
+          { id: 'clamped-down', contextWindow: 5_000_000 }
+        ]
+      }
+    ])
+    expect(endpoint.models.map((model) => model.contextWindow)).toEqual([
+      500_000, 200_000, 1_000, 1_000_000
+    ])
   })
 
   it('reserves the built-in DeepSeek provider id', () => {

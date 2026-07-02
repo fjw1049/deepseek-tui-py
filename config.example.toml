@@ -18,6 +18,12 @@ timeout = 120
 # api_key = "sk-..."
 # model = "glm-5.2"
 # context_window = 1000000
+#
+# Multi-model endpoints can set a window per model (the Workbench settings
+# UI writes this table automatically):
+# [providers.my-provider.context_windows]
+# "glm-5.2" = 1000000
+# "glm-5.2-air" = 500000
 
 [ui]
 color_scheme = "default"

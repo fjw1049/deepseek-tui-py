@@ -379,15 +379,21 @@ def context_window_override(model: str) -> int | None:
 def register_provider_context_windows(config: object) -> None:
     """Register context windows for every ``[providers.X]`` model in ``config``.
 
-    - ``context_window`` set on the provider table wins.
+    - ``[providers.X.context_windows]`` (model id → tokens, written by the
+      Workbench custom-endpoint UI) wins for the models it names.
+    - ``context_window`` on the provider table applies to its default model.
     - A custom model the static table doesn't recognize defaults to
       :data:`CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS` (500K).
     Idempotent; safe to call on every config load / engine creation.
     """
     providers = getattr(config, "providers", None) or {}
     for entry in providers.values():
+        per_model = getattr(entry, "context_windows", None) or {}
+        for model_id, window in per_model.items():
+            if isinstance(window, int) and window > 0:
+                set_context_window_override(str(model_id), window)
         model = (getattr(entry, "model", None) or "").strip()
-        if not model:
+        if not model or model in per_model:
             continue
         window = getattr(entry, "context_window", None)
         if isinstance(window, int) and window > 0:

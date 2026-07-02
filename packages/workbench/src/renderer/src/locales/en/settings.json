@@ -416,5 +416,7 @@
   "modelTestPassed": "Tool compatible",
   "modelTestFailed": "Test failed",
   "modelUntested": "Untested",
+  "modelContextWindowLabel": "Context",
+  "modelContextWindowHint": "Context window in tokens (default 500,000, max 1,000,000). Used for the context meter and compaction thresholds.",
   "testAndAddModelBtn": "Test and add"
 }

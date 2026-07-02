@@ -2,8 +2,12 @@ import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+  CUSTOM_MODEL_CONTEXT_WINDOW_MAX,
+  CUSTOM_MODEL_CONTEXT_WINDOW_MIN,
   mergeAppearanceSettings,
   mergeClawSettings,
+  normalizeCustomModelContextWindow,
   type AppearancePatchV1,
   type ApprovalPolicy,
   type AppSettingsV1,
@@ -1899,6 +1903,10 @@ function CustomEndpointsPanel({
   const [addKey, setAddKey] = useState('')
   const [addProtocol, setAddProtocol] = useState<EndpointProtocol>('openai')
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({})
+  // Context-window inputs keyed `${epId}::${modelId}` — kept as raw text
+  // while typing and clamped/committed on blur so mid-edit values (e.g.
+  // "10") aren't clamped up to the 1000 minimum under the user's cursor.
+  const [contextWindowDrafts, setContextWindowDrafts] = useState<Record<string, string>>({})
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string; testing: boolean }>>({})
   const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -2019,16 +2027,17 @@ function CustomEndpointsPanel({
         i === index
           ? {
               ...item,
-              models: [
-                ...item.models,
-                {
-                  id: modelId,
-                  enabled: true,
-                  testStatus: passed ? 'passed' as const : 'failed' as const,
-                  toolCalling: passed,
-                  lastTestedAt: now
-                }
-              ]
+                models: [
+                  ...item.models,
+                  {
+                    id: modelId,
+                    enabled: true,
+                    contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+                    testStatus: passed ? 'passed' as const : 'failed' as const,
+                    toolCalling: passed,
+                    lastTestedAt: now
+                  }
+                ]
             }
           : item
       )
@@ -2053,6 +2062,32 @@ function CustomEndpointsPanel({
                       lastTestedAt: new Date().toISOString()
                     }
                   : model
+              )
+            }
+          : item
+      )
+    )
+  }
+
+  const commitModelContextWindow = (endpointIndex: number, modelId: string): void => {
+    const endpoint = endpoints[endpointIndex]
+    if (!endpoint) return
+    const key = `${endpoint.id}::${modelId}`
+    const draft = contextWindowDrafts[key]
+    if (draft === undefined) return
+    const next = normalizeCustomModelContextWindow(draft)
+    setContextWindowDrafts((prev) => {
+      const rest = { ...prev }
+      delete rest[key]
+      return rest
+    })
+    updateEndpoints(
+      endpoints.map((item, index) =>
+        index === endpointIndex
+          ? {
+              ...item,
+              models: item.models.map((model) =>
+                model.id === modelId ? { ...model, contextWindow: next } : model
               )
             }
           : item
@@ -2191,6 +2226,24 @@ function CustomEndpointsPanel({
                 <div key={model.id} className="rounded-lg border border-ds-border-muted bg-ds-hover/30 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">{model.id}</span>
+                    <label
+                      className="flex items-center gap-1 text-[10px] text-ds-faint"
+                      title={t('modelContextWindowHint')}
+                    >
+                      {t('modelContextWindowLabel')}
+                      <input
+                        type="number"
+                        min={CUSTOM_MODEL_CONTEXT_WINDOW_MIN}
+                        max={CUSTOM_MODEL_CONTEXT_WINDOW_MAX}
+                        step={1000}
+                        className="w-[88px] rounded-md border border-ds-border bg-ds-card px-1.5 py-0.5 text-right font-mono text-[11px] text-ds-ink focus:border-accent/40 focus:outline-none"
+                        value={contextWindowDrafts[testKey] ?? String(model.contextWindow)}
+                        onChange={(event) =>
+                          setContextWindowDrafts((prev) => ({ ...prev, [testKey]: event.target.value }))
+                        }
+                        onBlur={() => commitModelContextWindow(index, model.id)}
+                      />
+                    </label>
                     <span className={`text-[10px] ${model.testStatus === 'passed' ? 'text-emerald-600' : model.testStatus === 'failed' ? 'text-red-600' : 'text-ds-faint'}`}>
                       {model.testStatus === 'passed' ? t('modelTestPassed') : model.testStatus === 'failed' ? t('modelTestFailed') : t('modelUntested')}
                     </span>
