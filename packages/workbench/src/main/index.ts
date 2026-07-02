@@ -27,6 +27,7 @@ import {
   runtimeSpawnEnv
 } from './resolve-python-runtime'
 import {
+  mergeAppearanceSettings,
   mergeClawSettings,
   normalizeAppSettings,
   type AppSettingsPatch,
@@ -828,6 +829,7 @@ app.whenReady().then(async () => {
       skills: { ...prev.skills, ...(partial.skills ?? {}) },
       claw: mergeClawSettings(prev.claw, partial.claw),
       guiUpdate: { ...prev.guiUpdate, ...(partial.guiUpdate ?? {}) },
+      appearance: mergeAppearanceSettings(prev.appearance, partial.appearance),
       agentProvider: 'deepseek-runtime'
     })
     if (prev.log.enabled !== next.log.enabled || prev.log.retentionDays !== next.log.retentionDays) {

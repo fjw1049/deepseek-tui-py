@@ -19,6 +19,7 @@ import { sanitizeReasoningPlaceholders } from '../lib/reasoning-text'
 import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
+import { applyAppearance } from '../lib/apply-appearance'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import { formatRuntimeError, getRuntimeErrorCode } from '../lib/format-runtime-error'
 import {
@@ -961,6 +962,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
     applyTheme,
     applyUiFontScale,
+    applyAppearance,
     workspaceLabelFromPath,
     normalizeWorkspaceRoot: (workspaceRoot) => normalizeWorkspaceRoot(workspaceRoot ?? undefined)
   }),
@@ -1106,6 +1108,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const needsInitialSetup = !settings.deepseek.apiKey.trim()
         applyTheme(settings.theme)
         applyUiFontScale(settings.uiFontScale)
+        applyAppearance(settings.appearance)
         await get().applyI18nFromSettings(settings.locale)
         set({
           route: 'chat',

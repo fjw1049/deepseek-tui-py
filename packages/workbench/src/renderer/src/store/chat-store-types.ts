@@ -26,6 +26,7 @@ export type SendMessageOverrides = {
 export type InitialSetupMode = 'required' | 'preview'
 export type SettingsRouteSection =
   | 'general'
+  | 'appearance'
   | 'runtime'
   | 'memory'
   | 'permissions'

@@ -76,7 +76,7 @@ function Row({
 }): ReactElement {
   return (
     <div
-      className={`flex gap-3 px-3 py-4 ${
+      className={`ds-density-row flex gap-3 px-3 py-4 ${
         wide ? 'flex-col sm:gap-3.5' : 'flex-col sm:flex-row sm:items-start sm:justify-between sm:gap-8'
       }`}
     >

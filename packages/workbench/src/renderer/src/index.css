@@ -14,6 +14,10 @@
   --ds-canvas-dot-size: 22px;
   --font-ui: 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
   --font-display: 'SF Pro Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --font-code: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  /* Appearance: density scale (spacing only) and chat reading size. */
+  --ds-density: 1;
+  --ds-chat-font-size: 15px;
   --surface-1: rgba(255, 255, 255, 0.92);
   --surface-2: rgba(255, 255, 255, 0.98);
   --surface-3: #ffffff;
@@ -789,7 +793,7 @@ textarea {
   max-width: 960px;
   margin-inline: auto;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: calc(1.25rem * var(--ds-density, 1));
 }
 
 .ds-chat-stage-stack > * {
@@ -877,7 +881,7 @@ textarea {
   align-items: center;
   gap: 0.75rem;
   border-radius: 12px;
-  padding: 0.625rem 0.75rem;
+  padding: calc(0.625rem * var(--ds-density, 1)) 0.75rem;
   font-size: 0.9375rem;
   font-weight: 500;
   line-height: 1.35;
@@ -1254,7 +1258,7 @@ textarea {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-family: var(--font-code);
   font-size: 0.8em;
   line-height: 1.18;
   vertical-align: baseline;
@@ -1291,7 +1295,7 @@ textarea {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-family: var(--font-code);
   font-size: 0.78em;
   line-height: 1.12;
   vertical-align: baseline;
@@ -1335,7 +1339,7 @@ textarea {
 
 .ds-markdown .ds-code-block-language {
   min-width: 0;
-  font-family: 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', monospace;
+  font-family: var(--font-code);
   font-size: 10px;
   text-transform: lowercase;
   letter-spacing: 0.02em;
@@ -1542,7 +1546,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
 }
 
 .ds-chat-answer {
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   line-height: 1.6;
 }
 
@@ -1559,7 +1563,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   background: var(--ds-bubble-user);
   padding: 0.72rem 1.05rem;
   color: var(--ds-bubble-user-fg);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 500;
   line-height: 1.58;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.05);
@@ -2073,4 +2077,41 @@ select:focus-visible,
   .ds-sidebar-toggle-button:hover {
     transform: none;
   }
+}
+
+/* ── Appearance: UI density (spacing only, no font-size change) ─────────────
+   The comfortable default keeps every rule inert; compact/spacious tune the
+   sidebar rows, chat gutters, composer, and settings rows. */
+[data-density='compact'] {
+  --ds-density: 0.85;
+}
+
+[data-density='spacious'] {
+  --ds-density: 1.18;
+}
+
+[data-density='compact'] .ds-chat-composer {
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+[data-density='spacious'] .ds-chat-composer {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+[data-density='compact'] .ds-density-row {
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+}
+
+[data-density='spacious'] .ds-density-row {
+  padding-top: 1.45rem;
+  padding-bottom: 1.45rem;
+}
+
+/* ── Appearance: font smoothing toggle (default keeps `antialiased`) ─────── */
+:root[data-font-smoothing='off'] body {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
 }

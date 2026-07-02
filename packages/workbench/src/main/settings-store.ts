@@ -16,6 +16,11 @@ import {
   type ClawImChannelV1,
   type ClawImConversationV1
 } from '../shared/app-settings'
+import {
+  defaultAppearanceSettings,
+  mergeAppearanceSettings,
+  normalizeAppearanceSettings
+} from '../shared/appearance'
 import { DEFAULT_DEV_PREVIEW_URL } from '../shared/dev-preview-url'
 
 export type { AppSettingsV1 }
@@ -148,7 +153,8 @@ const defaultSettings = (): AppSettingsV1 => ({
   guiUpdate: {
     channel: 'frontier'
   },
-  claw: defaultClawSettings()
+  claw: defaultClawSettings(),
+  appearance: defaultAppearanceSettings()
 })
 
 function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
@@ -163,6 +169,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     memory: normalizeMemorySettings(parsed.memory),
     claw: mergeClawSettings(defaults.claw, parsed.claw),
     guiUpdate: { ...defaults.guiUpdate, ...parsed.guiUpdate },
+    appearance: normalizeAppearanceSettings(parsed.appearance),
     agentProvider: 'deepseek-runtime'
   }
 }
@@ -269,6 +276,7 @@ export class JsonSettingsStore {
       memory: mergeMemorySettings(cur.memory, partial.memory),
       claw: mergeClawSettings(cur.claw, partial.claw),
       guiUpdate: { ...cur.guiUpdate, ...(partial.guiUpdate ?? {}) },
+      appearance: mergeAppearanceSettings(cur.appearance, partial.appearance),
       agentProvider: 'deepseek-runtime'
     })
     await this.save(next)
