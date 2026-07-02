@@ -972,11 +972,7 @@ export function SettingsView(): ReactElement {
           )}
 
           {category === 'appearance' && (
-            <AppearanceSettingsPanel
-              form={form}
-              onAppearancePatch={(patch) => update({ appearance: patch })}
-              onSettingsPatch={(patch) => update(patch)}
-            />
+            <AppearanceSettingsPanel form={form} onPatch={(patch) => update(patch)} />
           )}
 
           {category === 'runtime' && (

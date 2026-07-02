@@ -22,12 +22,16 @@ import {
 } from '@shared/appearance'
 import { SettingsSelect } from './SettingsSelect'
 
-type ThemeModePatch = { theme?: AppSettingsV1['theme']; uiFontScale?: AppSettingsV1['uiFontScale'] }
+type AppearanceViewPatch = {
+  theme?: AppSettingsV1['theme']
+  uiFontScale?: AppSettingsV1['uiFontScale']
+  appearance?: AppearancePatchV1
+}
 
 type Props = {
   form: AppSettingsV1
-  onAppearancePatch: (patch: AppearancePatchV1) => void
-  onSettingsPatch: (patch: ThemeModePatch) => void
+  /** Single patch callback so combined updates (e.g. restore defaults) stay atomic. */
+  onPatch: (patch: AppearanceViewPatch) => void
 }
 
 const TERMINAL_FONT_SUGGESTIONS = [
@@ -56,20 +60,16 @@ function useResolvedVariant(theme: AppSettingsV1['theme']): ThemeVariant {
   return systemDark ? 'dark' : 'light'
 }
 
-export function AppearanceSettingsPanel({
-  form,
-  onAppearancePatch,
-  onSettingsPatch
-}: Props): ReactElement {
+export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement {
   const { t } = useTranslation('settings')
   const appearance = form.appearance
   const resolvedVariant = useResolvedVariant(form.theme)
   const variantOrder: readonly ThemeVariant[] =
     resolvedVariant === 'dark' ? (['dark', 'light'] as const) : (['light', 'dark'] as const)
+  const onAppearancePatch = (patch: AppearancePatchV1): void => onPatch({ appearance: patch })
 
   const restoreDefaults = (): void => {
-    onSettingsPatch({ theme: 'system' })
-    onAppearancePatch(defaultAppearanceSettings())
+    onPatch({ theme: 'system', appearance: defaultAppearanceSettings() })
   }
 
   return (
@@ -99,7 +99,7 @@ export function AppearanceSettingsPanel({
                 { value: 'dark', label: t('themeDark') },
                 { value: 'system', label: t('themeSystem') }
               ]}
-              onChange={(value) => onSettingsPatch({ theme: value as AppSettingsV1['theme'] })}
+              onChange={(value) => onPatch({ theme: value as AppSettingsV1['theme'] })}
             />
           }
         />
@@ -110,7 +110,7 @@ export function AppearanceSettingsPanel({
             <SettingsSelect
               value={form.uiFontScale}
               onChange={(e) =>
-                onSettingsPatch({ uiFontScale: e.target.value as AppSettingsV1['uiFontScale'] })
+                onPatch({ uiFontScale: e.target.value as AppSettingsV1['uiFontScale'] })
               }
             >
               <option value="small">{t('fontScaleSmall')}</option>
