@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { readTerminalFontFamily } from '../lib/apply-theme'
+import { getTerminalFontSizePx, subscribeAppearance } from '../lib/apply-appearance'
 import { terminalLabelFromPath } from '../lib/workspace-label'
 import {
   closeTerminalSessionById,
@@ -166,7 +167,7 @@ export function AppTerminalPanel({
         cursorBlink: true,
         convertEol: true,
         fontFamily: readTerminalFontFamily(),
-        fontSize: 13,
+        fontSize: getTerminalFontSizePx(),
         lineHeight: 1.35,
         scrollback: 8_000,
         theme: readTerminalTheme()
@@ -199,6 +200,34 @@ export function AppTerminalPanel({
   useEffect(() => {
     scheduleFit(activeSessionId)
   }, [activeSessionId, mountActive, scheduleFit, sessions.length])
+
+  // Keep open terminals in sync with appearance settings (font family/size)
+  // and theme changes (data-theme flips or custom palette updates).
+  useEffect(() => {
+    if (!mountActive) return
+    const syncTerminalAppearance = (): void => {
+      const theme = readTerminalTheme()
+      const fontFamily = readTerminalFontFamily()
+      const fontSize = getTerminalFontSizePx()
+      for (const handle of terminalHandlesRef.current.values()) {
+        handle.terminal.options.theme = theme
+        handle.terminal.options.fontFamily = fontFamily
+        handle.terminal.options.fontSize = fontSize
+      }
+      scheduleFit(activeSessionId)
+    }
+
+    const unsubscribe = subscribeAppearance(syncTerminalAppearance)
+    const observer = new MutationObserver(syncTerminalAppearance)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    })
+    return () => {
+      unsubscribe()
+      observer.disconnect()
+    }
+  }, [activeSessionId, mountActive, scheduleFit])
 
   useEffect(() => {
     if (!mountActive) return

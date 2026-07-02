@@ -26,6 +26,7 @@ export type SendMessageOverrides = {
 
 export type SettingsRouteSection =
   | 'general'
+  | 'appearance'
   | 'models'
   | 'permissions'
   | 'mcp'

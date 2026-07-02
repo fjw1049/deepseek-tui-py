@@ -1,6 +1,16 @@
 import type { ReactElement, RefObject } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -38,6 +48,7 @@ import {
   sumDiffStats
 } from '../../lib/diff-stats'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
+import { getTimestampFormat, subscribeAppearance } from '../../lib/apply-appearance'
 import { useChatStore } from '../../store/chat-store'
 import { getProvider } from '../../agent/registry'
 import { DiffView } from '../DiffView'
@@ -2573,7 +2584,11 @@ function answersByQuestionId(
   return out
 }
 
-function formatMessageDateTime(input: string, locale: string): string {
+function formatMessageDateTime(
+  input: string,
+  locale: string,
+  timestampFormat: ReturnType<typeof getTimestampFormat> = 'locale'
+): string {
   const date = new Date(input)
   if (Number.isNaN(date.getTime())) return input
   const now = new Date()
@@ -2583,19 +2598,21 @@ function formatMessageDateTime(input: string, locale: string): string {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    ...(timestampFormat === 'locale' ? {} : { hour12: timestampFormat === '12-hour' })
   }).format(date)
 }
 
 function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
   const { t, i18n } = useTranslation('common')
+  const timestampFormat = useSyncExternalStore(subscribeAppearance, getTimestampFormat)
   if (block.kind === 'user') {
     return <UserMessageBubble block={block} />
   }
   if (block.kind === 'assistant') {
     const streaming = block.id === 'live-assistant'
     const createdAtLabel = block.createdAt
-      ? formatMessageDateTime(block.createdAt, i18n.language)
+      ? formatMessageDateTime(block.createdAt, i18n.language, timestampFormat)
       : null
     return (
       <div id={`block-${block.id}`} className="group/message flex min-w-0 max-w-full flex-col">

@@ -1,3 +1,10 @@
+import {
+  mergeAppearanceSettings,
+  normalizeAppearanceSettings,
+  type AppearancePatchV1,
+  type AppearanceSettingsV1
+} from './appearance'
+
 export const GUI_UPDATE_CHANNELS = ['frontier', 'stable'] as const
 export type GuiUpdateChannel = (typeof GUI_UPDATE_CHANNELS)[number]
 export const DEFAULT_GUI_UPDATE_CHANNEL: GuiUpdateChannel = 'frontier'
@@ -265,10 +272,14 @@ export type AppSettingsV1 = {
   memory: MemorySettingsV1
   claw: ClawSettingsV1
   guiUpdate: GuiUpdateConfigV1
+  appearance: AppearanceSettingsV1
 }
 
 export type AppSettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate' | 'customEndpoints'>
+  Omit<
+    AppSettingsV1,
+    'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate' | 'customEndpoints' | 'appearance'
+  >
 > & {
   deepseek?: Partial<DeepseekSettingsV1>
   log?: Partial<LogConfigV1>
@@ -278,6 +289,7 @@ export type AppSettingsPatch = Partial<
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<GuiUpdateConfigV1>
   customEndpoints?: CustomEndpointV1[]
+  appearance?: AppearancePatchV1
 }
 
 export const CLAW_CURRENT_USER_REQUEST_HEADING = '[Current user request]'
@@ -960,6 +972,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     memory?: MemorySettingsPatchV1
     claw?: ClawSettingsPatchV1
     guiUpdate?: Partial<GuiUpdateConfigV1>
+    appearance?: AppearancePatchV1
   }
   const claw = normalizeClawSettings(maybeSettings.claw)
   return {
@@ -980,6 +993,10 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
       channel: normalizeGuiUpdateChannel(
         maybeSettings.guiUpdate?.channel ?? DEFAULT_GUI_UPDATE_CHANNEL
       )
-    }
+    },
+    appearance: normalizeAppearanceSettings(maybeSettings.appearance)
   }
 }
+
+export { mergeAppearanceSettings, normalizeAppearanceSettings }
+export type { AppearancePatchV1, AppearanceSettingsV1 }

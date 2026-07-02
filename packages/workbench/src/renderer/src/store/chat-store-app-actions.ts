@@ -23,6 +23,7 @@ type CreateAppActionsOptions = {
   applyTheme: (theme: AppSettingsV1['theme']) => void
   applyUiFontScale: (scale: AppSettingsV1['uiFontScale']) => void
   applyUiFontFamily: (family: AppSettingsV1['uiFontFamily']) => void
+  applyAppearance: (appearance: AppSettingsV1['appearance']) => void
   workspaceLabelFromPath: (workspaceRoot: string) => string
   normalizeWorkspaceRoot: (workspaceRoot?: string | null) => string
 }
@@ -55,6 +56,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     applyTheme,
     applyUiFontScale,
     applyUiFontFamily,
+    applyAppearance,
     workspaceLabelFromPath,
     normalizeWorkspaceRoot
   } = options
@@ -193,6 +195,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       applyTheme(settings.theme)
       applyUiFontScale(settings.uiFontScale)
       applyUiFontFamily(settings.uiFontFamily)
+      applyAppearance(settings.appearance)
       set({
         providerId: settings.agentProvider,
         workspaceRoot,

@@ -2,7 +2,9 @@ import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  mergeAppearanceSettings,
   mergeClawSettings,
+  type AppearancePatchV1,
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
@@ -21,6 +23,7 @@ import {
   FolderOpen,
   Globe,
   Loader2,
+  Palette,
   Plug,
   Plus,
   RefreshCw,
@@ -35,6 +38,7 @@ import {
 } from 'lucide-react'
 import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
+import { applyAppearance } from '../lib/apply-appearance'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import {
   readPetEnabled,
@@ -50,6 +54,7 @@ import { filterManifestPets } from '@shared/pet-catalog-utils'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { reloadMcpWithRuntime } from '../lib/settings-reload'
+import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
@@ -63,7 +68,10 @@ import { usePersistentUsage } from '../hooks/use-persistent-usage'
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate' | 'customEndpoints'>
+  Omit<
+    AppSettingsV1,
+    'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate' | 'customEndpoints' | 'appearance'
+  >
 > & {
   deepseek?: Partial<AppSettingsV1['deepseek']>
   log?: Partial<AppSettingsV1['log']>
@@ -72,6 +80,7 @@ type SettingsPatch = Partial<
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
   customEndpoints?: AppSettingsV1['customEndpoints']
+  appearance?: AppearancePatchV1
 }
 type InlineNotice = {
   tone: 'success' | 'error' | 'info'
@@ -121,7 +130,8 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
     guiUpdate: {
       ...current.guiUpdate,
       ...(patch.guiUpdate ?? {})
-    }
+    },
+    appearance: mergeAppearanceSettings(current.appearance, patch.appearance)
   }
 }
 
@@ -193,6 +203,7 @@ export function SettingsView(): ReactElement {
   const formTheme = form?.theme
   const formUiFontScale = form?.uiFontScale
   const formUiFontFamily = form?.uiFontFamily
+  const formAppearance = form?.appearance
   const formWorkspaceRoot = form?.workspaceRoot
   const formPort = form?.deepseek.port
   const formDeepseekBinaryPath = form?.deepseek.binaryPath ?? ''
@@ -361,6 +372,13 @@ export function SettingsView(): ReactElement {
     applyUiFontScale(formUiFontScale)
     applyUiFontFamily(formUiFontFamily)
   }, [formTheme, formUiFontScale, formUiFontFamily])
+
+  // Live preview: appearance edits repaint immediately while the debounced
+  // save is still in flight (same pattern as theme/font scale above).
+  useEffect(() => {
+    if (!formAppearance) return
+    applyAppearance(formAppearance)
+  }, [formAppearance])
 
   useEffect(() => {
     if (typeof window.dsGui?.getLogPath !== 'function') return
@@ -727,6 +745,14 @@ export function SettingsView(): ReactElement {
             <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('general')}
           </button>
+          <button
+            type="button"
+            className={catCls('appearance')}
+            onClick={() => openSettings('appearance')}
+          >
+            <Palette className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('appearance')}
+          </button>
           <button type="button" className={catCls('models')} onClick={() => openSettings('models')}>
             <Box className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('models')}
@@ -815,55 +841,6 @@ export function SettingsView(): ReactElement {
                     >
                       <option value="en">English</option>
                       <option value="zh">简体中文</option>
-                    </SettingsSelect>
-                  }
-                />
-                <SettingRow
-                  title={t('theme')}
-                  description={t('themeDesc')}
-                  control={
-                    <SettingsSelect
-                      value={form.theme}
-                      onChange={(e) => update({ theme: e.target.value as AppSettingsV1['theme'] })}
-                    >
-                      <option value="system">{t('themeSystem')}</option>
-                      <option value="light">{t('themeLight')}</option>
-                      <option value="dark">{t('themeDark')}</option>
-                    </SettingsSelect>
-                  }
-                />
-                <SettingRow
-                  title={t('fontScale')}
-                  description={t('fontScaleDesc')}
-                  control={
-                    <SettingsSelect
-                      value={form.uiFontScale}
-                      onChange={(e) =>
-                        update({
-                          uiFontScale: e.target.value as AppSettingsV1['uiFontScale']
-                        })
-                      }
-                    >
-                      <option value="small">{t('fontScaleSmall')}</option>
-                      <option value="medium">{t('fontScaleMedium')}</option>
-                      <option value="large">{t('fontScaleLarge')}</option>
-                    </SettingsSelect>
-                  }
-                />
-                <SettingRow
-                  title={t('fontFamily')}
-                  description={t('fontFamilyDesc')}
-                  control={
-                    <SettingsSelect
-                      value={form.uiFontFamily}
-                      onChange={(e) =>
-                        update({
-                          uiFontFamily: e.target.value as AppSettingsV1['uiFontFamily']
-                        })
-                      }
-                    >
-                      <option value="inter-noto">{t('fontFamilyInterNoto')}</option>
-                      <option value="system-native">{t('fontFamilySystemNative')}</option>
                     </SettingsSelect>
                   }
                 />
@@ -1132,6 +1109,10 @@ export function SettingsView(): ReactElement {
                 />
               </SettingsCard>
             </>
+          )}
+
+          {category === 'appearance' && (
+            <AppearanceSettingsPanel form={form} onPatch={(patch) => update(patch)} />
           )}
 
           {category === 'models' && (
@@ -1575,7 +1556,7 @@ function SettingRow({
 
   if (layout === 'stacked') {
     return (
-      <div className="flex flex-col gap-4 px-4 py-5">
+      <div className="ds-density-row flex flex-col gap-4 px-4 py-5">
         <div className="min-w-0">
           {titleNode}
           {descriptionNode}
@@ -1590,7 +1571,7 @@ function SettingRow({
 
   return (
     <div
-      className={`flex ${
+      className={`ds-density-row flex ${
         wideControl
           ? 'flex-col gap-3.5 px-3 py-4 sm:px-4'
           : relaxed

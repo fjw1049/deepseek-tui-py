@@ -17,6 +17,9 @@
   --font-mono: var(--font-ui);
   --font-terminal: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
+  /* Appearance: density scale (spacing only) and chat reading size. */
+  --ds-density: 1;
+  --ds-chat-font-size: 15px;
   --surface-1: rgba(255, 255, 255, 0.92);
   --surface-2: rgba(255, 255, 255, 0.98);
   --surface-3: #ffffff;
@@ -1109,7 +1112,7 @@ samp {
   max-width: 960px;
   margin-inline: auto;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: calc(1.25rem * var(--ds-density, 1));
 }
 
 .ds-chat-stage-stack > * {
@@ -1295,7 +1298,7 @@ samp {
   align-items: center;
   gap: 0.75rem;
   border-radius: 12px;
-  padding: 0.625rem 0.75rem;
+  padding: calc(0.625rem * var(--ds-density, 1)) 0.75rem;
   font-size: 0.9375rem;
   font-weight: 500;
   line-height: 1.35;
@@ -2091,7 +2094,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
 
 .ds-chat-answer {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   line-height: 1.6;
 }
 
@@ -2109,7 +2112,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   padding: 0.72rem 1.05rem;
   color: var(--ds-bubble-user-fg);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.58;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.05);
@@ -2953,4 +2956,41 @@ select:focus-visible,
   .ds-sidebar-expand-droplet:hover {
     transform: none;
   }
+}
+
+/* ── Appearance: UI density (spacing only, no font-size change) ─────────────
+   The comfortable default keeps every rule inert; compact/spacious tune the
+   sidebar rows, chat gutters, composer, and settings rows. */
+[data-density='compact'] {
+  --ds-density: 0.85;
+}
+
+[data-density='spacious'] {
+  --ds-density: 1.18;
+}
+
+[data-density='compact'] .ds-chat-composer {
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+[data-density='spacious'] .ds-chat-composer {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+[data-density='compact'] .ds-density-row {
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+}
+
+[data-density='spacious'] .ds-density-row {
+  padding-top: 1.45rem;
+  padding-bottom: 1.45rem;
+}
+
+/* ── Appearance: font smoothing toggle (default keeps `antialiased`) ─────── */
+:root[data-font-smoothing='off'] body {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
 }
