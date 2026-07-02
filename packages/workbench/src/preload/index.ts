@@ -15,6 +15,7 @@ const api = {
   },
   setSettings: (partial) =>
     ipcRenderer.invoke('settings:set', partial),
+  notifyAppearanceApplied: () => ipcRenderer.invoke('window:appearance-applied'),
   transcribeAudio: (payload) => ipcRenderer.invoke('asr:transcribe', payload),
   getAsrConfig: () => ipcRenderer.invoke('asr:config:read'),
   setAsrConfig: (config) => ipcRenderer.invoke('asr:config:write', config),

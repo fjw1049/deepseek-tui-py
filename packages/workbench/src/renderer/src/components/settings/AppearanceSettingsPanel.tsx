@@ -36,6 +36,9 @@ type Props = {
   onPatch: (patch: AppearanceViewPatch) => void
 }
 
+// -webkit-font-smoothing only has an effect on macOS; hide the toggle elsewhere.
+const IS_MAC = window.dsGui?.platform === 'darwin'
+
 const TERMINAL_FONT_SUGGESTIONS = [
   'JetBrains Mono',
   'Fira Code',
@@ -199,16 +202,18 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
             </>
           }
         />
-        <Row
-          title={t('fontSmoothing')}
-          description={t('fontSmoothingDesc')}
-          control={
-            <Toggle
-              checked={appearance.fontSmoothing}
-              onChange={(value) => onAppearancePatch({ fontSmoothing: value })}
-            />
-          }
-        />
+        {IS_MAC ? (
+          <Row
+            title={t('fontSmoothing')}
+            description={t('fontSmoothingDesc')}
+            control={
+              <Toggle
+                checked={appearance.fontSmoothing}
+                onChange={(value) => onAppearancePatch({ fontSmoothing: value })}
+              />
+            }
+          />
+        ) : null}
       </Card>
 
       <SectionLabel>{t('appearanceSectionTime')}</SectionLabel>

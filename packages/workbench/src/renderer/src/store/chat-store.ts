@@ -1279,6 +1279,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         applyUiFontScale(settings.uiFontScale)
         applyUiFontFamily(settings.uiFontFamily)
         applyAppearance(settings.appearance)
+        // Theme is on the DOM — tell main to reveal the hidden window (the
+        // window stays hidden until now to avoid a light-palette flash).
+        void window.dsGui.notifyAppearanceApplied?.()
         await get().applyI18nFromSettings(settings.locale)
         set({
           route: 'chat',
@@ -1296,6 +1299,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({ composerModel: fromStorage })
         scheduleStartupRuntimeProbe(get)
       } catch (e) {
+        // Settings failed to load — reveal the window now so the error is
+        // visible instead of waiting for the main-process fallback timer.
+        void window.dsGui?.notifyAppearanceApplied?.()
         set({
           error: formatRuntimeError(e),
           runtimeErrorDetail: runtimeErrorDetail(e),

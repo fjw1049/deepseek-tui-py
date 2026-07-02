@@ -210,8 +210,12 @@ export function buildChromeThemeCssVars(
     vars['--font-ui'] = withUiFallback(theme.uiFont)
   }
   if (theme.codeFont) {
-    // Markdown code blocks read --font-mono (which defaults to var(--font-ui)).
-    vars['--font-mono'] = withMonoFallback(theme.codeFont)
+    const stack = withMonoFallback(theme.codeFont)
+    // Code-like UI strings (URLs, ids, tool output, mermaid labels).
+    vars['--font-mono'] = stack
+    // Chat markdown code (inline + pre blocks); unset by default so the
+    // stock look stays untouched (see index.css .ds-markdown code / pre).
+    vars['--ds-chat-code-font'] = stack
   }
 
   return vars

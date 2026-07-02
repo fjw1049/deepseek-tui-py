@@ -160,7 +160,7 @@
   "uiDensityCompact": "Compact",
   "uiDensityComfortable": "Comfortable",
   "uiDensitySpacious": "Spacious",
-  "chatFontSize": "Base font size",
+  "chatFontSize": "Chat font size",
   "chatFontSizeDesc": "Adjust the chat reading size in pixels. Messages and markdown scale from this value.",
   "terminalFontSize": "Terminal font size",
   "terminalFontSizeDesc": "Adjust terminal text independently from the app and chat font size.",

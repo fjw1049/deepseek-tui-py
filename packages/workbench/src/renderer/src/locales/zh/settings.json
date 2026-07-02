@@ -160,7 +160,7 @@
   "uiDensityCompact": "紧凑",
   "uiDensityComfortable": "舒适",
   "uiDensitySpacious": "宽松",
-  "chatFontSize": "基础字号",
+  "chatFontSize": "聊天字号",
   "chatFontSizeDesc": "以像素为单位调整聊天阅读字号，消息与 Markdown 内容随之缩放。",
   "terminalFontSize": "终端字号",
   "terminalFontSizeDesc": "独立于应用与聊天字号，单独调整终端文字大小。",

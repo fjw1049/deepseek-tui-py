@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, session } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  session
+} from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -609,10 +618,6 @@ function createWindow(): void {
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('[deepseek-gui] render-process-gone:', details)
   })
-  const showWindow = (): void => {
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return
-    mainWindow.show()
-  }
   mainWindow.on('closed', () => {
     abortAllSseStreams()
     terminalService.disposeTerminalSessionsForWindow(mainWindow?.id ?? -1)
@@ -665,18 +670,31 @@ function createWindow(): void {
     }
   })
 
+  // The window is revealed by the renderer's 'window:appearance-applied'
+  // signal (sent right after the persisted theme/appearance hits the DOM),
+  // so users never see the default light palette flash before their theme
+  // loads. Two fallbacks guarantee the window still appears if the renderer
+  // never signals: a short one once the renderer finished loading, and a
+  // long absolute one in case loading itself hangs (e.g. dev-server wait).
   mainWindow.once('ready-to-show', () => {
     traceStartup('window:ready-to-show')
-    showWindow()
   })
   mainWindow.webContents.once('did-finish-load', () => {
     traceStartup('window:did-finish-load')
-    showWindow()
+    setTimeout(() => {
+      traceStartup('window:fallback-show-after-load')
+      showMainWindowIfHidden()
+    }, 800)
   })
   setTimeout(() => {
     traceStartup('window:fallback-show-timeout')
-    showWindow()
-  }, 1500)
+    showMainWindowIfHidden()
+  }, 10000)
+}
+
+function showMainWindowIfHidden(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return
+  mainWindow.show()
 }
 
 function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
@@ -851,6 +869,10 @@ app.whenReady().then(async () => {
     }
   } catch { /* config.toml missing or unreadable — use GUI value */ }
 
+  // Keep native chrome (context menus, dialogs, Windows title bar, resize
+  // background) in sync with the app theme. `theme` maps 1:1 to themeSource.
+  nativeTheme.themeSource = initial.theme
+
   logDir = resolveLogDirectory()
   configureLogger({
     dir: logDir,
@@ -878,6 +900,9 @@ app.whenReady().then(async () => {
       configureLogger({ enabled: next.log.enabled, retentionDays: next.log.retentionDays })
     }
     const saved = await store.patch(partial)
+    if (saved.theme !== nativeTheme.themeSource) {
+      nativeTheme.themeSource = saved.theme
+    }
     queueRuntimeSettingsApply(prev, saved)
     return saved
   }
@@ -921,6 +946,12 @@ app.whenReady().then(async () => {
     logError
   })
   ipcMain.handle('startup:phase:get', async () => currentStartupPhase)
+  // Renderer signals that the persisted theme/appearance has been applied to
+  // the DOM — safe to reveal the window without a light-palette flash.
+  ipcMain.handle('window:appearance-applied', async () => {
+    traceStartup('window:appearance-applied')
+    showMainWindowIfHidden()
+  })
 
   ipcMain.handle('deepseek:spawn-if-needed', async () => {
     const s = await store.load()

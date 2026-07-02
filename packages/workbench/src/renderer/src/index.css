@@ -1756,7 +1756,9 @@ samp {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: var(--font-ui);
+  /* Default look keeps the UI font; a theme pack's custom code font
+     (--ds-chat-code-font, set by appearance-derive) takes over when present. */
+  font-family: var(--ds-chat-code-font, var(--font-ui));
   font-size: 0.8em;
   line-height: 1.18;
   vertical-align: baseline;
@@ -1772,6 +1774,9 @@ samp {
   background: var(--ds-pre-bg);
   padding: 0.6rem 0.72rem;
   box-sizing: border-box;
+  /* `monospace` = UA default, identical to the implicit pre font. A theme
+     pack's custom code font takes over via --ds-chat-code-font. */
+  font-family: var(--ds-chat-code-font, monospace);
 }
 
 .ds-markdown pre code {
@@ -1793,7 +1798,7 @@ samp {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: var(--font-ui);
+  font-family: var(--ds-chat-code-font, var(--font-ui));
   font-size: 0.78em;
   line-height: 1.12;
   vertical-align: baseline;
@@ -2599,12 +2604,12 @@ select:focus-visible,
 }
 
 .ds-dialogue-gutter {
-  padding-inline: 0 1.25rem;
+  padding-inline: 0 calc(1.25rem * var(--ds-density, 1));
 }
 
 @media (min-width: 640px) {
   .ds-dialogue-gutter {
-    padding-inline: 0 1.5rem;
+    padding-inline: 0 calc(1.5rem * var(--ds-density, 1));
   }
 }
 
@@ -2614,7 +2619,7 @@ select:focus-visible,
   min-height: 0;
   /* Symmetric inset so the message list and composer both pull away from the
      column edges by the same amount (overrides the asymmetric ds-dialogue-gutter). */
-  padding-inline: clamp(1rem, 4cqi, 4rem);
+  padding-inline: calc(clamp(1rem, 4cqi, 4rem) * var(--ds-density, 1));
 }
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {
@@ -2990,13 +2995,23 @@ select:focus-visible,
 
 /* ── Appearance: UI density (spacing only, no font-size change) ─────────────
    The comfortable default keeps every rule inert; compact/spacious tune the
-   sidebar rows, chat gutters, composer, and settings rows. */
+   sidebar rows, chat gutters, message spacing, composer, and settings rows. */
 [data-density='compact'] {
   --ds-density: 0.85;
 }
 
 [data-density='spacious'] {
   --ds-density: 1.18;
+}
+
+/* Vertical gap between chat timeline turns (replaces Tailwind gap-6). */
+.ds-timeline-stack {
+  gap: calc(1.5rem * var(--ds-density, 1));
+}
+
+/* Sidebar thread rows and similar list rows (replaces Tailwind py-2). */
+.ds-density-list-row {
+  padding-block: calc(0.5rem * var(--ds-density, 1));
 }
 
 [data-density='compact'] .ds-chat-composer {

@@ -773,7 +773,7 @@ export function ThreadRow({
       <button
         type="button"
         onClick={renaming ? undefined : onSelect}
-        className="relative flex min-w-0 flex-1 items-center gap-1.5 py-2 pl-2.5 pr-2.5 text-left"
+        className="ds-density-list-row relative flex min-w-0 flex-1 items-center gap-1.5 pl-2.5 pr-2.5 text-left"
         disabled={deleting}
         aria-label={
           showRunning

@@ -264,6 +264,8 @@ export type DsGuiApi = {
   getSettings: () => Promise<AppSettingsV1>
   getStartupPhase: () => Promise<StartupPhasePayload | null>
   onStartupPhase: (handler: (payload: StartupPhasePayload) => void) => () => void
+  /** Reveal the still-hidden window once the persisted theme is on the DOM. */
+  notifyAppearanceApplied: () => Promise<void>
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   transcribeAudio: (payload: {
     audio: ArrayBuffer

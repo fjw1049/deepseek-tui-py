@@ -149,6 +149,18 @@ describe('appearance-derive', () => {
     expect(darkVars['--ds-accent']).not.toBe('#0169cc')
   })
 
+  it('maps theme pack fonts to UI, mono, and chat-code tokens', () => {
+    const theme = { ...getThemePresetSeed('raycast', 'dark')! }
+    const vars = buildChromeThemeCssVars(theme, 'dark')
+    expect(vars['--font-ui']).toContain('Inter')
+    expect(vars['--font-mono']).toContain('JetBrains Mono')
+    expect(vars['--ds-chat-code-font']).toContain('JetBrains Mono')
+    // No font tokens leak when the pack leaves fonts empty.
+    const bare = buildChromeThemeCssVars(getThemePresetSeed('dracula', 'dark')!, 'dark')
+    expect(bare['--font-ui']).toBeUndefined()
+    expect(bare['--ds-chat-code-font']).toBeUndefined()
+  })
+
   it('opaque themes disable the glass blur', () => {
     const translucent = buildChromeThemeCssVars(getThemePresetSeed('codex', 'dark')!, 'dark')
     expect(translucent['--glass-blur']).toBe('30px')

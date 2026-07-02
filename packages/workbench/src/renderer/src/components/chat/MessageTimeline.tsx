@@ -480,7 +480,7 @@ export function MessageTimeline({
       }`}
     >
       <div
-        className={`flex w-full min-w-0 flex-col gap-6 ${
+        className={`ds-timeline-stack flex w-full min-w-0 flex-col ${
           useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
         } ${showEmptyHeroOnly ? 'pb-0 pt-0' : withOperationColumn ? 'ds-timeline-with-operation pb-6' : 'pb-6 pt-2'}`}
       >
