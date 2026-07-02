@@ -2,8 +2,10 @@ import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  mergeAppearanceSettings,
   mergeClawSettings,
   mergeMemorySettings,
+  type AppearancePatchV1,
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
@@ -19,6 +21,7 @@ import {
   FolderOpen,
   Globe,
   Loader2,
+  Palette,
   Plug,
   RefreshCw,
   Settings,
@@ -32,6 +35,7 @@ import {
 } from 'lucide-react'
 import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale } from '../lib/apply-theme'
+import { applyAppearance } from '../lib/apply-appearance'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import {
   readPetEnabled,
@@ -49,6 +53,7 @@ import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { McpServersPanel } from './settings/McpServersPanel'
 import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
+import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ClawSettingsPanel } from './settings/ClawSettingsPanel'
 import { MemorySettingsPanel } from './settings/MemorySettingsPanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
@@ -58,7 +63,10 @@ import { PetSprite } from './pet/PetSprite'
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = Partial<
-  Omit<AppSettingsV1, 'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate'>
+  Omit<
+    AppSettingsV1,
+    'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate' | 'appearance'
+  >
 > & {
   deepseek?: Partial<AppSettingsV1['deepseek']>
   log?: Partial<AppSettingsV1['log']>
@@ -67,6 +75,7 @@ type SettingsPatch = Partial<
   memory?: MemorySettingsPatchV1
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
+  appearance?: AppearancePatchV1
 }
 type InlineNotice = {
   tone: 'success' | 'error' | 'info'
@@ -116,7 +125,8 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
     guiUpdate: {
       ...current.guiUpdate,
       ...(patch.guiUpdate ?? {})
-    }
+    },
+    appearance: mergeAppearanceSettings(current.appearance, patch.appearance)
   }
 }
 
@@ -175,6 +185,7 @@ export function SettingsView(): ReactElement {
   const draftVersion = useRef(0)
   const formTheme = form?.theme
   const formUiFontScale = form?.uiFontScale
+  const formAppearance = form?.appearance
   const formWorkspaceRoot = form?.workspaceRoot
   const formPort = form?.deepseek.port
   const formDeepseekBinaryPath = form?.deepseek.binaryPath ?? ''
@@ -331,6 +342,13 @@ export function SettingsView(): ReactElement {
     applyTheme(formTheme)
     applyUiFontScale(formUiFontScale)
   }, [formTheme, formUiFontScale])
+
+  // Live preview: appearance edits repaint immediately while the debounced
+  // save is still in flight (same pattern as theme/font scale above).
+  useEffect(() => {
+    if (!formAppearance) return
+    applyAppearance(formAppearance)
+  }, [formAppearance])
 
   useEffect(() => {
     if (typeof window.dsGui?.getLogPath !== 'function') return
@@ -673,6 +691,14 @@ export function SettingsView(): ReactElement {
             <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('general')}
           </button>
+          <button
+            type="button"
+            className={catCls('appearance')}
+            onClick={() => openSettings('appearance')}
+          >
+            <Palette className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('appearance')}
+          </button>
           <button type="button" className={catCls('runtime')} onClick={() => openSettings('runtime')}>
             <SlidersHorizontal className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('runtime')}
@@ -771,20 +797,6 @@ export function SettingsView(): ReactElement {
                   }
                 />
                 <SettingRow
-                  title={t('theme')}
-                  description={t('themeDesc')}
-                  control={
-                    <SettingsSelect
-                      value={form.theme}
-                      onChange={(e) => update({ theme: e.target.value as AppSettingsV1['theme'] })}
-                    >
-                      <option value="system">{t('themeSystem')}</option>
-                      <option value="light">{t('themeLight')}</option>
-                      <option value="dark">{t('themeDark')}</option>
-                    </SettingsSelect>
-                  }
-                />
-                <SettingRow
                   title={t('onboardingPreview')}
                   description={t('onboardingPreviewDesc')}
                   control={
@@ -795,24 +807,6 @@ export function SettingsView(): ReactElement {
                     >
                       {t('onboardingPreviewOpen')}
                     </button>
-                  }
-                />
-                <SettingRow
-                  title={t('fontScale')}
-                  description={t('fontScaleDesc')}
-                  control={
-                    <SettingsSelect
-                      value={form.uiFontScale}
-                      onChange={(e) =>
-                        update({
-                          uiFontScale: e.target.value as AppSettingsV1['uiFontScale']
-                        })
-                      }
-                    >
-                      <option value="small">{t('fontScaleSmall')}</option>
-                      <option value="medium">{t('fontScaleMedium')}</option>
-                      <option value="large">{t('fontScaleLarge')}</option>
-                    </SettingsSelect>
                   }
                 />
                 <SettingRow
@@ -975,6 +969,10 @@ export function SettingsView(): ReactElement {
                 />
               </SettingsCard>
             </>
+          )}
+
+          {category === 'appearance' && (
+            <AppearanceSettingsPanel form={form} onPatch={(patch) => update(patch)} />
           )}
 
           {category === 'runtime' && (
@@ -1444,7 +1442,7 @@ function SettingRow({
 
   if (layout === 'stacked') {
     return (
-      <div className="flex flex-col gap-4 px-4 py-5">
+      <div className="ds-density-row flex flex-col gap-4 px-4 py-5">
         <div className="min-w-0">
           <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
           {descriptionNode}
@@ -1459,7 +1457,7 @@ function SettingRow({
 
   return (
     <div
-      className={`flex ${
+      className={`ds-density-row flex ${
         wideControl
           ? 'flex-col gap-3.5 px-3 py-4 sm:px-4'
           : relaxed

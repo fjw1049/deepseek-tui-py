@@ -6,6 +6,11 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
+import {
+  getTerminalFontFamily,
+  getTerminalFontSizePx,
+  subscribeAppearance
+} from '../lib/apply-appearance'
 
 type SessionState = {
   id: string
@@ -169,8 +174,8 @@ export function AppTerminalPanel({
       const terminal = new XTerm({
         cursorBlink: true,
         convertEol: true,
-        fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-        fontSize: 13,
+        fontFamily: getTerminalFontFamily(),
+        fontSize: getTerminalFontSizePx(),
         lineHeight: 1.35,
         scrollback: 8_000,
         theme: readTerminalTheme()
@@ -203,6 +208,33 @@ export function AppTerminalPanel({
   useEffect(() => {
     scheduleFit(activeSessionId)
   }, [activeSessionId, sessions.length])
+
+  // Keep open terminals in sync with appearance settings (font family/size)
+  // and theme changes (data-theme flips or custom palette updates).
+  useEffect(() => {
+    const syncTerminalAppearance = (): void => {
+      const theme = readTerminalTheme()
+      const fontFamily = getTerminalFontFamily()
+      const fontSize = getTerminalFontSizePx()
+      for (const handle of terminalHandlesRef.current.values()) {
+        handle.terminal.options.theme = theme
+        handle.terminal.options.fontFamily = fontFamily
+        handle.terminal.options.fontSize = fontSize
+      }
+      scheduleFit(activeSessionId)
+    }
+
+    const unsubscribe = subscribeAppearance(syncTerminalAppearance)
+    const observer = new MutationObserver(syncTerminalAppearance)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    })
+    return () => {
+      unsubscribe()
+      observer.disconnect()
+    }
+  }, [activeSessionId])
 
   useEffect(() => {
     const onResize = (): void => scheduleFit(activeSessionId)

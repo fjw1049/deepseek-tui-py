@@ -14,6 +14,7 @@ type CreateAppActionsOptions = {
   setComposerModelLoadPromise: (promise: Promise<void> | null) => void
   applyTheme: (theme: AppSettingsV1['theme']) => void
   applyUiFontScale: (scale: AppSettingsV1['uiFontScale']) => void
+  applyAppearance: (appearance: AppSettingsV1['appearance']) => void
   workspaceLabelFromPath: (workspaceRoot: string) => string
   normalizeWorkspaceRoot: (workspaceRoot?: string | null) => string
 }
@@ -43,6 +44,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     setComposerModelLoadPromise,
     applyTheme,
     applyUiFontScale,
+    applyAppearance,
     workspaceLabelFromPath,
     normalizeWorkspaceRoot
   } = options
@@ -111,6 +113,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
       applyTheme(settings.theme)
       applyUiFontScale(settings.uiFontScale)
+      applyAppearance(settings.appearance)
       set({
         providerId: settings.agentProvider,
         workspaceRoot,
