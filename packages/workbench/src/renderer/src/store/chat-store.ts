@@ -408,7 +408,14 @@ function armBusyWatchdog(
     maxAttempts: MAX_BUSY_RECOVERY_ATTEMPTS,
     finalizeBusyState: finalizeTurnTiming,
     flushLiveBlocks,
-    busyTimeoutMessage: () => i18n.t('common:busyTimeout')
+    busyTimeoutMessage: () => i18n.t('common:busyTimeout'),
+    isTurnStillActive: async () => {
+      const s = get()
+      if (!s.activeThreadId) return false
+      const p = getProvider(s.providerId)
+      if (typeof p.isThreadTurnActive !== 'function') return false
+      return p.isThreadTurnActive(s.activeThreadId)
+    }
   })
 }
 

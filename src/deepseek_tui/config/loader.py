@@ -160,6 +160,12 @@ class ConfigLoader:
 
         warn_unconsumed_config_fields(config)
 
+        # Make [providers.X] context_window (and the 500K custom-model
+        # default) visible to context_window_for_model() everywhere.
+        from deepseek_tui.config.providers import register_provider_context_windows
+
+        register_provider_context_windows(config)
+
         return config
 
     def _discover_config_file(self, config_path: Path | None) -> Path | None:

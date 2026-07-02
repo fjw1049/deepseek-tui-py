@@ -442,12 +442,16 @@ class SessionActivityCoordinator:
             self._task = None
 
     def _mailbox(self) -> Mailbox | None:
+        # Prefer the engine's own manager: with a shared ToolRuntime each
+        # engine gets a per-engine manager + mailbox (Engine.create), and
+        # draining the shared runtime.mailbox here would steal envelopes
+        # that belong to another engine's coordinator.
+        mgr = self._engine.tool_context.subagent_manager
+        if mgr is not None and mgr.mailbox is not None:
+            return mgr.mailbox
         rt = self._engine.tool_runtime
         if rt is not None and rt.mailbox is not None:
             return rt.mailbox
-        mgr = self._engine.tool_context.subagent_manager
-        if mgr is not None:
-            return mgr.mailbox
         return None
 
     def _running_subagents(self) -> int:

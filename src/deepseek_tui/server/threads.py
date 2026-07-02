@@ -1594,13 +1594,17 @@ class RuntimeThreadManager:
         """
         if engine is None:
             return
+        # Prefer the engine-owned manager's mailbox: with a shared
+        # ToolRuntime each engine has its own manager + mailbox, and the
+        # shared runtime.mailbox belongs to no thread in particular.
         mailbox = None
-        runtime = getattr(engine, "tool_runtime", None)
-        if runtime is not None and getattr(runtime, "mailbox", None) is not None:
-            mailbox = runtime.mailbox
+        mgr = engine.tool_context.subagent_manager
+        if mgr is not None and mgr.mailbox is not None:
+            mailbox = mgr.mailbox
         else:
-            mgr = engine.tool_context.subagent_manager
-            mailbox = mgr.mailbox if mgr is not None else None
+            runtime = getattr(engine, "tool_runtime", None)
+            if runtime is not None:
+                mailbox = getattr(runtime, "mailbox", None)
         if mailbox is None:
             return
         try:

@@ -41,6 +41,11 @@ class ProviderConfig(BaseModel):
     rate_limit: int | None = None
     max_tokens: int | None = None
     temperature: float | None = None
+    # Context window (tokens) for this provider's model. Custom models the
+    # built-in table doesn't recognize default to 500_000; set this to the
+    # real window (e.g. 1_000_000) to override. See
+    # ``config.providers.register_provider_context_windows``.
+    context_window: int | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
@@ -175,6 +180,10 @@ class CapacityConfig(BaseModel):
 
 class SubagentConfig(BaseModel):
     max_concurrent: int = 10
+    # Max sub-agent LLM streams in flight at once (per engine). Keeps
+    # parallel children from tripping provider rate limits (429 storms)
+    # alongside the parent's own request. 0 disables the gate.
+    llm_max_concurrent: int = 2
     default_model: str | None = None
     worker_model: str | None = None
     explorer_model: str | None = None

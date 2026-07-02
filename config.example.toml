@@ -9,6 +9,16 @@ model = "deepseek-v4-pro"
 base_url = "https://api.deepseek.com"
 timeout = 120
 
+# Custom OpenAI-compatible provider example. Models the built-in table
+# doesn't recognize default to a 500K context window; set context_window
+# to the model's real limit to override (e.g. 1000000 for a 1M model).
+# [providers.my-provider]
+# protocol = "openai"
+# base_url = "https://api.example.com/v1"
+# api_key = "sk-..."
+# model = "glm-5.2"
+# context_window = 1000000
+
 [ui]
 color_scheme = "default"
 show_thinking = true

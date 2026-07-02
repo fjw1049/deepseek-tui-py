@@ -321,6 +321,10 @@ class Engine:
             self.tool_context = tool_context or ToolContext(working_directory=Path.cwd())
         self.tool_runtime = tool_runtime
         self._owns_tool_runtime = tool_runtime is None
+        # True when Engine.create built a per-engine SubAgentManager (shared
+        # runtime case) — shutdown_session must then reap it here because the
+        # shared ToolRuntime.shutdown() never sees it.
+        self._owns_subagent_manager = False
         # Ensure the registry dispatcher can see the context (Stage 3
         # managers are attached on the context, not the registry).
         self.tool_registry.set_context(self.tool_context)
@@ -545,6 +549,12 @@ class Engine:
                 start_mcp=mcp_flag,
                 mcp_manager=mcp_manager,  # type: ignore[arg-type]
             )
+        # Make [providers.X] context_window overrides visible to
+        # context_window_for_model() even when Config was built directly
+        # (server / tests) instead of through ConfigLoader.load.
+        from deepseek_tui.config.providers import register_provider_context_windows
+
+        register_provider_context_windows(cfg)
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
         # Pull sampling / reasoning defaults out of Config so the per-turn
@@ -558,13 +568,27 @@ class Engine:
         # registered-but-runtime-unwired tools (e.g. task_shell_start) become
         # guaranteed failures. metadata is shallow-copied so per-engine writes
         # don't mutate the shared one.
+        #
+        # Sub-agents are engine-scoped: the shared runtime's single
+        # SubAgentManager + Mailbox must NOT be reused across engines. The
+        # Mailbox is a single-consumer queue, so with N engines each running
+        # a SessionActivityCoordinator, one thread's coordinator steals
+        # another thread's progress envelopes (cards never render). Sharing
+        # the manager also lets each new engine's attach_loop_runtime /
+        # attach_parent_cancel overwrite the previous engine's wiring. Give
+        # every engine its own manager + mailbox instead.
         import dataclasses as _dc
 
         per_engine_context: ToolContext | None = None
-        if isinstance(tool_runtime, ToolRuntime) and ws != runtime.context.working_directory:
+        per_engine_subagent_manager = None
+        if isinstance(tool_runtime, ToolRuntime):
+            from deepseek_tui.tools.runtime import build_subagent_manager
+
+            per_engine_subagent_manager, _ = build_subagent_manager(cfg, ws)
             per_engine_context = _dc.replace(
                 runtime.context,
                 working_directory=ws,
+                subagent_manager=per_engine_subagent_manager,
                 metadata=dict(runtime.context.metadata),
             )
         engine = cls(
@@ -615,16 +639,21 @@ class Engine:
             mode,
             engine.tool_context.working_directory,
         )
-        if runtime.subagent_manager is not None:
-            runtime.subagent_manager.attach_parent_cancel(handle.cancel_event)
-            runtime.subagent_manager.attach_parent_completion_sink(
+        # Wire the engine's own manager (per-engine when the runtime is
+        # shared, the runtime's own otherwise) — never the shared one, so
+        # cancel tokens / completion sinks / loop runtimes stay engine-local.
+        engine._owns_subagent_manager = per_engine_subagent_manager is not None
+        subagent_manager = engine.tool_context.subagent_manager
+        if subagent_manager is not None:
+            subagent_manager.attach_parent_cancel(handle.cancel_event)
+            subagent_manager.attach_parent_completion_sink(
                 engine._enqueue_subagent_completion
             )
             from deepseek_tui.tools.subagent import SubAgentRuntime
 
             auto_approve = await engine.approval_handler.auto_approve_enabled()
             loop_runtime = SubAgentRuntime(
-                manager=runtime.subagent_manager,
+                manager=subagent_manager,
                 client=engine.client,
                 model=default_model,
                 config=cfg,
@@ -633,9 +662,9 @@ class Engine:
                 auto_approve=auto_approve,
                 task_manager=runtime.task_manager,
                 cancel_token=handle.cancel_event,
-                mailbox=runtime.mailbox,
+                mailbox=subagent_manager.mailbox,
             )
-            runtime.subagent_manager.attach_loop_runtime(loop_runtime)
+            subagent_manager.attach_loop_runtime(loop_runtime)
 
 
         return engine
@@ -643,6 +672,12 @@ class Engine:
     async def shutdown_session(self) -> None:
         """Stop background coordinators and tool runtime (tests / teardown)."""
         await self._activity_coordinator.stop()
+        if self._owns_subagent_manager:
+            manager = self.tool_context.subagent_manager
+            if manager is not None:
+                if manager.mailbox is not None:
+                    manager.mailbox.close()
+                await manager.shutdown()
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
 
@@ -2314,19 +2349,27 @@ class Engine:
             args,
             tool_description=approval_request.reason,
         )
-        emit_tool_audit(
-            {
-                "event": "tool.approval_required",
-                "tool_id": tool_call.id,
-                "tool_name": tool_call.name,
-            }
-        )
-        await self.handle.emit(
-            ApprovalRequiredEvent(
-                tool_call_id=tool_call.id,
-                request=approval_request,
+        # Auto-approve short-circuits inside request_approval without ever
+        # registering the id on the ApprovalBridge. Emitting
+        # ApprovalRequiredEvent in that case races the instant decision:
+        # the UI shows a card / auto-responds, POSTs
+        # /v1/approvals/{id} for an id the bridge never knew, and gets 404.
+        # Only surface the approval request when someone can actually answer.
+        auto_approved = await self.approval_handler.auto_approve_enabled()
+        if not auto_approved:
+            emit_tool_audit(
+                {
+                    "event": "tool.approval_required",
+                    "tool_id": tool_call.id,
+                    "tool_name": tool_call.name,
+                }
             )
-        )
+            await self.handle.emit(
+                ApprovalRequiredEvent(
+                    tool_call_id=tool_call.id,
+                    request=approval_request,
+                )
+            )
         decision = await self.approval_handler.request_approval(
             tool_call.id, approval_request
         )

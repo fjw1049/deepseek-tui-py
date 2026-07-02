@@ -47,11 +47,14 @@ __all__ = [
     "compaction_message_threshold_for_model",
     "compaction_threshold_for_model",
     "context_window_for_model",
+    "context_window_override",
     "deprecation_for_model",
     "max_output_tokens_for_model",
     "normalize_model",
     "normalize_model_name",
     "provider_capability",
+    "register_provider_context_windows",
+    "set_context_window_override",
 ]
 
 
@@ -61,6 +64,10 @@ __all__ = [
 
 DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
 DEEPSEEK_V4_CONTEXT_WINDOW_TOKENS = 1_000_000
+# Default window for custom provider models the static table below doesn't
+# recognize (e.g. ``[providers.hs] model = "glm-5.2"``). Overridable per
+# provider via ``[providers.X] context_window = ...``.
+CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS = 500_000
 DEFAULT_COMPACTION_TOKEN_THRESHOLD = 50_000
 DEFAULT_COMPACTION_MESSAGE_THRESHOLD = 50
 
@@ -352,14 +359,58 @@ def _deepseek_context_window_hint(model_lower: str) -> int | None:
     return None
 
 
+# Config-driven per-model context windows. Populated from
+# ``[providers.X]`` tables at config load / engine creation so custom
+# provider models (unknown to the static table below) get a usable window.
+_context_window_overrides: dict[str, int] = {}
+
+
+def set_context_window_override(model: str, window: int) -> None:
+    """Pin ``model``'s context window (tokens). No-op for invalid input."""
+    key = model.strip().lower()
+    if key and window > 0:
+        _context_window_overrides[key] = window
+
+
+def context_window_override(model: str) -> int | None:
+    return _context_window_overrides.get(model.strip().lower())
+
+
+def register_provider_context_windows(config: object) -> None:
+    """Register context windows for every ``[providers.X]`` model in ``config``.
+
+    - ``context_window`` set on the provider table wins.
+    - A custom model the static table doesn't recognize defaults to
+      :data:`CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS` (500K).
+    Idempotent; safe to call on every config load / engine creation.
+    """
+    providers = getattr(config, "providers", None) or {}
+    for entry in providers.values():
+        model = (getattr(entry, "model", None) or "").strip()
+        if not model:
+            continue
+        window = getattr(entry, "context_window", None)
+        if isinstance(window, int) and window > 0:
+            set_context_window_override(model, window)
+        elif (
+            context_window_override(model) is None
+            and _context_window_for_model_optional(model) is None
+        ):
+            set_context_window_override(model, CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS)
+
+
 def context_window_for_model(model: str) -> int:
     """Return the context-window size in tokens for ``model``.
 
     Preserves the legacy Python signature (always returns an ``int``).
-    Internally delegates to the Rust-parity logic in
+    Config-registered overrides (``[providers.X] context_window`` / custom
+    model default) win; otherwise delegates to the Rust-parity logic in
     :func:`_context_window_for_model_optional` and falls back to
     :data:`DEFAULT_CONTEXT_WINDOW_TOKENS` when the model is unknown.
     """
+    override = context_window_override(model)
+    if override is not None:
+        return override
     resolved = _context_window_for_model_optional(model)
     return resolved if resolved is not None else DEFAULT_CONTEXT_WINDOW_TOKENS
 
@@ -455,8 +506,12 @@ def provider_capability(
         or model_lower == "deepseek-v4"
     )
 
-    # Context window: V4 → 1M; otherwise fall through to the model lookup.
-    if is_v4_pro or is_v4_flash:
+    # Context window: explicit config override wins; then V4 → 1M;
+    # otherwise fall through to the model lookup.
+    override = context_window_override(resolved_model)
+    if override is not None:
+        window = override
+    elif is_v4_pro or is_v4_flash:
         window = DEEPSEEK_V4_CONTEXT_WINDOW_TOKENS
     else:
         probed = _context_window_for_model_optional(resolved_model)

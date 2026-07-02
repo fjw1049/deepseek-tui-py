@@ -108,6 +108,46 @@ class ToolRuntime:
             await self.lsp_manager.close_all()
 
 
+def build_subagent_manager(
+    cfg: Config,
+    workspace: Path,
+    *,
+    state_path: Path | None = None,
+) -> tuple[SubAgentManager | None, Mailbox | None]:
+    """Build a SubAgentManager + Mailbox pair for one engine/workspace.
+
+    Sub-agents are engine-scoped entities: sharing one manager (and its
+    single-consumer Mailbox) across engines lets one thread's activity
+    coordinator steal another thread's progress envelopes. Every consumer
+    that needs its own event stream must own its own pair.
+    Returns ``(None, None)`` when ``features.subagents`` is disabled.
+    """
+    if not cfg.features.subagents:
+        return None, None
+    from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
+
+    mailbox = Mailbox()
+    resolved_state_path = state_path or (
+        workspace / ".deepseek" / "subagents.v1.json"
+    )
+    max_agents = min(
+        20,
+        cfg.max_subagents or cfg.subagents.max_concurrent or 10,
+    )
+    manager = SubAgentManager(
+        workspace=workspace,
+        max_agents=max_agents,
+        state_path=resolved_state_path,
+        mailbox=mailbox,
+        executor=_safe_subagent_executor(),
+        default_model=cfg.subagents.default_model
+        or cfg.default_text_model
+        or "deepseek-chat",
+        llm_max_concurrent=cfg.subagents.llm_max_concurrent,
+    )
+    return manager, mailbox
+
+
 async def create_tool_runtime(
     *,
     config: Config | None = None,
@@ -158,23 +198,9 @@ async def create_tool_runtime(
         task_manager = TaskManager(task_cfg, executor=task_exec)
         await task_manager.start()
 
-    if cfg.features.subagents:
-        from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
-        mailbox = Mailbox()
-        state_path = subagent_state_path or (workspace / ".deepseek" / "subagents.v1.json")
-        subagent_exec = _safe_subagent_executor()
-        max_agents = min(
-            20,
-            cfg.max_subagents or cfg.subagents.max_concurrent or 10,
-        )
-        subagent_manager = SubAgentManager(
-            workspace=workspace,
-            max_agents=max_agents,
-            state_path=state_path,
-            mailbox=mailbox,
-            executor=subagent_exec,
-            default_model=cfg.subagents.default_model or cfg.default_text_model or "deepseek-chat",
-        )
+    subagent_manager, mailbox = build_subagent_manager(
+        cfg, workspace, state_path=subagent_state_path
+    )
 
     mcp: McpManager | None = None
     owns_mcp_manager = True

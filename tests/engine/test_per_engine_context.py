@@ -85,7 +85,12 @@ async def test_per_engine_context_inherits_runtime_managers(
             "per-engine context dropped task_manager — task_shell_start "
             "would raise 'TaskManager is not attached'"
         )
-        assert ctx.subagent_manager is runtime.context.subagent_manager
+        # Sub-agents are engine-scoped: the shared manager's single-consumer
+        # Mailbox must NOT be reused across engines (cross-thread envelope
+        # theft), so each engine gets its own manager + mailbox.
+        assert ctx.subagent_manager is not None
+        assert ctx.subagent_manager is not runtime.context.subagent_manager
+        assert ctx.subagent_manager.mailbox is not runtime.mailbox
         assert ctx.network_policy is runtime.context.network_policy
         # Workspace itself must still reflect the engine's path.
         assert ctx.working_directory == engine_ws.resolve()
@@ -132,12 +137,13 @@ async def test_per_engine_context_metadata_is_isolated(
         handle.drain_events()
 
 
-async def test_same_workspace_uses_runtime_context_unchanged(
+async def test_same_workspace_still_gets_engine_scoped_subagents(
     tmp_path: Path, isolated_config: Config
 ):
-    """When engine ws == runtime ws, no per-engine context is created and
-    the engine uses the runtime context verbatim (manager already wired).
-    This path was never broken; this test guards the branching condition."""
+    """Even when engine ws == runtime ws, a shared runtime yields a
+    per-engine context with an engine-owned SubAgentManager: the shared
+    manager's single-consumer Mailbox cannot be safely drained by more
+    than one engine's activity coordinator."""
     runtime_ws = tmp_path / "shared_ws"
     runtime_ws.mkdir()
 
@@ -148,12 +154,15 @@ async def test_same_workspace_uses_runtime_context_unchanged(
             handle=handle,
             client=AsyncMock(),
             config=isolated_config,
-            working_directory=runtime_ws,  # == runtime cwd → no per-engine ctx
+            working_directory=runtime_ws,  # == runtime cwd
             tool_runtime=runtime,
         )
-        # Engine uses the runtime context directly; managers are present.
-        assert engine.tool_context is runtime.context
-        assert engine.tool_context.task_manager is not None
+        ctx = engine.tool_context
+        assert ctx is not runtime.context
+        assert ctx.task_manager is runtime.context.task_manager
+        assert ctx.subagent_manager is not None
+        assert ctx.subagent_manager is not runtime.context.subagent_manager
+        assert ctx.working_directory == runtime_ws.resolve()
     finally:
         await engine.shutdown_session()
         await runtime.shutdown()

@@ -1093,6 +1093,7 @@ class SubAgentManager:
         executor: SubAgentExecutor | None = None,
         mailbox: Mailbox | None = None,
         default_model: str = "deepseek-chat",
+        llm_max_concurrent: int = 2,
     ) -> None:
         self.workspace = workspace
         self.max_agents = max_agents
@@ -1101,6 +1102,15 @@ class SubAgentManager:
         self._state_path = state_path
         self._executor: SubAgentExecutor = executor or _stub_executor
         self._mailbox = mailbox
+        # Gate concurrent sub-agent LLM streams: N parallel children plus
+        # the parent all hitting one provider key is what triggers 429
+        # rate-limit storms (and their multi-minute backoffs). Tool
+        # execution is not gated — only the streaming call itself.
+        self.llm_semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(llm_max_concurrent)
+            if llm_max_concurrent > 0
+            else None
+        )
         self._agents: dict[str, SubAgent] = {}
         self._lock = asyncio.Lock()
         self._session_boot_id: str = f"boot_{uuid.uuid4().hex[:12]}"
@@ -1788,12 +1798,22 @@ async def run_subagent_loop(
             max_tokens=4096,
             stream=True,
         )
-        result = await turn_loop.run(
-            request,
-            _noop_emit,
-            cancel,
-            tools=round_tools,
-        )
+        llm_gate = getattr(runtime.manager, "llm_semaphore", None)
+        if llm_gate is not None:
+            async with llm_gate:
+                result = await turn_loop.run(
+                    request,
+                    _noop_emit,
+                    cancel,
+                    tools=round_tools,
+                )
+        else:
+            result = await turn_loop.run(
+                request,
+                _noop_emit,
+                cancel,
+                tools=round_tools,
+            )
 
         if result.usage is not None:
             last_usage = result.usage

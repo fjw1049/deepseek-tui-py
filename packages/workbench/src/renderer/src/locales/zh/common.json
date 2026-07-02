@@ -1056,6 +1056,7 @@
   "turnCompleteNotificationTitle": "DeepSeek 回复已完成",
   "turnCompleteNotificationBody": "「{{title}}」已完成回复。",
   "busyTimeout": "长时间未收到运行时完成事件。请检查连接或重试。",
+  "runtimeStreamRecovering": "事件流暂时中断，正在恢复连接…",
   "runtimeActionNeedsConnection": "请先连接运行时（见顶部状态栏）。",
   "runtimeFetchFailed": "无法连接到本地运行时。请确认 `deepseek serve --http` 已启动，或在设置中开启自动启动。",
   "runtimeBinaryNotInstalled": "未找到 deepseek 可执行文件。请在 DeepSeek-GUI 目录运行 npm install 以下载 CLI，或在设置中填写「deepseek 二进制路径」。",

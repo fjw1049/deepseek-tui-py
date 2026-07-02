@@ -1056,6 +1056,7 @@
   "turnCompleteNotificationTitle": "DeepSeek reply complete",
   "turnCompleteNotificationBody": "“{{title}}” is ready.",
   "busyTimeout": "No response from runtime in time. Check the connection or try again.",
+  "runtimeStreamRecovering": "Event stream interrupted — reconnecting…",
   "runtimeActionNeedsConnection": "Connect to the runtime first (see status bar).",
   "runtimeFetchFailed": "Could not reach the local runtime. Make sure `deepseek serve --http` is running, or enable auto-start in Settings.",
   "runtimeBinaryNotInstalled": "The deepseek CLI was not found. Run `npm install` in the DeepSeek-GUI folder to fetch it, or set the binary path in Settings.",

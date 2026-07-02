@@ -14,6 +14,13 @@ type BusyWatchdogOptions = {
   finalizeBusyState: (state: ChatState) => Partial<ChatState>
   flushLiveBlocks: (state: ChatState, base: Partial<ChatState>) => Partial<ChatState>
   busyTimeoutMessage: () => string
+  /**
+   * Authoritative liveness probe (GET /threads/{id}/activity). A silent SSE
+   * stream is NOT proof the turn died — the model may be reasoning for
+   * minutes or sitting in a rate-limit backoff. Only declare busyTimeout
+   * when the runtime itself says no turn is active.
+   */
+  isTurnStillActive?: () => Promise<boolean>
 }
 
 type TurnCompletionPollOptions = {
@@ -61,15 +68,36 @@ export function armBusyWatchdog(
       void state.recoverActiveTurn()
       return
     }
-    set((snapshot) => {
-      const base: Partial<ChatState> = {
-        ...options.finalizeBusyState(snapshot),
-        busy: false,
-        currentTurnId: null,
-        error: options.busyTimeoutMessage()
-      }
-      return options.flushLiveBlocks(snapshot, base)
-    })
+    const giveUp = (): void => {
+      if (!get().busy) return
+      set((snapshot) => {
+        const base: Partial<ChatState> = {
+          ...options.finalizeBusyState(snapshot),
+          busy: false,
+          currentTurnId: null,
+          error: options.busyTimeoutMessage()
+        }
+        return options.flushLiveBlocks(snapshot, base)
+      })
+    }
+    if (!options.isTurnStillActive) {
+      giveUp()
+      return
+    }
+    void options
+      .isTurnStillActive()
+      .then((active) => {
+        if (!get().busy) return
+        if (active) {
+          // Turn is alive on the runtime; the stream is just quiet. Reset
+          // the attempt budget and keep recovering instead of erroring out.
+          busyRecoveryAttempts = 0
+          void get().recoverActiveTurn()
+          return
+        }
+        giveUp()
+      })
+      .catch(giveUp)
   }, options.timeoutMs)
 }
 
