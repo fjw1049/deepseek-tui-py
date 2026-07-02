@@ -435,7 +435,7 @@ async def _run_task_engine_turn(
     from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import FeatureConfig, HooksConfig
     from deepseek_tui.engine.orchestrator import Engine
-    from deepseek_tui.engine.handle import AutoApprovalHandler
+    from deepseek_tui.engine.handle import AutoApprovalHandler, DenyApprovalHandler
     from deepseek_tui.tools.runtime import create_tool_runtime
     from deepseek_tui.tools.task import TaskExecutionResult
 
@@ -461,7 +461,15 @@ async def _run_task_engine_turn(
         start_mcp=False,
     )
 
-    approval_handler = AutoApprovalHandler() if task.auto_approve else None
+    # Tasks run detached — there is no interactive channel to surface an
+    # approval prompt. auto_approve=True lets the task use privileged tools;
+    # otherwise DenyApprovalHandler refuses them so the model sees a refusal
+    # instead of hanging on a prompt nobody can answer. Passing None would
+    # fall through to Engine.__init__'s AutoApprovalHandler() default and
+    # silently make every task auto-approved.
+    approval_handler = (
+        AutoApprovalHandler() if task.auto_approve else DenyApprovalHandler()
+    )
     max_rounds = (
         CRON_MAX_TOOL_ROUND_TRIPS
         if _is_cron_task(task.prompt)
@@ -507,7 +515,11 @@ async def _run_task_engine_turn(
             return TaskExecutionResult(summary=result_text, error="canceled")
         return TaskExecutionResult(summary=result_text, detail=None, error=None)
     finally:
-        await engine.shutdown_session()
+        # shutdown() (not shutdown_session()) so the per-task LLM client
+        # built above is closed — otherwise every task leaks its HTTP
+        # connection pool. SessionEndedEvent is swallowed by try/except
+        # inside shutdown(); drain_events() clears it either way.
+        await engine.shutdown()
         handle.drain_events()
 
 

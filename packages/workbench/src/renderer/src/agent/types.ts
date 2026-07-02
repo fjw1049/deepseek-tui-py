@@ -294,6 +294,8 @@ export interface AgentProvider {
   renameThread(threadId: string, title: string): Promise<void>
   deleteThread(threadId: string): Promise<void>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
+  /** Truncate a thread in place: drop `beforeItemId` and everything after it. */
+  rewindThread?(threadId: string, beforeItemId: string): Promise<void>
   resumeThread?(threadId: string): Promise<void>
   compactThread?(threadId: string, reason?: string): Promise<void>
   subscribeThreadEvents(

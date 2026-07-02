@@ -794,6 +794,7 @@ from fastapi.responses import JSONResponse
 from deepseek_tui.server.threads import (
     CreateThreadRequest,
     ForkThreadRequest,
+    RewindThreadRequest,
     UpdateThreadRequest,
 )
 from deepseek_tui.server.sessions import ImportTuiSessionRequest
@@ -942,6 +943,20 @@ async def fork_thread(request: Request, thread_id: str) -> JSONResponse:
     except ValueError as exc:
         raise api_error(400, str(exc), error="invalid_request") from exc
     return JSONResponse(status_code=201, content=forked.model_dump(mode="json"))
+
+
+@router_threads.post("/threads/{thread_id}/rewind")
+async def rewind_thread(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = RewindThreadRequest.model_validate(payload)
+    try:
+        thread = await mgr.rewind_thread(thread_id, before_item_id=req.before_item_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_request") from exc
+    return thread.model_dump(mode="json")
 
 
 @router_threads.post("/threads/{thread_id}/resume")

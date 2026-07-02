@@ -1202,6 +1202,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
+  async rewindThread(threadId: string, beforeItemId: string): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/rewind`,
+      'POST',
+      JSON.stringify({ before_item_id: beforeItemId })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rewind thread failed'))
+  }
+
   async resumeThread(threadId: string): Promise<void> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/resume`,

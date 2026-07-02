@@ -862,6 +862,79 @@ class RuntimeThreadManager:
         )
         return forked
 
+    async def rewind_thread(
+        self, thread_id: str, *, before_item_id: str
+    ) -> ThreadRecord:
+        """Truncate a thread in place at ``before_item_id``.
+
+        Deletes the item itself and everything after it (later items in the
+        same turn plus all later turns) from the durable store, then re-syncs
+        the warm engine session so the model no longer sees the dropped
+        history. Backs the Workbench "edit & resend" (rewind) flow.
+        """
+        thread = self.store.load_thread(thread_id)
+
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is not None and state.active_turn is not None:
+                raise ValueError("cannot rewind thread while a turn is active")
+
+        turns = self.store.list_turns_for_thread(thread_id)
+        cutoff_turn_index: int | None = None
+        for idx, turn in enumerate(turns):
+            if before_item_id in turn.item_ids:
+                cutoff_turn_index = idx
+                break
+        if cutoff_turn_index is None:
+            raise ValueError(f"item not found in thread: {before_item_id}")
+
+        cutoff_turn = turns[cutoff_turn_index]
+        kept_item_ids: list[str] = []
+        dropping = False
+        for item_id in cutoff_turn.item_ids:
+            if item_id == before_item_id:
+                dropping = True
+            if dropping:
+                self.store.delete_item(item_id)
+            else:
+                kept_item_ids.append(item_id)
+        if kept_item_ids:
+            cutoff_turn.item_ids = kept_item_ids
+            self.store.save_turn(cutoff_turn)
+        else:
+            self.store.delete_turn(cutoff_turn.id)
+
+        for turn in turns[cutoff_turn_index + 1 :]:
+            for item_id in turn.item_ids:
+                self.store.delete_item(item_id)
+            self.store.delete_turn(turn.id)
+
+        remaining = self.store.list_turns_for_thread(thread_id)
+        thread.latest_turn_id = remaining[-1].id if remaining else None
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+
+        # A warm engine still holds the dropped turns in session_messages;
+        # replace them so regeneration truly starts from the rewound state.
+        # (Unlike _sync_engine_session, an empty history must clear too.)
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+        if state is not None:
+            messages = reconstruct_messages_from_turns(self.store, thread_id)
+            state.engine.sync_session(messages, model=thread.model)
+
+        await self._emit_event(
+            thread_id,
+            None,
+            None,
+            "thread.rewound",
+            {
+                "thread": thread.model_dump(mode="json"),
+                "before_item_id": before_item_id,
+            },
+        )
+        return thread
+
     # --- turn lifecycle ------------------------------------------------------
 
     async def start_turn(self, thread_id: str, req: StartTurnRequest) -> TurnRecord:
@@ -3364,6 +3437,12 @@ class ForkThreadRequest(BaseModel):
     through_item_id: str | None = None
 
 
+class RewindThreadRequest(BaseModel):
+    """Truncate a thread in place, dropping ``before_item_id`` and after."""
+
+    before_item_id: str
+
+
 class StartTurnRequest(BaseModel):
     prompt: str
     input_summary: str | None = None
@@ -3483,6 +3562,12 @@ class RuntimeThreadStore:
 
     def save_item(self, item: TurnItemRecord) -> None:
         write_json_atomic(self._item_path(item.id), item.model_dump(mode="json"))
+
+    def delete_turn(self, turn_id: str) -> None:
+        self._turn_path(turn_id).unlink(missing_ok=True)
+
+    def delete_item(self, item_id: str) -> None:
+        self._item_path(item_id).unlink(missing_ok=True)
 
     def load_thread(self, thread_id: str) -> ThreadRecord:
         path = self._thread_path(thread_id)

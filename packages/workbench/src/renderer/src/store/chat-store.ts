@@ -2369,10 +2369,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const idx = state.blocks.findIndex((b) => b.id === userBlockId && b.kind === 'user')
     if (idx < 0) return
 
-    // Drop the target user block and everything after it. The runtime keeps
-    // the old items on disk; this only truncates what the UI shows. A future
-    // reload of this thread will surface the old items again — acceptable
-    // tradeoff while no rewind endpoint is exposed by the runtime.
+    // Truncate on the runtime first so the dropped turns are deleted from
+    // disk (they would otherwise resurface on the next thread reload) and
+    // the engine session is re-synced without them. Blocks with local
+    // optimistic ids (`u-…`/`q-…`) were never persisted, so only blocks
+    // carrying a runtime item id (`item_…`) need the backend call.
+    const p = getProvider(state.providerId)
+    if (
+      state.activeThreadId &&
+      userBlockId.startsWith('item_') &&
+      typeof p.rewindThread === 'function'
+    ) {
+      try {
+        await p.rewindThread(state.activeThreadId, userBlockId)
+      } catch (e) {
+        set({ error: formatRuntimeError(e) })
+        return
+      }
+    }
+
+    // Drop the target user block and everything after it from the UI.
     const trimmedBlocks = state.blocks.slice(0, idx)
 
     const droppedUserIds = state.blocks
