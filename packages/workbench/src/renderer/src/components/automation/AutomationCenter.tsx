@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
@@ -677,8 +678,13 @@ export function AutomationCenter({
         </div>
       </div>
 
-      {/* Detail drawer */}
-      {selected ? (
+      {/* Detail drawer. Portaled to <body>: the page root (.ds-feature-page)
+          carries a backdrop-filter, which makes it the containing block for
+          fixed descendants and forces a second full-size blur layer — the
+          combination flickers the whole window (see .ds-automation-drawer in
+          index.css). */}
+      {selected
+        ? createPortal(
         <>
           <button
             type="button"
@@ -686,7 +692,7 @@ export function AutomationCenter({
             className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
             onClick={() => setSelectedId(null)}
           />
-          <div className="ds-automation-drawer ds-glass ds-glass-strong fixed inset-y-0 right-0 z-[90] flex w-full max-w-[440px] flex-col shadow-2xl">
+          <div className="ds-automation-drawer fixed inset-y-0 right-0 z-[90] flex w-full max-w-[440px] flex-col">
             <div className="flex items-start justify-between border-b border-ds-border-muted px-5 py-4">
               <div className="min-w-0">
                 <h2 className="truncate text-[16px] font-semibold text-ds-ink">{selected.name}</h2>
@@ -810,8 +816,10 @@ export function AutomationCenter({
             </div>
           </div>
           </div>
-        </>
-      ) : null}
+        </>,
+        document.body
+      )
+        : null}
     </div>
   )
 }

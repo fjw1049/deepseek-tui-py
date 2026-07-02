@@ -74,25 +74,24 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
     onPatch({
       theme: 'system',
       uiFontScale: 'small',
-      uiFontFamily: 'inter-noto',
+      uiFontFamily: 'system-native',
       appearance: defaultAppearanceSettings()
     })
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <SectionLabel>{t('appearanceSectionTheme')}</SectionLabel>
         <button
           type="button"
           onClick={restoreDefaults}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-muted shadow-sm transition hover:bg-ds-hover hover:text-ds-ink"
+          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12.5px] font-medium text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
         >
-          <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <RotateCcw className="h-3 w-3" strokeWidth={1.75} />
           {t('appearanceRestoreDefaults')}
         </button>
       </div>
-
-      <SectionLabel>{t('appearanceSectionTheme')}</SectionLabel>
 
       <Card>
         <Row
@@ -123,21 +122,6 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
               <option value="small">{t('fontScaleSmall')}</option>
               <option value="medium">{t('fontScaleMedium')}</option>
               <option value="large">{t('fontScaleLarge')}</option>
-            </SettingsSelect>
-          }
-        />
-        <Row
-          title={t('fontFamily')}
-          description={t('fontFamilyDesc')}
-          control={
-            <SettingsSelect
-              value={form.uiFontFamily}
-              onChange={(e) =>
-                onPatch({ uiFontFamily: e.target.value as AppSettingsV1['uiFontFamily'] })
-              }
-            >
-              <option value="inter-noto">{t('fontFamilyInterNoto')}</option>
-              <option value="system-native">{t('fontFamilySystemNative')}</option>
             </SettingsSelect>
           }
         />
@@ -533,7 +517,15 @@ function ColorPill({
         }}
         spellCheck={false}
         className="w-full min-w-0 bg-transparent font-mono text-[13px] font-medium uppercase focus:outline-none"
-        style={{ color: 'inherit' }}
+        // Override the global .ds-settings-page input glass material (bg + blur +
+        // inset shadow) so the hex text stays on the solid color pill behind it.
+        style={{
+          color: 'inherit',
+          backgroundColor: 'transparent',
+          backdropFilter: 'none',
+          WebkitBackdropFilter: 'none',
+          boxShadow: 'none'
+        }}
       />
     </div>
   )
@@ -636,7 +628,7 @@ function Toggle({
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-        checked ? 'bg-emerald-500' : 'bg-ds-faint'
+        checked ? 'bg-accent' : 'bg-ds-faint'
       }`}
     >
       <span

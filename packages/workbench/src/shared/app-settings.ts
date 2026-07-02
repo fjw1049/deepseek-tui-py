@@ -961,8 +961,10 @@ export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[]
     })
 }
 
-export function normalizeUiFontFamily(raw: unknown): UiFontFamily {
-  return raw === 'system-native' ? 'system-native' : 'inter-noto'
+export function normalizeUiFontFamily(_raw: unknown): UiFontFamily {
+  // UI font is fixed to the system-native (Mac PingFang / Windows YaHei) stack;
+  // the selector was removed, so any stored/legacy value resolves here.
+  return 'system-native'
 }
 
 export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {

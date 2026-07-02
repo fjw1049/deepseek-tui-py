@@ -50,6 +50,14 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    // Pre-bundle deps that are only reachable through the lazily-loaded
+    // StreamdownAssistant chunk. Without this, Vite discovers streamdown's
+    // runtime imports (shiki/mermaid) on demand, re-runs the optimizer, and
+    // invalidates the in-flight chunk hash -> "Failed to fetch dynamically
+    // imported module" -> white screen when opening a chat.
+    optimizeDeps: {
+      include: ['streamdown', 'shiki', 'mermaid', 'remark-gfm', 'rehype-harden']
+    },
     plugins: [react()],
     server: {
       host: '127.0.0.1',

@@ -1659,7 +1659,7 @@ function PetMascotSettingPreview({
     <div className="flex flex-col gap-3">
       <p className="text-[13px] leading-relaxed text-ds-muted">{description}</p>
       <div
-        className={`rounded-xl border border-ds-border-muted bg-ds-main/45 p-3 transition ${
+        className={`rounded-xl border border-ds-border-muted bg-ds-main/45 p-3 transition dark:bg-white/[0.04] ${
           enabled ? '' : 'opacity-45 grayscale'
         }`}
       >
@@ -1671,7 +1671,7 @@ function PetMascotSettingPreview({
             {selectedName}
           </span>
         </div>
-        <div className="flex h-28 items-end justify-center overflow-hidden rounded-lg border border-ds-border-muted bg-ds-card">
+        <div className="flex h-28 items-end justify-center overflow-hidden rounded-lg border border-ds-border-muted bg-ds-card dark:bg-white/[0.06]">
           {previewSrc ? (
             <PetSprite
               src={previewSrc}
@@ -2329,7 +2329,7 @@ function Toggle({
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-        checked ? 'bg-emerald-500' : 'bg-ds-faint'
+        checked ? 'bg-accent' : 'bg-ds-faint'
       }`}
     >
       <span

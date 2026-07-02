@@ -125,7 +125,7 @@ const defaultSettings = (): AppSettingsV1 => ({
   locale: 'en',
   theme: 'system',
   uiFontScale: 'small',
-  uiFontFamily: 'inter-noto',
+  uiFontFamily: 'system-native',
   agentProvider: 'deepseek-runtime',
   deepseek: {
     binaryPath: '',

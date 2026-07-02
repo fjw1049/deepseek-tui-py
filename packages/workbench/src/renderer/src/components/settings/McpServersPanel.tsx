@@ -196,7 +196,7 @@ export function McpToggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${
-        checked ? 'bg-emerald-500' : 'bg-ds-faint'
+        checked ? 'bg-accent' : 'bg-ds-faint'
       }`}
     >
       <span

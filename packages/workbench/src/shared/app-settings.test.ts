@@ -161,9 +161,10 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
 })
 
 describe('normalizeUiFontFamily', () => {
-  it('defaults unknown values to inter-noto', () => {
-    expect(normalizeUiFontFamily(undefined)).toBe('inter-noto')
-    expect(normalizeUiFontFamily('invalid')).toBe('inter-noto')
+  it('always resolves to system-native (selector removed)', () => {
+    expect(normalizeUiFontFamily(undefined)).toBe('system-native')
+    expect(normalizeUiFontFamily('invalid')).toBe('system-native')
+    expect(normalizeUiFontFamily('inter-noto')).toBe('system-native')
     expect(normalizeUiFontFamily('system-native')).toBe('system-native')
   })
 })
