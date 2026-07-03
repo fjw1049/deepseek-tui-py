@@ -243,7 +243,7 @@ export function OperationContextDock({
   if (!root) return null
 
   return (
-    <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[22px] px-4 py-3.5">
+    <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[14px] px-4 py-3.5">
       <SectionHeader
         label={t('operationDockToolsTitle')}
         collapsed={collapsed.tools}

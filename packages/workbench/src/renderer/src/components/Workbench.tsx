@@ -708,6 +708,10 @@ export function Workbench(): ReactElement {
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    // Suspend the collapse transition while dragging so the width tracks the
+    // pointer 1:1 instead of easing behind it.
+    const wrapEl = (event.currentTarget as HTMLElement).closest('.ds-workbench-sidebar-wrap')
+    wrapEl?.classList.add('is-resizing')
 
     const onMove = (moveEvent: PointerEvent): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
@@ -733,6 +737,7 @@ export function Workbench(): ReactElement {
     const onUp = (): void => {
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
+      wrapEl?.classList.remove('is-resizing')
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -788,10 +793,22 @@ export function Workbench(): ReactElement {
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
     >
       {leftSidebarCollapsed ? <SidebarExpandDroplet onExpand={expandLeftSidebar} /> : null}
-      {!leftSidebarCollapsed ? (
+      {/* Stays mounted while collapsed so the offcanvas slide can animate: the
+          wrap's width shrinks to 0 while the fixed-width inner column slides
+          left, both on the same 300ms curve (Synara sidebar gap + container). */}
+      <div
+        className="ds-workbench-sidebar-wrap relative min-h-0 shrink-0"
+        data-collapsed={leftSidebarCollapsed ? '' : undefined}
+        aria-hidden={leftSidebarCollapsed}
+        inert={leftSidebarCollapsed || undefined}
+        style={{ width: leftSidebarCollapsed ? 0 : sidebarWrapWidth }}
+      >
         <div
-          className="ds-workbench-sidebar-wrap relative min-h-0 shrink-0"
-          style={{ width: sidebarWrapWidth }}
+          className="ds-workbench-sidebar-slide absolute inset-y-0 left-0"
+          style={{
+            width: sidebarWrapWidth,
+            transform: leftSidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)'
+          }}
         >
           <Sidebar
             threads={threads}
@@ -813,17 +830,17 @@ export function Workbench(): ReactElement {
             onOpenSettings={(section) => openSettings(section)}
             onCollapseSidebar={() => setLeftSidebarCollapsed(true)}
           />
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t('sidebarResize')}
-            className="ds-no-drag group absolute inset-y-0 right-0 z-30 w-2 translate-x-1/2 cursor-col-resize"
-            onPointerDown={beginLeftResize}
-          >
-            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
-          </div>
         </div>
-      ) : null}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('sidebarResize')}
+          className="ds-no-drag group absolute inset-y-0 right-0 z-30 w-2 translate-x-1/2 cursor-col-resize"
+          onPointerDown={beginLeftResize}
+        >
+          {/* No visible line: the content card's seam ring is the only divider (Synara). */}
+        </div>
+      </div>
 
       <main
         className={`ds-workbench-main ds-drag ds-stage-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
@@ -900,10 +917,10 @@ export function Workbench(): ReactElement {
           </div>
         )}
 
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={mainRowRef} className="flex min-h-0 flex-1">
+          <div className={`min-h-0 min-w-0 flex-1 flex-col ${chatColumnHidden ? 'hidden' : 'flex'}`}>
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="ds-workbench-topbar relative z-10 shrink-0 border-b border-ds-border-muted/35 bg-transparent">
+            <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
@@ -929,7 +946,7 @@ export function Workbench(): ReactElement {
                 </div>
               ) : null}
             </header>
-            <div ref={mainRowRef} className="ds-chat-main-row relative flex min-h-0 min-w-0 flex-1">
+            <div className="ds-chat-main-row relative flex min-h-0 min-w-0 flex-1">
               {!chatColumnHidden ? (
               <div
                 className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${chatColumnInsetClass}`}
@@ -1117,28 +1134,30 @@ export function Workbench(): ReactElement {
             </div>
             </div>
               ) : null}
-            <WorkbenchRightSidebar
-              open={rightSidebarOpen}
-              collapsed={rightSidebarCollapsed}
-              tab={rightSidebarTab}
-              width={rightSidebarWidth}
-              workspaceRoot={activeWorkspaceRoot}
-              blocks={blocks}
-              devPreviewBlocks={devPreviewBlocks}
-              latestDevPreviewUrl={latestDevPreviewUrl}
-              onTabChange={setRightSidebarTab}
-              onToggleCollapsed={() => setRightSidebarCollapsed((current) => !current)}
-              onClose={closeRightSidebarPanel}
-              onToggleMaximize={toggleRightSidebarMaximize}
-              maximized={chatColumnHidden}
-              onBeginResize={beginRightResize}
-              onOpenFileInEditor={openFileInEditor}
-              fillWidth={chatColumnHidden}
-            />
             </div>
           </section>
           </div>
-
+          {/* Full-height right panel: sits beside the topbar column so its 44px
+              tab header shares one continuous divider line with the topbar and
+              its left border runs the card's full height. */}
+          <WorkbenchRightSidebar
+            open={rightSidebarOpen}
+            collapsed={rightSidebarCollapsed}
+            tab={rightSidebarTab}
+            width={rightSidebarWidth}
+            workspaceRoot={activeWorkspaceRoot}
+            blocks={blocks}
+            devPreviewBlocks={devPreviewBlocks}
+            latestDevPreviewUrl={latestDevPreviewUrl}
+            onTabChange={setRightSidebarTab}
+            onToggleCollapsed={() => setRightSidebarCollapsed((current) => !current)}
+            onClose={closeRightSidebarPanel}
+            onToggleMaximize={toggleRightSidebarMaximize}
+            maximized={chatColumnHidden}
+            onBeginResize={beginRightResize}
+            onOpenFileInEditor={openFileInEditor}
+            fillWidth={chatColumnHidden}
+          />
         </div>
           </>
         )}
@@ -1170,7 +1189,7 @@ function DevPreviewLaunchCard({
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
-    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[18px] border border-ds-border-muted bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
+    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[12px] border border-ds-border-muted bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-400/20 bg-sky-500/10 text-sky-500 dark:border-sky-300/20 dark:bg-sky-300/10 dark:text-sky-300">
         <Globe2 className="h-5 w-5" strokeWidth={1.9} />
       </div>

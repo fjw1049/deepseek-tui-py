@@ -69,10 +69,10 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium transition ${
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium transition ${
         active
-          ? 'bg-ds-hover/70 text-ds-ink'
-          : 'text-ds-faint hover:bg-ds-hover/50 hover:text-ds-muted'
+          ? 'border-ds-border bg-ds-card text-ds-ink shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
+          : 'border-transparent text-ds-faint hover:bg-ds-hover/60 hover:text-ds-muted'
       }`}
       aria-pressed={active}
     >
@@ -171,11 +171,13 @@ export function WorkbenchRightSidebar({
         className="ds-no-drag group absolute inset-y-0 left-0 z-30 w-2 -translate-x-1/2 cursor-col-resize"
         onPointerDown={onBeginResize}
       >
-        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ds-border-muted/80 transition group-hover:bg-ds-border-strong" />
+        {/* Panel's own border-l is the divider; the handle stays invisible. */}
       </div>
 
-      <div className="ds-tool-panel flex h-full min-h-0 flex-col overflow-hidden border-l border-ds-border-muted/50 bg-ds-sidebar">
-        <div className="ds-no-drag flex shrink-0 items-center gap-1 border-b border-ds-border-muted/60 px-2 py-1.5">
+      <div className="ds-tool-panel ds-right-panel-surface flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
+        {/* Same height + divider treatment as the workbench topbar so the two
+            header lines read as one continuous rule across the card. */}
+        <div className="ds-no-drag ds-surface-divider flex min-h-[var(--ds-header-height,44px)] shrink-0 items-center gap-1 px-2">
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
             {TAB_ITEMS.map((item) => (
               <TabButton

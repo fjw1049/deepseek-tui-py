@@ -734,7 +734,7 @@ export function FloatingComposer({
       } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-0 pt-1'}`}
     >
       {pendingApprovalCount > 0 ? (
-        <div className="mb-2 rounded-[22px] border border-accent/30 bg-[linear-gradient(180deg,rgba(79,124,255,0.08),rgba(79,124,255,0.14))] px-4 py-3 shadow-sm backdrop-blur-xl">
+        <div className="mb-2 rounded-[14px] border border-accent/30 bg-[linear-gradient(180deg,rgba(79,124,255,0.08),rgba(79,124,255,0.14))] px-4 py-3 shadow-sm backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex min-w-0 items-center gap-2 text-[13px] font-medium text-ds-ink">
               <ShieldAlert className="h-4 w-4 shrink-0 text-accent" strokeWidth={1.9} />
@@ -757,7 +757,7 @@ export function FloatingComposer({
         </div>
       ) : null}
       {queuedMessages.length > 0 ? (
-        <div className="mb-2 rounded-[22px] border border-ds-border bg-ds-card/88 px-4 py-3 shadow-sm backdrop-blur-xl">
+        <div className="mb-2 rounded-[14px] border border-ds-border bg-ds-card/88 px-4 py-3 shadow-sm backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-[13px] font-medium text-ds-ink">
               <Clock3 className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
@@ -854,7 +854,7 @@ export function FloatingComposer({
                   })}
                 </div>
               ) : (
-                <div className="rounded-[20px] border border-dashed border-ds-border-muted px-4 py-5 text-[13px] text-ds-faint">
+                <div className="rounded-[12px] border border-dashed border-ds-border-muted px-4 py-5 text-[13px] text-ds-faint">
                   {t('slashCommandEmpty')}
                 </div>
               )
@@ -904,7 +904,7 @@ export function FloatingComposer({
                 })}
               </div>
             ) : (
-              <div className="rounded-[20px] border border-dashed border-ds-border-muted px-4 py-5 text-[13px] text-ds-faint">
+              <div className="rounded-[12px] border border-dashed border-ds-border-muted px-4 py-5 text-[13px] text-ds-faint">
                 {t('slashCommandEmpty')}
               </div>
             )}

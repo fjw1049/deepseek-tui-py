@@ -350,6 +350,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             runtime = tool_runtime
         else:
             mcp_flag = cfg.features.mcp if start_mcp is None else start_mcp
+            # Engine的「工具运行时装配工厂」—— 把Engine跑工具需要的所有依赖(managers + registry + context + policies)
+            # 按配置组装成一个ToolRuntime对象交出去。 Engine自己不管这些manager怎么建、executor怎么注入
             runtime = await create_tool_runtime(
                 config=cfg,
                 working_directory=working_directory,

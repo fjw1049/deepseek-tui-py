@@ -64,10 +64,10 @@ export function Sidebar({
 
   return (
     <aside className="ds-drag ds-sidebar-shell ds-frosted relative flex h-full w-full shrink-0 flex-col px-3 pb-3">
-      <div className="shrink-0 px-1 pb-2 pt-3">
-        <div aria-hidden className="ds-titlebar-safe-block" />
-        <div className="flex min-h-[48px] items-center justify-between px-1 py-1">
-          <div className="ds-sidebar-workbench-label">{t('sidebarWorkbench')}</div>
+      <div className="shrink-0 px-1 pb-2">
+        {/* Titlebar row: the collapse trigger lives beside the macOS traffic
+            lights (Synara puts SidebarLeadingControls in the sidebar header). */}
+        <div className="ds-sidebar-titlebar-row">
           <button
             type="button"
             onClick={onCollapseSidebar}
@@ -77,6 +77,9 @@ export function Sidebar({
           >
             <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
           </button>
+        </div>
+        <div className="flex min-h-[40px] items-center justify-between px-1 py-1">
+          <div className="ds-sidebar-workbench-label">{t('sidebarWorkbench')}</div>
         </div>
       </div>
 

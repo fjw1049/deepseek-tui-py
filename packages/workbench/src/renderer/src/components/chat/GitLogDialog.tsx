@@ -141,7 +141,7 @@ export function GitLogDialog({
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div className="ds-modal-surface flex h-[min(88vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-[22px]">
+      <div className="ds-modal-surface flex h-[min(88vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-[14px]">
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-ds-border px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">

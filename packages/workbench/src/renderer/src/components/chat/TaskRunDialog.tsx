@@ -104,7 +104,7 @@ export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): 
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div className="ds-modal-surface ds-modal-surface--solid flex h-full max-h-[54rem] w-full max-w-[56rem] flex-col overflow-hidden rounded-[20px]">
+      <div className="ds-modal-surface ds-modal-surface--solid flex h-full max-h-[54rem] w-full max-w-[56rem] flex-col overflow-hidden rounded-[12px]">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-ds-border px-6 py-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <TaskStatusGlyph status={status} />

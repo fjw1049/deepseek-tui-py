@@ -86,7 +86,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
   return (
     <section
       id={`todo-session-${session.anchorBlockId}`}
-      className={`my-2 overflow-hidden rounded-[18px] border border-ds-border bg-ds-card/70 shadow-[0_10px_28px_rgba(86,103,136,0.04)] ${className}`.trim()}
+      className={`my-2 overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/70 shadow-[0_10px_28px_rgba(86,103,136,0.04)] ${className}`.trim()}
     >
       <button
         type="button"

@@ -323,12 +323,30 @@ export function MessageTimeline({
         cancelAnimationFrame(jumpAnimRef.current)
         jumpAnimRef.current = null
       }
-      const targetTop = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      // Rects are in zoomed (visual) px while scrollTop is unzoomed content px —
+      // divide the rect delta by the UI scale before mixing the two spaces.
+      const uiScale =
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')
+        ) || 1
+      const targetTop =
+        (target.getBoundingClientRect().top - container.getBoundingClientRect().top) / uiScale +
+        container.scrollTop
       const viewH = container.clientHeight
       const goal = Math.max(0, targetTop - viewH * 0.2)
-      const start = container.scrollTop
+      let start = container.scrollTop
+      // The timeline isn't virtualized, so a long animated scroll paints every
+      // intermediate region (janky on heavy threads). Teleport to within one
+      // viewport of the goal and animate only that last stretch — the cost is
+      // bounded no matter how far the jump is (synara gets this for free from
+      // its virtualized scrollToIndex).
+      const maxAnimated = viewH
+      if (Math.abs(goal - start) > maxAnimated) {
+        start = goal > start ? goal - maxAnimated : goal + maxAnimated
+        container.scrollTop = start
+      }
       const distance = goal - start
-      const duration = 420
+      const duration = 280
       const startTime = performance.now()
       const easeOut = (t: number): number => 1 - Math.pow(1 - t, 3)
       const step = (now: number): void => {
@@ -398,6 +416,9 @@ export function MessageTimeline({
   // Cached block positions in scroll-content space (top = offset from content
   // origin; refresh only on layout/items change — never per scroll frame).
   const blockCacheRef = useRef<Map<string, { top: number; height: number }>>(new Map())
+  // Viewport height cache so the scroll hot path never reads clientHeight
+  // (which forces layout while streaming keeps styles dirty).
+  const viewportHeightRef = useRef(0)
 
   // Track reading highlights off the transcript's own scroll:
   //  - currentId : the last query bubble at or above the viewport top (the turn
@@ -436,7 +457,7 @@ export function MessageTimeline({
       const cache = blockCacheRef.current
       if (cache.size === 0) return
       const scrollTop = el.scrollTop
-      const viewH = el.clientHeight
+      const viewH = viewportHeightRef.current
       let current: string | null = trailItems[0]?.id ?? null
       const nextVisible: string[] = []
       for (const item of trailItems) {
@@ -452,21 +473,41 @@ export function MessageTimeline({
       frame = window.requestAnimationFrame(recompute)
     }
     // Refresh cache + resolve initial highlight after layout settles.
+    viewportHeightRef.current = el.clientHeight
     refreshBlockCache()
     recompute()
     el.addEventListener('scroll', onScroll, { passive: true })
     // Keep the cache honest when the scroll content reflows (mermaid render,
-    // image load, streaming append) — observe the inner content wrapper.
+    // image load, streaming append). Streaming resizes the content every few
+    // frames and a full re-measure forces layout for every query block, so
+    // coalesce: measure at most every 250ms (trailing edge picks up the rest).
+    let measureTimer: number | null = null
+    let lastMeasure = 0
+    const scheduleMeasure = (): void => {
+      const now = performance.now()
+      const wait = Math.max(0, 250 - (now - lastMeasure))
+      if (measureTimer !== null) return
+      measureTimer = window.setTimeout(() => {
+        measureTimer = null
+        lastMeasure = performance.now()
+        refreshBlockCache()
+        if (frame === null) frame = window.requestAnimationFrame(recompute)
+      }, wait)
+    }
     const contentEl = el.firstElementChild as HTMLElement | null
-    const ro = new ResizeObserver(() => {
-      refreshBlockCache()
+    const ro = new ResizeObserver(scheduleMeasure)
+    if (contentEl) ro.observe(contentEl)
+    const viewportRo = new ResizeObserver(() => {
+      viewportHeightRef.current = el.clientHeight
       if (frame === null) frame = window.requestAnimationFrame(recompute)
     })
-    if (contentEl) ro.observe(contentEl)
+    viewportRo.observe(el)
     return () => {
       el.removeEventListener('scroll', onScroll)
       if (frame !== null) window.cancelAnimationFrame(frame)
+      if (measureTimer !== null) window.clearTimeout(measureTimer)
       ro.disconnect()
+      viewportRo.disconnect()
     }
   }, [trailItems, visibleTurnCount, refreshBlockCache])
 
@@ -595,12 +636,13 @@ export function MessageTimeline({
 
   if (showEmptyHeroOnly) return timeline
 
-  // The rail is a sibling of the scroll container inside one `relative` box, so
-  // its `inset-y-0` matches the scroll viewport's height (not the whole main row
-  // including the composer) and `left-0` sits in the dialogue gutter — matching
-  // synara's mount. No portal: useSyncExternalStore isolates rail re-renders.
+  // The wrapper is intentionally NOT position:relative — the rail's `absolute`
+  // resolves against the chat main row (`.ds-chat-main-row`, the content card's
+  // positioned box), so `left-0` hugs the card's left edge like synara's
+  // MessageTrail instead of floating inside the padded dialogue column.
+  // No portal: useSyncExternalStore isolates rail re-renders.
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {timeline}
       {trailItems.length > 0 ? (
         <QueryTrail items={trailItems} activeStore={activeTrailStoreRef.current!} />
@@ -1151,7 +1193,7 @@ function TurnChangeSummary({
   })
 
   return (
-    <section className="ds-card-strong overflow-hidden rounded-[24px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
+    <section className="ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
       <button
         type="button"
         onClick={() => {
@@ -1558,7 +1600,7 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
   return (
     <section
       className={[
-        'my-2 overflow-hidden rounded-[18px] border shadow-[0_10px_28px_rgba(86,103,136,0.04)]',
+        'my-2 overflow-hidden rounded-[12px] border shadow-[0_10px_28px_rgba(86,103,136,0.04)]',
         hasFailure
           ? 'border-red-300/70 bg-red-500/10 dark:border-red-800/50'
           : 'border-violet-300/45 bg-violet-500/10 dark:border-violet-800/50'
@@ -1798,7 +1840,7 @@ function SubagentDetailDialog({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-[22px] border border-ds-border bg-ds-elevated shadow-[0_24px_80px_rgba(15,23,42,0.35)]"
+        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-[14px] border border-ds-border bg-ds-elevated shadow-[0_24px_80px_rgba(15,23,42,0.35)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-start gap-3 border-b border-ds-border-muted/70 bg-ds-elevated px-5 py-4">
@@ -2359,7 +2401,7 @@ function SubagentBubble({
   const statusLabel = subagentStatusLabel(block.status, t)
 
   return (
-    <div className="rounded-[22px] border border-violet-300/50 bg-[linear-gradient(180deg,rgba(139,92,246,0.06),rgba(139,92,246,0.12))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)] dark:border-violet-800/50">
+    <div className="rounded-[14px] border border-violet-300/50 bg-[linear-gradient(180deg,rgba(139,92,246,0.06),rgba(139,92,246,0.12))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)] dark:border-violet-800/50">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="font-semibold text-violet-700 dark:text-violet-300">{title}</div>
         <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
@@ -2446,7 +2488,7 @@ function UserInputBubble({
 
   return (
     <div
-      className={`rounded-[22px] border px-4 py-4 text-[13px] leading-6 shadow-[0_12px_30px_rgba(86,103,136,0.04)] ${
+      className={`rounded-[14px] border px-4 py-4 text-[13px] leading-6 shadow-[0_12px_30px_rgba(86,103,136,0.04)] ${
         block.status === 'error'
           ? 'border-red-300/80 bg-red-500/10 dark:border-red-800/60 dark:bg-red-950/35'
           : 'border-accent/35 bg-[linear-gradient(180deg,rgba(79,124,255,0.07),rgba(79,124,255,0.11))] text-ds-ink'
@@ -2633,7 +2675,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
   }
   if (block.kind === 'reasoning') {
     return (
-      <div id={`block-${block.id}`} className="ds-card-soft rounded-[20px] px-4 py-3 text-[13.5px] leading-6 text-ds-muted">
+      <div id={`block-${block.id}`} className="ds-card-soft rounded-[12px] px-4 py-3 text-[13.5px] leading-6 text-ds-muted">
         <div className="ds-markdown">
           <BoundedReasoningMarkdown text={block.text} />
         </div>
@@ -2668,7 +2710,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
     return <ElevationBubble block={block} />
   }
   return (
-    <div className="ds-card-soft rounded-[18px] px-3 py-2 text-[13.5px] text-ds-muted">
+    <div className="ds-card-soft rounded-[12px] px-3 py-2 text-[13.5px] text-ds-muted">
       {block.text}
     </div>
   )

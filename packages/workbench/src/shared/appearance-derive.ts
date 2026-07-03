@@ -93,14 +93,22 @@ export function buildChromeThemeCssVars(
   const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.06 + c * 0.05)
   const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.08 + c * 0.08)
 
+  // Synara's dark stack: the sidebar sits on the darkest chrome (surface) and
+  // the content card lifts to the lighter panel mix; light keeps the original
+  // panel-sidebar / surface-card arrangement (white card on gray ground).
+  const sidebarBg = light ? panel : surface
+  const canvasBg = light ? surface : panel
+
   // Text tiers.
   const textSecondary = rgba(ink, 0.65 + c * 0.1)
   const textTertiary = rgba(ink, 0.45 + c * 0.1)
 
-  // Borders.
-  const borderSoft = rgba(ink, (light ? 0.09 : 0.1) + c * 0.04)
-  const borderMuted = rgba(ink, (light ? 0.07 : 0.06) + c * 0.02)
-  const borderStrong = rgba(ink, (light ? 0.09 : 0.16) + c * 0.06)
+  // Borders. Dark runs noticeably softer than Synara's base derivation: white
+  // hairlines glare on near-black grounds, so hairlines carry less alpha and
+  // the surface layering (sidebar < card < control) does the separating.
+  const borderSoft = rgba(ink, light ? 0.09 + c * 0.04 : 0.06 + c * 0.03)
+  const borderMuted = rgba(ink, light ? 0.07 + c * 0.02 : 0.04 + c * 0.02)
+  const borderStrong = rgba(ink, light ? 0.09 + c * 0.06 : 0.1 + c * 0.05)
 
   // Dark accents brighten through a focus mix (Codex behavior) so low-value
   // accents stay legible on dark surfaces.
@@ -111,20 +119,25 @@ export function buildChromeThemeCssVars(
   const diffRemoved = parseHex(theme.semanticColors.diffRemoved)
   const skill = parseHex(theme.semanticColors.skill)
 
+  // Synara-flat frosted sidebar: translucency only affects the sidebar veil;
+  // everything else derives as solid flat surfaces.
   const glass = theme.translucent
-  const glassBg = glass ? rgba(panel, light ? 0.66 : 0.58) : hex(panel)
-  const glassBgStrong = glass ? rgba(panel, light ? 0.78 : 0.7) : hex(elevated1)
-  const glassBorder = rgba(ink, light ? 0.08 : 0.09)
-  const glassHighlight = light ? rgba(WHITE, 0.5) : rgba(WHITE, 0.06)
+  const glassBg = glass ? rgba(sidebarBg, light ? 0.64 : 0.72) : hex(sidebarBg)
+  const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.8 : 0.84) : hex(elevated1)
+  const glassBorder = rgba(ink, light ? 0.07 : 0.06)
+  const glassHighlight = 'transparent'
 
   const vars: Record<string, string> = {
     '--bg-app': hex(surfaceUnder),
-    '--bg-sidebar': hex(panel),
-    '--bg-canvas': hex(surface),
+    '--bg-sidebar': hex(sidebarBg),
+    '--bg-canvas': hex(canvasBg),
     '--ds-sidebar-dot': rgba(ink, light ? 0.03 : 0.028),
     '--ds-canvas-dot': rgba(ink, 0.04),
 
-    '--surface-1': rgba(surface, 0.92),
+    // Dark inputs/selects read as raised controls (Synara controlBackground);
+    // the old rgba(surface, .92) fill rendered them darker than everything
+    // around them ("input boxes so black").
+    '--surface-1': light ? rgba(surface, 0.92) : hex(elevated1),
     '--surface-2': hex(elevated1),
     '--surface-3': hex(elevated2),
     '--border-soft': borderSoft,
@@ -134,7 +147,7 @@ export function buildChromeThemeCssVars(
     '--text-tertiary': textTertiary,
     '--text-placeholder': rgba(ink, 0.42 + c * 0.08),
 
-    '--ds-surface-subtle': hex(mixRgb(surface, anchor, light ? 0.09 : 0.04 + c * 0.04)),
+    '--ds-surface-subtle': hex(mixRgb(canvasBg, anchor, light ? 0.09 : 0.04 + c * 0.04)),
     '--ds-surface-hover': rgba(ink, light ? 0.05 : 0.1),
     '--ds-border-muted': borderMuted,
     '--ds-bubble-user': rgba(ink, light ? 0.06 : 0.08),
@@ -155,9 +168,9 @@ export function buildChromeThemeCssVars(
     '--ds-success-soft': rgba(diffAdded, light ? 0.14 : 0.18),
     '--ds-danger-soft': rgba(diffRemoved, light ? 0.12 : 0.18),
 
-    '--ds-stage-gradient': `linear-gradient(180deg, ${hex(elevated1)} 0%, ${hex(surface)} 100%)`,
-    '--ds-topbar-bg': `linear-gradient(180deg, ${rgba(panel, 0.86)} 0%, ${rgba(panel, 0.62)} 58%, ${rgba(panel, 0.34)} 100%)`,
-    '--ds-sidebar-gradient': `linear-gradient(180deg, ${hex(panel)} 0%, ${hex(panel)} 100%)`,
+    '--ds-stage-gradient': hex(canvasBg),
+    '--ds-topbar-bg': 'transparent',
+    '--ds-sidebar-gradient': `linear-gradient(180deg, ${hex(sidebarBg)} 0%, ${hex(sidebarBg)} 100%)`,
     '--ds-sidebar-border': rgba(ink, light ? 0.06 : 0.07),
 
     '--ds-card-soft': rgba(elevated1, light ? 0.82 : 0.9),
@@ -171,8 +184,8 @@ export function buildChromeThemeCssVars(
     '--ds-chip-border': borderSoft,
     '--ds-chip-active': `linear-gradient(180deg, ${rgba(accentDisplay, light ? 0.16 : 0.18)}, ${rgba(accentDisplay, light ? 0.08 : 0.1)})`,
     '--ds-kbd-bg': rgba(elevated1, light ? 0.9 : 0.94),
-    '--ds-code-bg': hex(mixRgb(surface, anchor, light ? 0.04 : 0.033)),
-    '--ds-pre-bg': hex(mixRgb(surface, anchor, light ? 0.035 : 0)),
+    '--ds-code-bg': hex(mixRgb(canvasBg, anchor, light ? 0.04 : 0.033)),
+    '--ds-pre-bg': hex(mixRgb(canvasBg, anchor, light ? 0.035 : 0.03)),
     '--ds-table-head-bg': rgba(elevated1, light ? 0.96 : 0.94),
     '--ds-scrollbar-thumb': rgba(ink, light ? 0.2 : 0.28),
     '--ds-scrollbar-thumb-hover': rgba(ink, light ? 0.3 : 0.38),
@@ -181,28 +194,18 @@ export function buildChromeThemeCssVars(
     '--glass-bg-strong': glassBgStrong,
     '--glass-border': glassBorder,
     '--glass-highlight': glassHighlight,
-    '--glass-card': glass ? rgba(light ? panel : WHITE, light ? 0.55 : 0.05) : hex(elevated1),
-    '--glass-card-hover': glass ? rgba(light ? panel : WHITE, light ? 0.82 : 0.09) : hex(elevated2),
-    '--glass-blur': glass ? (light ? '22px' : '30px') : '0px',
+    '--glass-card': glass ? rgba(light ? panel : WHITE, light ? 0.6 : 0.05) : hex(elevated1),
+    '--glass-card-hover': glass ? rgba(light ? panel : WHITE, light ? 0.9 : 0.08) : hex(elevated2),
+    '--glass-blur': glass ? '8px' : '0px',
 
-    '--ds-material-page': glass ? rgba(panel, light ? 0.54 : 0.55) : hex(surface),
-    '--ds-material-panel': glass ? rgba(panel, light ? 0.72 : 0.7) : hex(panel),
-    '--ds-material-card': glass
-      ? light
-        ? rgba(WHITE, 0.46)
-        : rgba(WHITE, 0.045)
-      : hex(elevated1),
-    '--ds-material-card-hover': glass
-      ? light
-        ? rgba(WHITE, 0.72)
-        : rgba(WHITE, 0.075)
-      : hex(elevated2),
-    '--ds-material-control': light ? rgba(WHITE, 0.52) : rgba(WHITE, 0.055),
-    '--ds-material-stroke': light ? rgba(WHITE, 0.72) : rgba(WHITE, 0.075),
+    '--ds-material-page': hex(canvasBg),
+    '--ds-material-panel': hex(canvasBg),
+    '--ds-material-card': light ? hex(surface) : rgba(WHITE, 0.04),
+    '--ds-material-card-hover': light ? rgba(ink, 0.02) : rgba(WHITE, 0.07),
+    '--ds-material-control': light ? hex(surface) : rgba(WHITE, 0.05),
+    '--ds-material-stroke': rgba(ink, light ? 0.05 : 0.06),
 
-    '--app-wallpaper': `linear-gradient(180deg, ${hex(surfaceUnder)} 0%, ${hex(
-      mixRgb(surfaceUnder, light ? ink : BLACK, 0.03)
-    )} 100%)`
+    '--app-wallpaper': hex(surfaceUnder)
   }
 
   if (theme.uiFont) {

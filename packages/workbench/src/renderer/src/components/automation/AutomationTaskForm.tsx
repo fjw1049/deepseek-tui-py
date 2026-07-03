@@ -271,7 +271,7 @@ export function AutomationTaskForm({
         </div>
 
         {created ? (
-          <div className="rounded-[28px] border border-emerald-300/70 bg-emerald-50/80 p-5 text-emerald-900 shadow-sm dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-100">
+          <div className="rounded-[16px] border border-emerald-300/70 bg-emerald-50/80 p-5 text-emerald-900 shadow-sm dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-100">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex min-w-0 gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
@@ -308,7 +308,7 @@ export function AutomationTaskForm({
           </div>
         ) : null}
 
-        <div className="ds-content-card rounded-[30px] p-5">
+        <div className="ds-content-card rounded-[16px] p-5">
           <div className="grid gap-5">
             <label className="grid gap-2">
               <span className="text-[13px] font-semibold text-ds-ink">{t('automationPromptLabel')}</span>

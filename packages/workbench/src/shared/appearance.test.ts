@@ -134,7 +134,14 @@ describe('appearance-derive', () => {
     for (const variant of ['light', 'dark'] as const) {
       const theme = getThemePresetSeed('codex', variant)!
       const vars = buildChromeThemeCssVars(theme, variant)
-      expect(vars['--bg-canvas']).toBe(theme.surface)
+      // Light: white card on gray ground (canvas = surface). Dark: the sidebar
+      // takes the darkest chrome (surface) and the content card lifts brighter.
+      if (variant === 'light') {
+        expect(vars['--bg-canvas']).toBe(theme.surface)
+      } else {
+        expect(vars['--bg-sidebar']).toBe(theme.surface)
+        expect(vars['--bg-canvas']).not.toBe(theme.surface)
+      }
       expect(vars['--text-primary']).toBe(theme.ink)
       expect(vars['--ds-diff-added']).toBe(theme.semanticColors.diffAdded)
       // Every declared token resolves to a non-empty value.
@@ -163,7 +170,7 @@ describe('appearance-derive', () => {
 
   it('opaque themes disable the glass blur', () => {
     const translucent = buildChromeThemeCssVars(getThemePresetSeed('codex', 'dark')!, 'dark')
-    expect(translucent['--glass-blur']).toBe('30px')
+    expect(translucent['--glass-blur']).toBe('8px')
     const opaque = buildChromeThemeCssVars(
       { ...getThemePresetSeed('codex', 'dark')!, translucent: false },
       'dark'

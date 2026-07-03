@@ -18,7 +18,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type FocusEvent as ReactFocusEvent
+  type FocusEvent as ReactFocusEvent,
+  type WheelEvent as ReactWheelEvent
 } from 'react'
 import { useChatStore } from '../../store/chat-store'
 import {
@@ -43,19 +44,19 @@ type Props = {
 }
 
 // Fixed rail box. Ticks grow rightward inside it (left-aligned, like the Dock).
+// Geometry mirrors synara's MessageTrail so the rail hugs the content card's
+// left edge with ink-coloured 2px dashes.
 const RAIL_WIDTH_PX = 56
 const RAIL_MAX_HEIGHT_RATIO = 0.8
-const TICK_LEFT_PAD_PX = 3
-const TICK_HEIGHT_PX = 3
-const TICK_BASE_W = 3
-const TICK_MAX_W = 22
+const MIN_PANE_WIDTH_PX = 864
+const TICK_LEFT_PAD_PX = 14
+const TICK_HEIGHT_PX = 2
+const TICK_BASE_W = 6
+const TICK_MAX_W = 30
 const TICK_SPACING_PX = 10
-// Decorative coloured ticks: faint at rest (discoverable but not loud), brightening
-// for visible / anchor / focus states. Coloured with the accent so they read as
-// decoration rather than stray rendering artifacts.
 const TICK_REST_OPACITY = 0.2
-const TICK_VISIBLE_OPACITY = 0.45
-const TICK_ANCHOR_OPACITY = 0.8
+const TICK_VISIBLE_OPACITY = 0.52
+const TICK_ANCHOR_OPACITY = 0.9
 const TICK_FOCUS_OPACITY = 1
 const TOOLTIP_ESTIMATED_H_PX = 56
 const TOOLTIP_OFFSET_X_PX = 8
@@ -85,6 +86,24 @@ export function QueryTrail({ items, activeStore }: Props): React.ReactElement | 
   const tooltipId = useId()
 
   const [rovingIndex, setRovingIndex] = useState(0)
+  // Synara hides the trail on narrow panes: it needs a real left gutter to
+  // live in without crowding the dialogue column.
+  const [paneWide, setPaneWide] = useState(true)
+
+  useEffect(() => {
+    const nav = rootRef.current
+    if (!nav) return
+    // Measure the containing block (the content card's main row) — the rail is
+    // absolutely positioned against it, so that width is the real "pane" the
+    // rail lives in (synara gates on the transcript pane, not the text column).
+    const el = (nav.offsetParent as HTMLElement | null) ?? nav.parentElement
+    if (!el) return
+    const update = (): void => setPaneWide(el.clientWidth >= MIN_PANE_WIDTH_PX)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const anchorIndex = useMemo(
     () => items.findIndex((item) => item.id === currentId),
@@ -101,7 +120,7 @@ export function QueryTrail({ items, activeStore }: Props): React.ReactElement | 
   }, [items, visibleIds])
   const visibleIndexSet = useMemo(() => new Set(visibleIndexes), [visibleIndexes])
 
-  const visible = items.length > 1
+  const visible = items.length > 1 && paneWide
 
   const geometry = useMemo(
     () => computeTrailGeometry({ count: items.length, spacingPx: TICK_SPACING_PX }),
@@ -378,6 +397,29 @@ export function QueryTrail({ items, activeStore }: Props): React.ReactElement | 
     [scrollToBlock]
   )
 
+  // The rail overlays the card's left gutter, so without help a wheel gesture
+  // over it hits the rail's own (usually non-scrollable) viewport and the chat
+  // never moves — the strip feels like a dead zone. Forward the wheel to the
+  // chat scroller unless the rail's viewport genuinely overflows and the
+  // gesture happened inside it (then native rail scrolling should win).
+  const handleWheel = useCallback((event: ReactWheelEvent<HTMLElement>) => {
+    const viewport = viewportRef.current
+    if (
+      viewport &&
+      viewport.scrollHeight > viewport.clientHeight + 1 &&
+      event.target instanceof Node &&
+      viewport.contains(event.target)
+    ) {
+      return
+    }
+    const scroller = rootRef.current
+      ?.closest('.ds-chat-main-row')
+      ?.querySelector<HTMLElement>('.ds-scroll-surface')
+    if (!scroller) return
+    const lineFactor = event.deltaMode === 1 ? 16 : 1
+    scroller.scrollTop += (event.deltaY * lineFactor) / readUiScale()
+  }, [])
+
   // --- Keyboard: one tab stop (roving), arrows move, Enter jumps -------------
   const focusTick = useCallback((index: number) => {
     setRovingIndex(index)
@@ -457,7 +499,11 @@ export function QueryTrail({ items, activeStore }: Props): React.ReactElement | 
       onKeyDown={handleKeyDown}
       onBlur={handleRailBlur}
       onClick={handleNavClick}
-      className={`absolute inset-y-0 left-0 z-20 hidden flex-col justify-center transition-opacity duration-200 sm:flex ${
+      onWheel={handleWheel}
+      // ds-no-drag is load-bearing: the rail hugs the card's left edge inside the
+      // ds-drag titlebar section, and Electron eats pointer events over drag
+      // regions — without it the magnification/wheel stutter with a real mouse.
+      className={`ds-no-drag absolute inset-y-0 left-0 z-20 hidden flex-col justify-center transition-opacity duration-200 sm:flex ${
         visible ? 'opacity-100' : 'pointer-events-none opacity-0'
       }`}
       style={{ width: RAIL_WIDTH_PX }}
@@ -500,7 +546,7 @@ export function QueryTrail({ items, activeStore }: Props): React.ReactElement | 
                     : visibleIndexSet.has(index)
                       ? TICK_VISIBLE_OPACITY
                       : TICK_REST_OPACITY,
-                backgroundColor: 'var(--ds-accent)',
+                backgroundColor: 'var(--ds-text)',
                 willChange: 'width, opacity'
               }}
             />

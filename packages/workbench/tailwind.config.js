@@ -59,9 +59,9 @@ export default {
         panel: 'var(--ds-shadow-panel)'
       },
       borderRadius: {
-        xl: '14px',
-        '2xl': '18px',
-        '3xl': '22px'
+        xl: '10px',
+        '2xl': '14px',
+        '3xl': '16px'
       },
       fontFamily: {
         sans: ['var(--font-ui)'],

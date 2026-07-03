@@ -2,12 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens: light uses a clean neutral palette; dark follows the Codex-style theme-v1 palette. */
+/* Design tokens: Synara-style flat palette — near-white app ground, white
+   content card, hairline alpha borders, small radii, minimal shadows. */
 :root {
   --ds-window-controls-safe-block: 0px;
   --ds-ui-scale: 1;
-  --bg-app: #f7f7f8;
-  --bg-sidebar: #f2f2f3;
+  --bg-app: #fcfcfc;
+  --bg-sidebar: #fcfcfc;
   --ds-sidebar-dot: rgba(0, 0, 0, 0.03);
   --bg-canvas: #ffffff;
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
@@ -24,25 +25,25 @@
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
   --ds-chat-font-size: 15px;
-  --surface-1: rgba(255, 255, 255, 0.92);
-  --surface-2: rgba(255, 255, 255, 0.98);
+  --surface-1: #ffffff;
+  --surface-2: #ffffff;
   --surface-3: #ffffff;
-  --border-soft: rgba(0, 0, 0, 0.1);
-  --border-strong: rgba(0, 0, 0, 0.16);
-  --text-primary: #1a1a1a;
-  --text-secondary: #555555;
-  --text-tertiary: #888888;
-  --text-placeholder: #999999;
+  --border-soft: rgba(0, 0, 0, 0.07);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --text-primary: #262626;
+  --text-secondary: #5c5c5c;
+  --text-tertiary: #8a8a8a;
+  --text-placeholder: #9b9b9b;
 
   --ds-bg-main: var(--bg-app);
   --ds-bg-sidebar: var(--bg-sidebar);
   --ds-bg-canvas: var(--bg-canvas);
   --ds-surface-card: var(--surface-1);
   --ds-surface-elevated: var(--surface-2);
-  --ds-surface-subtle: #e8e8ea;
-  --ds-surface-hover: rgba(0, 0, 0, 0.05);
+  --ds-surface-subtle: rgba(0, 0, 0, 0.04);
+  --ds-surface-hover: rgba(0, 0, 0, 0.04);
   --ds-border: var(--border-soft);
-  --ds-border-muted: rgba(0, 0, 0, 0.06);
+  --ds-border-muted: rgba(0, 0, 0, 0.05);
   --ds-border-strong: var(--border-strong);
   --ds-text: var(--text-primary);
   --ds-text-muted: var(--text-secondary);
@@ -67,100 +68,94 @@
   --ds-success-soft: rgba(17, 185, 129, 0.14);
   --ds-warning-soft: rgba(245, 158, 11, 0.14);
   --ds-danger-soft: rgba(239, 68, 68, 0.12);
-  --ds-shadow-shell: 0 12px 30px rgba(0, 0, 0, 0.06);
-  --ds-shadow-panel: 0 16px 44px rgba(0, 0, 0, 0.05);
-  --ds-shadow-composer: 0 18px 46px rgba(0, 0, 0, 0.08),
-    0 5px 16px rgba(0, 0, 0, 0.04);
-  --ds-stage-gradient: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
-  --ds-topbar-bg:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(250, 250, 252, 0.62) 58%, rgba(245, 245, 247, 0.34) 100%);
-  --ds-topbar-shadow:
-    0 16px 42px rgba(0, 0, 0, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  --ds-sidebar-gradient:
-    linear-gradient(180deg, #f4f4f5 0%, #f2f2f3 48%, #f0f0f1 100%);
-  --ds-sidebar-border: rgba(0, 0, 0, 0.06);
-  --ds-sidebar-shadow:
-    inset -1px 0 0 rgba(0, 0, 0, 0.03),
-    8px 0 20px rgba(0, 0, 0, 0.015);
-  --ds-card-soft: rgba(255, 255, 255, 0.82);
-  --ds-card-strong: rgba(255, 255, 255, 0.96);
-  --ds-card-muted: rgba(245, 245, 247, 0.9);
-  --ds-card-ghost: rgba(250, 250, 252, 0.62);
-  --ds-card-hover: rgba(255, 255, 255, 0.98);
-  --ds-chip-bg: rgba(255, 255, 255, 0.92);
-  --ds-chip-muted-bg: rgba(245, 245, 247, 0.9);
-  --ds-chip-hover: rgba(255, 255, 255, 0.98);
-  --ds-chip-border: rgba(0, 0, 0, 0.1);
-  --ds-chip-active:
-    linear-gradient(180deg, rgba(240, 240, 242, 0.98), rgba(235, 235, 237, 0.94));
-  --ds-kbd-bg: rgba(245, 245, 247, 0.9);
-  --ds-code-bg: rgba(245, 245, 247, 0.96);
-  --ds-pre-bg: rgba(246, 246, 248, 0.96);
-  --ds-table-head-bg: rgba(245, 245, 247, 0.96);
+  --ds-shadow-shell: 0 1px 2px rgba(0, 0, 0, 0.03);
+  --ds-shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --ds-shadow-composer: 0 2px 10px rgba(0, 0, 0, 0.05),
+    0 1px 3px rgba(0, 0, 0, 0.03);
+  --ds-stage-gradient: #ffffff;
+  --ds-topbar-bg: transparent;
+  --ds-topbar-shadow: none;
+  --ds-sidebar-gradient: var(--bg-sidebar);
+  --ds-sidebar-border: rgba(0, 0, 0, 0.05);
+  --ds-sidebar-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.025);
+  --ds-card-soft: #ffffff;
+  --ds-card-strong: #ffffff;
+  --ds-card-muted: rgba(0, 0, 0, 0.03);
+  --ds-card-ghost: rgba(0, 0, 0, 0.02);
+  --ds-card-hover: rgba(0, 0, 0, 0.03);
+  --ds-chip-bg: #ffffff;
+  --ds-chip-muted-bg: rgba(0, 0, 0, 0.04);
+  --ds-chip-hover: rgba(0, 0, 0, 0.04);
+  --ds-chip-border: rgba(0, 0, 0, 0.08);
+  --ds-chip-active: rgba(0, 0, 0, 0.06);
+  --ds-kbd-bg: rgba(0, 0, 0, 0.04);
+  --ds-code-bg: rgba(0, 0, 0, 0.04);
+  --ds-pre-bg: #f6f6f6;
+  --ds-table-head-bg: rgba(0, 0, 0, 0.03);
   --ds-scrollbar-thumb: rgba(0, 0, 0, 0.2);
   --ds-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
   --ds-selection: rgba(0, 136, 255, 0.18);
-  --ds-shadow-card-soft: 0 10px 28px rgba(0, 0, 0, 0.05);
-  --ds-shadow-card-strong: 0 14px 36px rgba(0, 0, 0, 0.07);
-  --ds-shadow-chip: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  --ds-shadow-card-soft: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ds-shadow-card-strong: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --ds-shadow-chip: none;
 
-  /* ── Glass material (faux vibrancy). Light = white veil over a soft, bright wallpaper. ── */
-  --glass-blur: 22px;
-  --glass-saturate: 118%;
-  --glass-bg: rgba(249, 251, 253, 0.66);
-  --glass-bg-strong: rgba(249, 251, 253, 0.78);
-  --glass-border: rgba(15, 23, 42, 0.08);
-  --glass-highlight: rgba(255, 255, 255, 0.5);
-  --glass-shadow: 0 18px 44px rgba(15, 23, 42, 0.1);
-  --glass-card: rgba(249, 251, 253, 0.55);
-  --glass-card-hover: rgba(249, 251, 253, 0.82);
-  --app-wallpaper:
-    radial-gradient(120% 80% at 50% -12%, rgba(255, 255, 255, 0.5), transparent 50%),
-    linear-gradient(180deg, #eaecf1 0%, #e3e6ec 100%);
+  /* ── Frosted sidebar material (Synara style): translucent card color +
+     a light blur; content card floats on top of it. ── */
+  --glass-blur: 8px;
+  --glass-saturate: 135%;
+  --glass-bg: color-mix(in srgb, #ffffff 64%, transparent);
+  --glass-bg-strong: color-mix(in srgb, #ffffff 80%, transparent);
+  --glass-border: rgba(0, 0, 0, 0.07);
+  --glass-highlight: transparent;
+  --glass-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --glass-card: rgba(255, 255, 255, 0.6);
+  --glass-card-hover: rgba(255, 255, 255, 0.9);
+  --app-wallpaper: #fcfcfc;
 }
 
 :root[data-platform='darwin'] {
-  --ds-window-controls-safe-block: 42px;
+  /* The traffic lights are native chrome and ignore the body `zoom`, so both
+     safe areas divide by --ds-ui-scale to stay constant in device pixels. */
+  --ds-window-controls-safe-block: calc(42px / var(--ds-ui-scale, 1));
   /* Horizontal inset so chrome controls sit to the right of traffic lights. */
-  --ds-window-controls-safe-inline: 72px;
+  --ds-window-controls-safe-inline: calc(72px / var(--ds-ui-scale, 1));
 }
 
 [data-theme='dark'] {
-  /* Dark elevation ladder: each step is ~5-6% brighter than the one below and
-     carries the same cool gray-blue cast as the wallpaper, so layers separate
-     by luminance instead of relying on hairline borders / black shadows. */
-  --bg-app: #0e0f13;
-  --bg-sidebar: #16181d;
-  --bg-canvas: #17191e;
+  /* Synara dark stack: darkest chrome under the sidebar, the content card
+     lifts a step brighter, inputs/controls another step. Hairlines stay
+     faint — the surface layering does the separating, not the lines. */
+  --bg-app: #0e0e0e;
+  --bg-sidebar: #111111;
+  --bg-canvas: #1c1c1c;
   --ds-sidebar-dot: rgba(255, 255, 255, 0.028);
   --ds-canvas-dot: rgba(255, 255, 255, 0.04);
   --ds-canvas-dot-size: 22px;
-  --surface-1: rgba(29, 32, 37, 0.92);
-  --surface-2: #23262c;
-  --surface-3: #2a2e34;
-  --border-soft: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --text-primary: #ecedee;
-  --text-secondary: #b4b8bf;
-  --text-tertiary: #82878f;
-  --text-placeholder: #767b83;
+  --surface-1: #252525;
+  --surface-2: #262626;
+  --surface-3: #2d2d2d;
+  --border-soft: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --text-primary: #ececec;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #808080;
+  --text-placeholder: #757575;
 
   --ds-bg-main: var(--bg-app);
   --ds-bg-sidebar: var(--bg-sidebar);
   --ds-bg-canvas: var(--bg-canvas);
   --ds-surface-card: var(--surface-1);
   --ds-surface-elevated: var(--surface-2);
-  --ds-surface-subtle: #23262c;
-  --ds-surface-hover: rgba(255, 255, 255, 0.1);
+  --ds-surface-subtle: rgba(255, 255, 255, 0.05);
+  --ds-surface-hover: rgba(255, 255, 255, 0.06);
   --ds-border: var(--border-soft);
-  --ds-border-muted: rgba(255, 255, 255, 0.06);
+  --ds-border-muted: rgba(255, 255, 255, 0.05);
   --ds-border-strong: var(--border-strong);
   --ds-text: var(--text-primary);
   --ds-text-muted: var(--text-secondary);
   --ds-text-faint: var(--text-tertiary);
-  --ds-bubble-user: rgba(255, 255, 255, 0.08);
-  --ds-bubble-user-fg: #ecedee;
+  --ds-bubble-user: rgba(255, 255, 255, 0.07);
+  --ds-bubble-user-fg: #ececec;
   --ds-accent: #339cff;
   --ds-accent-soft: rgba(51, 156, 255, 0.18);
   --ds-heat-0: #21262d;
@@ -179,72 +174,49 @@
   --ds-success-soft: rgba(64, 201, 119, 0.18);
   --ds-warning-soft: rgba(245, 158, 11, 0.18);
   --ds-danger-soft: rgba(250, 66, 62, 0.18);
-  /* Dark shadows halved: on near-black backgrounds huge black shadows only
-     muddy the edges. Elevation reads through lighter fills + top highlight. */
-  --ds-shadow-shell: 0 24px 60px rgba(0, 0, 0, 0.4);
-  --ds-shadow-panel: 0 14px 36px rgba(0, 0, 0, 0.26);
-  --ds-shadow-composer: 0 18px 48px rgba(0, 0, 0, 0.34),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-  --ds-stage-gradient:
-    linear-gradient(180deg, #1c1f24 0%, #17191e 48%, #101116 100%);
-  --ds-topbar-bg:
-    linear-gradient(180deg, rgba(35, 38, 44, 0.86) 0%, rgba(28, 31, 36, 0.7) 58%, rgba(21, 23, 28, 0.42) 100%);
-  --ds-topbar-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  --ds-sidebar-gradient:
-    linear-gradient(180deg, #191c21 0%, #16181d 48%, #15171c 100%);
-  --ds-sidebar-border: rgba(255, 255, 255, 0.07);
-  --ds-sidebar-shadow:
-    inset -1px 0 0 rgba(255, 255, 255, 0.04),
-    10px 0 24px rgba(0, 0, 0, 0.16);
-  --ds-card-soft:
-    linear-gradient(180deg, rgba(35, 38, 44, 0.94), rgba(28, 31, 36, 0.9));
-  --ds-card-strong:
-    linear-gradient(180deg, rgba(42, 46, 52, 0.98), rgba(32, 35, 41, 0.96));
-  --ds-card-muted: rgba(35, 38, 44, 0.86);
-  --ds-card-ghost: rgba(21, 23, 27, 0.72);
-  --ds-card-hover:
-    linear-gradient(180deg, rgba(50, 54, 61, 0.98), rgba(38, 41, 47, 0.96));
-  --ds-chip-bg: rgba(37, 40, 46, 0.94);
-  --ds-chip-muted-bg: #23262c;
-  --ds-chip-hover: rgba(46, 50, 57, 0.98);
-  --ds-chip-border: rgba(255, 255, 255, 0.1);
-  --ds-chip-active:
-    linear-gradient(180deg, rgba(51, 156, 255, 0.18), rgba(51, 156, 255, 0.1));
-  --ds-kbd-bg: rgba(37, 40, 46, 0.94);
-  --ds-code-bg: #23262c;
-  --ds-pre-bg: #17191e;
-  --ds-table-head-bg: rgba(35, 38, 44, 0.94);
+  /* Flat dark elevation: hairline borders + slightly brighter fills, minimal shadow. */
+  --ds-shadow-shell: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --ds-shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --ds-shadow-composer: 0 2px 12px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  --ds-stage-gradient: #1c1c1c;
+  --ds-topbar-bg: transparent;
+  --ds-topbar-shadow: none;
+  --ds-sidebar-gradient: var(--bg-sidebar);
+  --ds-sidebar-border: rgba(255, 255, 255, 0.06);
+  --ds-sidebar-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.024);
+  --ds-card-soft: #222222;
+  --ds-card-strong: #2d2d2d;
+  --ds-card-muted: rgba(255, 255, 255, 0.04);
+  --ds-card-ghost: rgba(255, 255, 255, 0.02);
+  --ds-card-hover: rgba(255, 255, 255, 0.05);
+  --ds-chip-bg: rgba(255, 255, 255, 0.05);
+  --ds-chip-muted-bg: rgba(255, 255, 255, 0.04);
+  --ds-chip-hover: rgba(255, 255, 255, 0.08);
+  --ds-chip-border: rgba(255, 255, 255, 0.08);
+  --ds-chip-active: rgba(255, 255, 255, 0.09);
+  --ds-kbd-bg: rgba(255, 255, 255, 0.05);
+  --ds-code-bg: rgba(255, 255, 255, 0.05);
+  --ds-pre-bg: #232323;
+  --ds-table-head-bg: rgba(255, 255, 255, 0.04);
   --ds-scrollbar-thumb: rgba(170, 170, 170, 0.28);
   --ds-scrollbar-thumb-hover: rgba(200, 200, 200, 0.38);
   --ds-selection: rgba(51, 156, 255, 0.24);
-  --ds-shadow-card-soft: 0 8px 22px rgba(0, 0, 0, 0.16);
-  --ds-shadow-card-strong: 0 12px 30px rgba(0, 0, 0, 0.22);
-  --ds-shadow-chip: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --ds-shadow-card-soft: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --ds-shadow-card-strong: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --ds-shadow-chip: none;
 
-  /* ── Glass material. Dark = charcoal veil over a deep wallpaper (never white-on-alpha).
-     White alphas run higher than light mode so panels actually lift off the wallpaper. ── */
-  --glass-blur: 30px;
-  --glass-saturate: 112%;
-  --glass-bg: rgba(28, 31, 38, 0.62);
-  --glass-bg-strong: rgba(33, 37, 44, 0.74);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-highlight: rgba(255, 255, 255, 0.07);
-  --glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
-  --glass-card: rgba(255, 255, 255, 0.08);
-  --glass-card-hover: rgba(255, 255, 255, 0.12);
-  --app-wallpaper:
-    radial-gradient(120% 80% at 50% -12%, rgba(150, 180, 220, 0.05), transparent 50%),
-    linear-gradient(180deg, #14161b 0%, #0e1014 100%);
-}
-
-[data-theme='dark'] .ds-composer-shell::before {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 42%);
-}
-
-[data-theme='dark'] .ds-composer-shell::after {
-  border-color: rgba(255, 255, 255, 0.09);
+  /* ── Frosted sidebar material, dark variant. ── */
+  --glass-blur: 8px;
+  --glass-saturate: 135%;
+  --glass-bg: color-mix(in srgb, #111111 72%, transparent);
+  --glass-bg-strong: color-mix(in srgb, #111111 84%, transparent);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-highlight: transparent;
+  --glass-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --glass-card: rgba(255, 255, 255, 0.05);
+  --glass-card-hover: rgba(255, 255, 255, 0.08);
+  --app-wallpaper: #0e0e0e;
 }
 
 [data-theme='dark'] body::before {
@@ -267,76 +239,8 @@ html {
   color-scheme: dark;
 }
 
-/* Workbench-specific dark tuning: keep layered grays aligned with the Codex-style dark palette. */
-[data-theme='dark'] .ds-workbench-shell {
-  --bg-app: #0e0f13;
-  --bg-sidebar: #16181d;
-  --bg-canvas: #17191e;
-  --ds-sidebar-dot: rgba(255, 255, 255, 0.028);
-  --surface-1: rgba(29, 32, 37, 0.92);
-  --surface-2: #23262c;
-  --surface-3: #2a2e34;
-  --border-soft: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --text-primary: #ecedee;
-  --text-secondary: #b4b8bf;
-  --text-tertiary: #82878f;
-  --text-placeholder: #767b83;
-
-  --ds-bg-main: var(--bg-app);
-  --ds-bg-sidebar: var(--bg-sidebar);
-  --ds-bg-canvas: var(--bg-canvas);
-  --ds-surface-card: var(--surface-1);
-  --ds-surface-elevated: var(--surface-2);
-  --ds-surface-subtle: #23262c;
-  --ds-surface-hover: rgba(255, 255, 255, 0.1);
-  --ds-border: var(--border-soft);
-  --ds-border-muted: rgba(255, 255, 255, 0.06);
-  --ds-border-strong: var(--border-strong);
-  --ds-text: var(--text-primary);
-  --ds-text-muted: var(--text-secondary);
-  --ds-text-faint: var(--text-tertiary);
-  --ds-bubble-user: rgba(255, 255, 255, 0.08);
-  --ds-bubble-user-fg: #ecedee;
-  --ds-accent-soft: rgba(51, 156, 255, 0.16);
-  --ds-selection: rgba(51, 156, 255, 0.22);
-  --ds-shadow-shell: 0 24px 60px rgba(0, 0, 0, 0.38);
-  --ds-shadow-panel: 0 14px 36px rgba(0, 0, 0, 0.24);
-  --ds-shadow-composer: 0 18px 48px rgba(0, 0, 0, 0.3),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
-  --ds-stage-gradient: linear-gradient(180deg, #1c1f24 0%, #17191e 100%);
-  --ds-topbar-bg:
-    linear-gradient(180deg, rgba(35, 38, 44, 0.8) 0%, rgba(28, 31, 36, 0.64) 58%, rgba(21, 23, 28, 0.34) 100%);
-  --ds-topbar-shadow:
-    0 12px 30px rgba(0, 0, 0, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --ds-sidebar-gradient:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.02), transparent 22%),
-    linear-gradient(180deg, #191c21 0%, #16181d 48%, #15171c 100%);
-  --ds-sidebar-border: rgba(255, 255, 255, 0.07);
-  --ds-sidebar-shadow:
-    inset -1px 0 0 rgba(255, 255, 255, 0.04),
-    10px 0 24px rgba(0, 0, 0, 0.16);
-  --ds-card-soft: rgba(29, 32, 37, 0.88);
-  --ds-card-strong: rgba(37, 40, 46, 0.96);
-  --ds-card-muted: rgba(35, 38, 44, 0.82);
-  --ds-card-ghost: rgba(21, 23, 27, 0.62);
-  --ds-card-hover: rgba(46, 50, 57, 0.98);
-  --ds-chip-bg: rgba(37, 40, 46, 0.94);
-  --ds-chip-muted-bg: #23262c;
-  --ds-chip-hover: rgba(46, 50, 57, 0.98);
-  --ds-chip-border: rgba(255, 255, 255, 0.1);
-  --ds-chip-active: linear-gradient(180deg, rgba(51, 156, 255, 0.16), rgba(51, 156, 255, 0.08));
-  --ds-kbd-bg: rgba(37, 40, 46, 0.94);
-  --ds-code-bg: #23262c;
-  --ds-pre-bg: #17191e;
-  --ds-table-head-bg: rgba(35, 38, 44, 0.94);
-  --ds-scrollbar-thumb: rgba(170, 170, 170, 0.26);
-  --ds-scrollbar-thumb-hover: rgba(200, 200, 200, 0.36);
-  --ds-shadow-card-soft: 0 8px 22px rgba(0, 0, 0, 0.15);
-  --ds-shadow-card-strong: 0 12px 30px rgba(0, 0, 0, 0.2);
-  --ds-shadow-chip: inset 0 1px 0 rgba(255, 255, 255, 0.07);
-}
+/* Workbench dark tuning removed: the shell inherits the flat Synara-style
+   dark tokens from the [data-theme='dark'] root block above. */
 
 :root[data-ui-font='system-native'] {
   --font-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI',
@@ -490,24 +394,9 @@ samp {
   box-shadow: var(--ds-shadow-composer);
 }
 
-.ds-composer-shell::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at top left, rgba(120, 120, 130, 0.04), transparent 28%),
-    radial-gradient(circle at right 14% bottom 18%, rgba(0, 136, 255, 0.04), transparent 24%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.10), transparent 28%);
-  pointer-events: none;
-}
-
+.ds-composer-shell::before,
 .ds-composer-shell::after {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  pointer-events: none;
+  content: none;
 }
 
 .ds-composer-shell textarea::-webkit-scrollbar-thumb {
@@ -517,14 +406,14 @@ samp {
 
 .ds-chat-composer {
   overflow: visible;
-  border-radius: 28px;
-  background: var(--glass-bg-strong);
-  border-color: var(--glass-border);
-  box-shadow:
-    var(--glass-shadow),
-    inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-radius: 1.2rem;
+  background: var(--ds-card-strong);
+  border-color: var(--ds-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme='dark'] .ds-chat-composer {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .ds-chat-composer::before,
@@ -533,16 +422,13 @@ samp {
 }
 
 .ds-chat-composer-focus {
-  border-color: color-mix(in srgb, var(--ds-accent) 42%, var(--glass-border));
-  box-shadow:
-    0 0 0 3px var(--ds-accent-soft),
-    var(--glass-shadow),
-    inset 0 1px 0 var(--glass-highlight);
+  border-color: var(--ds-border-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 /* Empty-state composer: compact card under the hero. */
 .ds-composer-empty.ds-chat-composer {
-  border-radius: 22px;
+  border-radius: 1.2rem;
   min-height: 96px;
   gap: 0.375rem;
   padding-top: 0.625rem;
@@ -581,9 +467,7 @@ samp {
 }
 
 [data-theme='dark'] .ds-user-message-bubble {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.035),
-    0 16px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .ds-transition {
@@ -778,58 +662,47 @@ samp {
   backdrop-filter: blur(18px);
 }
 
-/* ── Glass surfaces: one material, theme-driven by tokens. Only outermost panels blur. ── */
+/* ── Former glass surfaces: now flat cards (Synara style). ── */
 .ds-glass {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    var(--glass-shadow),
-    inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  background: var(--ds-card-strong);
+  border: 1px solid var(--ds-border);
+  box-shadow: var(--ds-shadow-card-soft);
 }
 
 .ds-glass-strong {
-  background: var(--glass-bg-strong);
+  background: var(--ds-card-strong);
 }
 
-/* Empty-stage hero cards sit flush on the canvas — inset highlight only, no drop shadow. */
+/* Empty-stage hero cards sit flush on the canvas — hairline border only. */
 .ds-hero-panel.ds-glass {
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  box-shadow: none;
 }
 
 .ds-glass-segment-thumb {
-  background: var(--glass-bg-strong);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 4px 14px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  background: var(--ds-card-strong);
+  border: 1px solid var(--ds-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   transition:
     left 0.32s cubic-bezier(0.4, 0, 0.2, 1),
     width 0.32s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 [data-theme='dark'] .ds-glass-segment-thumb {
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 6px 18px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* Tiles nested inside a glass panel: translucent fill, no second blur. */
+/* Tiles nested inside a panel: quiet fill, hairline border. */
 .ds-glass-card {
-  background: var(--glass-card);
-  border: 1px solid var(--glass-border);
+  background: var(--ds-card-muted);
+  border: 1px solid var(--ds-border-muted);
   transition:
     background 0.18s ease,
     border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    box-shadow 0.18s ease;
 }
 
 .ds-glass-card:hover {
-  background: var(--glass-card-hover);
+  background: var(--ds-card-hover);
 }
 
 /* Selects: replace the native arrow with a chevron at a controlled inset
@@ -931,15 +804,41 @@ samp {
   min-height: 28.75rem;
 }
 
-/* Fixed full-width top bar — same edge alignment on home and chat views. */
+/* Fixed full-width top bar — same edge alignment on home and chat views.
+   Synara sizing: a calm 44px header row instead of a cramped strip. On macOS
+   the height derives from the measured traffic-light centreline (21.75pt,
+   native — ignores body zoom) so the centred title sits on the same line as
+   the lights and the sidebar toggles. */
+:root {
+  --ds-header-height: 44px;
+}
+
+:root[data-platform='darwin'] {
+  --ds-header-height: calc(43.5px / var(--ds-ui-scale, 1));
+}
+
 .ds-workbench-topbar {
   width: 100%;
-  min-height: 28px;
+  min-height: var(--ds-header-height);
 }
 
 .ds-workbench-topbar__inner {
-  min-height: 28px;
+  min-height: var(--ds-header-height);
   padding-inline: 1rem;
+  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Collapsed sidebar: the header inherits the window chrome. Reserve room for
+   the fixed expand trigger, and on macOS also for the traffic lights. */
+.ds-workbench-sidebar-wrap[data-collapsed] + .ds-workbench-main .ds-workbench-topbar__inner {
+  padding-left: 3.25rem;
+}
+
+:root[data-platform='darwin']
+  .ds-workbench-sidebar-wrap[data-collapsed]
+  + .ds-workbench-main
+  .ds-workbench-topbar__inner {
+  padding-left: calc(var(--ds-window-controls-safe-inline, 72px) + 2.5rem);
 }
 
 @media (min-width: 640px) {
@@ -962,7 +861,7 @@ samp {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  margin-top: -1rem;
+  transform: translateY(-50%);
 }
 
 @media (min-width: 640px) {
@@ -1156,13 +1055,9 @@ samp {
 }
 
 .ds-topbar-surface {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  box-shadow:
-    var(--glass-shadow),
-    inset 0 1px 0 var(--glass-highlight);
+  background: var(--ds-card-strong);
+  border: 1px solid var(--ds-border);
+  box-shadow: var(--ds-shadow-card-soft);
 }
 
 .ds-sidebar-shell {
@@ -1198,28 +1093,28 @@ samp {
 
 .ds-sidebar-workbench-label {
   display: inline-flex;
-  height: 2.25rem;
+  height: 2rem;
   align-items: center;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
-  padding-inline: 0.95rem;
+  border-radius: 8px;
+  background: transparent;
+  padding-inline: 0.35rem;
   color: var(--text-primary);
-  font-size: 0.9375rem;
-  font-weight: 700;
+  font-size: 0.875rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+  box-shadow: none;
 }
 
 .ds-sidebar-workbench-icon {
   display: inline-flex;
-  height: 2.25rem;
-  width: 2.25rem;
+  height: 2rem;
+  width: 2rem;
   align-items: center;
   justify-content: center;
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--surface-2) 62%, transparent);
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-tertiary);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  box-shadow: none;
 }
 
 .ds-sidebar-section-label {
@@ -1306,10 +1201,10 @@ samp {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 0.75rem;
-  border-radius: 12px;
-  padding: calc(0.625rem * var(--ds-density, 1)) 0.75rem;
-  font-size: 0.9375rem;
+  gap: 0.625rem;
+  border-radius: 8px;
+  padding: calc(0.4rem * var(--ds-density, 1)) 0.5rem;
+  font-size: 0.875rem;
   font-weight: 500;
   line-height: 1.35;
   transition:
@@ -1488,42 +1383,32 @@ samp {
 
 .ds-sidebar-toggle-button {
   display: inline-flex;
-  height: 2rem;
-  width: 2rem;
+  height: 1.75rem;
+  width: 1.75rem;
   align-items: center;
   justify-content: center;
-  border-radius: 0.9rem;
-  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 82%, #ffffff 18%);
-  background: rgba(255, 255, 255, 0.5);
+  border-radius: 7px;
+  border: none;
+  background: transparent;
   color: var(--ds-text-faint);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.68),
-    0 8px 18px rgba(0, 0, 0, 0.04);
+  box-shadow: none;
   transition:
-    transform 0.15s ease,
     background 0.15s ease,
-    border-color 0.15s ease,
     color 0.15s ease;
 }
 
 .ds-sidebar-toggle-button:hover {
-  transform: translateY(-1px);
-  border-color: var(--ds-border-strong);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--ds-surface-hover);
   color: var(--ds-text);
 }
 
 [data-theme='dark'] .ds-sidebar-toggle-button {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 10px 20px rgba(0, 0, 0, 0.16);
+  background: transparent;
+  box-shadow: none;
 }
 
 [data-theme='dark'] .ds-sidebar-toggle-button:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .ds-terminal-panel {
@@ -2122,15 +2007,15 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
 .ds-user-message-bubble {
   max-width: min(72%, 640px);
   min-width: 0;
-  border-radius: 20px;
+  border-radius: 0.8rem;
   background: var(--ds-bubble-user);
-  padding: 0.72rem 1.05rem;
+  padding: 0.6rem 0.95rem;
   color: var(--ds-bubble-user-fg);
   font-family: var(--font-ui);
   font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.58;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.05);
+  box-shadow: none;
 }
 
 .ds-user-message-edit-bubble {
@@ -2170,55 +2055,58 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   min-height: var(--ds-window-controls-safe-block);
 }
 
-/* Compact floating control to reopen the sidebar after collapse. */
+/* Sidebar titlebar row: hosts the collapse trigger at the exact spot where the
+   expand trigger appears after collapse, so the control never jumps. On macOS
+   it sits right after the traffic lights. */
+.ds-sidebar-titlebar-row {
+  display: flex;
+  min-height: var(--ds-header-height, 44px);
+  align-items: center;
+  justify-content: flex-start;
+  /* aside px-3 (12px) + wrapper px-1 (4px) = 16px base; the expand droplet is
+     fixed at left 16px, so zero extra padding lines the two triggers up. */
+  padding-left: 0;
+}
+
+:root[data-platform='darwin'] .ds-sidebar-titlebar-row {
+  /* Droplet sits at safe-inline + 6px; subtract the 16px structural inset.
+     Height comes from --ds-header-height, which is calibrated so the centred
+     28px button lands exactly on the traffic-light line (21.75pt). */
+  padding-left: calc(var(--ds-window-controls-safe-inline, 72px) - 10px);
+}
+
+/* Quiet ghost trigger to reopen the collapsed sidebar. Sits in the titlebar
+   row, right after the macOS traffic lights (Synara SidebarTrigger). */
 .ds-sidebar-expand-droplet {
   position: fixed;
-  z-index: 10000;
-  left: 0;
-  top: calc(var(--ds-window-inset) + var(--ds-window-controls-safe-block, 0px) + 6px);
+  z-index: 60;
+  left: 16px;
+  top: 8px;
   display: inline-flex;
-  height: 2.125rem;
-  width: calc(var(--ds-window-inset) + 2.125rem);
+  height: 1.75rem;
+  width: 1.75rem;
   align-items: center;
   justify-content: center;
-  padding-left: var(--ds-window-inset);
-  border: 1px solid var(--glass-border);
-  border-left: none;
-  border-radius: 0 999px 999px 0;
-  background: var(--glass-bg-strong);
+  border: none;
+  border-radius: 7px;
+  background: transparent;
   color: var(--ds-text-faint);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 10px 24px rgba(15, 23, 42, 0.12);
-  backdrop-filter: blur(calc(var(--glass-blur) * 0.85)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.85)) saturate(var(--glass-saturate));
   cursor: pointer;
   transition:
-    transform 0.16s ease,
-    color 0.16s ease,
-    box-shadow 0.16s ease,
-    border-color 0.16s ease;
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .ds-sidebar-expand-droplet:hover {
-  transform: translateX(1px);
-  border-color: color-mix(in srgb, var(--ds-border-strong) 70%, transparent);
+  background: var(--ds-surface-hover);
   color: var(--ds-text);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 14px 32px rgba(15, 23, 42, 0.16);
 }
 
-[data-theme='dark'] .ds-sidebar-expand-droplet {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 12px 28px rgba(0, 0, 0, 0.34);
-}
-
-[data-theme='dark'] .ds-sidebar-expand-droplet:hover {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 16px 36px rgba(0, 0, 0, 0.42);
+:root[data-platform='darwin'] .ds-sidebar-expand-droplet {
+  left: calc(var(--ds-window-controls-safe-inline, 72px) + 6px);
+  /* Same measured centreline as .ds-sidebar-titlebar-row (21.75pt; native
+     chrome ignores the body zoom, hence the divide). */
+  top: calc(21.75px / var(--ds-ui-scale, 1) - 0.875rem);
 }
 
 .ds-drag button,
@@ -2377,43 +2265,35 @@ summary,
    Outer surfaces own the blur. Nested cards stay translucent and lightweight
    so dense tools and settings remain readable without stacking blur layers. */
 :root {
-  --ds-window-inset: 8px;
-  --ds-window-gap: 8px;
-  --ds-radius-shell: 28px;
-  --ds-radius-panel: 22px;
-  --ds-radius-control: 14px;
+  --ds-window-inset: 0px;
+  --ds-window-gap: 0px;
+  --ds-radius-shell: 14px;
+  --ds-radius-panel: 12px;
+  --ds-radius-control: 10px;
+  /* Rounded corner of the content card's seam side (matches Synara). */
+  --app-content-card-radius: 0.9rem;
   --ds-page-max: 1180px;
-  --ds-material-page: rgba(249, 251, 253, 0.54);
-  --ds-material-panel: rgba(249, 251, 253, 0.72);
-  --ds-material-card: rgba(255, 255, 255, 0.46);
-  --ds-material-card-hover: rgba(255, 255, 255, 0.72);
-  --ds-material-control: rgba(255, 255, 255, 0.52);
-  --ds-material-overlay: rgba(31, 41, 55, 0.22);
-  --ds-material-stroke: rgba(255, 255, 255, 0.72);
-  --ds-material-shadow:
-    0 28px 70px rgba(45, 58, 78, 0.13),
-    0 8px 24px rgba(45, 58, 78, 0.07);
-  --ds-card-shadow:
-    0 12px 32px rgba(45, 58, 78, 0.07),
-    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  --ds-material-page: #ffffff;
+  --ds-material-panel: #ffffff;
+  --ds-material-card: #ffffff;
+  --ds-material-card-hover: rgba(0, 0, 0, 0.02);
+  --ds-material-control: #ffffff;
+  --ds-material-overlay: rgba(0, 0, 0, 0.32);
+  --ds-material-stroke: rgba(0, 0, 0, 0.05);
+  --ds-material-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --ds-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 [data-theme='dark'] {
-  /* Cards and controls need noticeably more white than light mode's glass —
-     4-5% white over a near-black wallpaper reads as "nothing there". */
-  --ds-material-page: rgba(22, 25, 31, 0.6);
-  --ds-material-panel: rgba(27, 31, 38, 0.74);
-  --ds-material-card: rgba(255, 255, 255, 0.08);
-  --ds-material-card-hover: rgba(255, 255, 255, 0.12);
-  --ds-material-control: rgba(255, 255, 255, 0.09);
-  --ds-material-overlay: rgba(0, 0, 0, 0.5);
-  --ds-material-stroke: rgba(255, 255, 255, 0.1);
-  --ds-material-shadow:
-    0 20px 52px rgba(0, 0, 0, 0.36),
-    0 6px 18px rgba(0, 0, 0, 0.22);
-  --ds-card-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --ds-material-page: #1c1c1c;
+  --ds-material-panel: #1c1c1c;
+  --ds-material-card: rgba(255, 255, 255, 0.04);
+  --ds-material-card-hover: rgba(255, 255, 255, 0.07);
+  --ds-material-control: rgba(255, 255, 255, 0.05);
+  --ds-material-overlay: rgba(0, 0, 0, 0.55);
+  --ds-material-stroke: rgba(255, 255, 255, 0.06);
+  --ds-material-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --ds-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
 }
 
 button:focus-visible,
@@ -2426,40 +2306,137 @@ select:focus-visible,
 }
 
 .ds-workbench-shell {
-  gap: var(--ds-window-gap);
-  padding: var(--ds-window-inset);
+  gap: 0;
+  padding: 0;
 }
 
-.ds-workbench-sidebar-wrap,
-.ds-workbench-right-panel,
-.ds-workbench-terminal-wrap {
-  filter: drop-shadow(0 20px 42px rgba(42, 55, 76, 0.1));
-}
-
+/* Synara-style shell: the sidebar is a flush frosted surface, the main content
+   is a raised white card whose left edge (the "seam") is rounded and carries a
+   1px inset ring + a soft depth shadow toward the sidebar. */
 .ds-sidebar-shell {
   overflow: hidden;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-shell);
-  background: var(--ds-material-panel);
-  box-shadow:
-    var(--ds-material-shadow),
-    inset 0 1px 0 var(--glass-highlight);
+  border: none;
+  border-radius: 0;
+  background: var(--glass-bg);
+  box-shadow: var(--ds-sidebar-shadow);
 }
 
 .ds-workbench-main {
-  border-radius: var(--ds-radius-shell);
+  --seam-line: rgba(0, 0, 0, 0.08);
+  --seam-shadow-color: rgba(0, 0, 0, 0.1);
+  border-radius: 0;
+  background: var(--ds-material-panel);
+}
+
+[data-theme='dark'] .ds-workbench-main {
+  --seam-line: rgba(255, 255, 255, 0.06);
+  --seam-shadow-color: rgba(0, 0, 0, 0.36);
+}
+
+/* Only when the left sidebar is visible does the seam exist: round the card's
+   left corners, cast a soft depth shadow onto the sidebar, and draw a 1px seam
+   ring clipped to the seam-side radius strip (Synara chat-content-card). */
+.ds-workbench-sidebar-wrap {
+  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ds-workbench-sidebar-slide {
+  transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ds-workbench-sidebar-wrap.is-resizing,
+.ds-workbench-sidebar-wrap.is-resizing .ds-workbench-sidebar-slide {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-workbench-sidebar-wrap,
+  .ds-workbench-sidebar-slide,
+  .ds-workbench-sidebar-wrap::after,
+  .ds-workbench-sidebar-wrap + .ds-workbench-main,
+  .ds-workbench-sidebar-wrap + .ds-workbench-main::before {
+    transition: none;
+  }
+}
+
+/* Wedge behind the card's rounded seam corners: fills the radius cutouts with
+   the sidebar material so the corners melt into the sidebar column instead of
+   exposing the darker window ground (Synara chat-content-card-backing::after). */
+.ds-workbench-sidebar-wrap::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  right: calc(-1 * var(--app-content-card-radius, 0.9rem));
+  width: var(--app-content-card-radius, 0.9rem);
+  pointer-events: none;
+  background: var(--glass-bg);
+  transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ds-workbench-sidebar-wrap + .ds-workbench-main {
+  border-radius: var(--app-content-card-radius, 0.9rem) 0 0 var(--app-content-card-radius, 0.9rem);
+  box-shadow: -6.5px 0 12px -10px var(--seam-shadow-color);
+  transition:
+    border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ds-workbench-sidebar-wrap + .ds-workbench-main::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--seam-line);
+  clip-path: inset(0 calc(100% - var(--app-content-card-radius, 0.9rem)) 0 0);
+  transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Collapsed: the card flattens back to a full-bleed surface — radius, seam
+   ring, depth shadow, and corner wedge all fade in sync with the slide. */
+.ds-workbench-sidebar-wrap[data-collapsed] {
+  pointer-events: none;
+}
+
+.ds-workbench-sidebar-wrap[data-collapsed]::after {
+  opacity: 0;
+}
+
+.ds-workbench-sidebar-wrap[data-collapsed] + .ds-workbench-main {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ds-workbench-sidebar-wrap[data-collapsed] + .ds-workbench-main::before {
+  opacity: 0;
+}
+
+/* Header divider (Synara chat-surface-divider): a 1px bottom gradient instead
+   of border-b. Inside the seam-rounded card it is inset 1px from the left so
+   it never crosses the seam ring into a bright corner point. */
+.ds-surface-divider {
+  border-bottom: none;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--ds-border) 60%, transparent),
+    color-mix(in srgb, var(--ds-border) 60%, transparent)
+  );
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: 100% 1px;
+}
+
+.ds-workbench-sidebar-wrap:not([data-collapsed]) + .ds-workbench-main .ds-surface-divider {
+  background-size: calc(100% - 1px) 1px;
+  background-position: right bottom;
 }
 
 .ds-workbench-right-panel {
   overflow: hidden;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-panel);
-  background: var(--ds-material-panel);
-  box-shadow:
-    var(--ds-material-shadow),
-    inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .ds-context-rail {
@@ -2528,40 +2505,25 @@ select:focus-visible,
   line-height: 1.55;
 }
 
-/* Operation dock is a floating card on the busy chat canvas, so unlike the
-   home hero cards it keeps a soft drop shadow + slightly more solid fill so it
-   reads as a distinct elevated surface instead of blending into the backdrop. */
+/* Operation dock: quiet flat card on the chat canvas. */
 .ds-operation-dock.ds-hero-panel.ds-glass {
-  background: var(--ds-material-panel);
-  border-color: color-mix(in srgb, var(--ds-accent) 10%, var(--glass-border));
-  box-shadow:
-    0 12px 32px rgba(15, 23, 42, 0.09),
-    0 2px 6px rgba(15, 23, 42, 0.05),
-    inset 0 1px 0 var(--glass-highlight);
+  background: var(--ds-card-strong);
+  border-color: var(--ds-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
-  box-shadow:
-    0 16px 40px rgba(0, 0, 0, 0.4),
-    0 2px 6px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-/* Hover lifts a touch more and warms the accent border, matching home cards. */
 .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--ds-accent) 24%, var(--glass-border));
-  box-shadow:
-    0 20px 44px rgba(15, 23, 42, 0.12),
-    0 3px 8px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 var(--glass-highlight);
+  transform: none;
+  border-color: var(--ds-border-strong);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
-  box-shadow:
-    0 24px 52px rgba(0, 0, 0, 0.48),
-    0 3px 8px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32);
 }
 
 .ds-operation-rail {
@@ -2652,12 +2614,10 @@ select:focus-visible,
 
 .ds-workbench-terminal-wrap {
   overflow: hidden;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--ds-border);
   border-radius: var(--ds-radius-panel);
   background: var(--ds-material-panel);
-  box-shadow:
-    var(--ds-material-shadow),
-    inset 0 1px 0 var(--glass-highlight);
+  box-shadow: var(--ds-material-shadow);
 }
 
 .ds-tool-panel {
@@ -2665,6 +2625,14 @@ select:focus-visible,
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
+}
+
+/* Right dock panel: the vertical seam against the chat column. Declared here
+   (after the .ds-tool-panel reset above) because that reset strips Tailwind's
+   border-l utility. Colour matches .ds-surface-divider so the vertical and
+   horizontal rules read as one weight. */
+.ds-tool-panel.ds-right-panel-surface {
+  border-left: 1px solid color-mix(in srgb, var(--ds-border) 60%, transparent);
 }
 
 .ds-workspace-editor-pane .ds-editor-line-added,
@@ -2710,16 +2678,13 @@ select:focus-visible,
   position: relative;
 }
 
+/* Feature pages live inside the main content card — flat, no chrome of their own. */
 .ds-feature-page {
   overflow: hidden;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-shell);
-  background: var(--ds-material-page);
-  box-shadow:
-    var(--ds-material-shadow),
-    inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .ds-feature-page.ds-page-scroll,
@@ -2734,29 +2699,61 @@ select:focus-visible,
   transform: translateZ(0);
 }
 
+/* Settings mirrors the main shell: frosted flush sidebar + raised content card
+   whose seam side is rounded (Synara same-shell settings). */
 .ds-settings-page {
-  gap: var(--ds-window-gap);
-  padding: var(--ds-window-inset);
+  gap: 0;
+  padding: 0;
 }
 
 .ds-settings-sidebar {
-  border-radius: var(--ds-radius-shell);
+  border-radius: 0;
+}
+
+.ds-settings-page {
+  --seam-line: rgba(0, 0, 0, 0.08);
+  --seam-shadow-color: rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+[data-theme='dark'] .ds-settings-page {
+  --seam-line: rgba(255, 255, 255, 0.06);
+  --seam-shadow-color: rgba(0, 0, 0, 0.36);
 }
 
 .ds-settings-page > .ds-page-scroll {
   overflow: auto;
-  /* Scrolling shell that also paints an outer drop shadow — same as
-     .ds-feature-page.ds-page-scroll: contain overscroll, but no `contain: paint`. */
   overscroll-behavior: contain;
   transform: translateZ(0);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-shell);
-  background: var(--ds-material-page);
-  box-shadow:
-    var(--ds-material-shadow),
-    inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: none;
+  border-radius: var(--app-content-card-radius, 0.9rem) 0 0 var(--app-content-card-radius, 0.9rem);
+  background: var(--ds-material-panel);
+  box-shadow: -6.5px 0 12px -10px var(--seam-shadow-color);
+}
+
+/* Seam wedge + clipped ring for the settings card. Drawn on the page (not the
+   scroll container) so they stay put while the content scrolls; only the
+   left-radius strip of the ring survives the clip (same as the chat card). */
+.ds-settings-page::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 260px;
+  width: var(--app-content-card-radius, 0.9rem);
+  z-index: 0;
+  pointer-events: none;
+  background: var(--glass-bg);
+}
+
+.ds-settings-page::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 0 260px;
+  z-index: 40;
+  pointer-events: none;
+  border-radius: var(--app-content-card-radius, 0.9rem) 0 0 var(--app-content-card-radius, 0.9rem);
+  box-shadow: inset 0 0 0 1px var(--seam-line);
+  clip-path: inset(0 calc(100% - var(--app-content-card-radius, 0.9rem)) 0 0);
 }
 
 .ds-content-card {
@@ -2774,27 +2771,22 @@ select:focus-visible,
 }
 
 .ds-content-card--interactive:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--ds-accent) 20%, var(--glass-border));
+  transform: none;
+  border-color: var(--ds-border-strong);
   background: var(--ds-material-card-hover);
-  box-shadow:
-    0 20px 44px rgba(45, 58, 78, 0.11),
-    inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .ds-hero-panel.ds-content-card--interactive {
   transition:
-    transform 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease;
 }
 
 .ds-hero-panel.ds-content-card--interactive:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--ds-accent) 20%, var(--glass-border));
-  box-shadow:
-    0 20px 44px rgba(45, 58, 78, 0.11),
-    inset 0 1px 0 var(--glass-highlight);
+  transform: none;
+  border-color: var(--ds-border-strong);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .ds-feature-page input:not([type='checkbox']):not([type='radio']),
@@ -2806,11 +2798,9 @@ select:focus-visible,
 .ds-modal-surface input:not([type='checkbox']):not([type='radio']),
 .ds-modal-surface textarea,
 .ds-modal-surface select {
-  border-color: var(--glass-border);
+  border-color: var(--ds-border);
   background-color: var(--ds-material-control);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  box-shadow: none;
 }
 
 .ds-feature-page input:not([type='checkbox']):not([type='radio']):focus,
@@ -2822,18 +2812,14 @@ select:focus-visible,
 .ds-modal-surface input:not([type='checkbox']):not([type='radio']):focus,
 .ds-modal-surface textarea:focus,
 .ds-modal-surface select:focus {
-  border-color: color-mix(in srgb, var(--ds-accent) 48%, var(--glass-border));
-  box-shadow:
-    0 0 0 3px var(--ds-accent-soft),
-    inset 0 1px 0 var(--glass-highlight);
+  border-color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-border));
+  box-shadow: 0 0 0 3px var(--ds-accent-soft);
 }
 
 .ds-modal-backdrop {
-  background:
-    radial-gradient(circle at 50% 12%, rgba(255, 255, 255, 0.12), transparent 34%),
-    var(--ds-material-overlay);
-  backdrop-filter: blur(16px) saturate(115%);
-  -webkit-backdrop-filter: blur(16px) saturate(115%);
+  background: var(--ds-material-overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 .ds-modal-backdrop-clear {
@@ -2843,19 +2829,13 @@ select:focus-visible,
 }
 
 .ds-modal-surface {
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg-strong);
-  box-shadow:
-    0 34px 100px rgba(15, 23, 42, 0.24),
-    inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(calc(var(--glass-blur) + 8px)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 8px)) saturate(var(--glass-saturate));
+  border: 1px solid var(--ds-border);
+  background: var(--ds-surface-elevated);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.16);
 }
 
 [data-theme='dark'] .ds-modal-surface {
-  box-shadow:
-    0 38px 110px rgba(0, 0, 0, 0.68),
-    inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
 }
 
 /* Opaque variant for content-heavy panels (e.g. the task run log) where the
@@ -2885,7 +2865,7 @@ select:focus-visible,
 
 .ds-channel-page .ds-content-card,
 .ds-settings-page .ds-content-card {
-  border-radius: 20px;
+  border-radius: 14px;
 }
 
 .ds-channel-page .ds-content-card > div:first-child {
@@ -2919,11 +2899,6 @@ select:focus-visible,
 }
 
 @media (max-width: 1180px) {
-  :root {
-    --ds-window-inset: 6px;
-    --ds-window-gap: 6px;
-  }
-
   .ds-feature-page,
   .ds-settings-page > .ds-page-scroll {
     padding-left: 1.5rem;
@@ -2932,18 +2907,6 @@ select:focus-visible,
 }
 
 @media (max-width: 900px) {
-  :root {
-    --ds-window-inset: 5px;
-    --ds-window-gap: 5px;
-    --ds-radius-shell: 22px;
-    --ds-radius-panel: 18px;
-  }
-
-  .ds-settings-page {
-    gap: 7px;
-    padding: 7px;
-  }
-
   .ds-settings-sidebar {
     width: 224px;
   }

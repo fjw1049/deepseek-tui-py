@@ -725,10 +725,10 @@ export function SettingsView(): ReactElement {
   }
 
   const catCls = (c: SettingsCategory): string =>
-    `flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium transition ${
+    `flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium transition ${
       category === c
-        ? 'bg-ds-subtle text-ds-ink shadow-sm ring-1 ring-ds-border-muted'
-        : 'text-ds-muted hover:bg-ds-hover'
+        ? 'bg-ds-hover text-ds-ink'
+        : 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
     }`
   return (
     <div className="ds-settings-page ds-drag flex h-full min-h-0 w-full min-w-0">
@@ -791,7 +791,7 @@ export function SettingsView(): ReactElement {
       </aside>
 
       <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-10">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-2xl">
           {!form.deepseek.apiKey.trim() && category === 'models' ? (
             <div className="mb-6 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-5 py-4 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/35 dark:text-amber-100">
               <div className="text-[15px] font-semibold">{t('apiKeyRequiredTitle')}</div>

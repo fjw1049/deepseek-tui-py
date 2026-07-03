@@ -220,7 +220,7 @@ export function ContextUsageMeter({
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
             style={panelStyle}
-            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-[20px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">

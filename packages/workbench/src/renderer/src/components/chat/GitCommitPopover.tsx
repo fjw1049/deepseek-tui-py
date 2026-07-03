@@ -321,7 +321,7 @@ export function GitCommitPopover({
       <div className="ds-modal-backdrop-clear ds-no-drag fixed inset-0 z-[80] pointer-events-none">
         <div
           ref={dialogRef}
-          className="ds-modal-surface pointer-events-auto fixed flex w-[min(100vw-24px,32rem)] max-h-[min(88vh,680px)] flex-col overflow-hidden rounded-[22px]"
+          className="ds-modal-surface pointer-events-auto fixed flex w-[min(100vw-24px,32rem)] max-h-[min(88vh,680px)] flex-col overflow-hidden rounded-[14px]"
           style={
             dialogPos
               ? { left: dialogPos.x, top: dialogPos.y }

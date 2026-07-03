@@ -66,7 +66,7 @@ export function ModelUsageHeroPanel({
   const segmentDays = range === '7d' ? 1 : range === '30d' ? 2 : 3
 
   return (
-    <div className="ds-hero-panel ds-glass ds-content-card--interactive ds-empty-hero-panel flex flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5">
+    <div className="ds-hero-panel ds-glass ds-content-card--interactive ds-empty-hero-panel flex flex-col overflow-hidden rounded-[14px] px-4 py-4 sm:px-5 sm:py-5">
       <div className="flex shrink-0 flex-nowrap items-center justify-between gap-3">
         <GlassSegmentedControl
           value={tab}

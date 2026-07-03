@@ -30,7 +30,7 @@ export function ElevationBubble({ block }: { block: ElevationBlock }): ReactElem
   return (
     <div
       id={`block-${block.id}`}
-      className="rounded-[22px] border border-amber-400/40 bg-[linear-gradient(180deg,rgba(251,191,36,0.08),rgba(251,191,36,0.14))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)]"
+      className="rounded-[14px] border border-amber-400/40 bg-[linear-gradient(180deg,rgba(251,191,36,0.08),rgba(251,191,36,0.14))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)]"
     >
       <div className="font-semibold text-amber-800 dark:text-amber-200">{t('elevationTitle')}</div>
       {block.toolName ? (

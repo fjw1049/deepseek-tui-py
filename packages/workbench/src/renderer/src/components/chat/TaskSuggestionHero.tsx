@@ -103,7 +103,7 @@ function RepoRow({
   return (
     <div
       className={[
-        'group relative flex min-h-[118px] overflow-hidden rounded-[18px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
+        'group relative flex min-h-[118px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
         theme.border
       ].join(' ')}
     >
@@ -241,7 +241,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
         <div
           className={[
-            'ds-hero-panel ds-glass ds-content-card--interactive flex flex-col overflow-hidden rounded-[22px] px-4 py-4 sm:px-5 sm:py-5',
+            'ds-hero-panel ds-glass ds-content-card--interactive flex flex-col overflow-hidden rounded-[14px] px-4 py-4 sm:px-5 sm:py-5',
             EMPTY_HERO_PANEL_CLASS
           ].join(' ')}
         >
@@ -277,7 +277,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
                 {Array.from({ length: 3 }).map((_, index) => (
                   <div
                     key={index}
-                    className="min-h-[118px] animate-pulse rounded-[18px] border border-ds-border bg-ds-card/60"
+                    className="min-h-[118px] animate-pulse rounded-[12px] border border-ds-border bg-ds-card/60"
                   />
                 ))}
               </div>
@@ -310,7 +310,7 @@ export function TaskSuggestionOfflineHero({
   const { t } = useTranslation('common')
   return (
     <div className="flex flex-col items-center justify-center px-8 py-16 text-center">
-      <div className="ds-card-soft mb-4 rounded-[18px] px-4 py-3">
+      <div className="ds-card-soft mb-4 rounded-[12px] px-4 py-3">
         <Bot className="mx-auto h-6 w-6 text-accent opacity-90" strokeWidth={1.4} />
       </div>
       <p className="max-w-sm text-[20px] font-semibold tracking-[-0.03em] text-ds-ink">

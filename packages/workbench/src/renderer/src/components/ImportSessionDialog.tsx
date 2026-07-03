@@ -136,7 +136,7 @@ export function ImportSessionDialog({ open, onClose }: Props): ReactElement | nu
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-session-title"
-        className="ds-modal-surface flex max-h-[min(80vh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-[24px]"
+        className="ds-modal-surface flex max-h-[min(80vh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-[14px]"
       >
         <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted/40 px-5 py-4">
           <div>
@@ -168,7 +168,7 @@ export function ImportSessionDialog({ open, onClose }: Props): ReactElement | nu
               {t('importSessionLoading')}
             </div>
           ) : sessions.length === 0 ? (
-            <div className="rounded-[18px] border border-dashed border-ds-border-muted/60 px-4 py-8 text-center">
+            <div className="rounded-[12px] border border-dashed border-ds-border-muted/60 px-4 py-8 text-center">
               <p className="text-[14px] text-ds-muted">{t('importSessionEmpty')}</p>
               {sessionsDir ? (
                 <p className="mt-2 truncate text-[12px] text-ds-faint" title={sessionsDir}>

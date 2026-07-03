@@ -149,7 +149,7 @@ function WorkflowDetail({
   const pct = process.progressPct
 
   return (
-    <div className="rounded-[18px] border border-ds-border-muted bg-ds-card/70 px-4 py-3 text-[13px] leading-6">
+    <div className="rounded-[12px] border border-ds-border-muted bg-ds-card/70 px-4 py-3 text-[13px] leading-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="font-semibold text-ds-ink">{workflow.workflowName || snap.name}</div>
         <span className="font-mono text-[11px] text-ds-faint">{workflow.toolCallId}</span>
@@ -245,7 +245,7 @@ function ProcessDetailModal({
     >
       <div className="absolute inset-0 bg-black/35 backdrop-blur-sm" />
       <div
-        className="relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-[22px] border border-ds-border-muted bg-ds-elevated shadow-[0_28px_70px_rgba(0,0,0,0.22)] dark:border-white/[0.08] dark:bg-[#171a1f]"
+        className="relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-elevated shadow-[0_28px_70px_rgba(0,0,0,0.22)] dark:border-white/[0.08] dark:bg-[#171a1f]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b border-ds-border-muted/70 px-4 py-3">

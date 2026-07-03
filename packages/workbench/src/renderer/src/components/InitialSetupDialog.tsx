@@ -107,12 +107,12 @@ export function InitialSetupDialog(): ReactElement {
         : 'border-ds-border bg-ds-card text-ds-muted hover:border-ds-border-strong hover:text-ds-ink'
     ].join(' ')
   const fieldClass =
-    'w-full rounded-[18px] border border-ds-border bg-ds-card px-4 py-3 text-[15px] text-ds-ink outline-none transition placeholder:text-ds-faint focus:border-accent/60 focus:ring-2 focus:ring-accent/15'
+    'w-full rounded-[12px] border border-ds-border bg-ds-card px-4 py-3 text-[15px] text-ds-ink outline-none transition placeholder:text-ds-faint focus:border-accent/60 focus:ring-2 focus:ring-accent/15'
   const labelClass = 'text-[15px] font-medium text-ds-ink'
 
   return (
     <div className="ds-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="ds-glass ds-glass-strong w-full max-w-[592px] overflow-hidden rounded-[28px] text-ds-ink">
+      <div className="ds-glass ds-glass-strong w-full max-w-[592px] overflow-hidden rounded-[16px] text-ds-ink">
         <div className="bg-[radial-gradient(circle_at_top_right,var(--ds-accent-soft),transparent_42%)] px-8 pb-7 pt-8">
           <div className="flex items-center justify-between gap-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent/10 px-3.5 py-1.5 text-[13px] font-semibold text-accent">
@@ -206,7 +206,7 @@ export function InitialSetupDialog(): ReactElement {
                 {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            <div className="flex flex-col gap-2 rounded-[18px] border border-ds-border-muted bg-ds-subtle/50 px-4 py-3 text-[13px] text-ds-muted sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="flex flex-col gap-2 rounded-[12px] border border-ds-border-muted bg-ds-subtle/50 px-4 py-3 text-[13px] text-ds-muted sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <p className="leading-6">
                 {t('firstRunBuyApiHint')}
               </p>
@@ -237,7 +237,7 @@ export function InitialSetupDialog(): ReactElement {
 
         <div className="space-y-4 px-8 pb-8 pt-1">
           {error && (
-            <div className="rounded-[18px] border border-[var(--ds-danger)]/20 bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]">
+            <div className="rounded-[12px] border border-[var(--ds-danger)]/20 bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]">
               {error}
             </div>
           )}

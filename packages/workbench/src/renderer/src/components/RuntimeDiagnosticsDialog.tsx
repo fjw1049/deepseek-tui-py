@@ -255,7 +255,7 @@ export function RuntimeDiagnosticsDialog({
 
   return (
     <div className="ds-modal-backdrop ds-no-drag fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="ds-modal-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[22px]">
+      <div className="ds-modal-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[14px]">
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-ds-border px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
