@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 # Execpolicy decision enum.
-# Mirrors ``crates/tui/src/execpolicy/decision.rs`` (27 LOC).
 #
-# Rust serde shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
-# serialised as a string. The Rust enum derives ``Ord`` with the variant
-# order ``Allow < Prompt < Forbidden``, which :meth:`Policy.check` relies
-# on when aggregating multiple matches (the most-restrictive decision
-# wins). We preserve that ordering here.
+# Wire shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
+# serialised as a string. The variant order ``Allow < Prompt <
+# Forbidden`` is what :meth:`Policy.check` relies on when aggregating
+# multiple matches (the most-restrictive decision wins). We preserve
+# that ordering here.
 
 
 from enum import Enum
@@ -47,10 +46,7 @@ class Decision(str, Enum):
 
     @classmethod
     def parse(cls, raw: str) -> Decision:
-        """Parse a string; raise :class:`ExecPolicyError` on unknown values.
-
-        Mirrors Rust ``Decision::parse`` (decision.rs:19-26).
-        """
+        """Parse a string; raise :class:`ExecPolicyError` on unknown values."""
         try:
             return cls(raw)
         except ValueError as err:
@@ -77,9 +73,7 @@ _RANK: dict[str, int] = {
 
 
 
-# Errors raised by the Rust-parity execpolicy machinery.
-# Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
-# ``AmendError`` variants from ``amend.rs:12-55``.
+# Errors raised by the execpolicy machinery.
 
 
 __all__ = [
@@ -91,9 +85,8 @@ __all__ = [
 class ExecPolicyError(Exception):
     """Base class for execpolicy parse / evaluate errors.
 
-    Matches Rust ``execpolicy::Error`` (error.rs:7-28). Instances can
-    carry structured context via :attr:`data` for callers that want to
-    inspect the offending inputs.
+    Instances can carry structured context via :attr:`data` for callers
+    that want to inspect the offending inputs.
     """
 
     data: dict[str, Any]
@@ -102,7 +95,7 @@ class ExecPolicyError(Exception):
         super().__init__(message)
         self.data = data
 
-    # --- Constructors (one per Rust variant) ------------------------
+    # --- Constructors -----------------------------------------------
 
     @classmethod
     def invalid_decision(cls, value: str) -> ExecPolicyError:
@@ -147,8 +140,8 @@ class ExecPolicyError(Exception):
 class AmendError(Exception):
     """Errors specific to ``blocking_append_allow_prefix_rule``.
 
-    Mirrors Rust ``AmendError`` (amend.rs:12-55). Instances carry
-    structured context via :attr:`data` (path / directory / source).
+    Instances carry structured context via :attr:`data`
+    (path / directory / source).
     """
 
     data: dict[str, Any]
@@ -200,8 +193,7 @@ class AmendError(Exception):
 
 
 
-# Rule data model for the Rust-parity execpolicy system.
-# Mirrors ``crates/tui/src/execpolicy/rule.rs`` (160 LOC):
+# Rule data model for the execpolicy system.
 #
 # * :class:`PatternToken` — ``Single(str) | Alts(list[str])``
 # * :class:`PrefixPattern` — ``{first: str, rest: list[PatternToken]}``
@@ -213,8 +205,7 @@ class AmendError(Exception):
 # * :func:`validate_match_examples` / :func:`validate_not_match_examples`
 #
 # The ``RuleMatch`` wire shape uses ``type`` discriminator values
-# ``prefixRuleMatch`` / ``heuristicsRuleMatch`` to match Rust's
-# ``#[serde(rename_all = "camelCase")]`` on the enum tag.
+# ``prefixRuleMatch`` / ``heuristicsRuleMatch`` (camelCase on the tag).
 
 
 
@@ -243,12 +234,7 @@ class PatternToken:
     """One position in a :class:`PrefixPattern`.
 
     Carries either a single literal string (``Single``) or a set of
-    acceptable alternatives (``Alts``). Mirrors the Rust enum::
-
-        enum PatternToken {
-            Single(String),
-            Alts(Vec<String>),
-        }
+    acceptable alternatives (``Alts``).
     """
 
     # None means Alts; non-None means Single.
@@ -268,7 +254,7 @@ class PatternToken:
         return self.value is not None
 
     def matches(self, token: str) -> bool:
-        """Mirror Rust ``PatternToken::matches`` (rule.rs:19-24)."""
+        """Whether ``token`` is accepted at this position."""
         if self.value is not None:
             return self.value == token
         return token in self.alternatives_
@@ -276,7 +262,6 @@ class PatternToken:
     def alternatives(self) -> tuple[str, ...]:
         """Return the set of acceptable tokens at this position.
 
-        Mirror Rust ``PatternToken::alternatives`` (rule.rs:26-31).
         For ``Single`` returns a single-element slice.
         """
         if self.value is not None:
@@ -293,9 +278,9 @@ class PatternToken:
 class PrefixPattern:
     """Prefix matcher keyed by a fixed first token.
 
-    Mirrors Rust ``PrefixPattern`` (rule.rs:36-40). The first token
-    is always a literal string — that's how :class:`Policy` indexes
-    rules by the head of the command (its ``program``).
+    The first token is always a literal string — that's how
+    :class:`Policy` indexes rules by the head of the command
+    (its ``program``).
     """
 
     first: str
@@ -304,7 +289,6 @@ class PrefixPattern:
     def matches_prefix(self, cmd: list[str]) -> list[str] | None:
         """Return the matched prefix slice, or ``None``.
 
-        Mirrors Rust ``PrefixPattern::matches_prefix`` (rule.rs:43-56).
         Checks length ≥ pattern length and the first token equals
         :attr:`first`, then validates each subsequent pattern position.
         """
@@ -323,7 +307,7 @@ class PrefixPattern:
 
 
 class PrefixRuleMatch(BaseModel):
-    """Rust variant ``RuleMatch::PrefixRuleMatch`` (rule.rs:61-71)."""
+    """Prefix-rule match result."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -334,7 +318,7 @@ class PrefixRuleMatch(BaseModel):
 
 
 class HeuristicsRuleMatch(BaseModel):
-    """Rust variant ``RuleMatch::HeuristicsRuleMatch`` (rule.rs:72-76)."""
+    """Heuristics-rule match result."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -355,7 +339,7 @@ RuleMatch = Annotated[
 
 
 class Rule(ABC):
-    """Rust ``Rule`` trait (rule.rs:95-99)."""
+    """Base rule interface."""
 
     @abstractmethod
     def program(self) -> str:
@@ -373,11 +357,7 @@ RuleRef = Rule
 
 @dataclass(frozen=True, slots=True)
 class PrefixRule(Rule):
-    """Concrete rule matching by :class:`PrefixPattern`.
-
-    Mirrors Rust ``PrefixRule`` (rule.rs:88-93) + its ``Rule`` impl
-    (rule.rs:103-117).
-    """
+    """Concrete rule matching by :class:`PrefixPattern`."""
 
     pattern: PrefixPattern
     decision: Decision
@@ -417,8 +397,6 @@ def validate_match_examples(
 ) -> None:
     """Raise :class:`ExecPolicyError.example_did_not_match` if any
     example fails to match any rule.
-
-    Mirrors Rust ``validate_match_examples`` (rule.rs:120-142).
     """
     unmatched: list[str] = []
     for example in matches:
@@ -437,8 +415,6 @@ def validate_not_match_examples(
 ) -> None:
     """Raise :class:`ExecPolicyError.example_did_match` if any rule
     matches one of the negative examples.
-
-    Mirrors Rust ``validate_not_match_examples`` (rule.rs:145-160).
     """
     for example in not_matches:
         for rule in rules:
@@ -449,7 +425,6 @@ def validate_not_match_examples(
 
 
 # Command matching helpers for execpolicy rules.
-# Mirrors ``crates/tui/src/execpolicy/matcher.rs`` (198 LOC).
 #
 # Three public functions:
 #
@@ -461,14 +436,12 @@ def validate_not_match_examples(
 # * :func:`strip_heredoc_bodies` — exposed for unit tests / callers that
 #   want the intermediate form.
 #
-# Differences vs. Rust:
+# Note on the here-string placeholder:
 #
-# * Rust's ``regex`` crate has no lookbehind, so Rust preprocesses
-#   ``<<<`` (here-string) to a placeholder before running the heredoc
-#   regex. Python's ``re`` supports lookbehind (``(?<!<)``), so in
-#   theory we could skip the placeholder dance — but we preserve it
-#   byte-identically so test fixtures captured from the Rust version
-#   round-trip cleanly.
+# * ``<<<`` (here-string) is rewritten to a placeholder before running
+#   the heredoc regex. Python's ``re`` supports lookbehind (``(?<!<)``),
+#   so in theory we could skip the placeholder dance — but we preserve
+#   it byte-identically so captured test fixtures round-trip cleanly.
 
 
 __all__ = ["normalize_command", "pattern_matches", "strip_heredoc_bodies"]
@@ -476,7 +449,7 @@ __all__ = ["normalize_command", "pattern_matches", "strip_heredoc_bodies"]
 
 _HERESTRING_PLACEHOLDER = "\x01HERESTRING\x01"
 
-# Mirror Rust's regex:  <<-?\s*(?:['"]?)([A-Za-z_][A-Za-z0-9_]*)(?:['"]?)
+# Regex:  <<-?\s*(?:['"]?)([A-Za-z_][A-Za-z0-9_]*)(?:['"]?)
 # Allows optional `-` after `<<`, optional surrounding quotes on the
 # delimiter, delimiter is a typical shell identifier.
 _HEREDOC_RE = re.compile(r"""<<-?\s*(?:['"]?)([A-Za-z_][A-Za-z0-9_]*)(?:['"]?)""")
@@ -485,19 +458,17 @@ _HEREDOC_RE = re.compile(r"""<<-?\s*(?:['"]?)([A-Za-z_][A-Za-z0-9_]*)(?:['"]?)""
 def normalize_command(command: str) -> str:
     """Normalize a command string by shlex-parsing and re-joining tokens.
 
-    Heredoc bodies are stripped first (issue #419). Mirrors Rust
-    ``normalize_command`` (matcher.rs:12-23).
+    Heredoc bodies are stripped first (issue #419).
     """
     stripped = strip_heredoc_bodies(command)
     try:
         tokens = shlex.split(stripped)
     except ValueError:
-        # shlex raises on unbalanced quotes; Rust's shlex returns None
-        # in the same case. Fall back to whitespace split.
+        # shlex raises on unbalanced quotes; fall back to whitespace split.
         tokens = [t for t in stripped.split() if t]
     if not tokens:
         # Keep whitespace-split fallback even when shlex succeeded but
-        # returned empty, matching Rust.
+        # returned empty.
         tokens = [t for t in stripped.split() if t]
     return " ".join(tokens)
 
@@ -509,8 +480,6 @@ def strip_heredoc_bodies(command: str) -> str:
     and consumes the body up to the matching delimiter line. The
     here-string operator ``<<<`` is intentionally left alone — its
     body is the next token on the same line.
-
-    Mirrors Rust ``strip_heredoc_bodies`` (matcher.rs:38-100).
     """
     if "<<" not in command:
         return command
@@ -539,8 +508,8 @@ def strip_heredoc_bodies(command: str) -> str:
                     break
 
     joined = "\n".join(out_lines)
-    # Rust appends a trailing `\n` per line; we match that shape so the
-    # downstream shlex sees the same bytes.
+    # Append a trailing `\n` so the downstream shlex sees a consistent
+    # shape regardless of whether the input ended in a newline.
     if not joined.endswith("\n"):
         joined += "\n"
     # Restore the here-string operator.
@@ -551,7 +520,6 @@ def pattern_matches(pattern: str, command: str) -> bool:
     """Return True if ``pattern`` matches ``command`` after normalization.
 
     Patterns support ``*`` wildcards that match any substring.
-    Mirrors Rust ``pattern_matches`` (matcher.rs:105-118).
     """
     norm_pattern = normalize_command(pattern)
     norm_command = normalize_command(command)
@@ -567,16 +535,15 @@ def pattern_matches(pattern: str, command: str) -> bool:
     return bool(regex.fullmatch(norm_command))
 
 
-# Policy engine for the Rust-parity execpolicy system.
-# Mirrors ``crates/tui/src/execpolicy/policy.rs`` (145 LOC):
+# Policy engine for the execpolicy system.
 #
 # * :class:`Policy` — maps first-token (program) → list of :class:`Rule`;
 #   evaluates command-token lists with an optional heuristics fallback.
 # * :class:`Evaluation` — decision + matched-rules payload emitted for
 #   each evaluated command.
 #
-# Rust's ``check`` takes ``heuristics_fallback: &F`` where ``F: Fn(&[String]) -> Decision``.
-# Python translation: any callable ``(list[str]) -> Decision``.
+# ``check`` takes a ``heuristics_fallback``: any callable
+# ``(list[str]) -> Decision``.
 
 
 
@@ -601,20 +568,20 @@ HeuristicsFallback = Callable[[list[str]], Decision]
 class Policy:
     """Indexed collection of :class:`Rule` keyed by command first-token.
 
-    Rust ``Policy`` (policy.rs:16-117). The underlying storage is a
-    multimap so several rules can share a first token (e.g. multiple
-    ``git status`` prefix patterns with different justifications).
+    The underlying storage is a multimap so several rules can share a
+    first token (e.g. multiple ``git status`` prefix patterns with
+    different justifications).
     """
 
     rules_by_program: dict[str, list[RuleRef]] = field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> Policy:
-        """Construct an empty policy (Rust ``Policy::empty``)."""
+        """Construct an empty policy."""
         return cls()
 
     def rules(self) -> dict[str, list[RuleRef]]:
-        """Expose the internal multimap (Rust ``Policy::rules``)."""
+        """Expose the internal multimap."""
         return self.rules_by_program
 
     # --- Mutation ---------------------------------------------------
@@ -627,10 +594,7 @@ class Policy:
     def add_prefix_rule(
         self, prefix: list[str], decision: Decision
     ) -> None:
-        """Add a simple :class:`PrefixRule` from ``prefix`` tokens.
-
-        Mirrors Rust ``Policy::add_prefix_rule`` (policy.rs:34-54).
-        """
+        """Add a simple :class:`PrefixRule` from ``prefix`` tokens."""
         if not prefix:
             raise ExecPolicyError.invalid_pattern("prefix cannot be empty")
         first_token = prefix[0]
@@ -651,9 +615,8 @@ class Policy:
     ) -> Evaluation:
         """Evaluate ``cmd``, falling back to heuristics when no rule matches.
 
-        Mirrors Rust ``Policy::check`` (policy.rs:56-62). Returns a
-        non-empty :class:`Evaluation` because ``heuristics_fallback``
-        always supplies a decision.
+        Returns a non-empty :class:`Evaluation` because
+        ``heuristics_fallback`` always supplies a decision.
         """
         matched_rules = self.matches_for_command(cmd, heuristics_fallback)
         return Evaluation.from_matches(matched_rules)
@@ -663,10 +626,7 @@ class Policy:
         commands: Iterable[list[str]],
         heuristics_fallback: HeuristicsFallback,
     ) -> Evaluation:
-        """Evaluate several commands and aggregate matches.
-
-        Mirrors Rust ``Policy::check_multiple`` (policy.rs:65-83).
-        """
+        """Evaluate several commands and aggregate matches."""
         aggregated: list[RuleMatch] = []
         for command in commands:
             aggregated.extend(
@@ -679,10 +639,7 @@ class Policy:
         cmd: list[str],
         heuristics_fallback: HeuristicsFallback | None = None,
     ) -> list[RuleMatch]:
-        """Return all matches for ``cmd``, optionally with heuristics fallback.
-
-        Mirrors Rust ``Policy::matches_for_command`` (policy.rs:92-116).
-        """
+        """Return all matches for ``cmd``, optionally with heuristics fallback."""
         matched_rules: list[RuleMatch] = []
         if cmd:
             rules_for_program = self.rules_by_program.get(cmd[0], [])
@@ -709,8 +666,7 @@ class Policy:
 class Evaluation(BaseModel):
     """Aggregated evaluation result.
 
-    Mirrors Rust ``Evaluation`` (policy.rs:119-145). The wire shape
-    uses camelCase for ``matchedRules`` (Rust serde rename).
+    The wire shape uses camelCase for ``matchedRules``.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -719,10 +675,7 @@ class Evaluation(BaseModel):
     matched_rules: list[RuleMatch] = Field(alias="matchedRules")
 
     def is_match(self) -> bool:
-        """True iff any rule is a real prefix match (not a heuristics fallback).
-
-        Mirrors Rust ``Evaluation::is_match`` (policy.rs:127-132).
-        """
+        """True iff any rule is a real prefix match (not a heuristics fallback)."""
         return any(
             isinstance(rule, PrefixRuleMatch) for rule in self.matched_rules
         )
@@ -731,9 +684,8 @@ class Evaluation(BaseModel):
     def from_matches(cls, matched_rules: list[RuleMatch]) -> Evaluation:
         """Build an Evaluation; aggregate decision is the max severity.
 
-        Mirrors Rust ``Evaluation::from_matches`` (policy.rs:134-144).
-        Caller must ensure ``matched_rules`` is non-empty; the Rust
-        implementation panics otherwise, we mirror with an exception.
+        Caller must ensure ``matched_rules`` is non-empty; an empty list
+        raises an exception rather than producing a decision.
         """
         if not matched_rules:
             raise ExecPolicyError.invalid_rule(
@@ -755,8 +707,7 @@ def _dump_rules(rules: list[RuleMatch]) -> list[Any]:
 
 # Mini-Starlark parser for execpolicy rule files.
 #
-# Rust uses the ``starlark`` crate to evaluate policy files that look
-# like this::
+# Policy files use a Starlark-flavoured syntax that looks like this::
 #
 #     prefix_rule(pattern=["git", "status"], decision="allow")
 #     prefix_rule(
@@ -767,12 +718,12 @@ def _dump_rules(rules: list[RuleMatch]) -> list[Any]:
 #         not_match=["git push"],
 #     )
 #
-# Rust's Starlark is a full Python-like DSL with ``def`` / ``if`` / ``for``
-# / ``import`` / f-strings. We don't need that surface — only ``prefix_rule``
-# calls with literal-list / literal-string arguments.
+# Full Starlark is a Python-like DSL with ``def`` / ``if`` / ``for`` /
+# ``import`` / f-strings. We don't need that surface — only
+# ``prefix_rule`` calls with literal-list / literal-string arguments.
 #
 # This module implements a ~200 LOC subset sufficient to parse the
-# default policy ships with the Rust repo. Grammar:
+# default policy. Grammar:
 #
 #     module     := statement*
 #     statement  := COMMENT | call | blank
@@ -782,11 +733,10 @@ def _dump_rules(rules: list[RuleMatch]) -> list[Any]:
 #     expr       := STRING | LIST
 #     LIST       := '[' (expr (',' expr)*)? ']'
 #
-# The goal is byte-for-byte equivalence with Rust's ``prefix_rule``
-# behaviour — not general Starlark compatibility. Unsupported syntax
-# (``def`` / ``if`` / f-strings / ``import``) surfaces via a clear
-# :class:`ExecPolicyError` so users notice when the Rust file uses
-# features beyond our subset.
+# The goal is faithful ``prefix_rule`` behaviour — not general Starlark
+# compatibility. Unsupported syntax (``def`` / ``if`` / f-strings /
+# ``import``) surfaces via a clear :class:`ExecPolicyError` so users
+# notice when a policy file uses features beyond our subset.
 
 
 
@@ -801,8 +751,8 @@ __all__ = ["PolicyParser"]
 class PolicyParser:
     """Parse one or more policy files into a :class:`Policy`.
 
-    Mirrors Rust ``PolicyParser`` (parser.rs:28-69). Call :meth:`parse`
-    for each file, then :meth:`build` to realise the :class:`Policy`.
+    Call :meth:`parse` for each file, then :meth:`build` to realise the
+    :class:`Policy`.
     """
 
     def __init__(self) -> None:
@@ -873,10 +823,10 @@ class _PrefixRuleArgs:
 def _extract_kwargs(call: ast.Call, identifier: str) -> _PrefixRuleArgs:
     """Parse a ``prefix_rule(...)`` call into a typed argument bundle.
 
-    Positional args are not supported — Rust's Starlark signature
-    accepts `pattern` as the sole required arg, but the real policy
-    files always use keyword form. Enforcing kwargs keeps the parser
-    simple and the error messages precise.
+    Positional args are not supported — the Starlark signature accepts
+    `pattern` as the sole required arg, but the real policy files always
+    use keyword form. Enforcing kwargs keeps the parser simple and the
+    error messages precise.
     """
     if call.args:
         raise ExecPolicyError.starlark(
@@ -985,8 +935,7 @@ def _build_prefix_rule_rules(
 ) -> list[RuleRef]:
     """Build one or more :class:`PrefixRule` instances from parsed args.
 
-    Mirrors the Rust ``prefix_rule`` builtin (parser.rs:209-268). The
-    first pattern token may be either a single string or a list of
+    The first pattern token may be either a single string or a list of
     alternatives; each alternative spawns a separate rule keyed on
     that first token.
     """
@@ -1081,7 +1030,7 @@ def _parse_examples(raw: list[Any], identifier: str) -> list[list[str]]:
 
 
 def _tokenize_string_example(raw: str) -> list[str]:
-    """Shlex-split a string example; mirror Rust's `parse_string_example`."""
+    """Shlex-split a string example."""
     import shlex
 
     try:
@@ -1098,9 +1047,8 @@ def _tokenize_string_example(raw: str) -> list[str]:
 
 
 # Execpolicy rules loaded from TOML configuration.
-# Mirrors ``crates/tui/src/execpolicy/rules.rs`` (123 LOC). This is the
-# lightweight TOML-based rules layer — the parallel system to the
-# Starlark-based :mod:`deepseek_tui.execpolicy.parser` / :mod:`policy`.
+# This is the lightweight TOML-based rules layer — the parallel system to
+# the Starlark-based :mod:`deepseek_tui.execpolicy.parser` / :mod:`policy`.
 #
 # Wire format::
 #
@@ -1111,8 +1059,7 @@ def _tokenize_string_example(raw: str) -> list[str]:
 #     [rules.danger]
 #     deny = ["rm -rf /", "rm -rf /*"]
 #
-# Evaluation semantics (mirrors Rust ``ExecPolicyConfig::evaluate`` at
-# rules.rs:43-64):
+# Evaluation semantics:
 #
 # 1. Scan every ``deny`` pattern in every group in insertion order.
 #    First match → ``Deny(reason)``.
@@ -1146,8 +1093,7 @@ class ExecPolicyDecisionKind:
     """Tag constants for the :class:`ExecPolicyDecision` enum.
 
     Used with :func:`isinstance` — we don't use a real Enum because
-    ``Deny`` / ``AskUser`` carry a reason string, mirroring Rust's
-    data-variant pattern.
+    ``Deny`` / ``AskUser`` carry a reason string.
     """
 
     ALLOW = "allow"
@@ -1157,7 +1103,7 @@ class ExecPolicyDecisionKind:
 
 @dataclass(frozen=True, slots=True)
 class ExecPolicyDecision:
-    """Mirrors Rust ``ExecPolicyDecision`` enum (rules.rs:11-16).
+    """Decision emitted by the TOML-based execpolicy layer.
 
     Use the class methods (:meth:`allow`, :meth:`deny`, :meth:`ask_user`)
     instead of the constructor for a clean call-site.
@@ -1209,10 +1155,10 @@ class ExecPolicyConfig:
     """Top-level TOML policy config.
 
     The key order of ``rules`` is preserved on insertion so that the
-    scan order in :meth:`evaluate` is deterministic. Rust used
-    ``BTreeMap`` (sorted) — we use ``dict`` (insertion-order) because
-    that's more useful for Python users authoring custom policies
-    (they can reason about match precedence by source order).
+    scan order in :meth:`evaluate` is deterministic. We use ``dict``
+    (insertion-order) rather than a sorted map because that's more
+    useful for users authoring custom policies (they can reason about
+    match precedence by source order).
     """
 
     rules: dict[str, RuleSet] = field(default_factory=dict)
@@ -1221,10 +1167,7 @@ class ExecPolicyConfig:
 
     @classmethod
     def from_str(cls, contents: str) -> ExecPolicyConfig:
-        """Parse a TOML string into an :class:`ExecPolicyConfig`.
-
-        Mirrors Rust ``ExecPolicyConfig::from_str`` (rules.rs:33-35).
-        """
+        """Parse a TOML string into an :class:`ExecPolicyConfig`."""
         try:
             data = _toml_reader.loads(contents)
         except _toml_reader.TOMLDecodeError as err:
@@ -1233,10 +1176,7 @@ class ExecPolicyConfig:
 
     @classmethod
     def from_path(cls, path: Path) -> ExecPolicyConfig:
-        """Parse a TOML file path.
-
-        Mirrors Rust ``ExecPolicyConfig::from_path`` (rules.rs:37-41).
-        """
+        """Parse a TOML file path."""
         try:
             with path.open("rb") as fh:
                 data = _toml_reader.load(fh)
@@ -1285,7 +1225,6 @@ class ExecPolicyConfig:
     def evaluate(self, command: str) -> ExecPolicyDecision:
         """Evaluate ``command`` against the deny- then allow-pattern lists.
 
-        Mirrors Rust ``ExecPolicyConfig::evaluate`` (rules.rs:43-64).
         Deny wins over allow unconditionally; no match falls back to
         ``AskUser``.
         """
@@ -1312,7 +1251,6 @@ class ExecPolicyConfig:
 def default_execpolicy_path() -> Path | None:
     """``~/.deepseek/execpolicy.toml`` — or ``None`` if HOME unavailable.
 
-    Mirrors Rust ``default_execpolicy_path`` (execpolicy/rules.rs:72-74).
     User-level — policy travels with the operator, not with each checkout.
     """
     from deepseek_tui.config.paths import user_execpolicy_path
@@ -1373,10 +1311,7 @@ def load_user_policy() -> TomlBackedPolicy | None:
 
 
 def load_default_policy() -> ExecPolicyConfig | None:
-    """Load the default policy if it exists; return ``None`` otherwise.
-
-    Mirrors Rust ``load_default_policy`` (rules.rs:71-79).
-    """
+    """Load the default policy if it exists; return ``None`` otherwise."""
     path = default_execpolicy_path()
     if path is None or not path.exists():
         return None

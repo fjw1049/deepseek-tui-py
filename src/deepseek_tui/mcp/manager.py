@@ -366,11 +366,7 @@ class McpManager:
         *,
         fail_on_required: bool = False,
     ) -> McpStartupCompleteEvent:
-        """Connect every configured server and return a startup summary.
-
-        Mirrors Rust ``McpManager::start_all`` (``crates/mcp/src/lib.rs``) +
-        ``McpPool::connect_all`` required checks (``mcp.rs:1594-1607``).
-        """
+        """Connect every configured server and return a startup summary."""
         ready: list[str] = []
         failed: list[McpStartupFailure] = []
         cancelled: list[str] = []
@@ -501,7 +497,7 @@ class McpManager:
             return
 
     async def reload_if_config_changed(self) -> bool:
-        """Lazy reload when config file mtime/content changed (Rust #1267)."""
+        """Lazy reload when config file mtime/content changed."""
         if self._config_path is None or not self._config_path.exists():
             return False
         try:

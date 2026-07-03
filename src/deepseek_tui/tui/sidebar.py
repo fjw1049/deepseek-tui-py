@@ -7,7 +7,6 @@ from __future__ import annotations
 
 # Sidebar widget — session/thread list panel.
 #
-# Mirrors Rust ``tui/sidebar.rs`` (~770 LOC).
 # Provides a toggleable left-side panel listing recent sessions/threads
 # with keyboard navigation, filtering, and session actions.
 #
@@ -260,7 +259,6 @@ class Sidebar(Widget):
 
 # Right-side info sidebar — Plan / Todos / Tasks / Agents live state.
 #
-# Mirrors Rust ``crates/tui/src/tui/sidebar.rs::render_sidebar_auto``.
 # Each panel reads its data from a pre-fetched snapshot the app pushes
 # in via :meth:`update_data`; the widget itself stays sync-only so it
 # can be called from anywhere in the event loop without await.
@@ -674,13 +672,11 @@ class InfoSidebar(Widget):
 
 # Compact session-context inspector text renderer.
 #
-# Mirrors ``crates/tui/src/tui/context_inspector.rs`` (466 LOC).
-#
 # Builds the textual snapshot rendered by the ``/context`` slash command.
-# The Rust implementation reaches deep into ``App`` state; the Python port
-# takes a small :class:`InspectorSnapshot` dataclass so unit tests don't
-# need to spin up a Textual app and the engine layer can build the
-# snapshot from whatever live state it has at the time.
+# Rather than reaching deep into ``App`` state, this takes a small
+# :class:`InspectorSnapshot` dataclass so unit tests don't need to spin up
+# a Textual app and the engine layer can build the snapshot from whatever
+# live state it has at the time.
 #
 
 from deepseek_tui.config.providers import context_window_for_model
@@ -699,7 +695,7 @@ MAX_TOOL_ROWS: int = 8
 
 @dataclass(slots=True)
 class ContextReferenceView:
-    """Mirror Rust ``SessionContextReference`` projected onto the inspector."""
+    """A session context reference projected onto the inspector."""
 
     badge: str
     label: str
@@ -712,7 +708,7 @@ class ContextReferenceView:
 
 @dataclass(slots=True)
 class ToolDetailView:
-    """Mirror Rust ``ToolDetailRecord`` projected onto the inspector."""
+    """A tool detail record projected onto the inspector."""
 
     tool_name: str
     tool_id: str
@@ -721,10 +717,7 @@ class ToolDetailView:
 
 @dataclass(slots=True)
 class InspectorSnapshot:
-    """Snapshot of the bits of app state the inspector renders.
-
-    Mirror Rust ``App`` fields used by ``build_context_inspector_text``.
-    """
+    """Snapshot of the bits of app state the inspector renders."""
 
     model: str
     workspace: Path
@@ -740,10 +733,7 @@ class InspectorSnapshot:
 
 
 def build_context_inspector_text(snapshot: InspectorSnapshot) -> str:
-    """Build the inspector text.
-
-    Mirror Rust ``build_context_inspector_text`` (context_inspector.rs:24).
-    """
+    """Build the inspector text."""
     used, max_window, percent = _context_usage(snapshot)
     status = _context_status(percent)
 
@@ -796,7 +786,7 @@ def _context_usage(snapshot: InspectorSnapshot) -> tuple[int, int, float]:
 
 
 def _context_status(percent: float) -> str:
-    """Mirror Rust ``context_status`` (context_inspector.rs:80)."""
+    """Classify context usage percentage as ok/high/critical."""
     if percent >= CONTEXT_CRITICAL_THRESHOLD_PERCENT:
         return "critical"
     if percent >= CONTEXT_WARNING_THRESHOLD_PERCENT:
@@ -809,7 +799,7 @@ def _text_tokens(text: str) -> int:
 
 
 def _system_prompt_structure(snapshot: InspectorSnapshot) -> list[str]:
-    """Mirror Rust ``push_system_prompt_structure`` (context_inspector.rs:92)."""
+    """Render the system prompt structure section."""
     out: list[str] = ["System Prompt Structure", "-----------------------"]
 
     blocks = snapshot.system_prompt_blocks
@@ -862,7 +852,7 @@ def _system_prompt_structure(snapshot: InspectorSnapshot) -> list[str]:
 
 
 def _render_references(references: list[ContextReferenceView]) -> list[str]:
-    """Mirror Rust ``push_references`` (context_inspector.rs:175)."""
+    """Render the references section."""
     out: list[str] = ["References", "----------"]
     seen: set[str] = set()
     rendered = 0
@@ -894,7 +884,7 @@ def _render_references(references: list[ContextReferenceView]) -> list[str]:
 
 
 def _render_tools(snapshot: InspectorSnapshot) -> list[str]:
-    """Mirror Rust ``push_tools`` (context_inspector.rs:233)."""
+    """Render the recent tools section."""
     out: list[str] = ["Recent Tools", "------------"]
     rendered = 0
     for detail in snapshot.active_tool_details:

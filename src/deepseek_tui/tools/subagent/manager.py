@@ -1,6 +1,6 @@
 """SubAgentManager — spawn/cancel/result/list/resume/assign/send_input.
 
-Mirrors ``crates/tui/src/tools/subagent/mod.rs``. ``asyncio.Task``-backed
+``asyncio.Task``-backed
 execution (not multiprocessing — LLM calls are IO-bound; see HANDOVER.md
 decision 2026-05-07). Persistence under
 ``<workspace>/.deepseek/subagents.v1.json``.
@@ -56,9 +56,9 @@ def _write_json_atomic(path: Path, value: Any) -> None:
 class SubAgentManager:
     """Manager for in-process sub-agents.
 
-    Mirrors Rust ``SubAgentManager`` (mod.rs:726-). Runs agents as
+    Runs agents as
     :class:`asyncio.Task` rather than multiprocessing subprocesses —
-    LLM calls are IO-bound and Rust itself uses tokio::spawn.
+    LLM calls are IO-bound.
     """
 
     def __init__(
@@ -105,7 +105,7 @@ class SubAgentManager:
         self._parent_completion_sink = sink
 
     def attach_loop_runtime(self, runtime: SubAgentRuntime) -> None:
-        """Wire shared client/config for ``run_subagent_loop`` (Rust SubAgentRuntime)."""
+        """Wire shared client/config for ``run_subagent_loop``."""
         self._loop_runtime = runtime
 
     @property
@@ -269,7 +269,7 @@ class SubAgentManager:
     async def resume(self, agent_id: str) -> SubAgentResult:
         """Re-open a terminated agent for a new prompt.
 
-        Mirrors Rust ``SubAgentManager::resume`` — resurrects the status
+        Resurrects the status
         back to Running and re-spawns the driver task.
         """
         async with self._lock:
@@ -451,7 +451,7 @@ class SubAgentManager:
         try:
             self._persist_state()
         except Exception as exc:  # noqa: BLE001
-            # Match Rust's eprintln! best-effort behavior.
+            # Best-effort logging.
             print(f"Failed to persist sub-agent state: {exc}")
 
     def _persist_state(self) -> None:
@@ -514,7 +514,7 @@ class SubAgentManager:
             # Restore id from persisted record, overwriting the freshly
             # generated one.
             agent.id = raw["id"]
-            # Running on disk → Interrupted on load (Rust parity).
+            # Running on disk → Interrupted on load.
             status = SubAgentStatus.from_dict(raw["status"])
             if status.kind is SubAgentStatusKind.RUNNING:
                 status = SubAgentStatus.interrupted(SUBAGENT_RESTART_REASON)
@@ -530,7 +530,7 @@ class SubAgentManager:
 class SubAgentRuntime:
     """Runtime context forwarded to children on spawn.
 
-    Rust analogue: ``SubAgentRuntime`` (mod.rs:587). All depths share
+    All depths share
     :attr:`manager`; children increment :attr:`spawn_depth` only.
     """
 

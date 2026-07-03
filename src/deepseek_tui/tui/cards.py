@@ -1,6 +1,6 @@
 """Agent card and pager widgets.
 
-Sub-agent activity card — mirrors ``crates/tui/src/tui/widgets/agent_card.rs``:
+Sub-agent activity card:
 
 - :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
   status glyph + role + agent id, plus the last
@@ -12,7 +12,7 @@ drive it without a Textual runtime. The :class:`AgentCardWidget` is a
 thin :class:`textual.widgets.Static` adapter that renders a card's
 current state using Rich markup.
 
-Long-output pager overlay — mirrors ``crates/tui/src/tui/pager.rs``:
+Long-output pager overlay:
 :class:`PagerState` (pure key/scroll state machine) + :class:`PagerScreen`
 (Textual modal adapter).
 """
@@ -34,7 +34,7 @@ DELEGATE_MAX_ACTIONS: int = 3
 
 
 class AgentLifecycle(str, enum.Enum):
-    """Mirror Rust ``AgentLifecycle`` (agent_card.rs:30)."""
+    """Lifecycle state of a sub-agent."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -76,10 +76,7 @@ class AgentLifecycle(str, enum.Enum):
 
 @dataclass(slots=True)
 class DelegateCard:
-    """Single ``agent_spawn`` invocation card.
-
-    Mirror Rust ``DelegateCard`` (agent_card.rs:69).
-    """
+    """Single ``agent_spawn`` invocation card."""
 
     agent_id: str
     agent_type: str
@@ -89,10 +86,7 @@ class DelegateCard:
     truncated: bool = False
 
     def push_action(self, action: str) -> None:
-        """Append ``action``; drop the head past :data:`DELEGATE_MAX_ACTIONS`.
-
-        Mirror Rust ``push_action`` (agent_card.rs:91).
-        """
+        """Append ``action``; drop the head past :data:`DELEGATE_MAX_ACTIONS`."""
         self.actions.append(action)
         if len(self.actions) > DELEGATE_MAX_ACTIONS:
             self.actions.pop(0)
@@ -101,8 +95,7 @@ class DelegateCard:
     def render_lines(self) -> list[str]:
         """Render the card as a list of Rich-markup lines.
 
-        Mirror Rust ``render_lines`` (agent_card.rs:102). Returns one
-        string per visual line; the caller joins with ``\\n``.
+        Returns one string per visual line; the caller joins with ``\\n``.
         """
         lines: list[str] = [
             _card_header(
@@ -136,8 +129,7 @@ class DelegateCard:
 def apply_to_delegate(card: DelegateCard, msg: MailboxMessage) -> bool:
     """Apply a mailbox envelope to ``card``.
 
-    Mirror Rust ``apply_to_delegate`` (agent_card.rs:382). Returns True
-    if the card state changed.
+    Returns True if the card state changed.
     """
     if msg.agent_id != card.agent_id:
         return False
@@ -269,10 +261,7 @@ class PagerAction(str, enum.Enum):
 
 @dataclass(slots=True)
 class PagerState:
-    """Pure state machine for the pager.
-
-    Mirror Rust ``PagerView`` (pager.rs:35).
-    """
+    """Pure state machine for the pager."""
 
     title: str
     lines: list[str]
@@ -352,10 +341,9 @@ class PagerState:
     def handle_key(self, key: str, *, ctrl: bool = False, shift: bool = False) -> PagerAction:
         """Apply a key press; returns whether the host should redraw / close.
 
-        Mirror Rust ``handle_key`` (pager.rs:187). ``key`` follows Textual
-        conventions: lowercase letters, ``escape``/``enter``/``space``,
-        arrow / paging key names. Ctrl + Shift modifiers are explicit
-        flags rather than embedded in the key string.
+        ``key`` follows Textual conventions: lowercase letters,
+        ``escape``/``enter``/``space``, arrow / paging key names. Ctrl + Shift
+        modifiers are explicit flags rather than embedded in the key string.
         """
         if self.search_mode:
             return self._handle_search_key(key)

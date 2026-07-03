@@ -1,6 +1,6 @@
 """Sub-agent tools — thin wrappers over :class:`SubAgentManager`.
 
-Mirrors Rust ``crates/tui/src/tools/subagent/mod.rs``. All 10 tools delegate
+All 10 tools delegate
 to ``context.subagent_manager``.
 """
 
@@ -629,7 +629,7 @@ class AgentWaitTool(ToolSpec):
 class DelegateToAgentTool(ToolSpec):
     """``delegate_to_agent`` — convenience combo: spawn + block on result.
 
-    Mirrors Rust ``DelegateToAgentTool``; internally spawns a fresh agent
+    Internally spawns a fresh agent
     then waits up to ``timeout_ms`` for it to terminate.
     """
 

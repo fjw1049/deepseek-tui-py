@@ -93,7 +93,6 @@ class ToolExecutionMixin:
         api_tools = await self._get_tools_with_mcp()
 
         # Build execution plans and check if batch can be parallelized
-        # (mirrors Rust dispatch.rs:263-355 / turn_loop.rs:1184)
         if len(tool_calls) > 1:
             from deepseek_tui.engine.dispatch import (
                 ToolExecutionPlan,
@@ -279,7 +278,6 @@ class ToolExecutionMixin:
     ) -> list[Message]:
         """Execute multiple read-only tools in parallel.
 
-        Mirrors Rust turn_loop.rs:1205-1303 (FuturesUnordered branch).
         Only called when should_parallelize_tool_batch returns True,
         which guarantees all tools are read-only, non-interactive,
         and don't require approval.
@@ -440,7 +438,7 @@ class ToolExecutionMixin:
             model=model,
         )
         await self._run_lifecycle_hook("tool_call_before", hook_ctx)
-        # Expose parent transcript for fork_context spawns (Rust SubAgentForkContext).
+        # Expose parent transcript for fork_context spawns.
         self.tool_context.metadata["parent_session_messages"] = [
             m.model_dump(mode="json") for m in self.session_messages
         ]
@@ -465,7 +463,7 @@ class ToolExecutionMixin:
         """Inner tool dispatch (lifecycle hooks handled by wrapper)."""
         from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
 
-        # 先归一化：把 Rust 桥接别名（如 mcp_read_resource）映射回注册表工具名，
+        # 先归一化：把桥接别名（如 mcp_read_resource）映射回注册表工具名，
         # 后续的 is_external_mcp_tool 判定才会把它正确归到注册表分支而非外部 MCP 分支。
         tool_name = normalize_mcp_bridge_tool_name(tool_call.name)
         # 写文件类工具执行前拍快照（供 /undo）。注意：parallel 自身不是写工具，
@@ -481,8 +479,7 @@ class ToolExecutionMixin:
                 self._activated_tool_names,
             )
 
-        # A direct call to a deferred tool activates it for later rounds
-        # (mirrors Rust maybe_activate_requested_deferred_tool).
+        # A direct call to a deferred tool activates it for later rounds.
         maybe_activate_requested_deferred_tool(
             tool_name, api_tools, self._activated_tool_names
         )
@@ -832,9 +829,8 @@ class ToolExecutionMixin:
     async def _execute_parallel_tools(self, input_data: dict[str, Any]) -> ToolResult:
         """Fan out multi_tool_use.parallel sub-calls concurrently.
 
-        Mirrors Rust turn_loop.rs:1161-1189 + tool_execution.rs:58-67.
         Only read-only tools that don't require approval are eligible.
-        Recursive self-calls are rejected (tool_execution.rs:63).
+        Recursive self-calls are rejected.
         """
         calls = parse_parallel_tool_calls(input_data)
         if not calls:
@@ -883,10 +879,7 @@ class ToolExecutionMixin:
     async def _await_user_input(
         self, tool_call_id: str, input_data: dict[str, Any]
     ) -> ToolResult:
-        """Emit UserInputRequiredEvent and block until TUI resolves.
-
-        Mirrors Rust turn_loop.rs:1245-1275.
-        """
+        """Emit UserInputRequiredEvent and block until TUI resolves."""
         from deepseek_tui.tools.user_input import validate_user_input_request
 
         questions = validate_user_input_request(input_data)

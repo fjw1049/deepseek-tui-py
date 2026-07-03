@@ -206,7 +206,7 @@ class ShellHookConfig(BaseModel):
 
 
 class LifecycleHookEntry(BaseModel):
-    """Single lifecycle hook — mirrors Rust ``hooks::Hook`` (hooks.rs:102-130)."""
+    """Single lifecycle hook."""
 
     event: str
     command: str
@@ -220,8 +220,8 @@ class LifecycleHookEntry(BaseModel):
 class HooksConfig(BaseModel):
     """Hooks configuration.
 
-    Observability sinks (``crates/hooks``): stdout / JSONL / webhook.
-    Lifecycle hooks (``crates/tui/src/hooks.rs``): ``[[hooks.hooks]]`` entries.
+    Observability sinks: stdout / JSONL / webhook.
+    Lifecycle hooks: ``[[hooks.hooks]]`` entries.
     """
 
     stdout: bool = False
@@ -235,7 +235,7 @@ class HooksConfig(BaseModel):
 
 
 class NotificationsConfig(BaseModel):
-    """Terminal notification settings — mirrors Rust ``NotificationsConfig``.
+    """Terminal notification settings.
 
     ``method`` / ``threshold_secs`` / ``enabled`` are consumed by
     ``DeepSeekTUI._maybe_notify_turn_done`` (see ``tui/app.py``). When the
@@ -253,10 +253,10 @@ class NotificationsConfig(BaseModel):
 
 
 class NetworkPolicyConfig(BaseModel):
-    """Network access policy — mirrors Rust ``NetworkPolicyToml``.
+    """Network access policy.
 
     Stage 2.7 deferred OS-level sandboxing; this struct accepts the TOML
-    so configs from the Rust binary load cleanly. ``rules`` and
+    so existing configs load cleanly. ``rules`` and
     ``amendments`` are stored as raw dicts (Pydantic doesn't enforce the
     inner shape yet) — wiring them through to ``ExecPolicyEngine`` is
     tracked in HANDOVER as a follow-up.
@@ -269,7 +269,7 @@ class NetworkPolicyConfig(BaseModel):
 
 
 class SkillsConfig(BaseModel):
-    """[skills] subsection — mirrors Rust ``SkillsConfig``.
+    """[skills] subsection.
 
     Top-level ``Config.skills_dir`` already covers the install path. The
     nested table adds registry URL + max install size; both are accepted
@@ -320,8 +320,7 @@ class LoggingConfig(BaseModel):
 class LspSettings(BaseModel):
     """Post-edit LSP diagnostics settings — Stage 4.4.
 
-    Mirrors Rust ``LspConfig`` (crates/tui/src/lsp/mod.rs:55-103). The
-    engine collects diagnostics after every successful edit tool and
+    The engine collects diagnostics after every successful edit tool and
     injects them as a synthetic user message before the next API call.
     """
 
@@ -403,21 +402,18 @@ class Config(BaseModel):
     lsp: LspSettings = Field(default_factory=LspSettings)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
-    # Top-level subsection mirrors of Rust ``ConfigToml``. Accept the TOML
-    # so user configs written for the Rust binary load cleanly; Stage 6
-    # wires these fields into runtime behavior. ``tools_file`` is recorded
-    # but never read today — same parity intent.
+    # Top-level subsections. Accept the TOML so existing user configs load
+    # cleanly; Stage 6 wires these fields into runtime behavior.
+    # ``tools_file`` is recorded but never read today.
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     network: NetworkPolicyConfig = Field(default_factory=NetworkPolicyConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     tools_file: Path | None = None
-    # Cycle / seam toggles consumed by ``Engine.create``. Mirror Rust
-    # ``cycle_manager.rs`` + ``seam_manager.rs`` opt-in behavior. Off by
-    # default so existing tests stay deterministic; long-running real
-    # sessions can flip these via TOML once they're ready for cycle
-    # archive-and-replay.
+    # Cycle / seam toggles consumed by ``Engine.create``. Off by default
+    # so existing tests stay deterministic; long-running real sessions can
+    # flip these via TOML once they're ready for cycle archive-and-replay.
     cycle_enabled: bool = True
     seam_enabled: bool = True
 

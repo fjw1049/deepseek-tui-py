@@ -9,8 +9,6 @@ from __future__ import annotations
 
 # RequestUserInputTool — pauses execution to ask the user a question.
 #
-# Mirrors `crates/tui/src/tools/user_input.rs`.
-#
 # The Engine intercepts this tool name, validates the input, emits a
 # UserInputRequiredEvent, and blocks until the TUI resolves the future.
 # The ToolSpec itself always raises — it must never be dispatched directly.
@@ -41,7 +39,6 @@ class UserInputQuestion:
 def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQuestion]:
     """Validate and parse the request_user_input input.
 
-    Mirrors Rust UserInputRequest::validate().
     Raises ToolError on invalid input.
     """
     tool_uses = input_data.get("questions")
@@ -133,8 +130,6 @@ class RequestUserInputTool(ToolSpec):
 
 
 # ``retrieve_tool_result`` — selective retrieval for spilled tool outputs.
-#
-# Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/tool_result_retrieval.rs``.
 #
 
 from deepseek_tui.tools.validation import require_string as _require_string

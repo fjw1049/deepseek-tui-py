@@ -13,10 +13,9 @@ from __future__ import annotations
 
 """Skills subsystem — discovery, install, and activation.
 
-Mirrors ``crates/tui/src/skills/mod.rs``. A skill is a directory
-containing ``SKILL.md`` with YAML frontmatter (name, description)
-followed by the skill body. Skills are discovered by scanning
-subdirectories of the configured skills directory.
+A skill is a directory containing ``SKILL.md`` with YAML frontmatter
+(name, description) followed by the skill body. Skills are discovered by
+scanning subdirectories of the configured skills directory.
 """
 
 import logging
@@ -71,10 +70,7 @@ def default_skills_dir() -> Path:
 
 
 def agents_global_skills_dir() -> Path | None:
-    """``~/.agents/skills`` — agentskills.io ecosystem global.
-
-    Mirrors Rust ``agents_global_skills_dir`` (skills/mod.rs:41-43).
-    """
+    """``~/.agents/skills`` — agentskills.io ecosystem global."""
     home = Path.home()
     if not home:
         return None
@@ -82,10 +78,7 @@ def agents_global_skills_dir() -> Path | None:
 
 
 def claude_global_skills_dir() -> Path | None:
-    """``~/.claude/skills`` — Claude-ecosystem global (#902).
-
-    Mirrors Rust ``claude_global_skills_dir`` (skills/mod.rs:51-53).
-    """
+    """``~/.claude/skills`` — Claude-ecosystem global (#902)."""
     home = Path.home()
     if not home:
         return None
@@ -94,10 +87,7 @@ def claude_global_skills_dir() -> Path | None:
 
 @dataclass(frozen=True, slots=True)
 class Skill:
-    """Parsed representation of a SKILL.md definition.
-
-    Mirrors Rust ``Skill`` (skills/mod.rs:41-51).
-    """
+    """Parsed representation of a SKILL.md definition."""
 
     name: str
     description: str
@@ -108,27 +98,21 @@ class Skill:
     frontmatter key. When set, overrides ``FOCUS_MODE_TOOLS`` for this
     skill. ``None`` means "not declared" (fall back to the fixed set).
 
-    Deviation from Rust ``Skill`` (which has no such field) — approved
-    for the focus-mode feature; mirrors workflow ``allowed_tools`` semantics.
+    An intentional addition for the focus-mode feature; mirrors workflow
+    ``allowed_tools`` semantics.
     """
 
 
 @dataclass(slots=True)
 class SkillRegistry:
-    """Collection of discovered skills.
-
-    Mirrors Rust ``SkillRegistry`` — a ``Vec<Skill>`` plus warnings.
-    """
+    """Collection of discovered skills."""
 
     skills: list[Skill] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
     def discover(cls, skills_dir: Path) -> SkillRegistry:
-        """Scan ``skills_dir`` for subdirectories containing SKILL.md.
-
-        Mirrors Rust ``SkillRegistry::discover`` (mod.rs:95-140).
-        """
+        """Scan ``skills_dir`` for subdirectories containing SKILL.md."""
         registry = cls()
         if not skills_dir.is_dir():
             return registry
@@ -175,10 +159,7 @@ _FRONTMATTER_RE = re.compile(
 
 
 def _parse_skill_file(path: Path) -> Skill:
-    """Parse a SKILL.md file into a Skill instance.
-
-    Mirrors Rust frontmatter parsing (mod.rs:200-270).
-    """
+    """Parse a SKILL.md file into a Skill instance."""
     content = path.read_text(encoding="utf-8")
     meta: dict[str, str] = {}
     allowed_tools: tuple[str, ...] | None = None
@@ -266,8 +247,7 @@ def skills_directories(
 ) -> list[Path]:
     """Return ordered list of skill directories to scan.
 
-    Mirrors Rust ``skills_directories`` (skills/mod.rs:371-408). Precedence
-    (first match wins on name conflicts):
+    Precedence (first match wins on name conflicts):
 
     1. ``<workspace>/.agents/skills`` — deepseek-native convention.
     2. ``<workspace>/skills`` — flat, project-local.
@@ -322,8 +302,7 @@ def discover_in_workspace(
 ) -> SkillRegistry:
     """Discover skills across all skill directories.
 
-    First directory wins on name collisions (mirrors Rust
-    ``discover_in_workspace``).
+    First directory wins on name collisions.
     """
     merged = SkillRegistry()
     seen_names: set[str] = set()
@@ -366,10 +345,9 @@ _HOW_TO_USE_SKILLS = (
 def truncate_for_prompt(value: str, max_chars: int) -> str:
     """Collapse internal whitespace, then bound by ``max_chars``.
 
-    Mirrors Rust ``truncate_for_prompt`` (mod.rs:565). The collapse is
-    deliberate: SKILL.md descriptions sometimes carry stray newlines /
-    tabs / runs of spaces, and the system-prompt section reads as a
-    single bullet list, not free-form prose.
+    The collapse is deliberate: SKILL.md descriptions sometimes carry
+    stray newlines / tabs / runs of spaces, and the system-prompt section
+    reads as a single bullet list, not free-form prose.
     """
     single_line = " ".join(value.split())
     if len(single_line) <= max_chars:
@@ -384,11 +362,10 @@ def render_available_skills_context(
 ) -> str:
     """Render the progressive-disclosure skills block for the system prompt.
 
-    Mirrors Rust ``render_skills_block`` (mod.rs:497-562). Each entry
-    carries the real on-disk path captured at discovery — the directory
-    name can differ from the frontmatter ``name`` for community installs,
-    in which case ``<dir>/<name>/SKILL.md`` would not exist and the model
-    would fail to open it.
+    Each entry carries the real on-disk path captured at discovery — the
+    directory name can differ from the frontmatter ``name`` for community
+    installs, in which case ``<dir>/<name>/SKILL.md`` would not exist and
+    the model would fail to open it.
     """
     if registry.is_empty:
         return ""
@@ -441,8 +418,8 @@ def render_available_skills_context(
 
 """Bundled system skills.
 
-Mirrors ``crates/tui/src/skills/system.rs``. Installs the bundled
-``skill-creator`` skill at startup if not already present.
+Installs the bundled ``skill-creator`` skill at startup if not already
+present.
 """
 
 
@@ -483,7 +460,7 @@ file that follows the standard format:
 def install_system_skills(skills_dir: Path | None = None) -> None:
     """Install bundled system skills if not already present.
 
-    Called at TUI startup. Mirrors Rust ``install_system_skills``.
+    Called at TUI startup.
     """
     target = skills_dir or default_skills_dir()
     target.mkdir(parents=True, exist_ok=True)
@@ -527,9 +504,8 @@ def uninstall_system_skills(skills_dir: Path | None = None) -> None:
 
 """Skill installation, update, and uninstall.
 
-Mirrors ``crates/tui/src/skills/install.rs``. Handles community skill
-install from source specs (``github:owner/repo``) and local tarballs,
-plus update/uninstall/trust lifecycle.
+Handles community skill install from source specs (``github:owner/repo``)
+and local tarballs, plus update/uninstall/trust lifecycle.
 
 2026-05-14 — Hardened against the audit report's K-1/K-2/K-3/K-4/K-5/K-7
 findings (HANDOVER §skills.2026-05-14):
@@ -575,14 +551,14 @@ DEFAULT_REGISTRY_URL = (
     "DeepSeek-TUI/main/skills-registry/index.json"
 )
 
-# 5 MiB matches Rust ``DEFAULT_MAX_SIZE_BYTES`` (install.rs:66). Applied
+# 5 MiB size cap. Applied
 # both to the compressed download stream AND to the cumulative
 # decompressed bytes — a gzip-bomb wins the first check but fails the
 # second.
 DEFAULT_MAX_SIZE_BYTES = 5 * 1024 * 1024
 
-# Mirrors Rust install.rs:144 — only these hosts are accepted for
-# ``github:`` archive URLs. Anything else fails ``_resolve_archive_urls``.
+# Only these hosts are accepted for ``github:`` archive URLs. Anything
+# else fails ``_resolve_archive_urls``.
 GITHUB_ALLOWED_HOSTS = frozenset({"github.com", "www.github.com"})
 
 # Hosts we accept for the public skill registry index. Matches
@@ -602,10 +578,7 @@ class InstallOutcome(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class InstallSource:
-    """Parsed install source spec.
-
-    Mirrors Rust ``InstallSource::parse``.
-    """
+    """Parsed install source spec."""
 
     kind: str
     owner: str = ""
@@ -696,11 +669,7 @@ def install(
 
 
 def _github_archive_urls(source: InstallSource) -> list[str]:
-    """Candidate archive URLs in fallback order (main → master).
-
-    Mirrors Rust install.rs which tries main then master via
-    ``download_first_success`` (install.rs:295).
-    """
+    """Candidate archive URLs in fallback order (main → master)."""
     base = f"https://github.com/{source.owner}/{source.repo}/archive/refs/heads"
     return [f"{base}/main.tar.gz", f"{base}/master.tar.gz"]
 
@@ -729,8 +698,7 @@ def _install_from_github(
     directory; a successful, validated extract is then ``rename``-d into
     place. A mid-flight failure (Ctrl-C, network error, bomb, traversal
     attempt) leaves no half-baked ``dest/`` behind that the user has to
-    ``rm -rf`` before retrying. Mirrors the Rust install path's
-    tempdir-then-rename pattern.
+    ``rm -rf`` before retrying.
     """
     name = name_override or source.repo
     dest = target_dir / name

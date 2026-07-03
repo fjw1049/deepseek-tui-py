@@ -1,13 +1,4 @@
-"""Provider catalogue + model/context-window resolution.
-
-Mirrors Rust sources:
-
-* ``crates/config/src/lib.rs``       —   provider defaults
-* ``crates/tui/src/config.rs``       —   canonical_model_name
-* ``crates/tui/src/models.rs``       —   context_window_for_model
-                                          + DEFAULT_CONTEXT_WINDOW_TOKENS,
-                                          DEEPSEEK_V4_CONTEXT_WINDOW_TOKENS
-"""
+"""Provider catalogue + model/context-window resolution."""
 
 from __future__ import annotations
 
@@ -29,7 +20,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Constants (mirror crates/tui/src/models.rs:5-8)
+# Constants
 # ---------------------------------------------------------------------------
 
 DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
@@ -41,15 +32,14 @@ CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS = 500_000
 
 
 # ---------------------------------------------------------------------------
-# Model name canonicalisation (mirror config.rs:273-310)
+# Model name canonicalisation
 # ---------------------------------------------------------------------------
 
 
 def canonical_model_name(model: str) -> str | None:
     """Canonicalise common model aliases to stable DeepSeek IDs.
 
-    Returns ``None`` when the model is not a known alias. Mirrors
-    Rust ``canonical_model_name`` (config.rs:273-282).
+    Returns ``None`` when the model is not a known alias.
     """
     lower = model.strip().lower()
     if lower in ("deepseek-v4-pro", "deepseek-v4pro"):
@@ -68,7 +58,7 @@ def canonical_model_name(model: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Context window (mirror models.rs:204-261)
+# Context window
 # ---------------------------------------------------------------------------
 
 
@@ -80,8 +70,7 @@ _CURRENT_DEEPSEEK_V4_ALIASES = frozenset(
 def _deepseek_context_window_hint(model_lower: str) -> int | None:
     """Scan for a ``<n>k`` suffix and return a valid tokens count.
 
-    Matches Rust ``deepseek_context_window_hint`` byte-by-byte
-    (models.rs:232-261): only accepts 8-1024 kilo-tokens, and requires
+    Only accepts 8-1024 kilo-tokens, and requires
     the number to be non-alphanumeric-bordered on both sides so embedded
     digits (like ``v4`` or model-ID versions) don't trigger.
     """
@@ -162,7 +151,7 @@ def context_window_for_model(model: str) -> int:
 
     Preserves the legacy Python signature (always returns an ``int``).
     Config-registered overrides (``[providers.X] context_window`` / custom
-    model default) win; otherwise delegates to the Rust-parity logic in
+    model default) win; otherwise delegates to the logic in
     :func:`_context_window_for_model_optional` and falls back to
     :data:`DEFAULT_CONTEXT_WINDOW_TOKENS` when the model is unknown.
     """
@@ -174,7 +163,7 @@ def context_window_for_model(model: str) -> int:
 
 
 def _context_window_for_model_optional(model: str) -> int | None:
-    """Rust-parity ``context_window_for_model`` returning ``None`` for unknown."""
+    """``context_window_for_model`` returning ``None`` for unknown."""
     lower = model.lower()
     if "deepseek" in lower:
         hint = _deepseek_context_window_hint(lower)
@@ -239,7 +228,7 @@ class ProviderDefaults:
     protocol: str = "openai"
 
 
-# Defaults table — model strings match the Rust ``DEFAULT_*_MODEL`` constants.
+# Defaults table.
 PROVIDER_DEFAULTS: dict[str, ProviderDefaults] = {
     "deepseek": ProviderDefaults(
         base_url="https://api.deepseek.com",

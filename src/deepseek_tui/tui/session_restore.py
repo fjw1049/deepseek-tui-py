@@ -96,7 +96,7 @@ def session_started_at_iso(metadata: dict[str, Any], *, path: Path | None = None
     return None
 
 
-# TUI-backed approval handler — mirrors Rust ``tui/approval.rs``.
+# TUI-backed approval handler.
 #
 # Stage 6.4: Bridges the engine's ``ApprovalHandler`` interface to the
 # Textual ``ApprovalDialog`` modal screen. When the engine requests

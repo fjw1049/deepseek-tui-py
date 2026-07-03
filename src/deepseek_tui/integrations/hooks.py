@@ -177,12 +177,12 @@ def generic_event_frame(frame: BaseModel) -> GenericEventFrameEvent:
 
 """Hook sinks for event emission.
 
-Mirrors ``crates/hooks/src/lib.rs`` (170 lines). Three sinks:
+Three sinks:
 
 - :class:`StdoutHookSink`: prints JSON events line-by-line
 - :class:`JsonlHookSink`: appends timestamped events to a JSONL log file
 - :class:`WebhookHookSink`: POSTs events to a URL with backoff retry
-  (max 2 retries, 200ms × attempt backoff — Rust parity)
+  (max 2 retries, 200ms × attempt backoff)
 """
 
 
@@ -230,8 +230,7 @@ class JsonlHookSink(HookSink):
 class WebhookHookSink(HookSink):
     """POST hook events to a webhook URL.
 
-    Mirrors Rust ``WebhookHookSink`` (lib.rs:108-153): max 2 retries,
-    200ms × retries backoff. Status != 2xx triggers retry.
+    Max 2 retries, 200ms × retries backoff. Status != 2xx triggers retry.
     """
 
     def __init__(self, url: str, max_retries: int = 2) -> None:
@@ -275,8 +274,8 @@ class WebhookHookSink(HookSink):
 class ShellHookSink(HookSink):
     """Execute a shell command when a matching event fires.
 
-    Mirrors Rust HookExecutor — runs command with event JSON on stdin,
-    respects timeout. Only fires for events matching ``event_filter``.
+    Runs command with event JSON on stdin, respects timeout. Only fires
+    for events matching ``event_filter``.
     """
 
     def __init__(
@@ -352,7 +351,7 @@ class HookDispatcher:
 # From executor.py
 # ======================================================================
 
-"""Lifecycle hook executor — mirrors ``crates/tui/src/hooks.rs``.
+"""Lifecycle hook executor.
 
 User-defined shell commands from ``[[hooks.hooks]]`` in config.toml, triggered
 at session/tool/mode/message/error/shell_env lifecycle points.

@@ -1,6 +1,6 @@
 """Durable thread/turn/item runtime for the HTTP API and background tasks.
 
-Mirrors Rust ``crates/tui/src/runtime_threads.rs``. Split into layers:
+Split into layers:
 
 - :mod:`.broadcast` — multi-consumer SSE broadcast channel
 - :mod:`.models`    — constants, enums, record/request pydantic models

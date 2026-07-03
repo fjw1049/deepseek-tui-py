@@ -265,7 +265,7 @@ class EngineHandle:
         return self._cancel_reason
 
     async def steer(self, text: str) -> None:
-        """Inject a user message mid-turn (mirrors Rust rx_steer)."""
+        """Inject a user message mid-turn."""
         await self._steer_queue.put(text)
 
     def is_turn_active(self) -> bool:

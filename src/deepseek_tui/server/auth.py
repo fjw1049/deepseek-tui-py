@@ -28,9 +28,8 @@ def resolve_runtime_auth(
 ) -> ResolvedRuntimeAuth:
     """Resolve the bearer token used for /v1/* routes.
 
-    Priority (mirrors Rust ``resolve_runtime_auth`` plus a Python-side file
-    fallback so CLI/Electron callers share the same secret without explicit
-    plumbing):
+    Priority (a Python-side file fallback lets CLI/Electron callers share the
+    same secret without explicit plumbing):
 
     1. ``cli_token``                  — explicit ``--auth-token``
     2. ``env_token``                  — ``DEEPSEEK_RUNTIME_TOKEN``

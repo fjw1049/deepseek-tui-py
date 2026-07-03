@@ -1,7 +1,6 @@
 """Process isolation — sandbox manager + seatbelt (macOS).
 
 OS execution sandbox — policy, manager, and macOS Seatbelt integration.
-Port of ``docs/DeepSeek-TUI-main/crates/tui/src/sandbox/{policy,mod}.rs``.
 """
 
 from __future__ import annotations
@@ -440,7 +439,6 @@ def apply_sandbox_metadata(
 
 
 # macOS Seatbelt (sandbox-exec) profile generation.
-# Port of ``docs/DeepSeek-TUI-main/crates/tui/src/sandbox/seatbelt.rs``.
 
 
 

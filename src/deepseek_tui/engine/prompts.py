@@ -2,7 +2,6 @@
 
 Consolidates engine/prompts.py, tool_profiles.py, and prompts/ package.
 Engine-level system prompt builder.
-Mirrors ``crates/tui/src/prompts.rs::system_prompt_for_mode_with_context``.
 """
 
 from __future__ import annotations
@@ -75,8 +74,7 @@ def render_environment_block(
 ) -> str:
     """Render the ``## Environment`` block.
 
-    Mirrors Rust ``render_environment_block`` (prompts.rs:51-66). Lists:
-    locale, runtime version, host platform, login shell, current working
+    Lists locale, runtime version, host platform, login shell, current working
     directory. All values are session-stable so the block sits in the
     workspace-static prefix and benefits from KV prefix cache hits.
 
@@ -114,7 +112,7 @@ def build_system_prompt(
     If *override* is provided and non-empty, it is used verbatim (for tests
     and AppRuntime callers that supply their own prompt).
 
-    Otherwise, composes from layered templates following the Rust ordering:
+    Otherwise, composes from layered templates in this order:
       1. mode prompt (base + personality + mode + approval)
       2. project_context block (AGENTS.md / CLAUDE.md / instructions.md)
       3. ## Environment block (lang / version / platform / shell / pwd)
@@ -166,7 +164,7 @@ def build_system_prompt(
             "proactively suggest using `/compact` to the user."
         )
 
-    # Skills context (mirrors Rust skills injection into system prompt)
+    # Skills context
     if skills_context and skills_context.strip():
         full_prompt += "\n\n" + skills_context
 
@@ -325,9 +323,9 @@ def _copy_tool_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 # System prompt composition from layered template files.
-# Mirrors ``crates/tui/src/prompts.rs`` — composable layers loaded at runtime:
+# Composable layers loaded at runtime:
 # base.md → personality overlay → mode delta → approval policy.
-# Prompt files are copied verbatim from the Rust source (English, unmodified).
+# Prompt files are copied verbatim (English, unmodified).
 
 
 _PACKAGE = "deepseek_tui.prompts"
@@ -338,7 +336,7 @@ def _load(relative: str) -> str:
     return (pkg_files(_PACKAGE) / relative).read_text(encoding="utf-8")
 
 
-# Lazy-loaded prompt constants (mirrors Rust include_str! constants)
+# Lazy-loaded prompt constants
 _cache: dict[str, str] = {}
 
 

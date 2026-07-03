@@ -33,7 +33,7 @@ _EXEC_ENV_STORE_KEY = "shell_exec_envs"
 _MAX_STORED_PROCESSES = 20
 
 
-# Default + max foreground timeouts mirror Rust shell.rs:1481-1482.
+# Default + max foreground timeouts.
 EXEC_DEFAULT_TIMEOUT_MS = 120_000
 EXEC_MAX_TIMEOUT_MS = 600_000
 
@@ -616,7 +616,6 @@ def _command_safety_heuristic(tokens: list[str]) -> Decision:
     """Map command_safety analysis to Policy Decision.
 
     Used as the heuristics fallback when no prefix-rule matches.
-    Mirrors the Rust command_safety → Policy::check integration.
     """
     cmd_str = " ".join(tokens)
     analysis = analyze_command(cmd_str)
@@ -633,7 +632,7 @@ def _command_safety_heuristic(tokens: list[str]) -> Decision:
 class PtyProcess:
     """Handle for a pty-backed background command.
 
-    Mirrors Rust ``BackgroundShell::Pty`` (shell.rs:119-). Wraps a process
+    Wraps a process
     id plus a master fd for stdin / stdout multiplex.
     """
 

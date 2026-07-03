@@ -1,4 +1,4 @@
-"""Main TUI application — mirrors Rust ``tui/app.rs`` + ``tui/ui.rs``.
+"""Main TUI application.
 
 Stage 6.1: Wire Engine ↔ TUI so the app can actually send/receive messages.
 Stage 6.5: Slash command activation — SlashMenu in compose tree,
@@ -122,10 +122,9 @@ class DeepSeekTUI(App[None]):
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
         Binding("escape", "esc_press", "Backtrack", show=False),
         Binding("f1", "show_help", "Help", show=False),
-        # Rust-parity bindings (subset). Full Rust catalog has 40+ chords;
-        # this batch covers the highest-traffic ones — pickers, mode cycle,
-        # transcript scroll. Remaining Rust bindings are documented in the
-        #集成债 list as Stage 6 follow-up.
+        # Bindings (subset). This batch covers the highest-traffic ones —
+        # pickers, mode cycle, transcript scroll. Remaining bindings are
+        # documented in the 集成债 list as Stage 6 follow-up.
         Binding("ctrl+r", "open_session_picker", "Sessions"),
         Binding("ctrl+o", "open_model_picker", "Models"),
         Binding("ctrl+p", "open_file_picker", "Files"),
@@ -189,8 +188,7 @@ class DeepSeekTUI(App[None]):
         )
         # Ensure bundled system skills exist before any skill discovery
         # runs (Engine.create reads ``default_skills_dir()`` via
-        # ``discover_in_workspace``). Mirrors Rust ``main.rs:3974`` which
-        # calls ``crate::skills::install_system_skills`` at startup.
+        # ``discover_in_workspace``).
         try:
             from deepseek_tui.integrations.skills import install_system_skills
 
@@ -321,9 +319,7 @@ class DeepSeekTUI(App[None]):
         Returns a status-bar message (or ``None`` if nothing to do).
         Sessions are read from ``~/.deepseek/sessions/<id>.json``; the
         special id ``current``/``latest`` maps to the auto-persisted
-        ``current.json`` snapshot. Mirrors Rust ``run_interactive``'s
-        resume path which also feeds ``SessionManager::load_session``
-        output back into the engine before the first user input.
+        ``current.json`` snapshot.
         """
         if self._engine is None:
             return None
@@ -917,10 +913,10 @@ class DeepSeekTUI(App[None]):
     def action_show_help(self) -> None:
         self.push_screen(HelpPanel())
 
-    # ── Rust-parity action stubs (subset) ────────────────────────────
+    # ── Action stubs (subset) ────────────────────────────
 
     def action_open_session_picker(self) -> None:
-        """Open the session picker (Ctrl+R, Rust ``Ctrl+R``).
+        """Open the session picker (Ctrl+R).
 
         Sessions are loaded from ``~/.deepseek/sessions/*.json``; selection
         triggers the same restore path used by ``--resume``. Empty list
@@ -946,7 +942,7 @@ class DeepSeekTUI(App[None]):
         self.push_screen(SessionPicker(sessions=sessions), _on_pick)
 
     def action_open_model_picker(self) -> None:
-        """Open the model picker (Ctrl+M, Rust ``Ctrl+M``)."""
+        """Open the model picker (Ctrl+M)."""
         from deepseek_tui.tui.dialogs import ModelPicker, _build_model_list_from_config
 
         def _on_pick(picked: str | None) -> None:
@@ -961,7 +957,7 @@ class DeepSeekTUI(App[None]):
         self.push_screen(ModelPicker(models=models), _on_pick)
 
     def action_open_file_picker(self) -> None:
-        """Open the workspace file picker (Ctrl+P, Rust ``Ctrl+P``).
+        """Open the workspace file picker (Ctrl+P).
 
         On selection, prepends the path to the composer as ``@path``.
         """
@@ -979,7 +975,7 @@ class DeepSeekTUI(App[None]):
         self.push_screen(FilePicker(), _on_pick)
 
     def action_cycle_mode(self) -> None:
-        """Cycle agent/plan/yolo/ask/workflow modes (Tab, Rust ``Tab``)."""
+        """Cycle agent/plan/yolo/ask/workflow modes (Tab)."""
         modes = ("agent", "plan", "yolo", "ask", "workflow")
         current = self.query_one(StatusBar)._mode or "agent"
         try:
@@ -1004,8 +1000,8 @@ class DeepSeekTUI(App[None]):
     def action_clear_transcript(self) -> None:
         """Clear visible transcript without resetting engine session.
 
-        Rust ``Ctrl+L`` clears the screen; ``Ctrl+N`` is the full new-session
-        chord. Keeping these distinct mirrors that split.
+        ``Ctrl+L`` clears the screen; ``Ctrl+N`` is the full new-session
+        chord. These two are kept distinct.
         """
         self.query_one(Transcript).clear_messages()
 
@@ -1022,7 +1018,7 @@ class DeepSeekTUI(App[None]):
             pass
 
     def action_toggle_thinking(self) -> None:
-        """Toggle ``ui.show_thinking`` (Ctrl+T, Rust ``Ctrl+T``).
+        """Toggle ``ui.show_thinking`` (Ctrl+T).
 
         The transcript reads the flag at the start of each turn and on
         ``finalize_message``; live deltas always render so the user can
@@ -1062,7 +1058,7 @@ class DeepSeekTUI(App[None]):
         return items
 
     def action_esc_press(self) -> None:
-        """Esc-Esc backtrack chord (mirrors Rust ``backtrack.rs``).
+        """Esc-Esc backtrack chord.
 
         First Esc primes; second opens the picker. The picker shows up
         as a status-bar toast rather than a full overlay (which is logged
@@ -1266,10 +1262,10 @@ class DeepSeekTUI(App[None]):
     # ── notifications ─────────────────────────────────────────────────
 
     def _maybe_notify_turn_done(self) -> None:
-        """Emit OSC 9 / BEL when a long turn finishes (mirrors Rust notifications.rs).
+        """Emit OSC 9 / BEL when a long turn finishes.
 
         Method + threshold are read from the top-level ``[notifications]``
-        section first (Rust parity), falling back to ``Config.ui.notify_*``
+        section first, falling back to ``Config.ui.notify_*``
         when the nested fields are unset. ``notifications.enabled = false``
         suppresses the notification entirely.
         """

@@ -1,7 +1,7 @@
-"""CLI entry point — mirrors ``crates/cli/src/lib.rs``.
+"""CLI entry point.
 
 22 subcommands + global flags, using typer (Python equivalent of clap).
-Rust passthroughs (doctor/models/sessions/resume/fork/init/setup/exec/
+Passthrough subcommands (doctor/models/sessions/resume/fork/init/setup/exec/
 review/apply/eval/mcp/features/completions) become direct calls into the
 corresponding Python modules rather than spawning a sibling binary.
 """
@@ -31,7 +31,7 @@ app = typer.Typer(
     help="DeepSeek TUI — terminal AI agent (Python edition).",
 )
 
-# ── Global flags (mirrors Cli struct in Rust lib.rs:50-96) ───────────────
+# ── Global flags ─────────────────────────────────────────────────────────
 
 CONFIG_OPTION = typer.Option(None, "--config", help="Path to config TOML file.")
 PROFILE_OPTION = typer.Option(None, "--profile", help="Config profile name.")
@@ -134,7 +134,7 @@ def _launch_tui(config: Config) -> None:
 
 
 def _run_one_shot(config: Config, prompt: str) -> None:
-    """Non-interactive single-shot execution (mirrors Rust ``-p`` flag)."""
+    """Non-interactive single-shot execution."""
     asyncio.run(_run_one_shot_async(config, prompt))
 
 
@@ -198,7 +198,7 @@ def version() -> None:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: doctor  (mirrors Rust Commands::Doctor)
+# Subcommand: doctor
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()
@@ -244,7 +244,7 @@ def doctor(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: models  (mirrors Rust Commands::Models → Model list)
+# Subcommand: models
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()
@@ -256,7 +256,7 @@ def models(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: serve  (mirrors Rust Commands::Serve → AppServer)
+# Subcommand: serve
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()
@@ -320,7 +320,7 @@ def serve(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand group: auth  (mirrors Rust Commands::Auth)
+# Subcommand group: auth
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 auth_app = typer.Typer(help="Manage authentication credentials and provider keys.")
@@ -330,7 +330,7 @@ _PROVIDER_LIST = ["deepseek", "nvidia-nim", "openrouter", "novita", "openai"]
 
 
 def _keyring_slot(provider_name: str) -> str:
-    """Map provider name to keyring slot (mirrors Rust keyring_slot)."""
+    """Map provider name to keyring slot."""
     return provider_name
 
 
@@ -478,7 +478,7 @@ def auth_migrate(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: login / logout  (mirrors Rust Commands::Login/Logout)
+# Subcommand: login / logout
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()
@@ -507,7 +507,7 @@ def logout() -> None:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand group: config  (mirrors Rust Commands::Config)
+# Subcommand group: config
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 config_app = typer.Typer(help="Read/write/list config values.")
@@ -639,7 +639,7 @@ def _cli_config_write(key: str, value: str | None) -> None:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand group: model  (mirrors Rust Commands::Model)
+# Subcommand group: model
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 model_app = typer.Typer(help="Resolve or list available models across providers.")
@@ -704,7 +704,7 @@ def model_resolve(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand group: thread  (mirrors Rust Commands::Thread)
+# Subcommand group: thread
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 thread_app = typer.Typer(help="Manage thread/session metadata.")
@@ -861,7 +861,7 @@ def thread_set_name(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: sandbox  (mirrors Rust Commands::Sandbox)
+# Subcommand: sandbox
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 sandbox_app = typer.Typer(help="Evaluate sandbox/approval policy decisions.")
@@ -887,7 +887,7 @@ def sandbox_check(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: features  (mirrors Rust Commands::Features)
+# Subcommand: features
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()
@@ -905,7 +905,7 @@ def features(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: init  (mirrors Rust Commands::Init)
+# Subcommand: init
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()
@@ -927,9 +927,6 @@ def init() -> None:
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Subcommands that are stubs (require later stages)
-# Mirrors Rust: exec, review, apply, eval, sessions, resume, fork,
-#               setup, mcp, completions, app-server,
-#               metrics, update
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.command()

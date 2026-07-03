@@ -1,7 +1,4 @@
-"""Sub-agent core types: constants, agent types/prompts, status and request models.
-
-Mirrors the type half of Rust ``crates/tui/src/tools/subagent/mod.rs``.
-"""
+"""Sub-agent core types: constants, agent types/prompts, status and request models."""
 
 from __future__ import annotations
 
@@ -43,7 +40,7 @@ class SubAgentType(str, Enum):
 
     @staticmethod
     def parse(raw: str) -> SubAgentType | None:
-        """Accepts Rust-compatible aliases (general_purpose, worker, etc.)."""
+        """Accepts aliases (general_purpose, worker, etc.)."""
         key = raw.strip().lower().replace("-", "_")
         aliases: dict[str, SubAgentType] = {
             "general": SubAgentType.GENERAL,
@@ -73,10 +70,7 @@ class SubAgentType(str, Enum):
         return aliases.get(key)
 
     def system_prompt(self) -> str:
-        """Return the system prompt for this agent type.
-
-        Mirrors Rust ``SubAgentType::system_prompt`` (mod.rs:227-237).
-        """
+        """Return the system prompt for this agent type."""
         from deepseek_tui.engine.prompts import load_prompt
 
         output_contract = load_prompt("subagent_output_format")
@@ -204,7 +198,7 @@ def whale_nickname_for_index(index: int) -> str:
 def build_subagent_system_prompt(
     agent_type: SubAgentType, assignment: SubAgentAssignment
 ) -> str:
-    """Mirror Rust ``build_subagent_system_prompt`` (mod.rs:2629)."""
+    """Build the sub-agent system prompt."""
     base = agent_type.system_prompt()
     role = (assignment.role or "").strip()
     if role:

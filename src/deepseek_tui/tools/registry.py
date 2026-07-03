@@ -19,10 +19,7 @@ import logging
 
 
 class ToolCapability(str, Enum):
-    """Capabilities a tool may have or require.
-
-    Mirrors Rust's `tools/spec.rs::ToolCapability`.
-    """
+    """Capabilities a tool may have or require."""
 
     READ_ONLY = "read_only"
     WRITES_FILES = "writes_files"
@@ -34,8 +31,6 @@ class ToolCapability(str, Enum):
 
 class ApprovalRequirement(str, Enum):
     """Approval requirement for a tool.
-
-    Mirrors Rust's `tools/spec.rs::ApprovalRequirement`.
 
     * AUTO: never needs approval (safe, read-only operations)
     * SUGGEST: hint that the user should approve, but allow skipping
@@ -82,10 +77,7 @@ class ToolSpec(ABC):
     # --- Optional metadata with sensible defaults --------------------
 
     def approval_requirement(self) -> ApprovalRequirement:
-        """Return whether this tool needs user approval before running.
-
-        Mirrors Rust ``ToolSpec::approval_requirement`` default in ``spec.rs``.
-        """
+        """Return whether this tool needs user approval before running."""
         caps = self.capabilities()
         if ToolCapability.EXECUTES_CODE in caps:
             return ApprovalRequirement.REQUIRED
@@ -98,15 +90,12 @@ class ToolSpec(ABC):
     def defer_loading(self) -> bool:
         """Whether the model should defer loading the tool's full schema.
 
-        Default ``False``. Mirrors Rust `ToolSpec::defer_loading`.
+        Default ``False``.
         """
         return False
 
     def is_read_only(self) -> bool:
-        """True iff the tool's capabilities include READ_ONLY.
-
-        Mirrors Rust `ToolSpec::is_read_only` (default impl).
-        """
+        """True iff the tool's capabilities include READ_ONLY."""
         return ToolCapability.READ_ONLY in self.capabilities()
 
     def supports_parallel(self) -> bool:
@@ -139,8 +128,7 @@ class ToolContext:
     def resolve_path(self, path: str) -> Path:
         """Resolve ``path`` against the workspace, refusing escapes.
 
-        Mirrors Rust ``PathEscape`` (tools/src/lib.rs:67-75): when the
-        resolved path falls outside ``working_directory``, raise
+        When the resolved path falls outside ``working_directory``, raise
         ``ValueError`` instead of silently rewriting it. The negative
         signal lets the LLM self-correct on the next turn — without it,
         absolute-path hallucinations (``/home/user/foo.py``) keep
@@ -166,23 +154,23 @@ class ToolContext:
         return resolved
 
 
-# Tool registry, mirroring `crates/tui/src/tools/registry.rs`.
+# Tool registry.
 #
-# Two important Rust invariants the Python port preserves:
+# Two important invariants preserved:
 #
-# 1. **Alphabetical sort in `to_api_tools()`** (Rust L144-149, GitHub
-#    issue #263). DeepSeek's KV prefix cache only stays warm if the tool
-#    array is byte-stable across launches. Python's ``dict`` preserves
-#    insertion order, but cross-process registration order varies (env,
-#    config, MCP discovery), so we sort by name on serialisation.
-# 2. **Memoised serialised catalog** (Rust L151-156). Each tool's
+# 1. **Alphabetical sort in `to_api_tools()`**. DeepSeek's KV prefix cache
+#    only stays warm if the tool array is byte-stable across launches.
+#    Python's ``dict`` preserves insertion order, but cross-process
+#    registration order varies (env, config, MCP discovery), so we sort by
+#    name on serialisation.
+# 2. **Memoised serialised catalog**. Each tool's
 #    ``description()`` and ``input_schema()`` is sampled exactly once per
 #    registration. Some tools — notably MCP adapters whose upstream
 #    description string drifts on reconnect — would otherwise rewrite
 #    the catalog mid-session and bust the prefix cache.
 #
 # The wire format we emit is the standard OpenAI ``{type, function}``
-# envelope, with two non-OpenAI Rust extension fields (``allowed_callers``
+# envelope, with two non-OpenAI extension fields (``allowed_callers``
 # and ``defer_loading``) tucked into the ``function`` object. Both fields
 # are silently ignored by providers that don't recognise them.
 #
@@ -204,10 +192,7 @@ class ToolRegistry:
     # ------------------------------------------------------------------
 
     def register(self, tool: ToolSpec) -> None:
-        """Register a tool. Logs a warning if it overwrites an existing one.
-
-        Mirrors Rust ``ToolRegistry::register`` (registry.rs:46-52).
-        """
+        """Register a tool. Logs a warning if it overwrites an existing one."""
         name = tool.name()
         if name in self._tools:
             _LOG.warning("Overwriting existing tool: %s", name)
@@ -215,15 +200,15 @@ class ToolRegistry:
         self._invalidate_api_cache()
 
     def register_all(self, tools: list[ToolSpec]) -> None:
-        """Register every tool in ``tools`` (Rust L55-59)."""
+        """Register every tool in ``tools``."""
         for tool in tools:
             self.register(tool)
 
     def remove(self, name: str) -> ToolSpec | None:
         """Remove a tool by name; return the removed spec or ``None``.
 
-        Mirrors Rust L264-271. Cache is only invalidated if a removal
-        actually happened, matching the Rust early-return.
+        Cache is only invalidated if a removal
+        actually happened, matching the early-return.
         """
         removed = self._tools.pop(name, None)
         if removed is not None:
@@ -231,15 +216,12 @@ class ToolRegistry:
         return removed
 
     def clear(self) -> None:
-        """Remove every registered tool (Rust L274-278)."""
+        """Remove every registered tool."""
         self._tools.clear()
         self._invalidate_api_cache()
 
     def filter_by_names(self, allowed: set[str]) -> None:
-        """Keep only tools whose names appear in *allowed*.
-
-        Mirrors Rust SubAgent scope restriction (mod.rs:810-825).
-        """
+        """Keep only tools whose names appear in *allowed*."""
         to_remove = [n for n in self._tools if n not in allowed]
         if to_remove:
             for n in to_remove:
@@ -262,8 +244,8 @@ class ToolRegistry:
     def names(self) -> list[str]:
         """Return all registered tool names (insertion order, NOT sorted).
 
-        Rust ``names()`` returns insertion-order; only ``to_api_tools``
-        sorts. Keeping this asymmetric matches the Rust contract.
+        Only ``to_api_tools`` sorts; ``names()`` returns insertion order.
+        Keeping this asymmetric is intentional.
         """
         return list(self._tools)
 
@@ -284,14 +266,10 @@ class ToolRegistry:
     # ------------------------------------------------------------------
 
     def read_only_tools(self) -> list[ToolSpec]:
-        """Mirrors Rust L214-219."""
         return [t for t in self._tools.values() if t.is_read_only()]
 
     def approval_required_tools(self) -> list[ToolSpec]:
-        """Tools whose ``approval_requirement()`` is ``REQUIRED``.
-
-        Mirrors Rust L225-231.
-        """
+        """Tools whose ``approval_requirement()`` is ``REQUIRED``."""
         return [
             t
             for t in self._tools.values()
@@ -307,7 +285,7 @@ class ToolRegistry:
         return self._context
 
     def set_context(self, context: ToolContext) -> None:
-        """Replace the registry's tool execution context (Rust L251)."""
+        """Replace the registry's tool execution context."""
         self._context = context
 
     # ------------------------------------------------------------------
@@ -348,9 +326,7 @@ class ToolRegistry:
         context: ToolContext | None = None,
         context_override: ToolContext | None = None,
     ) -> ToolResult:
-        """Rust-named alias for :meth:`execute`, with context override.
-
-        Mirrors Rust ``execute_full_with_context`` (registry.rs:122-134).
+        """Alias for :meth:`execute`, with context override.
 
         Resolution order for the actual context passed to the tool:
 
@@ -388,12 +364,12 @@ class ToolRegistry:
                 "name": ...,
                 "description": ...,
                 "parameters": ...,
-                "allowed_callers": ["direct"],   # Rust extension
-                "defer_loading": false           # Rust extension
+                "allowed_callers": ["direct"],   # extension field
+                "defer_loading": false           # extension field
               }
             }
 
-        ``allowed_callers`` and ``defer_loading`` are Rust extension
+        ``allowed_callers`` and ``defer_loading`` are extension
         fields preserved for behaviour parity; OpenAI / DeepSeek silently
         ignore unknown keys inside ``function``.
         """
@@ -407,7 +383,7 @@ class ToolRegistry:
     def to_api_tools_with_cache(self, enable_cache: bool) -> list[dict[str, Any]]:
         """Return :meth:`to_api_tools` with a cache marker on the last tool.
 
-        Mirrors Rust L190-198. When ``enable_cache`` is true, the last
+        When ``enable_cache`` is true, the last
         entry gets ``cache_control = {"type": "ephemeral"}``, which lets
         prompt-cache-aware providers (Anthropic, some OpenAI proxies)
         anchor the prefix at the end of the tool list.
@@ -430,8 +406,8 @@ class ToolRegistry:
 
     @staticmethod
     def _serialise_tool(tool: ToolSpec) -> dict[str, Any]:
-        # Encode the tool name to the provider-safe wire form. Rust
-        # `to_api_tool_name` (client.rs:25-39) is reversible, so the
+        # Encode the tool name to the provider-safe wire form. The
+        # tool-name encoding is reversible, so the
         # Python in-memory name (which may contain `.` / `:` / non-ASCII)
         # round-trips correctly via `from_api_tool_name` when the model
         # echoes it back. See client.streaming for the decode side.
@@ -695,7 +671,7 @@ def build_subagent_registry(
     root_model: str | None = None,
     extra_tools: list[ToolSpec] | None = None,
 ) -> ToolRegistry:
-    """Tool surface for a sub-agent loop (mirrors Rust ``SubAgentToolRegistry``).
+    """Tool surface for a sub-agent loop.
 
     Default ``allowed_tools=None`` inherits the full agent registry. Custom
     agents pass an explicit allowlist.

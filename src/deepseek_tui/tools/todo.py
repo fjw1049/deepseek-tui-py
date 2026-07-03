@@ -1,4 +1,4 @@
-"""Todo / checklist tools — Python port of Rust ``crates/tui/src/tools/todo.rs``.
+"""Todo / checklist tools.
 
 This module exposes a single 4-tool family — ``checklist_write`` /
 ``checklist_add`` / ``checklist_update`` / ``checklist_list`` — operating on
@@ -50,7 +50,7 @@ _STATUS_GLYPHS: dict[TodoStatus, str] = {
 class TodoItem:
     """A single checklist item.
 
-    Mirrors Rust ``TodoItem`` (``todo.rs:48-53``). The ``id`` stays a
+    The ``id`` stays a
     string in the Python port — legacy tests already index by str —
     while the upgraded ``status`` field replaces the prior 2-state
     ``done: bool``.
@@ -126,7 +126,6 @@ def _coerce_status(value: object, *, default: TodoStatus = "pending") -> TodoSta
 def _enforce_single_in_progress(items: list[TodoItem]) -> None:
     """Enforce the "at most one item in_progress" invariant.
 
-    Mirrors Rust ``TodoStore::ensure_single_in_progress`` (todo.rs:498).
     Called on every write path (add / update / write) before persisting.
     """
     in_progress_ids = [i.id for i in items if i.status == "in_progress"]
@@ -140,7 +139,7 @@ def _enforce_single_in_progress(items: list[TodoItem]) -> None:
 
 
 def _snapshot(store: dict[str, Any]) -> dict[str, Any]:
-    """Serialise the store into the format Rust's ``TodoListSnapshot`` uses.
+    """Serialise the store into the ``TodoListSnapshot`` on-disk format.
 
     Drives both the human-readable rendering and the ``task_updates``
     metadata side-channel.
@@ -167,8 +166,7 @@ def _snapshot(store: dict[str, Any]) -> dict[str, Any]:
 def _build_result_metadata(store: dict[str, Any], *, tool_name: str) -> dict[str, Any]:
     """Build the ``ToolResult.metadata`` payload.
 
-    Mirrors Rust ``checklist_metadata()`` (``todo.rs:549-573``). The
-    nested ``task_updates.checklist`` block is what gets routed to
+    The nested ``task_updates.checklist`` block is what gets routed to
     :class:`TaskManager` for durable persistence.
     """
     snap = _snapshot(store)
@@ -189,10 +187,8 @@ def _forward_to_task_manager(
     spawned Engine's ``ToolContext.metadata`` (see
     :mod:`deepseek_tui.engine.dispatch`). When both are present, we
     fire-and-forget a coroutine that persists the snapshot to the
-    on-disk ``TaskRecord.checklist`` field, mirroring Rust's
-    event-stream-driven ``apply_task_update_metadata`` path. Missing
-    keys (= we're not inside a task) is the normal case and silently
-    skipped.
+    on-disk ``TaskRecord.checklist`` field. Missing keys (= we're not
+    inside a task) is the normal case and silently skipped.
     """
     task_id = context.metadata.get(_TASK_ID_KEY)
     manager = context.metadata.get(_TASK_MANAGER_KEY)
@@ -215,8 +211,7 @@ def _forward_to_task_manager(
 class TodoWriteTool(ToolSpec):
     """Replace the active checklist.
 
-    Matches Rust ``todo.rs`` ``TodoWriteTool::checklist``. Operates on the
-    shared in-memory store via :class:`ToolContext.metadata`.
+    Operates on the shared in-memory store via :class:`ToolContext.metadata`.
 
     Schema accepts two shapes:
 
@@ -486,8 +481,8 @@ class TodoListTool(ToolSpec):
             for i in items
         ]
         metadata = _build_result_metadata(store, tool_name=self.name())
-        # Listing is read-only — no task_updates forwarding (matches Rust:
-        # ``checklist_metadata`` is only attached to write paths).
+        # Listing is read-only — no task_updates forwarding
+        # (``checklist_metadata`` is only attached to write paths).
         metadata.pop("task_updates", None)
         return ToolResult(
             success=True,

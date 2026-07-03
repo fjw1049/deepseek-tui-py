@@ -1,8 +1,5 @@
 """First-run onboarding screen.
 
-Mirrors ``crates/tui/src/tui/onboarding/`` (167 LOC for ``mod.rs`` plus
-``welcome.rs``, ``api_key.rs``, ``trust_directory.rs``).
-
 Three-step flow:
 
 1. Welcome — short intro + "Press Enter to continue".
@@ -29,7 +26,7 @@ from textual.widgets import Input, Label, Static
 
 
 class OnboardingStep(str, enum.Enum):
-    """Mirror Rust ``OnboardingState`` (onboarding/mod.rs:33)."""
+    """Onboarding flow step."""
 
     WELCOME = "welcome"
     API_KEY = "api_key"
@@ -37,7 +34,7 @@ class OnboardingStep(str, enum.Enum):
 
 
 def default_marker_path() -> Path:
-    """Mirror Rust ``default_marker_path`` (onboarding/mod.rs:134).
+    """Path of the onboarding-complete marker file.
 
     Project-local since 2026-05-11 — each checkout decides whether the
     user has finished its own onboarding.
@@ -48,12 +45,12 @@ def default_marker_path() -> Path:
 
 
 def is_onboarded() -> bool:
-    """Mirror Rust ``is_onboarded`` (onboarding/mod.rs:138)."""
+    """``True`` if onboarding has already been completed."""
     return default_marker_path().exists()
 
 
 def mark_onboarded() -> Path:
-    """Mirror Rust ``mark_onboarded`` (onboarding/mod.rs:142)."""
+    """Write the onboarding-complete marker file and return its path."""
     path = default_marker_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("")
@@ -61,7 +58,7 @@ def mark_onboarded() -> Path:
 
 
 def mask_key(key: str) -> str:
-    """Mirror Rust ``mask_key`` (onboarding/api_key.rs:71)."""
+    """Mask an API key, revealing only the last four characters."""
     trimmed = key.strip()
     n = len(trimmed)
     if n == 0:

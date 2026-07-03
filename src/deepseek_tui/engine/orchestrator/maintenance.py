@@ -28,7 +28,7 @@ class SessionMaintenanceMixin:
     def _take_pre_tool_snapshot(
         self, tool_call_id: str, tool_name: str, args: dict[str, Any]
     ) -> None:
-        """Capture file contents before a write tool runs (mirrors Rust #384).
+        """Capture file contents before a write tool runs.
 
         Best-effort — failures here must never block tool execution.
         """
@@ -60,7 +60,7 @@ class SessionMaintenanceMixin:
                 del self.tool_snapshots[oldest]
 
     def undo_last_tool(self) -> tuple[bool, str]:
-        """Restore the most recent tool snapshot (mirrors Rust /undo).
+        """Restore the most recent tool snapshot.
 
         Returns (success, message).
         """
@@ -180,7 +180,7 @@ class SessionMaintenanceMixin:
         """Best-effort session persistence after each turn.
 
         Writes session_messages to a JSON file so sessions survive restarts.
-        Mirrors Rust ``Engine::auto_save_session`` behavior. Silent on failure.
+        Silent on failure.
         """
         try:
             from deepseek_tui.config.paths import user_sessions_dir

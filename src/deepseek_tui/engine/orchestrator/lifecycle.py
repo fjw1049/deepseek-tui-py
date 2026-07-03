@@ -100,7 +100,6 @@ class LifecycleLspMixin:
     ) -> None:
         """Queue diagnostics for files the tool just edited.
 
-        Mirrors Rust ``Engine::run_post_edit_lsp_hook`` (lsp_hooks.rs:80-103).
         Silent failure — a dead LSP server must never block the agent.
         """
         manager = self._get_lsp_manager()
@@ -130,8 +129,7 @@ class LifecycleLspMixin:
     def _flush_pending_lsp_diagnostics(self, messages: list[Message]) -> None:
         """Render pending blocks into a synthetic user message.
 
-        Mirrors Rust ``Engine::flush_pending_lsp_diagnostics``
-        (lsp_hooks.rs:110-127). Attaches the rendered block to
+        Attaches the rendered block to
         ``messages`` in place so it rides the next request.
         """
         if not self.pending_lsp_blocks:

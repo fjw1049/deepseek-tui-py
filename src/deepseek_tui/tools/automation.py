@@ -9,8 +9,6 @@ from __future__ import annotations
 
 # Model-visible automation tools backed by :class:`AutomationManager`.
 #
-# Mirrors Rust ``crates/tui/src/tools/automation.rs`` (382 LOC).
-#
 # Eight tools:
 #
 # ================== ================================================
@@ -74,11 +72,7 @@ AUTOMATION_MANAGER_KEY = "automation_manager"
 
 
 def _get_manager(context: ToolContext) -> AutomationManager:
-    """Pull the ``AutomationManager`` off the context, or raise.
-
-    Mirrors Rust ``context.runtime.automations`` ``ok_or_else``
-    (automation.rs:62-66).
-    """
+    """Pull the ``AutomationManager`` off the context, or raise."""
     raw = context.metadata.get(AUTOMATION_MANAGER_KEY)
     if raw is None:
         raise ToolError(
@@ -573,7 +567,7 @@ class AutomationRunTool(ToolSpec):
         automation_id = _require_string(input_data, "automation_id")
 
         # The run_now path requires a TaskManager — pick it up off the
-        # context the same way Rust does (``runtime.task_manager``).
+        # context (``runtime.task_manager``).
         from deepseek_tui.tools.task import TaskManager
 
         task_manager_raw = context.metadata.get("task_manager")
@@ -602,8 +596,6 @@ _ = asdict
 
 # Durable automation records and scheduler-supporting manager.
 #
-# Mirrors Rust ``crates/tui/src/automation_manager.rs`` (937 LOC).
-#
 # Automations are local-first recurring jobs that **enqueue standard
 # durable tasks**. This module stores automation definitions and run
 # history under ``~/.deepseek/automations/`` (or
@@ -622,13 +614,12 @@ _ = asdict
 # Every disk write goes through ``write_json_atomic`` (tmp file + rename)
 # so partially-written records cannot survive a crash.
 #
-# RRULE subset matches Rust :class:`AutomationSchedule`:
+# RRULE subset:
 #
 # * ``FREQ=HOURLY;INTERVAL=N[;BYDAY=MO,TU]``
 # * ``FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=30``
 #
-# Times in ``next_after`` are computed in **local time** (matches Rust
-# ``with_timezone(&Local)`` at automation_manager.rs:223) so a user with
+# Times in ``next_after`` are computed in **local time** so a user with
 # a 9am rule fires at their local 9am, not UTC 9am.
 #
 
@@ -655,11 +646,11 @@ logger = logging.getLogger(__name__)
 CURRENT_AUTOMATION_SCHEMA_VERSION = 1
 CURRENT_RUN_SCHEMA_VERSION = 1
 
-# Mapping the Rust ``Weekday`` enum (Mon=0…Sun=6) to Python ``datetime``
+# Mapping the ``Weekday`` enum (Mon=0…Sun=6) to Python ``datetime``
 # weekday integers. Python ``datetime.weekday()`` already uses the same
 # 0..6 Monday-first convention so the mapping is the identity, but we
 # keep an explicit table so ``parse_byday`` round-trips cleanly with the
-# string forms Rust accepts.
+# string forms accepted.
 _WEEKDAY_BY_TOKEN: dict[str, int] = {
     "MO": 0,
     "TU": 1,
@@ -672,14 +663,14 @@ _WEEKDAY_BY_TOKEN: dict[str, int] = {
 
 
 class AutomationStatus(str, Enum):
-    """Mirrors Rust ``AutomationStatus`` (snake_case on the wire)."""
+    """Automation status (snake_case on the wire)."""
 
     ACTIVE = "active"
     PAUSED = "paused"
 
 
 class AutomationRunStatus(str, Enum):
-    """Mirrors Rust ``AutomationRunStatus``."""
+    """Automation run status."""
 
     QUEUED = "queued"
     RUNNING = "running"
@@ -689,7 +680,7 @@ class AutomationRunStatus(str, Enum):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# RRULE parsing — Rust automation_manager.rs:120-296
+# RRULE parsing
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -733,10 +724,7 @@ class AutomationSchedule:
 
     @classmethod
     def parse_rrule(cls, rrule: str) -> AutomationSchedule:
-        """Parse an RRULE string. Raises :class:`ValueError` on bad input.
-
-        Mirrors Rust ``AutomationSchedule::parse_rrule`` (132-220).
-        """
+        """Parse an RRULE string. Raises :class:`ValueError` on bad input."""
         parts: dict[str, str] = {}
         for raw in rrule.split(";"):
             item = raw.strip()
@@ -810,7 +798,7 @@ class AutomationSchedule:
 
         Both input and output are timezone-aware UTC ``datetime``s.
         Internally we convert to local time so weekly BYHOUR=9 fires at
-        the user's 9am, mirroring Rust automation_manager.rs:223.
+        the user's 9am.
         """
         if after.tzinfo is None:
             raise ValueError("after must be timezone-aware")
@@ -824,7 +812,7 @@ class AutomationSchedule:
             ).replace(second=0, microsecond=0)
             if payload.byday is not None:
                 # Search up to 21 days ahead in INTERVAL-hour steps;
-                # matches the Rust ``24 * 21`` cap (line 234).
+                # 24 * 21 cap.
                 for _ in range(24 * 21):
                     if candidate.weekday() in payload.byday:
                         return candidate.astimezone(timezone.utc)
@@ -856,7 +844,6 @@ class AutomationSchedule:
 
 
 def _parse_byday(value: str) -> list[int]:
-    """Mirrors Rust ``parse_byday`` (278-296)."""
     days: list[int] = []
     for token in value.split(","):
         key = token.strip().upper()
@@ -875,7 +862,7 @@ def _parse_byday(value: str) -> list[int]:
 
 @dataclass(slots=True)
 class AutomationRecord:
-    """Mirrors Rust ``AutomationRecord``. ``cwds`` is a list of strings
+    """``cwds`` is a list of strings
     (Path-like) so it round-trips through JSON without needing a custom
     encoder."""
 
@@ -946,7 +933,7 @@ class AutomationRecord:
 
 @dataclass(slots=True)
 class AutomationRunRecord:
-    """Mirrors Rust ``AutomationRunRecord``."""
+    """A single automation run record."""
 
     id: str
     automation_id: str
@@ -1049,7 +1036,6 @@ def _parse_iso(value: str) -> datetime:
 
 
 def validate_name_and_prompt(name: str, prompt: str) -> None:
-    """Mirrors Rust ``validate_name_and_prompt`` (762-770)."""
     if not name.strip():
         raise ValueError("Automation name is required")
     if not prompt.strip():
@@ -1064,10 +1050,7 @@ def write_json_atomic(path: Path, value: Any) -> None:
 
 
 def default_automations_dir() -> Path:
-    """``$DEEPSEEK_AUTOMATIONS_DIR`` or ``~/.deepseek/automations``.
-
-    Mirrors Rust ``default_automations_dir`` (790-800).
-    """
+    """``$DEEPSEEK_AUTOMATIONS_DIR`` or ``~/.deepseek/automations``."""
     override = os.environ.get("DEEPSEEK_AUTOMATIONS_DIR", "").strip()
     if override:
         return Path(override)
@@ -1083,7 +1066,7 @@ def default_automations_dir() -> Path:
 class AutomationManager:
     """In-process automation registry.
 
-    Mirrors Rust ``AutomationManager`` (299-760). All disk IO is
+    All disk IO is
     synchronous (the records are tiny JSON files); the ``async`` methods
     only exist where they need to ``await`` ``TaskManager`` calls.
 
@@ -1129,7 +1112,6 @@ class AutomationManager:
     # ── CRUD ──
 
     def create_automation(self, req: CreateAutomationRequest) -> AutomationRecord:
-        """Mirrors Rust ``create_automation`` (335-362)."""
         validate_name_and_prompt(req.name, req.prompt)
         schedule = AutomationSchedule.parse_rrule(req.rrule)
         now = _utc_now()
@@ -1184,7 +1166,6 @@ class AutomationManager:
     def update_automation(
         self, automation_id: str, req: UpdateAutomationRequest
     ) -> AutomationRecord:
-        """Mirrors Rust ``update_automation`` (411-455)."""
         existing = self.get_automation(automation_id)
 
         if req.name is not None:
@@ -1271,7 +1252,6 @@ class AutomationManager:
         run: AutomationRunRecord,
         task_manager: TaskManager,
     ) -> None:
-        """Mirrors Rust ``enqueue_run_task`` (539-574) via ``automation.pipeline``."""
         from deepseek_tui.automation.pipeline import enqueue_automation_task
 
         await enqueue_automation_task(automation, run, task_manager)
@@ -1279,7 +1259,6 @@ class AutomationManager:
     async def run_now(
         self, automation_id: str, task_manager: TaskManager
     ) -> AutomationRunRecord:
-        """Mirrors Rust ``run_now`` (576-614)."""
         automation = self.get_automation(automation_id)
         now = _utc_now_iso()
         run = AutomationRunRecord(
@@ -1310,9 +1289,9 @@ class AutomationManager:
     # ── scheduler ──
 
     async def scheduler_tick(self, task_manager: TaskManager) -> None:
-        """Mirrors Rust ``scheduler_tick`` (616-677).
+        """Iterate all active automations.
 
-        Iterates all active automations, fires due ones (idempotent on
+        Fires due ones (idempotent on
         ``scheduled_for == due_at``), and advances ``next_run_at`` for
         each.
         """
@@ -1336,7 +1315,7 @@ class AutomationManager:
                 continue
 
             # Idempotency guard: don't re-fire the same scheduled slot if
-            # we already wrote a run for it. Mirrors Rust 640-650.
+            # we already wrote a run for it.
             existing_for_slot = any(
                 run.scheduled_for == automation.next_run_at
                 for run in self.list_runs(automation.id, limit=25)
@@ -1367,9 +1346,7 @@ class AutomationManager:
             self.save_automation(automation)
 
     async def reconcile_run_statuses(self, task_manager: TaskManager) -> None:
-        """Mirrors Rust ``reconcile_run_statuses`` (679-759).
-
-        Walks every Queued/Running run, looks up its linked Task, and
+        """Walk every Queued/Running run, looks up its linked Task, and
         propagates the Task status back into the Run.
         """
         from deepseek_tui.tools.task import TaskStatus
@@ -1456,8 +1433,6 @@ class AutomationManager:
 
 # Background scheduler for :class:`AutomationManager`.
 #
-# Mirrors Rust ``automation_manager.rs::spawn_scheduler`` (817-850).
-#
 # The loop ticks the manager + reconciles run statuses on a fixed
 # cadence. Failures inside a single tick are logged and swallowed so a
 # transient error never kills the scheduler — the next tick gets a fresh
@@ -1466,8 +1441,7 @@ class AutomationManager:
 # Q1 decision (Engine-level): one scheduler task per ``Engine`` instance,
 # started in ``Engine.create`` and cancelled in ``Engine.shutdown``.
 #
-# Q2 decision: tick interval defaults to 15 s (matches Rust
-# ``AutomationSchedulerConfig::default``), with a 5-second floor for
+# Q2 decision: tick interval defaults to 15 s, with a 5-second floor for
 # sanity. Tests can pass ``tick_interval_secs=1`` for fast iteration.
 #
 
@@ -1484,10 +1458,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class AutomationSchedulerConfig:
-    """Mirrors Rust ``AutomationSchedulerConfig`` (805-815).
+    """Scheduler configuration.
 
-    The ``tick_interval_secs`` floor of 5 matches the Rust ``.max(5)``
-    clamp at line 827.
+    The ``tick_interval_secs`` floor of 5 matches the ``.max(5)`` floor.
     """
 
     tick_interval_secs: float = 15.0
@@ -1509,8 +1482,7 @@ async def run_scheduler_loop(
     3. Sleep up to ``tick_interval_secs`` or wake early on cancel.
 
     Exceptions in tick/reconcile are logged at warning level and
-    swallowed (Rust does the same with ``tracing::warn!`` — see
-    automation_manager.rs:836, 839).
+    swallowed.
     """
     cfg = config or AutomationSchedulerConfig()
     interval = max(5.0, float(cfg.tick_interval_secs))
@@ -1531,8 +1503,7 @@ async def run_scheduler_loop(
             logger.warning("automation_scheduler_reconcile_failed: %s", exc)
 
         # Sleep until the next tick OR until cancel fires, whichever is
-        # first. ``asyncio.wait`` here mirrors Rust ``tokio::select!``
-        # at line 843.
+        # first.
         try:
             await asyncio.wait_for(cancel.wait(), timeout=interval)
         except asyncio.TimeoutError:

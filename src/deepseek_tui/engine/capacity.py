@@ -2,8 +2,6 @@
 
 Consolidates capacity.py, capacity_flow.py, compaction.py.
 Capacity-aware guardrail controller for context pressure management.
-Mirrors ``crates/tui/src/core/capacity.rs:1-784``
-+ ``crates/tui/src/core/engine/capacity_flow.rs:1-975``.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from pathlib import Path
 
 
 class GuardrailAction(enum.Enum):
-    """Guardrail intervention decision (mirrors Rust GuardrailAction)."""
+    """Guardrail intervention decision."""
     NO_INTERVENTION = "no_intervention"
     TARGETED_CONTEXT_REFRESH = "targeted_context_refresh"
     VERIFY_WITH_TOOL_REPLAY = "verify_with_tool_replay"
@@ -29,7 +27,7 @@ class GuardrailAction(enum.Enum):
 
 
 class RiskBand(enum.Enum):
-    """Coarse failure risk classification (mirrors Rust RiskBand)."""
+    """Coarse failure risk classification."""
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -37,7 +35,7 @@ class RiskBand(enum.Enum):
 
 @dataclass
 class CapacityObservationInput:
-    """Input for observing current turn pressure (mirrors Rust struct)."""
+    """Input for observing current turn pressure."""
     turn_index: int
     model: str
     action_count_this_turn: int
@@ -48,7 +46,7 @@ class CapacityObservationInput:
 
 @dataclass
 class DynamicSlackProfile:
-    """Rolling slack profile metrics (mirrors Rust struct)."""
+    """Rolling slack profile metrics."""
     final_slack: float = 0.0
     min_slack: float = 0.0
     violation_ratio: float = 0.0
@@ -58,7 +56,7 @@ class DynamicSlackProfile:
 
 @dataclass
 class CapacitySnapshot:
-    """Per-checkpoint capacity snapshot (mirrors Rust struct)."""
+    """Per-checkpoint capacity snapshot."""
     turn_index: int
     h_hat: float  # estimated context used (normalized 0-1)
     c_hat: float  # context budget scaled
@@ -71,17 +69,17 @@ class CapacitySnapshot:
 
 @dataclass
 class CapacityDecision:
-    """Full controller decision with reason and cooldown (mirrors Rust struct)."""
+    """Full controller decision with reason and cooldown."""
     action: GuardrailAction
     reason: str
     cooldown_blocked: bool = False
 
 
 class CapacityControllerConfig:
-    """Configuration for CapacityController (mirrors Rust CapacityControllerConfig)."""
+    """Configuration for CapacityController."""
 
     def __init__(self) -> None:
-        """Initialize with Rust defaults."""
+        """Initialize with default thresholds."""
         self.enabled: bool = False
         self.low_risk_max: float = 0.50
         self.medium_risk_max: float = 0.62
@@ -102,7 +100,7 @@ class CapacityControllerConfig:
 
     @staticmethod
     def from_app_config(config_dict: CapacityConfig) -> CapacityControllerConfig:
-        """Build effective capacity config from app config dict (mirrors Rust method)."""
+        """Build effective capacity config from app config dict."""
         out = CapacityControllerConfig()
 
         if config_dict.enabled is not None:
@@ -131,7 +129,7 @@ class CapacityControllerConfig:
 
 @dataclass
 class CapacityController:
-    """Main capacity guardrail controller (mirrors Rust CapacityController impl)."""
+    """Main capacity guardrail controller."""
 
     config: CapacityControllerConfig
     # Rolling history of slack values (for volatility tracking)
@@ -334,7 +332,6 @@ class CapacityController:
 
 
 # Capacity checkpoint flow logic for the Engine.
-# Simplified port of ``crates/tui/src/core/engine/capacity_flow.rs:1-975``.
 # Implements the 3 checkpoint entry points that route to guardrail actions.
 # Full tool-replay and canonical-state-rebuild logic is deferred (P1).
 
@@ -401,7 +398,6 @@ async def run_pre_request_checkpoint(
     """Pre-request checkpoint: if TARGETED_CONTEXT_REFRESH, trigger compaction.
 
     Returns (decision, compacted) where compacted is True if messages were modified.
-    Mirrors capacity_flow.rs:13-34.
     """
     obs = build_observation(turn_index, model, messages)
     snapshot: CapacitySnapshot | None = controller.observe_pre_turn(obs)
@@ -430,7 +426,6 @@ async def run_post_tool_checkpoint(
 
     Full VERIFY_WITH_TOOL_REPLAY (re-running read-only tools) is deferred.
     For now, logs the decision and returns it for caller awareness.
-    Mirrors capacity_flow.rs:37-76.
     """
     obs = build_observation(turn_index, model, messages)
     snapshot = controller.observe_post_tool(obs)
@@ -459,7 +454,6 @@ async def run_error_escalation_checkpoint(
 
     Full VERIFY_AND_REPLAN (canonical state rebuild) is deferred.
     For now, logs escalation decisions for caller awareness.
-    Mirrors capacity_flow.rs:78-151.
     """
     if step_error_count == 0 and consecutive_tool_error_steps < 2:
         return CapacityDecision(
@@ -485,14 +479,13 @@ async def run_error_escalation_checkpoint(
 
 
 # Context compaction for long conversations.
-# Mirrors ``crates/tui/src/compaction.rs:1-2008``.
 
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.seam import truncate_chars as _truncate_chars
 from deepseek_tui.protocol.messages import Message
 
-# Configuration constants (mirrors Rust)
+# Configuration constants
 KEEP_RECENT_MESSAGES = 4
 MIN_SUMMARIZE_MESSAGES = 6
 MAX_WORKING_SET_PATHS = 24
@@ -509,7 +502,7 @@ LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS = 36_000
 LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
-# Rust v0.8.11: hard floor for automatic compaction. Below this,
+# Hard floor for automatic compaction. Below this,
 # should_compact() returns false regardless of config. Tuned for V4's
 # 1M window with real-input-token semantics (last_real_input_tokens):
 # 200K = 20% of window. Below this the prefix cache is still healthy
@@ -522,15 +515,15 @@ MINIMUM_AUTO_COMPACTION_TOKENS = 200_000
 class CompactionConfig:
     """Configuration for conversation compaction behavior.
 
-    Mirrors Rust CompactionConfig (compaction.rs:29). Key difference from
+    Key difference from
     prior Python: ``model`` defaults to None which means "use the same
-    model as the main conversation" (Rust behavior). The old default of
+    model as the main conversation". The old default of
     "deepseek-chat" silently routed compaction to v4-flash.
     """
     enabled: bool = True
     token_threshold: int = 400_000  # Trigger compaction at ~40% of V4 1M window
-    message_threshold: int = 500  # Rust uses token-based, not message-based
-    model: str | None = None  # None = inherit main model (Rust behavior)
+    message_threshold: int = 500  # token-based upstream, not message-based
+    model: str | None = None  # None = inherit main model
     cache_summary: bool = True
     auto_floor_tokens: int = MINIMUM_AUTO_COMPACTION_TOKENS
 
@@ -729,7 +722,7 @@ def should_compact(
         return real_input_tokens >= config.token_threshold
 
     # Fallback: char-based estimate (first turn, or provider reported no usage).
-    # Rust v0.8.11: hard floor — don't auto-compact below this token count.
+    # Hard floor — don't auto-compact below this token count.
     # V4 prefix-cache economics: compaction rewrites the stable prefix,
     # destroying KV cache. At low token counts the cache is healthy and
     # compaction's cost dwarfs its benefit.

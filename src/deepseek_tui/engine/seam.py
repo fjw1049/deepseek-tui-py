@@ -1,6 +1,5 @@
 """Seam manager — append-only layered context management with Flash.
 
-Mirrors Rust ``seam_manager.rs`` (~700 LOC).
 Produces `<archived_context>` blocks using a cheap/fast summarization model,
 preserving the prefix cache by appending summaries rather than replacing messages.
 """
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
     from deepseek_tui.protocol.messages import Message
 
-# --- Default thresholds (Rust seam_manager.rs:48-56) -------------------------
+# --- Default thresholds ------------------------------------------------------
 
 DEFAULT_SEAM_MODEL = "deepseek-v4-flash"
 DEFAULT_L1_THRESHOLD = 192_000

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 
 
-# Status footer — mirrors Rust ``crates/tui/src/tui/widgets/footer.rs``.
+# Status footer.
 #
 # Single 1-row bar docked to the bottom of the app, rendered as a
 # 3-column Rich ``Table.grid`` inside one ``Static``. The earlier
@@ -14,7 +14,7 @@ from __future__ import annotations
 # ``Composer`` on the same edge); collapsing to one Static + one
 # internal grid sidesteps the layout fight entirely while keeping the
 # ``mode·model·cost  /  chord chips  /  cache·worked·ctx`` layout the
-# user designed off the Rust footer. Middle chord hints omit ``⇧⇥ mode``
+# user designed. Middle chord hints omit ``⇧⇥ mode``
 # and ``⌃O models`` (shortcuts still work); only ``⌃P`` / ``⌃R`` remain.
 #
 # Legacy parity (phase-E tests): the ``_status``, ``_model``, ``_mode``,
@@ -213,14 +213,12 @@ class StatusBar(Static):
 
 # Frame-rate limiter for the TUI render loop.
 #
-# Mirrors ``crates/tui/src/tui/frame_rate_limiter.rs`` (186 LOC).
-#
 # When the model streams a long assistant response, every SSE chunk would
 # fire a redraw. The user can't perceive frames faster than ~120 FPS, and
 # ratatui/Textual diff-and-flush has real cost, so capping the redraw rate
 # is a strict performance win.
 #
-# In Python/Textual, the integration is conceptually the same as Rust: the
+# In Python/Textual, the integration is conceptually the same: the
 # caller marks a draw event, then asks the limiter how long to wait before
 # the next draw is allowed. The implementation is monotonic-time based and
 # agnostic to the UI framework.
@@ -232,10 +230,7 @@ LOW_MOTION_MIN_FRAME_INTERVAL_SECS: float = 1.0 / 30.0
 
 @dataclass(slots=True)
 class FrameRateLimiter:
-    """Remembers the most recent emitted draw, allowing deadlines to be clamped.
-
-    Mirror Rust ``FrameRateLimiter`` (frame_rate_limiter.rs:44).
-    """
+    """Remembers the most recent emitted draw, allowing deadlines to be clamped."""
 
     last_emitted_at: float | None = None
     low_motion: bool = False
@@ -248,10 +243,7 @@ class FrameRateLimiter:
         )
 
     def clamp_deadline(self, requested: float) -> float:
-        """Return *requested*, clamped forward if it would exceed the cap.
-
-        Mirror Rust ``clamp_deadline`` (frame_rate_limiter.rs:55).
-        """
+        """Return *requested*, clamped forward if it would exceed the cap."""
         last = self.last_emitted_at
         if last is None:
             return requested
@@ -263,10 +255,7 @@ class FrameRateLimiter:
         self.last_emitted_at = emitted_at
 
     def time_until_next_draw(self, now: float) -> float | None:
-        """Seconds until next draw allowed; None if allowed now.
-
-        Mirror Rust ``time_until_next_draw`` (frame_rate_limiter.rs:74).
-        """
+        """Seconds until next draw allowed; None if allowed now."""
         clamped = self.clamp_deadline(now)
         if clamped <= now:
             return None
@@ -278,8 +267,6 @@ class FrameRateLimiter:
 
 
 # OSC 8 hyperlink emission and stripping.
-#
-# Mirrors ``crates/tui/src/tui/osc8.rs`` (165 LOC).
 #
 # Modern terminals (iTerm2, Terminal.app 13+, Ghostty, Kitty, WezTerm,
 # Alacritty, recent gnome-terminal/konsole) make a substring clickable when
@@ -314,7 +301,6 @@ def enabled() -> bool:
 def wrap_link(target: str, label: str) -> str:
     """Wrap *label* so it links to *target* in OSC 8-aware terminals.
 
-    Mirrors Rust ``wrap_link`` (osc8.rs:47).
     Does not check :func:`enabled` — callers wanting the runtime gate
     should branch on it before calling.
     """
@@ -324,7 +310,6 @@ def wrap_link(target: str, label: str) -> str:
 def strip_into(s: str, out: list[str]) -> None:
     """Append *s* to *out* with OSC 8 escape sequences removed.
 
-    Mirrors Rust ``strip_into`` (osc8.rs:62).
     Other escapes (color, style) pass through untouched. Handles both the
     standard ``ESC \\`` and lone ``BEL`` terminators.
     """

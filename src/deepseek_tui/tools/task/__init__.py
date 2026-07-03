@@ -1,6 +1,5 @@
 """Task lifecycle — tools and durable persistence manager.
 
-Mirrors Rust ``crates/tui/src/tools/tasks.rs`` + ``task_manager.rs``.
 Split by responsibility:
 
 - :mod:`.models`      — task records, requests, constants

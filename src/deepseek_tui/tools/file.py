@@ -99,10 +99,7 @@ class WriteFileTool(ToolSpec):
 
 
 class EditFileTool(ToolSpec):
-    """Replace text in a UTF-8 file via exact search/replace (all occurrences).
-
-    Schema mirrors Rust ``crates/tui/src/tools/file.rs:283-372``.
-    """
+    """Replace text in a UTF-8 file via exact search/replace (all occurrences)."""
 
     def name(self) -> str:
         return "edit_file"
@@ -200,7 +197,7 @@ def _require_string_with_alias(
 ) -> str:
     """Accept primary key, fall back to alias (for schema migration).
 
-    Used by ``edit_file`` to accept both Rust-parity ``search``/``replace``
+    Used by ``edit_file`` to accept both ``search``/``replace``
     and legacy ``old_string``/``new_string`` so models trained on either
     schema still work.
     """

@@ -247,8 +247,7 @@ async def create_tool_runtime(
         # every fire ends up calling ``TaskManager.add_task``. Fail
         # fast at construction time rather than letting the LLM call
         # ``automation_run`` and discover the missing dependency at
-        # runtime. Mirrors Rust ``registry.rs::with_runtime_task_tools``
-        # which registers task + automation tools together.
+        # runtime.
         if not cfg.features.tasks:
             raise ValueError(
                 "features.automations requires features.tasks=True "
@@ -262,7 +261,7 @@ async def create_tool_runtime(
         automation_manager = AutomationManager.open(automation_root)
         metadata[AUTOMATION_MANAGER_KEY] = automation_manager
         # AutomationRunTool reaches the TaskManager through the same
-        # context.metadata bag — Rust does this through ``runtime``.
+        # context.metadata bag.
         # The ``features.tasks`` guard above guarantees task_manager is
         # not None here.
         assert task_manager is not None
@@ -409,8 +408,8 @@ def _safe_subagent_executor() -> Any:
 async def _build_mcp_manager(cfg: Config) -> McpManager:
     """Load ``mcp_config_path`` and return an :class:`McpManager`.
 
-    Missing / malformed config → empty manager (best-effort, matching
-    Rust ``McpManager::default`` behavior when config is absent).
+    Missing / malformed config → empty manager (best-effort default
+    behavior when config is absent).
     """
     from deepseek_tui.mcp.config import load_mcp_config
 
@@ -423,8 +422,6 @@ async def _build_mcp_manager(cfg: Config) -> McpManager:
 
 
 # MultiToolUseParallelTool — expands a batch of read-only tool calls.
-#
-# Mirrors `crates/tui/src/tools/parallel.rs`.
 #
 # The model may emit a single ``multi_tool_use.parallel`` tool call whose
 # ``tool_uses`` array contains multiple sub-calls.  The Engine intercepts
@@ -473,8 +470,6 @@ class MultiToolUseParallelTool(ToolSpec):
 
 
 # Tool-output spillover writer (#422).
-#
-# Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/truncate.rs``.
 #
 
 from deepseek_tui.config.paths import user_tool_outputs_dir
@@ -580,7 +575,7 @@ def maybe_spillover(
 def apply_spillover(result: ToolResult, tool_id: str) -> ToolResult:
     """Spill large successful tool results to disk; shrink inline content.
 
-    Mirrors Rust ``apply_spillover`` (truncate.rs:229). Failures are logged
+    Failures are logged
     and the original result is returned unchanged.
     """
     if not result.success:

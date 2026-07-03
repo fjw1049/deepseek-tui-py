@@ -1,13 +1,10 @@
 """MCP transport layer — stdio and SSE/HTTP.
 
-Mirrors ``crates/tui/src/mcp.rs:260-472`` (McpTransport trait +
-StdioTransport + SseTransport).
-
 Each transport exposes ``send(dict)`` and ``recv() -> dict``. The MCP
 client is oblivious to which one is under the hood — it just pushes
 JSON-RPC 2.0 objects through.
 
-SSE protocol specifics (Rust parity):
+SSE protocol specifics:
 
 1. GET ``base_url`` → long-lived SSE stream
 2. First ``event: endpoint`` frame gives the POST endpoint URL.
@@ -164,9 +161,8 @@ class StdioTransport(McpTransport):
 class SseTransport(McpTransport):
     """Connect to an MCP server over SSE (server→client) + HTTP POST (client→server).
 
-    Mirrors Rust ``SseTransport`` (mcp.rs:301-472). The first SSE frame
-    whose ``event:`` field is ``endpoint`` carries the POST URL used for
-    outgoing client-to-server messages.
+    The first SSE frame whose ``event:`` field is ``endpoint`` carries the
+    POST URL used for outgoing client-to-server messages.
     """
 
     def __init__(
@@ -197,7 +193,7 @@ class SseTransport(McpTransport):
             return
         self._reader_task = asyncio.create_task(self._run_sse_loop())
         # Wait up to connect_timeout for endpoint discovery so the first
-        # send has a target. Matches Rust's semantic where send() errors
+        # send has a target. Matches the semantic where send() errors
         # if endpoint_url is None.
         try:
             await asyncio.wait_for(

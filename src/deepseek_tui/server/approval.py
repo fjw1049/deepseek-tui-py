@@ -120,7 +120,7 @@ class ApprovalBridge:
 class HttpApprovalHandler(ApprovalHandler):
     """Block Engine tool approval until POST /v1/approvals/{id}.
 
-    Mirrors TUI ``TUIApprovalHandler`` but resolves via :class:`ApprovalBridge`.
+    Resolves via :class:`ApprovalBridge`.
     """
 
     def __init__(

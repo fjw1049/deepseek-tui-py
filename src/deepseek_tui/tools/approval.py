@@ -7,7 +7,7 @@ from __future__ import annotations
 
 
 
-# Tool approval gate — mirrors Rust ``turn_loop`` + ``ToolSpec::approval_requirement``.
+# Tool approval gate.
 #
 # Single source of truth for *whether* to prompt/block. Presentation lives in
 # ``approval_present``; legacy ``ExecPolicyEngine.evaluate`` delegates here.
@@ -42,7 +42,7 @@ def normalize_approval_policy(policy: str | None) -> str:
 def requirement_from_capabilities(
     capabilities: list[ToolCapability],
 ) -> ApprovalRequirement:
-    """Mirror ``ToolSpec.approval_requirement`` default (for legacy evaluate API)."""
+    """``approval_requirement`` default (for legacy evaluate API)."""
     if ToolCapability.EXECUTES_CODE in capabilities or (
         ToolCapability.REQUIRES_APPROVAL in capabilities
     ):
@@ -186,7 +186,7 @@ def _requirement_needs_prompt(req: ApprovalRequirement, mode: str) -> bool:
     return False
 
 
-# Build human-readable approval presentation (mirrors ``tui/approval.rs``).
+# Build human-readable approval presentation.
 
 from deepseek_tui.policy.approval import build_approval_key
 from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command

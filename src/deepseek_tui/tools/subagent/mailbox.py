@@ -1,6 +1,6 @@
 """Sub-agent mailbox — structured progress/lifecycle event stream.
 
-Mirrors ``crates/tui/src/tools/subagent/mailbox.rs`` (478 lines). Sequence
+Sequence
 numbers are monotonic across the whole mailbox so consumers see a single
 consistent ordering even with multiple producers.
 """
@@ -129,10 +129,8 @@ MAILBOX_MAX_ENVELOPES = 512
 class Mailbox:
     """Sender side of the mailbox. Cheaply sharable via ``share()``.
 
-    Mirrors Rust ``Mailbox`` (mailbox.rs:135-). In Rust this is ``Clone``
-    through an ``Arc``; here we expose ``share()`` which returns the same
-    underlying object so child runtimes observing the same stream stay
-    in sync.
+    ``share()`` returns the same underlying object so child runtimes
+    observing the same stream stay in sync.
     """
 
     def __init__(self, cancel_token: asyncio.Event | None = None) -> None:
@@ -177,7 +175,7 @@ class Mailbox:
     def close(self) -> None:
         """Close the mailbox and cancel the bound token.
 
-        Per Rust behavior: closing signals cancellation through the shared
+        Closing signals cancellation through the shared
         token so children cooperating on the same token shut down too.
         """
         if self._closed:

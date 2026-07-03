@@ -1,6 +1,5 @@
 """Command safety analysis for shell execution.
 
-Mirrors `crates/tui/src/command_safety.rs` (1,200 lines).
 Detects potentially dangerous shell command patterns and assigns safety levels.
 """
 
@@ -332,10 +331,7 @@ NETWORK_COMMANDS = {
 
 
 def analyze_command(command: str) -> SafetyAnalysis:
-    """Analyze a shell command for safety.
-
-    Mirrors Rust `analyze_command()` (command_safety.rs:515-650).
-    """
+    """Analyze a shell command for safety."""
     command_lower = command.lower()
     command_trimmed = command.strip()
 
@@ -510,8 +506,6 @@ def _all_segments_known_safe(command: str) -> bool:
 
 def classify_command(tokens: list[str]) -> str:
     """Classify a command from token list to canonical prefix.
-
-    Mirrors Rust ``classify_command`` (command_safety.rs:268-300):
 
     1. Drop flag tokens (starting with ``-``) entirely.
     2. Lowercase positionals.

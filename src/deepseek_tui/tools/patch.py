@@ -423,8 +423,7 @@ def _walk(base: Path, current: Path, lines: list[str], max_depth: int, depth: in
 
 # Unified-diff patcher with fuzzy matching.
 #
-# Mirrors ``crates/tui/src/tools/apply_patch.rs`` (1,469 lines). Provides
-# pure-Python equivalents for:
+# Provides pure-Python equivalents for:
 #
 # - :func:`parse_unified_diff` / :func:`parse_unified_diff_files`
 # - :func:`apply_hunks_to_lines` / :func:`apply_hunk` (with cumulative
@@ -433,12 +432,12 @@ def _walk(base: Path, current: Path, lines: list[str], max_depth: int, depth: in
 # - :class:`Hunk` / :class:`HunkLine` / :class:`PatchResult` /
 #   :class:`FileSummary`
 #
-# ``MAX_FUZZ = 50`` follows Rust (apply_patch.rs:21). Fuzz search starts
+# ``MAX_FUZZ = 50``. Fuzz search starts
 # at the adjusted line (cumulative offset applied) and widens symmetrically
 # up to ``max_fuzz`` lines on either side.
 #
 
-# Constants — mirror Rust
+# Constants
 MAX_FUZZ = 50
 HUNK_PREVIEW_LINES = 4
 SNIPPET_RADIUS = 2
@@ -517,7 +516,7 @@ def parse_unified_diff(patch: str) -> list[Hunk]:
     """Parse a single-file unified diff, returning its hunks.
 
     Header lines (``---``/``+++``) are skipped; the caller is expected to
-    supply ``path`` externally. Mirrors Rust ``parse_unified_diff``.
+    supply ``path`` externally.
     """
     lines = patch.splitlines()
     idx = 0
@@ -541,7 +540,7 @@ def parse_unified_diff_files(
 ) -> list[FilePatch]:
     """Parse a multi-file unified diff (with ``---``/``+++`` headers).
 
-    Mirrors Rust ``parse_unified_diff_files``. Recognizes ``/dev/null`` and
+    Recognizes ``/dev/null`` and
     strips ``a/``/``b/`` prefixes.
     """
     lines = patch.splitlines()
@@ -618,7 +617,7 @@ def _parse_hunk(lines: list[str], start_idx: int) -> tuple[Hunk, int]:
 
     hunk_lines: list[HunkLine] = []
     expected = max(old_count, new_count) + min(old_count, new_count)
-    # Rust loops up to expected*2 to forgive mis-sized hunks.
+    # Loop up to expected*2 to forgive mis-sized hunks.
     budget = max(1, expected * 2)
     idx = start_idx + 1
     while idx < len(lines) and budget > 0:
@@ -649,7 +648,7 @@ def _parse_hunk(lines: list[str], start_idx: int) -> tuple[Hunk, int]:
             idx += 1
             budget -= 1
             continue
-        # Fallback: unprefixed text treated as context (Rust does the same).
+        # Fallback: unprefixed text treated as context.
         hunk_lines.append(HunkLine(HunkLineKind.CONTEXT, line))
         idx += 1
         budget -= 1
@@ -801,8 +800,7 @@ def matches_at_position(
 ) -> bool:
     """Check whether ``old_lines`` match ``lines`` starting at ``pos``.
 
-    Uses ``rstrip()`` on both sides to normalize trailing whitespace
-    (matches Rust's ``trim_end`` comparison).
+    Uses ``rstrip()`` on both sides to normalize trailing whitespace.
     """
     if pos + len(old_lines) > len(lines):
         return False

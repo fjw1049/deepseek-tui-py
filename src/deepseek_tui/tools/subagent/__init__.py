@@ -1,6 +1,6 @@
 """Sub-agent spawning, communication, and delegation.
 
-Mirrors Rust ``crates/tui/src/tools/subagent/``. Split by responsibility:
+Split by responsibility:
 
 - :mod:`.types`      — constants, SubAgentType/prompts, status + request models
 - :mod:`.mailbox`    — lifecycle/progress event stream

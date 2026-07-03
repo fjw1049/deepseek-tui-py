@@ -1,6 +1,5 @@
-"""Durable task data models and constants.
-
-Mirrors the type half of Rust ``crates/tui/src/task_manager.rs``.
+"""
+Durable task data models and constants.
 """
 
 from __future__ import annotations
@@ -21,9 +20,8 @@ def _summarize_text(text: str, limit: int) -> str:
 
 # Durable task manager.
 #
-# Mirrors `crates/tui/src/task_manager.rs` (1,845 lines). Persists each task as
-# its own JSON file under ``./.deepseek/tasks/`` and maintains a queue in
-# ``queue.json`` so tasks survive process restarts.
+# Persists each task as its own JSON file under ``./.deepseek/tasks/`` and
+# maintains a queue in ``queue.json`` so tasks survive process restarts.
 #
 
 CURRENT_TASK_SCHEMA_VERSION = 2
@@ -272,7 +270,7 @@ ExecutorFunc = Callable[[ExecutionTask, asyncio.Event], Awaitable[TaskExecutionR
 def default_tasks_dir() -> Path:
     """``~/.deepseek/tasks/`` — cross-project task queue.
 
-    Mirrors Rust ``default_tasks_dir`` (task_manager.rs:1629). User-level so
+    User-level so
     background tasks survive across project switches. ``DEEPSEEK_TASKS_DIR``
     env var overrides.
     """

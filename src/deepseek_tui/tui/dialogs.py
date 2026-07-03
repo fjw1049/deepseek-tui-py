@@ -158,8 +158,6 @@ class ApprovalDialog(ModalScreen[bool]):
 
 # Picker widgets — model, mode, and file selection.
 #
-# Mirrors Rust ``tui/model_picker.rs`` + ``tui/mode_picker.rs``
-# + file picker functionality (~800 LOC combined).
 # Implemented as Textual ModalScreen overlays with filterable lists.
 #
 
@@ -424,7 +422,7 @@ class ProviderPicker(_FilterablePickerScreen):
 
 
 # ===========================================================================
-# SessionPicker — for switching sessions (Rust session_picker.rs, 671 LOC)
+# SessionPicker — for switching sessions
 # ===========================================================================
 
 
@@ -435,7 +433,7 @@ class SessionPicker(_FilterablePickerScreen):
         super().__init__("Select Session", sessions)
 
 
-# Help / keybinds panel — mirrors Rust help screen.
+# Help / keybinds panel.
 #
 # Provides a modal overlay showing all keybindings and available commands,
 # with section grouping and scrollable content.
@@ -583,7 +581,7 @@ class _SlashCommandHelp(Static):
             self.update("[dim]Slash commands unavailable[/]")
 
 
-# @file mention autocomplete — mirrors Rust ``tui/file_mention.rs``.
+# @file mention autocomplete.
 #
 # Stage 6.6: Detects ``@`` in the composer input and shows a file
 # completion popup. Files are listed from the working directory.

@@ -1,8 +1,4 @@
-"""Plan, note, and skill_load tools.
-
-Mirrors Rust tools at ``crates/tui/src/tools/{recall_archive}.rs``
-and ``crates/tui/src/commands/{note}.rs``.
-"""
+"""Plan, note, and skill_load tools."""
 
 from __future__ import annotations
 
@@ -16,7 +12,7 @@ from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, T
 from deepseek_tui.tools.registry import ToolContext
 
 # ===========================================================================
-# note — quick note tool (Rust commands/note.rs, ~60 LOC)
+# note — quick note tool
 # ===========================================================================
 
 
@@ -61,11 +57,11 @@ class NoteTool(ToolSpec):
 
 
 # ===========================================================================
-# review — code review tool (Rust tools/review.rs, 540 LOC)
+# review — code review tool
 # ===========================================================================
 
 # ===========================================================================
-# plan_update — update the agent's plan (Rust 406 LOC)
+# plan_update — update the agent's plan
 # ===========================================================================
 
 
@@ -160,14 +156,14 @@ class PlanUpdateTool(ToolSpec):
 
 
 # ===========================================================================
-# skill_load — load a skill file into context (Rust 365 LOC)
+# skill_load — load a skill file into context
 # ===========================================================================
 
 
 class SkillLoadTool(ToolSpec):
     """Load a skill body + companion files into the next turn's context.
 
-    Mirrors Rust ``LoadSkillTool`` (tools/skill.rs). The tool name is
+    The tool name is
     ``load_skill`` (verb-noun) to match the prompt-side trigger text the
     system message advertises — see ``render_available_skills_context``
     in ``skills/__init__.py``.
@@ -217,7 +213,7 @@ class SkillLoadTool(ToolSpec):
         return [ToolCapability.READ_ONLY]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        # Accept both ``name`` (Rust parity) and ``skill_name`` (legacy
+        # Accept both ``name`` and ``skill_name`` (legacy
         # Python alias) — the Python tool used to ship as ``skill_load``
         # with the latter param, so prompts cached against the old shape
         # still work after the rename.
@@ -286,8 +282,7 @@ class SkillLoadTool(ToolSpec):
 def _format_skill_body(skill: Any) -> str:
     """Render the tool-result body model will see.
 
-    Mirrors Rust ``format_skill_body`` (tools/skill.rs:134). The
-    description rides up top so a single tool result is self-contained
+    The description rides up top so a single tool result is self-contained
     (no need to cross-reference the system-prompt catalogue);
     companion-file paths land under a clearly-named heading so the
     model can open them with ``read_file`` when relevant.
@@ -321,7 +316,6 @@ def _format_skill_body(skill: Any) -> str:
 def _collect_companion_files(skill: Any) -> list[Path]:
     """List sibling files of SKILL.md.
 
-    Mirrors Rust ``collect_companion_files`` (tools/skill.rs:162).
     Skips the ``SKILL.md`` itself and any nested directories so the
     listing stays focused on at-hand resources. Sorted for determinism.
     """
@@ -356,7 +350,7 @@ def _optional_string(input_data: dict[str, object], key: str) -> str | None:
 
 
 def _notes_path(context: ToolContext) -> Path:
-    """``~/.deepseek/notes.txt`` — user scratch notes (Rust .txt format).
+    """``~/.deepseek/notes.txt`` — user scratch notes.
 
     ``DEEPSEEK_NOTES_PATH`` env var overrides (used by tests to isolate
     writes from the real ``~/.deepseek/notes.txt``).

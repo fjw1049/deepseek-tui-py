@@ -408,7 +408,7 @@ ToolCell = BlockToolCell
 
 
 # ======================================================================
-# Diff parsing and rendering — mirrors Rust ``tui/diff_render.rs``.
+# Diff parsing and rendering.
 # Parses unified diff format and renders with Rich styling:
 # added lines green, removed red, hunk headers cyan, context dim.
 # ======================================================================

@@ -2,8 +2,8 @@
 
 Consolidates context.py, project_context.py, working_set.py.
 Context budgeting and prompt-shaping helpers for the engine.
-Mirrors ``crates/tui/src/core/engine/context.rs:1-382``. Shared by the
-streaming turn loop, capacity flow, and engine session maintenance code.
+Shared by the streaming turn loop, capacity flow, and engine session
+maintenance code.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# --- Constants (Rust context.rs:17-44) -----------------------------------
+# --- Constants ------------------------------------------------------------
 
 MIN_RECENT_MESSAGES_TO_KEEP = 4
 MAX_CONTEXT_RECOVERY_ATTEMPTS = 2
@@ -38,7 +38,7 @@ LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 TOOL_RESULT_METADATA_SUMMARY_CHARS = 320
 
-# --- Text summarization (Rust context.rs:52-84) --------------------------
+# --- Text summarization ---------------------------------------------------
 
 
 def summarize_text(text: str, limit: int) -> str:
@@ -68,7 +68,7 @@ def summarize_text_head_tail(text: str, limit: int) -> str:
     return text[:head_len] + marker + text[total - tail_len :]
 
 
-# --- Tool result compaction (Rust context.rs:86-263) ----------------------
+# --- Tool result compaction -----------------------------------------------
 
 _NOISY_TOOLS = frozenset(
     {
@@ -201,10 +201,7 @@ def _tool_result_context_limits(model: str) -> tuple[int, int, int]:
 def compact_tool_result_for_context(
     model: str, tool_name: str, output: ToolResult
 ) -> str:
-    """Compact a tool result before inserting into the model transcript.
-
-    Mirrors Rust ``compact_tool_result_for_context`` (context.rs:228-263).
-    """
+    """Compact a tool result before inserting into the model transcript."""
     raw = output.content.strip()
     if not raw:
         return ""
@@ -239,7 +236,7 @@ def compact_tool_result_for_context(
     )
 
 
-# --- Token estimation (Rust context.rs:341-378) --------------------------
+# --- Token estimation -----------------------------------------------------
 
 
 @functools.lru_cache(maxsize=1)
@@ -300,10 +297,7 @@ def _estimate_text_tokens_conservative(text: str) -> int:
 def estimate_input_tokens_conservative(
     messages: list[Message], system_prompt: str | None = None
 ) -> int:
-    """Conservative estimate of input tokens including system prompt.
-
-    Mirrors Rust ``estimate_input_tokens_conservative`` (context.rs:356-366).
-    """
+    """Conservative estimate of input tokens including system prompt."""
     msg_chars = 0
     for msg in messages:
         for block in msg.content:
@@ -327,8 +321,7 @@ def estimate_input_tokens_conservative(
 def context_input_budget(model: str, requested_output_tokens: int) -> int | None:
     """Calculate usable input token budget after reserving output + headroom.
 
-    Mirrors Rust ``context_input_budget`` (context.rs:368-374), with one
-    fix: the output reservation is clamped to a quarter of the window.
+    The output reservation is clamped to a quarter of the window.
     Without the clamp, models whose window is smaller than the requested
     output reservation (e.g. 128K window vs 262K reservation) computed a
     negative budget and silently skipped overflow prechecks entirely.
@@ -504,8 +497,8 @@ def estimate_context_breakdown(
 
 
 # Project context loader — discovers AGENTS.md / CLAUDE.md / instructions.
-# Mirrors Rust ``crates/tui/src/project_context.rs``. Resolves the first
-# project-instruction file found, walks up parent directories for monorepo
+# Resolves the first project-instruction file found, walks up parent
+# directories for monorepo
 # setups, falls back to a user-level ``~/.deepseek/AGENTS.md``, and finally
 # auto-generates a placeholder ``<workspace>/.deepseek/instructions.md`` so
 # the engine has *something* to anchor on. The loaded content is wrapped as
@@ -523,8 +516,7 @@ from deepseek_tui.config.paths import (
 logger = logging.getLogger(__name__)
 
 
-# Candidate context files, in priority order. Mirrors Rust
-# ``PROJECT_CONTEXT_FILES`` (project_context.rs:22-27).
+# Candidate context files, in priority order.
 PROJECT_CONTEXT_FILES: tuple[str, ...] = (
     "AGENTS.md",
     ".claude/instructions.md",
@@ -533,7 +525,7 @@ PROJECT_CONTEXT_FILES: tuple[str, ...] = (
 )
 
 # Hard cap to keep a malicious / oversized include from blowing the prompt
-# budget on its own (Rust ``MAX_CONTEXT_SIZE`` = 100 KB).
+# budget on its own (= 100 KB).
 MAX_CONTEXT_SIZE: int = 100 * 1024
 
 
@@ -546,8 +538,7 @@ MAX_CONTEXT_SIZE: int = 100 * 1024
 class ProjectContext:
     """Result of loading project context.
 
-    Mirrors Rust ``ProjectContext`` (project_context.rs:80-93). The
-    ``warnings`` list surfaces non-fatal load failures (file too large,
+    The ``warnings`` list surfaces non-fatal load failures (file too large,
     empty, unreadable) so callers can show them without aborting startup.
     """
 
@@ -564,10 +555,7 @@ class ProjectContext:
         return self.instructions is not None
 
     def as_system_block(self) -> str | None:
-        """Format the instructions as a system-prompt block.
-
-        Mirrors Rust ``as_system_block`` (project_context.rs:113-124).
-        """
+        """Format the instructions as a system-prompt block."""
         if self.instructions is None:
             return None
         source = (
@@ -620,7 +608,6 @@ def _load_context_file(path: Path) -> str:
 def load_project_context(workspace: Path) -> ProjectContext:
     """Load the first project-context file found under ``workspace``.
 
-    Mirrors Rust ``load_project_context`` (project_context.rs:327-352).
     Returns an empty context if no candidate file is present or readable.
     Warnings collect non-fatal failures.
     """
@@ -649,9 +636,6 @@ def load_project_context_with_parents(
     home_dir: Path | None = None,
 ) -> ProjectContext:
     """Full project-context resolution.
-
-    Mirrors Rust ``load_project_context_with_parents_and_home``
-    (project_context.rs:361-413).
 
     Search order:
       1. ``workspace`` itself
@@ -694,7 +678,7 @@ def load_project_context_with_parents(
                 ctx.source_path = global_ctx.source_path
 
     # 4. Auto-generate as last resort. Writes to disk so subsequent loads
-    #    are cached at the filesystem layer (Rust comment: avoids per-turn
+    #    are cached at the filesystem layer (avoids per-turn
     #    scan that breaks KV prefix cache stability).
     if not ctx.has_instructions():
         generated = _auto_generate_context(workspace)
@@ -762,8 +746,7 @@ _AUTO_GENERATED_TEMPLATE = """\
 def _auto_generate_context(workspace: Path) -> str | None:
     """Write a placeholder ``<workspace>/.deepseek/instructions.md``.
 
-    Mirrors Rust ``auto_generate_context`` (project_context.rs:439-475)
-    but skips the project-tree summary — that lives in the optional
+    Skips the project-tree summary — that lives in the optional
     ``ProjectContextPack`` (Stage-4 work), not the load chain.
 
     Returns the generated content on success, ``None`` on failure (no
@@ -785,16 +768,12 @@ def _auto_generate_context(workspace: Path) -> str | None:
 
 
 # Working set management for tracking user-relevant files and context.
-# Mirrors ``crates/tui/src/session/working_set.rs``.
 
 
 
 
 class WorkingSet:
-    """Tracks files and context relevant to current user work.
-
-    Mirrors Rust WorkingSet for pinning decisions during compaction.
-    """
+    """Tracks files and context relevant to current user work."""
 
     _MAX_RECENT_PATHS = 100
 

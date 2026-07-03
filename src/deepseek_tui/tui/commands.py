@@ -1,6 +1,6 @@
 """Slash command registry and dispatcher.
 
-Mirrors ``crates/tui/src/commands/mod.rs``. Central registry of slash
+Central registry of slash
 commands with description, aliases, and handler dispatch.
 """
 from __future__ import annotations
@@ -161,10 +161,7 @@ def get_completions(prefix: str = "") -> list[tuple[str, str]]:
 
 
 def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
-    """Parse and dispatch a slash command.
-
-    Mirrors ``commands::execute`` in Rust ``mod.rs``.
-    """
+    """Parse and dispatch a slash command."""
     parts = raw_input.strip().split(maxsplit=1)
     if not parts:
         return CommandResult(error="empty command")
@@ -196,7 +193,6 @@ def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
 """Slash command handler implementations.
 
 Each handler has signature: ``(args: str, app: DeepSeekTUI) -> CommandResult``.
-Mirrors individual ``commands/*.rs`` files in Rust.
 """
 
 
@@ -947,10 +943,9 @@ def cmd_agent(args: str, app: DeepSeekTUI) -> CommandResult:
 def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
     """Switch to Plan mode and pop the plan-confirmation prompt.
 
-    Mirror Rust slash ``/plan`` + ``PlanPromptView``. The prompt opens
-    via :class:`PlanPromptScreen` (push_screen with a callback). Outside
-    of a running Textual app (e.g. unit tests), the call short-circuits
-    to a textual hint so the dispatch layer is still testable.
+    The prompt opens via :class:`PlanPromptScreen` (push_screen with a
+    callback). Outside of a running Textual app (e.g. unit tests), the call
+    short-circuits to a textual hint so the dispatch layer is still testable.
     """
     from deepseek_tui.tui.plan import PlanOutcome, PlanPromptScreen
 
@@ -1438,8 +1433,6 @@ def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
         /skills <prefix>              — filter installed by name prefix
         /skills --remote | remote     — list curated remote registry
         /skills sync | --sync         — fetch + cache remote registry locally
-
-    Mirrors Rust ``commands/skills.rs::list_skills`` (skills.rs:37-130).
     """
     from deepseek_tui.integrations.skills import default_skills_dir, fetch_registry
 
@@ -1507,8 +1500,6 @@ def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
         /skill update <name>         — re-fetch from .installed-from
         /skill uninstall <name>      — delete (community installs only)
         /skill trust <name>          — mark trusted (allowed-tools whitelist)
-
-    Mirrors Rust ``commands/skills.rs::run_skill`` (skills.rs:142-310).
     """
     from deepseek_tui.integrations.skills import (
         InstallSource,
@@ -1585,10 +1576,6 @@ def cmd_log(args: str, app: DeepSeekTUI) -> CommandResult:
         /log              → print current log file path
         /log tail         → print last 50 lines
         /log tail 200     → print last 200 lines
-
-    Mirrors the lightweight log-introspection slash command described in
-    the 2026-05-10 logging design doc — full Rust binary doesn't have
-    this exact command but exposes ``tail -f`` instructions in docs.
     """
     from deepseek_tui.utils import current_log_path, tail_log
 
@@ -1625,7 +1612,7 @@ def cmd_log(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/undo")
 def cmd_undo(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Undo the last file-modifying tool (mirrors Rust /undo)."""
+    """Undo the last file-modifying tool."""
     if app._engine is None:
         return CommandResult(error="Engine not started")
     success, msg = app._engine.undo_last_tool()

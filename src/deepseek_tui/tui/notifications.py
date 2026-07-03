@@ -1,7 +1,5 @@
 """OSC 9 / BEL desktop notifications for long agent-turn completion.
 
-Mirrors ``crates/tui/src/tui/notifications.rs`` (341 LOC).
-
 Writes a terminal escape to the provided sink (or stdout for the public
 API) when a turn takes longer than the configured threshold. Supports
 tmux DCS passthrough so OSC 9 reaches the outer terminal even when
@@ -19,7 +17,7 @@ from typing import IO
 
 
 class Method(str, enum.Enum):
-    """Notification delivery method (mirrors Rust ``Method``)."""
+    """Notification delivery method."""
 
     AUTO = "auto"
     OSC9 = "osc9"
@@ -28,10 +26,7 @@ class Method(str, enum.Enum):
 
     @classmethod
     def from_str(cls, s: str) -> Method:
-        """Parse from a configuration string (case-insensitive).
-
-        Mirror Rust ``Method::from_str`` (notifications.rs:29).
-        """
+        """Parse from a configuration string (case-insensitive)."""
         v = s.strip().lower()
         if v in ("osc9", "osc-9"):
             return cls.OSC9
@@ -45,7 +40,6 @@ class Method(str, enum.Enum):
 def _resolve_method() -> Method:
     """Resolve AUTO to a concrete method by inspecting ``$TERM_PROGRAM``.
 
-    Mirror Rust ``resolve_method`` (notifications.rs:44).
     Known OSC-9 capable: iTerm.app, Ghostty, WezTerm. Else BEL.
     """
     term_program = os.environ.get("TERM_PROGRAM", "")
@@ -55,7 +49,7 @@ def _resolve_method() -> Method:
 
 
 def _build_escape(method: Method, in_tmux: bool, msg: str) -> bytes:
-    """Build the raw escape bytes (mirror Rust ``build_escape`` notifications.rs:58)."""
+    """Build the raw escape bytes."""
     if method == Method.BEL:
         return b"\x07"
     if method == Method.OSC9:
@@ -75,10 +69,7 @@ def notify_done_to(
     elapsed_secs: float,
     sink: IO[bytes],
 ) -> None:
-    """Emit a turn-complete notification to *sink* if the threshold is met.
-
-    Mirror Rust ``notify_done_to`` (notifications.rs:81).
-    """
+    """Emit a turn-complete notification to *sink* if the threshold is met."""
     if elapsed_secs < threshold_secs:
         return
     effective = method
@@ -103,19 +94,15 @@ def notify_done(
     threshold_secs: float,
     elapsed_secs: float,
 ) -> None:
-    """Emit a turn-complete notification to stdout.
-
-    Mirror Rust ``notify_done`` (notifications.rs:111).
-    """
+    """Emit a turn-complete notification to stdout."""
     notify_done_to(method, in_tmux, msg, threshold_secs, elapsed_secs, sys.stdout.buffer)
 
 
 def humanize_duration(seconds: float) -> str:
     """Return a compact human-readable duration string.
 
-    Mirror Rust ``humanize_duration`` (notifications.rs:135). Examples:
-    ``"45s"``, ``"1m"``, ``"1m 12s"``, ``"1h"``, ``"3h 12m"``, ``"1d"``,
-    ``"2d 5h"``, ``"1w"``, ``"3w 2d"``.
+    Examples: ``"45s"``, ``"1m"``, ``"1m 12s"``, ``"1h"``, ``"3h 12m"``,
+    ``"1d"``, ``"2d 5h"``, ``"1w"``, ``"3w 2d"``.
     """
     total = int(seconds)
     if total <= 0:

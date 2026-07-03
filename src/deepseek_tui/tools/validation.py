@@ -9,11 +9,6 @@ from __future__ import annotations
 
 # Data validation + test runner + revert turn tools.
 #
-# Mirrors:
-# - ``crates/tui/src/tools/validate_data.rs``
-# - ``crates/tui/src/tools/test_runner.rs``
-# - ``crates/tui/src/tools/revert_turn.rs``
-#
 import asyncio
 import json
 from pathlib import Path
@@ -32,8 +27,6 @@ MAX_OUTPUT_CHARS = 40_000
 
 
 class ValidateDataTool(ToolSpec):
-    """Mirrors Rust ``validate_data.rs``."""
-
     def name(self) -> str:
         return "validate_data"
 
@@ -167,7 +160,7 @@ def _summarize_json(value: Any) -> dict[str, Any]:
 
 
 class RunTestsTool(ToolSpec):
-    """Mirrors Rust ``test_runner.rs`` — adapted for Python projects."""
+    """Test runner adapted for Python projects."""
 
     def name(self) -> str:
         return "run_tests"
@@ -263,7 +256,7 @@ def _truncate(text: str, limit: int) -> str:
 
 
 class RevertTurnTool(ToolSpec):
-    """Mirrors Rust ``revert_turn.rs``.
+    """Revert-turn tool.
 
     Since Python does not have the SnapshotRepo (side-git) system yet,
     this tool returns an informative error directing the user to use

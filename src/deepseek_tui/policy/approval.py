@@ -76,7 +76,6 @@ class PolicyRule:
 
 
 # Per-call approval cache with fingerprint keys.
-# Mirrors ``crates/tui/src/tools/approval_cache.rs`` (280 lines).
 #
 # Instead of caching approvals by tool name alone — which would let an
 # approved ``exec_shell "cat foo"`` silently unlock
@@ -114,8 +113,8 @@ _FETCH_TOOLS = {"fetch_url", "web.fetch", "web_fetch"}
 class ApprovalKey:
     """Tool-call fingerprint used as the cache key.
 
-    Mirrors Rust ``ApprovalKey`` (approval_cache.rs:31). Stable enough to
-    match repeated calls; specific enough to avoid privilege confusion.
+    Stable enough to match repeated calls; specific enough to avoid
+    privilege confusion.
     """
 
     value: str
@@ -125,10 +124,7 @@ class ApprovalKey:
 
 
 class ApprovalCacheStatus(Enum):
-    """Status of a previously-rendered approval decision.
-
-    Mirrors Rust ``ApprovalCacheStatus`` (approval_cache.rs:35).
-    """
+    """Status of a previously-rendered approval decision."""
 
     APPROVED = "approved"
     """Call fingerprint matched and the session flag says reuse."""
@@ -147,9 +143,8 @@ class _CacheEntry:
 class ApprovalCache:
     """Approval cache backed by tool-call fingerprints.
 
-    Mirrors Rust ``ApprovalCache`` (approval_cache.rs:55-110). Scope is
-    the current engine session — the engine owns one instance and clears
-    it on session boundaries.
+    Scope is the current engine session — the engine owns one instance and
+    clears it on session boundaries.
     """
 
     _entries: dict[ApprovalKey, _CacheEntry] = field(default_factory=dict)
@@ -179,10 +174,7 @@ class ApprovalCache:
 
 
 def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
-    """Build the approval-cache key for a tool call.
-
-    Mirrors Rust ``build_approval_key`` (approval_cache.rs:121-142).
-    """
+    """Build the approval-cache key for a tool call."""
     if tool_name in _PATCH_TOOLS:
         return ApprovalKey(f"patch:{_hash_patch_paths(tool_input)}")
     if tool_name in _SHELL_TOOLS:
@@ -196,7 +188,7 @@ def _command_prefix(tool_input: Any) -> str:
     """Canonical command prefix via the arity dictionary.
 
     ``git status -s`` and ``git status --porcelain`` fingerprint identical;
-    ``git push`` fingerprints differently. Mirrors Rust ``command_prefix``.
+    ``git push`` fingerprints differently.
     """
     command = ""
     if isinstance(tool_input, dict):
@@ -212,12 +204,11 @@ def _command_prefix(tool_input: Any) -> str:
 def _hash_patch_paths(tool_input: Any) -> str:
     """Hash the sorted set of file paths referenced by a patch input.
 
-    Mirrors Rust ``hash_patch_paths`` (approval_cache.rs:159-191). Supports
-    both the structured ``changes`` list and the unified-diff ``patch``
-    text. Rust uses ``DefaultHasher``; we use ``blake2b`` truncated to
-    16 hex chars — stable across Python runs (unlike ``hash()``) and
-    fast. The fingerprint *identity* matters, not hash compatibility
-    with Rust, because each session has its own cache.
+    Supports both the structured ``changes`` list and the unified-diff
+    ``patch`` text. We use ``blake2b`` truncated to 16 hex chars —
+    stable across Python runs (unlike ``hash()``) and fast. Only the
+    fingerprint *identity* matters, not any cross-implementation hash
+    compatibility, because each session has its own cache.
     """
     paths: list[str] = []
     if isinstance(tool_input, dict):
@@ -250,9 +241,8 @@ def _hash_patch_paths(tool_input: Any) -> str:
 def _parse_host(tool_input: Any) -> str:
     """Extract hostname from a URL input.
 
-    Mirrors Rust ``parse_host`` (approval_cache.rs:194-202). If the URL
-    is unparseable or has no host, fall back to the raw string so the
-    cache still differentiates distinct garbage inputs.
+    If the URL is unparseable or has no host, fall back to the raw string
+    so the cache still differentiates distinct garbage inputs.
     """
     url = ""
     if isinstance(tool_input, dict):
@@ -270,10 +260,8 @@ def _parse_host(tool_input: Any) -> str:
 
 
 # Advisory file-locked append for policy amendments.
-# Mirrors ``crates/tui/src/execpolicy/amend.rs`` (225 LOC).
 #
-# The invariant (and the Rust test fixtures): appending a new
-# ``prefix_rule(...)`` line must
+# The invariant: appending a new ``prefix_rule(...)`` line must
 #
 # 1. create the parent directory if it doesn't exist;
 # 2. take an advisory lock on the policy file (``fcntl.flock`` on Unix);
@@ -295,11 +283,8 @@ def blocking_append_allow_prefix_rule(
 ) -> None:
     """Append a ``prefix_rule(pattern=..., decision="allow")`` to the file.
 
-    Mirrors Rust ``blocking_append_allow_prefix_rule`` (amend.rs:59-91).
-    The Rust version blocks on advisory locking and is meant to be
-    wrapped in ``tokio::task::spawn_blocking``; the Python caller should
-    similarly wrap this in ``asyncio.to_thread`` when called from async
-    code.
+    This blocks on advisory locking, so callers should wrap it in
+    ``asyncio.to_thread`` when invoked from async code.
     """
     if not prefix:
         raise AmendError.empty_prefix()
@@ -320,10 +305,7 @@ def blocking_append_allow_prefix_rule(
 
 
 def _append_locked_line(policy_path: Path, line: str) -> None:
-    """Open ``policy_path`` for append, lock, and append ``line``.
-
-    Mirrors Rust ``append_locked_line`` (amend.rs:93-146).
-    """
+    """Open ``policy_path`` for append, lock, and append ``line``."""
     import fcntl
 
     try:

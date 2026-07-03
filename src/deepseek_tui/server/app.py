@@ -80,11 +80,11 @@ def attach_cors(app: Any, origins: list[str]) -> None:
 
 # FastAPI router for app-server endpoints.
 #
-# Mirrors ``crates/app-server/src/lib.rs`` (783 lines). Each handler is a
+# Each handler is a
 # thin delegator to :class:`AppRuntime` so HTTP + stdio JSON-RPC share the
 # same code path.
 #
-# Extended with runtime-thread lifecycle routes (mirrors Rust runtime_api.rs):
+# Extended with runtime-thread lifecycle routes:
 # - POST /threads          — create thread
 # - GET  /threads          — list threads
 # - GET  /threads/{id}     — get thread detail
@@ -297,7 +297,7 @@ def build_router() -> APIRouter:
     async def stream_events(request: Request, thread_id: str) -> StreamingResponse:
         """Long-poll friendly SSE wrapper over ``events_since``.
 
-        Rust ``GET /v1/threads/{id}/events`` returns SSE; the JSON variant
+        The ``GET /v1/threads/{id}/events`` route returns SSE; the JSON variant
         above is kept for clients that already integrated with the Python
         snapshot semantics. New clients should target this stream endpoint.
         """
@@ -355,7 +355,7 @@ def build_router() -> APIRouter:
 
     # --- App-Server long-tail (skills / tasks / mcp / workspace) ---------
     #
-    # Mirrors a subset of Rust ``runtime_api.rs`` routes that overlap with
+    # Routes that overlap with
     # CLI thread/task/skill commands. Each handler is a thin delegator to
     # :class:`AppRuntime` and returns ``{"ok": False, "error": ...}`` when
     # the underlying manager isn't wired (no exceptions across HTTP).
@@ -461,7 +461,7 @@ async def stdio_mcp_startup(
 
 # App server entry points — HTTP (FastAPI/uvicorn) and stdio JSON-RPC.
 #
-# Mirrors ``crates/app-server/src/lib.rs`` (783 lines). The HTTP path uses
+# The HTTP path uses
 # FastAPI + uvicorn. The stdio path speaks newline-delimited JSON-RPC 2.0.
 # Both call into the same :class:`AppRuntime` so state stays consistent.
 #
@@ -493,7 +493,7 @@ def build_fastapi_app(
 ) -> Any:
     """Construct a FastAPI app with routes attached.
 
-    When ``http_mode`` is True, mount Rust-parity Workbench routes (bare JSON +
+    When ``http_mode`` is True, mount Workbench routes (bare JSON +
     long-lived SSE) and keep legacy envelope routes under ``/legacy`` only.
     """
     from fastapi import FastAPI
@@ -569,10 +569,9 @@ def build_fastapi_app(
         app.include_router(build_router(), prefix="/legacy")
     else:
         # Mount the same router twice: at root for legacy callers and at ``/v1``
-        # for Rust-parity callers. Rust's ``runtime_api`` exposes everything
-        # under ``/v1/...`` (see runtime_api.rs:295-344). Keeping both prefixes
-        # working avoids breaking existing Python integration tests while
-        # giving cross-language clients the URL shape they expect.
+        # for callers that expect everything under ``/v1/...``. Keeping both
+        # prefixes working avoids breaking existing Python integration tests
+        # while giving cross-language clients the URL shape they expect.
         app.include_router(build_router())
         app.include_router(build_router(), prefix="/v1")
     return app
@@ -775,7 +774,7 @@ def _rpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
 
 # SSE (Server-Sent Events) support for streaming responses.
 #
-# Mirrors the SSE framing used by Rust app-server. Each envelope contains
+# Each envelope contains
 # an ``event:`` field (the tagged-union discriminator) and a ``data:``
 # field (the payload JSON), terminated by a blank line.
 #
@@ -801,7 +800,7 @@ async def iter_sse(source: AsyncIterable[dict[str, Any]]) -> AsyncIterator[str]:
 
 # Async broadcast channel — one sender, multiple receivers.
 #
-# Mirrors Rust ``tokio::sync::broadcast`` semantics with bounded capacity.
+# Bounded-capacity broadcast semantics.
 # Each subscriber gets its own asyncio.Queue; when full, oldest items are
 # dropped (lagging receiver behaviour).
 #

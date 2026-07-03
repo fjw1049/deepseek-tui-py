@@ -1,7 +1,4 @@
-"""Runtime thread data models: constants, enums, records, requests, config.
-
-Mirrors the data-model half of Rust ``crates/tui/src/runtime_threads.rs``.
-"""
+"""Runtime thread data models: constants, enums, records, requests, config."""
 
 from __future__ import annotations
 
@@ -12,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# --- constants (mirrors Rust) ------------------------------------------------
+# --- constants ---------------------------------------------------------------
 
 EVENT_CHANNEL_CAPACITY: int = 1024
 MAX_ACTIVE_THREADS_DEFAULT: int = 8
@@ -25,7 +22,7 @@ RUNTIME_RESTART_REASON: str = "Interrupted by process restart"
 
 
 class RuntimeTurnStatus(str, Enum):
-    """Mirrors Rust ``RuntimeTurnStatus`` (line 53)."""
+    """Lifecycle status of a runtime turn."""
 
     QUEUED = "queued"
     IN_PROGRESS = "in_progress"
@@ -36,7 +33,7 @@ class RuntimeTurnStatus(str, Enum):
 
 
 class TurnItemKind(str, Enum):
-    """Mirrors Rust ``TurnItemKind`` (line 64)."""
+    """Kind of item recorded within a turn."""
 
     USER_MESSAGE = "user_message"
     AGENT_MESSAGE = "agent_message"
@@ -50,7 +47,7 @@ class TurnItemKind(str, Enum):
 
 
 class TurnItemLifecycleStatus(str, Enum):
-    """Mirrors Rust ``TurnItemLifecycleStatus`` (line 77)."""
+    """Lifecycle status of a turn item."""
 
     QUEUED = "queued"
     IN_PROGRESS = "in_progress"
@@ -64,7 +61,7 @@ class TurnItemLifecycleStatus(str, Enum):
 
 
 class ThreadRecord(BaseModel):
-    """Mirrors Rust ``ThreadRecord`` (line 87)."""
+    """Persisted record for a single thread."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -92,7 +89,7 @@ class ThreadRecord(BaseModel):
 
 
 class TurnRecord(BaseModel):
-    """Mirrors Rust ``TurnRecord`` (line 114)."""
+    """Persisted record for a single turn."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -112,7 +109,7 @@ class TurnRecord(BaseModel):
 
 
 class TurnItemRecord(BaseModel):
-    """Mirrors Rust ``TurnItemRecord`` (line 139)."""
+    """Persisted record for a single turn item."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -130,7 +127,7 @@ class TurnItemRecord(BaseModel):
 
 
 class RuntimeEventRecord(BaseModel):
-    """Mirrors Rust ``RuntimeEventRecord`` (line 160)."""
+    """Persisted record for a single runtime event."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -225,7 +222,7 @@ class ThreadDetail(BaseModel):
 
 
 class RuntimeThreadManagerConfig(BaseModel):
-    """Mirrors Rust ``RuntimeThreadManagerConfig`` (line 479)."""
+    """Configuration for the runtime thread manager."""
 
     data_dir: Path
     task_data_dir: Path

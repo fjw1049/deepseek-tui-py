@@ -2,7 +2,6 @@
 
 Consolidates turn_loop.py and input_processor.py.
 Main streaming turn loop for the engine.
-Mirrors ``crates/tui/src/core/engine/turn_loop.rs:1-1597``.
 """
 
 from __future__ import annotations
@@ -58,12 +57,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Mirrors Rust constants from streaming.rs / turn_loop.rs
 MAX_STREAM_RETRIES = 3
 MAX_CONTEXT_RECOVERY_ATTEMPTS = 3
 TURN_MAX_OUTPUT_TOKENS = 262_144
 
-# Stream guard constants (mirrors Rust streaming.rs)
+# Stream guard constants
 STREAM_CHUNK_TIMEOUT_SECS = 90
 STREAM_MAX_DURATION_SECS = 1800
 STREAM_MAX_CONTENT_BYTES = 10 * 1024 * 1024
@@ -71,7 +69,7 @@ MAX_TRANSPARENT_STREAM_RETRIES = 2
 
 
 class TurnOutcomeStatus(enum.Enum):
-    """Mirrors Rust TurnOutcomeStatus enum."""
+    """Outcome status of a turn."""
     SUCCESS = "success"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
@@ -92,7 +90,7 @@ class TurnResult:
 
 @dataclass
 class _TurnState:
-    """Internal turn state tracking (mirrors Rust state variables)."""
+    """Internal turn state tracking."""
     context_recovery_attempts: int = 0
     stream_retry_attempts: int = 0
     active_tool_names: set[str] = field(default_factory=set)
@@ -100,10 +98,7 @@ class _TurnState:
 
 
 class TurnLoop:
-    """Main streaming turn loop orchestrator.
-
-    Mirrors `Engine::handle_deepseek_turn` from Rust.
-    """
+    """Main streaming turn loop orchestrator."""
     def __init__(
         self,
         client: LLMClient,
@@ -175,7 +170,7 @@ class TurnLoop:
         latency_turn_id: str | None = None,
         round_idx: int = 0,
     ) -> TurnResult:
-        """Core turn loop logic (mirrors Rust handle_deepseek_turn main loop)."""
+        """Core turn loop logic."""
         from deepseek_tui.server.metrics import get_turn_latency, now_ms
 
         buffer = AssistantResponseBuffer()
@@ -303,7 +298,7 @@ class TurnLoop:
                 # etc.) reaches the LLM client. Without this propagation the
                 # rebuilt request below would silently drop these fields and
                 # reasoning models (DeepSeek-R1 / V4) would never enable
-                # thinking. Mirrors Rust turn_loop.rs which preserves them.
+                # thinking.
                 temperature=request.temperature,
                 top_p=request.top_p,
                 reasoning_effort=request.reasoning_effort,
@@ -356,8 +351,8 @@ class TurnLoop:
                         raw = stream_event.text
                         # Buffer keeps RAW text so the post-stream tool_parser
                         # fallback can still detect markers. Only the visible
-                        # delta is scrubbed of fake wrappers (mirrors Rust:
-                        # buffer holds canonical, emit shows cleaned UX).
+                        # delta is scrubbed of fake wrappers: buffer holds
+                        # canonical, emit shows cleaned UX.
                         buffer.append_text(raw)
                         if (
                             not fake_notice_sent
@@ -579,7 +574,7 @@ class TurnLoop:
 def _should_transparently_retry(
     any_content_received: bool, attempts: int, cancelled: bool
 ) -> bool:
-    """Mirrors Rust should_transparently_retry_stream()."""
+    """Decide whether to transparently retry a stalled stream."""
     return (
         not any_content_received
         and attempts < MAX_TRANSPARENT_STREAM_RETRIES

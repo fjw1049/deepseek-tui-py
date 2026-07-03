@@ -1,7 +1,5 @@
 """Network policy evaluation and session caching.
 
-Mirrors ``crates/tui/src/network_policy.rs``.
-
 Provides domain-level allow/deny gating for all outbound HTTP requests
 made by tools (fetch_url, web_search, MCP transports). Deny-wins
 precedence: a host in both allow and deny lists is always denied.

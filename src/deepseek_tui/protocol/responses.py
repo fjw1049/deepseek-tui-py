@@ -11,8 +11,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 class Usage(BaseModel):
     """Token-usage accounting for a single LLM response.
 
-    Mirrors Rust ``crates/tui/src/models.rs::Usage`` (185-202). DeepSeek
-    returns ``prompt_tokens`` / ``completion_tokens`` and provides
+    DeepSeek returns ``prompt_tokens`` / ``completion_tokens`` and provides
     ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens`` and
     ``completion_tokens_details.reasoning_tokens``. We accept those wire
     names via Pydantic v2 ``AliasChoices`` so ``Usage.model_validate``
@@ -48,9 +47,9 @@ class Usage(BaseModel):
     def _extract_nested_reasoning(cls, data: Any) -> Any:
         """Pull reasoning_tokens out of completion_tokens_details if present.
 
-        DeepSeek puts it nested under ``completion_tokens_details``; Rust
-        ``parse_usage`` handles this same path. Avoid clobbering an explicit
-        top-level ``reasoning_tokens`` if the caller already set one.
+        DeepSeek puts it nested under ``completion_tokens_details``; this
+        handles that path. Avoid clobbering an explicit top-level
+        ``reasoning_tokens`` if the caller already set one.
         """
         if not isinstance(data, dict):
             return data

@@ -9,11 +9,8 @@ from __future__ import annotations
 
 # Tool-name codec for the DeepSeek (OpenAI-compatible) Chat Completions API.
 #
-# Behavioral parity with the Rust implementation at
-# ``crates/tui/src/client.rs:25-112`` of the original DeepSeek-TUI project.
-#
 # The provider only accepts ``[A-Za-z0-9_-]`` in tool names, so any other
-# character must be escaped. Rust uses a reversible scheme:
+# character must be escaped. Uses a reversible scheme:
 #
 # * ``-`` → ``--``
 # * any other non-``[A-Za-z0-9_]`` char ``c`` →
@@ -49,10 +46,7 @@ def _is_passthrough(ch: str) -> bool:
 
 
 def to_api_tool_name(name: str) -> str:
-    """Encode a Python tool name into the provider-safe wire form.
-
-    Mirrors `to_api_tool_name` in `crates/tui/src/client.rs:25-39`.
-    """
+    """Encode a Python tool name into the provider-safe wire form."""
     parts: list[str] = []
     for ch in name:
         if _is_passthrough(ch):
@@ -65,11 +59,7 @@ def to_api_tool_name(name: str) -> str:
 
 
 def from_api_tool_name(name: str) -> str:
-    """Decode a provider-emitted tool name back to its original form.
-
-    Mirrors `from_api_tool_name` in `crates/tui/src/client.rs:41-86`,
-    plus the bare-hex fallback at L91-112.
-    """
+    """Decode a provider-emitted tool name back to its original form."""
     return _decode_bare_hex_escapes(_decode_delimited(name))
 
 
@@ -105,7 +95,7 @@ def _decode_delimited(name: str) -> str:
                 i = cursor
                 continue
             # Decode failed: emit `-x` + however many hex chars we read,
-            # then advance past them. Matches Rust which appends `-x` +
+            # then advance past them. Appends `-x` +
             # the partial hex body and continues.
             out.append("-")
             out.append("x")
@@ -131,8 +121,8 @@ def _decode_bare_hex_escapes(text: str) -> str:
         decoded = _safe_hex_to_char(hex_body)
         if decoded is None:
             return match.group(0)
-        # Mirror the Rust gating at L104: only decode if `decoded` is a
-        # character that `to_api_tool_name` would itself have encoded.
+        # Only decode if `decoded` is a character that `to_api_tool_name`
+        # would itself have encoded.
         if decoded.isascii() and (decoded.isalnum() or decoded == "_"):
             return match.group(0)
         if decoded == "-":
@@ -162,7 +152,7 @@ def _safe_hex_to_char(hex_str: str) -> str | None:
     return chr(code)
 
 
-# Deprecated tool alias notices — mirrors Rust ``wrap_with_deprecation_notice``.
+# Deprecated tool alias notices.
 
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
@@ -229,8 +219,6 @@ class DeprecatingAliasTool(ToolSpec):
 
 
 # JSON Schema sanitizer for DeepSeek strict function calling.
-#
-# Mirrors ``crates/tui/src/tools/schema_sanitize.rs``.
 #
 # Pydantic-generated schemas contain patterns that DeepSeek's strict mode
 # rejects:

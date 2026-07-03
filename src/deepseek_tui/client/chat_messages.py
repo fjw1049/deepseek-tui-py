@@ -164,9 +164,9 @@ def _strip_orphaned_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _should_include_reasoning(model: str, reasoning_effort: str | None) -> bool:
-    """Mirror Rust ``requires_reasoning_content`` (client/chat.rs:826-834).
+    """Whether reasoning content should be replayed into the request.
 
-    Rust treats the following effort values as "off" and skips reasoning
+    The following effort values are treated as "off" and skip reasoning
     replay: ``off`` / ``disabled`` / ``none`` / ``false``. Otherwise, any
     DeepSeek model whose name contains one of the reasoning markers gets
     its reasoning blocks replayed back into the request, which avoids the

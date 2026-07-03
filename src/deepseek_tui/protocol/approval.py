@@ -1,15 +1,6 @@
 """Approval & review types.
 
-Mirrors:
-
-* ``AskForApproval`` (protocol/src/lib.rs:226-236)
-* ``NetworkPolicyRuleAction`` (lib.rs:288-293)
-* ``NetworkPolicyAmendment`` (lib.rs:295-299)
-* ``ReviewDecision`` (lib.rs:301-313)
-* ``NetworkApprovalContext`` (lib.rs:343-347)
-* ``ExecApprovalRequestEvent`` (lib.rs:349-367)
-
-Rust JSON shapes::
+JSON shapes::
 
     AskForApproval (rename_all = "snake_case"):
         "unless_trusted" | "on_failure" | "on_request" | "never"
@@ -94,7 +85,7 @@ _AskVariants = Annotated[
 
 
 class AskForApproval(RootModel[_AskVariants]):
-    """Mirror of Rust ``AskForApproval`` enum.
+    """Approval policy for command execution.
 
     Wire shape:
 
@@ -165,14 +156,14 @@ class AskForApproval(RootModel[_AskVariants]):
 
 
 class NetworkPolicyRuleAction(str, Enum):
-    """Mirror of Rust ``NetworkPolicyRuleAction`` (lib.rs:288-293)."""
+    """Allow/deny action for a network policy rule."""
 
     ALLOW = "allow"
     DENY = "deny"
 
 
 class NetworkPolicyAmendment(BaseModel):
-    """Mirror of Rust ``NetworkPolicyAmendment`` (lib.rs:295-299)."""
+    """A single network policy amendment."""
 
     host: str
     action: NetworkPolicyRuleAction
@@ -226,16 +217,16 @@ ReviewDecision = Annotated[
 
 
 class NetworkApprovalContext(BaseModel):
-    """Mirror of Rust ``NetworkApprovalContext`` (lib.rs:343-347)."""
+    """Context for a network access approval request."""
 
     host: str
     protocol: str
 
 
 class ExecApprovalRequestEvent(BaseModel):
-    """Mirror of Rust ``ExecApprovalRequestEvent`` (lib.rs:349-367).
+    """Event requesting approval to run a command.
 
-    The ``available_decisions`` field carries Rust ``Vec<ReviewDecision>``;
+    The ``available_decisions`` field carries a list of review decisions;
     each item serialises with its own ``type`` discriminator.
     """
 

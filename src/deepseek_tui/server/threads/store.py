@@ -1,7 +1,6 @@
 """File-based persistence for threads/turns/items (JSON) and events (JSONL).
 
-Mirrors Rust ``RuntimeThreadStore`` (runtime_threads.rs:191-476). Pure I/O —
-no engine logic lives here.
+Pure I/O — no engine logic lives here.
 """
 
 from __future__ import annotations
@@ -27,10 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class RuntimeThreadStore:
-    """File-based store: threads/turns/items as individual JSON, events as JSONL.
-
-    Mirrors Rust ``RuntimeThreadStore`` (line 191-476).
-    """
+    """File-based store: threads/turns/items as individual JSON, events as JSONL."""
 
     def __init__(self, root: Path) -> None:
         self._threads_dir = root / "threads"

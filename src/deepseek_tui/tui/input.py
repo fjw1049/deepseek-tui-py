@@ -5,7 +5,7 @@ from __future__ import annotations
 
 
 
-# Input composer widget — mirrors Rust ``tui/user_input.rs``.
+# Input composer widget.
 import os
 import subprocess
 import tempfile
@@ -30,9 +30,7 @@ class ComposerHint(Static):
     """One-line hint strip above the composer.
 
     Shows the active mode + model + the high-traffic key chords
-    (``↵ send · Ctrl+J newline · Tab mode``). Mirrors the bottom title
-    of Rust's bordered ``ComposerWidget`` block in
-    ``crates/tui/src/tui/widgets/mod.rs``.
+    (``↵ send · Ctrl+J newline · Tab mode``).
     """
 
     DEFAULT_CSS = """
@@ -266,7 +264,7 @@ class SlashMenu(Vertical):
         self.hide()
 
 
-# Command palette widget — mirrors Rust ``tui/command_palette.rs``.
+# Command palette widget.
 #
 # Stage 6.6: Ctrl+K style command palette for quick access to slash
 # commands, model switching, and other actions.

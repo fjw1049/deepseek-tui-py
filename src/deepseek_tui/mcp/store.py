@@ -23,7 +23,7 @@ class McpWriteStatus(str, Enum):
 
 
 def validate_mcp_config_path(path: Path) -> None:
-    """Reject unsafe MCP config paths (mirrors Rust ``validate_mcp_config_path``)."""
+    """Reject unsafe MCP config paths."""
     if not str(path).strip():
         raise ValueError("MCP config path is empty")
     if ".." in path.parts:

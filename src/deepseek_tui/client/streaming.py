@@ -22,7 +22,7 @@ from deepseek_tui.protocol.responses import (
 def parse_json_object(raw: str) -> dict[str, Any]:
     """Parse raw JSON arguments with repair ladder fallback.
 
-    Mirrors Rust ``arg_repair.rs`` — guarantees a dict is always returned.
+    Guarantees a dict is always returned.
     """
     if not raw:
         return {}
@@ -35,7 +35,7 @@ def parse_json_object(raw: str) -> dict[str, Any]:
         pass
 
     # Stage 2+: deterministic repair ladder (trailing commas, control chars,
-    # unbalanced braces) — mirrors crates/tui/src/tools/arg_repair.rs
+    # unbalanced braces)
     from deepseek_tui.engine.dispatch import repair
 
     return repair(raw)

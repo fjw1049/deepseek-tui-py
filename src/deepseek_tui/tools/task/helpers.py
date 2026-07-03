@@ -16,7 +16,7 @@ _MAX_SUMMARY_CHARS = 2000
 
 
 def _summarize(text: str, limit: int) -> str:
-    """Mirror of Rust ``summarize`` (tools/tasks.rs:947-965).
+    """Summarize output text for compact display.
 
     Drops control characters (except ``\\n`` / ``\\t``), truncates to
     ``limit`` chars with a trailing ``...`` marker. Empty result becomes
@@ -75,7 +75,7 @@ async def _git_changed_files(cwd: Path) -> list[str]:
 def _classify_gate_failure(
     gate: str, exit_code: int, stdout: str, stderr: str
 ) -> str:
-    """Heuristic failure classification mirroring Rust classify_gate_failure().
+    """Heuristic failure classification.
 
     Scans output for common error patterns to categorize why a gate failed.
     """

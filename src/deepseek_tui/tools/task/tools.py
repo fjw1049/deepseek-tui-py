@@ -1,6 +1,6 @@
 """Durable task tools — thin wrappers over :class:`TaskManager`.
 
-Mirrors Rust ``crates/tui/src/tools/tasks.rs``. All tools delegate to
+All tools delegate to
 ``context.task_manager``.
 """
 
@@ -206,7 +206,7 @@ class TaskCancelTool(ToolSpec):
 class TaskGateRunTool(ToolSpec):
     """Execute a verification gate command and record the result.
 
-    Mirrors Rust ``TaskGateRunTool`` (tasks.rs:287-420). Runs the command,
+    Runs the command,
     captures exit_code/stdout/stderr, computes duration, classifies failure,
     and persists a TaskGateRecord on the task.
     """

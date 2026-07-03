@@ -33,7 +33,7 @@ from deepseek_tui.tools.task.store import _utc_now_iso
 class PrAttemptRecordTool(ToolSpec):
     """Capture a PR attempt with git diff --binary and record it.
 
-    Mirrors Rust ``PrAttemptRecordTool`` (tasks.rs:505-706). Automatically
+    Automatically
     runs ``git diff --binary`` to capture the current working tree diff,
     extracts changed_files, computes base/head refs, and writes the patch
     as a durable artifact on the task.
@@ -240,7 +240,6 @@ class PrAttemptReadTool(ToolSpec):
 class PrAttemptPreflightTool(ToolSpec):
     """Run ``git apply --check`` for a recorded attempt patch.
 
-    Mirrors Rust ``PrAttemptPreflightTool`` (crates/tui/src/tools/tasks.rs:707-771).
     No-mutation preflight; actual apply remains explicit and approval-gated
     elsewhere.
     """

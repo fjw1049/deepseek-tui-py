@@ -1,4 +1,4 @@
-"""Read-only time tools for scheduling (mirrors OpenHuman ``current_time``)."""
+"""Read-only time tools for scheduling."""
 
 from __future__ import annotations
 

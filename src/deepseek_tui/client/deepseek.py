@@ -22,10 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_reasoning_model(model: str) -> bool:
-    """Check if a model supports reasoning_content output.
-
-    Mirrors Rust client/chat.rs requires_reasoning_content().
-    """
+    """Check if a model supports reasoning_content output."""
     lower = model.lower()
     return any(
         marker in lower
@@ -45,8 +42,7 @@ def _map_tool_choice_for_chat(
 ) -> str | dict[str, Any] | None:
     """Translate internal tool_choice shape into the chat-completions API shape.
 
-    Mirrors Rust ``client/chat.rs::map_tool_choice_for_chat``. The engine
-    emits ``{"type": "auto"}`` etc. internally, but DeepSeek's
+    The engine emits ``{"type": "auto"}`` etc. internally, but DeepSeek's
     ``/v1/chat/completions`` only accepts the OpenAI shapes:
       - bare string ``"auto" | "none" | "required"``
       - object ``{"type": "function", "function": {"name": "..."}}``
@@ -128,8 +124,7 @@ class DeepSeekClient(LLMClient):
         ``asyncio.TimeoutError``, hitting different retry branches in
         ``TurnLoop._run_turn_loop`` and confusing transparent-retry
         accounting. Connect/write timeouts stay bounded so DNS or TLS
-        stalls still surface promptly. Mirrors Rust which treats stream
-        idle timeout independently from request setup.
+        stalls still surface promptly.
         """
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
@@ -160,10 +155,10 @@ class DeepSeekClient(LLMClient):
         payload = self._build_payload(request)
         client = self._get_http_client()
         chunk_timeout = self.timeout_seconds
-        # Pre-stream retry on 429 / 5xx / connect errors. Mirrors Rust
-        # client.rs::send_with_retry: only retries before the first byte
-        # of the response body is consumed; once SSE chunks start flowing
-        # the engine's transparent-retry layer takes over.
+        # Pre-stream retry on 429 / 5xx / connect errors: only retries
+        # before the first byte of the response body is consumed; once SSE
+        # chunks start flowing the engine's transparent-retry layer takes
+        # over.
         url = self._chat_completions_url()
         body_bytes = len(json.dumps(payload).encode())
         logger.info(
@@ -211,7 +206,7 @@ class DeepSeekClient(LLMClient):
         """Yield SSE events; retry connection-phase 429/5xx with backoff.
 
         The retry loop only fires before the first SSE chunk is yielded.
-        Delays follow Rust client.rs (1s base, ×2 backoff, max 60s) but
+        Delays: 1s base, ×2 backoff, max 60s, but
         capped at MAX_PRE_STREAM_RETRIES attempts.
         """
         max_retries = 3

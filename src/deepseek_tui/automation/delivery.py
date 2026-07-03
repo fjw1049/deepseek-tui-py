@@ -205,7 +205,7 @@ def format_delivery_body(
 
 @dataclass(frozen=True, slots=True)
 class DeliveryConfig:
-    """Mirrors OpenHuman ``DeliveryConfig`` subset used after cron agent runs."""
+    """``DeliveryConfig`` subset used after cron agent runs."""
 
     mode: str = "silent"
     chat_id: str | None = None

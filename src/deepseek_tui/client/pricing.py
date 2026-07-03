@@ -1,4 +1,4 @@
-"""Per-model cost estimation — mirrors Rust ``crates/tui/src/pricing.rs``.
+"""Per-model cost estimation.
 
 DeepSeek's published rates have **three** input tiers (cache hit / cache miss
 / output) and ship in two currencies (USD + CNY). The v4 Pro model is on a
@@ -26,9 +26,8 @@ from deepseek_tui.protocol.responses import Usage
 class CostCurrency(str, Enum):
     """Cost display currency.
 
-    Mirrors Rust ``CostCurrency`` (``pricing.rs:9-31``). Accepts both
-    short codes (``usd`` / ``cny``) and common aliases (``yuan`` /
-    ``rmb`` / ``$`` / ``¥``) via :meth:`from_setting`.
+    Accepts both short codes (``usd`` / ``cny``) and common aliases
+    (``yuan`` / ``rmb`` / ``$`` / ``¥``) via :meth:`from_setting`.
     """
 
     USD = "usd"
@@ -52,8 +51,7 @@ class CostCurrency(str, Enum):
 class CostEstimate:
     """Cost estimate in both official DeepSeek pricing currencies.
 
-    Mirrors Rust ``CostEstimate`` (``pricing.rs:34-56``). Carry both so
-    the UI can switch currency without re-pricing the turn.
+    Carry both so the UI can switch currency without re-pricing the turn.
     """
 
     usd: float = 0.0
@@ -90,8 +88,7 @@ class _ModelPricing:
     cny: _CurrencyPricing
 
 
-# DeepSeek's v4 Pro limited-time 75% discount runs through this UTC instant
-# (mirrors ``v4_pro_discount_ends_at()`` in the Rust source).
+# DeepSeek's v4 Pro limited-time 75% discount runs through this UTC instant.
 _V4_PRO_DISCOUNT_ENDS_AT = datetime(2026, 5, 31, 15, 59, 0, tzinfo=timezone.utc)
 
 
@@ -138,7 +135,6 @@ _V4_FLASH = _ModelPricing(
 def _pricing_for_model_at(model: str, now: datetime) -> _ModelPricing | None:
     """Return per-million pricing for ``model`` at instant ``now``.
 
-    Mirrors Rust ``pricing_for_model_at`` (``pricing.rs:84-138``).
     Returns ``None`` for unknown or non-DeepSeek-Platform models so the
     UI can hide the cost chip rather than report a misleading zero.
     """
@@ -163,9 +159,8 @@ def calculate_turn_cost_estimate_from_usage(
 ) -> CostEstimate | None:
     """Cost for one turn, honoring DeepSeek's three-tier billing.
 
-    Mirrors Rust ``calculate_turn_cost_estimate_from_usage``
-    (``pricing.rs:178-186``). ``now`` is exposed for tests so the v4-pro
-    discount cutover is deterministic.
+    ``now`` is exposed for tests so the v4-pro discount cutover is
+    deterministic.
     """
     pricing = _pricing_for_model_at(model, now or datetime.now(timezone.utc))
     if pricing is None:
@@ -193,8 +188,6 @@ def _estimate_in_currency(rates: _CurrencyPricing, usage: Usage) -> float:
 
 def format_cost_amount(cost: float, currency: CostCurrency = CostCurrency.USD) -> str:
     """Compact formatter for the footer cost chip.
-
-    Mirrors Rust ``format_cost_amount`` (``pricing.rs:211-220``):
 
     - ``< 0.0001`` → ``<$0.0001`` (just signals "non-zero")
     - ``0.0001 .. 0.01`` → 4-digit precision (``$0.0034``)
@@ -227,7 +220,7 @@ def format_cost_estimate(
 class ModelPricing:
     """Legacy flat 2-tier rate card.
 
-    Pre-2026-05-12 port of Rust's pricing module used this 2-tier shape
+    Pre-2026-05-12 code used this 2-tier shape
     (one input rate, one output rate). The real DeepSeek surface is
     3-tier; the canonical entry point is
     :func:`calculate_turn_cost_estimate_from_usage`. Kept here only so

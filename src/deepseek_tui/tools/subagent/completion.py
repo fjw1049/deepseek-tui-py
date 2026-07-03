@@ -9,7 +9,7 @@ from typing import Any
 from deepseek_tui.tools.subagent.types import SubAgentResult, SubAgentStatusKind
 
 
-# Sub-agent completion payloads for parent turn handoff (Rust issue #756).
+# Sub-agent completion payloads for parent turn handoff.
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +69,7 @@ _MAX_PAYLOAD_CHARS = 8_000
 
 
 def build_completion_payload(snap: SubAgentResult) -> str:
-    """Human summary on line 1, sentinel on line 2 (Rust ``run_subagent_task``)."""
+    """Human summary on line 1, sentinel on line 2."""
     summary = summarize_subagent_result(snap)
     sentinel = subagent_done_sentinel(snap)
     payload = f"{summary}\n{sentinel}"

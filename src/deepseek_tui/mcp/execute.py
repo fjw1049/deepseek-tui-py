@@ -1,7 +1,4 @@
-"""Execute external MCP tools — shared by Engine and AppRuntime.
-
-Mirrors ``crates/tui/src/core/engine/tool_execution.rs::execute_mcp_tool_with_pool``.
-"""
+"""Execute external MCP tools — shared by Engine and AppRuntime."""
 
 from __future__ import annotations
 
@@ -19,7 +16,7 @@ _MCP_READ_ALIASES = frozenset({"mcp_read_resource", "read_mcp_resource"})
 
 
 def normalize_mcp_bridge_tool_name(name: str) -> str:
-    """Map Rust-parity MCP bridge aliases onto registered tool names."""
+    """Map MCP bridge aliases onto registered tool names."""
     if name == "mcp_read_resource":
         return "read_mcp_resource"
     return name

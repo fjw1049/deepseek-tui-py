@@ -1,7 +1,4 @@
-"""Durable TaskManager — queueing, workers, and lifecycle transitions.
-
-Mirrors ``crates/tui/src/task_manager.rs`` (1,845 lines).
-"""
+"""Durable TaskManager — queueing, workers, and lifecycle transitions."""
 
 from __future__ import annotations
 
@@ -74,10 +71,7 @@ def get_real_task_executor() -> ExecutorFunc:
 
 
 class TaskManager:
-    """Durable task manager.
-
-    Mirrors Rust `TaskManager` (task_manager.rs:702-1472).
-    """
+    """Durable task manager."""
 
     def __init__(
         self,
@@ -142,10 +136,7 @@ class TaskManager:
         return self._cfg.data_dir
 
     def artifact_absolute_path(self, patch_ref: str) -> Path:
-        """Resolve a recorded artifact reference to an absolute path.
-
-        Mirrors Rust ``TaskManager::artifact_absolute_path``.
-        """
+        """Resolve a recorded artifact reference to an absolute path."""
         p = Path(patch_ref)
         if p.is_absolute():
             return p
@@ -297,8 +288,7 @@ class TaskManager:
     ) -> TaskRecord | None:
         """Apply ``task_updates`` from a tool's result metadata to the task.
 
-        Mirrors Rust ``TaskManager::record_tool_metadata``
-        (``task_manager.rs:985-1003``). Currently honors the
+        Currently honors the
         ``task_updates.checklist`` key — see
         :meth:`_apply_task_update_metadata` for details. Returns the
         updated record, or ``None`` if the task no longer exists (e.g.
@@ -655,13 +645,22 @@ class TaskManager:
             del self._tasks[tid]
 
     def _persist_all_locked(self) -> None:
+        """全量落盘：先写队列，再逐个写入所有任务记录。
+
+        调用方必须已持有 ``self._lock``（``_locked`` 约定）。用于队列
+        结构性变化的场合（新增/取消/出队/收尾/启动），此时 queue 与多个
+        任务状态可能同时变动，一次全写保证多文件间一致。高频的单任务
+        更新应改用 :meth:`_persist_task_locked` 以避免全量写放大。
+        """
         self._persist_queue_locked()
         for task in self._tasks.values():
             self._persist_task_locked(task)
 
     def _persist_queue_locked(self) -> None:
+        """原子写入队列顺序到 ``queue.json``（调用方须持有 ``self._lock``）。"""
         _write_json_atomic(self._queue_path, {"queue": list(self._queue)})
 
     def _persist_task_locked(self, task: TaskRecord) -> None:
+        """原子写入单个任务到 ``tasks/{id}.json``（调用方须持有 ``self._lock``）。"""
         path = self._tasks_dir / f"{task.id}.json"
         _write_json_atomic(path, _task_record_to_dict(task))

@@ -57,10 +57,7 @@ def reconstruct_messages_from_turns(
     store: RuntimeThreadStore,
     thread_id: str,
 ) -> list:
-    """Rebuild Engine chat history from persisted turn items.
-
-    Mirrors Rust ``RuntimeThreadManager::reconstruct_messages_from_turns``.
-    """
+    """Rebuild Engine chat history from persisted turn items."""
     from deepseek_tui.protocol.messages import (
         Message,
         Role,
@@ -121,7 +118,7 @@ def reconstruct_messages_from_turns(
 
 
 def tool_kind_for_name(name: str) -> TurnItemKind:
-    """Mirrors Rust ``tool_kind_for_name`` (line 2542)."""
+    """Classify a tool name into its turn-item kind."""
     lower = name.lower()
     if lower in ("exec_shell", "exec_shell_wait", "exec_shell_interact"):
         return TurnItemKind.COMMAND_EXECUTION

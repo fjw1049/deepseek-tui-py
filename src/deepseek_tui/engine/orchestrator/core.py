@@ -1,7 +1,6 @@
 """Engine core — construction, turn loop, and conversation orchestration.
 
-Mirrors Rust ``crates/tui/src/core/engine`` entry points. Tool dispatch,
-maintenance, and lifecycle/LSP methods live in sibling mixins.
+Tool dispatch, maintenance, and lifecycle/LSP methods live in sibling mixins.
 """
 
 from __future__ import annotations
@@ -154,15 +153,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # activation survives past the round that produced it.
         self._activated_tool_names: set[str] = set()
         # Cumulative session cost (USD / CNY), accumulated per turn from
-        # the DeepSeek usage payload via the pricing module. Mirrors
-        # Rust ``App.session_cost`` — the footer reads these to render
-        # the cost chip and the ``/cost`` slash command sources from
-        # the same fields.
+        # the DeepSeek usage payload via the pricing module. The footer
+        # reads these to render the cost chip and the ``/cost`` slash
+        # command sources from the same fields.
         self.session_cost_usd: float = 0.0
         self.session_cost_cny: float = 0.0
         # 2026-05-15: cumulative cache hit/miss tokens across the whole
-        # session. Intentional deviation from Rust ``footer_cache_spans``
-        # (ui.rs:7377), which displays only ``last_prompt_cache_hit_tokens``
+        # session. Intentional deviation from the footer cache spans, which
+        # display only the most recent turn's cache-hit tokens
         # — i.e. the most recent turn. DeepSeek's prefix cache means
         # every turn after the first has a near-100% hit ratio, so the
         # per-turn number is constant ~99% and carries no information.
@@ -171,7 +169,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # See HANDOVER §九 ``cache_chip.2026-05-15 cumulative``.
         self.session_cache_hit_total: int = 0
         self.session_cache_miss_total: int = 0
-        # Stage 4.4 post-edit LSP diagnostics — Rust ``Engine.pending_lsp_blocks``
+        # Stage 4.4 post-edit LSP diagnostics — pending diagnostic blocks.
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
         # Last real input_tokens reported by the provider (from the final
@@ -195,7 +193,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # ``_get_tools_with_mcp`` 只返回交集。由 ``_handle_send_message_inner``
         # 在 try/finally 中设置与复位，不跨 turn 保留。
         self._focus_tool_whitelist: frozenset[str] | None = None
-        # Per-tool snapshots for /undo (mirrors Rust pre_tool_snapshot, #384).
+        # Per-tool snapshots for /undo.
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
         self.tool_snapshots: dict[str, list[tuple[Path, bytes | None]]] = {}
@@ -204,8 +202,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Sampling / reasoning defaults — populated from Config in
         # ``Engine.create``. Without these, ``_run_conversation`` would
         # build a ``MessageRequest`` missing reasoning_effort/temperature
-        # and DeepSeek-R1 / V4 thinking would never activate. Mirrors
-        # Rust ``Engine`` which reads them from EngineConfig per turn.
+        # and DeepSeek-R1 / V4 thinking would never activate.
         self.default_reasoning_effort = default_reasoning_effort
         self.default_temperature = default_temperature
         self.default_top_p = default_top_p
@@ -218,7 +215,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         )
         self.tool_context.metadata["hook_executor"] = self.hook_executor
         # Cycle / seam managers — instantiated but disabled by default. The
-        # full Rust archive-and-replan logic lives in cycle_manager.py /
+        # full archive-and-replan logic lives in cycle_manager.py /
         # seam_manager.py; ``Engine`` keeps surface integration minimal:
         # ``_maybe_advance_cycle`` runs at the start of each conversation
         # and only fires when the user opts in via ``Config.cycle_enabled``.
@@ -230,7 +227,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self._cycle_started_at: int = 0
         # Working-set tracker — observes user messages and tool calls to
         # surface relevant file paths for compaction pinning + system-prompt
-        # injection. Mirrors Rust ``WorkingSet`` (working_set.rs). One per
+        # injection. One per
         # Engine instance: workspace lives on tool_context.working_directory.
         self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
@@ -250,7 +247,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         *,
         model: str | None = None,
     ) -> None:
-        """Replace in-memory chat history (Rust ``Op::SyncSession`` parity)."""
+        """Replace in-memory chat history."""
         self.session_messages.clear()
         self.session_messages.extend(messages)
         if model:
@@ -517,7 +514,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def _accrue_child_token_cost_from_metadata(
         self, metadata: dict[str, Any] | None
     ) -> None:
-        """Roll child-tool token usage into session cost (Rust #524 / tool_routing)."""
+        """Roll child-tool token usage into session cost."""
         if not metadata:
             return
         child_model = metadata.get("child_model")
@@ -621,7 +618,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def _initial_request_tools_for_context(
         self, api_tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Mirror TurnLoop's initial active tool filtering for context counts.
+        """Initial active-tool filtering for context counts.
 
         Replays the same ordering the streaming turn uses so the breakdown
         counts only the tools sent on the first request: apply native/MCP
@@ -886,7 +883,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         start = time.monotonic()
 
         # Plan mode: detect quick-plan requests that skip codebase exploration
-        # and inject a grounding hint (mirrors Rust engine.rs:956)
+        # and inject a grounding hint
         if should_force_update_plan_first(self.mode, processed.display_text or ""):
             working_messages.append(
                 Message.user(
@@ -992,7 +989,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # Only persist the turn's messages on success. Failed turns
             # (stream timeout, content overflow, ...) can leave a partial
             # assistant message in working_messages; persisting it would
-            # corrupt the context for every later turn. Mirrors the
+            # corrupt the context for every later turn. Matches the
             # cancelled path above, which also discards working state.
             if turn_ok:
                 if op.hidden:
@@ -1245,7 +1242,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 len(tools),
                 model,
             )
-            # Drain steer messages — mid-turn user input (mirrors turn_loop.rs:49-57 )
+            # Drain steer messages — mid-turn user input
             # 这是中途转向机制
             for steer_text in self.handle.drain_steers():
                 steer_text = steer_text.strip()
@@ -1263,7 +1260,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     messages.append(Message.user(processed.model_text))
                     self.working_set.observe_references(processed.references)
 
-            # Capacity pre-request checkpoint (mirrors capacity_flow.rs:13-34)
+            # Capacity pre-request checkpoint
             # 观测 token/工具调用密度,容量预检查；改写式（删旧+塞摘要）
             await run_pre_request_checkpoint(
                 self.capacity_controller,
@@ -1400,13 +1397,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             ))
             messages.extend(tool_results)
 
-            # Capacity post-tool checkpoint (mirrors capacity_flow.rs:37-76)
+            # Capacity post-tool checkpoint
             # 观测 token/工具调用密度,容量后检查
             await run_post_tool_checkpoint(
                 self.capacity_controller, self.turn_counter, model, messages,
             )
 
-            # Capacity error escalation (mirrors capacity_flow.rs:78-151)
+            # Capacity error escalation
             if tool_errors > 0:
                 step_error_count += tool_errors
                 consecutive_tool_error_steps += 1
@@ -1421,7 +1418,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             else:
                 consecutive_tool_error_steps = 0
 
-            # Plan mode: stop after successful update_plan (Rust turn_loop.rs:1634)
+            # Plan mode: stop after successful update_plan
             if tool_errors == 0 and any(
                 should_stop_after_plan_tool(self.mode, tc.name, True)
                 for tc in result.tool_calls

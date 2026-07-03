@@ -2,7 +2,6 @@
 
 Consolidates tool_catalog.py and tool_parser.py.
 Deferred tool catalog and built-in advanced tool helpers.
-Mirrors ``crates/tui/src/core/engine/tool_catalog.rs:1-475``.
 
 The streaming turn loop owns when tools are offered or executed. This module
 owns the catalog-level policy around deferred loading, tool search, missing
@@ -22,7 +21,7 @@ from typing import Any
 from deepseek_tui.tools.registry import ToolError, ToolResult
 from dataclasses import dataclass
 
-# --- Constants (Rust tool_catalog.rs:18-26) -------------------------------
+# --- Constants ------------------------------------------------------------
 
 MULTI_TOOL_PARALLEL_NAME = "multi_tool_use.parallel"
 REQUEST_USER_INPUT_NAME = "request_user_input"
@@ -38,7 +37,7 @@ def is_tool_search_tool(name: str) -> bool:
     return name in (TOOL_SEARCH_REGEX_NAME, TOOL_SEARCH_BM25_NAME)
 
 
-# --- Deferred loading policy (Rust tool_catalog.rs:31-99) -----------------
+# --- Deferred loading policy ----------------------------------------------
 
 _ALWAYS_ACTIVE_TOOLS = frozenset(
     {
@@ -59,7 +58,7 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "task_shell_wait",
         # Sub-agent orchestration — keep visible alongside task_* so the
         # model does not reach for task_create when the user asks for
-        # agent_spawn (both families were deferred in Rust; task_* was
+        # agent_spawn (both families were originally deferred; task_* was
         # promoted to always-active in Python and created a selection bias).
         "agent_spawn",
         "agent_result",
@@ -147,7 +146,7 @@ def build_model_tool_catalog(
     return native_tools + mcp_tools
 
 
-# --- Advanced tooling injection (Rust tool_catalog.rs:120-180) ------------
+# --- Advanced tooling injection -------------------------------------------
 
 
 def ensure_advanced_tooling(
@@ -245,7 +244,7 @@ def ensure_advanced_tooling(
         )
 
 
-# --- Active tool set (Rust tool_catalog.rs:182-240) ----------------------
+# --- Active tool set ------------------------------------------------------
 
 
 def initial_active_tools(tools: list[dict[str, Any]]) -> set[str]:
@@ -309,7 +308,7 @@ def maybe_activate_requested_deferred_tool(
     return False
 
 
-# --- Tool search (Rust tool_catalog.rs:242-302) --------------------------
+# --- Tool search ----------------------------------------------------------
 
 
 def _tool_search_haystack(tool: dict[str, Any]) -> str:
@@ -370,7 +369,7 @@ def discover_tools_with_bm25_like(
     return [name for _, name in scored[:5]]
 
 
-# --- Edit distance & suggestions (Rust tool_catalog.rs:304-389) ----------
+# --- Edit distance & suggestions ------------------------------------------
 
 
 def edit_distance(a: str, b: str) -> int:
@@ -443,7 +442,7 @@ def missing_tool_error_message(
     )
 
 
-# --- Built-in tool executors (Rust tool_catalog.rs:407-475) ---------------
+# --- Built-in tool executors ----------------------------------------------
 
 
 def execute_tool_search(
@@ -537,9 +536,6 @@ async def execute_code_execution_tool(
 
 
 # Tool call parsing for text-based and streaming fragments.
-# Mirrors ``crates/tui/src/core/tool_parser.rs`` (510 lines) for text-based
-# legacy format support; ``crates/tui/src/core/engine/dispatch.rs:151-220``
-# for stream fragment reassembly.
 
 
 

@@ -1,6 +1,5 @@
 """RuntimeThreadManager — orchestrates Engine lifecycles for HTTP threads.
 
-Mirrors Rust ``RuntimeThreadManager`` (runtime_threads.rs:594-2488).
 Manages active engines, turn monitoring, LRU eviction, and restart recovery.
 """
 
@@ -186,10 +185,7 @@ class _PendingUserInputRecord:
 
 
 class RuntimeThreadManager:
-    """Manages active engine threads, lifecycle, and event persistence.
-
-    Mirrors Rust ``RuntimeThreadManager`` (line 594-2488).
-    """
+    """Manages active engine threads, lifecycle, and event persistence."""
 
     def __init__(
         self,
@@ -692,12 +688,10 @@ class RuntimeThreadManager:
     async def resume_thread(self, thread_id: str) -> ThreadDetail:
         """Touch a thread so its engine is loaded and return its detail.
 
-        Mirrors Rust ``RuntimeThreadManager::resume_thread`` (runtime_threads.rs:809-813).
-        The Rust version does ``ensure_engine_loaded`` to re-hydrate the
-        engine task; here we drive the same path through ``_ensure_engine_loaded``
+        Re-hydrates the engine task by driving ``_ensure_engine_loaded``
         so the LRU cache + engine task wake up before clients hit the next
         ``/threads/{id}/turns`` request. Re-emits a ``thread.resumed``
-        event for parity with Rust's event timeline.
+        event onto the event timeline.
         """
         thread = self.store.load_thread(thread_id)
         await self._ensure_engine_loaded(thread)
@@ -713,11 +707,10 @@ class RuntimeThreadManager:
     async def threads_summary(self) -> dict[str, Any]:
         """Compact roll-up over all threads.
 
-        Mirrors Rust ``GET /v1/threads/summary`` (runtime_api.rs:568-648).
         Returns aggregate counts + last-updated id so dashboards / TUI
         sidebars can render a header without paginating the full list.
-        Python's ``ThreadRecord`` doesn't carry a status enum (Rust does),
-        so we expose ``active`` vs ``archived`` and a per-mode breakdown.
+        ``ThreadRecord`` doesn't carry a status enum, so we expose
+        ``active`` vs ``archived`` and a per-mode breakdown.
         """
         threads = self.store.list_threads()
         active = 0
@@ -1775,10 +1768,7 @@ class RuntimeThreadManager:
         handle: EngineHandle,
         mode: str,
     ) -> None:
-        """Consume engine events and persist turn items + runtime events.
-
-        Mirrors Rust ``monitor_turn`` (line 1641-2373).
-        """
+        """Consume engine events and persist turn items + runtime events."""
         current_message_text = ""
         current_message_item_id: str | None = None
         current_reasoning_item_id: str | None = None
@@ -2203,8 +2193,7 @@ class RuntimeThreadManager:
                         # ``input`` is what the GUI provider needs to render
                         # interactive ``request_user_input`` blocks live;
                         # without it the questions only appear after the turn
-                        # completes (via ThreadDetail reload). Mirrors Rust
-                        # runtime_threads.rs ``item.started`` payload.
+                        # completes (via ThreadDetail reload).
                         "tool": {
                             "id": tc.id,
                             "name": tc.name,
@@ -2913,10 +2902,7 @@ class RuntimeThreadManager:
             logger.debug("[mcp-warmup] background discovery failed (non-fatal)")
 
     def _recover_interrupted_state(self) -> None:
-        """On startup, mark any Queued/InProgress turns as Interrupted.
-
-        Mirrors Rust ``recover_interrupted_state`` (line 2425-2468).
-        """
+        """On startup, mark any Queued/InProgress turns as Interrupted."""
         now = datetime.now(timezone.utc)
         for thread in self.store.list_threads():
             thread_changed = False

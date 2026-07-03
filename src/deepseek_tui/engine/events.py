@@ -104,7 +104,7 @@ class TurnCancelledEvent:
 
 @dataclass(frozen=True, slots=True)
 class SubAgentMailboxEvent:
-    """Structured sub-agent progress (mirrors Rust ``Event::SubAgentMailbox``)."""
+    """Structured sub-agent progress."""
 
     seq: int
     message: MailboxMessage
@@ -198,7 +198,7 @@ EngineEvent = (
 )
 
 
-# Fake-wrapper filtering — mirrors Rust ``streaming.rs:73-137``.
+# Fake-wrapper filtering.
 # Some models try to forge tool calls in plain text instead of using the
 # structured tool channel. We strip those wrappers so they don't pollute
 # the visible transcript.
@@ -245,8 +245,7 @@ def _find_first_marker(text: str, markers: tuple[str, ...]) -> tuple[int, int] |
 class FakeWrapperFilter:
     """Stateful filter that strips fake tool-call wrappers across stream deltas.
 
-    Mirrors Rust ``filter_tool_call_delta`` (streaming.rs:110-137). The
-    ``in_tool_call`` flag persists across calls so a wrapper that spans
+    The ``in_tool_call`` flag persists across calls so a wrapper that spans
     chunk boundaries still gets stripped.
     """
 

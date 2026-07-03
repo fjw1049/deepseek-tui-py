@@ -46,10 +46,7 @@ def get_real_subagent_executor() -> SubAgentExecutor:
 
 
 class SubAgent:
-    """Single sub-agent handle.
-
-    Mirrors Rust ``SubAgent`` (mod.rs:648-723).
-    """
+    """Single sub-agent handle."""
 
     def __init__(
         self,

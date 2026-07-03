@@ -141,8 +141,8 @@ async def body(request: Request) -> dict[str, Any]:
 def classify_turn_value_error(exc: ValueError) -> Exception:
     """Map RuntimeThreadManager ``ValueError`` to HTTP shape.
 
-    Active-turn collisions are 409 ``turn_conflict`` (mirrors Rust ``ApiError``
-    shape). Empty prompt / not-loaded / wrong turn id are caller errors → 400.
+    Active-turn collisions are 409 ``turn_conflict``. Empty prompt /
+    not-loaded / wrong turn id are caller errors → 400.
     """
     msg = str(exc)
     lowered = msg.lower()
@@ -1076,7 +1076,7 @@ async def workspace_status(request: Request) -> dict[str, Any]:
     if runtime is None:
         raise api_error(503, "runtime not configured")
     return await runtime.workspace_status()
-"""Rust-parity /v1 runtime routes for DeepSeek Workbench.
+"""/v1 runtime routes for DeepSeek Workbench.
 
 Routes are split by domain (health/threads/turns/events/approvals/user_inputs/
 workspace) to keep each file under ~80 LOC. ``build_runtime_api_router``

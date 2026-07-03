@@ -7,8 +7,7 @@ from __future__ import annotations
 
 # Application runtime — single orchestration entry for the app-server.
 #
-# Mirrors ``deepseek_core::Runtime`` (crates/core/src/runtime.rs) — not
-# line-by-line, but in role: the app-server's handlers never construct an
+# The app-server's handlers never construct an
 # :class:`Engine` directly. They go through this class so config, thread
 # storage, and the Stage 3 tool runtime are shared across every request.
 #
@@ -280,7 +279,6 @@ class AppRuntime:
     async def handle_prompt(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Prompt handler — records prompt, emits 3 event frames.
 
-        Mirrors Rust ``Runtime::handle_prompt`` (core/src/lib.rs:925-999):
         ResponseStart → ResponseDelta("model-selected") → ResponseEnd.
         Full LLM streaming lands via /prompt/stream.
         """
@@ -331,7 +329,7 @@ class AppRuntime:
         - **With** an LLMClient injected: spin up an :class:`Engine`
           over the current tool runtime, send the prompt, and stream
           every engine event through :func:`engine_event_to_sse`.
-        - **Without** an LLMClient: yield the Rust-parity 3-frame
+        - **Without** an LLMClient: yield the 3-frame
           placeholder (ResponseStart/Delta("model-selected")/ResponseEnd).
 
         The latter path preserves Stage 4.1.next behavior for tests and
@@ -407,7 +405,7 @@ class AppRuntime:
                 pass
 
     async def _emit_prompt_hooks(self, response_id: str) -> None:
-        """Fan-out the 3 response-lifecycle hook events (Rust parity).
+        """Fan-out the 3 response-lifecycle hook events.
 
         Kept separate from event-frame construction so HTTP responses and
         SSE streams share the same hook emission path.
@@ -421,7 +419,7 @@ class AppRuntime:
     async def handle_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a single tool call through the registry.
 
-        Payload shape follows Rust ``ToolCallRequest``::
+        Payload shape::
 
             {"call": {"name": "...", "arguments": {...}}, "cwd": "..."}
         """
@@ -597,15 +595,14 @@ class AppRuntime:
 
     # --- App Server long-tail handlers -----------------------------------
     #
-    # Mirrors a subset of Rust ``runtime_api.rs`` (runtime_api.rs:297-341)
-    # that overlaps with existing CLI thread/task/skill commands. Each
+    # Handlers that overlap with existing CLI thread/task/skill commands. Each
     # handler is a thin delegator to a manager that already exists in the
     # Python tree (TaskManager / SkillRegistry / McpManager / SessionManager).
     # Handlers return ``{"ok": False, "error": ...}`` when the underlying
     # manager isn't wired so the routes never raise.
 
     async def list_skills(self) -> dict[str, Any]:
-        """Mirror Rust ``list_skills`` (runtime_api.rs:657)."""
+        """List available skills."""
         from deepseek_tui.integrations.skills import discover_in_workspace
 
         skills_dir = Path(self.config.skills_dir).expanduser()  # noqa: ASYNC240 — pure path expansion, not I/O
@@ -630,7 +627,7 @@ class AppRuntime:
         }
 
     async def list_tasks(self, limit: int | None = None) -> dict[str, Any]:
-        """Mirror Rust ``list_tasks`` (runtime_api.rs:954)."""
+        """List tasks."""
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
         manager = self._tool_runtime.task_manager
@@ -641,7 +638,7 @@ class AppRuntime:
         }
 
     async def get_task(self, task_id: str) -> dict[str, Any]:
-        """Mirror Rust ``get_task`` (runtime_api.rs:963)."""
+        """Get a single task by id."""
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
         try:
@@ -651,7 +648,7 @@ class AppRuntime:
         return {"ok": True, "task": _task_record_to_dict(record)}
 
     async def cancel_task(self, task_id: str) -> dict[str, Any]:
-        """Mirror Rust ``cancel_task`` (runtime_api.rs:?)."""
+        """Cancel a task by id."""
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
         try:
@@ -836,7 +833,7 @@ class AppRuntime:
         }
 
     async def list_mcp_servers(self) -> dict[str, Any]:
-        """Mirror Rust ``list_mcp_servers`` (runtime_api.rs:678)."""
+        """List configured MCP servers."""
         if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
             return {"ok": False, "error": "mcp manager not configured"}
         manager = self._tool_runtime.mcp_manager
@@ -853,7 +850,7 @@ class AppRuntime:
         return {"ok": True, "servers": out}
 
     async def list_mcp_tools(self) -> dict[str, Any]:
-        """Mirror Rust ``list_mcp_tools`` (runtime_api.rs:708)."""
+        """List MCP tools."""
         if self._tool_runtime is None or self._tool_runtime.mcp_manager is None:
             return {"ok": False, "error": "mcp manager not configured"}
         manager = self._tool_runtime.mcp_manager
@@ -865,7 +862,7 @@ class AppRuntime:
         return {"ok": True, "tools": manager.tools_http_payload()}
 
     async def workspace_status(self) -> dict[str, Any]:
-        """Mirror Rust ``workspace_status`` (runtime_api.rs:?).
+        """Report a read-only snapshot of the workspace.
 
         Returns the current working directory, model, sandbox/approval
         configuration, and minimal counts. Used by the TUI / dashboards
@@ -891,7 +888,6 @@ class AppRuntime:
     async def mcp_startup(self) -> dict[str, Any]:
         """Start every enabled MCP server and summarize results.
 
-        Mirrors Rust ``Runtime::mcp_startup`` (core/src/lib.rs:1192-1237).
         Emits ``GenericEventFrame`` hook events for each startup update and
         the final complete summary.
         """
@@ -1103,10 +1099,7 @@ def _task_record_to_dict(record: Any) -> dict[str, Any]:
 
 
 def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
-    """Build the 3-frame response envelope Rust emits for every prompt.
-
-    Mirrors Rust ``Runtime::handle_prompt`` (lib.rs:938-953).
-    """
+    """Build the 3-frame response envelope emitted for every prompt."""
     return [
         ResponseStartFrame(response_id=response_id).model_dump(),
         ResponseDeltaFrame(
@@ -1123,9 +1116,8 @@ def _build_hook_dispatcher(config: Config) -> HookDispatcher:
 
 # Bridge engine events into SSE envelopes.
 #
-# Mirrors the Rust event-frame path used by ``app-server``: turn_loop
-# emits EngineEvent dataclasses, and the bridge serializes each one into
-# ``{"event": "<snake_case>", ...}`` dicts that :func:`iter_sse` can frame.
+# turn_loop emits EngineEvent dataclasses, and the bridge serializes each one
+# into ``{"event": "<snake_case>", ...}`` dicts that :func:`iter_sse` can frame.
 #
 # Stage 4.1.next.next wires :class:`AppRuntime.stream_prompt` through this
 # bridge so the /prompt/stream endpoint streams real assistant deltas and

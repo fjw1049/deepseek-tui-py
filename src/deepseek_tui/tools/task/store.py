@@ -63,10 +63,7 @@ def _duration_ms(start_iso: str, end_iso: str) -> int:
     return max(0, millis)
 
 def _resolve_task_id(tasks: dict[str, TaskRecord], id_or_prefix: str) -> str:
-    """Resolve a task id or unique prefix to a full id.
-
-    Mirrors Rust `resolve_task_id()` (task_manager.rs:1545-1563).
-    """
+    """Resolve a task id or unique prefix to a full id."""
     if id_or_prefix in tasks:
         return id_or_prefix
     matches = [tid for tid in tasks if tid.startswith(id_or_prefix)]
@@ -145,10 +142,7 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
 def _load_state(
     tasks_dir: Path, queue_path: Path
 ) -> tuple[dict[str, TaskRecord], deque[str]]:
-    """Load persisted tasks + queue, converting Running → Queued on recovery.
-
-    Mirrors Rust `load_state()` (task_manager.rs:1474-1543).
-    """
+    """Load persisted tasks + queue, converting Running → Queued on recovery."""
     tasks: dict[str, TaskRecord] = {}
     if tasks_dir.exists():
         for path in sorted(tasks_dir.glob("*.json")):

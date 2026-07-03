@@ -7,8 +7,6 @@ from __future__ import annotations
 
 # Plan-mode confirmation prompt.
 #
-# Mirrors ``crates/tui/src/tui/plan_prompt.rs`` (291 LOC).
-#
 # After a plan is generated in plan mode, the user must pick one of four
 # options:
 #
@@ -18,9 +16,9 @@ from __future__ import annotations
 # 4. Exit plan mode — return to Agent mode without implementation
 #
 # This module provides the data + selection state machine plus a Textual
-# ``ModalScreen`` for interactive picking. The state machine logic mirrors
-# Rust 1:1 so the unit tests cover the same edge cases (digit shortcuts,
-# letter shortcuts, up/down navigation, enter/escape).
+# ``ModalScreen`` for interactive picking. The unit tests cover the edge
+# cases (digit shortcuts, letter shortcuts, up/down navigation,
+# enter/escape).
 #
 import enum
 from dataclasses import dataclass
@@ -57,8 +55,7 @@ PLAN_OPTIONS: list[tuple[PlanOutcome, str, str]] = [
 class PlanPromptState:
     """Pure state machine for plan prompt selection.
 
-    Mirror Rust ``PlanPromptView`` (plan_prompt.rs:99). Decoupled from the
-    Textual screen so unit tests don't need a UI runtime.
+    Decoupled from the Textual screen so unit tests don't need a UI runtime.
     """
 
     selected: int = 0
@@ -76,17 +73,14 @@ class PlanPromptState:
         return PLAN_OPTIONS[self.selected][0]
 
     def submit_number(self, number: int) -> PlanOutcome | None:
-        """Quick-pick by 1-4. Returns None if out of range.
-
-        Mirror Rust ``submit_number`` (plan_prompt.rs:118).
-        """
+        """Quick-pick by 1-4. Returns None if out of range."""
         if 1 <= number <= len(PLAN_OPTIONS):
             self.selected = number - 1
             return self.submit()
         return None
 
     def submit_letter(self, letter: str) -> PlanOutcome | None:
-        """Quick-pick by letter (a/y/r/q/e). Mirror Rust handle_key (plan_prompt.rs:138)."""
+        """Quick-pick by letter (a/y/r/q/e)."""
         ch = letter.lower()
         if ch == "a":
             self.selected = 0
@@ -199,8 +193,6 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
 
 # Esc-Esc backtrack state machine.
 #
-# Mirrors ``crates/tui/src/tui/backtrack.rs`` (386 LOC).
-#
 # Lets the user rewind the active conversation to a previous user
 # message. The chord is intentionally two-step so a single stray ``Esc``
 # after a popup close cannot accidentally rewind a turn:
@@ -223,7 +215,7 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
 
 
 class BacktrackPhase(str, enum.Enum):
-    """Mirror Rust ``BacktrackPhase`` (backtrack.rs:25)."""
+    """Backtrack phase state."""
 
     INACTIVE = "inactive"
     PRIMED = "primed"
@@ -231,17 +223,14 @@ class BacktrackPhase(str, enum.Enum):
 
 
 class Direction(str, enum.Enum):
-    """Mirror Rust ``Direction`` (backtrack.rs:42)."""
+    """Selection navigation direction."""
 
     LEFT = "left"
     RIGHT = "right"
 
 
 class EscEffect(str, enum.Enum):
-    """What the caller should do in response to a single ``Esc``.
-
-    Mirror Rust ``EscEffect`` (backtrack.rs:51).
-    """
+    """What the caller should do in response to a single ``Esc``."""
 
     NONE = "none"
     PRIME = "prime"
@@ -251,7 +240,7 @@ class EscEffect(str, enum.Enum):
 
 @dataclass(slots=True)
 class BacktrackState:
-    """Mirror Rust ``BacktrackState`` (backtrack.rs:72)."""
+    """Backtrack selection state machine."""
 
     phase: BacktrackPhase = BacktrackPhase.INACTIVE
     selected_idx: int = 0
@@ -272,10 +261,7 @@ class BacktrackState:
         return None
 
     def handle_esc(self, total_user_messages: int) -> EscEffect:
-        """Process an Esc press.
-
-        Mirror Rust ``handle_esc`` (backtrack.rs:119).
-        """
+        """Process an Esc press."""
         if self.phase == BacktrackPhase.INACTIVE:
             if total_user_messages == 0:
                 return EscEffect.NONE
@@ -298,7 +284,6 @@ class BacktrackState:
     def step(self, direction: Direction) -> None:
         """Step the selection while in ``Selecting``.
 
-        Mirror Rust ``step`` (backtrack.rs:153).
         ``LEFT`` walks backward in time (older); ``RIGHT`` walks forward.
         Bounds-checked: ``selected_idx`` is clamped to ``[0, total - 1]``.
         """
@@ -313,9 +298,8 @@ class BacktrackState:
     def confirm(self) -> int | None:
         """Commit the current selection.
 
-        Mirror Rust ``confirm`` (backtrack.rs:178). Returns the
-        depth-from-tail offset (0 = newest user turn) and resets state;
-        returns ``None`` if not currently selecting.
+        Returns the depth-from-tail offset (0 = newest user turn) and resets
+        state; returns ``None`` if not currently selecting.
         """
         if self.phase != BacktrackPhase.SELECTING:
             return None
@@ -326,10 +310,7 @@ class BacktrackState:
         return idx
 
     def reset(self) -> None:
-        """Force the state machine back to ``Inactive``.
-
-        Mirror Rust ``reset`` (backtrack.rs:192).
-        """
+        """Force the state machine back to ``Inactive``."""
         self.phase = BacktrackPhase.INACTIVE
         self.selected_idx = 0
         self.total = 0

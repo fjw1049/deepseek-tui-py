@@ -1,6 +1,6 @@
 """Path resolution for the ``.deepseek/`` data directories.
 
-Two-layer layout, mirroring Rust ``crates/tui/src/config.rs:1690-1930``:
+Two-layer layout:
 
 * **User-level** ``~/.deepseek/`` — cross-project state: credentials,
   session history, audit log, composer history,
@@ -36,10 +36,7 @@ def expand_path(path: Path | str) -> Path:
 
 
 def user_deepseek_dir() -> Path:
-    """Resolve ``~/.deepseek/`` (or ``$DEEPSEEK_HOME``).
-
-    Mirrors Rust ``effective_home_dir()`` (tui/config.rs:1690-1722).
-    """
+    """Resolve ``~/.deepseek/`` (or ``$DEEPSEEK_HOME``)."""
     override = os.getenv("DEEPSEEK_HOME")
     if override:
         return expand_path(override)
@@ -60,7 +57,7 @@ def user_agents_path() -> Path:
 
 
 def user_notes_path() -> Path:
-    """``~/.deepseek/notes.txt`` — user scratch notes (matches Rust .txt)."""
+    """``~/.deepseek/notes.txt`` — user scratch notes."""
     return user_deepseek_dir() / "notes.txt"
 
 
@@ -94,10 +91,7 @@ def user_session_cycles_dir(session_id: str) -> Path:
 
 
 def user_tasks_dir() -> Path:
-    """``~/.deepseek/tasks/`` (or ``$DEEPSEEK_TASKS_DIR``).
-
-    Mirrors Rust ``default_tasks_dir`` (task_manager.rs:1629).
-    """
+    """``~/.deepseek/tasks/`` (or ``$DEEPSEEK_TASKS_DIR``)."""
     override = os.getenv("DEEPSEEK_TASKS_DIR")
     if override:
         return expand_path(override)
@@ -120,10 +114,7 @@ def user_state_db_path() -> Path:
 
 
 def user_execpolicy_path() -> Path:
-    """``~/.deepseek/execpolicy.toml`` — exec policy ruleset.
-
-    Mirrors Rust ``default_execpolicy_path`` (execpolicy/rules.rs:72-74).
-    """
+    """``~/.deepseek/execpolicy.toml`` — exec policy ruleset."""
     return user_deepseek_dir() / "execpolicy.toml"
 
 

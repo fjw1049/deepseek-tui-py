@@ -1,8 +1,7 @@
 """MCP client — transport-agnostic JSON-RPC 2.0 wrapper.
 
-Mirrors ``crates/tui/src/mcp.rs:477-914`` (McpConnection). Speaks stdio
-or SSE/HTTP depending on ``McpServerConfig.url``; the transport is
-picked in :meth:`McpClient.start` via :func:`build_transport`.
+Speaks stdio or SSE/HTTP depending on ``McpServerConfig.url``; the
+transport is picked in :meth:`McpClient.start` via :func:`build_transport`.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ from deepseek_tui.mcp.transport import (
 
 
 def qualify_tool_name(server_name: str, tool_name: str) -> str:
-    """Encode an MCP tool name as ``mcp_<server>_<tool>`` (Rust TUI parity)."""
+    """Encode an MCP tool name as ``mcp_<server>_<tool>``."""
     sanitized_server = re.sub(r"[^a-z0-9_]", "_", server_name.lower())
     sanitized_tool = re.sub(r"[^a-z0-9_]", "_", tool_name.lower())
     qualified = f"mcp_{sanitized_server}_{sanitized_tool}"
@@ -76,10 +75,7 @@ class McpToolDescriptor:
 
 
 def build_transport(config: McpServerConfig) -> McpTransport:
-    """Pick stdio vs SSE transport from the config shape.
-
-    Mirrors Rust ``McpConnection::new`` (mcp.rs:485+).
-    """
+    """Pick stdio vs SSE transport from the config shape."""
     if config.url is not None:
         return SseTransport(
             url=config.url,
@@ -221,7 +217,7 @@ class McpClient:
                 message = await self._transport.recv()
                 msg_id = message.get("id")
                 if msg_id is None:
-                    # Server notification — ignore for now (Rust logs them)
+                    # Server notification — ignore for now
                     continue
                 fut = self._pending.pop(msg_id, None)
                 if fut is not None and not fut.done():

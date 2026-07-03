@@ -2,7 +2,6 @@
 
 Consolidates dispatch.py, executors.py, arg_repair.py.
 Tool dispatch — plan/execute helpers for the per-turn tool batch.
-Mirrors ``crates/tui/src/core/engine/dispatch.rs:1-354``.
 
 Owns:
   * The ``multi_tool_use.parallel`` payload parser.
@@ -27,7 +26,7 @@ from collections.abc import Awaitable, Callable
 import json
 import re
 
-# --- Types (Rust dispatch.rs:28-65) --------------------------------------
+# --- Types ---------------------------------------------------------------
 
 
 @dataclass
@@ -47,7 +46,7 @@ class ToolExecutionPlan:
     blocked_error: ToolError | None = None
 
 
-# --- Error formatting (Rust dispatch.rs:96-126) ---------------------------
+# --- Error formatting -----------------------------------------------------
 
 
 def format_tool_error(err: Exception, tool_name: str) -> str:
@@ -80,7 +79,7 @@ def format_tool_error(err: Exception, tool_name: str) -> str:
     return msg
 
 
-# --- Parallel tool calls (Rust dispatch.rs:215-259) -----------------------
+# --- Parallel tool calls --------------------------------------------------
 
 
 def _normalize_parallel_tool_name(raw: str) -> str:
@@ -127,7 +126,7 @@ def parse_parallel_tool_calls(
     return calls
 
 
-# --- Dispatch policy (Rust dispatch.rs:263-355) ---------------------------
+# --- Dispatch policy ------------------------------------------------------
 
 
 def should_parallelize_tool_batch(plans: list[ToolExecutionPlan]) -> bool:
@@ -172,7 +171,7 @@ def should_force_update_plan_first(mode: str, content: str) -> bool:
     return not any(n in lower for n in exploration_needles)
 
 
-# --- MCP tool policy (Rust dispatch.rs:326-355) ---------------------------
+# --- MCP tool policy ------------------------------------------------------
 
 _MCP_PARALLEL_SAFE = frozenset(
     {
@@ -186,7 +185,7 @@ _MCP_PARALLEL_SAFE = frozenset(
 
 
 def is_mcp_tool(name: str) -> bool:
-    """Check if a tool name refers to an MCP tool (mirrors Rust McpPool::is_mcp_tool)."""
+    """Check if a tool name refers to an MCP tool."""
     if name in _MCP_PARALLEL_SAFE:
         return True
     if name.startswith("mcp__"):
@@ -240,7 +239,6 @@ def emit_tool_audit(event: dict[str, Any]) -> None:
 # Real executors for Task and SubAgent — replace the sleep-50ms stubs.
 # Sub-agents run ``run_subagent_loop`` (shared SubAgentManager, no nested Engine).
 # Tasks run a single Engine turn with the **shared** process TaskManager injected.
-# Mirrors Rust ``run_subagent`` + ``EngineTaskExecutor``.
 
 
 
@@ -522,7 +520,6 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
 
 
 # Deterministic JSON argument repair ladder.
-# Mirrors ``crates/tui/src/tools/arg_repair.rs``.
 # LLM streaming can produce malformed JSON in tool call arguments:
 # - Truncated streams → unclosed braces/brackets
 # - Control characters (0x00-0x1F) inside string values
