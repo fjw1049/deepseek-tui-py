@@ -97,11 +97,27 @@ normalize_electron_path_txt() {
   "
 }
 
+esbuild_platform_binary_ready() {
+  node -e "
+    const fs = require('fs');
+    const path = require('path');
+    const bin = path.join(
+      'node_modules',
+      '@esbuild',
+      process.platform + '-' + process.arch,
+      'bin',
+      'esbuild'
+    );
+    process.exit(fs.existsSync(bin) ? 0 : 1);
+  "
+}
+
 ensure_node_modules() {
   if [[ -d node_modules \
     && -f node_modules/cac/dist/index.mjs \
     && -f node_modules/@larksuiteoapi/node-sdk/package.json \
-    && -f node_modules/@larksuiteoapi/node-sdk/lib/index.js ]]; then
+    && -f node_modules/@larksuiteoapi/node-sdk/lib/index.js \
+    && esbuild_platform_binary_ready ]]; then
     echo "[workbench] node_modules ready (skip npm install)"
     return 0
   fi
