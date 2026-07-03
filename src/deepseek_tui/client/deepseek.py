@@ -217,6 +217,7 @@ class DeepSeekClient(LLMClient):
         max_retries = 3
         attempt = 0
         backoff = 1.0
+        streamed = False
         while True:
             try:
                 async with aconnect_sse(
@@ -271,6 +272,7 @@ class DeepSeekClient(LLMClient):
                             )
                         except StopAsyncIteration:
                             return
+                        streamed = True
                         if sse.data == "[DONE]":
                             return
                         try:
@@ -286,11 +288,20 @@ class DeepSeekClient(LLMClient):
                             yield event
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
                 logger.warning(
-                    "http_connect_error attempt=%d exception_type=%s message=%s",
+                    "http_connect_error attempt=%d streamed=%s exception_type=%s message=%s",
                     attempt,
+                    streamed,
                     type(exc).__name__,
                     str(exc)[:200],
                 )
+                if streamed:
+                    # Chunks were already parsed and yielded: replaying the
+                    # request here would feed duplicate deltas into the same
+                    # parser (corrupting accumulated tool calls). Propagate
+                    # and let the turn-level retry restart cleanly.
+                    raise httpx.NetworkError(
+                        f"connection lost mid-stream: {exc}"
+                    ) from exc
                 if attempt < max_retries:
                     attempt += 1
                     await asyncio.sleep(backoff)

@@ -31,6 +31,7 @@ from deepseek_tui.workflow.models import (
     WorkflowStepError,
 )
 from deepseek_tui.workflow.models import make_step_output, render_template
+from typing import Protocol
 
 
 def _recompute_snapshot(snapshot: WorkflowSnapshot) -> WorkflowSnapshot:
@@ -497,21 +498,16 @@ def render_workflow_text(snapshot: WorkflowSnapshot, *, completed: bool = False)
 
 
 # DeepSeek SubAgentManager adapter for workflow steps.
-import asyncio
-import time
-from typing import Any, Protocol
 
 from deepseek_tui.tools.subagent import (
     SpawnRequest,
     SubAgentAssignment,
-    SubAgentManager,
     SubAgentRuntime,
     SubAgentStatusKind,
     SubAgentType,
 )
 from deepseek_tui.workflow.models import ANALYSIS_ONLY_TOOLS, WAIT_TIMEOUT_MS
-from deepseek_tui.workflow.models import StepOutput, WorkflowAbortedError, WorkflowPolicy
-from deepseek_tui.workflow.models import make_step_output
+from deepseek_tui.workflow.models import WorkflowPolicy
 
 
 class WorkflowRunner(Protocol):

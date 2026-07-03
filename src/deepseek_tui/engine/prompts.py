@@ -13,6 +13,8 @@ from pathlib import Path
 
 
 import enum
+from typing import Any
+from importlib.resources import files as pkg_files
 
 HANDOFF_RELATIVE_PATH = ".deepseek/handoff.md"
 INSTRUCTIONS_FILE_MAX_BYTES = 100 * 1024
@@ -216,7 +218,6 @@ def _load_handoff_block(workspace: Path) -> str | None:
 
 # Tool visibility profiles — slim catalogs for automation composer and cron runs.
 
-from typing import Any
 
 AUTOMATION_COMPOSER_HEADING = "[Scheduled automation request]"
 CRON_PROMPT_PREFIX = "[cron:"
@@ -328,8 +329,6 @@ def _copy_tool_entry(entry: dict[str, Any]) -> dict[str, Any]:
 # base.md → personality overlay → mode delta → approval policy.
 # Prompt files are copied verbatim from the Rust source (English, unmodified).
 
-import enum
-from importlib.resources import files as pkg_files
 
 _PACKAGE = "deepseek_tui.prompts"
 

@@ -13,7 +13,6 @@ Other modules in this package (outbound MCP client):
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
@@ -427,6 +426,19 @@ class McpManager:
         return summary
 
     async def stop_all(self) -> None:
+        # Cancel background work first so refresh/preload tasks don't race
+        # against teardown (and don't leak past shutdown).
+        for task in (
+            self._background_refresh_task,
+            getattr(self._preload, "_task", None),
+        ):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+        self._background_refresh_task = None
         for client in self._clients.values():
             await client.stop()
         self._clients.clear()

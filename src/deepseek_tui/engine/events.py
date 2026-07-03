@@ -135,6 +135,11 @@ class SessionActivityEvent:
 class TurnCompleteEvent:
     assistant_message: Message | None
     usage: Usage | None = None
+    # False when the turn ended in a failure outcome (stream timeout,
+    # context overflow, ...). Consumers must not mark the turn as
+    # completed-successfully in that case.
+    success: bool = True
+    error_message: str | None = None
     # Cumulative session cost (USD) — populated when ``Engine`` knows
     # how to price the model. ``None`` when pricing is unknown (off-
     # platform providers, unrecognised model) so the UI can hide rather

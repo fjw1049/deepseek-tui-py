@@ -19,6 +19,9 @@ from typing import Any
 
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
+import json
+import re
+from pathlib import Path
 
 REQUEST_USER_INPUT_NAME = "request_user_input"
 
@@ -133,13 +136,8 @@ class RequestUserInputTool(ToolSpec):
 #
 # Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/tool_result_retrieval.rs``.
 #
-import json
-import re
-from pathlib import Path
 
 from deepseek_tui.tools.validation import require_string as _require_string
-from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.runtime import spillover_path, spillover_root
 
 DEFAULT_MAX_BYTES = 8 * 1024

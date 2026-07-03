@@ -9,6 +9,10 @@ import enum
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+import json
+import time
+from collections.abc import Callable
+from pathlib import Path
 
 if TYPE_CHECKING:
     from deepseek_tui.tui.app import DeepSeekTUI
@@ -197,11 +201,6 @@ Mirrors individual ``commands/*.rs`` files in Rust.
 
 
 
-import json
-import time
-from collections.abc import Callable
-from pathlib import Path
-from typing import TYPE_CHECKING
 
 from deepseek_tui.tui.status import StatusBar
 from deepseek_tui.tui.transcript import Transcript
@@ -323,11 +322,16 @@ def cmd_mode(args: str, app: DeepSeekTUI) -> CommandResult:
                 f"Unknown mode: {arg!r}. Valid: " + ", ".join(_VALID_MODES)
             )
         )
-    # Direct switch — align with action_cycle_mode (UI + engine.mode).
+    _switch_mode(app, arg)
+    return CommandResult(output=f"Mode → {arg}")
+
+
+def _switch_mode(app: DeepSeekTUI, mode: str) -> None:
+    """Directly switch the interaction mode (UI + engine.mode)."""
     previous_mode = getattr(app, "_interaction_mode", "agent")
-    app._interaction_mode = arg  # type: ignore[attr-defined]
+    app._interaction_mode = mode  # type: ignore[attr-defined]
     if app._engine is not None:
-        app._engine.mode = arg
+        app._engine.mode = mode
         app.run_worker(
             app._engine.run_lifecycle_hook("mode_change", previous_mode=previous_mode),
             name="mode-change-hook",
@@ -336,11 +340,10 @@ def cmd_mode(args: str, app: DeepSeekTUI) -> CommandResult:
         from deepseek_tui.tui.input import ComposerHint
         from deepseek_tui.tui.status import StatusBar
 
-        app.query_one(StatusBar).set_mode(arg)
-        app.query_one(ComposerHint).set_mode(arg)
+        app.query_one(StatusBar).set_mode(mode)
+        app.query_one(ComposerHint).set_mode(mode)
     except Exception:  # noqa: BLE001 — best-effort UI refresh
         pass
-    return CommandResult(output=f"Mode → {arg}")
 
 
 # ── /provider ────────────────────────────────────────────────────────────
@@ -949,17 +952,24 @@ def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
     of a running Textual app (e.g. unit tests), the call short-circuits
     to a textual hint so the dispatch layer is still testable.
     """
-    from deepseek_tui.tui.plan_prompt import PlanOutcome, PlanPromptScreen
-    from deepseek_tui.tui.status import StatusBar
+    from deepseek_tui.tui.plan import PlanOutcome, PlanPromptScreen
 
     if not getattr(app, "is_running", False):
         return CommandResult(output="Switched to Plan mode.")
 
+    _switch_mode(app, "plan")
+
     def _on_plan_outcome(outcome: PlanOutcome | None) -> None:
-        if outcome is None or outcome == PlanOutcome.DISMISSED:
-            return
-        status = app.query_one(StatusBar)
-        status.set_mode(outcome.value)
+        # Map prompt outcomes onto real interaction modes; REVISE /
+        # DISMISSED keep the freshly-entered plan mode.
+        if outcome == PlanOutcome.ACCEPT_YOLO:
+            _switch_mode(app, "yolo")
+            from deepseek_tui.engine.handle import AutoApprovalHandler
+
+            if app._engine is not None:
+                app._engine.approval_handler = AutoApprovalHandler()
+        elif outcome in (PlanOutcome.ACCEPT_AGENT, PlanOutcome.EXIT_PLAN):
+            _switch_mode(app, "agent")
 
     app.push_screen(PlanPromptScreen(), _on_plan_outcome)
     return CommandResult(output="Switched to Plan mode.")
@@ -1431,8 +1441,7 @@ def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
 
     Mirrors Rust ``commands/skills.rs::list_skills`` (skills.rs:37-130).
     """
-    from deepseek_tui.integrations.skills import default_skills_dir
-    from deepseek_tui.integrations.skills.install import fetch_registry
+    from deepseek_tui.integrations.skills import default_skills_dir, fetch_registry
 
     skills_dir = default_skills_dir()
     arg = args.strip()
@@ -1501,9 +1510,9 @@ def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
 
     Mirrors Rust ``commands/skills.rs::run_skill`` (skills.rs:142-310).
     """
-    from deepseek_tui.integrations.skills import default_skills_dir
-    from deepseek_tui.integrations.skills.install import (
+    from deepseek_tui.integrations.skills import (
         InstallSource,
+        default_skills_dir,
         install,
         trust,
         uninstall,

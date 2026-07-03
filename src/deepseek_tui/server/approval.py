@@ -175,8 +175,6 @@ class HttpApprovalHandler(ApprovalHandler):
 
 
 # HTTP-suspended sandbox elevation for Workbench / headless runtimes.
-import asyncio
-from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
@@ -235,6 +233,21 @@ class ElevationBridge:
                 }
             )
         return out
+
+    def cancel_for_thread(self, thread_id: str) -> None:
+        """Cancel all pending elevations belonging to a specific thread."""
+        to_cancel = [
+            elevation_id
+            for elevation_id, fut in self._pending.items()
+            if not fut.done()
+            and (meta := self._meta.get(elevation_id)) is not None
+            and meta.thread_id == thread_id
+        ]
+        for elevation_id in to_cancel:
+            fut = self._pending.pop(elevation_id, None)
+            self._meta.pop(elevation_id, None)
+            if fut is not None and not fut.done():
+                fut.cancel()
 
     def cancel_all(self) -> None:
         for fut in self._pending.values():

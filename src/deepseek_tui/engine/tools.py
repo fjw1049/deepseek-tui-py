@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.registry import ToolError, ToolResult
+from dataclasses import dataclass
 
 # --- Constants (Rust tool_catalog.rs:18-26) -------------------------------
 
@@ -540,9 +541,6 @@ async def execute_code_execution_tool(
 # legacy format support; ``crates/tui/src/core/engine/dispatch.rs:151-220``
 # for stream fragment reassembly.
 
-import json
-import re
-from dataclasses import dataclass
 
 
 @dataclass
@@ -916,106 +914,3 @@ def has_tool_call_markers(text: str) -> bool:
         or "<tool_call" in text
         or "<invoke " in text
     )
-
-
-def parse_tool_input(buffer: str) -> dict[str, object] | None:
-    """Parse streaming tool input JSON fragments.
-
-    Handles partial/incomplete JSON during streaming by:
-    1. Trying direct JSON parse
-    2. Stripping code fences (```)
-    3. Handling double-quoted strings
-    4. Extracting balanced braces for partial JSON
-
-    This is the core stream fragment reassembly function.
-    """
-    trimmed = buffer.strip()
-    if not trimmed:
-        return None
-
-    # Try direct JSON parse
-    try:
-        result = json.loads(trimmed)
-        if isinstance(result, dict):
-            return result
-    except json.JSONDecodeError:
-        pass
-
-    # Try stripping code fences
-    stripped = _strip_code_fences(trimmed)
-    if stripped:
-        try:
-            result = json.loads(stripped)
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
-
-    # Try handling double-quoted string containing JSON
-    try:
-        inner = json.loads(trimmed)
-        if isinstance(inner, str):
-            result = json.loads(inner)
-            if isinstance(result, dict):
-                return result
-    except json.JSONDecodeError:
-        pass
-
-    # Try extracting balanced segment (partial JSON)
-    segment = _extract_json_segment(trimmed)
-    if segment:
-        try:
-            result = json.loads(segment)
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
-
-def _strip_code_fences(text: str) -> str | None:
-    """Remove ``` code fence markers from text."""
-    if "```" not in text:
-        return None
-
-    lines = []
-    for line in text.split("\n"):
-        if not line.strip().startswith("```"):
-            lines.append(line)
-
-    stripped = "\n".join(lines).strip()
-    return stripped if stripped else None
-
-
-def _extract_json_segment(text: str) -> str | None:
-    """Extract the first complete JSON segment (object or array)."""
-    # Try extracting balanced braces first, then brackets
-    result = _extract_balanced_segment(text, "{", "}")
-    if result:
-        return result
-    return _extract_balanced_segment(text, "[", "]")
-
-
-def _extract_balanced_segment(text: str, open_char: str, close_char: str) -> str | None:
-    """Extract a balanced segment between open_char and close_char."""
-    start = text.find(open_char)
-    if start < 0:
-        return None
-
-    depth = 0
-    end_idx = None
-
-    for i, c in enumerate(text[start:]):
-        if c == open_char:
-            depth += 1
-        elif c == close_char:
-            depth -= 1
-            if depth == 0:
-                end_idx = start + i + 1
-                break
-
-    if end_idx is None:
-        return None
-
-    return text[start:end_idx]

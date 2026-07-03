@@ -32,6 +32,8 @@ from __future__ import annotations
 #    (where ``x000041`` would map back to ``A``).
 #
 import re
+from dataclasses import replace
+from typing import Any
 
 __all__ = ["from_api_tool_name", "to_api_tool_name"]
 
@@ -161,7 +163,6 @@ def _safe_hex_to_char(hex_str: str) -> str | None:
 
 
 # Deprecated tool alias notices — mirrors Rust ``wrap_with_deprecation_notice``.
-from dataclasses import replace
 
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
@@ -241,7 +242,6 @@ class DeprecatingAliasTool(ToolSpec):
 # This module normalizes schemas in-place so strict mode can be enabled
 # without hand-editing tool definitions.
 #
-from typing import Any
 
 
 def sanitize(schema: dict[str, Any]) -> dict[str, Any]:

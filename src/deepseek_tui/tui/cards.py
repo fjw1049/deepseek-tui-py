@@ -1,33 +1,32 @@
 """Agent card and pager widgets.
+
+Sub-agent activity card — mirrors ``crates/tui/src/tui/widgets/agent_card.rs``:
+
+- :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
+  status glyph + role + agent id, plus the last
+  :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
+  from the head and an ellipsis row signals truncation.
+
+The state-machine half of the card is plain Python so unit tests can
+drive it without a Textual runtime. The :class:`AgentCardWidget` is a
+thin :class:`textual.widgets.Static` adapter that renders a card's
+current state using Rich markup.
+
+Long-output pager overlay — mirrors ``crates/tui/src/tui/pager.rs``:
+:class:`PagerState` (pure key/scroll state machine) + :class:`PagerScreen`
+(Textual modal adapter).
 """
 
 from __future__ import annotations
 
-
-
-# Sub-agent activity cards (delegate + fanout).
-#
-# Mirrors ``crates/tui/src/tui/widgets/agent_card.rs`` (671 LOC).
-#
-# Two cards consume :class:`MailboxMessage` envelopes and surface a live
-# status line in the transcript:
-#
-# - :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
-#   status glyph + role + agent id, plus the last
-#   :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
-#   from the head and an ellipsis row signals truncation.
-# - :class:`FanoutCard` — multi-child dispatch. Dot-grid
-#   with one glyph per worker plus an aggregate counts line.
-#
-# The state-machine half of each card is plain Python so unit tests can
-# drive it without a Textual runtime. The :class:`AgentCardWidget` is a
-# thin :class:`textual.widgets.Static` adapter that renders a card's
-# current state using Rich markup.
-#
 import enum
 from dataclasses import dataclass, field
 
-from textual.widgets import Static
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Input, Label, Static
 
 from deepseek_tui.tools.subagent import MailboxMessage, MailboxMessageKind
 
@@ -130,118 +129,6 @@ class DelegateCard:
 
 
 # ---------------------------------------------------------------------------
-# Fanout card
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class WorkerSlot:
-    """Mirror Rust ``WorkerSlot`` (agent_card.rs:157)."""
-
-    worker_id: str
-    agent_id: str
-    status: AgentLifecycle
-
-    @classmethod
-    def new(cls, worker_id: str, status: AgentLifecycle) -> WorkerSlot:
-        return cls(worker_id=worker_id, agent_id=worker_id, status=status)
-
-
-_DOT_GLYPH = {
-    AgentLifecycle.COMPLETED: "●",
-    AgentLifecycle.RUNNING: "◐",
-    AgentLifecycle.FAILED: "×",
-    AgentLifecycle.CANCELLED: "⊘",
-    AgentLifecycle.PENDING: "○",
-}
-
-
-@dataclass(slots=True)
-class FanoutCard:
-    """Multi-child dispatch card (one slot per worker).
-
-    Mirror Rust ``FanoutCard`` (agent_card.rs:186).
-    """
-
-    kind: str
-    workers: list[WorkerSlot] = field(default_factory=list)
-
-    def with_workers(self, ids: list[str]) -> FanoutCard:
-        for worker_id in ids:
-            self.workers.append(WorkerSlot.new(worker_id, AgentLifecycle.PENDING))
-        return self
-
-    def upsert_worker(self, agent_id: str, status: AgentLifecycle) -> None:
-        """Mirror Rust ``upsert_worker`` (agent_card.rs:215)."""
-        for slot in self.workers:
-            if slot.agent_id == agent_id or slot.worker_id == agent_id:
-                slot.agent_id = agent_id
-                slot.status = status
-                return
-        self.workers.append(WorkerSlot.new(agent_id, status))
-
-    def claim_pending_worker(self, agent_id: str, status: AgentLifecycle) -> None:
-        """Bind a real agent id to the first pending placeholder slot.
-
-        Mirror Rust ``claim_pending_worker`` (agent_card.rs:232). Keeps
-        the dot count stable when the engine pre-seeds workers and
-        children attach later.
-        """
-        for slot in self.workers:
-            if slot.agent_id == agent_id:
-                slot.status = status
-                return
-        for slot in self.workers:
-            if slot.status == AgentLifecycle.PENDING:
-                slot.agent_id = agent_id
-                slot.status = status
-                return
-        self.upsert_worker(agent_id, status)
-
-    def counts(self) -> tuple[int, int, int, int]:
-        done = running = failed = pending = 0
-        for slot in self.workers:
-            if slot.status == AgentLifecycle.COMPLETED:
-                done += 1
-            elif slot.status == AgentLifecycle.RUNNING:
-                running += 1
-            elif slot.status in (AgentLifecycle.FAILED, AgentLifecycle.CANCELLED):
-                failed += 1
-            else:
-                pending += 1
-        return done, running, failed, pending
-
-    def dot_grid(self) -> str:
-        return "".join(_DOT_GLYPH[slot.status] for slot in self.workers)
-
-    def aggregate_status(self) -> AgentLifecycle:
-        done, running, failed, pending = self.counts()
-        if running > 0 or pending > 0:
-            return AgentLifecycle.RUNNING
-        if failed > 0 and done == 0:
-            return AgentLifecycle.FAILED
-        if done > 0:
-            return AgentLifecycle.COMPLETED
-        return AgentLifecycle.PENDING
-
-    def render_lines(self) -> list[str]:
-        title = f"{self.kind} ({len(self.workers)} workers)"
-        lines: list[str] = [
-            _card_header("fanout", self.aggregate_status(), self.kind, title),
-            f"  [bold cyan]{self.dot_grid()}[/]",
-        ]
-        done, running, failed, pending = self.counts()
-        lines.append(
-            f"  [dim]{done} done · {running} running · "
-            f"{failed} failed · {pending} pending[/]"
-        )
-        return lines
-
-    def render_text(self) -> str:
-        return "\n".join(self.render_lines())
-
-
-# ---------------------------------------------------------------------------
 # Mailbox dispatch
 # ---------------------------------------------------------------------------
 
@@ -278,33 +165,6 @@ def apply_to_delegate(card: DelegateCard, msg: MailboxMessage) -> bool:
         return False
     elif kind == MailboxMessageKind.TOKEN_USAGE:
         return False
-    return True
-
-
-def apply_to_fanout(card: FanoutCard, msg: MailboxMessage) -> bool:
-    """Mirror Rust ``apply_to_fanout`` (agent_card.rs:438)."""
-    agent_id = msg.agent_id
-    kind = msg.kind
-    if kind == MailboxMessageKind.STARTED:
-        card.claim_pending_worker(agent_id, AgentLifecycle.RUNNING)
-    elif kind in (
-        MailboxMessageKind.PROGRESS,
-        MailboxMessageKind.TOOL_CALL_STARTED,
-    ):
-        card.claim_pending_worker(agent_id, AgentLifecycle.RUNNING)
-    elif kind == MailboxMessageKind.TOOL_CALL_COMPLETED:
-        return True
-    elif kind == MailboxMessageKind.COMPLETED:
-        card.upsert_worker(agent_id, AgentLifecycle.COMPLETED)
-    elif kind == MailboxMessageKind.FAILED:
-        card.upsert_worker(agent_id, AgentLifecycle.FAILED)
-    elif kind == MailboxMessageKind.CANCELLED:
-        card.upsert_worker(agent_id, AgentLifecycle.CANCELLED)
-    elif kind == MailboxMessageKind.CHILD_SPAWNED:
-        # ``agent_id`` here carries the *child* id (see Mailbox.child_spawned).
-        card.upsert_worker(agent_id, AgentLifecycle.PENDING)
-    elif kind == MailboxMessageKind.TOKEN_USAGE:
-        return True
     return True
 
 
@@ -362,7 +222,7 @@ def _display_agent_id(agent_id: str) -> str:
 
 
 class AgentCardWidget(Static):
-    """Textual adapter that renders a :class:`DelegateCard` or :class:`FanoutCard`.
+    """Textual adapter that renders a :class:`DelegateCard`.
 
     The widget owns no card state — pass the current card on construction
     and call :meth:`update_card` whenever the state changes.
@@ -370,19 +230,18 @@ class AgentCardWidget(Static):
 
     DEFAULT_CSS = "AgentCardWidget { margin: 0 0 1 0; }"
 
-    def __init__(self, card: DelegateCard | FanoutCard) -> None:
+    def __init__(self, card: DelegateCard) -> None:
         super().__init__("")
         self._card = card
         self.update(card.render_text())
 
-    def update_card(self, card: DelegateCard | FanoutCard) -> None:
+    def update_card(self, card: DelegateCard) -> None:
         self._card = card
         self.update(card.render_text())
 
 
+# ---------------------------------------------------------------------------
 # Long-output pager overlay.
-#
-# Mirrors ``crates/tui/src/tui/pager.rs`` (809 LOC).
 #
 # Vim-style key bindings:
 #
@@ -397,20 +256,7 @@ class AgentCardWidget(Static):
 # - ``/`` — start search; ``Enter`` commits, ``Esc`` cancels.
 # - ``n`` / ``N`` — next / previous match.
 # - ``q`` / ``Esc`` — close.
-#
-# Layered the same way as :class:`PlanPromptState`: a pure-state class so
-# unit tests can drive the keymap without spinning up Textual, plus a thin
-# :class:`PagerScreen` adapter that wires Textual bindings to the state
-# machine.
-#
-import enum
-from dataclasses import dataclass, field
-
-from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Input, Label, Static
+# ---------------------------------------------------------------------------
 
 
 class PagerAction(str, enum.Enum):

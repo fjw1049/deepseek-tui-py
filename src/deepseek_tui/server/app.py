@@ -12,6 +12,17 @@ from deepseek_tui.server.approval import ApprovalBridge
 from deepseek_tui.server.approval import ElevationBridge
 from deepseek_tui.server.auth import RuntimeAuthMiddleware
 from deepseek_tui.server.routes import build_runtime_api_router
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
+import logging
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from collections.abc import AsyncIterable, AsyncIterator
+from typing import TypeVar
 
 
 def attach_runtime_api(
@@ -85,10 +96,7 @@ def attach_cors(app: Any, origins: list[str]) -> None:
 # - POST /threads/{id}/compact — compact thread
 # - GET  /threads/{id}/events — events since seq
 #
-from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
 
 from deepseek_tui.server.runtime import AppRuntime
 
@@ -457,16 +465,7 @@ async def stdio_mcp_startup(
 # FastAPI + uvicorn. The stdio path speaks newline-delimited JSON-RPC 2.0.
 # Both call into the same :class:`AppRuntime` so state stays consistent.
 #
-import asyncio
-import json
-import logging
-import sys
-import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
-from deepseek_tui.server.runtime import AppRuntime
 from deepseek_tui.config.models import Config
 
 logger = logging.getLogger(__name__)
@@ -780,9 +779,6 @@ def _rpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
 # an ``event:`` field (the tagged-union discriminator) and a ``data:``
 # field (the payload JSON), terminated by a blank line.
 #
-import json
-from collections.abc import AsyncIterable, AsyncIterator
-from typing import Any
 
 
 def format_sse(payload: dict[str, Any]) -> str:
@@ -809,13 +805,10 @@ async def iter_sse(source: AsyncIterable[dict[str, Any]]) -> AsyncIterator[str]:
 # Each subscriber gets its own asyncio.Queue; when full, oldest items are
 # dropped (lagging receiver behaviour).
 #
-import asyncio
-import logging
-from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
 
-# AsyncBroadcast moved to server/threads.py to avoid circular imports
+# AsyncBroadcast moved to server/threads/broadcast.py to avoid circular imports

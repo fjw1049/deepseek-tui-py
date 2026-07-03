@@ -15,6 +15,18 @@ from __future__ import annotations
 from enum import Enum
 from functools import total_ordering
 from typing import cast
+from pathlib import Path
+from typing import Any
+import shlex
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, Field
+import re
+from collections.abc import Callable, Iterable
+from dataclasses import field
+import ast
+import sys
 
 
 __all__ = ["Decision"]
@@ -69,8 +81,6 @@ _RANK: dict[str, int] = {
 # Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
 # ``AmendError`` variants from ``amend.rs:12-55``.
 
-from pathlib import Path
-from typing import Any
 
 __all__ = [
     "AmendError",
@@ -206,12 +216,7 @@ class AmendError(Exception):
 # ``prefixRuleMatch`` / ``heuristicsRuleMatch`` to match Rust's
 # ``#[serde(rename_all = "camelCase")]`` on the enum tag.
 
-import shlex
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
 
 
 __all__ = [
@@ -465,8 +470,6 @@ def validate_not_match_examples(
 #   byte-identically so test fixtures captured from the Rust version
 #   round-trip cleanly.
 
-import re
-import shlex
 
 __all__ = ["normalize_command", "pattern_matches", "strip_heredoc_bodies"]
 
@@ -575,11 +578,7 @@ def pattern_matches(pattern: str, command: str) -> bool:
 # Rust's ``check`` takes ``heuristics_fallback: &F`` where ``F: Fn(&[String]) -> Decision``.
 # Python translation: any callable ``(list[str]) -> Decision``.
 
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
-from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
 
 
 __all__ = [
@@ -789,9 +788,6 @@ def _dump_rules(rules: list[RuleMatch]) -> list[Any]:
 # :class:`ExecPolicyError` so users notice when the Rust file uses
 # features beyond our subset.
 
-import ast
-from dataclasses import dataclass
-from typing import Any
 
 
 __all__ = ["PolicyParser"]
@@ -1123,9 +1119,6 @@ def _tokenize_string_example(raw: str) -> list[str]:
 # 2. Scan every ``allow`` pattern. First match → ``Allow``.
 # 3. No match → ``AskUser("execpolicy: no matching allow rule")``.
 
-import sys
-from dataclasses import dataclass, field
-from pathlib import Path
 
 
 __all__ = [
@@ -1328,6 +1321,55 @@ def default_execpolicy_path() -> Path | None:
         return user_execpolicy_path()
     except (RuntimeError, OSError):  # pragma: no cover — platform quirks
         return None
+
+
+class TomlBackedPolicy:
+    """Adapt :class:`ExecPolicyConfig` TOML rules to the ``check`` interface
+    the shell tools expect from ``ToolContext.policy``.
+
+    Mapping:
+
+    * a matching ``deny`` pattern → :attr:`Decision.FORBIDDEN`
+    * a matching ``allow`` pattern → :attr:`Decision.ALLOW`
+    * no match → safety-heuristic fallback, but only its FORBIDDEN tier is
+      enforced here. Interactive approval prompting is owned by the
+      engine-level approval flow (``ExecPolicyEngine`` + approval handler),
+      so a heuristic PROMPT must not re-block a command the user already
+      approved — it maps to ALLOW at this layer.
+    """
+
+    def __init__(self, config: ExecPolicyConfig) -> None:
+        self._config = config
+
+    def check(
+        self, cmd: list[str], heuristics_fallback: HeuristicsFallback
+    ) -> Evaluation:
+        command = " ".join(cmd)
+        verdict = self._config.evaluate(command)
+        if verdict.is_deny:
+            decision = Decision.FORBIDDEN
+        elif verdict.is_allow:
+            decision = Decision.ALLOW
+        elif heuristics_fallback(list(cmd)) == Decision.FORBIDDEN:
+            decision = Decision.FORBIDDEN
+        else:
+            decision = Decision.ALLOW
+        return Evaluation.model_validate(
+            {"decision": decision, "matchedRules": []}
+        )
+
+
+def load_user_policy() -> TomlBackedPolicy | None:
+    """Load ``~/.deepseek/execpolicy.toml`` as a shell-tool policy gate.
+
+    Returns ``None`` when the file doesn't exist (the common case), so
+    callers can leave ``ToolContext.policy`` unset and rely on the
+    engine-level approval flow alone.
+    """
+    config = load_default_policy()
+    if config is None:
+        return None
+    return TomlBackedPolicy(config)
 
 
 def load_default_policy() -> ExecPolicyConfig | None:

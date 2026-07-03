@@ -435,10 +435,18 @@ def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> Non
     if decision == Decision.DENY:
         raise ToolError(
             f"Network access denied for {url} by policy. "
-            "Configure allow-list in config.toml [network_policy]."
+            "Configure allow rules in config.toml [network]."
         )
-    # PROMPT → for now treat as allow (full interactive prompt requires TUI hook)
-    # TODO: wire interactive approval when TUI approval handler is available
+    if decision == Decision.PROMPT:
+        # No interactive approval hook exists on this path yet, so an
+        # unlisted host must fail closed rather than silently bypass the
+        # policy. Users opt hosts in via [network] rules or
+        # default_action = "allow".
+        raise ToolError(
+            f"Network access to {url} is not covered by the [network] "
+            "policy (default_action=ask). Add an allow rule for this host "
+            "in config.toml [network] or set default_action = \"allow\"."
+        )
 
 
 def _require_http_url(url: str) -> None:
@@ -540,17 +548,3 @@ async def _http_get(
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc
 
 
-async def _fetch(
-    url: str,
-    context: ToolContext,
-    *,
-    params: dict[str, str] | None = None,
-    headers: dict[str, str] | None = None,
-) -> httpx.Response:
-    _check_network_policy(url, "fetch_url", context)
-    timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else None
-    try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            return await _http_get(client, url, params=params, headers=headers)
-    except (httpx.HTTPError, OSError) as exc:
-        raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc

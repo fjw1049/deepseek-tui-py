@@ -16,10 +16,12 @@ from typing import Any
 from deepseek_tui.config.providers import context_window_for_model
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.tools.registry import ToolResult
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
 
 # --- Constants (Rust context.rs:17-44) -----------------------------------
 
-TURN_MAX_OUTPUT_TOKENS = 262_144
 MIN_RECENT_MESSAGES_TO_KEEP = 4
 MAX_CONTEXT_RECOVERY_ATTEMPTS = 2
 CONTEXT_HEADROOM_TOKENS = 1024
@@ -35,9 +37,6 @@ LARGE_CONTEXT_TOOL_RESULT_SNIPPET_CHARS = 10_000
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 TOOL_RESULT_METADATA_SUMMARY_CHARS = 320
-
-COMPACTION_SUMMARY_MARKER = "Conversation Summary (Auto-Generated)"
-WORKING_SET_SUMMARY_MARKER = "## Repo Working Set"
 
 # --- Text summarization (Rust context.rs:52-84) --------------------------
 
@@ -240,46 +239,6 @@ def compact_tool_result_for_context(
     )
 
 
-# --- System prompt management (Rust context.rs:265-339) -------------------
-
-
-def extract_compaction_summary_prompt(prompt: str | None) -> str | None:
-    """Extract compaction summary block from a system prompt string.
-
-    Recognizes both the legacy marker and the ``<archived_context>`` tag
-    actually emitted by ``compaction._build_summary_system_prompt`` — the
-    two had drifted apart, making this function never match real output.
-    """
-    if not prompt:
-        return None
-    if COMPACTION_SUMMARY_MARKER not in prompt and "<archived_context>" not in prompt:
-        return None
-    return prompt
-
-
-def remove_working_set_summary(prompt: str | None) -> str | None:
-    """Remove the working-set summary block from a system prompt."""
-    if not prompt:
-        return None
-    lines = prompt.split("\n")
-    filtered = [line for line in lines if WORKING_SET_SUMMARY_MARKER not in line]
-    result = "\n".join(filtered).strip()
-    return result or None
-
-
-def append_working_set_summary(
-    prompt: str | None, working_set_summary: str | None
-) -> str | None:
-    """Append a working-set summary to the system prompt."""
-    summary = (working_set_summary or "").strip()
-    if not summary:
-        return prompt
-    base = remove_working_set_summary(prompt) or ""
-    if base:
-        return f"{base}\n\n{summary}"
-    return summary
-
-
 # --- Token estimation (Rust context.rs:341-378) --------------------------
 
 
@@ -378,10 +337,6 @@ def context_input_budget(model: str, requested_output_tokens: int) -> int | None
     reserve = min(requested_output_tokens, window // 4)
     budget = window - reserve - CONTEXT_HEADROOM_TOKENS
     return budget if budget > 0 else None
-
-
-def turn_response_headroom_tokens() -> int:
-    return TURN_MAX_OUTPUT_TOKENS + CONTEXT_HEADROOM_TOKENS
 
 
 def is_context_length_error_message(message: str) -> bool:
@@ -558,9 +513,6 @@ def estimate_context_breakdown(
 # injected into the system prompt by ``engine/prompts.py``. Without this the
 # model never sees AGENTS.md / CLAUDE.md — they sit on disk and do nothing.
 
-import logging
-from dataclasses import dataclass, field
-from pathlib import Path
 
 from deepseek_tui.config.paths import (
     project_deepseek_dir,
@@ -835,10 +787,7 @@ def _auto_generate_context(workspace: Path) -> str | None:
 # Working set management for tracking user-relevant files and context.
 # Mirrors ``crates/tui/src/session/working_set.rs``.
 
-from pathlib import Path
-from typing import Any
 
-from deepseek_tui.protocol.messages import Message
 
 
 class WorkingSet:

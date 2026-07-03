@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Any
 
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
@@ -199,8 +201,6 @@ def format_delivery_body(
 """Optional automation metadata (delivery / digest) — backward compatible."""
 
 
-from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass(frozen=True, slots=True)

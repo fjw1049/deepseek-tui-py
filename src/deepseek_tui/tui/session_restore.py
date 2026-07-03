@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.protocol.messages import Message
+import asyncio
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +103,6 @@ def session_started_at_iso(metadata: dict[str, Any], *, path: Path | None = None
 # approval, this handler signals the TUI app to push the dialog and
 # awaits the user's response via an asyncio Future.
 #
-import asyncio
-from typing import TYPE_CHECKING
 
 from deepseek_tui.engine.handle import ApprovalHandler
 from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest

@@ -220,8 +220,6 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
 # routing (popup detection, streaming guard, fork side effects) lives in
 # ``DeepSeekTUI``.
 #
-import enum
-from dataclasses import dataclass
 
 
 class BacktrackPhase(str, enum.Enum):

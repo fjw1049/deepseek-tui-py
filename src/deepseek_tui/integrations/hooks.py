@@ -16,6 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from pydantic import BaseModel
+import asyncio
+import json
+from abc import ABC, abstractmethod
+from datetime import datetime, timezone
+from pathlib import Path
+import httpx
+import logging
+import uuid
 
 
 @dataclass
@@ -154,7 +163,6 @@ def event_to_dict(event: HookEvent) -> dict[str, Any]:
 """Bridge protocol EventFrame models into observability hook events."""
 
 
-from pydantic import BaseModel
 
 
 
@@ -178,14 +186,7 @@ Mirrors ``crates/hooks/src/lib.rs`` (170 lines). Three sinks:
 """
 
 
-import asyncio
-import json
-from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
 
-import httpx
 
 
 
@@ -302,6 +303,11 @@ class ShellHookSink(HookSink):
             )
         except asyncio.TimeoutError:
             proc.kill()  # type: ignore[union-attr]
+            # Reap the killed child; otherwise it lingers as a zombie.
+            try:
+                await proc.wait()  # type: ignore[union-attr]
+            except (OSError, ProcessLookupError):
+                pass
         except OSError:
             pass
 
@@ -313,7 +319,6 @@ class ShellHookSink(HookSink):
 """Hook dispatcher for broadcasting events to multiple sinks."""
 
 
-import logging
 
 
 logger = logging.getLogger(__name__)
@@ -354,14 +359,8 @@ at session/tool/mode/message/error/shell_env lifecycle points.
 """
 
 
-import asyncio
-import logging
-import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 
-from deepseek_tui.config.models import HooksConfig, LifecycleHookEntry, ShellHookConfig
+from deepseek_tui.config.models import HooksConfig, LifecycleHookEntry
 
 logger = logging.getLogger(__name__)
 
@@ -582,6 +581,11 @@ class HookExecutor:
             )
         except asyncio.TimeoutError:
             proc.kill()  # type: ignore[union-attr]
+            # Reap the killed child; otherwise it lingers as a zombie.
+            try:
+                await proc.wait()  # type: ignore[union-attr]
+            except (OSError, ProcessLookupError):
+                pass
             return HookResult(
                 name=hook.name,
                 success=False,
@@ -699,7 +703,6 @@ def _merge_legacy_shell_hooks(config: HooksConfig) -> HooksConfig:
 """Construct a :class:`HookDispatcher` from application config."""
 
 
-from pathlib import Path
 
 from deepseek_tui.config.models import Config
 

@@ -143,7 +143,13 @@ class GitBlameTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         root = _resolve_root(input_data, context)
-        file_path = _require_string(input_data, "file")
+        # Resolve inside the workspace (raises on escape), then pass a
+        # root-relative path to git.
+        resolved_file = context.resolve_path(_require_string(input_data, "file"))
+        try:
+            file_path = str(resolved_file.relative_to(root))
+        except ValueError:
+            file_path = str(resolved_file)
         line_start = _optional_int(input_data, "line_start")
         line_end = _optional_int(input_data, "line_end")
         args = ["blame", "-f"]
@@ -194,15 +200,6 @@ def _optional_int(input_data: dict[str, object], key: str) -> int | None:
     if not isinstance(value, int):
         raise ToolError(f"{key} must be an integer")
     return value
-
-
-import asyncio
-from pathlib import Path
-
-from deepseek_tui.tools.validation import optional_string as _optional_string
-from deepseek_tui.tools.validation import require_string as _require_string
-from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.registry import ToolContext
 
 
 class GitHubIssueContextTool(ToolSpec):

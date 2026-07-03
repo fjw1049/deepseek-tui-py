@@ -30,6 +30,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 from deepseek_tui.client.pricing import CostCurrency, format_cost_amount
+from dataclasses import dataclass
 
 
 class StatusBar(Static):
@@ -224,7 +225,6 @@ class StatusBar(Static):
 # the next draw is allowed. The implementation is monotonic-time based and
 # agnostic to the UI framework.
 #
-from dataclasses import dataclass
 
 MIN_FRAME_INTERVAL_SECS: float = 1.0 / 120.0
 LOW_MOTION_MIN_FRAME_INTERVAL_SECS: float = 1.0 / 30.0

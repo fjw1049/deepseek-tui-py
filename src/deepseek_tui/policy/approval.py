@@ -2,196 +2,24 @@
 
 from __future__ import annotations
 
-# Execpolicy decision enum.
-# Mirrors ``crates/tui/src/execpolicy/decision.rs`` (27 LOC).
-#
-# Rust serde shape: camelCase ``"allow" | "prompt" | "forbidden"`` when
-# serialised as a string. The Rust enum derives ``Ord`` with the variant
-# order ``Allow < Prompt < Forbidden``, which :meth:`Policy.check` relies
-# on when aggregating multiple matches (the most-restrictive decision
-# wins). We preserve that ordering here.
-
-
-from enum import Enum
-from functools import total_ordering
-from typing import cast
-
-
-__all__ = ["Decision"]
-
-
-@total_ordering
-class Decision(str, Enum):
-    """Decision for a command evaluation.
-
-    * ``ALLOW``      — run without further approval
-    * ``PROMPT``     — request explicit user approval
-    * ``FORBIDDEN``  — block outright
-    """
-
-    ALLOW = "allow"
-    PROMPT = "prompt"
-    FORBIDDEN = "forbidden"
-
-    @classmethod
-    def parse(cls, raw: str) -> Decision:
-        """Parse a string; raise :class:`ExecPolicyError` on unknown values.
-
-        Mirrors Rust ``Decision::parse`` (decision.rs:19-26).
-        """
-        try:
-            return cls(raw)
-        except ValueError as err:
-            raise ExecPolicyError.invalid_decision(raw) from err
-
-    # --- Ordering (ALLOW < PROMPT < FORBIDDEN) ----------------------
-
-    _RANKS: dict[str, int] = {}  # type: ignore[misc]
-
-    def __lt__(self, other: object) -> bool:
-        if not isinstance(other, Decision):
-            return NotImplemented
-        ranks = _RANK
-        return ranks[cast(str, self.value)] < ranks[cast(str, other.value)]
-
-
-# Module-level rank table (kept separate from the enum class so the
-# Enum machinery doesn't try to turn it into a member).
-_RANK: dict[str, int] = {
-    Decision.ALLOW.value: 0,
-    Decision.PROMPT.value: 1,
-    Decision.FORBIDDEN.value: 2,
-}
-
-
-
-# Errors raised by the Rust-parity execpolicy machinery.
-# Mirrors ``crates/tui/src/execpolicy/error.rs`` (28 LOC) plus the
-# ``AmendError`` variants from ``amend.rs:12-55``.
-
 from pathlib import Path
 from typing import Any
 
-__all__ = [
-    "AmendError",
-    "ExecPolicyError",
-]
-
-
-class ExecPolicyError(Exception):
-    """Base class for execpolicy parse / evaluate errors.
-
-    Matches Rust ``execpolicy::Error`` (error.rs:7-28). Instances can
-    carry structured context via :attr:`data` for callers that want to
-    inspect the offending inputs.
-    """
-
-    data: dict[str, Any]
-
-    def __init__(self, message: str, **data: Any) -> None:
-        super().__init__(message)
-        self.data = data
-
-    # --- Constructors (one per Rust variant) ------------------------
-
-    @classmethod
-    def invalid_decision(cls, value: str) -> ExecPolicyError:
-        return cls(f"invalid decision: {value}", value=value)
-
-    @classmethod
-    def invalid_pattern(cls, message: str) -> ExecPolicyError:
-        return cls(f"invalid pattern element: {message}")
-
-    @classmethod
-    def invalid_example(cls, message: str) -> ExecPolicyError:
-        return cls(f"invalid example: {message}")
-
-    @classmethod
-    def invalid_rule(cls, message: str) -> ExecPolicyError:
-        return cls(f"invalid rule: {message}")
-
-    @classmethod
-    def example_did_not_match(
-        cls, rules: list[str], examples: list[str]
-    ) -> ExecPolicyError:
-        return cls(
-            "expected every example to match at least one rule. "
-            f"rules: {rules!r}; unmatched examples: {examples!r}",
-            rules=rules,
-            unmatched_examples=examples,
-        )
-
-    @classmethod
-    def example_did_match(cls, rule: str, example: str) -> ExecPolicyError:
-        return cls(
-            f"expected example to not match rule `{rule}`: {example}",
-            rule=rule,
-            example=example,
-        )
-
-    @classmethod
-    def starlark(cls, message: str) -> ExecPolicyError:
-        return cls(f"starlark error: {message}")
-
-
-class AmendError(Exception):
-    """Errors specific to ``blocking_append_allow_prefix_rule``.
-
-    Mirrors Rust ``AmendError`` (amend.rs:12-55). Instances carry
-    structured context via :attr:`data` (path / directory / source).
-    """
-
-    data: dict[str, Any]
-
-    def __init__(self, message: str, **data: Any) -> None:
-        super().__init__(message)
-        self.data = data
-
-    @classmethod
-    def empty_prefix(cls) -> AmendError:
-        return cls("prefix rule requires at least one token")
-
-    @classmethod
-    def missing_parent(cls, path: Path) -> AmendError:
-        return cls(f"policy path has no parent: {path}", path=path)
-
-    @classmethod
-    def create_policy_dir(cls, directory: Path, source: Exception) -> AmendError:
-        err = cls(
-            f"failed to create policy directory {directory}: {source}",
-            directory=directory,
-        )
-        err.__cause__ = source
-        return err
-
-    @classmethod
-    def open_policy_file(cls, path: Path, source: Exception) -> AmendError:
-        err = cls(f"failed to open policy file {path}: {source}", path=path)
-        err.__cause__ = source
-        return err
-
-    @classmethod
-    def write_policy_file(cls, path: Path, source: Exception) -> AmendError:
-        err = cls(f"failed to write to policy file {path}: {source}", path=path)
-        err.__cause__ = source
-        return err
-
-    @classmethod
-    def lock_policy_file(cls, path: Path, source: Exception) -> AmendError:
-        err = cls(f"failed to lock policy file {path}: {source}", path=path)
-        err.__cause__ = source
-        return err
-
-    @classmethod
-    def read_policy_file(cls, path: Path, source: Exception) -> AmendError:
-        err = cls(f"failed to read policy file {path}: {source}", path=path)
-        err.__cause__ = source
-        return err
-
-
+# Single source of truth for the execpolicy Decision enum and error types
+# lives in policy.exec_policy; re-exported here for callers that import
+# them from policy.approval (e.g. tools/shell.py).
+from deepseek_tui.policy.exec_policy import (  # noqa: F401
+    AmendError,
+    Decision,
+    ExecPolicyError,
+)
 
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
+from urllib.parse import urlparse
+import json
+from typing import TYPE_CHECKING
 
 
 class RiskLevel(Enum):
@@ -267,11 +95,6 @@ class PolicyRule:
 # session. When false, the grant is one-shot: the next call with the same
 # key still has to re-prompt.
 
-import hashlib
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
-from urllib.parse import urlparse
 
 from deepseek_tui.policy.command_safety import classify_command
 
@@ -462,8 +285,6 @@ def _parse_host(tool_input: Any) -> str:
 # blocker, so we don't spend effort here on a Win-specific ``msvcrt``
 # lock path.
 
-import json
-from pathlib import Path
 
 
 __all__ = ["blocking_append_allow_prefix_rule"]
@@ -551,7 +372,6 @@ def _append_locked_line(policy_path: Path, line: str) -> None:
 
 
 
-from typing import TYPE_CHECKING
 
 from deepseek_tui.tools.registry import ToolCapability
 

@@ -37,6 +37,11 @@ class McpTransportError(Exception):
     """Raised when a transport cannot send/recv."""
 
 
+# Sentinel queued by the SSE reader loop when the stream dies, so recv()
+# raises instead of blocking forever on an empty queue.
+_SSE_CLOSED: dict[str, Any] = {"__sse_closed__": True}
+
+
 class McpTransport(ABC):
     """Transport contract shared by stdio and SSE."""
 
@@ -230,7 +235,14 @@ class SseTransport(McpTransport):
     async def recv(self) -> dict[str, Any]:
         if self._reader_task is None:
             raise McpTransportError("SSE transport not started")
-        return await self._queue.get()
+        item = await self._queue.get()
+        if item is _SSE_CLOSED:
+            # Re-queue the sentinel so every concurrent waiter unblocks.
+            self._queue.put_nowait(_SSE_CLOSED)
+            raise McpTransportError(
+                f"MCP SSE stream closed for {_mask_url(self.base_url)}"
+            )
+        return item
 
     async def _run_sse_loop(self) -> None:
         try:
@@ -263,8 +275,12 @@ class SseTransport(McpTransport):
                             await self._queue.put(parsed)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — loop ends, waiters see transport err
-            return
+        except Exception as exc:  # noqa: BLE001 — surfaced via the sentinel below
+            logger.debug("mcp_sse_loop_error url=%s error=%s", _mask_url(self.base_url), exc)
+        finally:
+            # Wake any recv() waiter — otherwise a dead SSE stream leaves
+            # callers blocked on the queue forever.
+            self._queue.put_nowait(_SSE_CLOSED)
 
     def _set_endpoint(self, raw: str) -> None:
         value = raw.strip()

@@ -47,6 +47,10 @@ from deepseek_tui.policy.sandbox import sandbox_policy_for_mode
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 from typing import TYPE_CHECKING as _TC2
+import logging
+import os
+import time
+from dataclasses import replace
 if _TC2:
     from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
 from deepseek_tui.tools.task import (
@@ -279,16 +283,56 @@ async def create_tool_runtime(
     if task_manager is not None:
         metadata["task_manager"] = task_manager
 
-    # Network policy — domain-level allow/deny for outbound HTTP
-    network_decider = None
-    net_cfg = getattr(cfg, "network_policy", None)
-    if net_cfg is not None:
-        from deepseek_tui.policy.network import NetworkPolicy, NetworkPolicyDecider
+    # Exec policy — user-authored rules from ~/.deepseek/execpolicy.toml
+    # gate shell commands at the tool layer (deny wins; unmatched commands
+    # defer to the engine-level approval flow).
+    if policy is None and cfg.features.exec_policy:
+        from deepseek_tui.policy.exec_policy import load_user_policy
 
+        policy = load_user_policy()
+
+    # Network policy — domain-level allow/deny for outbound HTTP, from the
+    # ``[network]`` config table. Rule entries carry ``host`` (or
+    # ``domain``) plus ``action`` ("allow" / "deny"); session amendments
+    # recorded by approval flows use the same shape.
+    network_decider = None
+    net_cfg = getattr(cfg, "network", None)
+    if net_cfg is not None and getattr(net_cfg, "enabled", False):
+        from deepseek_tui.policy.network import (
+            Decision as NetworkDecision,
+            NetworkPolicy,
+            NetworkPolicyDecider,
+        )
+
+        allow_hosts: list[str] = []
+        deny_hosts: list[str] = []
+        raw_rules = [
+            *getattr(net_cfg, "rules", []),
+            *getattr(net_cfg, "amendments", []),
+        ]
+        for rule in raw_rules:
+            if not isinstance(rule, dict):
+                continue
+            host = str(rule.get("host") or rule.get("domain") or "").strip()
+            action = str(rule.get("action") or "").strip().lower()
+            if not host:
+                continue
+            if action == "allow":
+                allow_hosts.append(host)
+            elif action == "deny":
+                deny_hosts.append(host)
+        default_action = str(
+            getattr(net_cfg, "default_action", "ask") or "ask"
+        ).strip().lower()
+        default_decision = {
+            "allow": NetworkDecision.ALLOW,
+            "deny": NetworkDecision.DENY,
+        }.get(default_action, NetworkDecision.PROMPT)
         network_decider = NetworkPolicyDecider(
             policy=NetworkPolicy(
-                allow=getattr(net_cfg, "allow", []),
-                deny=getattr(net_cfg, "deny", []),
+                allow=allow_hosts,
+                deny=deny_hosts,
+                default=default_decision,
             ),
         )
 
@@ -388,7 +432,6 @@ async def _build_mcp_manager(cfg: Config) -> McpManager:
 # The ToolSpec itself always raises — it must never be dispatched directly.
 #
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.registry import ToolContext
 
 MULTI_TOOL_PARALLEL_NAME = "multi_tool_use.parallel"
 
@@ -433,14 +476,8 @@ class MultiToolUseParallelTool(ToolSpec):
 #
 # Mirrors ``docs/DeepSeek-TUI-main/crates/tui/src/tools/truncate.rs``.
 #
-import logging
-import os
-import time
-from dataclasses import replace
-from pathlib import Path
 
 from deepseek_tui.config.paths import user_tool_outputs_dir
-from deepseek_tui.tools.registry import ToolResult
 
 logger = logging.getLogger(__name__)
 

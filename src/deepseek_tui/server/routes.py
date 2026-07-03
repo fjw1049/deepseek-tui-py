@@ -9,6 +9,16 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import HTTPException
+from fastapi import Request
+from fastapi import APIRouter
+from pydantic import BaseModel
+import os
+from fastapi import BackgroundTasks
+from pydantic import Field
+from fastapi.responses import StreamingResponse
+from datetime import datetime, timezone
+from pathlib import Path
+from fastapi.responses import JSONResponse
 
 
 def api_error(status_code: int, message: str, *, error: str | None = None) -> HTTPException:
@@ -90,9 +100,7 @@ def runtime_from_request(request: Any) -> Any:
 
 
 # Shared request helpers + ValueError classifier for runtime_api routes.
-from typing import Any
 
-from fastapi import Request
 
 from deepseek_tui.server.threads import RuntimeThreadManager
 
@@ -146,8 +154,6 @@ def classify_turn_value_error(exc: ValueError) -> Exception:
 
 
 # POST /v1/approvals/{id} — resolve a pending tool approval.
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
 
 
 router_approvals = APIRouter(prefix="/v1")
@@ -185,11 +191,7 @@ async def decide_approval(request: Request, approval_id: str) -> dict[str, objec
 
 
 # Automation HTTP — CRUD, triggers, Feishu inbound.
-import os
-from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Request
-from pydantic import BaseModel, Field
 
 from deepseek_tui.automation.inbox import (
     append_feishu_inbound,
@@ -488,8 +490,6 @@ async def list_automation_runs(
 
 
 # POST /v1/elevations/{id} — resolve a pending sandbox elevation (L3).
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
 
 
 router_elevations = APIRouter(prefix="/v1")
@@ -528,8 +528,6 @@ async def decide_elevation(request: Request, elevation_id: str) -> dict[str, obj
 
 
 # GET /v1/threads/{id}/events — long-lived SSE with backlog replay.
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
 
 
 router_events = APIRouter(prefix="/v1")
@@ -582,7 +580,6 @@ async def get_item(request: Request, item_id: str) -> dict[str, Any]:
 
 
 # GET /health and /healthz — connection probes.
-from fastapi import APIRouter, Request
 
 router_health = APIRouter()
 
@@ -613,7 +610,6 @@ async def health_ready(request: Request) -> dict[str, object]:
 
 
 # GET /v1/jobs — shell + durable task snapshot for Workbench.
-from fastapi import APIRouter, Request
 
 
 router_jobs = APIRouter(prefix="/v1")
@@ -632,9 +628,7 @@ async def list_jobs(request: Request) -> dict[str, object]:
 # its enabled servers. The legacy router exposed this under ``/legacy/mcp/startup``
 # only; the GUI talks exclusively to ``/v1/*`` so the parity route lives here.
 #
-from typing import Any
 
-from fastapi import APIRouter, Request
 
 
 router_mcp = APIRouter(prefix="/v1")
@@ -653,10 +647,7 @@ async def mcp_preload_status(request: Request) -> dict[str, Any]:
 
 
 # GET /v1/sessions + export Workbench threads back to TUI session files.
-from datetime import datetime, timezone
-from typing import Any
 
-from fastapi import APIRouter, Request
 
 from deepseek_tui.server.sessions import (
     export_thread_to_tui_session,
@@ -710,10 +701,7 @@ async def export_session(request: Request, thread_id: str) -> dict[str, Any]:
 
 
 # GET /v1/skills — discovered skills for Workbench settings/diagnostics.
-from pathlib import Path
-from typing import Any
 
-from fastapi import APIRouter, Request
 
 from deepseek_tui.integrations.skills import discover_in_workspace
 
@@ -748,9 +736,7 @@ async def list_skills(request: Request) -> dict[str, Any]:
 
 
 # GET/POST /v1/tasks — durable background task queue.
-from typing import Any
 
-from fastapi import APIRouter, Request
 
 
 router_tasks = APIRouter(prefix="/v1")
@@ -786,10 +772,7 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
 
 
 # /v1/threads CRUD + summary + fork + resume.
-from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 
 from deepseek_tui.server.threads import (
     CreateThreadRequest,
@@ -970,10 +953,7 @@ async def resume_thread(request: Request, thread_id: str) -> dict[str, Any]:
 
 
 # /v1/threads/{id}/turns lifecycle: start / interrupt / steer / compact.
-from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 
 from deepseek_tui.server.threads import (
     CompactThreadRequest,
@@ -1046,10 +1026,7 @@ async def compact_thread(request: Request, thread_id: str) -> dict[str, Any]:
 
 
 # POST /v1/user-inputs/{id} — answer or cancel a pending question.
-from typing import Any
 
-from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
 
 
 router_user_inputs = APIRouter(prefix="/v1")
@@ -1087,9 +1064,7 @@ async def user_input_response(
 
 
 # GET /v1/workspace/status — diagnostic dialog.
-from typing import Any
 
-from fastapi import APIRouter, Request
 
 
 router_workspace = APIRouter(prefix="/v1")
@@ -1110,7 +1085,6 @@ unchanged.
 """
 
 
-from fastapi import APIRouter
 
 __all__ = ["build_runtime_api_router"]
 

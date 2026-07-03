@@ -41,9 +41,11 @@ class NetworkPolicy:
         self,
         allow: Sequence[str] = (),
         deny: Sequence[str] = (),
+        default: Decision = Decision.PROMPT,
     ) -> None:
         self._allow = list(allow)
         self._deny = list(deny)
+        self._default = default
 
     def evaluate(self, host: str) -> Decision:
         """Evaluate *host* against policy. Deny wins over allow."""
@@ -59,8 +61,8 @@ class NetworkPolicy:
         if self._matches_list(host, self._allow):
             return Decision.ALLOW
 
-        # Not in either list → prompt user
-        return Decision.PROMPT
+        # Not in either list → configured default (usually prompt)
+        return self._default
 
     @staticmethod
     def _matches_list(host: str, patterns: list[str]) -> bool:
@@ -71,7 +73,7 @@ class NetworkPolicy:
             if p.startswith("."):
                 # Subdomain wildcard: .example.com matches sub.example.com
                 # but NOT example.com itself
-                if host.endswith(p) or host == p[1:]:
+                if host != p[1:] and host.endswith(p):
                     return True
             else:
                 if host == p:
@@ -109,7 +111,9 @@ class NetworkPolicyDecider:
         self._policy = policy or NetworkPolicy()
         self._cache = _SessionCache()
         if audit_path is None:
-            self._audit_path = Path.home() / ".deepseek" / "audit.log"
+            from deepseek_tui.config.paths import user_audit_log_path
+
+            self._audit_path = user_audit_log_path()
         else:
             self._audit_path = Path(audit_path)
 

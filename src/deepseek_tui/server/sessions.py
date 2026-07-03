@@ -18,6 +18,8 @@ from deepseek_tui.server.threads import (
 )
 from deepseek_tui.config.paths import user_sessions_dir
 from deepseek_tui.protocol.messages import Message
+import uuid
+from pydantic import BaseModel
 
 
 def _title_from_metadata(metadata: dict[str, Any] | None, fallback: str) -> str:
@@ -188,16 +190,9 @@ def export_thread_to_tui_session(
 
 
 # Import TUI session JSON snapshots into durable runtime threads.
-import json
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
 
-from pydantic import BaseModel
 
 from deepseek_tui.server.threads import (
-    RuntimeThreadStore,
     RuntimeTurnStatus,
     TurnItemKind,
     TurnItemLifecycleStatus,
@@ -205,9 +200,7 @@ from deepseek_tui.server.threads import (
     TurnRecord,
     tool_kind_for_name,
 )
-from deepseek_tui.config.paths import user_sessions_dir
 from deepseek_tui.protocol.messages import (
-    Message,
     Role,
     TextBlock,
     ToolResultBlock,

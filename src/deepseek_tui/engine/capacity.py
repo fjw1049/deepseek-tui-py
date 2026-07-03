@@ -13,6 +13,11 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from deepseek_tui.config.models import CapacityConfig
+import logging
+from typing import TYPE_CHECKING
+import asyncio
+import re
+from pathlib import Path
 
 
 class GuardrailAction(enum.Enum):
@@ -333,8 +338,6 @@ class CapacityController:
 # Implements the 3 checkpoint entry points that route to guardrail actions.
 # Full tool-replay and canonical-state-rebuild logic is deferred (P1).
 
-import logging
-from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
@@ -484,11 +487,6 @@ async def run_error_escalation_checkpoint(
 # Context compaction for long conversations.
 # Mirrors ``crates/tui/src/compaction.rs:1-2008``.
 
-import asyncio
-import re
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.seam import truncate_chars as _truncate_chars
@@ -629,34 +627,6 @@ def _normalize_path_candidate(path: str, workspace: Path | None = None) -> str |
         return str(p)
     except (ValueError, OSError):
         return None
-
-
-def _extract_paths_from_tool_input(
-    input_data: Any, workspace: Path | None = None
-) -> list[str]:
-    """Extract file paths from tool input (dict/JSON)."""
-    paths: list[str] = []
-    if not isinstance(input_data, dict):
-        return paths
-
-    # Check single path keys
-    for key in ["path", "file", "target", "cwd"]:
-        if key in input_data and isinstance(input_data[key], str):
-            candidate = input_data[key]
-            normalized = _normalize_path_candidate(candidate, workspace)
-            if normalized:
-                paths.append(normalized)
-
-    # Check list path keys
-    for key in ["paths", "files", "targets"]:
-        if key in input_data and isinstance(input_data[key], list):
-            for item in input_data[key]:
-                if isinstance(item, str):
-                    normalized = _normalize_path_candidate(item, workspace)
-                    if normalized:
-                        paths.append(normalized)
-
-    return paths
 
 
 def _estimate_tokens_for_message(msg: Message, include_thinking: bool = True) -> int:

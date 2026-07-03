@@ -16,8 +16,6 @@ introduce new "layer-ambiguous" helpers.
 
 from __future__ import annotations
 
-
-
 import os
 from pathlib import Path
 
@@ -56,16 +54,6 @@ def user_config_path() -> Path:
     return user_deepseek_dir() / "config.toml"
 
 
-def user_managed_config_path() -> Path:
-    """``~/.deepseek/managed_config.toml`` — enterprise admin config."""
-    return user_deepseek_dir() / "managed_config.toml"
-
-
-def user_requirements_path() -> Path:
-    """``~/.deepseek/requirements.toml`` — enterprise hard requirements."""
-    return user_deepseek_dir() / "requirements.toml"
-
-
 def user_agents_path() -> Path:
     """``~/.deepseek/AGENTS.md`` — global fallback instructions."""
     return user_deepseek_dir() / "AGENTS.md"
@@ -100,11 +88,6 @@ def user_session_dir(session_id: str) -> Path:
     return user_sessions_dir() / session_id
 
 
-def user_session_artifacts_dir(session_id: str) -> Path:
-    """``~/.deepseek/sessions/<id>/artifacts/`` — large tool output blobs."""
-    return user_session_dir(session_id) / "artifacts"
-
-
 def user_session_cycles_dir(session_id: str) -> Path:
     """``~/.deepseek/sessions/<id>/cycles/`` — archived cycle JSONL."""
     return user_session_dir(session_id) / "cycles"
@@ -126,24 +109,9 @@ def user_threads_dir() -> Path:
     return user_deepseek_dir() / "threads"
 
 
-def user_stash_dir() -> Path:
-    """``~/.deepseek/stash/`` — named markdown snippets (/stash command)."""
-    return user_deepseek_dir() / "stash"
-
-
 def user_skills_dir() -> Path:
     """``~/.deepseek/skills/`` — cross-project user skills."""
     return user_deepseek_dir() / "skills"
-
-
-def user_skill_state_path() -> Path:
-    """``~/.deepseek/skill_state.toml`` — skill enable/disable state."""
-    return user_deepseek_dir() / "skill_state.toml"
-
-
-def user_roles_dir() -> Path:
-    """``~/.deepseek/roles/`` — custom sub-agent role TOML."""
-    return user_deepseek_dir() / "roles"
 
 
 def user_state_db_path() -> Path:
@@ -159,29 +127,9 @@ def user_execpolicy_path() -> Path:
     return user_deepseek_dir() / "execpolicy.toml"
 
 
-def user_onboarded_marker_path() -> Path:
-    """``~/.deepseek/.onboarded`` — completion flag for first-run wizard."""
-    return user_deepseek_dir() / ".onboarded"
-
-
 def user_mcp_config_path() -> Path:
     """``~/.deepseek/mcp.json`` — user MCP server config."""
     return user_deepseek_dir() / "mcp.json"
-
-
-def user_composer_history_path() -> Path:
-    """``~/.deepseek/composer_history`` — input history (zsh-style)."""
-    return user_deepseek_dir() / "composer_history"
-
-
-def user_composer_stash_path() -> Path:
-    """``~/.deepseek/composer_stash.jsonl`` — draft input stash."""
-    return user_deepseek_dir() / "composer_stash.jsonl"
-
-
-def user_workspace_trust_path() -> Path:
-    """``~/.deepseek/workspace-trust.json`` — trusted workspace decisions."""
-    return user_deepseek_dir() / "workspace-trust.json"
 
 
 def workbench_usage_dir() -> Path:
@@ -213,51 +161,6 @@ def project_config_path(workspace: Path | None = None) -> Path:
 def project_instructions_path(workspace: Path | None = None) -> Path:
     """``<workspace>/.deepseek/instructions.md`` — auto-generated fallback."""
     return project_deepseek_dir(workspace) / "instructions.md"
-
-
-def project_handoff_path(workspace: Path | None = None) -> Path:
-    """``<workspace>/.deepseek/handoff.md`` — current session handoff."""
-    return project_deepseek_dir(workspace) / "handoff.md"
-
-
-def project_subagent_state_path(workspace: Path | None = None) -> Path:
-    """``<workspace>/.deepseek/subagents.v1.json`` — active sub-agents."""
-    return project_deepseek_dir(workspace) / "subagents.v1.json"
-
-
-def project_plan_path(workspace: Path | None = None) -> Path:
-    """``<workspace>/.deepseek/plan.md`` — current task high-level plan."""
-    return project_deepseek_dir(workspace) / "plan.md"
-
-
-def project_skills_dir(workspace: Path | None = None) -> Path:
-    """``<workspace>/.deepseek/skills/`` — project-level skills."""
-    return project_deepseek_dir(workspace) / "skills"
-
-
-def project_logs_dir(workspace: Path | None = None) -> Path:
-    """``<workspace>/.deepseek/logs/`` — project runtime logs."""
-    return project_deepseek_dir(workspace) / "logs"
-
-
-# ---------------------------------------------------------------------------
-# Project root (NOT inside .deepseek/)
-# ---------------------------------------------------------------------------
-
-
-def project_agents_md(workspace: Path | None = None) -> Path:
-    """``<workspace>/AGENTS.md`` — first-priority project instructions."""
-    return (workspace or Path.cwd()) / "AGENTS.md"
-
-
-def project_claude_instructions(workspace: Path | None = None) -> Path:
-    """``<workspace>/.claude/instructions.md`` — second-priority."""
-    return (workspace or Path.cwd()) / ".claude" / "instructions.md"
-
-
-def project_claude_md(workspace: Path | None = None) -> Path:
-    """``<workspace>/CLAUDE.md`` — third-priority project instructions."""
-    return (workspace or Path.cwd()) / "CLAUDE.md"
 
 
 def dotenv_path(workspace: Path | None = None) -> Path:

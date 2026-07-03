@@ -12,11 +12,20 @@ Owns:
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-from deepseek_tui.tools.registry import ToolError, ToolResult
+from deepseek_tui.tools.registry import ToolError
+import json as _json
+import logging as _logging
+import os as _os
+import asyncio
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+import json
+import re
 
 # --- Types (Rust dispatch.rs:28-65) --------------------------------------
 
@@ -36,52 +45,6 @@ class ToolExecutionPlan:
     supports_parallel: bool = False
     read_only: bool = False
     blocked_error: ToolError | None = None
-
-
-@dataclass
-class ToolExecOutcome:
-    """Result from executing a single tool."""
-
-    index: int
-    id: str
-    name: str
-    input: dict[str, Any]
-    started_at: float = field(default_factory=time.monotonic)
-    result: ToolResult | None = None
-    error: ToolError | None = None
-
-
-@dataclass
-class ParallelToolResultEntry:
-    tool_name: str
-    success: bool
-    content: str
-    error: str | None = None
-
-
-@dataclass
-class ParallelToolResult:
-    results: list[ParallelToolResultEntry] = field(default_factory=list)
-
-
-# --- Caller policy (Rust dispatch.rs:76-94) -------------------------------
-
-
-def caller_type_for_tool_use(caller: str | None) -> str:
-    return caller or "direct"
-
-
-def caller_allowed_for_tool(
-    caller: str | None,
-    allowed_callers: list[str] | None,
-) -> bool:
-    """Check if caller type is allowed for a tool definition."""
-    requested = caller_type_for_tool_use(caller)
-    if allowed_callers is None:
-        return requested == "direct"
-    if not allowed_callers:
-        return requested == "direct"
-    return requested in allowed_callers
 
 
 # --- Error formatting (Rust dispatch.rs:96-126) ---------------------------
@@ -247,9 +210,6 @@ def mcp_tool_approval_description(name: str) -> str:
 
 # --- Audit logging (formerly engine/tool_execution.py) -----------------------
 
-import json as _json
-import logging as _logging
-import os as _os
 
 _audit_logger = _logging.getLogger(__name__)
 
@@ -282,12 +242,7 @@ def emit_tool_audit(event: dict[str, Any]) -> None:
 # Tasks run a single Engine turn with the **shared** process TaskManager injected.
 # Mirrors Rust ``run_subagent`` + ``EngineTaskExecutor``.
 
-import asyncio
-import logging
-from pathlib import Path
-from typing import TYPE_CHECKING
 
-from collections.abc import Awaitable, Callable
 
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
@@ -576,8 +531,6 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
 # The repair ladder attempts increasingly aggressive fixes, guaranteeing
 # a valid dict is always returned (worst case: empty {}).
 
-import json
-import re
 
 # Max input size — beyond this we bail to {} to avoid pathological regex.
 _MAX_INPUT_BYTES = 1_048_576  # 1 MiB

@@ -11,6 +11,8 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
+import asyncio
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -218,9 +220,6 @@ def first_response_timeout_message(trace: TurnLatencyTrace | None) -> str:
 
 
 # Coalesce streaming ``item.delta`` events before persistence / SSE.
-import asyncio
-from collections.abc import Awaitable, Callable
-from typing import Any
 
 EmitDelta = Callable[[str, str, str, str, dict[str, Any]], Awaitable[None]]
 

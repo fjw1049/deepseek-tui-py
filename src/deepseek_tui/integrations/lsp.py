@@ -4,6 +4,14 @@ Consolidates the former lsp/ package.
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
+from enum import IntEnum
+from enum import Enum
+from pathlib import Path
+import asyncio
+import json
+from abc import ABC, abstractmethod
+from typing import Any
 
 # Key used in ToolContext.metadata for the LspManager instance.
 LSP_MANAGER_KEY = "lsp_manager"
@@ -17,8 +25,6 @@ LSP_MANAGER_KEY = "lsp_manager"
 """LSP diagnostic models and rendering."""
 
 
-from dataclasses import dataclass
-from enum import IntEnum
 
 
 class Severity(IntEnum):
@@ -77,8 +83,6 @@ def render_blocks(blocks: list[DiagnosticBlock]) -> str:
 """Language detection and LSP server registry."""
 
 
-from enum import Enum
-from pathlib import Path
 
 
 class Language(Enum):
@@ -153,11 +157,6 @@ def server_for(lang: Language) -> tuple[str, list[str]] | None:
 """LSP client and transport layer."""
 
 
-import asyncio
-import json
-from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Any
 
 
 
@@ -302,18 +301,30 @@ class LspClient:
 
     async def _receive_loop(self) -> None:
         """Receive loop for handling server messages."""
-        while True:
-            msg = await self.transport.receive()
-            if msg is None:
-                break
-            if "id" in msg and msg["id"] in self._pending:
-                future = self._pending.pop(msg["id"])
-                if "result" in msg:
-                    future.set_result(msg["result"])
-                elif "error" in msg:
-                    future.set_exception(RuntimeError(msg["error"].get("message", "LSP error")))
-            elif msg.get("method") == "textDocument/publishDiagnostics":
-                self._handle_diagnostics(msg["params"])
+        try:
+            while True:
+                msg = await self.transport.receive()
+                if msg is None:
+                    break
+                if "id" in msg and msg["id"] in self._pending:
+                    future = self._pending.pop(msg["id"])
+                    if future.done():
+                        continue
+                    if "result" in msg:
+                        future.set_result(msg["result"])
+                    elif "error" in msg:
+                        future.set_exception(RuntimeError(msg["error"].get("message", "LSP error")))
+                elif msg.get("method") == "textDocument/publishDiagnostics":
+                    self._handle_diagnostics(msg["params"])
+        finally:
+            # Server died or stream hit EOF: fail every in-flight request so
+            # _request() callers don't await a future that can never resolve.
+            pending, self._pending = self._pending, {}
+            for future in pending.values():
+                if not future.done():
+                    future.set_exception(
+                        RuntimeError("LSP server connection closed")
+                    )
 
     def _handle_diagnostics(self, params: dict[str, Any]) -> None:
         """Handle publishDiagnostics notification."""
@@ -381,8 +392,6 @@ class LspClient:
 """LSP manager for lazy server spawning and diagnostics collection."""
 
 
-import asyncio
-from pathlib import Path
 
 
 
@@ -500,8 +509,6 @@ so the next LLM turn sees fresh diagnostics.
 """
 
 
-from pathlib import Path
-from typing import Any
 
 _EDIT_TOOLS = {"edit_file", "write_file"}
 

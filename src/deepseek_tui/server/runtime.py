@@ -52,6 +52,7 @@ from deepseek_tui.protocol.events import (
     ResponseStartEvent as ResponseStartFrame,
 )
 from deepseek_tui.protocol.messages import Message
+from dataclasses import asdict
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -1130,8 +1131,6 @@ def _build_hook_dispatcher(config: Config) -> HookDispatcher:
 # bridge so the /prompt/stream endpoint streams real assistant deltas and
 # tool results instead of the 3-frame placeholder.
 #
-from dataclasses import asdict
-from typing import Any
 
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,

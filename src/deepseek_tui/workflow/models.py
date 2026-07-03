@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-
-
-# Workflow IR and runtime snapshot models.
-from dataclasses import dataclass, field
+import re
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 
@@ -177,7 +175,6 @@ class WorkflowRunContext:
 
 
 # Parse and validate Workflow IR JSON.
-from typing import Any
 
 
 
@@ -484,16 +481,11 @@ def _step_templates(step: WorkflowStep) -> list[str]:
 
 
 def _extract_output_refs(template: str) -> list[str]:
-    import re
-
     refs = re.findall(r"\{\{outputs\.([a-zA-Z0-9_\-]+)(?:\.full)?\}\}", template)
     return list(refs)
 
 
 # JSON-serializable views of workflow runtime state.
-from dataclasses import asdict
-from typing import Any
-
 
 
 def snapshot_to_dict(snapshot: WorkflowSnapshot) -> dict[str, Any]:
@@ -503,14 +495,7 @@ def snapshot_to_dict(snapshot: WorkflowSnapshot) -> dict[str, Any]:
     return data
 
 
-def agent_run_to_dict(run: WorkflowAgentRun) -> dict[str, Any]:
-    return asdict(run)
-
-
 # Template rendering for workflow prompts.
-import re
-from typing import Any
-
 
 _OUTPUT_PREVIEW_RE = re.compile(
     r"\{\{outputs\.([a-zA-Z0-9_\-]+)\}\}"

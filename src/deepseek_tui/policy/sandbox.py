@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+import os
+import subprocess
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -440,12 +443,6 @@ def apply_sandbox_metadata(
 # Port of ``docs/DeepSeek-TUI-main/crates/tui/src/sandbox/seatbelt.rs``.
 
 
-import os
-import subprocess
-import sys
-from functools import lru_cache
-from pathlib import Path
-from typing import TYPE_CHECKING
 
 SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec"
 

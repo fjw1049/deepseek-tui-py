@@ -14,6 +14,13 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
+from pathlib import Path
+from textual.widgets import Input, ListItem, ListView
+from textual.containers import VerticalScroll
+import os
+from textual.message import Message
+from textual.widgets import OptionList
+from textual.widgets.option_list import Option
 
 
 class ApprovalDialog(ModalScreen[bool]):
@@ -155,13 +162,7 @@ class ApprovalDialog(ModalScreen[bool]):
 # + file picker functionality (~800 LOC combined).
 # Implemented as Textual ModalScreen overlays with filterable lists.
 #
-from pathlib import Path
 
-from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Input, ListItem, ListView, Static
 
 # ===========================================================================
 # Base FilterablePicker
@@ -318,27 +319,6 @@ class ModelPicker(_FilterablePickerScreen):
 
 
 # ===========================================================================
-# ModePicker
-# ===========================================================================
-
-AVAILABLE_MODES: list[tuple[str, str]] = [
-    ("agent", "Agent — autonomous tool use (default)"),
-    ("plan", "Plan — read-only analysis, no edits"),
-    ("yolo", "YOLO — auto-approve everything"),
-    ("ask", "Ask — answer questions only"),
-    ("workflow", "Workflow — multi-phase structured execution"),
-]
-
-
-class ModePicker(_FilterablePickerScreen):
-    """Pick an interaction mode."""
-
-    def __init__(self, modes: list[tuple[str, str]] | None = None) -> None:
-        items = modes or AVAILABLE_MODES
-        super().__init__("Select Mode", items)
-
-
-# ===========================================================================
 # FilePicker
 # ===========================================================================
 
@@ -460,11 +440,6 @@ class SessionPicker(_FilterablePickerScreen):
 # Provides a modal overlay showing all keybindings and available commands,
 # with section grouping and scrollable content.
 #
-from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import VerticalScroll
-from textual.screen import ModalScreen
-from textual.widgets import Static
 
 KEYBIND_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     (
@@ -613,14 +588,7 @@ class _SlashCommandHelp(Static):
 # Stage 6.6: Detects ``@`` in the composer input and shows a file
 # completion popup. Files are listed from the working directory.
 #
-import os
-from pathlib import Path
 
-from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.message import Message
-from textual.widgets import OptionList, Static
-from textual.widgets.option_list import Option
 
 
 class FileMention(Vertical):

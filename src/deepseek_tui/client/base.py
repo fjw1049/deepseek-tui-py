@@ -4,8 +4,12 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from deepseek_tui.engine.usage_ledger import TurnUsageLedger
 
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (

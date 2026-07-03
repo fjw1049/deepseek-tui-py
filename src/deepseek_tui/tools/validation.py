@@ -204,6 +204,12 @@ class RunTestsTool(ToolSpec):
         if extra_args:
             cmd_str = f"{cmd_str} {extra_args}"
 
+        from deepseek_tui.tools.shell import check_command_policy
+
+        refusal = check_command_policy(cmd_str, context)
+        if refusal is not None:
+            return refusal
+
         try:
             proc = await asyncio.wait_for(
                 asyncio.create_subprocess_shell(
@@ -356,10 +362,7 @@ class RevertTurnTool(ToolSpec):
 
 
 # Terminating structured-output tool for sub-agent workflows.
-from typing import Any
 
-from deepseek_tui.tools.registry import ToolCapability, ToolResult, ToolSpec
-from deepseek_tui.tools.registry import ToolContext
 
 STRUCTURED_OUTPUT_TOOL_NAME = "structured_output"
 
@@ -437,9 +440,7 @@ class StructuredOutputTool(ToolSpec):
 # Extracted from per-tool duplicates to reduce ~100 lines of redundancy
 # across 12+ tool files.
 #
-from typing import Any
 
-from deepseek_tui.tools.registry import ToolError
 
 
 def require_string(input_data: dict[str, object], key: str) -> str:

@@ -22,6 +22,14 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Input, ListItem, ListView, Static
+import re
+from dataclasses import field
+from rich.console import Group, RenderableType
+from rich.markup import escape
+from rich.panel import Panel
+from rich.text import Text
+from textual.containers import VerticalScroll
+from pathlib import Path
 
 
 @dataclass(slots=True)
@@ -282,18 +290,7 @@ class Sidebar(Widget):
 #     │ agent_a1b2  explore  done              │
 #     └────────────────────────────────────────┘
 #
-import re
-from dataclasses import dataclass, field
-from typing import Any
 
-from rich.console import Group, RenderableType
-from rich.markup import escape
-from rich.panel import Panel
-from rich.text import Text
-from textual.containers import VerticalScroll
-from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Static
 
 
 @dataclass(slots=True)
@@ -685,8 +682,6 @@ class InfoSidebar(Widget):
 # need to spin up a Textual app and the engine layer can build the
 # snapshot from whatever live state it has at the time.
 #
-from dataclasses import dataclass, field
-from pathlib import Path
 
 from deepseek_tui.config.providers import context_window_for_model
 from deepseek_tui.engine.context import (

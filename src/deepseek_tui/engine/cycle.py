@@ -13,6 +13,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import asyncio
+import logging
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -185,11 +188,6 @@ def enforce_briefing_cap(text: str, max_tokens: int) -> str:
     return text[:max_chars] + "\n\n[...briefing truncated to fit cap...]"
 
 
-def estimate_briefing_tokens(text: str) -> int:
-    """Estimate tokens (~4 chars/token)."""
-    return (len(text) + APPROX_CHARS_PER_TOKEN - 1) // APPROX_CHARS_PER_TOKEN
-
-
 async def produce_briefing(
     client: LLMClient,
     model: str,
@@ -263,37 +261,6 @@ def archive_cycle(
             f.write(json.dumps(_message_to_dict(msg)) + "\n")
     tmp_path.rename(path)
     return path
-
-
-def open_archive(path: Path) -> tuple[CycleArchiveHeader, list[dict[str, Any]]]:
-    """Open an archived cycle JSONL and return header + message dicts."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if not lines:
-        raise ValueError(f"Empty archive at {path}")
-
-    header_data = json.loads(lines[0])
-    header = CycleArchiveHeader(
-        schema_version=header_data.get("schema_version", 1),
-        cycle=header_data.get("cycle", 0),
-        session_id=header_data.get("session_id", ""),
-        model=header_data.get("model", ""),
-        started=header_data.get("started", 0),
-        ended=header_data.get("ended", 0),
-        message_count=header_data.get("message_count", 0),
-    )
-
-    if header.schema_version > CYCLE_ARCHIVE_SCHEMA_VERSION:
-        raise ValueError(
-            f"Archive schema v{header.schema_version} at {path} "
-            f"is newer than supported v{CYCLE_ARCHIVE_SCHEMA_VERSION}"
-        )
-
-    messages = []
-    for line in lines[1:]:
-        line = line.strip()
-        if line:
-            messages.append(json.loads(line))
-    return header, messages
 
 
 def build_seed_messages(
@@ -394,10 +361,6 @@ def _message_to_dict(msg: Any) -> dict[str, Any]:
 # unit tests that construct an engine without a consumer do not spawn a forever
 # background loop.
 
-import asyncio
-import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 from deepseek_tui.engine.events import (
     SessionActivityEvent,

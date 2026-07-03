@@ -42,6 +42,17 @@ from deepseek_tui.tools.registry import (
     ToolSpec,
 )
 from deepseek_tui.tools.registry import ToolContext
+import json
+import logging
+import os
+import shutil
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING
+import asyncio
 
 __all__ = [
     "AUTOMATION_MANAGER_KEY",
@@ -620,17 +631,6 @@ _ = asdict
 # ``with_timezone(&Local)`` at automation_manager.rs:223) so a user with
 # a 9am rule fires at their local 9am, not UTC 9am.
 #
-import json
-import logging
-import os
-import shutil
-import tempfile
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from enum import Enum
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.task import TaskManager
@@ -1057,24 +1057,10 @@ def validate_name_and_prompt(name: str, prompt: str) -> None:
 
 
 def write_json_atomic(path: Path, value: Any) -> None:
-    """Tmp file + ``os.replace`` — Rust ``write_json_atomic`` (772-788)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(value, indent=2, ensure_ascii=False, sort_keys=False)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=path.name + ".",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        os.replace(tmp_name, path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
-        raise
+    """Tmp file + ``os.replace`` — delegates to the shared utils helper."""
+    from deepseek_tui.utils import write_json_atomic as _impl
+
+    _impl(path, value)
 
 
 def default_automations_dir() -> Path:
@@ -1484,10 +1470,6 @@ class AutomationManager:
 # ``AutomationSchedulerConfig::default``), with a 5-second floor for
 # sanity. Tests can pass ``tick_interval_secs=1`` for fast iteration.
 #
-import asyncio
-import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.task import TaskManager

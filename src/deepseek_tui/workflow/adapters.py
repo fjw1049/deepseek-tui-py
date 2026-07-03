@@ -15,6 +15,8 @@ import re
 from typing import Any
 
 from deepseek_tui.workflow.models import WorkflowMeta, WorkflowPhase, WorkflowPolicy, WorkflowSpec
+from functools import lru_cache
+from importlib.resources import files
 
 
 class PiJsParseError(ValueError):
@@ -149,8 +151,6 @@ def _validate_meta(meta: dict[str, Any]) -> None:
 
 
 # Workflow prompt snippets for the main model.
-from functools import lru_cache
-from importlib.resources import files
 
 
 @lru_cache(maxsize=1)

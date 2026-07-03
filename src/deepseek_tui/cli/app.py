@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -712,14 +714,30 @@ app.add_typer(thread_app, name="thread")
 def _open_session_manager() -> tuple[Any, Any]:
     """Open Database + SessionManager. Returns (db, manager) or (None, None)."""
     from deepseek_tui.config.paths import user_state_db_path
-    from deepseek_tui.state.database import Database
-    from deepseek_tui.state.session_manager import SessionManager
+    from deepseek_tui.state import Database, SessionManager
 
     db_path = user_state_db_path()
     if not db_path.exists():
         return None, None
     db = Database(db_path)
     return db, SessionManager(db)
+
+
+@asynccontextmanager
+async def _session_manager() -> AsyncIterator[tuple[Any, Any]]:
+    """Yield an initialized ``(db, manager)`` pair; close the db on exit.
+
+    Yields ``(None, None)`` when no state.db exists.
+    """
+    db, mgr = _open_session_manager()
+    if mgr is None:
+        yield None, None
+        return
+    try:
+        await db.initialize()
+        yield db, mgr
+    finally:
+        await db.close()
 
 
 @thread_app.command("list")
@@ -730,18 +748,17 @@ def thread_list(
     """List saved threads."""
 
     async def _run() -> None:
-        db, mgr = _open_session_manager()
-        if mgr is None:
-            typer.echo("No saved threads (no state.db).")
-            return
-        await db.initialize()
-        sessions = await mgr.list_sessions(limit=limit, include_archived=all_threads)
-        if not sessions:
-            typer.echo("No saved threads.")
-            return
-        for s in sessions:
-            tag = " [archived]" if getattr(s, "archived", False) else ""
-            typer.echo(f"{s.id}  {getattr(s, 'preview', '(unnamed)')}{tag}")
+        async with _session_manager() as (_db, mgr):
+            if mgr is None:
+                typer.echo("No saved threads (no state.db).")
+                return
+            sessions = await mgr.list_sessions(limit=limit, include_archived=all_threads)
+            if not sessions:
+                typer.echo("No saved threads.")
+                return
+            for s in sessions:
+                tag = " [archived]" if getattr(s, "archived", False) else ""
+                typer.echo(f"{s.id}  {getattr(s, 'preview', '(unnamed)')}{tag}")
 
     asyncio.run(_run())
 
@@ -753,21 +770,20 @@ def thread_read(
     """Read a thread's metadata as JSON."""
 
     async def _run() -> None:
-        db, mgr = _open_session_manager()
-        if mgr is None:
-            typer.echo("No saved threads (no state.db).", err=True)
-            raise typer.Exit(1)
-        await db.initialize()
-        meta = await mgr.get_session(thread_id)
-        if meta is None:
-            typer.echo(f"Thread not found: {thread_id}", err=True)
-            raise typer.Exit(1)
-        from dataclasses import asdict, is_dataclass
+        async with _session_manager() as (_db, mgr):
+            if mgr is None:
+                typer.echo("No saved threads (no state.db).", err=True)
+                raise typer.Exit(1)
+            meta = await mgr.get_session(thread_id)
+            if meta is None:
+                typer.echo(f"Thread not found: {thread_id}", err=True)
+                raise typer.Exit(1)
+            from dataclasses import asdict, is_dataclass
 
-        if is_dataclass(meta):
-            typer.echo(json.dumps(asdict(meta), indent=2, default=str))
-        else:
-            typer.echo(json.dumps(getattr(meta, "__dict__", {}), indent=2, default=str))
+            if is_dataclass(meta):
+                typer.echo(json.dumps(asdict(meta), indent=2, default=str))
+            else:
+                typer.echo(json.dumps(getattr(meta, "__dict__", {}), indent=2, default=str))
 
     asyncio.run(_run())
 
@@ -799,13 +815,12 @@ def thread_archive(
     """Archive a thread."""
 
     async def _run() -> None:
-        db, mgr = _open_session_manager()
-        if mgr is None:
-            typer.echo("No state.db found.", err=True)
-            raise typer.Exit(1)
-        await db.initialize()
-        await mgr.archive(thread_id)
-        typer.echo(f"Archived {thread_id}")
+        async with _session_manager() as (_db, mgr):
+            if mgr is None:
+                typer.echo("No state.db found.", err=True)
+                raise typer.Exit(1)
+            await mgr.archive(thread_id)
+            typer.echo(f"Archived {thread_id}")
 
     asyncio.run(_run())
 
@@ -817,13 +832,12 @@ def thread_unarchive(
     """Unarchive a thread."""
 
     async def _run() -> None:
-        db, mgr = _open_session_manager()
-        if mgr is None:
-            typer.echo("No state.db found.", err=True)
-            raise typer.Exit(1)
-        await db.initialize()
-        await mgr.unarchive(thread_id)
-        typer.echo(f"Unarchived {thread_id}")
+        async with _session_manager() as (_db, mgr):
+            if mgr is None:
+                typer.echo("No state.db found.", err=True)
+                raise typer.Exit(1)
+            await mgr.unarchive(thread_id)
+            typer.echo(f"Unarchived {thread_id}")
 
     asyncio.run(_run())
 
@@ -836,13 +850,12 @@ def thread_set_name(
     """Rename a thread."""
 
     async def _run() -> None:
-        db, mgr = _open_session_manager()
-        if mgr is None:
-            typer.echo("No state.db found.", err=True)
-            raise typer.Exit(1)
-        await db.initialize()
-        await mgr.set_name(thread_id, name)
-        typer.echo(f"Renamed {thread_id} to {name!r}")
+        async with _session_manager() as (_db, mgr):
+            if mgr is None:
+                typer.echo("No state.db found.", err=True)
+                raise typer.Exit(1)
+            await mgr.set_name(thread_id, name)
+            typer.echo(f"Renamed {thread_id} to {name!r}")
 
     asyncio.run(_run())
 
@@ -1021,8 +1034,7 @@ def sessions(
 ) -> None:
     """List saved TUI sessions."""
     from deepseek_tui.config.paths import user_state_db_path
-    from deepseek_tui.state.database import Database
-    from deepseek_tui.state.session_manager import SessionManager
+    from deepseek_tui.state import Database, SessionManager
 
     async def _list() -> None:
         db_path = user_state_db_path()
@@ -1031,16 +1043,19 @@ def sessions(
             return
         db = Database(db_path)
         await db.initialize()
-        mgr = SessionManager(db)
-        all_sessions = await mgr.list_sessions(limit=limit)
-        if not all_sessions:
-            typer.echo("No saved sessions.")
-            return
-        for s in all_sessions:
-            name = getattr(s, "preview", None) or "(unnamed)"
-            sid = getattr(s, "id", "?")
-            ts = getattr(s, "updated_at", "")
-            typer.echo(f"{sid}  {name}  {ts}")
+        try:
+            mgr = SessionManager(db)
+            all_sessions = await mgr.list_sessions(limit=limit)
+            if not all_sessions:
+                typer.echo("No saved sessions.")
+                return
+            for s in all_sessions:
+                name = getattr(s, "preview", None) or "(unnamed)"
+                sid = getattr(s, "id", "?")
+                ts = getattr(s, "updated_at", "")
+                typer.echo(f"{sid}  {name}  {ts}")
+        finally:
+            await db.close()
 
     asyncio.run(_list())
 
@@ -1326,8 +1341,7 @@ def metrics(
 ) -> None:
     """Print a usage rollup from the audit log."""
     from deepseek_tui.config.paths import user_state_db_path
-    from deepseek_tui.state.database import Database
-    from deepseek_tui.state.session_manager import SessionManager
+    from deepseek_tui.state import Database, SessionManager
 
     async def _metrics() -> None:
         db_path = user_state_db_path()
@@ -1336,9 +1350,12 @@ def metrics(
         else:
             db = Database(db_path)
             await db.initialize()
-            mgr = SessionManager(db)
-            all_sessions = await mgr.list_sessions(include_archived=True)
-            total_sessions = len(all_sessions)
+            try:
+                mgr = SessionManager(db)
+                all_sessions = await mgr.list_sessions(include_archived=True)
+                total_sessions = len(all_sessions)
+            finally:
+                await db.close()
         data = {
             "total_sessions": total_sessions,
             "period": since or "all-time",

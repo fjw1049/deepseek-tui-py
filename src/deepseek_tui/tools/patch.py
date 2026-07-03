@@ -20,6 +20,8 @@ from deepseek_tui.tools.registry import (
     ToolSpec,
 )
 from deepseek_tui.tools.registry import ToolContext
+from dataclasses import dataclass, field
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -435,9 +437,6 @@ def _walk(base: Path, current: Path, lines: list[str], max_depth: int, depth: in
 # at the adjusted line (cumulative offset applied) and widens symmetrically
 # up to ``max_fuzz`` lines on either side.
 #
-from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
 
 # Constants — mirror Rust
 MAX_FUZZ = 50

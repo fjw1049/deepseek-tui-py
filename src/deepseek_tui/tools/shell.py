@@ -90,25 +90,9 @@ class ExecShellTool(ToolSpec):
         )
 
         # Check command execution policy
-        if context.policy:
-            cmd_tokens = _parse_command_tokens(command)
-            evaluation = context.policy.check(
-                cmd_tokens,
-                _command_safety_heuristic,
-            )
-            if evaluation.decision == Decision.FORBIDDEN:
-                raise ToolError(
-                    f"Command execution forbidden by policy: {command}"
-                )
-            elif evaluation.decision == Decision.PROMPT:
-                return ToolResult(
-                    success=False,
-                    content=(
-                        f"Command requires user approval before execution: {command}\n"
-                        "The command was flagged by the safety policy. "
-                        "Ask the user to approve or use a safer alternative."
-                    ),
-                )
+        refusal = check_command_policy(command, context)
+        if refusal is not None:
+            return refusal
 
         if use_pty:
             return await _run_pty(
@@ -598,6 +582,34 @@ def _parse_command_tokens(command: str) -> list[str]:
         return shlex.split(command)
     except ValueError:
         return [command]
+
+
+def check_command_policy(command: str, context: ToolContext) -> ToolResult | None:
+    """Evaluate ``command`` against ``context.policy`` (execpolicy rules).
+
+    Shared by every tool that shells out with an LLM-provided command
+    (exec_shell, run_tests, task_gate_run). Raises :class:`ToolError` on
+    FORBIDDEN, returns a refusal :class:`ToolResult` on PROMPT, and
+    returns ``None`` when execution may proceed.
+    """
+    if not context.policy:
+        return None
+    evaluation = context.policy.check(
+        _parse_command_tokens(command),
+        _command_safety_heuristic,
+    )
+    if evaluation.decision == Decision.FORBIDDEN:
+        raise ToolError(f"Command execution forbidden by policy: {command}")
+    if evaluation.decision == Decision.PROMPT:
+        return ToolResult(
+            success=False,
+            content=(
+                f"Command requires user approval before execution: {command}\n"
+                "The command was flagged by the safety policy. "
+                "Ask the user to approve or use a safer alternative."
+            ),
+        )
+    return None
 
 
 def _command_safety_heuristic(tokens: list[str]) -> Decision:

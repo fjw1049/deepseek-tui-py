@@ -20,6 +20,9 @@ from deepseek_tui.engine.dispatch import is_mcp_tool, mcp_tool_is_read_only
 from deepseek_tui.policy.approval import _assess_risk, _classify_category
 from deepseek_tui.policy.approval import ApprovalRequest
 from deepseek_tui.tools.registry import ApprovalRequirement, ToolCapability, ToolSpec
+import json
+from typing import Any
+from typing import TYPE_CHECKING
 
 _AUTO_POLICIES = frozenset({"auto", "never-ask", "yolo"})
 _PROMPT_POLICIES = frozenset({"on-request", "suggest", "untrusted"})
@@ -184,13 +187,9 @@ def _requirement_needs_prompt(req: ApprovalRequirement, mode: str) -> bool:
 
 
 # Build human-readable approval presentation (mirrors ``tui/approval.rs``).
-import json
-from typing import Any
 
 from deepseek_tui.policy.approval import build_approval_key
 from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
-from deepseek_tui.policy.approval import ApprovalRequest
-from deepseek_tui.engine.dispatch import is_mcp_tool
 
 _PREVIEW_MAX = 4000
 _LINE_MAX = 200
@@ -473,7 +472,6 @@ def _truncate(text: str, max_len: int) -> str:
 
 
 # SSE payload for sandbox elevation (L3) — Workbench parity.
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from deepseek_tui.engine.events import ElevationRequiredEvent

@@ -192,7 +192,7 @@ class DeepSeekTUI(App[None]):
         # ``discover_in_workspace``). Mirrors Rust ``main.rs:3974`` which
         # calls ``crate::skills::install_system_skills`` at startup.
         try:
-            from deepseek_tui.integrations.skills.system import install_system_skills
+            from deepseek_tui.integrations.skills import install_system_skills
 
             install_system_skills()
         except Exception:  # noqa: BLE001 — bundled-skill failure must
@@ -290,7 +290,7 @@ class DeepSeekTUI(App[None]):
             # are non-fatal: status bar surfaces them and the user can keep
             # going with an empty session.
             applied = self._apply_resume_or_fork()
-            if applied is None and not session_tid:
+            if applied is None and not (self._resume_session_id or self._fork_session_id):
                 applied = self._apply_crash_checkpoint()
             if applied is None:
                 status.set_status("ready")
@@ -873,20 +873,6 @@ class DeepSeekTUI(App[None]):
         transcript.clear_messages()
         if self._engine is not None:
             self._engine.session_messages.clear()
-
-    def _cancel_active_turn(self) -> bool:
-        """Request cancellation of the in-flight turn. Returns True if one was active."""
-        if not self.handle.is_turn_active():
-            return False
-        self.run_worker(self.handle.cancel(), name="turn-cancel")
-        self.query_one(StatusBar).set_status("cancelling turn...")
-        return True
-
-    async def action_interrupt_or_quit(self) -> None:
-        """Ctrl+C: cancel the running turn first; quit when idle."""
-        if self._cancel_active_turn():
-            return
-        await self.action_quit()
 
     def _cancel_active_turn(self) -> bool:
         """Request cancellation of the in-flight turn. Returns True if one was active."""

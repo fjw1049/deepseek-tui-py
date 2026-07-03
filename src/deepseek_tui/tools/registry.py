@@ -11,6 +11,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING
+import asyncio
+import logging
 
 
 
@@ -109,9 +113,6 @@ class ToolSpec(ABC):
         return True
 
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from deepseek_tui.policy.exec_policy import Policy
@@ -185,9 +186,6 @@ class ToolContext:
 # and ``defer_loading``) tucked into the ``function`` object. Both fields
 # are silently ignored by providers that don't recognise them.
 #
-import asyncio
-import logging
-from typing import Any
 
 
 __all__ = ["ToolRegistry"]
@@ -457,91 +455,98 @@ class ToolRegistry:
         }
 
 
-from typing import TYPE_CHECKING
 
 from deepseek_tui.config.models import Config
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
-from deepseek_tui.tools.automation import (
-    AutomationCreateTool,
-    AutomationDeleteTool,
-    AutomationListTool,
-    AutomationPauseTool,
-    AutomationReadTool,
-    AutomationResumeTool,
-    AutomationRunTool,
-    AutomationUpdateTool,
-)
-from deepseek_tui.tools.encoding import DeprecatingAliasTool
-from deepseek_tui.tools.file import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from deepseek_tui.tools.git import (
-    GitBlameTool,
-    GitDiffTool,
-    GitLogTool,
-    GitShowTool,
-    GitStatusTool,
-)
-from deepseek_tui.tools.git import (
-    GitHubCloseTool,
-    GitHubCommentTool,
-    GitHubIssueContextTool,
-    GitHubPrContextTool,
-)
-from deepseek_tui.tools.knowledge import (
-    NoteTool,
-    PlanUpdateTool,
-    SkillLoadTool,
-)
-from deepseek_tui.tools.mcp import (
-    ListMcpResourcesTool,
-    ListMcpResourceTemplatesTool,
-    McpGetPromptTool,
-    ReadMcpResourceTool,
-)
-from deepseek_tui.tools.runtime import MultiToolUseParallelTool
-from deepseek_tui.tools.user_input import RetrieveToolResultTool
-from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
-from deepseek_tui.tools.shell import (
-    ExecShellCancelTool,
-    ExecShellInteractTool,
-    ExecShellTool,
-    ExecShellWaitTool,
-)
-from deepseek_tui.tools.subagent import (
-    AgentAssignTool,
-    AgentCancelTool,
-    AgentCloseTool,
-    AgentListTool,
-    AgentResultTool,
-    AgentResumeTool,
-    AgentSendInputTool,
-    AgentSpawnTool,
-    AgentWaitTool,
-    DelegateToAgentTool,
-)
-from deepseek_tui.tools.task import (
-    PrAttemptListTool,
-    PrAttemptPreflightTool,
-    PrAttemptReadTool,
-    PrAttemptRecordTool,
-    TaskCancelTool,
-    TaskCreateTool,
-    TaskGateRunTool,
-    TaskListTool,
-    TaskReadTool,
-    TaskShellStartTool,
-    TaskShellWaitTool,
-)
-from deepseek_tui.tools.time_tools import CurrentTimeTool
-from deepseek_tui.tools.todo import TodoAddTool, TodoListTool, TodoUpdateTool, TodoWriteTool
-from deepseek_tui.tools.user_input import RequestUserInputTool
-from deepseek_tui.tools.patch import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
-from deepseek_tui.tools.validation import RevertTurnTool, RunTestsTool, ValidateDataTool
-from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
 
 def build_default_registry(config: Config | None = None, *, mode: str = "agent") -> ToolRegistry:
+    # Tool modules import ToolSpec/ToolError/... from this module at import
+    # time, so importing them lazily here (instead of at module level) keeps
+    # ``import deepseek_tui.tools.<any_tool_module>`` usable as an entry
+    # point without a circular-import failure.
+    from deepseek_tui.tools.automation import (
+        AutomationCreateTool,
+        AutomationDeleteTool,
+        AutomationListTool,
+        AutomationPauseTool,
+        AutomationReadTool,
+        AutomationResumeTool,
+        AutomationRunTool,
+        AutomationUpdateTool,
+    )
+    from deepseek_tui.tools.encoding import DeprecatingAliasTool
+    from deepseek_tui.tools.file import (
+        EditFileTool,
+        ListDirTool,
+        ReadFileTool,
+        WriteFileTool,
+    )
+    from deepseek_tui.tools.git import (
+        GitBlameTool,
+        GitDiffTool,
+        GitHubCloseTool,
+        GitHubCommentTool,
+        GitHubIssueContextTool,
+        GitHubPrContextTool,
+        GitLogTool,
+        GitShowTool,
+        GitStatusTool,
+    )
+    from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool
+    from deepseek_tui.tools.mcp import (
+        ListMcpResourcesTool,
+        ListMcpResourceTemplatesTool,
+        McpGetPromptTool,
+        ReadMcpResourceTool,
+    )
+    from deepseek_tui.tools.patch import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
+    from deepseek_tui.tools.runtime import MultiToolUseParallelTool
+    from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
+    from deepseek_tui.tools.shell import (
+        ExecShellCancelTool,
+        ExecShellInteractTool,
+        ExecShellTool,
+        ExecShellWaitTool,
+    )
+    from deepseek_tui.tools.subagent import (
+        AgentAssignTool,
+        AgentCancelTool,
+        AgentCloseTool,
+        AgentListTool,
+        AgentResultTool,
+        AgentResumeTool,
+        AgentSendInputTool,
+        AgentSpawnTool,
+        AgentWaitTool,
+        DelegateToAgentTool,
+    )
+    from deepseek_tui.tools.task import (
+        PrAttemptListTool,
+        PrAttemptPreflightTool,
+        PrAttemptReadTool,
+        PrAttemptRecordTool,
+        TaskCancelTool,
+        TaskCreateTool,
+        TaskGateRunTool,
+        TaskListTool,
+        TaskReadTool,
+        TaskShellStartTool,
+        TaskShellWaitTool,
+    )
+    from deepseek_tui.tools.time_tools import CurrentTimeTool
+    from deepseek_tui.tools.todo import (
+        TodoAddTool,
+        TodoListTool,
+        TodoUpdateTool,
+        TodoWriteTool,
+    )
+    from deepseek_tui.tools.user_input import RequestUserInputTool, RetrieveToolResultTool
+    from deepseek_tui.tools.validation import RevertTurnTool, RunTestsTool, ValidateDataTool
+    from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
+
     cfg = config or Config()
     registry = ToolRegistry()
 

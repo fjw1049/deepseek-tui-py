@@ -18,10 +18,12 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import dataclass, field
 
 from rich.console import Group as _Group
 from rich.console import RenderableType
 from rich.markup import escape
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
@@ -406,27 +408,10 @@ ToolCell = BlockToolCell
 
 
 # ======================================================================
-# From diff_viewer.py — Diff parsing and rendering
+# Diff parsing and rendering — mirrors Rust ``tui/diff_render.rs``.
+# Parses unified diff format and renders with Rich styling:
+# added lines green, removed red, hunk headers cyan, context dim.
 # ======================================================================
-
-"""Diff viewer widget — renders unified diffs with color coding.
-
-Mirrors Rust ``tui/diff_render.rs`` (~449 LOC).
-Parses unified diff format and renders with Rich styling:
-- Added lines: green
-- Removed lines: red
-- Hunk headers: cyan
-- Context lines: dim
-"""
-
-from dataclasses import dataclass, field
-
-from rich.style import Style
-from textual.containers import VerticalScroll
-
-# ===========================================================================
-# Diff parsing
-# ===========================================================================
 
 _HUNK_HEADER_RE = re.compile(
     r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$"
@@ -613,124 +598,3 @@ def render_diff_to_rich(files: list[DiffFile], *, line_numbers: bool = True) -> 
     return output
 
 
-def render_diff_summary(files: list[DiffFile]) -> Text:
-    """Render a compact summary of the diff."""
-    output = Text()
-    total_add = sum(f.additions for f in files)
-    total_del = sum(f.deletions for f in files)
-    output.append(
-        f"{len(files)} file(s) changed, "
-        f"+{total_add} insertions, -{total_del} deletions\n",
-        style=STYLE_STATS,
-    )
-    for f in files:
-        path = f.new_path or f.old_path
-        output.append(f"  {path} ", style=STYLE_FILE_HEADER)
-        if f.additions:
-            output.append("+" * min(f.additions, 20), style=STYLE_ADD)
-        if f.deletions:
-            output.append("-" * min(f.deletions, 20), style=STYLE_REMOVE)
-        output.append("\n")
-    return output
-
-
-# ===========================================================================
-# DiffViewer Textual Widget
-# ===========================================================================
-
-
-class DiffViewer(VerticalScroll):
-    """Scrollable diff viewer widget for the TUI."""
-
-    DEFAULT_CSS = """
-    DiffViewer {
-        height: 1fr;
-        overflow-y: auto;
-        padding: 0 1;
-        background: $surface;
-    }
-    DiffViewer .diff-summary {
-        margin-bottom: 1;
-    }
-    DiffViewer .diff-content {
-        margin: 0;
-    }
-    """
-
-    def __init__(self, diff_text: str = "") -> None:
-        super().__init__()
-        self._diff_text = diff_text
-        self._files: list[DiffFile] = []
-        self._show_line_numbers = True
-
-    def on_mount(self) -> None:
-        if self._diff_text:
-            self.set_diff(self._diff_text)
-
-    def set_diff(self, diff_text: str) -> None:
-        """Parse and display a unified diff."""
-        self._diff_text = diff_text
-        self._files = parse_unified_diff(diff_text)
-        self._render()
-
-    def toggle_line_numbers(self) -> None:
-        """Toggle line number display."""
-        self._show_line_numbers = not self._show_line_numbers
-        self._render()
-
-    def _render(self) -> None:
-        try:
-            self.remove_children()
-        except Exception:
-            pass
-
-        if not self._files:
-            self.mount(Static("[dim]No diff content[/]"))
-            return
-
-        summary = render_diff_summary(self._files)
-        self.mount(Static(summary, classes="diff-summary"))
-
-        content = render_diff_to_rich(self._files, line_numbers=self._show_line_numbers)
-        self.mount(Static(content, classes="diff-content"))
-
-    @property
-    def file_count(self) -> int:
-        return len(self._files)
-
-    @property
-    def total_additions(self) -> int:
-        return sum(f.additions for f in self._files)
-
-    @property
-    def total_deletions(self) -> int:
-        return sum(f.deletions for f in self._files)
-
-
-# ===========================================================================
-# DiffScreen — full-screen diff modal
-# ===========================================================================
-
-
-class DiffScreen(Static):
-    """Inline diff display widget for embedding in transcript."""
-
-    DEFAULT_CSS = """
-    DiffScreen {
-        margin: 0 0 1 0;
-        padding: 0 1;
-    }
-    """
-
-    def __init__(self, diff_text: str, *, compact: bool = False) -> None:
-        super().__init__("")
-        self._diff_text = diff_text
-        self._compact = compact
-
-    def on_mount(self) -> None:
-        files = parse_unified_diff(self._diff_text)
-        if self._compact:
-            renderable = render_diff_summary(files)
-        else:
-            renderable = render_diff_to_rich(files, line_numbers=True)
-        self.update(renderable)

@@ -16,6 +16,12 @@ from rich.markup import escape
 from textual import events
 from textual.message import Message
 from textual.widgets import Static, TextArea
+from textual.app import ComposeResult
+from textual.containers import Vertical
+from textual.widgets import OptionList
+from textual.widgets.option_list import Option
+from textual.screen import ModalScreen
+from textual.widgets import Input
 
 PASTE_ENTER_SUPPRESS_WINDOW_SECS: float = 0.120
 
@@ -198,11 +204,6 @@ def _open_external_editor(initial_content: str) -> str | None:
             pass
 
 
-from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.message import Message
-from textual.widgets import OptionList, Static
-from textual.widgets.option_list import Option
 
 from deepseek_tui.tui.commands import get_completions
 
@@ -270,14 +271,7 @@ class SlashMenu(Vertical):
 # Stage 6.6: Ctrl+K style command palette for quick access to slash
 # commands, model switching, and other actions.
 #
-from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList
-from textual.widgets.option_list import Option
 
-from deepseek_tui.tui.commands import get_completions
 
 
 class CommandPalette(ModalScreen[str | None]):

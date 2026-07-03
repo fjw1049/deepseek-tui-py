@@ -54,6 +54,7 @@ from deepseek_tui.protocol.responses import (
     ToolCall,
     Usage,
 )
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ class TurnLoop:
         *,
         include_tool_search: bool = True,
         include_code_execution: bool = True,
+        extra_active_tools: set[str] | None = None,
         latency_turn_id: str | None = None,
         round_idx: int = 0,
     ) -> TurnResult:
@@ -145,6 +147,10 @@ class TurnLoop:
             )
 
         state.active_tool_names = initial_active_tools(tool_catalog)
+        if extra_active_tools:
+            # Deferred tools activated earlier in the session (via
+            # tool_search or a direct call) stay advertised on later rounds.
+            state.active_tool_names |= extra_active_tools
 
         # Main streaming turn loop
         result = await self._run_turn_loop(
@@ -583,7 +589,6 @@ def _should_transparently_retry(
 
 # Engine-facing entry for user turn preprocessing.
 
-from pathlib import Path
 
 from deepseek_tui.state.context import (
     ContextConfig,

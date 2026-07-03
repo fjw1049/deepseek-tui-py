@@ -23,6 +23,14 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+import io
+import json
+import shutil
+import tarfile
+from enum import Enum
+from typing import Any
+from urllib.parse import urlparse
+import httpx
 
 __all__ = [
     "Skill",
@@ -437,8 +445,6 @@ Mirrors ``crates/tui/src/skills/system.rs``. Installs the bundled
 ``skill-creator`` skill at startup if not already present.
 """
 
-import logging
-from pathlib import Path
 
 
 __all__ = ["install_system_skills", "uninstall_system_skills"]
@@ -545,18 +551,7 @@ Network IO uses ``httpx`` (already a project dependency) instead of
 from the same client the rest of the system uses.
 """
 
-import io
-import json
-import logging
-import shutil
-import tarfile
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
 
-import httpx
 
 
 __all__ = [
