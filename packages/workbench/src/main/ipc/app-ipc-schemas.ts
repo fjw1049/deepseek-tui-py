@@ -224,7 +224,7 @@ export const workspacePickFilesPayloadSchema = z
 
 export const trendingPeriodSchema = z.enum(['daily', 'weekly', 'monthly'])
 
-export const usageRangeSchema = z.enum(['7d', '30d', '90d'])
+export const usageRangeSchema = z.enum(['7d', '30d', '90d', '1y'])
 
 export const usageQueryPayloadSchema = z
   .object({

@@ -1,4 +1,4 @@
-"""Persistent Workbench model usage ledger (user-level, 90-day retention)."""
+"""Persistent Workbench model usage ledger (user-level, 1-year retention)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from deepseek_tui.config.paths import workbench_usage_ledger_path
 logger = logging.getLogger(__name__)
 
 LEDGER_SCHEMA_VERSION = 1
-RETENTION_DAYS = 90
+RETENTION_DAYS = 365
 BUILTIN_DEEPSEEK_PROVIDER_ID = "deepseek"
 MODEL_REF_SEPARATOR = "::"
 LOCK_TIMEOUT_SECONDS = 30.0

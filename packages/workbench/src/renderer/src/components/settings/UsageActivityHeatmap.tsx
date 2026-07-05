@@ -1,4 +1,11 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type { UsageDailyPoint } from '@shared/usage-ledger'
 import {
@@ -13,6 +20,10 @@ import { formatCompactNumber } from '../../hooks/use-model-usage'
 
 const WEEKDAY_LABEL_WIDTH = 16
 const LEGEND_CELL_PX = 11
+const SQUARE_GAP = 3
+const MONTH_ROW_HEIGHT = 14
+const MONTH_ROW_GAP = 6
+const COLUMN_GAP = 8
 
 type Props = {
   daily: UsageDailyPoint[]
@@ -23,15 +34,49 @@ type Props = {
 export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Props): ReactElement {
   const { t, i18n } = useTranslation('common')
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const plotRef = useRef<HTMLDivElement>(null)
+  const [plotBox, setPlotBox] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0
+  })
+
+  useLayoutEffect(() => {
+    if (!fillHeight) return
+    const el = plotRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (rect) setPlotBox({ width: rect.width, height: rect.height })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [fillHeight])
 
   const referenceDate = useMemo(
     () => (asOfDay ? new Date(`${asOfDay}T12:00:00`) : new Date()),
     [asOfDay]
   )
 
+  // In fill mode, size square cells to the box height and draw as many weekly
+  // columns as fit the width; earlier dataless days render as empty squares so
+  // the grid fills the panel edge-to-edge like a GitHub contribution graph.
+  const layout = useMemo(() => {
+    if (!fillHeight || plotBox.width <= 0 || plotBox.height <= 0) {
+      return { dayCount: undefined as number | undefined, cellPx: 0 }
+    }
+    const gridHeight = plotBox.height - MONTH_ROW_HEIGHT - MONTH_ROW_GAP
+    const gridWidth = plotBox.width - WEEKDAY_LABEL_WIDTH - COLUMN_GAP
+    const side = Math.max(3, (gridHeight - (HEATMAP_ROWS - 1) * SQUARE_GAP) / HEATMAP_ROWS)
+    const weeks = Math.min(
+      53,
+      Math.max(1, Math.floor((gridWidth + SQUARE_GAP) / (side + SQUARE_GAP)))
+    )
+    return { dayCount: weeks * HEATMAP_ROWS, cellPx: side }
+  }, [fillHeight, plotBox.width, plotBox.height])
+
   const grid = useMemo(
-    () => buildHeatmapGrid(daily, i18n.language, undefined, referenceDate),
-    [daily, i18n.language, referenceDate]
+    () => buildHeatmapGrid(daily, i18n.language, layout.dayCount, referenceDate),
+    [daily, i18n.language, layout.dayCount, referenceDate]
   )
 
   const levelFor = useMemo(() => {
@@ -45,6 +90,28 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
     if (!selectedDay) return null
     return grid.cells.find((cell) => cell.day === selectedDay) ?? null
   }, [grid.cells, selectedDay])
+
+  // Turn the measured square side into CSS vars the grid and labels align to.
+  // Before the first measurement we letterbox via container-query units so the
+  // grid never overflows on the initial paint.
+  const cellSizing = useMemo<CSSProperties>(() => {
+    const wc = Math.max(grid.weekCount, 1)
+    if (layout.cellPx <= 0) {
+      const widthBudget = WEEKDAY_LABEL_WIDTH + COLUMN_GAP + (wc - 1) * SQUARE_GAP
+      const heightBudget = MONTH_ROW_HEIGHT + MONTH_ROW_GAP + (HEATMAP_ROWS - 1) * SQUARE_GAP
+      const cell = `min((100cqw - ${widthBudget}px) / ${wc}, (100cqh - ${heightBudget}px) / ${HEATMAP_ROWS})`
+      return {
+        '--hm-cell': `max(3px, ${cell})`,
+        '--hm-grid-w': `calc(${wc} * var(--hm-cell) + ${(wc - 1) * SQUARE_GAP}px)`,
+        '--hm-grid-h': `calc(${HEATMAP_ROWS} * var(--hm-cell) + ${(HEATMAP_ROWS - 1) * SQUARE_GAP}px)`
+      } as CSSProperties
+    }
+    return {
+      '--hm-cell': `${layout.cellPx}px`,
+      '--hm-grid-w': `${wc * layout.cellPx + (wc - 1) * SQUARE_GAP}px`,
+      '--hm-grid-h': `${HEATMAP_ROWS * layout.cellPx + (HEATMAP_ROWS - 1) * SQUARE_GAP}px`
+    } as CSSProperties
+  }, [grid.weekCount, layout.cellPx])
 
   if (grid.cells.length === 0) {
     return (
@@ -71,10 +138,20 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
           'rounded-xl border border-ds-border/55 bg-ds-elevated/20 px-2.5 py-2.5'
         ].join(' ')}
       >
-        <div className={['flex w-full min-w-0 items-stretch gap-2', fillHeight ? 'min-h-0 flex-1' : ''].join(' ')}>
+        <div
+          ref={plotRef}
+          className={[
+            'flex w-full min-w-0 gap-2',
+            fillHeight ? 'min-h-0 flex-1 items-start [container-type:size]' : 'items-stretch'
+          ].join(' ')}
+          style={fillHeight ? cellSizing : undefined}
+        >
           <div className="flex shrink-0 flex-col" style={{ width: WEEKDAY_LABEL_WIDTH }}>
             <div className="mb-1.5 h-3.5 shrink-0" aria-hidden />
-            <div className="relative min-h-0 flex-1">
+            <div
+              className={fillHeight ? 'relative shrink-0' : 'relative min-h-0 flex-1'}
+              style={fillHeight ? { height: 'var(--hm-grid-h)' } : undefined}
+            >
               {grid.weekdayLabels.map((label, index) => (
                 <span
                   key={`${label}-${index}`}
@@ -87,7 +164,10 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
             </div>
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="relative mb-1.5 h-3.5 w-full shrink-0">
+            <div
+              className={['relative mb-1.5 h-3.5 shrink-0', fillHeight ? '' : 'w-full'].join(' ')}
+              style={fillHeight ? { width: 'var(--hm-grid-w)', maxWidth: '100%' } : undefined}
+            >
               {grid.monthLabels.map((marker) => (
                 <span
                   key={`${marker.weekIndex}-${marker.label}`}
@@ -103,14 +183,21 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
             <div
               role="group"
               aria-label={t('usageHeroActivity')}
-              className={['grid w-full max-w-full gap-[3px]', fillHeight ? 'min-h-0 flex-1' : ''].join(' ')}
-              style={{
-                gridAutoFlow: 'column',
-                gridTemplateRows: fillHeight
-                  ? `repeat(${HEATMAP_ROWS}, minmax(0, 1fr))`
-                  : `repeat(${HEATMAP_ROWS}, auto)`,
-                gridTemplateColumns: `repeat(${grid.weekCount}, minmax(0, 1fr))`
-              }}
+              className={['grid max-w-full gap-[3px]', fillHeight ? 'shrink-0' : 'w-full'].join(' ')}
+              style={
+                fillHeight
+                  ? {
+                      gridAutoFlow: 'column',
+                      width: 'var(--hm-grid-w)',
+                      gridTemplateRows: `repeat(${HEATMAP_ROWS}, var(--hm-cell))`,
+                      gridTemplateColumns: `repeat(${grid.weekCount}, var(--hm-cell))`
+                    }
+                  : {
+                      gridAutoFlow: 'column',
+                      gridTemplateRows: `repeat(${HEATMAP_ROWS}, auto)`,
+                      gridTemplateColumns: `repeat(${grid.weekCount}, minmax(0, 1fr))`
+                    }
+              }
             >
               {grid.cells.map((cell, index) => (
                 <HeatCell
@@ -247,17 +334,15 @@ function HeatCell({
   const tokens = cell.inRange ? (cell.point?.totalTokens ?? 0) : 0
   const level = levelFor(tokens)
   const fill = heatFillForLevel(level)
-  const sizeClass = fillHeight
-    ? 'h-full w-full min-h-0 min-w-0'
-    : 'aspect-square w-full min-w-0'
+  // The cell fills its grid track; the swatch is sized to the track's smaller
+  // edge via container-query units, so it stays a true square (never stretched
+  // into a rectangle) with even breathing room on every side.
+  // Grid tracks are already exact squares, so the swatch simply fills its cell;
+  // the uniform grid gap becomes the only spacing between squares.
+  const cellClass = fillHeight ? 'h-full w-full' : 'aspect-square w-full min-w-0'
 
   if (!cell.inRange || !cell.day) {
-    return (
-      <div
-        className={`${sizeClass} rounded-[3px] bg-ds-border/30`}
-        aria-hidden
-      />
-    )
+    return <div className={`${cellClass} rounded-[3px] bg-ds-border`} aria-hidden />
   }
 
   const dateLabel = formatHeatmapDayLabel(cell.day, locale)
@@ -272,13 +357,11 @@ function HeatCell({
       aria-pressed={selected}
       onClick={() => onSelect(cell.day!)}
       className={[
-        sizeClass,
-        'cursor-pointer rounded-[3px] border-0 p-0 transition-[box-shadow,transform,filter] duration-150',
-        'hover:z-[1] hover:brightness-[0.97] hover:ring-1 hover:ring-ds-border/80',
+        cellClass,
+        'cursor-pointer rounded-[3px] border-0 p-0 transition-[transform,filter,box-shadow] duration-150',
+        'hover:z-[1] hover:scale-110 hover:brightness-110',
         'focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70',
-        selected
-          ? 'z-[2] ring-2 ring-accent ring-offset-1 ring-offset-ds-card brightness-100'
-          : ''
+        selected ? 'z-[2] scale-110 ring-2 ring-accent ring-offset-1 ring-offset-ds-card' : ''
       ].join(' ')}
       style={{ backgroundColor: fill }}
     />

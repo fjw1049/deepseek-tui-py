@@ -2,8 +2,10 @@ import { decodeModelRef, encodeModelRef } from './model-ref'
 
 export const USAGE_LEDGER_SCHEMA_VERSION = 1
 export const USAGE_RETENTION_DAYS = 90
+/** Longest window we keep and can query (used by the activity heatmap). */
+export const USAGE_MAX_RANGE_DAYS = 365
 
-export type UsageRange = '7d' | '30d' | '90d'
+export type UsageRange = '7d' | '30d' | '90d' | '1y'
 
 export type ModelUsageBucket = {
   model: string
@@ -109,7 +111,13 @@ function localDayKey(date: Date): string {
 
 function rangeStartDay(range: UsageRange, referenceDate: Date): string {
   const days =
-    range === '7d' ? 6 : range === '30d' ? 29 : USAGE_RETENTION_DAYS - 1
+    range === '7d'
+      ? 6
+      : range === '30d'
+        ? 29
+        : range === '90d'
+          ? USAGE_RETENTION_DAYS - 1
+          : USAGE_MAX_RANGE_DAYS - 1
   const start = new Date(referenceDate)
   start.setHours(0, 0, 0, 0)
   start.setDate(start.getDate() - days)
@@ -158,7 +166,13 @@ export function queryUsageLedger(
   const daily: UsageDailyPoint[] = []
 
   const dayCount =
-    range === '7d' ? 7 : range === '30d' ? 30 : USAGE_RETENTION_DAYS
+    range === '7d'
+      ? 7
+      : range === '30d'
+        ? 30
+        : range === '90d'
+          ? USAGE_RETENTION_DAYS
+          : USAGE_MAX_RANGE_DAYS
   for (let offset = dayCount - 1; offset >= 0; offset -= 1) {
     const date = new Date(anchor)
     date.setDate(anchor.getDate() - offset)

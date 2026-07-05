@@ -173,7 +173,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const [usageTab, setUsageTab] = useState<'overview' | 'models'>('overview')
   const [usageRange, setUsageRange] = useState<UsageRange>('90d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
-  const heatmapUsage = usePersistentUsage('90d', usageRefreshKey)
+  const heatmapUsage = usePersistentUsage('1y', usageRefreshKey)
   const [period, setPeriod] = useState<TrendingPeriod>('daily')
   const [repos, setRepos] = useState<TrendingRepo[]>([])
   const [loading, setLoading] = useState(true)
