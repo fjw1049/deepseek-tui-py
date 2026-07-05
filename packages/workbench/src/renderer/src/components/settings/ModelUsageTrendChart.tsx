@@ -154,7 +154,7 @@ export function ModelUsageTrendChart({
               aria-hidden
             >
               {yTicks.slice(0, -1).map((tick) => (
-                <div key={tick} className="h-px w-full bg-ds-border/45" />
+                <div key={tick} className="h-px w-full bg-ds-border" />
               ))}
             </div>
           ) : null}
@@ -173,7 +173,7 @@ export function ModelUsageTrendChart({
                   title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
                 >
                   <div
-                    className="flex w-full flex-col justify-end overflow-hidden rounded-t-[3px] bg-ds-border/25"
+                    className="flex w-full flex-col justify-end overflow-hidden rounded-t-[3px] bg-ds-border"
                     style={{
                       height: point.totalTokens > 0 ? `${heightPct}%` : '2px',
                       minHeight: point.totalTokens > 0 ? '3px' : '2px'

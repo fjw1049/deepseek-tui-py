@@ -133,7 +133,7 @@ export function ThreadContextMenu({
         <span className="min-w-0 truncate">{t('threadMenuMarkUnread')}</span>
       </button>
 
-      <div className="my-1 h-px bg-ds-border-muted/60" />
+      <div className="my-1 h-px bg-ds-border-muted" />
 
       <button
         type="button"
@@ -158,7 +158,7 @@ export function ThreadContextMenu({
         <span className="min-w-0 truncate">{t('threadMenuCopyThreadId')}</span>
       </button>
 
-      <div className="my-1 h-px bg-ds-border-muted/60" />
+      <div className="my-1 h-px bg-ds-border-muted" />
 
       <button
         type="button"

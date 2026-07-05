@@ -1171,7 +1171,7 @@ export function SettingsView(): ReactElement {
                     <span className="text-[12px] font-semibold uppercase tracking-wide text-ds-faint">
                       {t('asrGroupLabel')}
                     </span>
-                    <span className="h-px flex-1 bg-ds-border/70" />
+                    <span className="h-px flex-1 bg-ds-border" />
                   </div>
                   <SettingRow
                     title={t('asrBaseUrl')}

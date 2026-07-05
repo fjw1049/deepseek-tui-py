@@ -53,6 +53,15 @@ export default {
           userbubbleFg: 'var(--ds-bubble-user-fg)'
         }
       },
+      /* Colors above are full rgba() var() strings, so Tailwind v3 cannot apply
+         `/NN` alpha modifiers to them — classes like `border-ds-border/60` are
+         silently NOT generated and the border falls back to preflight's default
+         border-color. Point that default at the theme token so every such
+         border renders as the soft hairline instead of opaque gray-200
+         (#e5e7eb), which glared on dark surfaces. divideColor follows this. */
+      borderColor: {
+        DEFAULT: 'var(--ds-border)'
+      },
       boxShadow: {
         composer: 'var(--ds-shadow-composer)',
         shell: 'var(--ds-shadow-shell)',

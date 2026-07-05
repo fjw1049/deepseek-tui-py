@@ -85,7 +85,7 @@ export function HoverInfoCard({
         const Icon = row.icon
         return (
           <Fragment key={`${index}-${row.text}`}>
-            {row.divider ? <div className="mx-1 h-px bg-ds-border-muted/50" /> : null}
+            {row.divider ? <div className="mx-1 h-px bg-ds-border-muted" /> : null}
             <div className="flex h-6 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-none text-ds-muted">
               <Icon className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
               <span className="min-w-0 truncate">{row.text}</span>

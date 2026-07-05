@@ -792,7 +792,12 @@ export function Workbench(): ReactElement {
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
     >
-      {leftSidebarCollapsed ? <SidebarExpandDroplet onExpand={expandLeftSidebar} /> : null}
+      {/* Chat route reopens the sidebar from the topbar button below (Synara
+          SidebarTrigger in the content header); the floating droplet remains
+          for routes without that header (plugins/automation/channels). */}
+      {leftSidebarCollapsed && route !== 'chat' ? (
+        <SidebarExpandDroplet onExpand={expandLeftSidebar} />
+      ) : null}
       {/* Stays mounted while collapsed so the offcanvas slide can animate: the
           wrap's width shrinks to 0 while the fixed-width inner column slides
           left, both on the same 300ms curve (Synara sidebar gap + container). */}
@@ -922,6 +927,17 @@ export function Workbench(): ReactElement {
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
+                {leftSidebarCollapsed ? (
+                  <button
+                    type="button"
+                    onClick={expandLeftSidebar}
+                    className="ds-sidebar-toggle-button ds-no-drag shrink-0"
+                    aria-label={t('sidebarExpand')}
+                    title={t('sidebarExpandShortcut')}
+                  >
+                    <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
+                  </button>
+                ) : null}
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
                 </div>

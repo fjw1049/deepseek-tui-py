@@ -181,7 +181,7 @@ function WorkflowDetail({
             <span>{t('processTrayProgress')}</span>
             <span>{pct}%</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-ds-border/60">
+          <div className="h-1.5 overflow-hidden rounded-full bg-ds-border">
             <div className="h-full rounded-full bg-sky-500" style={{ width: `${pct}%` }} />
           </div>
         </div>

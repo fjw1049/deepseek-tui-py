@@ -152,7 +152,7 @@ export function ModelUsagePanel({
                     {formatCompactNumber(bucket.totalTokens)} tokens
                   </span>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-ds-border/70">
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-ds-border">
                   <span
                     className="block h-full rounded-full"
                     style={{ width: `${widthPct}%`, backgroundColor: color }}

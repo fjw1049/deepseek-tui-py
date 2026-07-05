@@ -29,7 +29,7 @@ const CONTRAST_CURVE_BELOW_BASELINE = 0.7
 const CONTRAST_CURVE_ABOVE_BASELINE = 2
 const SURFACE_UNDER_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.16, light: 0.04 }
 const SURFACE_UNDER_CONTRAST_STEP: Record<ThemeVariant, number> = { dark: 0.0015, light: 0.0012 }
-const PANEL_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.03, light: 0.18 }
+const PANEL_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.01, light: 0.18 }
 const PANEL_CONTRAST_STEP: Record<ThemeVariant, number> = { dark: 0.03, light: 0.008 }
 
 function parseHex(value: string): Rgb {
@@ -90,14 +90,15 @@ export function buildChromeThemeCssVars(
     SURFACE_UNDER_BASE_ALPHA[variant] + (theme.contrast - CONTRAST_BASELINE[variant]) * SURFACE_UNDER_CONTRAST_STEP[variant]
   )
   const panel = mixRgb(surface, anchor, PANEL_BASE_ALPHA[variant] + c * PANEL_CONTRAST_STEP[variant])
-  const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.06 + c * 0.05)
-  const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.08 + c * 0.08)
+  const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.022 + c * 0.04)
+  const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.042 + c * 0.06)
 
-  // Synara's dark stack: the sidebar sits on the darkest chrome (surface) and
-  // the content card lifts to the lighter panel mix; light keeps the original
-  // panel-sidebar / surface-card arrangement (white card on gray ground).
-  const sidebarBg = light ? panel : surface
-  const canvasBg = light ? surface : panel
+  // Synara's stack in BOTH variants: the content canvas is the theme surface
+  // (the main working tone) and the sidebar takes the panel mix — a slightly
+  // lifted veil over the darker window ground. Dark previously inverted this
+  // (darkest sidebar, lifted canvas), which read backwards next to Synara.
+  const sidebarBg = panel
+  const canvasBg = surface
 
   // Text tiers.
   const textSecondary = rgba(ink, 0.65 + c * 0.1)
@@ -106,9 +107,9 @@ export function buildChromeThemeCssVars(
   // Borders. Dark runs noticeably softer than Synara's base derivation: white
   // hairlines glare on near-black grounds, so hairlines carry less alpha and
   // the surface layering (sidebar < card < control) does the separating.
-  const borderSoft = rgba(ink, light ? 0.09 + c * 0.04 : 0.06 + c * 0.03)
-  const borderMuted = rgba(ink, light ? 0.07 + c * 0.02 : 0.04 + c * 0.02)
-  const borderStrong = rgba(ink, light ? 0.09 + c * 0.06 : 0.1 + c * 0.05)
+  const borderSoft = rgba(ink, light ? 0.09 + c * 0.04 : 0.02 + c * 0.05)
+  const borderMuted = rgba(ink, light ? 0.07 + c * 0.02 : 0.02 + c * 0.025)
+  const borderStrong = rgba(ink, light ? 0.09 + c * 0.06 : 0.06 + c * 0.05)
 
   // Dark accents brighten through a focus mix (Codex behavior) so low-value
   // accents stay legible on dark surfaces.
@@ -124,7 +125,7 @@ export function buildChromeThemeCssVars(
   const glass = theme.translucent
   const glassBg = glass ? rgba(sidebarBg, light ? 0.64 : 0.72) : hex(sidebarBg)
   const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.8 : 0.84) : hex(elevated1)
-  const glassBorder = rgba(ink, light ? 0.07 : 0.06)
+  const glassBorder = rgba(ink, light ? 0.07 : 0.05)
   const glassHighlight = 'transparent'
 
   const vars: Record<string, string> = {
@@ -132,7 +133,7 @@ export function buildChromeThemeCssVars(
     '--bg-sidebar': hex(sidebarBg),
     '--bg-canvas': hex(canvasBg),
     '--ds-sidebar-dot': rgba(ink, light ? 0.03 : 0.028),
-    '--ds-canvas-dot': rgba(ink, 0.04),
+    '--ds-canvas-dot': rgba(ink, light ? 0.04 : 0.03),
 
     // Dark inputs/selects read as raised controls (Synara controlBackground);
     // the old rgba(surface, .92) fill rendered them darker than everything
@@ -171,7 +172,7 @@ export function buildChromeThemeCssVars(
     '--ds-stage-gradient': hex(canvasBg),
     '--ds-topbar-bg': 'transparent',
     '--ds-sidebar-gradient': `linear-gradient(180deg, ${hex(sidebarBg)} 0%, ${hex(sidebarBg)} 100%)`,
-    '--ds-sidebar-border': rgba(ink, light ? 0.06 : 0.07),
+    '--ds-sidebar-border': rgba(ink, light ? 0.06 : 0.05),
 
     '--ds-card-soft': rgba(elevated1, light ? 0.82 : 0.9),
     '--ds-card-strong': rgba(elevated2, 0.96),
@@ -187,8 +188,8 @@ export function buildChromeThemeCssVars(
     '--ds-code-bg': hex(mixRgb(canvasBg, anchor, light ? 0.04 : 0.033)),
     '--ds-pre-bg': hex(mixRgb(canvasBg, anchor, light ? 0.035 : 0.03)),
     '--ds-table-head-bg': rgba(elevated1, light ? 0.96 : 0.94),
-    '--ds-scrollbar-thumb': rgba(ink, light ? 0.2 : 0.28),
-    '--ds-scrollbar-thumb-hover': rgba(ink, light ? 0.3 : 0.38),
+    '--ds-scrollbar-thumb': rgba(ink, light ? 0.2 : 0.14),
+    '--ds-scrollbar-thumb-hover': rgba(ink, light ? 0.3 : 0.24),
 
     '--glass-bg': glassBg,
     '--glass-bg-strong': glassBgStrong,
@@ -203,7 +204,7 @@ export function buildChromeThemeCssVars(
     '--ds-material-card': light ? hex(surface) : rgba(WHITE, 0.04),
     '--ds-material-card-hover': light ? rgba(ink, 0.02) : rgba(WHITE, 0.07),
     '--ds-material-control': light ? hex(surface) : rgba(WHITE, 0.05),
-    '--ds-material-stroke': rgba(ink, light ? 0.05 : 0.06),
+    '--ds-material-stroke': rgba(ink, light ? 0.05 : 0.045),
 
     '--app-wallpaper': hex(surfaceUnder)
   }

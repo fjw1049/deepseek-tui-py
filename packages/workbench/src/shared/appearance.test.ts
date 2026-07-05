@@ -134,13 +134,13 @@ describe('appearance-derive', () => {
     for (const variant of ['light', 'dark'] as const) {
       const theme = getThemePresetSeed('codex', variant)!
       const vars = buildChromeThemeCssVars(theme, variant)
-      // Light: white card on gray ground (canvas = surface). Dark: the sidebar
-      // takes the darkest chrome (surface) and the content card lifts brighter.
-      if (variant === 'light') {
-        expect(vars['--bg-canvas']).toBe(theme.surface)
-      } else {
-        expect(vars['--bg-sidebar']).toBe(theme.surface)
-        expect(vars['--bg-canvas']).not.toBe(theme.surface)
+      // Both variants: the content canvas IS the theme surface and the
+      // sidebar takes the lifted panel mix. (In light the panel mixes toward
+      // white, so a pure-white surface yields an identical sidebar — only
+      // dark can assert the sidebar actually differs.)
+      expect(vars['--bg-canvas']).toBe(theme.surface)
+      if (variant === 'dark') {
+        expect(vars['--bg-sidebar']).not.toBe(theme.surface)
       }
       expect(vars['--text-primary']).toBe(theme.ink)
       expect(vars['--ds-diff-added']).toBe(theme.semanticColors.diffAdded)

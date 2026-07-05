@@ -240,7 +240,7 @@ export function ContextUsageMeter({
               </div>
             </div>
 
-            <div className="mt-3.5 flex h-1.5 overflow-hidden rounded-full bg-ds-border-muted/50">
+            <div className="mt-3.5 flex h-1.5 overflow-hidden rounded-full bg-ds-border-muted">
               {rows.map((row) => {
                 const pct = windowTokens > 0 ? (row.tokens / windowTokens) * 100 : 0
                 if (pct <= 0) return null

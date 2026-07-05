@@ -201,7 +201,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
           role="separator"
           aria-orientation="vertical"
           aria-label={t('workspaceEditorTreeResize')}
-          className="ds-no-drag group relative z-20 w-1 shrink-0 cursor-col-resize bg-ds-border-muted/40 hover:bg-ds-border-strong/80"
+          className="ds-no-drag group relative z-20 w-1 shrink-0 cursor-col-resize bg-ds-border-muted hover:bg-[var(--ds-border-strong)]"
           onPointerDown={beginTreeResize}
         />
 

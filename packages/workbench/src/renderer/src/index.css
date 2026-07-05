@@ -53,10 +53,10 @@
   --ds-accent: #0088ff;
   --ds-accent-soft: rgba(0, 136, 255, 0.14);
   --ds-heat-0: #ebedf0;
-  --ds-heat-1: #c6e6ff;
-  --ds-heat-2: #79c3ff;
-  --ds-heat-3: #218bff;
-  --ds-heat-4: #0088ff;
+  --ds-heat-1: #9be9a8;
+  --ds-heat-2: #40c463;
+  --ds-heat-3: #30a14e;
+  --ds-heat-4: #216e39;
   --ds-success: #128a4a;
   --ds-danger: #c92a2a;
   --ds-diff-added: #128a4a;
@@ -122,20 +122,22 @@
 }
 
 [data-theme='dark'] {
-  /* Synara dark stack: darkest chrome under the sidebar, the content card
-     lifts a step brighter, inputs/controls another step. Hairlines stay
-     faint — the surface layering does the separating, not the lines. */
+  /* Synara dark stack (matches its light structure): the content canvas IS
+     the theme surface — the darkest working tone — and the sidebar is the
+     lifted panel veil over the window ground, so the sidebar reads slightly
+     LIGHTER than the main area. Inputs/controls/cards step up from the
+     canvas. Hairlines stay faint — layering separates, not lines. */
   --bg-app: #0e0e0e;
-  --bg-sidebar: #111111;
-  --bg-canvas: #1c1c1c;
+  --bg-sidebar: #171717;
+  --bg-canvas: #111111;
   --ds-sidebar-dot: rgba(255, 255, 255, 0.028);
-  --ds-canvas-dot: rgba(255, 255, 255, 0.04);
+  --ds-canvas-dot: rgba(255, 255, 255, 0.03);
   --ds-canvas-dot-size: 22px;
-  --surface-1: #252525;
-  --surface-2: #262626;
-  --surface-3: #2d2d2d;
-  --border-soft: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.13);
+  --surface-1: #1b1b1b;
+  --surface-2: #1d1d1d;
+  --surface-3: #222222;
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.09);
   --text-primary: #ececec;
   --text-secondary: #b0b0b0;
   --text-tertiary: #808080;
@@ -149,7 +151,7 @@
   --ds-surface-subtle: rgba(255, 255, 255, 0.05);
   --ds-surface-hover: rgba(255, 255, 255, 0.06);
   --ds-border: var(--border-soft);
-  --ds-border-muted: rgba(255, 255, 255, 0.05);
+  --ds-border-muted: rgba(255, 255, 255, 0.035);
   --ds-border-strong: var(--border-strong);
   --ds-text: var(--text-primary);
   --ds-text-muted: var(--text-secondary);
@@ -159,10 +161,10 @@
   --ds-accent: #339cff;
   --ds-accent-soft: rgba(51, 156, 255, 0.18);
   --ds-heat-0: #21262d;
-  --ds-heat-1: #0a3069;
-  --ds-heat-2: #0550ae;
-  --ds-heat-3: #096edb;
-  --ds-heat-4: #339cff;
+  --ds-heat-1: #0e4429;
+  --ds-heat-2: #006d32;
+  --ds-heat-3: #26a641;
+  --ds-heat-4: #39d353;
   --ds-success: #40c977;
   --ds-danger: #fa423e;
   --ds-diff-added: #40c977;
@@ -178,29 +180,29 @@
   --ds-shadow-shell: 0 1px 2px rgba(0, 0, 0, 0.3);
   --ds-shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.3);
   --ds-shadow-composer: 0 2px 12px rgba(0, 0, 0, 0.34),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
-  --ds-stage-gradient: #1c1c1c;
+    0 0 0 1px rgba(255, 255, 255, 0.03);
+  --ds-stage-gradient: #111111;
   --ds-topbar-bg: transparent;
   --ds-topbar-shadow: none;
   --ds-sidebar-gradient: var(--bg-sidebar);
-  --ds-sidebar-border: rgba(255, 255, 255, 0.06);
+  --ds-sidebar-border: rgba(255, 255, 255, 0.05);
   --ds-sidebar-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.024);
-  --ds-card-soft: #222222;
-  --ds-card-strong: #2d2d2d;
+  --ds-card-soft: #171717;
+  --ds-card-strong: #1c1c1c;
   --ds-card-muted: rgba(255, 255, 255, 0.04);
   --ds-card-ghost: rgba(255, 255, 255, 0.02);
   --ds-card-hover: rgba(255, 255, 255, 0.05);
   --ds-chip-bg: rgba(255, 255, 255, 0.05);
   --ds-chip-muted-bg: rgba(255, 255, 255, 0.04);
   --ds-chip-hover: rgba(255, 255, 255, 0.08);
-  --ds-chip-border: rgba(255, 255, 255, 0.08);
+  --ds-chip-border: rgba(255, 255, 255, 0.05);
   --ds-chip-active: rgba(255, 255, 255, 0.09);
   --ds-kbd-bg: rgba(255, 255, 255, 0.05);
   --ds-code-bg: rgba(255, 255, 255, 0.05);
-  --ds-pre-bg: #232323;
+  --ds-pre-bg: #181818;
   --ds-table-head-bg: rgba(255, 255, 255, 0.04);
-  --ds-scrollbar-thumb: rgba(170, 170, 170, 0.28);
-  --ds-scrollbar-thumb-hover: rgba(200, 200, 200, 0.38);
+  --ds-scrollbar-thumb: rgba(170, 170, 170, 0.14);
+  --ds-scrollbar-thumb-hover: rgba(200, 200, 200, 0.24);
   --ds-selection: rgba(51, 156, 255, 0.24);
   --ds-shadow-card-soft: 0 1px 2px rgba(0, 0, 0, 0.24);
   --ds-shadow-card-strong: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -209,9 +211,9 @@
   /* ── Frosted sidebar material, dark variant. ── */
   --glass-blur: 8px;
   --glass-saturate: 135%;
-  --glass-bg: color-mix(in srgb, #111111 72%, transparent);
-  --glass-bg-strong: color-mix(in srgb, #111111 84%, transparent);
-  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-bg: color-mix(in srgb, #171717 72%, transparent);
+  --glass-bg-strong: color-mix(in srgb, #171717 84%, transparent);
+  --glass-border: rgba(255, 255, 255, 0.05);
   --glass-highlight: transparent;
   --glass-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   --glass-card: rgba(255, 255, 255, 0.05);
@@ -828,17 +830,14 @@ samp {
   transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Collapsed sidebar: the header inherits the window chrome. Reserve room for
-   the fixed expand trigger, and on macOS also for the traffic lights. */
-.ds-workbench-sidebar-wrap[data-collapsed] + .ds-workbench-main .ds-workbench-topbar__inner {
-  padding-left: 3.25rem;
-}
-
+/* Collapsed sidebar: the header inherits the window chrome. The expand toggle
+   now flows inside the topbar row, so only reserve the macOS traffic-light
+   inset (non-mac keeps the row's own padding). */
 :root[data-platform='darwin']
   .ds-workbench-sidebar-wrap[data-collapsed]
   + .ds-workbench-main
   .ds-workbench-topbar__inner {
-  padding-left: calc(var(--ds-window-controls-safe-inline, 72px) + 2.5rem);
+  padding-left: calc(var(--ds-window-controls-safe-inline, 72px) + 0.375rem);
 }
 
 @media (min-width: 640px) {
@@ -2285,13 +2284,13 @@ summary,
 }
 
 [data-theme='dark'] {
-  --ds-material-page: #1c1c1c;
-  --ds-material-panel: #1c1c1c;
+  --ds-material-page: #111111;
+  --ds-material-panel: #111111;
   --ds-material-card: rgba(255, 255, 255, 0.04);
   --ds-material-card-hover: rgba(255, 255, 255, 0.07);
   --ds-material-control: rgba(255, 255, 255, 0.05);
   --ds-material-overlay: rgba(0, 0, 0, 0.55);
-  --ds-material-stroke: rgba(255, 255, 255, 0.06);
+  --ds-material-stroke: rgba(255, 255, 255, 0.045);
   --ds-material-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   --ds-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
 }
@@ -2330,7 +2329,9 @@ select:focus-visible,
 
 [data-theme='dark'] .ds-workbench-main {
   --seam-line: rgba(255, 255, 255, 0.06);
-  --seam-shadow-color: rgba(0, 0, 0, 0.36);
+  /* Softer than Synara's 0.36: our dark sidebar/canvas tones sit much closer
+     together, so a strong fringe reads as a dirty double-line, not depth. */
+  --seam-shadow-color: rgba(0, 0, 0, 0.22);
 }
 
 /* Only when the left sidebar is visible does the seam exist: round the card's
@@ -2367,9 +2368,15 @@ select:focus-visible,
   position: absolute;
   inset-block: 0;
   right: calc(-1 * var(--app-content-card-radius, 0.9rem));
-  width: var(--app-content-card-radius, 0.9rem);
+  /* 2px wider than the radius so the strip overlaps the sidebar's right edge:
+     the sidebar's backdrop blur samples the darker window ground past its own
+     edge and leaves a dark fringe there — the overlap paints sidebar material
+     (same color AND same blur, per Synara chat-content-card-backing) over it. */
+  width: calc(var(--app-content-card-radius, 0.9rem) + 2px);
   pointer-events: none;
   background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
@@ -2718,7 +2725,7 @@ select:focus-visible,
 
 [data-theme='dark'] .ds-settings-page {
   --seam-line: rgba(255, 255, 255, 0.06);
-  --seam-shadow-color: rgba(0, 0, 0, 0.36);
+  --seam-shadow-color: rgba(0, 0, 0, 0.22);
 }
 
 .ds-settings-page > .ds-page-scroll {

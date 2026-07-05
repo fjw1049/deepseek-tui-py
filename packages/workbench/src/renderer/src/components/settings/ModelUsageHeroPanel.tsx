@@ -188,7 +188,7 @@ export function ModelUsageHeroPanel({
                           {share}%
                         </span>
                       </div>
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ds-border/55">
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ds-border">
                         <span
                           className="block h-full rounded-full transition-[width] duration-300"
                           style={{
