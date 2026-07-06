@@ -35,7 +35,6 @@ import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { SessionHeader } from './SessionHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
-import { ImportSessionDialog } from './ImportSessionDialog'
 import {
   RightSidebarToggleButton,
   WorkbenchRightSidebar
@@ -261,7 +260,6 @@ export function Workbench(): ReactElement {
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
-  const [importSessionOpen, setImportSessionOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
   const conversationInsetClass = 'px-3 md:px-5 lg:px-6 xl:px-8'
@@ -831,7 +829,6 @@ export function Workbench(): ReactElement {
             }}
             onNewChat={startNewChat}
             onNewChatInWorkspace={startNewChatInWorkspace}
-            onImportSession={() => setImportSessionOpen(true)}
             onOpenSettings={(section) => openSettings(section)}
             onCollapseSidebar={() => setLeftSidebarCollapsed(true)}
           />
@@ -1187,10 +1184,6 @@ export function Workbench(): ReactElement {
           setRuntimeDiagnosticsOpen(false)
           openSettings('general')
         }}
-      />
-      <ImportSessionDialog
-        open={importSessionOpen}
-        onClose={() => setImportSessionOpen(false)}
       />
     </div>
   )

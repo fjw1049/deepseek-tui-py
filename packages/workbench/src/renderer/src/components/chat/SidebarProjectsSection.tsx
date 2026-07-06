@@ -18,7 +18,6 @@ import {
   Plus,
   Trash2,
   Archive,
-  Download,
   Search
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
@@ -50,7 +49,6 @@ type SidebarProjectsSectionProps = {
   onPickWorkspace: () => void
   onRemoveWorkspace: (workspacePath: string) => Promise<void>
   onCreateThreadInWorkspace: (workspacePath: string) => void
-  onImportSession: () => void
   onSelectThread: (threadId: string) => void
   onOpenThreadTerminal: (threadId: string) => Promise<void>
   onDeleteThread: (threadId: string) => Promise<void>
@@ -95,7 +93,6 @@ export function SidebarProjectsSection({
   onPickWorkspace,
   onRemoveWorkspace,
   onCreateThreadInWorkspace,
-  onImportSession,
   onSelectThread,
   onOpenThreadTerminal,
   onDeleteThread,
@@ -523,14 +520,6 @@ export function SidebarProjectsSection({
                 <Search className="h-3.5 w-3.5" strokeWidth={1.75} />
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={onImportSession}
-              title={t('importSession')}
-              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-            >
-              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-            </button>
             <button
               type="button"
               onClick={onPickWorkspace}

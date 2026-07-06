@@ -26,7 +26,6 @@ type Props = {
   onCompactThread: (id: string) => Promise<void>
   onNewChat: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
-  onImportSession: () => void
   onOpenSettings: (section?: SettingsRouteSection) => void
   onCollapseSidebar: () => void
 }
@@ -41,7 +40,6 @@ export function Sidebar({
   onCompactThread,
   onNewChat,
   onNewChatInWorkspace,
-  onImportSession,
   onOpenSettings,
   onCollapseSidebar
 }: Props): ReactElement {
@@ -142,7 +140,6 @@ export function Sidebar({
         onPickWorkspace={() => void chooseWorkspace()}
         onRemoveWorkspace={deleteWorkspace}
         onCreateThreadInWorkspace={onNewChatInWorkspace}
-        onImportSession={onImportSession}
         onSelectThread={onSelectThread}
         onOpenThreadTerminal={onOpenThreadTerminal}
         onDeleteThread={onDeleteThread}
