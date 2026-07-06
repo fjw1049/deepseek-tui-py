@@ -927,17 +927,25 @@ export function Workbench(): ReactElement {
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
-                {leftSidebarCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={expandLeftSidebar}
-                    className="ds-sidebar-toggle-button ds-no-drag shrink-0"
-                    aria-label={t('sidebarExpand')}
-                    title={t('sidebarExpandShortcut')}
-                  >
+                <button
+                  type="button"
+                  onClick={toggleLeftSidebar}
+                  className="ds-sidebar-toggle-button ds-no-drag shrink-0"
+                  aria-label={
+                    leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')
+                  }
+                  title={
+                    leftSidebarCollapsed
+                      ? t('sidebarExpandShortcut')
+                      : t('sidebarCollapse')
+                  }
+                >
+                  {leftSidebarCollapsed ? (
                     <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
-                  </button>
-                ) : null}
+                  ) : (
+                    <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
+                  )}
+                </button>
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
                 </div>
