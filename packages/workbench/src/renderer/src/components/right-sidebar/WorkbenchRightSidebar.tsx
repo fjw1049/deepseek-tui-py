@@ -119,15 +119,15 @@ export function WorkbenchRightSidebar({
     )
   }
 
-  let panel: ReactNode = null
+  let otherPanel: ReactNode = null
   if (tab === 'editor') {
-    panel = (
+    otherPanel = (
       <Suspense fallback={<PanelFallback />}>
         <WorkspaceEditorPanel workspaceRoot={workspaceRoot} blocks={blocks} />
       </Suspense>
     )
   } else if (tab === 'changes') {
-    panel = (
+    otherPanel = (
       <Suspense fallback={<PanelFallback />}>
         <ChangeInspector
           blocks={blocks}
@@ -136,17 +136,8 @@ export function WorkbenchRightSidebar({
         />
       </Suspense>
     )
-  } else if (tab === 'terminal') {
-    panel = (
-      <AppTerminalPanel
-        workspaceRoot={workspaceRoot}
-        mountSurface="sidebar"
-        mountActive
-        className="h-full max-h-full w-full"
-      />
-    )
-  } else {
-    panel = (
+  } else if (tab === 'preview') {
+    otherPanel = (
       <Suspense fallback={<PanelFallback />}>
         <DevBrowserPanel
           blocks={devPreviewBlocks}
@@ -156,6 +147,8 @@ export function WorkbenchRightSidebar({
       </Suspense>
     )
   }
+
+  const terminalVisible = tab === 'terminal'
 
   return (
     <aside
@@ -212,7 +205,24 @@ export function WorkbenchRightSidebar({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden">{panel}</div>
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          {/* Terminal stays mounted (just hidden) when other tabs are active so
+              xterm buffers and the terminal:data IPC listener survive tab
+              switches; otherwise switching tabs would unmount the panel and
+              drop all session scrollback. */}
+          <div className={terminalVisible ? 'h-full w-full' : 'hidden h-full w-full'}>
+            <AppTerminalPanel
+              workspaceRoot={workspaceRoot}
+              mountSurface="sidebar"
+              mountActive
+              visible={terminalVisible}
+              className="h-full max-h-full w-full"
+            />
+          </div>
+          {otherPanel ? (
+            <div className="absolute inset-0 h-full w-full">{otherPanel}</div>
+          ) : null}
+        </div>
       </div>
     </aside>
   )

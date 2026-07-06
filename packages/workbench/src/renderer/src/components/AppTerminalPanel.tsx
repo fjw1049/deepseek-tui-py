@@ -25,6 +25,7 @@ type Props = {
   workspaceRoot: string
   mountSurface: TerminalXtermMount
   mountActive: boolean
+  visible?: boolean
   onClose?: () => void
   className?: string
 }
@@ -67,6 +68,7 @@ export function AppTerminalPanel({
   workspaceRoot,
   mountSurface,
   mountActive,
+  visible = true,
   onClose,
   className
 }: Props): ReactElement {
@@ -94,7 +96,7 @@ export function AppTerminalPanel({
 
   const scheduleFit = useCallback(
     (sessionId: string | null): void => {
-      if (!sessionId || !mountActive) return
+      if (!sessionId || !mountActive || !visible) return
       if (fitFrameRef.current !== null) {
         window.cancelAnimationFrame(fitFrameRef.current)
       }
@@ -111,7 +113,7 @@ export function AppTerminalPanel({
         }
       })
     },
-    [mountActive]
+    [mountActive, visible]
   )
 
   const createSession = useCallback(async (): Promise<void> => {
