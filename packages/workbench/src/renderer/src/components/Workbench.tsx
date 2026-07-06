@@ -316,13 +316,19 @@ export function Workbench(): ReactElement {
     (showOperationColumn || rightSidebarOpen)
   const showDefaultEditorPicker =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0
-  const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
+  // Left sidebar toggle lives at the far right of the topbar action cluster.
+  const showLeftSidebarToggle = route === 'chat'
+  const showTopbarRightActions =
+    showDefaultEditorPicker || showRightSidebarToggle || showLeftSidebarToggle
+  // Reserve room on the right of the session title so it never runs under the
+  // absolutely-positioned right-actions cluster. Each visible control (~1.75rem
+  // button + 0.375rem gap) adds to the budget.
   const topbarRightPaddingClass = showTopbarRightActions
     ? showDefaultEditorPicker && showRightSidebarToggle
-      ? 'pr-[4.75rem] sm:pr-[5.25rem]'
+      ? 'pr-[7rem] sm:pr-[7.5rem]'
       : showDefaultEditorPicker
-        ? 'pr-12'
-        : 'pr-9 sm:pr-10'
+        ? 'pr-[5.25rem]'
+        : 'pr-[4.5rem] sm:pr-[4.75rem]'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
   const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
@@ -792,12 +798,10 @@ export function Workbench(): ReactElement {
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
     >
-      {/* Chat route reopens the sidebar from the topbar button below (Synara
-          SidebarTrigger in the content header); the floating droplet remains
-          for routes without that header (plugins/automation/channels). */}
-      {leftSidebarCollapsed && route !== 'chat' ? (
-        <SidebarExpandDroplet onExpand={expandLeftSidebar} />
-      ) : null}
+      {/* Floating expand trigger at the top-left when the sidebar is collapsed.
+          The right-side topbar toggle also expands; this keeps the original
+          left-side entry point (Synara SidebarTrigger beside the traffic lights). */}
+      {leftSidebarCollapsed ? <SidebarExpandDroplet onExpand={expandLeftSidebar} /> : null}
       {/* Stays mounted while collapsed so the offcanvas slide can animate: the
           wrap's width shrinks to 0 while the fixed-width inner column slides
           left, both on the same 300ms curve (Synara sidebar gap + container). */}
@@ -927,25 +931,6 @@ export function Workbench(): ReactElement {
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
-                <button
-                  type="button"
-                  onClick={toggleLeftSidebar}
-                  className="ds-sidebar-toggle-button ds-no-drag shrink-0"
-                  aria-label={
-                    leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')
-                  }
-                  title={
-                    leftSidebarCollapsed
-                      ? t('sidebarExpandShortcut')
-                      : t('sidebarCollapse')
-                  }
-                >
-                  {leftSidebarCollapsed ? (
-                    <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
-                  ) : (
-                    <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
-                  )}
-                </button>
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
                 </div>
@@ -966,6 +951,27 @@ export function Workbench(): ReactElement {
                       open={rightSidebarOpen}
                       onClick={toggleRightSidebar}
                     />
+                  ) : null}
+                  {showLeftSidebarToggle ? (
+                    <button
+                      type="button"
+                      onClick={toggleLeftSidebar}
+                      className="ds-sidebar-toggle-button ds-no-drag shrink-0"
+                      aria-label={
+                        leftSidebarCollapsed ? t('sidebarExpand') : t('sidebarCollapse')
+                      }
+                      title={
+                        leftSidebarCollapsed
+                          ? t('sidebarExpandShortcut')
+                          : t('sidebarCollapse')
+                      }
+                    >
+                      {leftSidebarCollapsed ? (
+                        <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
+                      ) : (
+                        <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
+                      )}
+                    </button>
                   ) : null}
                 </div>
               ) : null}
