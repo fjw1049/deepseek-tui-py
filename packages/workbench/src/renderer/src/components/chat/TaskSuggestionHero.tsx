@@ -14,7 +14,6 @@ import { useChatStore } from '../../store/chat-store'
 import { usePersistentUsage } from '../../hooks/use-persistent-usage'
 import { ModelUsageHeroPanel } from '../settings/ModelUsageHeroPanel'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
-import { EmptyStageMarkIcon } from './EmptyStageMarkIcon'
 import { GreetingDateBar } from './GreetingDateBar'
 
 const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
@@ -217,19 +216,14 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
   return (
     <div className="ds-no-drag w-full">
-      <GreetingDateBar
-        daily={persistentUsage.data?.daily ?? []}
-        asOfDay={persistentUsage.data?.asOfDay}
-        loading={persistentUsage.loading}
-      />
-      <div className="ds-empty-stage-prompt mt-5 flex items-center gap-3.5 px-0.5">
-        <EmptyStageMarkIcon className="h-12 w-12" />
-        <p className="flex items-baseline font-medium leading-snug tracking-[-0.02em] text-ds-ink">
-          <span className="text-[28px] sm:text-[32px]">:</span>
-          <span className="ml-2.5 text-[26px] sm:ml-3 sm:text-[30px]">{t('emptyStagePrompt')}</span>
-        </p>
+      <div className="mt-4">
+        <GreetingDateBar
+          daily={persistentUsage.data?.daily ?? []}
+          asOfDay={persistentUsage.data?.asOfDay}
+          loading={persistentUsage.loading}
+        />
       </div>
-      <div className="ds-empty-hero-grid grid">
+      <div className="ds-empty-hero-grid mt-6 grid">
         <ModelUsageHeroPanel
           summary={persistentUsage.data?.summary ?? null}
           daily={persistentUsage.data?.daily ?? []}

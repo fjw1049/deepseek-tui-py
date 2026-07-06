@@ -45,8 +45,6 @@ function formatDateTime(date: Date, locale: string): string {
 export function GreetingDateBar({ daily, asOfDay, loading }: Props): ReactElement {
   const { t, i18n } = useTranslation('common')
   const threads = useChatStore((s) => s.threads)
-  const busy = useChatStore((s) => s.busy)
-  const blocks = useChatStore((s) => s.blocks)
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -58,15 +56,10 @@ export function GreetingDateBar({ daily, asOfDay, loading }: Props): ReactElemen
   const dateLabel = useMemo(() => formatDateTime(now, locale), [now, locale])
   const greetingKey = greetingKeyFor(now.getHours())
 
-  const runningCount = useMemo(() => {
-    let count = 0
-    for (const block of blocks) {
-      const status = (block as { status?: string }).status
-      if (status === 'running' || status === 'pending') count += 1
-    }
-    if (busy && count === 0) return 1
-    return count
-  }, [blocks, busy])
+  const activeDays = useMemo(
+    () => daily.filter((point) => point.totalTokens > 0).length,
+    [daily]
+  )
 
   const todayTokens = useMemo(() => {
     const key = asOfDay ?? todayLocalKey()
@@ -87,7 +80,7 @@ export function GreetingDateBar({ daily, asOfDay, loading }: Props): ReactElemen
           <h2 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-ds-ink sm:text-[24px]">
             {t(greetingKey)}
             <span className="text-ds-faint">,</span>{' '}
-            <span className="text-accent">{t('greetingFlair')}</span>
+            <span className="text-accent">{t(`greetingFlair${greetingKey.slice('greeting'.length)}`)}</span>
           </h2>
           <span
             aria-hidden
@@ -98,7 +91,7 @@ export function GreetingDateBar({ daily, asOfDay, loading }: Props): ReactElemen
 
       <div className="hidden shrink-0 items-end gap-6 md:flex">
         <Stat label={t('dateBarStatsThreads')} value={String(threads.length)} />
-        <Stat label={t('dateBarStatsRunning')} value={String(runningCount)} />
+        <Stat label={t('dateBarStatsActiveDays')} value={String(activeDays)} />
         <Stat label={t('dateBarStatsTodayTokens')} value={todayLabel} />
       </div>
     </div>
