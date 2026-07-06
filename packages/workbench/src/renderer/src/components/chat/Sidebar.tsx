@@ -76,9 +76,6 @@ export function Sidebar({
             <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
           </button>
         </div>
-        <div className="flex min-h-[40px] items-center justify-between px-1 py-1">
-          <div className="ds-sidebar-workbench-label">{t('sidebarWorkbench')}</div>
-        </div>
       </div>
 
       <div className="ds-no-drag flex flex-col gap-0.5 px-1">
