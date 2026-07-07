@@ -11,7 +11,7 @@ export type InstalledSkill = {
   builtin: boolean
 }
 
-type SkillTab = 'builtin' | 'installed'
+type SkillTab = 'builtin' | 'installed' | 'marketplace'
 
 type Props = {
   skills: InstalledSkill[]
@@ -20,20 +20,30 @@ type Props = {
   onPreview: (skill: InstalledSkill) => void
   onOpen: (skill: InstalledSkill) => void
   onDelete: (skill: InstalledSkill) => void
+  /** Content rendered when the ModelScope 市场 tab is active. */
+  marketplaceSlot?: ReactElement
 }
 
 /**
- * Installed-skills list with 内置 / 已安装 segmented tabs. Built-in skills carry
- * the bundled `.system-installed-version` marker and cannot be deleted; user
- * skills reveal an open/delete action row on hover.
+ * Installed-skills list with 内置 / 已安装 / ModelScope 市场 segmented tabs. Built-in
+ * skills carry the bundled `.system-installed-version` marker and cannot be
+ * deleted; user skills reveal an open/delete action row on hover. The
+ * marketplace tab renders `marketplaceSlot` (the ModelScope browser).
  */
-export function InstalledSkillsPanel({ skills, loading, busyId, onPreview, onOpen, onDelete }: Props): ReactElement {
+export function InstalledSkillsPanel({
+  skills,
+  loading,
+  busyId,
+  onPreview,
+  onOpen,
+  onDelete,
+  marketplaceSlot
+}: Props): ReactElement {
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<SkillTab>('builtin')
 
   const builtinSkills = skills.filter((skill) => skill.builtin)
   const userSkills = skills.filter((skill) => !skill.builtin)
-  const activeSkills = tab === 'builtin' ? builtinSkills : userSkills
 
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
@@ -44,20 +54,23 @@ export function InstalledSkillsPanel({ skills, loading, busyId, onPreview, onOpe
         <SkillTabButton active={tab === 'installed'} count={userSkills.length} onClick={() => setTab('installed')}>
           {t('skillTabInstalled')}
         </SkillTabButton>
+        <SkillTabButton active={tab === 'marketplace'} onClick={() => setTab('marketplace')}>
+          {t('marketplaceTitle')}
+        </SkillTabButton>
       </div>
 
-      {loading ? (
+      {tab === 'marketplace' ? null : loading ? (
         <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">
           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
           {t('skillsLoading')}
         </div>
-      ) : activeSkills.length === 0 ? (
+      ) : (tab === 'builtin' ? builtinSkills : userSkills).length === 0 ? (
         <div className="px-5 py-10 text-center text-[13px] text-ds-faint">
           {tab === 'builtin' ? t('skillsBuiltinEmpty') : t('skillsInstalledEmpty')}
         </div>
       ) : (
         <ul className="divide-y divide-ds-border-muted/70">
-          {activeSkills.map((skill) => (
+          {(tab === 'builtin' ? builtinSkills : userSkills).map((skill) => (
             <SkillRow
               key={skill.id}
               skill={skill}
@@ -69,6 +82,13 @@ export function InstalledSkillsPanel({ skills, loading, busyId, onPreview, onOpe
           ))}
         </ul>
       )}
+      {/* MarketplaceBrowser stays mounted across tabs so the parent's top
+          "重新加载" refresh signal reaches it even while the market tab is
+          hidden — otherwise the signal would fire into an unmounted component
+          and the catalog would never re-fetch. */}
+      <div className={tab === 'marketplace' ? '' : 'hidden'}>
+        {marketplaceSlot ?? null}
+      </div>
     </div>
   )
 }
@@ -80,7 +100,7 @@ function SkillTabButton({
   children
 }: {
   active: boolean
-  count: number
+  count?: number
   onClick: () => void
   children: string
 }): ReactElement {
@@ -93,13 +113,15 @@ function SkillTabButton({
       }`}
     >
       {children}
-      <span
-        className={`inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold ${
-          active ? 'bg-ds-ink/10 text-ds-ink' : 'bg-ds-subtle text-ds-faint'
-        }`}
-      >
-        {count}
-      </span>
+      {count !== undefined ? (
+        <span
+          className={`inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold ${
+            active ? 'bg-ds-ink/10 text-ds-ink' : 'bg-ds-subtle text-ds-faint'
+          }`}
+        >
+          {count}
+        </span>
+      ) : null}
     </button>
   )
 }

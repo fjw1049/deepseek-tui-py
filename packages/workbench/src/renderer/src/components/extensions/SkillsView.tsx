@@ -32,6 +32,10 @@ export function SkillsView(): ReactElement {
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [skillsListLoading, setSkillsListLoading] = useState(false)
   const [previewSkill, setPreviewSkill] = useState<string | null>(null)
+  // Bumped by the top "重新加载" button to force-refresh the ModelScope market
+  // catalog in parallel with the local skills dir scan (single button updates
+  // 内置 / 已安装 / 市场三个 tab).
+  const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
 
   // Silence unused var until per-workspace skill roots land here too.
   void workspaceRoot
@@ -177,7 +181,12 @@ export function SkillsView(): ReactElement {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void refreshSkillsList()}
+              onClick={() => {
+                void refreshSkillsList()
+                // Bump the market catalog refresh alongside the local scan so
+                // the single top button updates all three tabs.
+                setMarketRefreshSignal((n) => n + 1)
+              }}
               disabled={skillsListLoading}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"
             >
@@ -266,15 +275,17 @@ export function SkillsView(): ReactElement {
             onPreview={(skill) => setPreviewSkill(skill.id)}
             onOpen={() => void openSkillsDir()}
             onDelete={(skill) => void deleteSkill(skill)}
+            marketplaceSlot={
+              <MarketplaceBrowser
+                kind="skill"
+                query={query}
+                isInstalled={isMarketplaceInstalled}
+                onInstall={installFromMarketplace}
+                refreshSignal={marketRefreshSignal}
+              />
+            }
           />
         </div>
-
-        <MarketplaceBrowser
-          kind="skill"
-          query={query}
-          isInstalled={isMarketplaceInstalled}
-          onInstall={installFromMarketplace}
-        />
       </div>
 
       <SkillPreviewDialog skillName={previewSkill} skillsDir={skillsDir} onClose={() => setPreviewSkill(null)} />
