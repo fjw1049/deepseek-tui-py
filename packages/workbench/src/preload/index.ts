@@ -36,6 +36,10 @@ const api = {
   openSkillRoot: (rootPath) =>
     ipcRenderer.invoke('skill:open-root', rootPath),
   listSkillsInRoot: (rootPath) => ipcRenderer.invoke('skill:list-in-root', rootPath),
+  deleteSkill: (rootPath, skillName) =>
+    ipcRenderer.invoke('skill:delete', { rootPath, skillName }),
+  readSkill: (rootPath, skillName) =>
+    ipcRenderer.invoke('skill:read', { rootPath, skillName }),
   getDeepseekConfigFile: () =>
     ipcRenderer.invoke('deepseek:config:read'),
   setDeepseekConfigFile: (content) =>
@@ -70,6 +74,9 @@ const api = {
   getWorkspaceSuggestions: (workspaceRoot) =>
     ipcRenderer.invoke('workspace:suggestions', workspaceRoot),
   getTrendingRepos: (period) => ipcRenderer.invoke('trending:repos', period),
+  getMarketplaceCatalog: (kind) => ipcRenderer.invoke('marketplace:catalog:get', kind),
+  refreshMarketplaceCatalog: (kind) => ipcRenderer.invoke('marketplace:catalog:refresh', kind),
+  fetchSkillMarkdown: (id) => ipcRenderer.invoke('marketplace:skill:markdown', id),
   queryUsage: (params) => ipcRenderer.invoke('usage:query', params ?? {}),
   pruneUsageProvider: (providerId) => ipcRenderer.invoke('usage:prune-provider', { providerId }),
   pruneUsageEndpointModel: (providerId, modelId) =>

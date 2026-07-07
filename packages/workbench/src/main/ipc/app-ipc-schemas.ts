@@ -52,6 +52,20 @@ export const skillSaveFilePayloadSchema = z
   })
   .strict()
 
+export const skillDeletePayloadSchema = z
+  .object({
+    rootPath: trimmedString(MAX_PATH_LENGTH),
+    skillName: trimmedString(128)
+  })
+  .strict()
+
+export const skillReadPayloadSchema = z
+  .object({
+    rootPath: trimmedString(MAX_PATH_LENGTH),
+    skillName: trimmedString(128)
+  })
+  .strict()
+
 export const rootPathSchema = trimmedString(MAX_PATH_LENGTH)
 export const deepseekConfigContentSchema = z.string().max(MAX_CONFIG_FILE_BYTES)
 
@@ -223,6 +237,10 @@ export const workspacePickFilesPayloadSchema = z
   .strict()
 
 export const trendingPeriodSchema = z.enum(['daily', 'weekly', 'monthly'])
+
+export const marketplaceKindSchema = z.enum(['mcp', 'skill'])
+
+export const marketplaceSkillMarkdownSchema = trimmedString(200)
 
 export const usageRangeSchema = z.enum(['7d', '30d', '90d', '1y'])
 

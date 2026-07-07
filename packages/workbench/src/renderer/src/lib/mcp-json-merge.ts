@@ -56,6 +56,16 @@ export function mergeMcpServerIntoConfig(
   return `${JSON.stringify(doc, null, 2)}\n`
 }
 
+export function removeMcpServerFromConfig(raw: string, serverId: string): string {
+  const doc = parseMcpConfigDocument(raw)
+  const servers = serversTable(doc)
+  if (!Object.prototype.hasOwnProperty.call(servers, serverId)) {
+    throw new Error(`MCP server "${serverId}" not found.`)
+  }
+  delete servers[serverId]
+  return `${JSON.stringify(doc, null, 2)}\n`
+}
+
 export function buildMcpServerEntry(
   command: string,
   args: string[],

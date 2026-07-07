@@ -2,7 +2,7 @@ import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
-import { access, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
 import type {
@@ -33,8 +33,12 @@ import {
   shellOpenExternalUrlSchema,
   shellOpenTerminalPathSchema,
   skillSaveFilePayloadSchema,
+  skillDeletePayloadSchema,
+  skillReadPayloadSchema,
   terminalCreateOptionsSchema,
   terminalInputPayloadSchema,
+  marketplaceKindSchema,
+  marketplaceSkillMarkdownSchema,
   terminalLifecyclePayloadSchema,
   terminalResizePayloadSchema,
   trendingPeriodSchema,
@@ -60,6 +64,11 @@ import {
 } from '../deepseek-process'
 import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
 import { getTrendingRepos } from '../services/trending-repos'
+import {
+  fetchSkillMarkdown,
+  getMarketplaceCatalog,
+  refreshMarketplaceCatalog
+} from '../services/modelscope-marketplace'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
 import { transcribeAudio } from '../services/asr-transcription-service'
@@ -143,6 +152,23 @@ function parseIpcPayload<T>(channel: string, schema: z.ZodType<T>, payload: unkn
 }
 
 const settingsPatchSchema = z.object({}).passthrough()
+
+/** Marker file bundled system skills carry (see integrations/skills.py). */
+const SYSTEM_SKILL_MARKER = '.system-installed-version'
+
+/** Pull the `description:` value out of a SKILL.md YAML frontmatter block. */
+function parseSkillDescription(content: string): string {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return ''
+  const descLine = match[1]
+    .split(/\r?\n/)
+    .find((line) => /^description\s*:/.test(line))
+  if (!descLine) return ''
+  return descLine
+    .replace(/^description\s*:/, '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+}
 
 /**
  * Open the platform terminal at the given filesystem path. macOS uses
@@ -557,13 +583,20 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       }
       await mkdir(target, { recursive: true })
       const entries = await readdir(target, { withFileTypes: true })
-      const skills: Array<{ id: string; name: string; path: string }> = []
+      const skills: Array<{ id: string; name: string; path: string; description: string; builtin: boolean }> = []
       for (const entry of entries) {
         if (!entry.isDirectory()) continue
-        const skillMd = join(target, entry.name, 'SKILL.md')
+        const skillDir = join(target, entry.name)
+        const skillMd = join(skillDir, 'SKILL.md')
         try {
-          await access(skillMd)
-          skills.push({ id: entry.name, name: entry.name, path: skillMd })
+          const content = await readFile(skillMd, 'utf8')
+          const description = parseSkillDescription(content)
+          // Bundled system skills carry a `.system-installed-version` marker
+          // (see integrations/skills.py); those are the built-in ones.
+          const builtin = await access(join(skillDir, SYSTEM_SKILL_MARKER))
+            .then(() => true)
+            .catch(() => false)
+          skills.push({ id: entry.name, name: entry.name, path: skillMd, description, builtin })
         } catch {
           /* not a skill folder */
         }
@@ -575,6 +608,52 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
         ok: false as const,
         message: error instanceof Error ? error.message : String(error),
         skills: [] as const
+      }
+    }
+  })
+
+  ipcMain.handle('skill:delete', async (_, payload: unknown) => {
+    const request = parseIpcPayload('skill:delete', skillDeletePayloadSchema, payload)
+    try {
+      const rootPath = expandHomePath(request.rootPath)
+      if (!rootPath) {
+        return { ok: false as const, message: 'Skill directory is required.' }
+      }
+      const skillName = normalizeSkillFolderName(request.skillName)
+      const skillDir = join(rootPath, skillName)
+      // Guard: refuse to delete bundled system skills.
+      const isBuiltin = await access(join(skillDir, SYSTEM_SKILL_MARKER))
+        .then(() => true)
+        .catch(() => false)
+      if (isBuiltin) {
+        return { ok: false as const, message: 'Built-in skills cannot be deleted.' }
+      }
+      await access(join(skillDir, 'SKILL.md'))
+      await rm(skillDir, { recursive: true, force: true })
+      return { ok: true as const }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('skill:read', async (_, payload: unknown) => {
+    const request = parseIpcPayload('skill:read', skillReadPayloadSchema, payload)
+    try {
+      const rootPath = expandHomePath(request.rootPath)
+      if (!rootPath) {
+        return { ok: false as const, message: 'Skill directory is required.' }
+      }
+      const skillName = normalizeSkillFolderName(request.skillName)
+      const skillMd = join(rootPath, skillName, 'SKILL.md')
+      const content = await readFile(skillMd, 'utf8')
+      return { ok: true as const, content, path: skillMd }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
       }
     }
   })
@@ -1003,6 +1082,16 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
 
   ipcMain.handle('trending:repos', async (_, period: unknown) =>
     getTrendingRepos(parseIpcPayload('trending:repos', trendingPeriodSchema, period))
+  )
+
+  ipcMain.handle('marketplace:catalog:get', async (_, kind: unknown) =>
+    getMarketplaceCatalog(parseIpcPayload('marketplace:catalog:get', marketplaceKindSchema, kind))
+  )
+  ipcMain.handle('marketplace:catalog:refresh', async (_, kind: unknown) =>
+    refreshMarketplaceCatalog(parseIpcPayload('marketplace:catalog:refresh', marketplaceKindSchema, kind))
+  )
+  ipcMain.handle('marketplace:skill:markdown', async (_, id: unknown) =>
+    fetchSkillMarkdown(parseIpcPayload('marketplace:skill:markdown', marketplaceSkillMarkdownSchema, id))
   )
 
   ipcMain.handle('editor:list', async () => listEditorsResult())

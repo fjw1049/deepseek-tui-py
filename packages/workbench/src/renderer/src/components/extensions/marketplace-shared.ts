@@ -1,7 +1,7 @@
 /**
- * Shared local-install helpers for the extension views (Skills / Connectors).
- * Extracted from the original PluginMarketplaceView so the two full-screen
- * pages reuse the exact same disk-write logic instead of duplicating it.
+ * Shared local-install helpers for the extension views (Skills / Connectors),
+ * so both full-screen pages reuse the exact same disk-write logic instead of
+ * duplicating it.
  */
 
 export type NoticeTone = 'success' | 'error' | 'info'

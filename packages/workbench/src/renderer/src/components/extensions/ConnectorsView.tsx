@@ -1,65 +1,40 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Loader2, Plus, RefreshCw, Search, Settings } from 'lucide-react'
+import { Loader2, Plus, RefreshCw, Search, Settings } from 'lucide-react'
 import {
   buildMcpServerEntry,
+  listMcpServers,
   mergeMcpServerIntoConfig,
   mcpConfigHasServer,
   parseMcpConfigDocument,
+  removeMcpServerFromConfig,
+  setMcpServerEnabled,
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
-import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
-import { useChatStore } from '../../store/chat-store'
-import { McpServersPanel } from '../settings/McpServersPanel'
 import { loadInstalledPlugins, saveInstalledPlugins, storageKey, normalizePluginId, type Notice } from './marketplace-shared'
-import { MarketplaceSection, NoticeView, type MarketplaceItem } from './marketplace-ui'
+import { NoticeView } from './marketplace-ui'
+import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
+import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
+import { resolveMcpInstall } from './modelscope-install'
+import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
-type ConnectorFilter = 'all' | 'installed'
-
-/** Local connector presets — each is an MCP server the runtime spawns locally. */
-const CONNECTOR_ITEMS: (MarketplaceItem & { install: (workspaceRoot: string) => McpServerEntry })[] = [
+/** Hardcoded built-in connector shown in the 内置 tab (not backed by mcp.json). */
+const BUILTIN_CONNECTORS: ConnectorItem[] = [
   {
-    id: 'filesystem',
-    kind: 'mcp',
-    titleKey: 'pluginMcpFilesystemTitle',
-    descriptionKey: 'pluginMcpFilesystemDesc',
-    install: (workspaceRoot) =>
-      buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-filesystem', workspaceRoot || '/path/to/project'])
-  },
-  {
-    id: 'playwright',
-    kind: 'mcp',
-    titleKey: 'pluginMcpPlaywrightTitle',
-    descriptionKey: 'pluginMcpPlaywrightDesc',
-    install: () => buildMcpServerEntry('npx', ['-y', '@playwright/mcp@latest'])
-  },
-  {
-    id: 'github',
-    kind: 'mcp',
-    titleKey: 'pluginMcpGithubTitle',
-    descriptionKey: 'pluginMcpGithubDesc',
-    install: () =>
-      buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-github'], {
-        GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_...'
-      })
-  },
-  {
-    id: 'context7',
-    kind: 'mcp',
-    titleKey: 'pluginMcpContext7Title',
-    descriptionKey: 'pluginMcpContext7Desc',
-    install: () => buildMcpServerEntry('npx', ['-y', '@upstash/context7-mcp@latest'])
+    id: 'yahoo-finance',
+    name: 'yahoo-finance',
+    summary: 'Yahoo Finance — 行情、财报与市场数据',
+    builtin: true,
+    enabled: true
   }
 ]
 
 export function ConnectorsView(): ReactElement {
   const { t } = useTranslation('common')
   const { t: tSettings } = useTranslation('settings')
-  const workspaceRoot = normalizeWorkspaceRoot(useChatStore((s) => s.workspaceRoot))
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<ConnectorFilter>('all')
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -68,19 +43,14 @@ export function ConnectorsView(): ReactElement {
   const [customCommand, setCustomCommand] = useState('')
   const [customArgs, setCustomArgs] = useState('')
   const [customConfig, setCustomConfig] = useState('')
-  const [mcpConfigPath, setMcpConfigPath] = useState('~/.deepseek/mcp.json')
   const [mcpConfigText, setMcpConfigText] = useState('')
-  const [mcpConfigExists, setMcpConfigExists] = useState(false)
   const [mcpLoaded, setMcpLoaded] = useState(false)
-  const [mcpBusy, setMcpBusy] = useState(false)
-  const [mcpNotice, setMcpNotice] = useState<Notice | null>(null)
+  const [reloading, setReloading] = useState(false)
 
   const readMcpConfig = useCallback(async (): Promise<string> => {
     if (typeof window.dsGui?.getMcpConfigFile !== 'function') return mcpConfigText
     const file = await window.dsGui.getMcpConfigFile()
-    setMcpConfigPath(file.path)
     setMcpConfigText(file.content)
-    setMcpConfigExists(file.exists)
     setMcpLoaded(true)
     return file.content
   }, [mcpConfigText])
@@ -91,31 +61,17 @@ export function ConnectorsView(): ReactElement {
   }, [mcpLoaded, readMcpConfig])
 
   const reloadMcp = async (): Promise<void> => {
+    setReloading(true)
     try {
       const result = await reloadMcpWithRuntime(readMcpConfig)
-      setMcpNotice({
+      setNotice({
         tone: result.runtime ? 'success' : 'info',
         message: result.runtime ? tSettings('mcpReloadRuntimeOk') : tSettings('mcpReloadDiskOnly')
       })
     } catch (e) {
-      setMcpNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
-    }
-  }
-
-  const saveMcpConfig = async (content?: string, quiet = false): Promise<void> => {
-    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
-    const payload = content ?? mcpConfigText
-    setMcpBusy(true)
-    if (!quiet) setMcpNotice(null)
-    try {
-      const result = await window.dsGui.setMcpConfigFile(payload)
-      setMcpConfigText(payload)
-      setMcpConfigExists(true)
-      if (!quiet) setMcpNotice({ tone: 'success', message: tSettings('mcpSaved', { path: result.path }) })
-    } catch (e) {
-      setMcpNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
+      setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
-      setMcpBusy(false)
+      setReloading(false)
     }
   }
 
@@ -133,13 +89,22 @@ export function ConnectorsView(): ReactElement {
     })
   }
 
-  const isInstalled = useCallback(
-    (item: Pick<MarketplaceItem, 'kind' | 'id'>): boolean => {
-      if (installed.includes(storageKey(item.kind, item.id))) return true
-      return item.kind === 'mcp' && mcpConfigHasServer(mcpConfigText, item.id)
-    },
-    [installed, mcpConfigText]
-  )
+  // Real connectors come from mcp.json servers; the built-in one is prepended.
+  const connectors = useMemo<ConnectorItem[]>(() => {
+    const userConnectors = listMcpServers(mcpConfigText).map((server) => ({
+      id: server.id,
+      name: server.id,
+      summary: server.summary,
+      builtin: false,
+      enabled: server.enabled
+    }))
+    const normalizedQuery = query.trim().toLowerCase()
+    const all = [...BUILTIN_CONNECTORS, ...userConnectors]
+    if (!normalizedQuery) return all
+    return all.filter(
+      (c) => c.name.toLowerCase().includes(normalizedQuery) || c.summary.toLowerCase().includes(normalizedQuery)
+    )
+  }, [mcpConfigText, query])
 
   const appendMcpServer = async (id: string, entry: McpServerEntry): Promise<void> => {
     if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
@@ -157,30 +122,61 @@ export function ConnectorsView(): ReactElement {
     setNotice({ tone: 'success', message: t('pluginMcpAdded', { path: result.path }) })
   }
 
-  const visibleItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    return CONNECTOR_ITEMS.filter((item) => {
-      const title = t(item.titleKey).toLowerCase()
-      const description = t(item.descriptionKey).toLowerCase()
-      return !normalizedQuery || title.includes(normalizedQuery) || description.includes(normalizedQuery)
-    }).filter((item) => (filter === 'installed' ? isInstalled(item) : true))
-  }, [filter, isInstalled, query, t])
-
-  const recommendedItems = visibleItems.filter((item) => !isInstalled(item))
-  const personalItems = visibleItems.filter(isInstalled)
-
-  const addItem = async (item: MarketplaceItem): Promise<void> => {
-    const preset = CONNECTOR_ITEMS.find((entry) => entry.id === item.id)
-    if (!preset) return
-    setBusyId(storageKey(item.kind, item.id))
+  const deleteConnector = async (connector: ConnectorItem): Promise<void> => {
+    if (connector.builtin || typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    if (!window.confirm(t('connectorDeleteConfirm', { name: connector.name }))) return
+    setBusyId(connector.id)
     setNotice(null)
     try {
-      await appendMcpServer(item.id, preset.install(workspaceRoot))
+      const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+      const next = removeMcpServerFromConfig(content, connector.id)
+      const result = await window.dsGui.setMcpConfigFile(next)
+      setMcpConfigText(next)
+      setInstalled((prev) => {
+        const filtered = prev.filter((key) => key !== storageKey('mcp', connector.id))
+        saveInstalledPlugins(filtered)
+        return filtered
+      })
+      setNotice({ tone: 'success', message: t('connectorDeleted', { name: connector.name, path: result.path }) })
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusyId(null)
     }
+  }
+
+  const toggleConnector = async (connector: ConnectorItem, enabled: boolean): Promise<void> => {
+    if (connector.builtin || typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    setBusyId(connector.id)
+    setNotice(null)
+    try {
+      const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+      const next = setMcpServerEnabled(content, connector.id, enabled)
+      await window.dsGui.setMcpConfigFile(next)
+      setMcpConfigText(next)
+    } catch (e) {
+      setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const isMarketplaceInstalled = useCallback(
+    (item: MarketplaceItem): boolean =>
+      installed.includes(storageKey('mcp', item.id)) || mcpConfigHasServer(mcpConfigText, item.id),
+    [installed, mcpConfigText]
+  )
+
+  const installFromMarketplace = async (item: MarketplaceItem): Promise<InstallOutcome | null> => {
+    const resolution = resolveMcpInstall(item)
+    if (resolution.mode === 'manual') {
+      if (item.sourceUrl && typeof window.dsGui?.openExternal === 'function') {
+        await window.dsGui.openExternal(item.sourceUrl)
+      }
+      return { tone: 'info', message: t('marketplaceMcpManual') }
+    }
+    await appendMcpServer(item.id, resolution.entry)
+    return null
   }
 
   const addCustom = async (): Promise<void> => {
@@ -229,6 +225,15 @@ export function ConnectorsView(): ReactElement {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => void reloadMcp()}
+              disabled={reloading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${reloading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+              {t('connectorReload')}
+            </button>
+            <button
+              type="button"
               onClick={() => void openConfigDir()}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover"
             >
@@ -248,44 +253,15 @@ export function ConnectorsView(): ReactElement {
 
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('connectorsIntro')}</p>
 
-        <div className="ds-content-card mt-8 rounded-2xl p-5">
-          <h2 className="mb-4 text-[18px] font-semibold text-ds-ink">{t('connectorsInstalled')}</h2>
-          <McpServersPanel
-            configPath={mcpConfigPath}
-            configText={mcpConfigText}
-            configExists={mcpConfigExists}
-            loading={!mcpLoaded}
-            busy={mcpBusy}
-            notice={mcpNotice}
-            onConfigTextChange={setMcpConfigText}
-            onReload={() => void reloadMcp()}
-            onSave={(content, quiet) => void saveMcpConfig(content, quiet)}
-            onOpenConfigFolder={() => void openConfigDir()}
+        <label className="relative mt-6 block">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
+            placeholder={t('connectorsSearch')}
           />
-        </div>
-
-        <div className="mt-9 flex flex-col gap-3 md:flex-row md:items-center">
-          <label className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-              placeholder={t('connectorsSearch')}
-            />
-          </label>
-          <label className="relative w-full md:w-[168px]">
-            <select
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as ConnectorFilter)}
-              className="h-11 w-full appearance-none rounded-2xl border border-ds-border bg-ds-card px-4 pr-9 text-[15px] font-medium text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-            >
-              <option value="all">{t('pluginFilterAll')}</option>
-              <option value="installed">{t('pluginFilterInstalled')}</option>
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
-          </label>
-        </div>
+        </label>
 
         {customOpen ? (
           <section className="ds-content-card mt-6 rounded-2xl p-4">
@@ -337,24 +313,21 @@ export function ConnectorsView(): ReactElement {
 
         {notice ? <NoticeView notice={notice} /> : null}
 
-        <MarketplaceSection
-          title={t('pluginRecommended')}
-          emptyText={t('pluginNoResults')}
-          items={recommendedItems}
-          busyId={busyId}
-          isInstalled={isInstalled}
-          onAdd={addItem}
-          t={t}
-        />
+        <div className="mt-6">
+          <InstalledConnectorsPanel
+            connectors={connectors}
+            loading={!mcpLoaded}
+            busyId={busyId}
+            onToggle={(connector, enabled) => void toggleConnector(connector, enabled)}
+            onDelete={(connector) => void deleteConnector(connector)}
+          />
+        </div>
 
-        <MarketplaceSection
-          title={t('pluginPersonal')}
-          emptyText={t('pluginPersonalEmpty')}
-          items={personalItems}
-          busyId={busyId}
-          isInstalled={isInstalled}
-          onAdd={addItem}
-          t={t}
+        <MarketplaceBrowser
+          kind="mcp"
+          query={query}
+          isInstalled={isMarketplaceInstalled}
+          onInstall={installFromMarketplace}
         />
 
         <div className="mt-8 flex items-center gap-2 text-[12px] text-ds-faint">

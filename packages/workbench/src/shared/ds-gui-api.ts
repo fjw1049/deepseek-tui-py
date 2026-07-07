@@ -257,6 +257,47 @@ export type TrendingResult =
   | { ok: true; repos: TrendingRepo[]; period: TrendingPeriod; cachedAt: number }
   | { ok: false; error: string }
 
+/** ModelScope public marketplace (connectors=mcp / skills=skill). */
+export type MarketplaceKind = 'mcp' | 'skill'
+
+export type MarketplaceItem = {
+  id: string
+  name: string
+  description: string
+  publisher: string
+  categories: string[]
+  sourceUrl: string
+  /** MCP only: remote server URL (empty in the public listing). */
+  deployedUrl: string
+  deployedTransport: string
+  /** MCP only: full README markdown, used to extract an install config client-side. */
+  readme: string
+  /** MCP call volume or skill download count, for sorting. */
+  metric: number
+  isTop: number
+  /** Skill only. */
+  source?: string
+  tags?: string[]
+}
+
+export type MarketplaceCategory = { value: string; count: number }
+
+export type MarketplaceCatalogResult =
+  | {
+      ok: true
+      kind: MarketplaceKind
+      items: MarketplaceItem[]
+      categories: MarketplaceCategory[]
+      cachedAt: number
+      /** True when the network fetch failed and a stale cache was served instead. */
+      stale: boolean
+    }
+  | { ok: false; error: string }
+
+export type SkillMarkdownResult =
+  | { ok: true; content: string }
+  | { ok: false; sourceUrl: string }
+
 export type { UsageQueryResult, UsageRange } from './usage-ledger'
 
 export type DsGuiApi = {
@@ -288,9 +329,17 @@ export type DsGuiApi = {
   saveSkillFile: (rootPath: string, skillName: string, content: string) => Promise<SkillSaveResult>
   openSkillRoot: (rootPath: string) => Promise<PathOpenResult>
   listSkillsInRoot: (rootPath: string) => Promise<
-    | { ok: true; skills: Array<{ id: string; name: string; path: string }> }
+    | {
+        ok: true
+        skills: Array<{ id: string; name: string; path: string; description: string; builtin: boolean }>
+      }
     | { ok: false; message?: string; skills: [] }
   >
+  deleteSkill: (rootPath: string, skillName: string) => Promise<{ ok: true } | { ok: false; message?: string }>
+  readSkill: (
+    rootPath: string,
+    skillName: string
+  ) => Promise<{ ok: true; content: string; path: string } | { ok: false; message?: string }>
   getDeepseekConfigFile: () => Promise<DeepseekConfigFileResult>
   setDeepseekConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>
   openDeepseekConfigDir: () => Promise<PathOpenResult>
@@ -325,6 +374,9 @@ export type DsGuiApi = {
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
   getWorkspaceSuggestions: (workspaceRoot: string) => Promise<WorkspaceSuggestionsResult>
   getTrendingRepos: (period: TrendingPeriod) => Promise<TrendingResult>
+  getMarketplaceCatalog: (kind: MarketplaceKind) => Promise<MarketplaceCatalogResult>
+  refreshMarketplaceCatalog: (kind: MarketplaceKind) => Promise<MarketplaceCatalogResult>
+  fetchSkillMarkdown: (id: string) => Promise<SkillMarkdownResult>
   queryUsage: (params?: { range?: UsageRange; locale?: string }) => Promise<UsageQueryResult>
   pruneUsageProvider: (providerId: string) => Promise<{ ok: true }>
   pruneUsageEndpointModel: (providerId: string, modelId: string) => Promise<{ ok: true }>
