@@ -1090,20 +1090,6 @@ samp {
   pointer-events: none;
 }
 
-.ds-sidebar-workbench-label {
-  display: inline-flex;
-  height: 2rem;
-  align-items: center;
-  border-radius: 8px;
-  background: transparent;
-  padding-inline: 0.35rem;
-  color: var(--text-primary);
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  box-shadow: none;
-}
-
 .ds-sidebar-workbench-icon {
   display: inline-flex;
   height: 2rem;
