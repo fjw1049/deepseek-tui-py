@@ -397,6 +397,8 @@
   "composerAttachUnavailable": "当前环境无法打开系统文件选择框。",
   "composerAttachFailed": "未能添加所选文件。",
   "composerAttachmentRemove": "移除附件",
+  "composerAttachUploading": "上传中 {{percent}}%",
+  "composerAttachCompleted": "已完成",
   "composerSkillFocus": "聚焦模式：本轮仅由「{{name}}」技能引导",
   "composerConnectorFocus": "聚焦模式：本轮仅由「{{name}}」连接器作答",
   "composerModelSection": "模型",

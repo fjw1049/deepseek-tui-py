@@ -397,6 +397,8 @@
   "composerAttachUnavailable": "Cannot open the system file picker in this environment.",
   "composerAttachFailed": "Could not attach the selected files.",
   "composerAttachmentRemove": "Remove attachment",
+  "composerAttachUploading": "Uploading {{percent}}%",
+  "composerAttachCompleted": "Completed",
   "composerSkillFocus": "Focus mode: only the \"{{name}}\" skill will guide this turn",
   "composerConnectorFocus": "Focus mode: only the \"{{name}}\" connector will answer this turn",
   "composerModelSection": "Model",

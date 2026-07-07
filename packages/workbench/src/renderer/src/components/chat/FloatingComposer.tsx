@@ -9,6 +9,7 @@ import {
 } from 'react'
 import {
   Bot,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock3,
@@ -30,6 +31,7 @@ import {
   Square,
   Gauge,
   Mic,
+  Trash2,
   Wand2,
   Workflow,
   X
@@ -42,6 +44,7 @@ import {
   formatComposerModelLabel
 } from '../../lib/composer-model-label'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
+import { formatBytes } from '../../lib/format-bytes'
 import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash-commands'
 import {
   isUnknownComposerSlashCommand,
@@ -68,6 +71,55 @@ export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
 type ComposerAttachment = {
   id: string
   path: string
+  name: string
+  size: number
+  status: 'uploading' | 'done'
+  progress: number
+}
+
+type FileBadge = { label: string; className: string }
+
+function fileBasename(path: string): string {
+  return path.split(/[/\\]/).filter(Boolean).pop() ?? path
+}
+
+// Map a filename to a colored badge by extension. Pure CSS/text — no image
+// assets. Colors mirror the rgba style used by the skill/connector chips below.
+function fileBadge(name: string): FileBadge {
+  const ext = (name.split('.').pop() ?? '').toLowerCase()
+  const label = ext ? ext.toUpperCase() : 'FILE'
+  const palette: Record<string, string> = {
+    green: 'bg-[rgba(16,185,129,0.16)] text-[#059669]',
+    red: 'bg-[rgba(239,68,68,0.16)] text-[#dc2626]',
+    blue: 'bg-[rgba(59,130,246,0.16)] text-[#2563eb]',
+    purple: 'bg-[rgba(139,92,246,0.16)] text-[#7c3aed]',
+    slate: 'bg-[rgba(100,116,139,0.16)] text-[#475569]',
+    amber: 'bg-[rgba(245,158,11,0.16)] text-[#d97706]'
+  }
+  const byExt: Record<string, keyof typeof palette> = {
+    xlsx: 'green',
+    xls: 'green',
+    csv: 'green',
+    pdf: 'red',
+    doc: 'blue',
+    docx: 'blue',
+    png: 'purple',
+    jpg: 'purple',
+    jpeg: 'purple',
+    gif: 'purple',
+    webp: 'purple',
+    bmp: 'purple',
+    heic: 'purple',
+    md: 'slate',
+    txt: 'slate',
+    js: 'amber',
+    ts: 'amber',
+    tsx: 'amber',
+    jsx: 'amber',
+    py: 'amber',
+    json: 'amber'
+  }
+  return { label, className: palette[byExt[ext] ?? 'slate'] }
 }
 
 type QueuedComposerMessage = {
@@ -194,6 +246,9 @@ export function FloatingComposer({
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  // Simulated-upload interval handles keyed by attachment id, cleared on remove,
+  // send, and unmount so no timer fires setState on an unmounted component.
+  const attachTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
   // Focus-mode skill picked from the `/skills` panel. Held out of the input
   // text (rendered as an inline chip) and prepended as `/name ` only on send,
   // so the runtime's leading-token focus detection still works unchanged.
@@ -729,6 +784,48 @@ export function FloatingComposer({
     resetVoiceSession()
   }, [activeThreadId, resetVoiceSession])
 
+  const clearAttachTimer = (id: string): void => {
+    const timer = attachTimersRef.current.get(id)
+    if (timer !== undefined) {
+      clearInterval(timer)
+      attachTimersRef.current.delete(id)
+    }
+  }
+
+  // Drive a card from 0→100% then mark it done. There is no real network
+  // upload (attachments are `@path` mentions injected on send); this is a
+  // human-friendly progress animation over the file's real byte size. Honors
+  // reduced-motion by jumping straight to done.
+  const simulateUpload = (id: string): void => {
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduceMotion) {
+      setAttachments((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, progress: 100, status: 'done' } : item
+        )
+      )
+      return
+    }
+    const stepMs = 90
+    const increment = 7
+    const timer = setInterval(() => {
+      setAttachments((prev) =>
+        prev.map((item) => {
+          if (item.id !== id || item.status === 'done') return item
+          const next = Math.min(100, item.progress + increment)
+          if (next >= 100) {
+            clearAttachTimer(id)
+            return { ...item, progress: 100, status: 'done' }
+          }
+          return { ...item, progress: next }
+        })
+      )
+    }, stepMs)
+    attachTimersRef.current.set(id, timer)
+  }
+
   const pickAttachments = async (): Promise<void> => {
     clearAttachNotice()
     if (typeof window.dsGui === 'undefined') {
@@ -747,22 +844,34 @@ export function FloatingComposer({
       setAttachNotice(result.message ?? t('composerAttachFailed'))
       return
     }
-    if (result.paths.length === 0) return
+    if (result.files.length === 0) return
+    const added: string[] = []
     setAttachments((prev) => {
       const seen = new Set(prev.map((item) => item.path))
       const next = [...prev]
-      for (const path of result.paths) {
-        if (seen.has(path)) continue
-        seen.add(path)
-        next.push({ id: `att-${path}`, path })
+      for (const file of result.files) {
+        if (seen.has(file.path)) continue
+        seen.add(file.path)
+        const id = `att-${file.path}`
+        added.push(id)
+        next.push({
+          id,
+          path: file.path,
+          name: fileBasename(file.path),
+          size: file.size,
+          status: 'uploading',
+          progress: 0
+        })
       }
       return next
     })
+    for (const id of added) simulateUpload(id)
     setPlusMenuOpen(false)
     focusComposer()
   }
 
   const removeAttachment = (id: string): void => {
+    clearAttachTimer(id)
     setAttachments((prev) => prev.filter((item) => item.id !== id))
   }
 
@@ -773,6 +882,14 @@ export function FloatingComposer({
   useEffect(() => {
     return () => onNoticeChange?.(null)
   }, [onNoticeChange])
+
+  useEffect(() => {
+    const timers = attachTimersRef.current
+    return () => {
+      timers.forEach((timer) => clearInterval(timer))
+      timers.clear()
+    }
+  }, [])
 
   const handlePrimaryAction = (): void => {
     if (voiceActive) return
@@ -820,6 +937,8 @@ export function FloatingComposer({
         ? `@${focusConnector} ${body}`.trim()
         : body
     if (!payload.trim()) return
+    attachTimersRef.current.forEach((timer) => clearInterval(timer))
+    attachTimersRef.current.clear()
     setAttachments([])
     setInput('')
     setFocusSkill(null)
@@ -1020,22 +1139,81 @@ export function FloatingComposer({
         >
           {attachments.length > 0 ? (
             <div className="flex flex-wrap gap-2 px-1 pt-1">
-              {attachments.map((item) => (
-                <div
-                  key={item.id}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-ds-border-muted bg-ds-main/80 px-2.5 py-1 text-[12px] text-ds-ink"
-                >
-                  <span className="truncate">@{item.path}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(item.id)}
-                    className="shrink-0 rounded-full p-0.5 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-                    aria-label={t('composerAttachmentRemove')}
+              {attachments.map((item) => {
+                const badge = fileBadge(item.name)
+                const uploading = item.status === 'uploading'
+                const loaded = Math.round((item.size * item.progress) / 100)
+                return (
+                  <div
+                    key={item.id}
+                    className="flex min-w-[200px] max-w-[260px] flex-col gap-1.5 overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-main/80 px-2.5 py-2"
                   >
-                    <X className="h-3 w-3" strokeWidth={2} />
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] text-[9px] font-semibold tracking-tight ${badge.className}`}
+                        aria-hidden
+                      >
+                        {badge.label}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] font-medium text-ds-ink" title={item.path}>
+                          {item.name}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1 text-[11px] text-ds-faint">
+                          {uploading ? (
+                            <span className="truncate">
+                              {t('composerAttachUploading', {
+                                percent: item.progress
+                              })}
+                              {' · '}
+                              {formatBytes(loaded)} of {formatBytes(item.size)}
+                            </span>
+                          ) : (
+                            <>
+                              <CheckCircle2
+                                className="h-3.5 w-3.5 shrink-0 text-[#10b981]"
+                                strokeWidth={2}
+                              />
+                              <span className="truncate">
+                                {t('composerAttachCompleted')}
+                                {' · '}
+                                {formatBytes(item.size)}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {!uploading ? (
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(item.id)}
+                          className="shrink-0 rounded-full p-1 text-ds-faint transition hover:bg-[rgba(239,68,68,0.12)] hover:text-[#dc2626]"
+                          aria-label={t('composerAttachmentRemove')}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(item.id)}
+                          className="shrink-0 rounded-full p-1 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                          aria-label={t('composerAttachmentRemove')}
+                        >
+                          <X className="h-3.5 w-3.5" strokeWidth={2} />
+                        </button>
+                      )}
+                    </div>
+                    {uploading ? (
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-ds-hover/70">
+                        <div
+                          className="h-full rounded-full bg-[linear-gradient(90deg,#6366f1,#4f7cff)] transition-[width] duration-150 ease-out"
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
           ) : null}
 

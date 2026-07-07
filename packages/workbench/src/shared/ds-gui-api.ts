@@ -32,7 +32,7 @@ export type RuntimeRequestResult = { ok: boolean; status: number; body: string }
 export type WorkspacePickResult = { canceled: boolean; path: string | null }
 
 export type WorkspacePickFilesResult =
-  | { ok: true; paths: string[] }
+  | { ok: true; paths: string[]; files: Array<{ path: string; size: number }> }
   | { ok: false; message?: string; paths: [] }
 export type TuiSessionPickResult = { canceled: boolean; path: string | null }
 export type TuiSessionSummary = {

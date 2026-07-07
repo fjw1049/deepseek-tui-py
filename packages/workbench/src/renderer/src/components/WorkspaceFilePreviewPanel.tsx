@@ -3,6 +3,7 @@ import { Check, Copy, ExternalLink, FileCode2, Loader2, PanelRightClose } from '
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatFilePathForDisplay } from '../lib/diff-stats'
+import { formatBytes } from '../lib/format-bytes'
 import { openWorkspacePathInEditor } from '../lib/open-workspace-path'
 
 type Props = {
@@ -13,12 +14,6 @@ type Props = {
 }
 
 const COPY_RESET_MS = 1400
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 function fileNameFromPath(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).pop() ?? path

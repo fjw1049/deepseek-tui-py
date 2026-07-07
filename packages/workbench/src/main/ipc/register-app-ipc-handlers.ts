@@ -2,7 +2,7 @@ import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
-import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
 import type {
@@ -452,22 +452,28 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       ? await dialog.showOpenDialog(mainWindow, options)
       : await dialog.showOpenDialog(options)
     if (result.canceled) {
-      return { ok: true as const, paths: [] as const }
+      return { ok: true as const, paths: [] as const, files: [] as const }
     }
     const resolvedRoot = workspaceRoot ? await canonicalPath(resolve(workspaceRoot)) : null
-    const paths: string[] = []
+    const files: Array<{ path: string; size: number }> = []
     for (const picked of result.filePaths) {
       const abs = await canonicalPath(resolve(picked))
+      let displayPath = abs.split('\\').join('/')
       if (resolvedRoot) {
         const rel = relative(resolvedRoot, abs)
         if (rel && !rel.startsWith('..') && !rel.startsWith('/')) {
-          paths.push(rel.split('\\').join('/'))
-          continue
+          displayPath = rel.split('\\').join('/')
         }
       }
-      paths.push(abs.split('\\').join('/'))
+      let size = 0
+      try {
+        size = (await stat(abs)).size
+      } catch {
+        size = 0
+      }
+      files.push({ path: displayPath, size })
     }
-    return { ok: true as const, paths }
+    return { ok: true as const, paths: files.map((f) => f.path), files }
   })
 
   ipcMain.handle('workspace:pick-directory', async (_, defaultPath: unknown): Promise<WorkspacePickResult> => {
