@@ -540,6 +540,26 @@ export function FloatingComposer({
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [modelMenuOpen, plusMenuOpen])
 
+  // When the runtime transitions from offline→ready, invalidate the cached
+  // skills/connectors lists. Without this, a user who opened the `+` menu
+  // before the runtime connected would see "no skills" / "no connectors"
+  // forever — loadComposerSkills/loadComposerConnectors short-circuit on
+  // `skillsLoaded`/`connectorsLoaded` and never re-fetch once the runtime is
+  // actually available.
+  const prevRuntimeReadyRef = useRef(runtimeReady)
+  useEffect(() => {
+    const prev = prevRuntimeReadyRef.current
+    prevRuntimeReadyRef.current = runtimeReady
+    if (!prev && runtimeReady) {
+      setSkillsLoaded(false)
+      setSkillsLoading(false)
+      setComposerSkills([])
+      setConnectorsLoaded(false)
+      setConnectorsLoading(false)
+      setComposerConnectors([])
+    }
+  }, [runtimeReady])
+
   // Collapse the hovered submenu (and clear the skill filter) whenever the
   // `+` menu closes, so it reopens on the first-level list next time.
   useEffect(() => {
@@ -560,10 +580,14 @@ export function FloatingComposer({
     void window.dsGui
       .runtimeRequest('/v1/skills', 'GET')
       .then((result) => {
-        if (result.ok) {
+        if (!result.ok) return
+        try {
           setComposerSkills((JSON.parse(result.body) as { skills?: typeof composerSkills }).skills ?? [])
+        } catch {
+          // Malformed JSON: leave the list as-is rather than crashing the menu.
         }
       })
+      .catch(() => undefined)
       .finally(() => {
         setSkillsLoaded(true)
         setSkillsLoading(false)
@@ -610,17 +634,22 @@ export function FloatingComposer({
       .runtimeRequest('/v1/mcp/servers', 'GET')
       .then((result) => {
         if (!result.ok) return
-        const parsed = JSON.parse(result.body) as {
-          servers?: Array<{ name: string; transport?: string; connected?: boolean }>
+        try {
+          const parsed = JSON.parse(result.body) as {
+            servers?: Array<{ name: string; transport?: string; connected?: boolean }>
+          }
+          setComposerConnectors(
+            (parsed.servers ?? []).map((s) => ({
+              id: s.name,
+              summary: s.transport ?? '',
+              connected: s.connected === true
+            }))
+          )
+        } catch {
+          // Malformed JSON: leave the list as-is rather than crashing the menu.
         }
-        setComposerConnectors(
-          (parsed.servers ?? []).map((s) => ({
-            id: s.name,
-            summary: s.transport ?? '',
-            connected: s.connected === true
-          }))
-        )
       })
+      .catch(() => undefined)
       .finally(() => {
         setConnectorsLoaded(true)
         setConnectorsLoading(false)
@@ -797,6 +826,10 @@ export function FloatingComposer({
   // human-friendly progress animation over the file's real byte size. Honors
   // reduced-motion by jumping straight to done.
   const simulateUpload = (id: string): void => {
+    // Idempotent: if a timer for this id is already running (e.g. React
+    // StrictMode double-invokes the pickAttachments setter path), clear it
+    // before starting a new one so we never orphan an interval.
+    clearAttachTimer(id)
     const reduceMotion =
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -845,26 +878,36 @@ export function FloatingComposer({
       return
     }
     if (result.files.length === 0) return
+    // Compute new attachments OUTSIDE the setAttachments updater. Mutating an
+    // outer array inside a setState updater is unsafe under React StrictMode
+    // (which double-invokes updaters) — it would duplicate ids and cause
+    // simulateUpload to register multiple intervals for the same attachment,
+    // orphaning timers. Reading `attachments` from the closure is safe here
+    // because pickAttachments awaits the modal file picker, so no other
+    // attachment mutation can race this point.
+    const seen = new Set(attachments.map((item) => item.path))
     const added: string[] = []
-    setAttachments((prev) => {
-      const seen = new Set(prev.map((item) => item.path))
-      const next = [...prev]
-      for (const file of result.files) {
-        if (seen.has(file.path)) continue
-        seen.add(file.path)
-        const id = `att-${file.path}`
-        added.push(id)
-        next.push({
-          id,
-          path: file.path,
-          name: fileBasename(file.path),
-          size: file.size,
-          status: 'uploading',
-          progress: 0
-        })
-      }
-      return next
-    })
+    const next: ComposerAttachment[] = [...attachments]
+    for (const file of result.files) {
+      if (seen.has(file.path)) continue
+      seen.add(file.path)
+      const id = `att-${file.path}`
+      added.push(id)
+      next.push({
+        id,
+        path: file.path,
+        name: fileBasename(file.path),
+        size: file.size,
+        status: 'uploading',
+        progress: 0
+      })
+    }
+    if (added.length === 0) {
+      setPlusMenuOpen(false)
+      focusComposer()
+      return
+    }
+    setAttachments(next)
     for (const id of added) simulateUpload(id)
     setPlusMenuOpen(false)
     focusComposer()

@@ -1090,18 +1090,6 @@ samp {
   pointer-events: none;
 }
 
-.ds-sidebar-workbench-icon {
-  display: inline-flex;
-  height: 2rem;
-  width: 2rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-tertiary);
-  box-shadow: none;
-}
-
 .ds-sidebar-section-label {
   font-family: var(--font-ui);
   font-size: 0.75rem;

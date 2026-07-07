@@ -30,6 +30,25 @@ def _detect_focus_prefix(text: str, sigil: str) -> str | None:
     return first or None
 
 
+def _strip_focus_prefix(text: str, sigil: str, name: str) -> str:
+    """移除整条消息首个 ``<sigil><name>`` token（及一个分隔空白），返回剩余文本。
+
+    与 :func:`_detect_focus_prefix` 对称：仅当首个 token 恰为 ``<sigil><name>``
+    时才剥离。用于 MCP 连接器聚焦时把开头的 ``@<name>`` 从用户输入里摘掉，
+    避免 :func:`prepare_turn_for_model` 把它当作文件 mention 展开（注入
+    ``<missing-file>`` 块或内联同名工作区文件）。剥掉一个空白分隔符后保留
+    其余原文，调用方在处理完成后会重新把 ``<sigil><name> `` 拼回用户消息。
+    """
+    stripped = (text or "").lstrip()
+    prefix = f"{sigil}{name}"
+    if not stripped.startswith(prefix):
+        return text or ""
+    rest = stripped[len(prefix):]
+    if rest[:1] in (" ", "\t", "\n", "\r"):
+        rest = rest[1:]
+    return rest
+
+
 def _detect_focus_skill(text: str, registry: object | None) -> object | None:
     """解析形如 `/data-extract ...` 的前缀，命中已发现 skill 时返回该 Skill。
 

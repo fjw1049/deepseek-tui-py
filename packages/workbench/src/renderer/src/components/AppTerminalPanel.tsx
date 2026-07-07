@@ -255,6 +255,27 @@ export function AppTerminalPanel({
     sessionNodeRefs.current = {}
   }, [mountActive])
 
+  // Unmount cleanup: the bottom terminal is conditionally rendered
+  // ({bottomTerminalOpen ? <AppTerminalPanel/> : null}), so closing it
+  // unmounts the component while `mountActive` stays `true` — the effect
+  // above never fires. Dispose any surviving xterm handles here so we don't
+  // leak one xterm instance (DOM, scrollback, listeners) per open/close.
+  // We intentionally read the ref at cleanup time (not capture-at-mount)
+  // because handles are added/removed over the component's lifetime; the
+  // exhaustive-deps warning assumes React-rendered nodes and does not apply
+  // to this manually-managed Map of xterm instances (same pattern as the
+  // mountActive dispose effect above).
+  useEffect(() => {
+    return () => {
+      for (const handle of terminalHandlesRef.current.values()) {
+        handle.inputDisposable.dispose()
+        handle.terminal.dispose()
+      }
+      terminalHandlesRef.current.clear()
+      sessionNodeRefs.current = {}
+    }
+  }, [])
+
   const closeSession = (sessionId: string): void => {
     const handle = terminalHandlesRef.current.get(sessionId)
     if (handle) {

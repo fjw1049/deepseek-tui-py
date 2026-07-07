@@ -116,10 +116,22 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     setRoute: (route) => set({ route }),
 
     openSettings: (section: SettingsRouteSection | LegacySettingsRouteSection = 'general') => {
+      // Legacy deep links: ``mcp`` and ``skill`` previously opened settings
+      // tabs that have since migrated to the 应用拓展 pages. Redirect to the
+      // new routes instead of dropping the user on 通用 — old bookmarks and
+      // external callers (e.g. error banners) still pass these section ids.
+      if (section === 'mcp') {
+        set({ route: 'connectors' })
+        return
+      }
+      if (section === 'skill') {
+        set({ route: 'skills' })
+        return
+      }
       const normalized: SettingsRouteSection =
         section === 'agents'
           ? 'models'
-          : section === 'runtime' || section === 'claw' || section === 'mcp' || section === 'skill'
+          : section === 'runtime' || section === 'claw'
             ? 'general'
             : section
       set({

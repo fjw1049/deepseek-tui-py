@@ -327,30 +327,6 @@ export interface AgentProvider {
   fetchPendingEvolution?(threadId: string): Promise<EvolutionProposalPayload[]>
   /** Runtime HTTP: GET /v1/user-inputs/pending */
   fetchPendingUserInputs?(threadId: string): Promise<UserInputRequestPayload[]>
-  /** Runtime HTTP: POST /v1/threads/import-session */
-  importTuiSession?(input: {
-    sessionId?: string
-    path?: string
-    title?: string
-    workspace?: string
-  }): Promise<NormalizedThread>
-  /** Runtime HTTP: GET /v1/sessions */
-  listSessions?(limit?: number): Promise<{
-    dir: string
-    sessions: Array<{
-      kind: 'tui' | 'thread'
-      sessionId?: string
-      path?: string
-      threadId?: string
-      title: string
-      model?: string
-      workspace?: string
-      messageCount?: number
-      modifiedAt: string
-      importState: 'available' | 'linked' | 'native'
-      linkedThreadId?: string | null
-    }>
-  }>
   /** Runtime HTTP: POST /v1/threads/{id}/export-session */
   exportThreadToSession?(
     threadId: string,

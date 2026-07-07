@@ -34,20 +34,6 @@ export type WorkspacePickResult = { canceled: boolean; path: string | null }
 export type WorkspacePickFilesResult =
   | { ok: true; paths: string[]; files: Array<{ path: string; size: number }> }
   | { ok: false; message?: string; paths: [] }
-export type TuiSessionPickResult = { canceled: boolean; path: string | null }
-export type TuiSessionSummary = {
-  sessionId: string
-  path: string
-  title: string
-  model?: string
-  workspace?: string
-  messageCount: number
-  modifiedAt: string
-}
-export type ListTuiSessionsResult = {
-  dir: string
-  sessions: TuiSessionSummary[]
-}
 export type PathOpenResult = { ok: boolean; message?: string; path?: string }
 export type SkillSaveResult = { ok: true; path: string } | { ok: false; message: string }
 export type DeepseekConfigFileResult = { path: string; content: string; exists: boolean }
@@ -324,8 +310,6 @@ export type DsGuiApi = {
     defaultPath?: string
     workspaceRoot?: string
   }) => Promise<WorkspacePickFilesResult>
-  listTuiSessions: () => Promise<ListTuiSessionsResult>
-  pickTuiSessionFile: (defaultPath?: string) => Promise<TuiSessionPickResult>
   saveSkillFile: (rootPath: string, skillName: string, content: string) => Promise<SkillSaveResult>
   openSkillRoot: (rootPath: string) => Promise<PathOpenResult>
   listSkillsInRoot: (rootPath: string) => Promise<

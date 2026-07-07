@@ -1,7 +1,7 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
@@ -70,7 +70,6 @@ import {
   refreshMarketplaceCatalog
 } from '../services/modelscope-marketplace'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
-import { defaultTuiSessionsDir, listTuiSessions } from '../services/tui-session-service'
 import { transcribeAudio } from '../services/asr-transcription-service'
 import { readAsrConfigFile, writeAsrConfigFile } from '../asr-config'
 import {
@@ -155,6 +154,21 @@ const settingsPatchSchema = z.object({}).passthrough()
 
 /** Marker file bundled system skills carry (see integrations/skills.py). */
 const SYSTEM_SKILL_MARKER = '.system-installed-version'
+
+/** Cap skill:read content at 1 MB (matches skill:save-file) so a gigantic or
+ * malicious SKILL.md can't exhaust main-process memory or blow up the IPC
+ * channel to the renderer. */
+const SKILL_READ_MAX_BYTES = 1_048_576
+
+/** Defense-in-depth: verify a resolved skill path stays inside its root.
+ * `normalizeSkillFolderName` already rejects `..` and path separators, but a
+ * symlinked skill dir or a future caller bypassing that normalization could
+ * otherwise let skill:read/skill:delete touch files outside the skill root. */
+function isPathWithinRoot(target: string, root: string): boolean {
+  const r = resolve(root)
+  const t = resolve(target)
+  return t === r || t.startsWith(r + sep)
+}
 
 /** Pull the `description:` value out of a SKILL.md YAML frontmatter block. */
 function parseSkillDescription(content: string): string {
@@ -523,33 +537,6 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     }
   })
 
-  ipcMain.handle('tui-sessions:list', async () => ({
-    dir: defaultTuiSessionsDir(),
-    sessions: await listTuiSessions()
-  }))
-
-  ipcMain.handle('tui-sessions:pick-file', async (_, defaultPath: unknown) => {
-    const normalizedDefaultPath = parseIpcPayload(
-      'tui-sessions:pick-file',
-      z.object({ defaultPath: defaultPathSchema }).strict(),
-      { defaultPath }
-    ).defaultPath
-    const options: Electron.OpenDialogOptions = {
-      title: 'Select TUI session JSON',
-      defaultPath: normalizedDefaultPath || defaultTuiSessionsDir(),
-      properties: ['openFile', 'dontAddToRecent'],
-      filters: [{ name: 'Session JSON', extensions: ['json'] }]
-    }
-    const mainWindow = getMainWindow()
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options)
-    return {
-      canceled: result.canceled,
-      path: result.canceled ? null : (result.filePaths[0] ?? null)
-    }
-  })
-
   ipcMain.handle(
     'skill:save-file',
     async (_, payload: unknown) => {
@@ -621,6 +608,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       }
       const skillName = normalizeSkillFolderName(request.skillName)
       const skillDir = join(rootPath, skillName)
+      if (!isPathWithinRoot(skillDir, rootPath)) {
+        return { ok: false as const, message: 'Skill path escapes the skill root.' }
+      }
       // Guard: refuse to delete bundled system skills.
       const isBuiltin = await access(join(skillDir, SYSTEM_SKILL_MARKER))
         .then(() => true)
@@ -648,6 +638,15 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       }
       const skillName = normalizeSkillFolderName(request.skillName)
       const skillMd = join(rootPath, skillName, 'SKILL.md')
+      if (!isPathWithinRoot(skillMd, rootPath)) {
+        return { ok: false as const, message: 'Skill path escapes the skill root.' }
+      }
+      // Cap content size so a gigantic/malicious SKILL.md can't exhaust main
+      // process memory or blow up the IPC channel (matches skill:save-file).
+      const fileStat = await stat(skillMd)
+      if (fileStat.size > SKILL_READ_MAX_BYTES) {
+        return { ok: false as const, message: 'Skill file is too large to preview.' }
+      }
       const content = await readFile(skillMd, 'utf8')
       return { ok: true as const, content, path: skillMd }
     } catch (error) {

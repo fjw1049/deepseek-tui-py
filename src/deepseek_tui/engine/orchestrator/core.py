@@ -56,6 +56,7 @@ from deepseek_tui.engine.orchestrator.helpers import (
     _detect_focus_skill,
     _detect_locale,
     _resolve_app_mode,
+    _strip_focus_prefix,
 )
 from deepseek_tui.engine.orchestrator.lifecycle import LifecycleLspMixin
 from deepseek_tui.engine.orchestrator.maintenance import SessionMaintenanceMixin
@@ -853,12 +854,35 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.mode,
             self.tool_context.working_directory,
         )
+        # MCP 连接器聚焦：必须在 prepare_turn_for_model 之前检测，否则
+        # prepare_turn_for_model 会把开头的 `@<连接器名>` 当作文件 mention
+        # 展开，注入 <missing-file> 块（甚至内联同名工作区文件），污染
+        # 上下文。skill 聚焦用 `/` 前缀无此冲突。命中时把首个 `@<name>`
+        # token 剥掉再处理，处理完再拼回用户消息，模型仍能看到连接器线索。
+        raw_content = op.content or ""
+        focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
+        content_for_prepare = raw_content
+        if focus_mcp_ahead is not None:
+            content_for_prepare = _strip_focus_prefix(raw_content, "@", focus_mcp_ahead)
         processed = prepare_turn_for_model(
-            op.content or "",
+            content_for_prepare,
             workspace=self.tool_context.working_directory,
             session_id=self._cycle_session_id,
             turn_id=turn_id,
         )
+        if focus_mcp_ahead is not None:
+            # Re-prepend `@<name> ` so the model still sees the connector cue
+            # in the user message — only file-mention expansion was suppressed.
+            from dataclasses import replace as _dc_replace
+
+            token_prefix = f"@{focus_mcp_ahead} "
+            display = processed.display_text or ""
+            model = processed.model_text or ""
+            processed = _dc_replace(
+                processed,
+                display_text=f"{token_prefix}{display}".rstrip() if display else f"@{focus_mcp_ahead}",
+                model_text=f"{token_prefix}{model}".rstrip() if model else f"@{focus_mcp_ahead}",
+            )
         from deepseek_tui.engine.prompts import (
             TOOL_PROFILE_FULL,
             detect_tool_profile_from_prompt,
@@ -881,12 +905,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 走原有全量逻辑（`/xxx` 当普通文本）。基于用户实际输入文本解析。
         focus_text = processed.display_text or op.content or ""
         focus_skill = _detect_focus_skill(focus_text, self.skill_registry)
-        # MCP 连接器聚焦：skill 未命中时才探 `@<name>`，与 skill 聚焦互斥同构。
-        focus_mcp = (
-            _detect_focus_mcp(focus_text, self.mcp_manager)
-            if focus_skill is None
-            else None
-        )
+        # MCP 连接器聚焦：已在 prepare_turn_for_model 之前预先检测（避免与
+        # 文件 mention 展开冲突），此处复用结果。与 skill 聚焦互斥：skill
+        # 命中时让位（首 token 不可能同时以 `/` 和 `@` 开头，互斥由构造保证）。
+        focus_mcp = focus_mcp_ahead if focus_skill is None else None
         if focus_skill is not None:
             logger.info("skill_focus_mode skill=%s", getattr(focus_skill, "name", "?"))
         elif focus_mcp is not None:

@@ -2199,31 +2199,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  importTuiSession: async (input) => {
-    if (get().runtimeConnection !== 'ready') {
-      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
-      return
-    }
-    const p = getProvider(get().providerId)
-    if (typeof p.importTuiSession !== 'function') {
-      set({ error: i18n.t('common:runtimeImportUnsupported') })
-      return
-    }
-    try {
-      const thread = await p.importTuiSession(input)
-      await get().refreshThreads()
-      await get().selectThread(thread.id)
-      set({ error: null, route: 'chat' })
-    } catch (e) {
-      set({
-        error: formatRuntimeError(e),
-        ...(settingsSectionForRuntimeError(e)
-          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
-          : {})
-      })
-    }
-  },
-
   exportThreadToSession: async (threadId) => {
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })

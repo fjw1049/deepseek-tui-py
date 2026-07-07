@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Plus, RefreshCw, Search, Settings } from 'lucide-react'
 import {
@@ -12,7 +12,9 @@ import {
   setMcpServerEnabled,
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
+import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
+import { useChatStore } from '../../store/chat-store'
 import { loadInstalledPlugins, saveInstalledPlugins, storageKey, normalizePluginId, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
@@ -20,20 +22,55 @@ import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { resolveMcpInstall } from './modelscope-install'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
-/** Hardcoded built-in connector shown in the 内置 tab (not backed by mcp.json). */
-const BUILTIN_CONNECTORS: ConnectorItem[] = [
+/**
+ * Built-in connector presets — one-click installable local MCP servers.
+ * Each preset builds the mcp.json entry on demand (the filesystem preset
+ * binds to the active workspace root). Presets only show in the 内置 tab
+ * while not yet present in mcp.json; once installed they migrate to the
+ * 已安装 tab as ordinary user connectors.
+ */
+type ConnectorPreset = {
+  id: string
+  titleKey: string
+  descKey: string
+  build: (workspaceRoot: string) => McpServerEntry
+}
+
+const BUILTIN_PRESETS: ConnectorPreset[] = [
   {
-    id: 'yahoo-finance',
-    name: 'yahoo-finance',
-    summary: 'Yahoo Finance — 行情、财报与市场数据',
-    builtin: true,
-    enabled: true
+    id: 'filesystem',
+    titleKey: 'pluginMcpFilesystemTitle',
+    descKey: 'pluginMcpFilesystemDesc',
+    build: (workspaceRoot) =>
+      buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-filesystem', workspaceRoot || '/path/to/project'])
+  },
+  {
+    id: 'playwright',
+    titleKey: 'pluginMcpPlaywrightTitle',
+    descKey: 'pluginMcpPlaywrightDesc',
+    build: () => buildMcpServerEntry('npx', ['-y', '@playwright/mcp@latest'])
+  },
+  {
+    id: 'github',
+    titleKey: 'pluginMcpGithubTitle',
+    descKey: 'pluginMcpGithubDesc',
+    build: () =>
+      buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-github'], {
+        GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_...'
+      })
+  },
+  {
+    id: 'context7',
+    titleKey: 'pluginMcpContext7Title',
+    descKey: 'pluginMcpContext7Desc',
+    build: () => buildMcpServerEntry('npx', ['-y', '@upstash/context7-mcp@latest'])
   }
 ]
 
 export function ConnectorsView(): ReactElement {
   const { t } = useTranslation('common')
   const { t: tSettings } = useTranslation('settings')
+  const workspaceRoot = normalizeWorkspaceRoot(useChatStore((s) => s.workspaceRoot))
   const [query, setQuery] = useState('')
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -46,6 +83,23 @@ export function ConnectorsView(): ReactElement {
   const [mcpConfigText, setMcpConfigText] = useState('')
   const [mcpLoaded, setMcpLoaded] = useState(false)
   const [reloading, setReloading] = useState(false)
+  // Bumped by the top "重新加载" button to force-refresh the ModelScope market
+  // catalog in parallel with the local mcp.json reload (single button updates
+  // 内置 / 已安装 / 市场三个 tab).
+  const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
+  // Serialize mcp.json read-modify-write operations. Without this, concurrent
+  // installs from the marketplace (different items, each calling appendMcpServer)
+  // race: both read the same baseline, the second write overwrites the first,
+  // and the first server silently disappears from config.
+  const mcpWriteLockRef = useRef<Promise<unknown>>(Promise.resolve())
+  const withMcpWriteLock = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const run = mcpWriteLockRef.current.then(task, task)
+    mcpWriteLockRef.current = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }, [])
 
   const readMcpConfig = useCallback(async (): Promise<string> => {
     if (typeof window.dsGui?.getMcpConfigFile !== 'function') return mcpConfigText
@@ -62,6 +116,9 @@ export function ConnectorsView(): ReactElement {
 
   const reloadMcp = async (): Promise<void> => {
     setReloading(true)
+    // Bump the market catalog refresh signal alongside the local reload so the
+    // single top button updates all three tabs (内置 / 已安装 / ModelScope 市场).
+    setMarketRefreshSignal((n) => n + 1)
     try {
       const result = await reloadMcpWithRuntime(readMcpConfig)
       setNotice({
@@ -89,7 +146,8 @@ export function ConnectorsView(): ReactElement {
     })
   }
 
-  // Real connectors come from mcp.json servers; the built-in one is prepended.
+  // Real connectors come from mcp.json servers; built-in presets are prepended
+  // only while not yet installed (once installed they appear as user connectors).
   const connectors = useMemo<ConnectorItem[]>(() => {
     const userConnectors = listMcpServers(mcpConfigText).map((server) => ({
       id: server.id,
@@ -98,29 +156,48 @@ export function ConnectorsView(): ReactElement {
       builtin: false,
       enabled: server.enabled
     }))
+    const installedIds = new Set(userConnectors.map((c) => c.id))
+    const presetConnectors: ConnectorItem[] = BUILTIN_PRESETS.filter(
+      (preset) => !installedIds.has(preset.id)
+    ).map((preset) => ({
+      id: preset.id,
+      name: t(preset.titleKey),
+      summary: t(preset.descKey),
+      builtin: true,
+      enabled: false,
+      presetInstall: preset.build(workspaceRoot)
+    }))
     const normalizedQuery = query.trim().toLowerCase()
-    const all = [...BUILTIN_CONNECTORS, ...userConnectors]
+    const all = [...presetConnectors, ...userConnectors]
     if (!normalizedQuery) return all
     return all.filter(
       (c) => c.name.toLowerCase().includes(normalizedQuery) || c.summary.toLowerCase().includes(normalizedQuery)
     )
-  }, [mcpConfigText, query])
+  }, [mcpConfigText, query, t, workspaceRoot])
 
-  const appendMcpServer = async (id: string, entry: McpServerEntry): Promise<void> => {
-    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
-    const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
-    if (mcpConfigHasServer(content, id)) {
-      markInstalled(storageKey('mcp', id))
-      setNotice({ tone: 'info', message: t('pluginAlreadyAdded') })
-      return
-    }
-    const next = mergeMcpServerIntoConfig(content, id, entry)
-    const result = await window.dsGui.setMcpConfigFile(next)
-    setMcpConfigText(next)
-    setMcpLoaded(true)
-    markInstalled(storageKey('mcp', id))
-    setNotice({ tone: 'success', message: t('pluginMcpAdded', { path: result.path }) })
-  }
+  const appendMcpServer = useCallback(
+    async (id: string, entry: McpServerEntry): Promise<void> => {
+      if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
+      await withMcpWriteLock(async () => {
+        const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+        if (mcpConfigHasServer(content, id)) {
+          markInstalled(storageKey('mcp', id))
+          setNotice({ tone: 'info', message: t('pluginAlreadyAdded') })
+          return
+        }
+        const next = mergeMcpServerIntoConfig(content, id, entry)
+        const result = await window.dsGui.setMcpConfigFile(next)
+        setMcpConfigText(next)
+        setMcpLoaded(true)
+        markInstalled(storageKey('mcp', id))
+        setNotice({ tone: 'success', message: t('pluginMcpAdded', { path: result.path }) })
+        // Propagate the change to the running runtime so the new connector is
+        // live immediately, without forcing the user to click 重新加载.
+        void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+      })
+    },
+    [mcpLoaded, mcpConfigText, readMcpConfig, t, withMcpWriteLock]
+  )
 
   const deleteConnector = async (connector: ConnectorItem): Promise<void> => {
     if (connector.builtin || typeof window.dsGui?.setMcpConfigFile !== 'function') return
@@ -128,16 +205,19 @@ export function ConnectorsView(): ReactElement {
     setBusyId(connector.id)
     setNotice(null)
     try {
-      const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
-      const next = removeMcpServerFromConfig(content, connector.id)
-      const result = await window.dsGui.setMcpConfigFile(next)
-      setMcpConfigText(next)
-      setInstalled((prev) => {
-        const filtered = prev.filter((key) => key !== storageKey('mcp', connector.id))
-        saveInstalledPlugins(filtered)
-        return filtered
+      await withMcpWriteLock(async () => {
+        const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+        const next = removeMcpServerFromConfig(content, connector.id)
+        const result = await window.dsGui.setMcpConfigFile(next)
+        setMcpConfigText(next)
+        setInstalled((prev) => {
+          const filtered = prev.filter((key) => key !== storageKey('mcp', connector.id))
+          saveInstalledPlugins(filtered)
+          return filtered
+        })
+        setNotice({ tone: 'success', message: t('connectorDeleted', { name: connector.name, path: result.path }) })
+        void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
       })
-      setNotice({ tone: 'success', message: t('connectorDeleted', { name: connector.name, path: result.path }) })
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -150,10 +230,26 @@ export function ConnectorsView(): ReactElement {
     setBusyId(connector.id)
     setNotice(null)
     try {
-      const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
-      const next = setMcpServerEnabled(content, connector.id, enabled)
-      await window.dsGui.setMcpConfigFile(next)
-      setMcpConfigText(next)
+      await withMcpWriteLock(async () => {
+        const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+        const next = setMcpServerEnabled(content, connector.id, enabled)
+        await window.dsGui.setMcpConfigFile(next)
+        setMcpConfigText(next)
+        void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+      })
+    } catch (e) {
+      setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const installPreset = async (connector: ConnectorItem): Promise<void> => {
+    if (!connector.presetInstall) return
+    setBusyId(connector.id)
+    setNotice(null)
+    try {
+      await appendMcpServer(connector.id, connector.presetInstall)
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -320,15 +416,18 @@ export function ConnectorsView(): ReactElement {
             busyId={busyId}
             onToggle={(connector, enabled) => void toggleConnector(connector, enabled)}
             onDelete={(connector) => void deleteConnector(connector)}
+            onInstallPreset={(connector) => void installPreset(connector)}
+            marketplaceSlot={
+              <MarketplaceBrowser
+                kind="mcp"
+                query={query}
+                isInstalled={isMarketplaceInstalled}
+                onInstall={installFromMarketplace}
+                refreshSignal={marketRefreshSignal}
+              />
+            }
           />
         </div>
-
-        <MarketplaceBrowser
-          kind="mcp"
-          query={query}
-          isInstalled={isMarketplaceInstalled}
-          onInstall={installFromMarketplace}
-        />
 
         <div className="mt-8 flex items-center gap-2 text-[12px] text-ds-faint">
           <RefreshCw className="h-3.5 w-3.5" />

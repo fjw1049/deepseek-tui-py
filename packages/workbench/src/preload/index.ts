@@ -28,9 +28,6 @@ const api = {
   pickWorkspaceDirectory: (defaultPath) =>
     ipcRenderer.invoke('workspace:pick-directory', defaultPath),
   pickWorkspaceFiles: (options) => ipcRenderer.invoke('workspace:pick-files', options),
-  listTuiSessions: () => ipcRenderer.invoke('tui-sessions:list'),
-  pickTuiSessionFile: (defaultPath) =>
-    ipcRenderer.invoke('tui-sessions:pick-file', defaultPath),
   saveSkillFile: (rootPath, skillName, content) =>
     ipcRenderer.invoke('skill:save-file', { rootPath, skillName, content }),
   openSkillRoot: (rootPath) =>
