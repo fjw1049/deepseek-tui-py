@@ -1,7 +1,6 @@
 import type i18next from 'i18next'
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { encodeModelRef } from '@shared/model-ref'
-import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
 import {
   syncGitCommitSelection as mergeGitCommitSelection,
@@ -36,6 +35,8 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
   | 'setRoute'
   | 'openSettings'
   | 'openPlugins'
+  | 'openSkills'
+  | 'openConnectors'
   | 'closeInitialSetup'
   | 'selectInspectorItem'
   | 'syncGitCommitSelection'
@@ -118,7 +119,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const normalized: SettingsRouteSection =
         section === 'agents'
           ? 'models'
-          : section === 'runtime' || section === 'claw'
+          : section === 'runtime' || section === 'claw' || section === 'mcp' || section === 'skill'
             ? 'general'
             : section
       set({
@@ -128,11 +129,18 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     },
 
     openPlugins: (host?: PluginHostRoute) => {
-      if (!WORKBENCH_FEATURES.pluginMarketplace) return
       set({
         route: 'plugins',
         pluginHostRoute: host ?? 'chat'
       })
+    },
+
+    openSkills: () => {
+      set({ route: 'skills' })
+    },
+
+    openConnectors: () => {
+      set({ route: 'connectors' })
     },
 
     closeInitialSetup: () => set({ initialSetupOpen: false }),

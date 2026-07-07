@@ -1,9 +1,8 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe2, PanelLeftClose, PanelLeftOpen, TerminalSquare } from 'lucide-react'
+import { Globe2, PanelLeftOpen, TerminalSquare } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
 import {
@@ -41,8 +40,14 @@ import {
   WorkbenchRightSidebar
 } from './right-sidebar/WorkbenchRightSidebar'
 
-const PluginMarketplaceView = lazy(() =>
-  import('./PluginMarketplaceView').then((module) => ({ default: module.PluginMarketplaceView }))
+const SkillsView = lazy(() =>
+  import('./extensions/SkillsView').then((module) => ({ default: module.SkillsView }))
+)
+const ConnectorsView = lazy(() =>
+  import('./extensions/ConnectorsView').then((module) => ({ default: module.ConnectorsView }))
+)
+const PluginsPlaceholderView = lazy(() =>
+  import('./extensions/PluginsPlaceholderView').then((module) => ({ default: module.PluginsPlaceholderView }))
 )
 const AutomationCenter = lazy(() =>
   import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter }))
@@ -686,10 +691,6 @@ export function Workbench(): ReactElement {
     closeRightSidebar()
   }
 
-  const toggleLeftSidebar = (): void => {
-    setLeftSidebarCollapsed((current) => !current)
-  }
-
   const expandLeftSidebar = (): void => {
     setLeftSidebarCollapsed(false)
   }
@@ -904,28 +905,19 @@ export function Workbench(): ReactElement {
 
       <main
         className={`ds-workbench-main ds-drag ds-stage-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
-          WORKBENCH_FEATURES.pluginMarketplace && route === 'plugins' ? 'px-0' : ''
+          route === 'plugins' || route === 'skills' || route === 'connectors' ? 'px-0' : ''
         }`}
       >
-        {WORKBENCH_FEATURES.pluginMarketplace && route === 'plugins' ? (
-          <>
-            {!leftSidebarCollapsed ? (
-              <div className="ds-no-drag shrink-0 px-4 pt-4">
-                <button
-                  type="button"
-                  onClick={toggleLeftSidebar}
-                  className="ds-sidebar-toggle-button"
-                  aria-label={t('sidebarCollapse')}
-                  title={t('sidebarCollapse')}
-                >
-                  <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
-                </button>
-              </div>
-            ) : null}
-            <Suspense fallback={<div className="h-full bg-transparent" />}>
-              <PluginMarketplaceView />
-            </Suspense>
-          </>
+        {route === 'plugins' || route === 'skills' || route === 'connectors' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            {route === 'skills' ? (
+              <SkillsView />
+            ) : route === 'connectors' ? (
+              <ConnectorsView />
+            ) : (
+              <PluginsPlaceholderView />
+            )}
+          </Suspense>
         ) : route === 'automation' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
             <AutomationCenter

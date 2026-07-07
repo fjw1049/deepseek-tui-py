@@ -1249,6 +1249,17 @@ samp {
   opacity: 0.55;
 }
 
+/* Child links inside a collapsible sidebar group (e.g. 应用拓展). */
+.ds-sidebar-link--indent {
+  padding-left: 1.625rem;
+  font-size: 0.84rem;
+}
+
+.ds-sidebar-subgroup {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+}
+
 .ds-sidebar-link__icon {
   display: flex;
   height: 1.625rem;

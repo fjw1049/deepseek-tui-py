@@ -28,12 +28,10 @@ import {
   Globe,
   Loader2,
   Palette,
-  Plug,
   Plus,
   RefreshCw,
   Settings,
   Shield,
-  Sparkles,
   PawPrint,
   Pencil,
   Trash2,
@@ -57,10 +55,7 @@ import { resolvePetSpritesheetSrc } from '../lib/pet/pet-catalog'
 import { filterManifestPets } from '@shared/pet-catalog-utils'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
-import { reloadMcpWithRuntime } from '../lib/settings-reload'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
-import { McpServersPanel } from './settings/McpServersPanel'
-import { PluginsPanel, PluginsPanelHeader } from './settings/PluginsPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
@@ -182,22 +177,12 @@ export function SettingsView(): ReactElement {
   const [petCatalogLoading, setPetCatalogLoading] = useState(false)
   const [petCatalogError, setPetCatalogError] = useState<string | null>(null)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
-  const [skillNotice, setSkillNotice] = useState<InlineNotice | null>(null)
-  const [installedSkills, setInstalledSkills] = useState<Array<{ id: string; name: string; path: string }>>([])
-  const [skillsListLoading, setSkillsListLoading] = useState(false)
   const [deepseekPaths, setDeepseekPaths] = useState({
     configPath: '~/.deepseek/config.toml',
     mcpPath: '~/.deepseek/mcp.json',
     hooksDir: '~/.deepseek/hooks',
     skillsDir: '~/.deepseek/skills'
   })
-  const [mcpConfigPath, setMcpConfigPath] = useState('~/.deepseek/mcp.json')
-  const [mcpConfigText, setMcpConfigText] = useState('')
-  const [mcpConfigExists, setMcpConfigExists] = useState(false)
-  const [mcpLoading, setMcpLoading] = useState(false)
-  const [mcpLoaded, setMcpLoaded] = useState(false)
-  const [mcpBusy, setMcpBusy] = useState(false)
-  const [mcpNotice, setMcpNotice] = useState<InlineNotice | null>(null)
   const [hooksNotice, setHooksNotice] = useState<InlineNotice | null>(null)
   const initializedCategory = useRef(false)
   const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
@@ -361,7 +346,6 @@ export function SettingsView(): ReactElement {
       void window.dsGui.getDeepseekPaths().then((paths) => {
         if (!cancelled) {
           setDeepseekPaths(paths)
-          setMcpConfigPath(paths.mcpPath)
         }
       })
     }
@@ -449,111 +433,6 @@ export function SettingsView(): ReactElement {
       setTokenRegenError(e instanceof Error ? e.message : String(e))
     } finally {
       setTokenRegenBusy(false)
-    }
-  }
-
-  const loadMcpConfig = async (): Promise<void> => {
-    if (typeof window.dsGui?.getMcpConfigFile !== 'function') return
-    setMcpLoading(true)
-    setMcpNotice(null)
-    try {
-      const config = await window.dsGui.getMcpConfigFile()
-      setMcpConfigPath(config.path)
-      setMcpConfigText(config.content)
-      setMcpConfigExists(config.exists)
-      setMcpLoaded(true)
-    } catch (e) {
-      setMcpNotice({
-        tone: 'error',
-        message: e instanceof Error ? e.message : String(e)
-      })
-    } finally {
-      setMcpLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (category !== 'mcp' || mcpLoaded || mcpLoading) return
-    void loadMcpConfig()
-  }, [category, mcpLoaded, mcpLoading])
-
-  const loadInstalledPlugins = async (): Promise<void> => {
-    const root = deepseekPaths.skillsDir
-    if (!root || typeof window.dsGui?.listSkillsInRoot !== 'function') return
-    setSkillsListLoading(true)
-    try {
-      const result = await window.dsGui.listSkillsInRoot(root)
-      setInstalledSkills(result.ok ? result.skills : [])
-    } finally {
-      setSkillsListLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (category !== 'skill') return
-    void loadInstalledPlugins()
-  }, [category, deepseekPaths.skillsDir])
-
-  const openPluginsDir = async (): Promise<void> => {
-    const root = deepseekPaths.skillsDir
-    if (!root || typeof window.dsGui?.openSkillRoot !== 'function') return
-    setSkillNotice(null)
-    const result = await window.dsGui.openSkillRoot(root)
-    if (!result.ok) {
-      setSkillNotice({ tone: 'error', message: result.message ?? t('applyFailed') })
-    }
-  }
-
-  const reloadMcpSettings = async (): Promise<void> => {
-    setMcpLoading(true)
-    try {
-      const result = await reloadMcpWithRuntime(loadMcpConfig)
-      if (result.runtime) {
-        setMcpNotice({ tone: 'success', message: t('mcpReloadRuntimeOk') })
-      } else {
-        setMcpNotice({ tone: 'info', message: t('mcpReloadDiskOnly') })
-      }
-    } catch (e) {
-      setMcpNotice({
-        tone: 'error',
-        message: e instanceof Error ? e.message : String(e)
-      })
-    } finally {
-      setMcpLoading(false)
-    }
-  }
-
-  const saveMcpConfig = async (content?: string, quiet = false): Promise<void> => {
-    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
-    const payload = content ?? mcpConfigText
-    setMcpBusy(true)
-    if (!quiet) setMcpNotice(null)
-    try {
-      const result = await window.dsGui.setMcpConfigFile(payload)
-      setMcpConfigText(payload)
-      setMcpConfigPath(result.path)
-      setMcpConfigExists(true)
-      if (!quiet) {
-        setMcpNotice({
-          tone: 'success',
-          message: t('mcpSaved', { path: result.path })
-        })
-      }
-    } catch (e) {
-      setMcpNotice({
-        tone: 'error',
-        message: e instanceof Error ? e.message : String(e)
-      })
-    } finally {
-      setMcpBusy(false)
-    }
-  }
-
-  const openMcpConfigDir = async (): Promise<void> => {
-    if (typeof window.dsGui?.openMcpConfigDir !== 'function') return
-    const result = await window.dsGui.openMcpConfigDir()
-    if (!result.ok) {
-      setMcpNotice({ tone: 'error', message: result.message ?? t('applyFailed') })
     }
   }
 
@@ -760,14 +639,6 @@ export function SettingsView(): ReactElement {
           <button type="button" className={catCls('models')} onClick={() => openSettings('models')}>
             <Box className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('models')}
-          </button>
-          <button type="button" className={catCls('mcp')} onClick={() => openSettings('mcp')}>
-            <Plug className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('mcp')}
-          </button>
-          <button type="button" className={catCls('skill')} onClick={() => openSettings('skill')}>
-            <Sparkles className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('skill')}
           </button>
           <button type="button" className={catCls('hooks')} onClick={() => openSettings('hooks')}>
             <Anchor className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
@@ -1297,53 +1168,6 @@ export function SettingsView(): ReactElement {
                 }
               />
             </SettingsCard>
-          )}
-
-          {category === 'skill' && (
-                <SettingsCard title={t('skill')}>
-                  <div className="px-4 py-5">
-                    <h3 className="text-[14px] font-semibold text-ds-ink">{t('pluginsInstalled')}</h3>
-                    <PluginsPanelHeader />
-                    <div className="mt-4 w-full min-w-0">
-                      <PluginsPanel
-                        showIntro={false}
-                        skillsDir={deepseekPaths.skillsDir}
-                        plugins={installedSkills}
-                        loading={skillsListLoading}
-                        onReload={() => void loadInstalledPlugins()}
-                        onOpenSkillsDir={() => void openPluginsDir()}
-                      />
-                      {skillNotice ? (
-                        <div className="mt-3">
-                          <InlineNoticeView notice={skillNotice} />
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </SettingsCard>
-          )}
-
-          {category === 'mcp' && (
-                <SettingsCard title={t('mcp')}>
-                  <div className="px-4 py-5">
-                    <h3 className="text-[14px] font-semibold text-ds-ink">{t('mcpInstalled')}</h3>
-                    <p className="mt-1 max-w-3xl text-[13px] leading-6 text-ds-muted">{t('mcpPathDesc')}</p>
-                    <div className="mt-4 w-full min-w-0">
-                      <McpServersPanel
-                        configPath={mcpConfigPath}
-                        configText={mcpConfigText}
-                        configExists={mcpConfigExists}
-                        loading={mcpLoading}
-                        busy={mcpBusy}
-                        notice={mcpNotice}
-                        onConfigTextChange={setMcpConfigText}
-                        onReload={() => void reloadMcpSettings()}
-                        onSave={(content, quiet) => void saveMcpConfig(content, quiet)}
-                        onOpenConfigFolder={() => void openMcpConfigDir()}
-                      />
-                    </div>
-                  </div>
-                </SettingsCard>
           )}
 
           {category === 'hooks' && (

@@ -29,13 +29,25 @@ export type SettingsRouteSection =
   | 'appearance'
   | 'models'
   | 'permissions'
-  | 'mcp'
-  | 'skill'
   | 'hooks'
 
-/** @deprecated Use `models` or `general`; kept for deep-link normalization. */
-export type LegacySettingsRouteSection = SettingsRouteSection | 'agents' | 'runtime' | 'claw'
-export type AppRoute = 'chat' | 'settings' | 'plugins' | 'automation' | 'channels'
+/** @deprecated Use `models` or `general`; kept for deep-link normalization.
+ * `mcp`/`skill` moved to the 应用拓展 连接器/技能 pages; old deep-links fall back to `general`. */
+export type LegacySettingsRouteSection =
+  | SettingsRouteSection
+  | 'agents'
+  | 'runtime'
+  | 'claw'
+  | 'mcp'
+  | 'skill'
+export type AppRoute =
+  | 'chat'
+  | 'settings'
+  | 'plugins'
+  | 'skills'
+  | 'connectors'
+  | 'automation'
+  | 'channels'
 export type PluginHostRoute = 'chat'
 export type ThreadWarmupStatus = 'idle' | 'warming' | 'ready' | 'failed'
 export type ThreadWarmupState = {
@@ -91,6 +103,8 @@ export type ChatState = {
   openCode: () => Promise<void>
   openSettings: (section?: SettingsRouteSection) => void
   openPlugins: (host?: PluginHostRoute) => void
+  openSkills: () => void
+  openConnectors: () => void
   closeInitialSetup: () => void
   boot: () => Promise<void>
   probeRuntime: (mode?: 'user' | 'background') => Promise<void>

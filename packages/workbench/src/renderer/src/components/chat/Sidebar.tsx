@@ -1,20 +1,24 @@
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  Blocks,
+  Cable,
   CalendarClock,
   ChevronRight,
   Command,
-  LayoutGrid,
   MessageCircle,
   PanelLeftClose,
   Plus,
-  Settings
+  Puzzle,
+  Settings,
+  Sparkles
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
-import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { SidebarProjectsSection } from './SidebarProjectsSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
+
+const EXTENSIONS_OPEN_KEY = 'deepseekgui.sidebar.extensionsOpen'
 
 type Props = {
   threads: NormalizedThread[]
@@ -47,6 +51,8 @@ export function Sidebar({
   const route = useChatStore((s) => s.route)
   const setRoute = useChatStore((s) => s.setRoute)
   const openPlugins = useChatStore((s) => s.openPlugins)
+  const openSkills = useChatStore((s) => s.openSkills)
+  const openConnectors = useChatStore((s) => s.openConnectors)
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
   const deleteWorkspace = useChatStore((s) => s.deleteWorkspace)
@@ -59,6 +65,26 @@ export function Sidebar({
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const pluginsActive = route === 'plugins'
+  const skillsActive = route === 'skills'
+  const connectorsActive = route === 'connectors'
+  const extensionsActive = pluginsActive || skillsActive || connectorsActive
+  const [extensionsOpen, setExtensionsOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    if (window.localStorage.getItem(EXTENSIONS_OPEN_KEY) === '1') return true
+    return false
+  })
+
+  const toggleExtensions = (): void => {
+    setExtensionsOpen((prev) => {
+      const next = !prev
+      try {
+        window.localStorage.setItem(EXTENSIONS_OPEN_KEY, next ? '1' : '0')
+      } catch {
+        /* localStorage may be unavailable */
+      }
+      return next
+    })
+  }
 
   return (
     <aside className="ds-drag ds-sidebar-shell ds-frosted relative flex h-full w-full shrink-0 flex-col px-3 pb-3">
@@ -89,6 +115,51 @@ export function Sidebar({
           variant="flat"
           active={chatActive}
         />
+
+        <SidebarLink
+          icon={<Blocks className="h-4 w-4" strokeWidth={1.9} />}
+          label={t('extensions')}
+          onClick={toggleExtensions}
+          variant="flat"
+          active={extensionsActive && !extensionsOpen}
+          trailing={
+            <ChevronRight
+              className={`h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200 ${
+                extensionsOpen ? 'rotate-90' : ''
+              }`}
+              strokeWidth={1.9}
+            />
+          }
+        />
+        {extensionsOpen ? (
+          <div className="ds-sidebar-subgroup flex flex-col gap-0.5">
+            <SidebarLink
+              icon={<Puzzle className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('extPlugins')}
+              onClick={() => openPlugins()}
+              variant="flat"
+              indent
+              active={pluginsActive}
+            />
+            <SidebarLink
+              icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('extSkills')}
+              onClick={() => openSkills()}
+              variant="flat"
+              indent
+              active={skillsActive}
+            />
+            <SidebarLink
+              icon={<Cable className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('extConnectors')}
+              onClick={() => openConnectors()}
+              variant="flat"
+              indent
+              active={connectorsActive}
+            />
+          </div>
+        ) : null}
+
         <SidebarLink
           icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
           label={t('newAutomationTask')}
@@ -111,14 +182,6 @@ export function Sidebar({
           variant="flat"
           active={channelsActive}
         />
-        {WORKBENCH_FEATURES.pluginMarketplace ? (
-          <SidebarLink
-            icon={<LayoutGrid className="h-4 w-4" strokeWidth={1.75} />}
-            label={t('plugins')}
-            onClick={() => openPlugins()}
-            active={pluginsActive}
-          />
-        ) : null}
       </div>
 
       <div className="ds-no-drag mx-2 my-3 border-t border-ds-border-muted/15" />
@@ -175,6 +238,10 @@ type SidebarLinkProps = {
   shortcut?: string
   variant?: 'flat' | 'flat-accent' | 'footer'
   active?: boolean
+  /** Indent this link to mark it as a child of a collapsible group. */
+  indent?: boolean
+  /** Extra element rendered at the trailing edge (e.g. a group chevron). */
+  trailing?: ReactElement
 }
 
 function SidebarLink({
@@ -185,7 +252,9 @@ function SidebarLink({
   disabledHint,
   shortcut,
   variant = 'flat',
-  active = false
+  active = false,
+  indent = false,
+  trailing
 }: SidebarLinkProps): ReactElement {
   const variantClass =
     variant === 'flat-accent'
@@ -200,7 +269,9 @@ function SidebarLink({
       title={disabled ? disabledHint : undefined}
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
-      className={`ds-sidebar-link ds-no-drag ${variantClass} ${active ? 'ds-sidebar-link--active' : ''}`}
+      className={`ds-sidebar-link ds-no-drag ${variantClass} ${active ? 'ds-sidebar-link--active' : ''} ${
+        indent ? 'ds-sidebar-link--indent' : ''
+      }`}
     >
       <span
         className={`ds-sidebar-link__icon ${
@@ -222,6 +293,7 @@ function SidebarLink({
           {shortcut.replace('⌘', '')}
         </kbd>
       ) : null}
+      {trailing ?? null}
       {variant === 'footer' ? (
         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint transition-colors duration-200" strokeWidth={1.8} />
       ) : null}
