@@ -51,6 +51,10 @@ electron_binary_ready() {
 }
 
 install_electron_binary() {
+  if electron_binary_ready; then
+    echo "[workbench] Electron binary ready (skip download)"
+    return 0
+  fi
   if [[ ! -f node_modules/electron/install.js ]]; then
     echo "[workbench] electron package missing — run npm install in packages/workbench first" >&2
     exit 1
@@ -112,7 +116,35 @@ esbuild_platform_binary_ready() {
   "
 }
 
+node_modules_corrupted() {
+  node -e "
+    const fs = require('fs');
+    const path = require('path');
+    const nm = 'node_modules';
+    if (!fs.existsSync(nm)) process.exit(1);
+    try {
+      if (fs.readdirSync(nm).some((n) => / 2\$/.test(n))) process.exit(0);
+    } catch {
+      process.exit(0);
+    }
+    for (const name of ['shiki', 'mermaid']) {
+      const pkg = path.join(nm, name, 'package.json');
+      if (!fs.existsSync(pkg)) process.exit(0);
+      try {
+        require.resolve(name + '/package.json', { paths: [process.cwd()] });
+      } catch {
+        process.exit(0);
+      }
+    }
+    process.exit(1);
+  "
+}
+
 ensure_node_modules() {
+  if [[ -d node_modules ]] && node_modules_corrupted; then
+    echo "[workbench] node_modules corrupted (broken deps or Finder duplicate folders) — removing..."
+    rm -rf node_modules
+  fi
   if [[ -d node_modules \
     && -f node_modules/cac/dist/index.mjs \
     && -f node_modules/@larksuiteoapi/node-sdk/package.json \
