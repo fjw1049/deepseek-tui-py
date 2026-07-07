@@ -1,7 +1,7 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Globe2, PanelLeftClose, PanelLeftOpen, TerminalSquare } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import type { ChatBlock } from '../agent/types'
@@ -26,6 +26,7 @@ import {
 import { closeAllTerminalSessions } from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
 import { isChatsWorkspace, resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { AppTerminalPanel } from './AppTerminalPanel'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
@@ -53,8 +54,12 @@ const ChannelCenter = lazy(() =>
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
 const RIGHT_PANEL_WIDTH_KEY = 'deepseekgui.layout.rightInspectorWidth'
+const BOTTOM_TERMINAL_HEIGHT_KEY = 'deepseekgui.layout.bottomTerminalHeight'
 const LEFT_PANEL_DEFAULT = 272
 const RIGHT_CONTEXT_DEFAULT = 272
+const BOTTOM_TERMINAL_DEFAULT = 260
+const BOTTOM_TERMINAL_MIN = 140
+const BOTTOM_TERMINAL_MAX = 720
 const RIGHT_PANEL_DEFAULT = RIGHT_CONTEXT_DEFAULT
 const RIGHT_PANEL_HALF_RATIO = 0.5
 const LEFT_PANEL_MIN = 236
@@ -259,6 +264,14 @@ export function Workbench(): ReactElement {
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )
+  const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
+  const [bottomTerminalHeight, setBottomTerminalHeight] = useState(() =>
+    clampWidth(
+      readStoredWidth(BOTTOM_TERMINAL_HEIGHT_KEY, BOTTOM_TERMINAL_DEFAULT),
+      BOTTOM_TERMINAL_MIN,
+      BOTTOM_TERMINAL_MAX
+    )
+  )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
@@ -309,17 +322,15 @@ export function Workbench(): ReactElement {
   const showOperationColumn =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !stageCentered
   const showRightSidebarToggle =
-    route === 'chat' &&
-    activeWorkspaceRoot.trim().length > 0 &&
-    (showOperationColumn || rightSidebarOpen)
+    route === 'chat' && activeWorkspaceRoot.trim().length > 0
   const showDefaultEditorPicker =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0
   const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
   const topbarRightPaddingClass = showTopbarRightActions
     ? showDefaultEditorPicker && showRightSidebarToggle
-      ? 'pr-[4.75rem] sm:pr-[5.25rem]'
+      ? 'pr-[7rem] sm:pr-[7.5rem]'
       : showDefaultEditorPicker
-        ? 'pr-12'
+        ? 'pr-[5.25rem]'
         : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
@@ -445,6 +456,19 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     persistRightSidebarCollapsed(rightSidebarCollapsed)
   }, [rightSidebarCollapsed])
+
+  useEffect(() => {
+    persistWidth(BOTTOM_TERMINAL_HEIGHT_KEY, bottomTerminalHeight)
+  }, [bottomTerminalHeight])
+
+  // Enforce single-mount for the shared terminal store: whenever the sidebar
+  // shows its own terminal tab, or no workspace is active, drop the bottom
+  // panel so only one AppTerminalPanel is ever mounted.
+  useEffect(() => {
+    if (terminalSidebarOpen || !activeWorkspaceRoot.trim()) {
+      setBottomTerminalOpen(false)
+    }
+  }, [activeWorkspaceRoot, terminalSidebarOpen])
 
   const prevRightSidebarOpenRef = useRef(rightSidebarOpen)
   useEffect(() => {
@@ -682,11 +706,15 @@ export function Workbench(): ReactElement {
 
   const toggleTerminalPanel = (): void => {
     if (!activeWorkspaceRoot.trim()) return
-    if (terminalSidebarOpen) {
-      closeRightSidebar()
+    if (bottomTerminalOpen) {
+      setBottomTerminalOpen(false)
       return
     }
-    openRightSidebar('terminal')
+    // Bottom terminal and the right-sidebar terminal tab share one global xterm
+    // session store, so only one may mount at a time: hand the mount over by
+    // steering the sidebar off its terminal tab before opening the bottom panel.
+    if (terminalSidebarOpen) closeRightSidebar()
+    setBottomTerminalOpen(true)
   }
 
   const openDevPreview = (): void => {
@@ -772,6 +800,36 @@ export function Workbench(): ReactElement {
       if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
       setRightSidebarWidth(next.right)
       setChatColumnHidden(next.chatHidden)
+    }
+
+    const onUp = (): void => {
+      document.body.style.cursor = prevCursor
+      document.body.style.userSelect = prevUserSelect
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const beginBottomTerminalResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = bottomTerminalHeight
+    const prevCursor = document.body.style.cursor
+    const prevUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMove = (moveEvent: PointerEvent): void => {
+      // Handle sits on the panel's top edge, so dragging up (negative delta)
+      // grows the panel.
+      const delta = startY - moveEvent.clientY
+      setBottomTerminalHeight(
+        clampWidth(startHeight + delta, BOTTOM_TERMINAL_MIN, BOTTOM_TERMINAL_MAX)
+      )
     }
 
     const onUp = (): void => {
@@ -949,6 +1007,18 @@ export function Workbench(): ReactElement {
               </div>
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
+                  {showDefaultEditorPicker ? (
+                    <button
+                      type="button"
+                      onClick={toggleTerminalPanel}
+                      className="ds-sidebar-toggle-button ds-no-drag shrink-0"
+                      aria-label={bottomTerminalOpen ? t('terminalPanelHide') : t('terminalPanelShow')}
+                      aria-pressed={bottomTerminalOpen}
+                      title={bottomTerminalOpen ? t('terminalPanelHide') : t('terminalPanelShow')}
+                    >
+                      <TerminalSquare className="h-4 w-4" strokeWidth={1.85} />
+                    </button>
+                  ) : null}
                   {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
                   {showRightSidebarToggle ? (
                     <RightSidebarToggleButton
@@ -1048,7 +1118,7 @@ export function Workbench(): ReactElement {
                           onOpenChanges={handleComposerOpenDiff}
                           onOpenEditor={() => openRightSidebar('editor')}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
-                          terminalPanelOpen={terminalSidebarOpen}
+                          terminalPanelOpen={bottomTerminalOpen}
                           terminalPanelEnabled={activeWorkspaceRoot.trim().length > 0}
                           previewEnabled={activeWorkspaceRoot.trim().length > 0}
                           onTogglePreview={togglePreviewPanel}
@@ -1087,7 +1157,7 @@ export function Workbench(): ReactElement {
                         onOpenChanges={handleComposerOpenDiff}
                         onOpenEditor={() => openRightSidebar('editor')}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
-                        terminalPanelOpen={terminalSidebarOpen}
+                        terminalPanelOpen={bottomTerminalOpen}
                         terminalPanelEnabled={activeWorkspaceRoot.trim().length > 0}
                         previewEnabled={activeWorkspaceRoot.trim().length > 0}
                         onTogglePreview={togglePreviewPanel}
@@ -1148,6 +1218,31 @@ export function Workbench(): ReactElement {
             </div>
               ) : null}
             </div>
+            {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
+              <div
+                className="ds-bottom-terminal ds-no-drag relative shrink-0"
+                style={{ height: bottomTerminalHeight }}
+              >
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label={t('terminalPanelResize')}
+                  title={t('terminalPanelResize')}
+                  className="ds-bottom-terminal__handle ds-no-drag group absolute inset-x-0 top-0 z-40 flex h-3 items-center justify-center cursor-row-resize touch-none select-none"
+                  onPointerDown={beginBottomTerminalResize}
+                >
+                  <span className="pointer-events-none h-1 w-10 rounded-full bg-ds-border transition group-hover:w-16 group-hover:bg-ds-accent/70" />
+                </div>
+                <AppTerminalPanel
+                  workspaceRoot={activeWorkspaceRoot}
+                  mountSurface="bottom"
+                  mountActive
+                  visible
+                  onClose={() => setBottomTerminalOpen(false)}
+                  className="h-full max-h-full w-full border-t border-ds-border-muted"
+                />
+              </div>
+            ) : null}
           </section>
           </div>
           {/* Full-height right panel: sits beside the topbar column so its 44px
@@ -1170,6 +1265,7 @@ export function Workbench(): ReactElement {
             onBeginResize={beginRightResize}
             onOpenFileInEditor={openFileInEditor}
             fillWidth={chatColumnHidden}
+            terminalMountActive={!bottomTerminalOpen}
           />
         </div>
           </>

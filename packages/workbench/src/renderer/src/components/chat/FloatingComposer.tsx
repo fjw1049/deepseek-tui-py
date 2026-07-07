@@ -10,15 +10,18 @@ import {
 import {
   Bot,
   ChevronDown,
+  ChevronRight,
   Clock3,
   FileDiff,
   GitFork,
   ListTodo,
+  Loader2,
   MessageCircleQuestion,
   Package,
   Paperclip,
   Plus,
   Plug,
+  Search,
   Send,
   Settings2,
   ShieldAlert,
@@ -27,6 +30,7 @@ import {
   Square,
   Gauge,
   Mic,
+  Wand2,
   Workflow,
   X
 } from 'lucide-react'
@@ -172,6 +176,12 @@ export function FloatingComposer({
   const [asrConfigured, setAsrConfigured] = useState(false)
   const [focused, setFocused] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
+  // Which second-level panel the `+` menu is currently revealing on hover.
+  const [plusSubmenu, setPlusSubmenu] = useState<'mode' | 'skills' | null>(null)
+  const [composerSkills, setComposerSkills] = useState<Array<{ name: string; description?: string }>>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [skillsLoaded, setSkillsLoaded] = useState(false)
+  const [skillQuery, setSkillQuery] = useState('')
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
@@ -461,6 +471,35 @@ export function FloatingComposer({
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [modelMenuOpen, plusMenuOpen])
+
+  // Collapse the hovered submenu (and clear the skill filter) whenever the
+  // `+` menu closes, so it reopens on the first-level list next time.
+  useEffect(() => {
+    if (!plusMenuOpen) {
+      setPlusSubmenu(null)
+      setSkillQuery('')
+    }
+  }, [plusMenuOpen])
+
+  const loadComposerSkills = useCallback((): void => {
+    if (skillsLoaded || skillsLoading) return
+    if (!runtimeReady) {
+      setSkillsLoaded(true)
+      return
+    }
+    setSkillsLoading(true)
+    void window.dsGui
+      .runtimeRequest('/v1/skills', 'GET')
+      .then((result) => {
+        if (result.ok) {
+          setComposerSkills((JSON.parse(result.body) as { skills?: typeof composerSkills }).skills ?? [])
+        }
+      })
+      .finally(() => {
+        setSkillsLoaded(true)
+        setSkillsLoading(false)
+      })
+  }, [runtimeReady, skillsLoaded, skillsLoading])
 
   const focusComposer = (): void => {
     window.requestAnimationFrame(() => textareaRef.current?.focus())
@@ -1037,7 +1076,7 @@ export function FloatingComposer({
             }}
           />
 
-          <div className={`flex items-center gap-2 pl-6 pr-1 ${stageCentered ? 'pb-0' : 'pb-0'}`}>
+          <div className={`flex items-center gap-2 pl-3 pr-1 ${stageCentered ? 'pb-0' : 'pb-0'}`}>
             <div className="relative">
               <button
                 type="button"
@@ -1055,63 +1094,197 @@ export function FloatingComposer({
                 <Plus className="h-4 w-4" strokeWidth={2} />
               </button>
               {plusMenuOpen ? (
-                <div className="ds-glass absolute bottom-full left-0 z-40 mb-2 min-w-[220px] overflow-hidden rounded-2xl p-1.5">
-                  {(
-                    [
-                      { id: 'agent' as const, label: t('composerModeAgent'), icon: Bot },
-                      { id: 'plan' as const, label: t('composerModePlan'), icon: ListTodo },
-                      { id: 'ask' as const, label: t('composerModeAsk'), icon: MessageCircleQuestion },
-                      { id: 'workflow' as const, label: t('composerModeWorkflow'), icon: Workflow }
-                    ] as const
-                  ).map((item) => (
+                <div className="absolute bottom-full left-0 z-40 mb-2">
+                  <div className="ds-glass min-w-[220px] overflow-hidden rounded-2xl p-1.5">
+                    {/* Add files: no submenu, runs immediately. */}
                     <button
-                      key={item.id}
                       type="button"
+                      disabled={!canCompose}
+                      onMouseEnter={() => setPlusSubmenu(null)}
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        clearAttachNotice()
-                        setMode(item.id)
-                        setPlusMenuOpen(false)
-                        focusComposer()
-                      }}
+                      onClick={() => void pickAttachments()}
+                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
+                    >
+                      <Paperclip className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                      <span className="flex-1">{t('composerPlusAddFile')}</span>
+                    </button>
+                    <div className="my-1 border-t border-ds-border-muted" />
+                    {/* Mode + Skills: hover previews the submenu, click locks it
+                        open so the pointer can travel to the panel and interact
+                        with its controls without the panel collapsing. */}
+                    <button
+                      type="button"
+                      onMouseEnter={() => setPlusSubmenu('mode')}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => setPlusSubmenu('mode')}
                       className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
-                        mode === item.id
-                          ? 'bg-accent/10 font-semibold text-ds-ink'
+                        plusSubmenu === 'mode'
+                          ? 'bg-ds-hover text-ds-ink'
                           : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                       }`}
                     >
-                      <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                      <span>{item.label}</span>
+                      <Wand2 className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                      <span className="flex-1">{t('composerPlusMode')}</span>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
                     </button>
-                  ))}
-                  <div className="my-1 border-t border-ds-border-muted" />
-                  <button
-                    type="button"
-                    disabled={!canCompose}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => void pickAttachments()}
-                    className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
-                  >
-                    <Paperclip className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                    <span>{t('composerAttachNew')}</span>
-                  </button>
+                    <button
+                      type="button"
+                      onMouseEnter={() => {
+                        setPlusSubmenu('skills')
+                        loadComposerSkills()
+                      }}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setPlusSubmenu('skills')
+                        loadComposerSkills()
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
+                        plusSubmenu === 'skills'
+                          ? 'bg-ds-hover text-ds-ink'
+                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                      }`}
+                    >
+                      <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                      <span className="flex-1">{t('composerPlusSkills')}</span>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                    </button>
+                  </div>
+
+                  {plusSubmenu === 'mode' ? (
+                    <div className="ds-glass absolute bottom-0 left-full ml-2 w-[248px] overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                      <p className="px-1.5 pb-2 pt-1 text-[12px] leading-5 text-ds-faint">
+                        {mode === 'plan'
+                          ? t('composerModeHintPlan')
+                          : mode === 'ask'
+                            ? t('composerModeHintAsk')
+                            : mode === 'workflow'
+                              ? t('composerModeHintWorkflow')
+                              : t('composerModeHintDefault')}
+                      </p>
+                      <div className="border-t border-ds-border-muted pt-1">
+                        {(
+                          [
+                            { id: 'plan' as const, label: t('composerModePlanFull') },
+                            { id: 'ask' as const, label: t('composerModeAskFull') },
+                            { id: 'workflow' as const, label: t('composerModeWorkflowFull') }
+                          ] as const
+                        ).map((item) => {
+                          const on = mode === item.id
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              role="switch"
+                              aria-checked={on}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => {
+                                clearAttachNotice()
+                                setMode(on ? 'agent' : item.id)
+                                focusComposer()
+                              }}
+                              className="flex w-full items-center gap-2 rounded-xl px-1.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-hover"
+                            >
+                              <span className="flex-1">{item.label}</span>
+                              <span
+                                className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition ${
+                                  on ? 'bg-accent' : 'bg-ds-border'
+                                }`}
+                              >
+                                <span
+                                  className={`absolute h-3 w-3 rounded-full bg-white shadow-sm transition ${
+                                    on ? 'left-[14px]' : 'left-0.5'
+                                  }`}
+                                />
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {plusSubmenu === 'skills' ? (
+                    <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                      <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
+                        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                        <input
+                          type="text"
+                          value={skillQuery}
+                          onChange={(event) => setSkillQuery(event.target.value)}
+                          placeholder={t('composerSkillSearchPlaceholder')}
+                          className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
+                        />
+                      </div>
+                      <div className="ds-scroll-surface min-h-0 flex-1 space-y-1 overflow-y-auto">
+                        {skillsLoading ? (
+                          <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        ) : !runtimeReady ? (
+                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                            {t('composerSkillsNeedRuntime')}
+                          </div>
+                        ) : (
+                          (() => {
+                            const q = skillQuery.trim().toLowerCase()
+                            const filtered = composerSkills.filter(
+                              (skill) =>
+                                !q ||
+                                skill.name.toLowerCase().includes(q) ||
+                                (skill.description ?? '').toLowerCase().includes(q)
+                            )
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                                  {t('composerSkillsEmpty')}
+                                </div>
+                              )
+                            }
+                            return filtered.map((skill) => (
+                              <button
+                                key={skill.name}
+                                type="button"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => {
+                                  handlePickSkill(skill.name)
+                                  setPlusMenuOpen(false)
+                                }}
+                                className="block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover"
+                              >
+                                <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
+                                  <Package className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                                  <span className="truncate">{skill.name}</span>
+                                </div>
+                                {skill.description ? (
+                                  <div className="mt-0.5 line-clamp-2 pl-6 text-[11px] leading-4 text-ds-faint">
+                                    {skill.description}
+                                  </div>
+                                ) : null}
+                              </button>
+                            ))
+                          })()
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
 
-            <div
-              className="ds-no-drag inline-flex h-8 shrink-0 select-none items-center gap-1.5 rounded-full border px-2.5 text-[13px] font-semibold text-ds-ink"
-              style={{ background: modeBadge.gradient, borderColor: modeBadge.border }}
-              title={modeLabel}
-            >
-              <ModeBadgeIcon
-                className="h-4 w-4 shrink-0"
-                style={{ color: modeBadge.icon }}
-                strokeWidth={2}
-                aria-hidden
-              />
-              <span>{modeLabel}</span>
-            </div>
+            {mode !== 'agent' ? (
+              <div
+                className="ds-no-drag inline-flex h-8 shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-ds-ink"
+                title={modeLabel}
+              >
+                <ModeBadgeIcon
+                  className="h-4 w-4 shrink-0"
+                  style={{ color: modeBadge.icon }}
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <span>{modeLabel}</span>
+              </div>
+            ) : null}
 
             <div className="min-w-0 flex-1" />
 

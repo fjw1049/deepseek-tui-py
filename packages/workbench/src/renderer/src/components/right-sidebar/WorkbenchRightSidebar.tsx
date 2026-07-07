@@ -45,6 +45,7 @@ type Props = {
   onBeginResize: (event: React.PointerEvent<HTMLDivElement>) => void
   onOpenFileInEditor: (path: string) => void
   fillWidth?: boolean
+  terminalMountActive?: boolean
 }
 
 const TAB_ITEMS: Array<{ id: RightSidebarTab; icon: typeof Code2; labelKey: string }> = [
@@ -102,7 +103,8 @@ export function WorkbenchRightSidebar({
   maximized = false,
   onBeginResize,
   onOpenFileInEditor,
-  fillWidth = false
+  fillWidth = false,
+  terminalMountActive = true
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
 
@@ -214,7 +216,7 @@ export function WorkbenchRightSidebar({
             <AppTerminalPanel
               workspaceRoot={workspaceRoot}
               mountSurface="sidebar"
-              mountActive
+              mountActive={terminalMountActive}
               visible={terminalVisible}
               className="h-full max-h-full w-full"
             />
