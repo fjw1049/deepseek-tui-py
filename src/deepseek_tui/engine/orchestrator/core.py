@@ -52,6 +52,7 @@ from deepseek_tui.engine.handle import (
 from deepseek_tui.engine.orchestrator.helpers import (
     FOCUS_MODE_TOOLS,
     _assistant_preface_text,
+    _detect_focus_mcp,
     _detect_focus_skill,
     _detect_locale,
     _resolve_app_mode,
@@ -264,6 +265,25 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return self.tool_runtime.mcp_manager
         from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
         return self.tool_context.metadata.get(MCP_MANAGER_KEY)
+
+    def _mcp_focus_whitelist(self, server: str) -> frozenset[str]:
+        """聚焦某个 MCP 连接器时的工具白名单：该 server 的工具 + 基础读工具。
+
+        server 工具名取 ``grouped_discovered_tools()[server]`` 的 ``model_name``
+        （即 catalog 里的最终限定名），避免 ``mcp_<server>_<tool>`` 下划线歧义；
+        基础读工具复用 ``FOCUS_MODE_TOOLS`` 的只读子集，不另立常量。
+        """
+        base_read = FOCUS_MODE_TOOLS & {"read_file", "grep", "list_dir"}
+        mcp = self.mcp_manager
+        if mcp is None:
+            return frozenset(base_read)
+        grouped = mcp.grouped_discovered_tools()
+        server_tools = {
+            entry["model_name"]
+            for entry in grouped.get(server, [])
+            if entry.get("model_name")
+        }
+        return frozenset(server_tools | base_read)
 
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
@@ -859,11 +879,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Skill 聚焦模式：若用户以 `/<skill-name>` 指定了一个已发现的 skill，
         # 本 turn 只列该 skill、只放最小工具集。未命中则 focus_skill 为 None，
         # 走原有全量逻辑（`/xxx` 当普通文本）。基于用户实际输入文本解析。
-        focus_skill = _detect_focus_skill(
-            processed.display_text or op.content or "", self.skill_registry
+        focus_text = processed.display_text or op.content or ""
+        focus_skill = _detect_focus_skill(focus_text, self.skill_registry)
+        # MCP 连接器聚焦：skill 未命中时才探 `@<name>`，与 skill 聚焦互斥同构。
+        focus_mcp = (
+            _detect_focus_mcp(focus_text, self.mcp_manager)
+            if focus_skill is None
+            else None
         )
         if focus_skill is not None:
             logger.info("skill_focus_mode skill=%s", getattr(focus_skill, "name", "?"))
+        elif focus_mcp is not None:
+            logger.info("mcp_focus_mode server=%s", focus_mcp)
 
         user_message = Message.user(processed.model_text)
 
@@ -917,12 +944,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
             # skill 声明 ``allowed-tools`` 则完全覆盖固定白名单；否则回退到
-            # ``FOCUS_MODE_TOOLS``。
+            # ``FOCUS_MODE_TOOLS``。MCP 连接器聚焦：该 server 工具 + 基础读工具。
             if focus_skill is not None:
                 declared = getattr(focus_skill, "allowed_tools", None)
                 self._focus_tool_whitelist = (
                     frozenset(declared) if declared else FOCUS_MODE_TOOLS
                 )
+            elif focus_mcp is not None:
+                self._focus_tool_whitelist = self._mcp_focus_whitelist(focus_mcp)
             else:
                 self._focus_tool_whitelist = None
             await self.handle.emit(

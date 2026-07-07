@@ -646,6 +646,17 @@ async def mcp_preload_status(request: Request) -> dict[str, Any]:
     return runtime.mcp_preload_status()
 
 
+@router_mcp.get("/mcp/servers")
+async def mcp_servers(request: Request) -> dict[str, Any]:
+    """List configured MCP connectors with live connection state.
+
+    Each server carries ``connected`` (its client subprocess is running),
+    which the composer's connector panel uses to show a green/red dot.
+    """
+    runtime = runtime_from_request(request)
+    return await runtime.list_mcp_servers()
+
+
 # GET /v1/sessions + export Workbench threads back to TUI session files.
 
 

@@ -16,6 +16,20 @@ FOCUS_MODE_TOOLS = frozenset(
 )
 
 
+def _detect_focus_prefix(text: str, sigil: str) -> str | None:
+    """解析整条消息首个 token 为 ``<sigil><name>`` 的情形，返回 ``name``。
+
+    ``sigil`` 为单字符前缀（skill 用 ``/``、MCP 连接器用 ``@``）。未以该
+    前缀开头、或前缀后无内容时返回 ``None``。仅看首个 token，与聚焦语义
+    一致（`@foo 问题` 命中 `foo`，`看 @foo` 不命中）。
+    """
+    stripped = (text or "").lstrip()
+    if not stripped.startswith(sigil):
+        return None
+    first = stripped[len(sigil):].split(maxsplit=1)[0] if len(stripped) > len(sigil) else ""
+    return first or None
+
+
 def _detect_focus_skill(text: str, registry: object | None) -> object | None:
     """解析形如 `/data-extract ...` 的前缀，命中已发现 skill 时返回该 Skill。
 
@@ -25,13 +39,29 @@ def _detect_focus_skill(text: str, registry: object | None) -> object | None:
     """
     if registry is None:
         return None
-    stripped = (text or "").lstrip()
-    if not stripped.startswith("/"):
+    name = _detect_focus_prefix(text, "/")
+    if name is None:
         return None
-    first = stripped[1:].split(maxsplit=1)[0] if len(stripped) > 1 else ""
-    if not first:
+    return registry.get(name)
+
+
+def _detect_focus_mcp(text: str, manager: object | None) -> str | None:
+    """解析形如 `@github ...` 的前缀，命中已配置的 MCP 连接器时返回其名字。
+
+    与 :func:`_detect_focus_skill` 同构：只看首个 token `@<name>`，在
+    ``manager.server_names`` 里大小写不敏感匹配。未命中 / 无 manager 返回
+    ``None``，调用方即回退（`@xxx` 当普通文本或文件 mention，与现状一致）。
+    """
+    if manager is None:
         return None
-    return registry.get(first)
+    name = _detect_focus_prefix(text, "@")
+    if name is None:
+        return None
+    server_names = getattr(manager, "server_names", None) or []
+    for server in server_names:
+        if server.lower() == name.lower():
+            return server
+    return None
 
 
 def _resolve_app_mode(mode: str) -> _AppMode:

@@ -177,11 +177,20 @@ export function FloatingComposer({
   const [focused, setFocused] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   // Which second-level panel the `+` menu is currently revealing on hover.
-  const [plusSubmenu, setPlusSubmenu] = useState<'mode' | 'skills' | null>(null)
+  const [plusSubmenu, setPlusSubmenu] = useState<'mode' | 'skills' | 'connectors' | null>(null)
   const [composerSkills, setComposerSkills] = useState<Array<{ name: string; description?: string }>>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const [skillsLoaded, setSkillsLoaded] = useState(false)
   const [skillQuery, setSkillQuery] = useState('')
+  // MCP connectors mirror skills: listed from the runtime (so we know live
+  // connection state), picked as an inline chip, and prepended as a leading
+  // `@name` token on send. ``connected`` drives the green/red status dot.
+  const [composerConnectors, setComposerConnectors] = useState<
+    Array<{ id: string; summary: string; connected: boolean }>
+  >([])
+  const [connectorsLoading, setConnectorsLoading] = useState(false)
+  const [connectorsLoaded, setConnectorsLoaded] = useState(false)
+  const [connectorQuery, setConnectorQuery] = useState('')
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
@@ -189,6 +198,9 @@ export function FloatingComposer({
   // text (rendered as an inline chip) and prepended as `/name ` only on send,
   // so the runtime's leading-token focus detection still works unchanged.
   const [focusSkill, setFocusSkill] = useState<string | null>(null)
+  // Focus-mode MCP connector, same lifecycle as focusSkill but prepended as
+  // `@name ` on send so the runtime's leading-token connector detection fires.
+  const [focusConnector, setFocusConnector] = useState<string | null>(null)
   const [activeCommand, setActiveCommand] = useState<{
     id: ComposerActionCommandId
     args: string
@@ -205,7 +217,8 @@ export function FloatingComposer({
   const outboundPreview = buildOutboundMessage(attachments, input)
   // A picked skill alone is enough to send (the runtime just runs it), even
   // with no typed request yet.
-  const canSend = canCompose && (outboundPreview.length > 0 || focusSkill != null)
+  const canSend =
+    canCompose && (outboundPreview.length > 0 || focusSkill != null || focusConnector != null)
   const petSlashQuery = getPetSlashQuery(input)
   const slashQuery = petSlashQuery == null ? getSlashQuery(input) : null
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -478,6 +491,7 @@ export function FloatingComposer({
     if (!plusMenuOpen) {
       setPlusSubmenu(null)
       setSkillQuery('')
+      setConnectorQuery('')
     }
   }, [plusMenuOpen])
 
@@ -522,6 +536,47 @@ export function FloatingComposer({
     // cleared so the caret lands at the start, ready for the user's request;
     // `/name ` is prepended only at send time.
     setFocusSkill(name)
+    setFocusConnector(null)
+    setInput('')
+    setActiveCommand(null)
+    focusComposer()
+  }
+
+  const loadComposerConnectors = useCallback((): void => {
+    if (connectorsLoaded || connectorsLoading) return
+    // Connection state only exists once the runtime is up; short-circuit
+    // otherwise (the panel then shows the "connect runtime" empty state).
+    if (!runtimeReady) {
+      setConnectorsLoaded(true)
+      return
+    }
+    setConnectorsLoading(true)
+    void window.dsGui
+      .runtimeRequest('/v1/mcp/servers', 'GET')
+      .then((result) => {
+        if (!result.ok) return
+        const parsed = JSON.parse(result.body) as {
+          servers?: Array<{ name: string; transport?: string; connected?: boolean }>
+        }
+        setComposerConnectors(
+          (parsed.servers ?? []).map((s) => ({
+            id: s.name,
+            summary: s.transport ?? '',
+            connected: s.connected === true
+          }))
+        )
+      })
+      .finally(() => {
+        setConnectorsLoaded(true)
+        setConnectorsLoading(false)
+      })
+  }, [runtimeReady, connectorsLoaded, connectorsLoading])
+
+  const handlePickConnector = (id: string): void => {
+    // Mirror handlePickSkill: hold the connector as an inline chip; `@id ` is
+    // prepended only at send time. Focus skill/connector are mutually exclusive.
+    setFocusConnector(id)
+    setFocusSkill(null)
     setInput('')
     setActiveCommand(null)
     focusComposer()
@@ -756,13 +811,19 @@ export function FloatingComposer({
       return
     }
     const body = buildOutboundMessage(attachments, input)
-    // Prepend the focus-mode skill as a leading `/name` token so the runtime
-    // detects it (the inline chip is UI-only; the wire format is unchanged).
-    const payload = focusSkill ? `/${focusSkill} ${body}`.trim() : body
+    // Prepend the focus target as a leading token so the runtime detects it
+    // (chips are UI-only; wire format is unchanged): skill → `/name`, MCP
+    // connector → `@name`. The two are mutually exclusive by construction.
+    const payload = focusSkill
+      ? `/${focusSkill} ${body}`.trim()
+      : focusConnector
+        ? `@${focusConnector} ${body}`.trim()
+        : body
     if (!payload.trim()) return
     setAttachments([])
     setInput('')
     setFocusSkill(null)
+    setFocusConnector(null)
     onSend(payload)
   }
 
@@ -999,6 +1060,27 @@ export function FloatingComposer({
             </div>
           ) : null}
 
+          {focusConnector ? (
+            <div className="flex flex-wrap gap-2 px-1 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusConnector(null)
+                  focusComposer()
+                }}
+                title={t('composerConnectorFocus', { name: focusConnector })}
+                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(16,185,129,0.4)] bg-[rgba(16,185,129,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#10b981] transition hover:bg-[rgba(16,185,129,0.22)]"
+              >
+                <Plug className="h-3 w-3 shrink-0" strokeWidth={2} />
+                <span className="truncate">{focusConnector}</span>
+                <X
+                  className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
+                  strokeWidth={2}
+                />
+              </button>
+            </div>
+          ) : null}
+
           <textarea
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
@@ -1148,6 +1230,27 @@ export function FloatingComposer({
                       <span className="flex-1">{t('composerPlusSkills')}</span>
                       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
                     </button>
+                    <button
+                      type="button"
+                      onMouseEnter={() => {
+                        setPlusSubmenu('connectors')
+                        loadComposerConnectors()
+                      }}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setPlusSubmenu('connectors')
+                        loadComposerConnectors()
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
+                        plusSubmenu === 'connectors'
+                          ? 'bg-ds-hover text-ds-ink'
+                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                      }`}
+                    >
+                      <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                      <span className="flex-1">{t('composerPlusConnectors')}</span>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                    </button>
                   </div>
 
                   {plusSubmenu === 'mode' ? (
@@ -1258,6 +1361,88 @@ export function FloatingComposer({
                                 {skill.description ? (
                                   <div className="mt-0.5 line-clamp-2 pl-6 text-[11px] leading-4 text-ds-faint">
                                     {skill.description}
+                                  </div>
+                                ) : null}
+                              </button>
+                            ))
+                          })()
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {plusSubmenu === 'connectors' ? (
+                    <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                      <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
+                        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                        <input
+                          type="text"
+                          value={connectorQuery}
+                          onChange={(event) => setConnectorQuery(event.target.value)}
+                          placeholder={t('composerConnectorSearchPlaceholder')}
+                          className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
+                        />
+                      </div>
+                      <div className="ds-scroll-surface min-h-0 flex-1 space-y-1 overflow-y-auto">
+                        {connectorsLoading ? (
+                          <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        ) : !runtimeReady ? (
+                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                            {t('composerConnectorsNeedRuntime')}
+                          </div>
+                        ) : (
+                          (() => {
+                            const q = connectorQuery.trim().toLowerCase()
+                            const filtered = composerConnectors.filter(
+                              (c) =>
+                                !q ||
+                                c.id.toLowerCase().includes(q) ||
+                                c.summary.toLowerCase().includes(q)
+                            )
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                                  {t('composerConnectorsEmpty')}
+                                </div>
+                              )
+                            }
+                            return filtered.map((connector) => (
+                              <button
+                                key={connector.id}
+                                type="button"
+                                disabled={!connector.connected}
+                                title={
+                                  connector.connected
+                                    ? undefined
+                                    : t('composerConnectorDisconnected', { name: connector.id })
+                                }
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => {
+                                  if (!connector.connected) return
+                                  handlePickConnector(connector.id)
+                                  setPlusMenuOpen(false)
+                                }}
+                                className={`block w-full rounded-xl px-2.5 py-2 text-left transition ${
+                                  connector.connected
+                                    ? 'hover:bg-ds-hover'
+                                    : 'cursor-not-allowed opacity-40'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
+                                  <span
+                                    className={`h-2 w-2 shrink-0 rounded-full ${
+                                      connector.connected ? 'bg-emerald-500' : 'bg-red-500'
+                                    }`}
+                                    aria-hidden
+                                  />
+                                  <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                                  <span className="truncate">{connector.id}</span>
+                                </div>
+                                {connector.summary ? (
+                                  <div className="mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 font-mono text-ds-faint">
+                                    {connector.summary}
                                   </div>
                                 ) : null}
                               </button>

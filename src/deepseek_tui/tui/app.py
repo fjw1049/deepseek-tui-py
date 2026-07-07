@@ -545,11 +545,27 @@ class DeepSeekTUI(App[None]):
         elif "@" in text:
             at_pos = text.rfind("@")
             after_at = text[at_pos + 1:]
-            file_mention.show(prefix=after_at)
+            # 共用 `@`：token 前缀命中 MCP 连接器名时列连接器，否则列文件。
+            mcp_names = self._matching_mcp_names(after_at)
+            file_mention.show(prefix=after_at, mcp_names=mcp_names or None)
             slash_menu.hide()
         else:
             slash_menu.hide()
             file_mention.hide()
+
+    def _matching_mcp_names(self, prefix: str) -> list[str]:
+        """MCP connector names whose prefix matches text typed after ``@``.
+
+        Empty when the engine/manager is unavailable or nothing matches, in
+        which case the ``@`` menu falls back to file suggestions.
+        """
+        engine = self._engine
+        manager = engine.mcp_manager if engine is not None else None
+        names = list(getattr(manager, "server_names", None) or []) if manager else []
+        if "/" in prefix or " " in prefix:
+            return []
+        low = prefix.lower()
+        return [n for n in names if n.lower().startswith(low)]
 
     def on_composer_paste_enter_suppressed(
         self, event: Composer.PasteEnterSuppressed
@@ -569,7 +585,7 @@ class DeepSeekTUI(App[None]):
         composer.focus()
 
     def on_file_mention_selected(self, event: FileMention.Selected) -> None:
-        """Insert selected file path into composer."""
+        """Insert the selected file path or MCP connector into the composer."""
         composer = self.query_one(Composer)
         current = composer.text
         at_pos = current.rfind("@")

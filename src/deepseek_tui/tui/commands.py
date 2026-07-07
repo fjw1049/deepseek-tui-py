@@ -1279,6 +1279,36 @@ async def _mcp_discover_worker(app: DeepSeekTUI, path, *, reload_engine: bool) -
         transcript.add_notice(f"MCP snapshot failed: {exc}", severity="error")
 
 
+def _mcp_focus_preview(app: DeepSeekTUI, name: str) -> CommandResult:
+    """预览 `@<name>` 连接器聚焦时模型可见的工具集（连接器"导入测试"）。
+
+    从活动引擎的 MCP manager 读取该 server 已发现的工具，与 `@<name> 问题`
+    聚焦模式暴露给模型的工具一致（该 server 工具 + 基础读工具）。引擎未起或
+    该连接器无工具时给出明确提示。
+    """
+    engine = app._engine
+    manager = engine.mcp_manager if engine is not None else None
+    if manager is None:
+        return CommandResult(
+            error="MCP not active — start the engine, or run /mcp reload after adding servers."
+        )
+    server_names = getattr(manager, "server_names", None) or []
+    match = next((s for s in server_names if s.lower() == name.lower()), None)
+    if match is None:
+        available = ", ".join(server_names) or "(none configured)"
+        return CommandResult(error=f"Connector not found: {name}. Available: {available}")
+    tools = manager.grouped_discovered_tools().get(match, [])
+    lines = [f"Connector @{match} — focus mode exposes {len(tools)} tool(s) + base read tools:"]
+    for entry in tools:
+        desc = (entry.get("description") or "").strip().splitlines()[0:1]
+        suffix = f" — {desc[0]}" if desc else ""
+        lines.append(f"  • {entry.get('name', '?')}{suffix}")
+    if not tools:
+        lines.append("  (no tools discovered yet — run /mcp reload to connect)")
+    lines.append(f"Use it inline: `@{match} <your question>`")
+    return CommandResult(output="\n".join(lines))
+
+
 @_register("/mcp")
 def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.mcp.actions import (
@@ -1302,6 +1332,11 @@ def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
     action = parts[0].lower()
     rest = parts[1:]
     restart_required = _mcp_restart_required(app)
+
+    if action == "focus":
+        if not rest:
+            return CommandResult(error="Usage: /mcp focus <name>")
+        return _mcp_focus_preview(app, rest[0])
 
     try:
         if action == "init":
@@ -1353,7 +1388,7 @@ def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
             error=(
                 "Usage: /mcp [init|add stdio <name> <command> [args...]|"
                 "add http <name> <url>|enable <name>|disable <name>|"
-                "remove <name>|validate|reload]"
+                "remove <name>|focus <name>|validate|reload]"
             )
         )
     except (KeyError, ValueError, OSError, json.JSONDecodeError) as exc:

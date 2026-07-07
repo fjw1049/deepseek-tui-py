@@ -590,12 +590,20 @@ class _SlashCommandHelp(Static):
 
 
 class FileMention(Vertical):
-    """Popup for @file autocomplete suggestions."""
+    """Popup for ``@`` autocomplete — files by default, MCP connectors on match.
+
+    The ``@`` sigil is shared: :meth:`show` lists files, but when the caller
+    passes ``mcp_names`` (the connector names whose prefix matches what the
+    user typed after ``@``) it lists those connectors instead. Selecting a
+    connector emits :class:`Selected` with ``kind="mcp"`` so the composer can
+    insert ``@<name>`` for focus mode rather than a file path.
+    """
 
     class Selected(Message):
-        def __init__(self, path: str) -> None:
+        def __init__(self, path: str, kind: str = "file") -> None:
             super().__init__()
             self.path = path
+            self.kind = kind
 
     DEFAULT_CSS = """
     FileMention {
@@ -616,18 +624,28 @@ class FileMention(Vertical):
         self._cwd = working_directory or Path.cwd()
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Files[/]")
+        yield Static("[bold]Files[/]", id="mention-title")
         yield OptionList(id="file-list")
 
-    def show(self, prefix: str = "") -> None:
-        """Show file suggestions matching the prefix after ``@``."""
+    def show(self, prefix: str = "", mcp_names: list[str] | None = None) -> None:
+        """Show suggestions matching the prefix after ``@``.
+
+        ``mcp_names`` (when non-empty) switches the list to MCP connectors;
+        otherwise it lists files in the working directory.
+        """
         query = prefix.lstrip("@")
         try:
             option_list = self.query_one("#file-list", OptionList)
             option_list.clear_options()
-            matches = self._find_files(query)
-            for path in matches[:20]:
-                option_list.add_option(Option(path, id=path))
+            title = self.query_one("#mention-title", Static)
+            if mcp_names:
+                title.update("[bold]Connectors[/]")
+                for server in mcp_names[:20]:
+                    option_list.add_option(Option(f"@{server}", id=f"mcp:{server}"))
+            else:
+                title.update("[bold]Files[/]")
+                for path in self._find_files(query)[:20]:
+                    option_list.add_option(Option(path, id=path))
         except Exception:
             pass
         self.add_class("visible")
@@ -658,8 +676,12 @@ class FileMention(Vertical):
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
     ) -> None:
-        if event.option.id:
-            self.post_message(self.Selected(event.option.id))
+        opt_id = event.option.id
+        if opt_id:
+            if opt_id.startswith("mcp:"):
+                self.post_message(self.Selected(opt_id[len("mcp:"):], kind="mcp"))
+            else:
+                self.post_message(self.Selected(opt_id, kind="file"))
         self.hide()
 
 

@@ -845,6 +845,7 @@ class AppRuntime:
                     "name": name,
                     "enabled": bool(getattr(cfg, "enabled", False)),
                     "transport": _transport_label(cfg),
+                    "connected": manager.is_server_running(name),
                 }
             )
         return {"ok": True, "servers": out}

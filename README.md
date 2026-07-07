@@ -41,11 +41,11 @@ unset ELECTRON_RUN_AS_NODE   # 在 Cursor 里开发时建议执行
 - **联网搜索**：内置 Web 搜索（AnySearch + Tavily，结果合并）与网页抓取
 - **智能记忆**：可选的 L0→L3 分层记忆，跨会话记住用户偏好、项目习惯与踩坑（默认关闭，见「配置说明」）
 - **自动化任务**：定时 / 触发式 Agent 任务，结果可投递到飞书或邮件
-- **MCP**：通过 `.deepseek/mcp.json` 连接外部 MCP 服务（outbound client；不把 DeepSeek 暴露为 MCP Server）
+- **MCP 连接器**：通过 `.deepseek/mcp.json` 连接外部 MCP 服务（outbound client；不把 DeepSeek 暴露为 MCP Server）。输入框「+」菜单可挑选连接器，绿点=已连接、红点=未连接；选中后本轮只由该连接器作答
 - **桌面宠物**：输入框旁的小挂件（可在设置里关闭）
 - **设置**：模型、审批策略（`on-request` / `auto` 等）、Runtime 连接、记忆、自动化、宠物
 
-在输入框里可以用 `@文件路径` 把文件内容带进上下文。
+在输入框里可以用 `@文件路径` 把文件内容带进上下文；用 `@连接器名` 开头则聚焦到某个 MCP 连接器，让它专门回答这一轮（如 `@yahoo-finance 查英伟达股价`）。
 
 ---
 
@@ -94,7 +94,7 @@ mcp = true
 
 完整可配项见 [`config.example.toml`](config.example.toml)。飞书入站 / 测试发送由 Runtime HTTP 路由提供（`/feishu/inbound`、`/feishu/test-send`），在 GUI 设置或 `config.toml` 的 `[automation.feishu]` 中配置即可。
 
-MCP 配置文件默认路径：`~/.deepseek/mcp.json`（可用 `mcp_config_path` 覆盖）。CLI/TUI 均支持 `deepseek-tui mcp list|add|enable|…`。
+MCP 配置文件默认路径：`~/.deepseek/mcp.json`（可用 `mcp_config_path` 覆盖）。CLI/TUI 均支持 `deepseek-tui mcp list|add|enable|focus|…`（`focus <name>` 预览某个连接器聚焦时可用的工具）。已配置的连接器会在启动后自动后台连接。
 
 ---
 

@@ -212,6 +212,7 @@ class McpManager:
         self._discovered_tools_cache: list[dict[str, Any]] | None = None
         self._stale_cache: list[dict[str, Any]] | None = None
         self._background_refresh_task: asyncio.Task[None] | None = None
+        self._connect_task: asyncio.Task[None] | None = None
         self._discover_inflight: asyncio.Task[list[dict[str, Any]]] | None = None
         self._discover_lock = asyncio.Lock()
         self._discovered_tools_cache_path: Path | None = None
@@ -242,10 +243,14 @@ class McpManager:
     def _connected_server_count(self) -> int:
         count = 0
         for name in self._enabled_server_names():
-            client = self._clients.get(name)
-            if client is not None and client.is_running:
+            if self.is_server_running(name):
                 count += 1
         return count
+
+    def is_server_running(self, name: str) -> bool:
+        """Whether ``name``'s client subprocess/connection is live right now."""
+        client = self._clients.get(name)
+        return client is not None and client.is_running
 
     def preload_status(self) -> dict[str, Any]:
         cached = self.cached_tools()
@@ -297,6 +302,10 @@ class McpManager:
                 len(self._discovered_tools_cache),
                 len(enabled),
             )
+            # Tools served from disk cache without any live connection; warm the
+            # real connections in the background so the connector dots turn
+            # green after a restart without a manual reload.
+            self._schedule_background_connect()
             return
         try:
             loop = asyncio.get_running_loop()
@@ -355,6 +364,35 @@ class McpManager:
                 connected,
                 len(enabled),
             )
+        # Tool discovery only connects transiently to read schemas; it does not
+        # keep clients alive. Establish + hold real connections in the
+        # background so ``is_server_running`` (the connector dot) reflects
+        # "usable now" after a restart without a manual reload.
+        self._schedule_background_connect()
+
+    def _schedule_background_connect(self) -> None:
+        """Background ``start_all`` so enabled servers hold live connections.
+
+        Idempotent per :meth:`_ensure_client` (already-running clients are
+        reused), non-blocking, and skipped when no event loop is running or a
+        connect task is already in flight.
+        """
+        if not self._enabled_server_names():
+            return
+        if self._connect_task is not None and not self._connect_task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _connect() -> None:
+            try:
+                await self.start_all()
+            except Exception:  # noqa: BLE001 — best-effort warm connect
+                logger.exception("mcp_background_connect_failed")
+
+        self._connect_task = loop.create_task(_connect(), name="mcp-connect")
 
     @property
     def server_names(self) -> list[str]:
@@ -426,6 +464,7 @@ class McpManager:
         # against teardown (and don't leak past shutdown).
         for task in (
             self._background_refresh_task,
+            self._connect_task,
             getattr(self._preload, "_task", None),
         ):
             if task is not None and not task.done():
@@ -435,6 +474,7 @@ class McpManager:
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
         self._background_refresh_task = None
+        self._connect_task = None
         for client in self._clients.values():
             await client.stop()
         self._clients.clear()
