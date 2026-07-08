@@ -24,7 +24,7 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
 
 const EMPTY_HERO_PANEL_CLASS = 'ds-empty-hero-panel'
 const TRENDING_REPO_LIMIT = 8
-const VISIBLE_TOPIC_COUNT = 3
+const VISIBLE_TOPIC_COUNT = 2
 const CARD_THEMES = [
   {
     border: 'hover:border-emerald-400/35',
@@ -58,7 +58,7 @@ type Props = {
 
 function RepoMetrics({ repo }: { repo: TrendingRepo }): ReactElement {
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-ds-faint">
+    <div className="flex shrink-0 items-center gap-x-2.5 text-[10.5px] font-medium tabular-nums text-ds-faint">
       <span className="inline-flex items-center gap-1">
         <Star className="h-3 w-3" strokeWidth={1.7} aria-hidden />
         {repo.stars || '—'}
@@ -76,11 +76,11 @@ function RepoTopics({ topics, fallback }: { topics: string[]; fallback: string }
   const labels = visibleTopics.length > 0 ? visibleTopics : [fallback]
 
   return (
-    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-hidden">
+    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
       {labels.map((topic) => (
         <span
           key={topic}
-          className="inline-flex min-w-0 max-w-[112px] shrink-0 items-center gap-1 rounded-md border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] font-medium text-ds-muted"
+          className="inline-flex min-w-0 max-w-[104px] shrink-0 items-center gap-0.5 rounded-md border border-accent/12 bg-accent/5 px-1.5 py-0.5 text-[10px] font-medium text-ds-muted"
         >
           <span className="shrink-0 font-semibold text-accent">#</span>
           <span className="min-w-0 truncate">{topic}</span>
@@ -88,6 +88,13 @@ function RepoTopics({ topics, fallback }: { topics: string[]; fallback: string }
       ))}
     </div>
   )
+}
+
+/** Split "owner/repo" into a de-emphasized owner prefix and an emphasized repo name. */
+function splitRepoName(name: string): { owner: string; repo: string } {
+  const slash = name.lastIndexOf('/')
+  if (slash <= 0 || slash === name.length - 1) return { owner: '', repo: name }
+  return { owner: name.slice(0, slash + 1), repo: name.slice(slash + 1) }
 }
 
 function RepoRow({
@@ -99,11 +106,12 @@ function RepoRow({
 }): ReactElement {
   const { t } = useTranslation('common')
   const theme = CARD_THEMES[(repo.rank - 1) % CARD_THEMES.length]
+  const { owner, repo: repoName } = splitRepoName(repo.name)
 
   return (
     <div
       className={[
-        'group relative flex min-h-[118px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
+        'group relative flex min-h-[88px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
         theme.border
       ].join(' ')}
     >
@@ -111,30 +119,30 @@ function RepoRow({
       <button
         type="button"
         onClick={() => onAnalyze(repo)}
-        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2 text-left"
+        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2.5 text-left"
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <RepoTopics topics={repo.topics} fallback={t('trendingRepoFallbackTopic')} />
-          {repo.isNew ? (
-            <span className="shrink-0 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
-              {t('trendingNew')}
-            </span>
-          ) : null}
+        <div className="flex min-w-0 items-center gap-2 pr-7">
           <span
             className={[
-              'ml-auto shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+              'inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-semibold tabular-nums',
               theme.rank
             ].join(' ')}
           >
             #{repo.rank}
           </span>
+          <h3 className="min-w-0 flex-1 truncate text-[14.5px] font-semibold leading-tight tracking-[-0.01em] text-ds-ink">
+            {owner ? <span className="font-medium text-ds-muted">{owner}</span> : null}
+            {repoName}
+          </h3>
         </div>
-        <p className="mt-1.5 line-clamp-3 text-[13px] font-semibold leading-[1.35] text-ds-ink">
+        <p className="mt-1.5 w-full min-w-0 shrink-0 truncate text-[12px] leading-normal text-ds-muted">
           {repo.description || t('trendingNoDescription')}
         </p>
-        <div className="mt-auto flex min-w-0 items-center gap-2 pt-1.5">
-          <div className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-ds-muted">{repo.name}</div>
-          <RepoMetrics repo={repo} />
+        <div className="mt-auto flex min-w-0 items-center gap-2 pt-2">
+          <RepoTopics topics={repo.topics} fallback={t('trendingRepoFallbackTopic')} />
+          <div className="ml-auto shrink-0">
+            <RepoMetrics repo={repo} />
+          </div>
         </div>
       </button>
       <button
@@ -142,7 +150,7 @@ function RepoRow({
         title={t('trendingOpenGithub')}
         aria-label={`${t('trendingOpenGithub')}: ${repo.name}`}
         onClick={() => void window.dsGui.openExternal(repo.url)}
-        className="relative flex w-8 shrink-0 items-start justify-center rounded-r-[18px] pt-2 text-ds-faint transition hover:bg-ds-card hover:text-accent"
+        className="absolute right-0 top-0 flex h-8 w-8 shrink-0 items-center justify-center rounded-bl-[12px] rounded-tr-[12px] text-ds-faint transition hover:bg-ds-card hover:text-accent"
       >
         <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
       </button>
@@ -277,7 +285,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
                 {Array.from({ length: 3 }).map((_, index) => (
                   <div
                     key={index}
-                    className="min-h-[118px] animate-pulse rounded-[12px] border border-ds-border bg-ds-card/60"
+                    className="min-h-[88px] animate-pulse rounded-[12px] border border-ds-border bg-ds-card/60"
                   />
                 ))}
               </div>
