@@ -127,6 +127,18 @@ node_modules_corrupted() {
     } catch {
       process.exit(0);
     }
+    const requiredFiles = [
+      'cac/dist/index.mjs',
+      '@larksuiteoapi/node-sdk/lib/index.js',
+      'qs/lib/index.js',
+      'state-local/lib/es/state-local.js',
+      'mdast-util-to-string/lib/index.js',
+      'd3-scale/src/linear.js',
+      'hast-util-sanitize/lib/index.js',
+    ];
+    for (const rel of requiredFiles) {
+      if (!fs.existsSync(path.join(nm, rel))) process.exit(0);
+    }
     for (const name of ['shiki', 'mermaid']) {
       const pkg = path.join(nm, name, 'package.json');
       if (!fs.existsSync(pkg)) process.exit(0);
@@ -145,11 +157,7 @@ ensure_node_modules() {
     echo "[workbench] node_modules corrupted (broken deps or Finder duplicate folders) — removing..."
     rm -rf node_modules
   fi
-  if [[ -d node_modules \
-    && -f node_modules/cac/dist/index.mjs \
-    && -f node_modules/@larksuiteoapi/node-sdk/package.json \
-    && -f node_modules/@larksuiteoapi/node-sdk/lib/index.js \
-    && esbuild_platform_binary_ready ]]; then
+  if [[ -d node_modules ]] && ! node_modules_corrupted && esbuild_platform_binary_ready; then
     echo "[workbench] node_modules ready (skip npm install)"
     return 0
   fi
