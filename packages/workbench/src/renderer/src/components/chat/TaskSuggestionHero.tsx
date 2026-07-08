@@ -124,7 +124,7 @@ function RepoRow({
         <div className="flex min-w-0 items-center gap-2 pr-7">
           <span
             className={[
-              'inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-semibold tabular-nums',
+              'inline-flex h-4 shrink-0 items-center rounded-md border px-1 text-[8px] font-semibold tabular-nums',
               theme.rank
             ].join(' ')}
           >
@@ -258,7 +258,6 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
               <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-ds-ink">
                 {t('emptyHeroBadge')}
               </h2>
-              <p className="mt-1 text-[12.5px] leading-5 text-ds-muted">{t('emptyHeroSubCompact')}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <GlassSegmentedControl
