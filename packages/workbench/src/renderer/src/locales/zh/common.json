@@ -11,7 +11,7 @@
   "extSkills": "技能",
   "extConnectors": "连接器",
   "pluginsComingSoon": "插件功能即将推出，敬请期待。",
-  "connectorsIntro": "连接外部应用与服务（本质为本地 MCP），让智能体接入更多能力。",
+  "connectorsIntro": "连接外部应用与服务，让智能体接入更多能力。",
   "connectorsInstalled": "已安装连接器",
   "connectorsSearch": "搜索连接器",
   "connectorReload": "重新加载",
