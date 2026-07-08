@@ -160,7 +160,13 @@
   --ds-bubble-user-fg: #ececec;
   --ds-accent: #339cff;
   --ds-accent-soft: rgba(51, 156, 255, 0.18);
-  --ds-heat-0: #21262d;
+  /* GitHub dark contribution greens. heat-0 is a desaturated GREEN-gray (not
+     neutral gray) that sits clearly above the card ground (~#171717) — it reads
+     as a soft raised tile in the same hue family as the scale, so empty days
+     complete the grid instead of looking like gray boxes or holes ("空洞").
+     Neutral #303030 lifted off the ground but clashed with the greens; darker
+     tones (#191919, #232323) sank into holes. */
+  --ds-heat-0: #26312a;
   --ds-heat-1: #0e4429;
   --ds-heat-2: #006d32;
   --ds-heat-3: #26a641;

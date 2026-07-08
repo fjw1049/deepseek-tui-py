@@ -24,6 +24,10 @@ const SQUARE_GAP = 3
 const MONTH_ROW_HEIGHT = 14
 const MONTH_ROW_GAP = 6
 const COLUMN_GAP = 8
+// Target cell size in fill mode: small enough to read like a GitHub graph,
+// capped so a short panel packs more weeks instead of inflating each square.
+const IDEAL_CELL_PX = 13
+const MIN_CELL_PX = 3
 
 type Props = {
   daily: UsageDailyPoint[]
@@ -57,16 +61,19 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
     [asOfDay]
   )
 
-  // In fill mode, size square cells to the box height and draw as many weekly
-  // columns as fit the width; earlier dataless days render as empty squares so
-  // the grid fills the panel edge-to-edge like a GitHub contribution graph.
+  // In fill mode, prefer small, GitHub-style cells and pack as many weekly
+  // columns as the width allows, filling the panel edge-to-edge. Height only
+  // caps the cell so extra height becomes breathing room, not chunky blocks;
+  // dataless lead-in days render as faint empty squares (heat-0), so the grid
+  // reads like a GitHub contribution graph rather than a black slab.
   const layout = useMemo(() => {
     if (!fillHeight || plotBox.width <= 0 || plotBox.height <= 0) {
       return { dayCount: undefined as number | undefined, cellPx: 0 }
     }
     const gridHeight = plotBox.height - MONTH_ROW_HEIGHT - MONTH_ROW_GAP
     const gridWidth = plotBox.width - WEEKDAY_LABEL_WIDTH - COLUMN_GAP
-    const side = Math.max(3, (gridHeight - (HEATMAP_ROWS - 1) * SQUARE_GAP) / HEATMAP_ROWS)
+    const maxByHeight = (gridHeight - (HEATMAP_ROWS - 1) * SQUARE_GAP) / HEATMAP_ROWS
+    const side = Math.max(MIN_CELL_PX, Math.min(IDEAL_CELL_PX, maxByHeight))
     const weeks = Math.min(
       53,
       Math.max(1, Math.floor((gridWidth + SQUARE_GAP) / (side + SQUARE_GAP)))
@@ -142,7 +149,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
           ref={plotRef}
           className={[
             'flex w-full min-w-0 gap-2',
-            fillHeight ? 'min-h-0 flex-1 items-start [container-type:size]' : 'items-stretch'
+            fillHeight ? 'min-h-0 flex-1 items-center [container-type:size]' : 'items-stretch'
           ].join(' ')}
           style={fillHeight ? cellSizing : undefined}
         >
@@ -342,7 +349,13 @@ function HeatCell({
   const cellClass = fillHeight ? 'h-full w-full' : 'aspect-square w-full min-w-0'
 
   if (!cell.inRange || !cell.day) {
-    return <div className={`${cellClass} rounded-[3px] bg-ds-border`} aria-hidden />
+    return (
+      <div
+        className={`${cellClass} rounded-[3px]`}
+        style={{ backgroundColor: heatFillForLevel(0) }}
+        aria-hidden
+      />
+    )
   }
 
   const dateLabel = formatHeatmapDayLabel(cell.day, locale)
