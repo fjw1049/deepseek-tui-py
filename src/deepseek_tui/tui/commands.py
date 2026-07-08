@@ -116,6 +116,10 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/init", "Generate AGENTS.md", _T),
     CommandEntry("/settings", "Show persistent settings", _D),
     CommandEntry(
+        "/plugins", "List / manage plugins",
+        _T, ("/plugin",),
+    ),
+    CommandEntry(
         "/skills", "List local skills",
         _T,
     ),
@@ -1598,6 +1602,89 @@ def cmd_skill(args: str, app: DeepSeekTUI) -> CommandResult:
     if len(content) > 2000:
         content = content[:2000] + "\n... (truncated)"
     return CommandResult(output=content)
+
+
+# ── /plugins ─────────────────────────────────────────────────────────────
+
+@_register("/plugins")
+def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
+    """List / manage plugins (skills/hooks/MCP bundles).
+
+    Usage:
+        /plugins                     — list installed plugins
+        /plugins install <spec>      — github:owner/repo or local path
+        /plugins update <name>       — re-install from recorded source
+        /plugins remove <name>       — uninstall
+        /plugins enable <name>       — enable at user scope
+        /plugins disable <name>      — disable at user scope
+        /plugins trust <name>        — activate hooks/MCP servers
+        /plugins untrust <name>      — deactivate hooks/MCP servers
+
+    Changes take effect on the next session (engine restart).
+    """
+    from deepseek_tui.integrations.plugins import (
+        discover_plugins,
+        install_plugin,
+        set_plugin_enabled,
+        set_plugin_trusted,
+        uninstall_plugin,
+        update_plugin,
+        user_plugins_dir,
+    )
+
+    raw = args.strip()
+    if not raw:
+        plugins = discover_plugins(workspace=Path.cwd(), include_disabled=True)
+        if not plugins:
+            return CommandResult(
+                output=(
+                    "No plugins installed.\n"
+                    "Install one with `/plugins install <github:owner/repo|path>`."
+                )
+            )
+        lines = ["Installed plugins:\n"]
+        for p in plugins:
+            flags = [p.scope]
+            if not p.enabled:
+                flags.append("disabled")
+            if p.trusted:
+                flags.append("trusted")
+            desc = f" — {p.manifest.description}" if p.manifest.description else ""
+            lines.append(f"  {p.name} v{p.manifest.version} ({', '.join(flags)}){desc}")
+        return CommandResult(output="\n".join(lines))
+
+    parts = raw.split(None, 1)
+    head = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    plugins_dir = user_plugins_dir()
+    usage = (
+        "Usage: /plugins [install <spec> | update <name> | remove <name> | "
+        "enable <name> | disable <name> | trust <name> | untrust <name>]"
+    )
+    if not rest:
+        return CommandResult(error=usage)
+
+    if head == "install":
+        outcome, message = install_plugin(rest, plugins_dir)
+        if outcome.value == "failed":
+            return CommandResult(error=message)
+        return CommandResult(output=message)
+    if head == "update":
+        outcome, message = update_plugin(rest, plugins_dir)
+        if outcome.value == "failed":
+            return CommandResult(error=message)
+        return CommandResult(output=message)
+    if head == "remove":
+        return CommandResult(output=uninstall_plugin(rest, plugins_dir))
+    if head == "enable":
+        return CommandResult(output=set_plugin_enabled(rest, True, plugins_dir))
+    if head == "disable":
+        return CommandResult(output=set_plugin_enabled(rest, False, plugins_dir))
+    if head == "trust":
+        return CommandResult(output=set_plugin_trusted(rest, True, plugins_dir))
+    if head == "untrust":
+        return CommandResult(output=set_plugin_trusted(rest, False, plugins_dir))
+    return CommandResult(error=usage)
 
 
 # ── /log ──────────────────────────────────────────────────────────────────

@@ -366,7 +366,38 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if handle.hooks is None:
             handle.attach_hooks(build_hook_dispatcher(cfg))
         ws = working_directory or Path.cwd()
-        hook_executor = build_lifecycle_hook_executor(cfg, ws)
+        # Discover installed plugins and fan their components out to the
+        # existing subsystems: skills → SkillRegistry, hooks →
+        # HookExecutor, MCP servers → McpManager (via create_tool_runtime).
+        plugin_contribs = None
+        if cfg.features.plugins:
+            from deepseek_tui.integrations.plugins import (
+                collect_contributions,
+                discover_plugins,
+            )
+
+            try:
+                plugin_contribs = collect_contributions(
+                    discover_plugins(workspace=ws)
+                )
+            except OSError:
+                logger.warning("plugin discovery failed", exc_info=True)
+            if plugin_contribs is not None:
+                for warning in plugin_contribs.warnings:
+                    logger.warning("plugin: %s", warning)
+        hooks_cfg = cfg
+        if plugin_contribs is not None and plugin_contribs.hook_entries:
+            hooks_cfg = cfg.model_copy(
+                update={
+                    "hooks": cfg.hooks.model_copy(
+                        update={
+                            "hooks": list(cfg.hooks.hooks)
+                            + plugin_contribs.hook_entries
+                        }
+                    )
+                }
+            )
+        hook_executor = build_lifecycle_hook_executor(hooks_cfg, ws)
         if isinstance(tool_runtime, ToolRuntime):
             runtime = tool_runtime
         else:
@@ -380,6 +411,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 task_data_dir=task_data_dir,
                 start_mcp=mcp_flag,
                 mcp_manager=mcp_manager,  # type: ignore[arg-type]
+                extra_mcp_servers=(
+                    plugin_contribs.mcp_servers if plugin_contribs else None
+                ),
             )
         # Make [providers.X] context_window overrides visible to
         # context_window_for_model() even when Config was built directly
@@ -389,6 +423,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         register_provider_context_windows(cfg)
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
+        if plugin_contribs is not None and plugin_contribs.skills:
+            from deepseek_tui.integrations.plugins import merge_plugin_skills
+
+            merge_plugin_skills(skill_reg, plugin_contribs)
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()

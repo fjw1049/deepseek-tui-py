@@ -46,8 +46,8 @@ const SkillsView = lazy(() =>
 const ConnectorsView = lazy(() =>
   import('./extensions/ConnectorsView').then((module) => ({ default: module.ConnectorsView }))
 )
-const PluginsPlaceholderView = lazy(() =>
-  import('./extensions/PluginsPlaceholderView').then((module) => ({ default: module.PluginsPlaceholderView }))
+const PluginsView = lazy(() =>
+  import('./extensions/PluginsView').then((module) => ({ default: module.PluginsView }))
 )
 const AutomationCenter = lazy(() =>
   import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter }))
@@ -915,7 +915,7 @@ export function Workbench(): ReactElement {
             ) : route === 'connectors' ? (
               <ConnectorsView />
             ) : (
-              <PluginsPlaceholderView />
+              <PluginsView />
             )}
           </Suspense>
         ) : route === 'automation' ? (

@@ -165,6 +165,7 @@ async def create_tool_runtime(
     automation_data_dir: Path | None = None,
     automation_tick_interval_secs: float = 15.0,
     shared_task_manager: TaskManager | None = None,
+    extra_mcp_servers: list[Any] | None = None,
 ) -> ToolRuntime:
     """Build a fully-wired :class:`ToolRuntime`.
 
@@ -173,6 +174,9 @@ async def create_tool_runtime(
     - ``config.features.mcp`` gates McpManager construction; the caller
       may pre-build one (for tests) via ``mcp_manager=...``. Pass
       ``start_mcp=True`` to eagerly start all configured servers.
+    - ``extra_mcp_servers`` (``McpServerConfig`` list, e.g. from trusted
+      plugins) are added to the manager after config load; mcp.json
+      entries win on name conflicts.
     - policy is attached verbatim (caller may build one via
       ``execpolicy.Policy.default()``)
     """
@@ -212,7 +216,7 @@ async def create_tool_runtime(
         mcp = mcp_manager
         owns_mcp_manager = False
     elif cfg.features.mcp:
-        mcp = await _build_mcp_manager(cfg)
+        mcp = await _build_mcp_manager(cfg, extra_servers=extra_mcp_servers)
     if mcp is not None and start_mcp:
         await mcp.start_all(fail_on_required=True)
     if task_manager is not None and mcp is not None:
@@ -405,11 +409,14 @@ def _safe_subagent_executor() -> Any:
     return _stub_executor
 
 
-async def _build_mcp_manager(cfg: Config) -> McpManager:
+async def _build_mcp_manager(
+    cfg: Config, extra_servers: list[Any] | None = None
+) -> McpManager:
     """Load ``mcp_config_path`` and return an :class:`McpManager`.
 
     Missing / malformed config → empty manager (best-effort default
-    behavior when config is absent).
+    behavior when config is absent). ``extra_servers`` (e.g. plugin
+    contributions) are prepended so mcp.json entries win name conflicts.
     """
     from deepseek_tui.mcp.config import load_mcp_config
 
@@ -418,6 +425,8 @@ async def _build_mcp_manager(cfg: Config) -> McpManager:
         servers = load_mcp_config(path)
     except (OSError, ValueError):
         servers = []
+    if extra_servers:
+        servers = list(extra_servers) + servers
     return McpManager(servers, config_path=path)
 
 

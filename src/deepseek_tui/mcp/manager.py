@@ -252,6 +252,24 @@ class McpManager:
         client = self._clients.get(name)
         return client is not None and client.is_running
 
+    def declared_capabilities(self, qualified_tool_name: str) -> list[str]:
+        """Capability hints declared for the tool's server (may be empty).
+
+        Plugin manifests can declare ``permissions`` which land on
+        ``McpServerConfig.capabilities``; the approval gate uses them to
+        relax the blanket "MCP action requires approval" default.
+        """
+        mapping = self._tool_map.get(qualified_tool_name) or (
+            self._cached_tool_map.get(qualified_tool_name)
+        )
+        if mapping is None:
+            parsed = parse_qualified_tool_name(qualified_tool_name)
+            if parsed is None:
+                return []
+            mapping = parsed
+        cfg = self._configs.get(mapping[0])
+        return list(cfg.capabilities) if cfg is not None else []
+
     def preload_status(self) -> dict[str, Any]:
         cached = self.cached_tools()
         tools_count = len(cached) if cached is not None else 0
@@ -432,7 +450,13 @@ class McpManager:
             await _emit_async(name, McpStartupStatus.ready())
             return name, None
 
-        start_names = [name for name, cfg in self._configs.items() if cfg.enabled]
+        # Lazy servers (e.g. plugin-contributed) are excluded from eager
+        # startup; they connect on first tool call / discovery instead.
+        start_names = [
+            name
+            for name, cfg in self._configs.items()
+            if cfg.enabled and not cfg.lazy
+        ]
         for name, cfg in self._configs.items():
             if not cfg.enabled:
                 await _emit_async(name, McpStartupStatus.cancelled())

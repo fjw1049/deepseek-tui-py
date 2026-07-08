@@ -13,6 +13,14 @@ from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
 
 
+@pytest.fixture(autouse=True)
+def _isolate_claude_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep plugin discovery off the developer's real ~/.claude/plugins."""
+    monkeypatch.setenv("CLAUDE_PLUGINS_DIR", str(tmp_path / "_claude-plugins"))
+
+
 @pytest.fixture
 def isolated_config() -> Config:
     """Features on, MCP off — avoids hanging MCP handshakes in tests."""

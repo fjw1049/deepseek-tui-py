@@ -78,22 +78,60 @@ def plan_requires_approval(tool: ToolSpec, policy: str | None) -> bool:
     return _gate_action(tool.approval_requirement(), policy) is not GateAction.SKIP
 
 
-def _mcp_requirement(tool_name: str) -> ApprovalRequirement:
+def _capabilities_from_declared(declared: list[str] | None) -> list[ToolCapability]:
+    """Parse declared capability strings (plugin manifest permissions)."""
+    if not declared:
+        return []
+    out: list[ToolCapability] = []
+    for value in declared:
+        try:
+            cap = ToolCapability(value)
+        except ValueError:
+            continue
+        if cap not in out:
+            out.append(cap)
+    return out
+
+
+def _mcp_requirement(
+    tool_name: str, declared_capabilities: list[str] | None = None
+) -> ApprovalRequirement:
     if not is_mcp_tool(tool_name) or mcp_tool_is_read_only(tool_name):
         return ApprovalRequirement.AUTO
+    # Plugin-declared permissions map to ToolCapability and reuse the
+    # standard capability→requirement ladder instead of the blanket
+    # "every MCP action needs approval" default.
+    caps = _capabilities_from_declared(declared_capabilities)
+    if caps:
+        return requirement_from_capabilities(caps)
     return ApprovalRequirement.REQUIRED
 
 
-def needs_mcp_approval_prompt(tool_name: str, policy: str | None) -> bool:
-    return _gate_action(_mcp_requirement(tool_name), policy) is GateAction.PROMPT
+def needs_mcp_approval_prompt(
+    tool_name: str,
+    policy: str | None,
+    declared_capabilities: list[str] | None = None,
+) -> bool:
+    req = _mcp_requirement(tool_name, declared_capabilities)
+    return _gate_action(req, policy) is GateAction.PROMPT
 
 
-def should_block_mcp_on_never(tool_name: str, policy: str | None) -> bool:
-    return _gate_action(_mcp_requirement(tool_name), policy) is GateAction.BLOCK_NEVER
+def should_block_mcp_on_never(
+    tool_name: str,
+    policy: str | None,
+    declared_capabilities: list[str] | None = None,
+) -> bool:
+    req = _mcp_requirement(tool_name, declared_capabilities)
+    return _gate_action(req, policy) is GateAction.BLOCK_NEVER
 
 
-def plan_requires_mcp_approval(tool_name: str, policy: str | None) -> bool:
-    return _gate_action(_mcp_requirement(tool_name), policy) is not GateAction.SKIP
+def plan_requires_mcp_approval(
+    tool_name: str,
+    policy: str | None,
+    declared_capabilities: list[str] | None = None,
+) -> bool:
+    req = _mcp_requirement(tool_name, declared_capabilities)
+    return _gate_action(req, policy) is not GateAction.SKIP
 
 
 def build_approval_request(
@@ -162,14 +200,19 @@ def approval_request_for_capabilities(
     )
 
 
-def approval_request_for_mcp(tool_name: str, policy: str | None) -> ApprovalRequest | None:
-    if should_block_mcp_on_never(tool_name, policy):
-        caps = [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
+def approval_request_for_mcp(
+    tool_name: str,
+    policy: str | None,
+    declared_capabilities: list[str] | None = None,
+) -> ApprovalRequest | None:
+    declared = _capabilities_from_declared(declared_capabilities)
+    if should_block_mcp_on_never(tool_name, policy, declared_capabilities):
+        caps = declared or [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
         return build_approval_request(tool_name, caps, blocked_never=True)
-    if needs_mcp_approval_prompt(tool_name, policy):
+    if needs_mcp_approval_prompt(tool_name, policy, declared_capabilities):
         from deepseek_tui.engine.dispatch import mcp_tool_approval_description
 
-        caps = [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
+        caps = declared or [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
         return build_approval_request(
             tool_name,
             caps,

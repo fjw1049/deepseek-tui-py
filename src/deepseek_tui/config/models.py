@@ -109,6 +109,9 @@ class FeatureConfig(BaseModel):
     # are registered. Default False because automations have side effects
     # (durable scheduled fires) and should be a deliberate choice.
     automations: bool = False
+    # Plugin system (skills/hooks/MCP bundles). Discovery is cheap and
+    # hooks/MCP require per-plugin trust, so default on.
+    plugins: bool = True
 
 
 class AutomationEmailConfig(BaseModel):

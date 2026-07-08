@@ -1295,6 +1295,188 @@ def mcp_tools_cmd(
     asyncio.run(_run())
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Subcommand group: plugin
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+plugin_app = typer.Typer(help="Manage plugins (skills/hooks/MCP bundles).")
+app.add_typer(plugin_app, name="plugin")
+
+_PLUGIN_PROJECT_OPTION = typer.Option(
+    False,
+    "--project",
+    help="Target the project scope (<cwd>/.deepseek/plugins) instead of user scope.",
+)
+
+
+def _plugins_dir(project: bool) -> Path:
+    from deepseek_tui.integrations.plugins import project_plugins_dir, user_plugins_dir
+
+    return project_plugins_dir() if project else user_plugins_dir()
+
+
+def _plugin_list() -> None:
+    from deepseek_tui.integrations.plugins import discover_plugins
+
+    plugins = discover_plugins(workspace=Path.cwd(), include_disabled=True)
+    if not plugins:
+        typer.echo("No plugins installed.")
+        typer.echo("Install one with `deepseek-tui plugin install <github:owner/repo|path>`.")
+        return
+    for p in plugins:
+        flags: list[str] = [p.scope]
+        if not p.enabled:
+            flags.append("disabled")
+        if p.trusted:
+            flags.append("trusted")
+        components: list[str] = []
+        if p.manifest.skills:
+            components.append("skills")
+        if p.manifest.hooks:
+            components.append("hooks")
+        if p.manifest.mcp_servers:
+            components.append("mcp")
+        comp = f" [{', '.join(components)}]" if components else ""
+        perms = (
+            f" perms={','.join(p.manifest.permissions)}"
+            if p.manifest.permissions
+            else ""
+        )
+        desc = f" — {p.manifest.description}" if p.manifest.description else ""
+        typer.echo(
+            f"{p.name} v{p.manifest.version} ({', '.join(flags)}){comp}{perms}{desc}"
+        )
+
+
+@plugin_app.callback(invoke_without_command=True)
+def plugin_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        _plugin_list()
+
+
+@plugin_app.command("list")
+def plugin_list_cmd() -> None:
+    """List installed plugins across scopes."""
+    _plugin_list()
+
+
+@plugin_app.command("install")
+def plugin_install_cmd(
+    spec: str = typer.Argument(..., help="Source: github:owner/repo or local path."),
+    trust: bool = typer.Option(
+        False, "--trust", help="Trust immediately (activates hooks/MCP servers)."
+    ),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Install a plugin from GitHub or a local directory."""
+    from deepseek_tui.integrations.plugins import install_plugin
+    from deepseek_tui.integrations.skills import InstallOutcome
+
+    outcome, message = install_plugin(spec, _plugins_dir(project), trust=trust)
+    typer.echo(message)
+    if outcome == InstallOutcome.FAILED:
+        raise typer.Exit(1)
+
+
+@plugin_app.command("remove")
+def plugin_remove_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Uninstall a plugin."""
+    from deepseek_tui.integrations.plugins import uninstall_plugin
+
+    typer.echo(uninstall_plugin(name, _plugins_dir(project)))
+
+
+@plugin_app.command("update")
+def plugin_update_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Re-install a plugin from its recorded source."""
+    from deepseek_tui.integrations.plugins import update_plugin
+    from deepseek_tui.integrations.skills import InstallOutcome
+
+    outcome, message = update_plugin(name, _plugins_dir(project))
+    typer.echo(message)
+    if outcome == InstallOutcome.FAILED:
+        raise typer.Exit(1)
+
+
+@plugin_app.command("enable")
+def plugin_enable_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    from deepseek_tui.integrations.plugins import set_plugin_enabled
+
+    typer.echo(set_plugin_enabled(name, True, _plugins_dir(project)))
+
+
+@plugin_app.command("disable")
+def plugin_disable_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    from deepseek_tui.integrations.plugins import set_plugin_enabled
+
+    typer.echo(set_plugin_enabled(name, False, _plugins_dir(project)))
+
+
+@plugin_app.command("trust")
+def plugin_trust_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Trust a plugin — activates its hooks and MCP servers."""
+    from deepseek_tui.integrations.plugins import set_plugin_trusted
+
+    typer.echo(set_plugin_trusted(name, True, _plugins_dir(project)))
+
+
+@plugin_app.command("untrust")
+def plugin_untrust_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Revoke trust — deactivates the plugin's hooks and MCP servers."""
+    from deepseek_tui.integrations.plugins import set_plugin_trusted
+
+    typer.echo(set_plugin_trusted(name, False, _plugins_dir(project)))
+
+
+@plugin_app.command("search")
+def plugin_search_cmd(
+    query: str = typer.Argument("", help="Filter by name/description (optional)."),
+    registry_url: str = typer.Option(
+        None, "--registry", help="Override the registry index URL."
+    ),
+) -> None:
+    """Search the curated plugin marketplace index."""
+    from deepseek_tui.integrations.plugins import fetch_plugin_registry
+
+    doc = fetch_plugin_registry(registry_url)
+    if doc is None:
+        typer.echo("Plugin registry unavailable (network or host not allowed).")
+        raise typer.Exit(1)
+    q = query.strip().lower()
+    matches = [
+        e
+        for e in doc.plugins
+        if not q or q in e.name.lower() or q in e.description.lower()
+    ]
+    if not matches:
+        typer.echo("No plugins matched.")
+        return
+    for e in matches:
+        comp = f" [{', '.join(e.components)}]" if e.components else ""
+        perms = f" perms={','.join(e.permissions)}" if e.permissions else ""
+        desc = f" — {e.description}" if e.description else ""
+        typer.echo(f"{e.name} ({e.source}){comp}{perms}{desc}")
+        typer.echo(f"  install: deepseek-tui plugin install {e.source}")
+
+
 @app.command()
 def completions(
     shell: str = typer.Argument("bash", help="Shell type (bash/zsh/fish)."),

@@ -85,6 +85,13 @@ class ToolExecutionMixin:
             ]
         )
 
+    def _mcp_declared_capabilities(self, tool_name: str) -> list[str]:
+        """Capability hints declared for an MCP tool's server (plugin
+        manifest ``permissions``); empty when unknown / undeclared."""
+        if self.mcp_manager is None:
+            return []
+        return self.mcp_manager.declared_capabilities(tool_name)
+
     async def _execute_tool_calls(
         self, tool_calls: list[ToolCall], model: str | None = None
     ) -> list[Message]:
@@ -130,7 +137,11 @@ class ToolExecutionMixin:
                         input=tc.arguments if isinstance(tc.arguments, dict) else {},
                         read_only=mcp_tool_is_read_only(tc.name),
                         supports_parallel=mcp_tool_is_parallel_safe(tc.name),
-                        approval_required=plan_requires_mcp_approval(tc.name, policy),
+                        approval_required=plan_requires_mcp_approval(
+                            tc.name,
+                            policy,
+                            self._mcp_declared_capabilities(tc.name),
+                        ),
                     ))
                 else:
                     plans.append(ToolExecutionPlan(
@@ -525,7 +536,9 @@ class ToolExecutionMixin:
             if self.mcp_manager is None:
                 raise ToolError(f"MCP tool '{tool_name}' called but no MCP manager configured")
             approval_request = approval_request_for_mcp(
-                tool_name, self.exec_policy.approval_policy
+                tool_name,
+                self.exec_policy.approval_policy,
+                self._mcp_declared_capabilities(tool_name),
             )
             if approval_request is not None:
                 denied = await self._handle_approval_flow(

@@ -29,6 +29,14 @@ class McpServerConfig:
     execute_timeout: float = 60.0
     read_timeout: float = 120.0
     tool_filter: ToolFilter | None = None
+    # Deferred startup: excluded from eager start_all / background warm
+    # connects; the server process only spawns on first tool call or
+    # discovery. ``None`` means "not specified" so callers (e.g. the
+    # plugin loader) can apply their own default.
+    lazy: bool | None = None
+    # Declared capability hints (e.g. from a plugin manifest's
+    # ``permissions``) consumed by the approval presentation layer.
+    capabilities: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -55,12 +63,17 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid MCP config: {path}")
+    return servers_from_document(data)
+
+
+def servers_from_document(data: dict[str, Any]) -> list[McpServerConfig]:
+    """Parse an in-memory mcp.json-shaped document into server configs."""
     defaults = data.get("timeouts", {})
     if not isinstance(defaults, dict):
         defaults = {}
     servers = data.get("servers", data.get("mcpServers", {}))
     if not isinstance(servers, dict):
-        raise ValueError(f"Invalid MCP servers table: {path}")
+        raise ValueError("Invalid MCP servers table")
     return [
         _server_from_raw(name, raw, defaults)
         for name, raw in servers.items()
@@ -106,6 +119,7 @@ def _server_from_raw(
         tool_filter=ToolFilter(allow=enabled_tools, deny=disabled_tools)
         if enabled_tools or disabled_tools
         else None,
+        lazy=bool(raw["lazy"]) if "lazy" in raw else None,
     )
 
 
