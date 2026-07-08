@@ -242,12 +242,12 @@ export function SettingsView(): ReactElement {
     )
   }, [])
 
-  const loadPetCatalog = useCallback(async (): Promise<void> => {
+  const loadPetCatalog = useCallback(async (force = false): Promise<void> => {
     if (typeof window.dsGui?.fetchPetManifest !== 'function') return
     setPetCatalogLoading(true)
     setPetCatalogError(null)
     try {
-      const result = await window.dsGui.fetchPetManifest()
+      const result = await window.dsGui.fetchPetManifest(force)
       if (!result.ok) {
         setPetCatalogError(result.message)
         return
@@ -746,7 +746,7 @@ export function SettingsView(): ReactElement {
                         setPetEnabled(value)
                         writePetEnabled(value)
                       }}
-                      onRefresh={() => void loadPetCatalog()}
+                      onRefresh={() => void loadPetCatalog(true)}
                       onSearchQueryChange={setPetCatalogQuery}
                       onSelect={(pet) => void selectPetSlug(pet)}
                       onAddFavorite={addFavoritePet}

@@ -1,7 +1,7 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe2, PanelLeftOpen, TerminalSquare } from 'lucide-react'
+import { Globe2, PanelLeftOpen } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
@@ -999,18 +999,6 @@ export function Workbench(): ReactElement {
               </div>
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
-                  {showDefaultEditorPicker ? (
-                    <button
-                      type="button"
-                      onClick={toggleTerminalPanel}
-                      className="ds-sidebar-toggle-button ds-no-drag shrink-0"
-                      aria-label={bottomTerminalOpen ? t('terminalPanelHide') : t('terminalPanelShow')}
-                      aria-pressed={bottomTerminalOpen}
-                      title={bottomTerminalOpen ? t('terminalPanelHide') : t('terminalPanelShow')}
-                    >
-                      <TerminalSquare className="h-4 w-4" strokeWidth={1.85} />
-                    </button>
-                  ) : null}
                   {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
                   {showRightSidebarToggle ? (
                     <RightSidebarToggleButton
