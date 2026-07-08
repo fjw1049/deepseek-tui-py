@@ -12,9 +12,7 @@ import {
   setMcpServerEnabled,
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
-import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
-import { useChatStore } from '../../store/chat-store'
 import { loadInstalledPlugins, saveInstalledPlugins, storageKey, normalizePluginId, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
@@ -22,55 +20,9 @@ import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { resolveMcpInstall } from './modelscope-install'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
-/**
- * Built-in connector presets — one-click installable local MCP servers.
- * Each preset builds the mcp.json entry on demand (the filesystem preset
- * binds to the active workspace root). Presets only show in the 内置 tab
- * while not yet present in mcp.json; once installed they migrate to the
- * 已安装 tab as ordinary user connectors.
- */
-type ConnectorPreset = {
-  id: string
-  titleKey: string
-  descKey: string
-  build: (workspaceRoot: string) => McpServerEntry
-}
-
-const BUILTIN_PRESETS: ConnectorPreset[] = [
-  {
-    id: 'filesystem',
-    titleKey: 'pluginMcpFilesystemTitle',
-    descKey: 'pluginMcpFilesystemDesc',
-    build: (workspaceRoot) =>
-      buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-filesystem', workspaceRoot || '/path/to/project'])
-  },
-  {
-    id: 'playwright',
-    titleKey: 'pluginMcpPlaywrightTitle',
-    descKey: 'pluginMcpPlaywrightDesc',
-    build: () => buildMcpServerEntry('npx', ['-y', '@playwright/mcp@latest'])
-  },
-  {
-    id: 'github',
-    titleKey: 'pluginMcpGithubTitle',
-    descKey: 'pluginMcpGithubDesc',
-    build: () =>
-      buildMcpServerEntry('npx', ['-y', '@modelcontextprotocol/server-github'], {
-        GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_...'
-      })
-  },
-  {
-    id: 'context7',
-    titleKey: 'pluginMcpContext7Title',
-    descKey: 'pluginMcpContext7Desc',
-    build: () => buildMcpServerEntry('npx', ['-y', '@upstash/context7-mcp@latest'])
-  }
-]
-
 export function ConnectorsView(): ReactElement {
   const { t } = useTranslation('common')
   const { t: tSettings } = useTranslation('settings')
-  const workspaceRoot = normalizeWorkspaceRoot(useChatStore((s) => s.workspaceRoot))
   const [query, setQuery] = useState('')
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -146,34 +98,20 @@ export function ConnectorsView(): ReactElement {
     })
   }
 
-  // Real connectors come from mcp.json servers; built-in presets are prepended
-  // only while not yet installed (once installed they appear as user connectors).
+  // Connectors come solely from mcp.json servers.
   const connectors = useMemo<ConnectorItem[]>(() => {
     const userConnectors = listMcpServers(mcpConfigText).map((server) => ({
       id: server.id,
       name: server.id,
       summary: server.summary,
-      builtin: false,
       enabled: server.enabled
     }))
-    const installedIds = new Set(userConnectors.map((c) => c.id))
-    const presetConnectors: ConnectorItem[] = BUILTIN_PRESETS.filter(
-      (preset) => !installedIds.has(preset.id)
-    ).map((preset) => ({
-      id: preset.id,
-      name: t(preset.titleKey),
-      summary: t(preset.descKey),
-      builtin: true,
-      enabled: false,
-      presetInstall: preset.build(workspaceRoot)
-    }))
     const normalizedQuery = query.trim().toLowerCase()
-    const all = [...presetConnectors, ...userConnectors]
-    if (!normalizedQuery) return all
-    return all.filter(
+    if (!normalizedQuery) return userConnectors
+    return userConnectors.filter(
       (c) => c.name.toLowerCase().includes(normalizedQuery) || c.summary.toLowerCase().includes(normalizedQuery)
     )
-  }, [mcpConfigText, query, t, workspaceRoot])
+  }, [mcpConfigText, query])
 
   const appendMcpServer = useCallback(
     async (id: string, entry: McpServerEntry): Promise<void> => {
@@ -200,7 +138,7 @@ export function ConnectorsView(): ReactElement {
   )
 
   const deleteConnector = async (connector: ConnectorItem): Promise<void> => {
-    if (connector.builtin || typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
     if (!window.confirm(t('connectorDeleteConfirm', { name: connector.name }))) return
     setBusyId(connector.id)
     setNotice(null)
@@ -226,7 +164,7 @@ export function ConnectorsView(): ReactElement {
   }
 
   const toggleConnector = async (connector: ConnectorItem, enabled: boolean): Promise<void> => {
-    if (connector.builtin || typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
     setBusyId(connector.id)
     setNotice(null)
     try {
@@ -237,19 +175,6 @@ export function ConnectorsView(): ReactElement {
         setMcpConfigText(next)
         void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
       })
-    } catch (e) {
-      setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  const installPreset = async (connector: ConnectorItem): Promise<void> => {
-    if (!connector.presetInstall) return
-    setBusyId(connector.id)
-    setNotice(null)
-    try {
-      await appendMcpServer(connector.id, connector.presetInstall)
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -416,7 +341,12 @@ export function ConnectorsView(): ReactElement {
             busyId={busyId}
             onToggle={(connector, enabled) => void toggleConnector(connector, enabled)}
             onDelete={(connector) => void deleteConnector(connector)}
-            onInstallPreset={(connector) => void installPreset(connector)}
+            headerRight={
+              <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
+                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{t('pluginMcpRestartHint')}</span>
+              </div>
+            }
             marketplaceSlot={
               <MarketplaceBrowser
                 kind="mcp"
@@ -427,11 +357,6 @@ export function ConnectorsView(): ReactElement {
               />
             }
           />
-        </div>
-
-        <div className="mt-8 flex items-center gap-2 text-[12px] text-ds-faint">
-          <RefreshCw className="h-3.5 w-3.5" />
-          <span>{t('pluginMcpRestartHint')}</span>
         </div>
       </div>
     </div>

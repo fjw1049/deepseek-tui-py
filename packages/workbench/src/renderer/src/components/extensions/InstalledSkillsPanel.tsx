@@ -11,7 +11,7 @@ export type InstalledSkill = {
   builtin: boolean
 }
 
-type SkillTab = 'builtin' | 'installed' | 'marketplace'
+type SkillTab = 'installed' | 'marketplace'
 
 type Props = {
   skills: InstalledSkill[]
@@ -22,13 +22,16 @@ type Props = {
   onDelete: (skill: InstalledSkill) => void
   /** Content rendered when the ModelScope 市场 tab is active. */
   marketplaceSlot?: ReactElement
+  /** Optional content pinned to the right of the tab row (e.g. a hint). */
+  headerRight?: ReactElement
 }
 
 /**
- * Installed-skills list with 内置 / 已安装 / ModelScope 市场 segmented tabs. Built-in
- * skills carry the bundled `.system-installed-version` marker and cannot be
- * deleted; user skills reveal an open/delete action row on hover. The
- * marketplace tab renders `marketplaceSlot` (the ModelScope browser).
+ * Installed-skills list with 已安装 / ModelScope 市场 segmented tabs. The 已安装
+ * tab shows every local skill; built-in skills carry the bundled
+ * `.system-installed-version` marker and cannot be deleted (no delete action),
+ * while user skills reveal an open/delete action row on hover. The marketplace
+ * tab renders `marketplaceSlot` (the ModelScope browser).
  */
 export function InstalledSkillsPanel({
   skills,
@@ -37,26 +40,24 @@ export function InstalledSkillsPanel({
   onPreview,
   onOpen,
   onDelete,
-  marketplaceSlot
+  marketplaceSlot,
+  headerRight
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [tab, setTab] = useState<SkillTab>('builtin')
-
-  const builtinSkills = skills.filter((skill) => skill.builtin)
-  const userSkills = skills.filter((skill) => !skill.builtin)
+  const [tab, setTab] = useState<SkillTab>('installed')
 
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="flex items-center gap-5 border-b border-ds-border-muted px-5 pt-4">
-        <SkillTabButton active={tab === 'builtin'} count={builtinSkills.length} onClick={() => setTab('builtin')}>
-          {t('skillTabBuiltin')}
-        </SkillTabButton>
-        <SkillTabButton active={tab === 'installed'} count={userSkills.length} onClick={() => setTab('installed')}>
-          {t('skillTabInstalled')}
-        </SkillTabButton>
-        <SkillTabButton active={tab === 'marketplace'} onClick={() => setTab('marketplace')}>
-          {t('marketplaceTitle')}
-        </SkillTabButton>
+      <div className="flex items-center justify-between gap-4 border-b border-ds-border-muted px-5 pt-4">
+        <div className="flex items-center gap-5">
+          <SkillTabButton active={tab === 'installed'} count={skills.length} onClick={() => setTab('installed')}>
+            {t('skillTabInstalled')}
+          </SkillTabButton>
+          <SkillTabButton active={tab === 'marketplace'} onClick={() => setTab('marketplace')}>
+            {t('marketplaceTitle')}
+          </SkillTabButton>
+        </div>
+        {headerRight ? <div className="pb-3 pl-3">{headerRight}</div> : null}
       </div>
 
       {tab === 'marketplace' ? null : loading ? (
@@ -64,13 +65,13 @@ export function InstalledSkillsPanel({
           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
           {t('skillsLoading')}
         </div>
-      ) : (tab === 'builtin' ? builtinSkills : userSkills).length === 0 ? (
+      ) : skills.length === 0 ? (
         <div className="px-5 py-10 text-center text-[13px] text-ds-faint">
-          {tab === 'builtin' ? t('skillsBuiltinEmpty') : t('skillsInstalledEmpty')}
+          {t('skillsInstalledEmpty')}
         </div>
       ) : (
         <ul className="divide-y divide-ds-border-muted/70">
-          {(tab === 'builtin' ? builtinSkills : userSkills).map((skill) => (
+          {skills.map((skill) => (
             <SkillRow
               key={skill.id}
               skill={skill}

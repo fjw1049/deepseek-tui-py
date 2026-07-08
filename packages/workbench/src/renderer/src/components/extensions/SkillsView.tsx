@@ -275,6 +275,12 @@ export function SkillsView(): ReactElement {
             onPreview={(skill) => setPreviewSkill(skill.id)}
             onOpen={() => void openSkillsDir()}
             onDelete={(skill) => void deleteSkill(skill)}
+            headerRight={
+              <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
+                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{t('pluginSkillRestartHint')}</span>
+              </div>
+            }
             marketplaceSlot={
               <MarketplaceBrowser
                 kind="skill"
