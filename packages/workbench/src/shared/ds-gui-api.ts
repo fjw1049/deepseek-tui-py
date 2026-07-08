@@ -36,6 +36,9 @@ export type WorkspacePickFilesResult =
   | { ok: false; message?: string; paths: [] }
 export type PathOpenResult = { ok: boolean; message?: string; path?: string }
 export type SkillSaveResult = { ok: true; path: string } | { ok: false; message: string }
+export type SkillInstallZipResult =
+  | { ok: true; path: string }
+  | { ok: false; message?: string; conflict?: boolean }
 export type DeepseekConfigFileResult = { path: string; content: string; exists: boolean }
 export type DeepseekConfigSaveResult = { ok: true; path: string }
 export type EndpointTestResult =
@@ -311,6 +314,12 @@ export type DsGuiApi = {
     workspaceRoot?: string
   }) => Promise<WorkspacePickFilesResult>
   saveSkillFile: (rootPath: string, skillName: string, content: string) => Promise<SkillSaveResult>
+  installSkillZip: (payload: {
+    rootPath: string
+    fileName: string
+    data: Uint8Array
+    overwrite?: boolean
+  }) => Promise<SkillInstallZipResult>
   openSkillRoot: (rootPath: string) => Promise<PathOpenResult>
   listSkillsInRoot: (rootPath: string) => Promise<
     | {

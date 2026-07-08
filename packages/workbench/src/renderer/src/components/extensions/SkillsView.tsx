@@ -1,14 +1,13 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Plus, RefreshCw, Search, Settings } from 'lucide-react'
+import { Plus, RefreshCw, Search, Settings } from 'lucide-react'
 import { useChatStore } from '../../store/chat-store'
 import { InstalledSkillsPanel, type InstalledSkill } from './InstalledSkillsPanel'
 import { SkillPreviewDialog } from './SkillPreviewDialog'
+import { InstallSkillDialog } from './InstallSkillDialog'
 import {
-  buildSkillContent,
   loadInstalledPlugins,
-  normalizePluginId,
   saveInstalledPlugins,
   storageKey,
   type Notice
@@ -24,10 +23,7 @@ export function SkillsView(): ReactElement {
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [customOpen, setCustomOpen] = useState(false)
-  const [customName, setCustomName] = useState('')
-  const [customDescription, setCustomDescription] = useState('')
-  const [customBody, setCustomBody] = useState('')
+  const [installOpen, setInstallOpen] = useState(false)
   const [skillsDir, setSkillsDir] = useState('~/.deepseek/skills')
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [skillsListLoading, setSkillsListLoading] = useState(false)
@@ -36,9 +32,22 @@ export function SkillsView(): ReactElement {
   // catalog in parallel with the local skills dir scan (single button updates
   // 内置 / 已安装 / 市场三个 tab).
   const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
+  const installMenuRef = useRef<HTMLDivElement>(null)
 
   // Silence unused var until per-workspace skill roots land here too.
   void workspaceRoot
+
+  // Close the install popover when clicking anywhere outside it.
+  useEffect(() => {
+    if (!installOpen) return
+    const handleClick = (event: MouseEvent): void => {
+      if (installMenuRef.current && !installMenuRef.current.contains(event.target as Node)) {
+        setInstallOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [installOpen])
 
   useEffect(() => {
     if (typeof window.dsGui?.getDeepseekPaths !== 'function') return
@@ -107,41 +116,6 @@ export function SkillsView(): ReactElement {
     )
   }, [installedSkills, query])
 
-  const addCustom = async (): Promise<void> => {
-    const id = normalizePluginId(customName)
-    if (!id) {
-      setNotice({ tone: 'error', message: t('pluginCustomNameRequired') })
-      return
-    }
-    if (!skillsDir) {
-      setNotice({ tone: 'error', message: t('pluginSkillRootMissing') })
-      return
-    }
-    setBusyId('custom:skill')
-    setNotice(null)
-    try {
-      const description = customDescription.trim() || t('pluginCustomFallbackDesc')
-      const body = customBody.trim() || t('pluginCustomSkillFallbackBody')
-      const content = buildSkillContent(id, customName.trim() || id, description, body)
-      const result = await window.dsGui.saveSkillFile(skillsDir, id, content)
-      if (!result.ok) {
-        setNotice({ tone: 'error', message: result.message })
-        return
-      }
-      markInstalled(storageKey('skill', id))
-      await refreshSkillsList()
-      setNotice({ tone: 'success', message: t('pluginSkillAdded', { path: result.path }) })
-      setCustomName('')
-      setCustomDescription('')
-      setCustomBody('')
-      setCustomOpen(false)
-    } catch (e) {
-      setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
-    } finally {
-      setBusyId(null)
-    }
-  }
-
   const openSkillsDir = async (): Promise<void> => {
     if (!skillsDir || typeof window.dsGui?.openSkillRoot !== 'function') return
     const result = await window.dsGui.openSkillRoot(skillsDir)
@@ -174,10 +148,10 @@ export function SkillsView(): ReactElement {
   }
 
   return (
-    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-6 py-7 md:px-10 lg:px-14">
+    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-[26px] font-semibold text-ds-ink md:text-[30px]">{t('extSkills')}</h1>
+          <h1 className="text-[24px] font-semibold text-ds-ink">{t('extSkills')}</h1>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -201,14 +175,25 @@ export function SkillsView(): ReactElement {
               <Settings className="h-4 w-4" strokeWidth={1.75} />
               {t('pluginManage')}
             </button>
-            <button
-              type="button"
-              onClick={() => setCustomOpen((value) => !value)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-userbubble px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" strokeWidth={1.9} />
-              {t('pluginCreate')}
-            </button>
+            <div className="relative" ref={installMenuRef}>
+              <button
+                type="button"
+                onClick={() => setInstallOpen((value) => !value)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:opacity-90"
+              >
+                <Plus className="h-4 w-4" strokeWidth={1.9} />
+                {t('pluginCreate')}
+              </button>
+              <InstallSkillDialog
+                open={installOpen}
+                skillsDir={skillsDir}
+                onClose={() => setInstallOpen(false)}
+                onInstalled={(path) => {
+                  void refreshSkillsList()
+                  setNotice({ tone: 'success', message: t('skillInstallSuccess', { path }) })
+                }}
+              />
+            </div>
           </div>
         </div>
 
@@ -223,47 +208,6 @@ export function SkillsView(): ReactElement {
             placeholder={t('pluginSearchSkill')}
           />
         </label>
-
-        {customOpen ? (
-          <section className="ds-content-card mt-6 rounded-2xl p-4">
-            <div className="grid gap-3 md:grid-cols-2">
-              <input
-                value={customName}
-                onChange={(event) => setCustomName(event.target.value)}
-                className="h-10 rounded-xl border border-ds-border bg-ds-main/45 px-3 text-[14px] text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-                placeholder={t('pluginCustomName')}
-              />
-              <input
-                value={customDescription}
-                onChange={(event) => setCustomDescription(event.target.value)}
-                className="h-10 rounded-xl border border-ds-border bg-ds-main/45 px-3 text-[14px] text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-                placeholder={t('pluginCustomDescription')}
-              />
-            </div>
-            <textarea
-              value={customBody}
-              onChange={(event) => setCustomBody(event.target.value)}
-              className="mt-3 min-h-[140px] w-full rounded-xl border border-ds-border bg-ds-main/45 px-3 py-2 font-mono text-[13px] leading-5 text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-              placeholder={t('pluginCustomSkillBody')}
-              spellCheck={false}
-            />
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => void addCustom()}
-                disabled={busyId === 'custom:skill'}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-userbubble px-4 py-2 text-center text-[13px] font-semibold leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                {busyId === 'custom:skill' ? (
-                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                ) : (
-                  <Plus className="h-4 w-4" strokeWidth={2} />
-                )}
-                {t('pluginAddCustom')}
-              </button>
-            </div>
-          </section>
-        ) : null}
 
         {notice ? <NoticeView notice={notice} /> : null}
 

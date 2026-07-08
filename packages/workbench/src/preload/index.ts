@@ -30,6 +30,7 @@ const api = {
   pickWorkspaceFiles: (options) => ipcRenderer.invoke('workspace:pick-files', options),
   saveSkillFile: (rootPath, skillName, content) =>
     ipcRenderer.invoke('skill:save-file', { rootPath, skillName, content }),
+  installSkillZip: (payload) => ipcRenderer.invoke('skill:install-zip', payload),
   openSkillRoot: (rootPath) =>
     ipcRenderer.invoke('skill:open-root', rootPath),
   listSkillsInRoot: (rootPath) => ipcRenderer.invoke('skill:list-in-root', rootPath),

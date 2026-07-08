@@ -401,7 +401,7 @@ export function AutomationCenter({
             type="button"
             disabled={!runtimeReady}
             onClick={() => setCreating(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-ds-ink px-4 py-2 text-[13px] font-medium text-ds-main disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white transition hover:opacity-90 disabled:opacity-40"
           >
             <Plus className="h-4 w-4" />
             {t('automationNewTask')}

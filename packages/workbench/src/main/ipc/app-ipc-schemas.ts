@@ -66,6 +66,29 @@ export const skillReadPayloadSchema = z
   })
   .strict()
 
+const MAX_SKILL_ZIP_BYTES = 20_000_000
+
+export const skillInstallZipPayloadSchema = z
+  .object({
+    rootPath: trimmedString(MAX_PATH_LENGTH),
+    fileName: trimmedString(256),
+    // Raw zip bytes travel across the context bridge via structured clone
+    // (same as asr:transcribe). Accept both Uint8Array and ArrayBuffer.
+    data: z.union([z.instanceof(Uint8Array), z.instanceof(ArrayBuffer)]),
+    overwrite: z.boolean().optional()
+  })
+  .superRefine((value, ctx) => {
+    const byteLength =
+      value.data instanceof ArrayBuffer ? value.data.byteLength : value.data.byteLength
+    if (byteLength <= 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Zip payload is empty.' })
+      return
+    }
+    if (byteLength > MAX_SKILL_ZIP_BYTES) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Zip payload is too large.' })
+    }
+  })
+
 export const rootPathSchema = trimmedString(MAX_PATH_LENGTH)
 export const deepseekConfigContentSchema = z.string().max(MAX_CONFIG_FILE_BYTES)
 

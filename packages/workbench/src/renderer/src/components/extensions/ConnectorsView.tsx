@@ -1,22 +1,22 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Plus, RefreshCw, Search, Settings } from 'lucide-react'
+import { Plus, RefreshCw, Search, Settings } from 'lucide-react'
 import {
-  buildMcpServerEntry,
   listMcpServers,
   mergeMcpServerIntoConfig,
   mcpConfigHasServer,
-  parseMcpConfigDocument,
   removeMcpServerFromConfig,
   setMcpServerEnabled,
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
-import { loadInstalledPlugins, saveInstalledPlugins, storageKey, normalizePluginId, type Notice } from './marketplace-shared'
+import { loadInstalledPlugins, saveInstalledPlugins, storageKey, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
+import { AddMcpServerDialog } from './AddMcpServerDialog'
+import { ImportMcpJsonDialog } from './ImportMcpJsonDialog'
 import { resolveMcpInstall } from './modelscope-install'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
@@ -27,11 +27,9 @@ export function ConnectorsView(): ReactElement {
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [customOpen, setCustomOpen] = useState(false)
-  const [customName, setCustomName] = useState('')
-  const [customCommand, setCustomCommand] = useState('')
-  const [customArgs, setCustomArgs] = useState('')
-  const [customConfig, setCustomConfig] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [mcpConfigText, setMcpConfigText] = useState('')
   const [mcpLoaded, setMcpLoaded] = useState(false)
   const [reloading, setReloading] = useState(false)
@@ -44,6 +42,20 @@ export function ConnectorsView(): ReactElement {
   // race: both read the same baseline, the second write overwrites the first,
   // and the first server silently disappears from config.
   const mcpWriteLockRef = useRef<Promise<unknown>>(Promise.resolve())
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close the create dropdown when clicking anywhere outside it.
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleClick = (event: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
+
   const withMcpWriteLock = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const run = mcpWriteLockRef.current.then(task, task)
     mcpWriteLockRef.current = run.then(
@@ -200,49 +212,16 @@ export function ConnectorsView(): ReactElement {
     return null
   }
 
-  const addCustom = async (): Promise<void> => {
-    const id = normalizePluginId(customName)
-    if (!id) {
-      setNotice({ tone: 'error', message: t('pluginCustomNameRequired') })
-      return
-    }
-    setBusyId('custom:mcp')
-    setNotice(null)
-    try {
-      const rawCustom = customConfig.trim()
-      const argsFromForm = customArgs
-        .split('\n')
-        .map((arg) => arg.trim())
-        .filter(Boolean)
-      let entry: McpServerEntry
-      if (rawCustom.startsWith('{')) {
-        const parsed = parseMcpConfigDocument(rawCustom)
-        const servers = (parsed.mcpServers ?? parsed.servers) as Record<string, McpServerEntry> | undefined
-        entry =
-          servers?.[id] ??
-          (Object.values(servers ?? {})[0] as McpServerEntry | undefined) ??
-          buildMcpServerEntry(customCommand.trim() || 'npx', argsFromForm)
-      } else {
-        entry = buildMcpServerEntry(customCommand.trim() || 'npx', argsFromForm)
-      }
-      await appendMcpServer(id, entry)
-      setCustomName('')
-      setCustomCommand('')
-      setCustomArgs('')
-      setCustomConfig('')
-      setCustomOpen(false)
-    } catch (e) {
-      setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
-    } finally {
-      setBusyId(null)
-    }
-  }
+  const isDuplicate = useCallback(
+    (id: string): boolean => mcpConfigHasServer(mcpConfigText, id),
+    [mcpConfigText]
+  )
 
   return (
-    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-6 py-7 md:px-10 lg:px-14">
+    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-[26px] font-semibold text-ds-ink md:text-[30px]">{t('extConnectors')}</h1>
+          <h1 className="text-[24px] font-semibold text-ds-ink">{t('extConnectors')}</h1>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -261,14 +240,40 @@ export function ConnectorsView(): ReactElement {
               <Settings className="h-4 w-4" strokeWidth={1.75} />
               {t('pluginManage')}
             </button>
-            <button
-              type="button"
-              onClick={() => setCustomOpen((value) => !value)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-userbubble px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" strokeWidth={1.9} />
-              {t('pluginCreate')}
-            </button>
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((value) => !value)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:opacity-90"
+              >
+                <Plus className="h-4 w-4" strokeWidth={1.9} />
+                {t('pluginCreate')}
+              </button>
+              {menuOpen ? (
+                <div className="ds-content-card absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-xl py-1 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setAddOpen(true)
+                    }}
+                    className="flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
+                  >
+                    {t('connectorAddMcp')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setImportOpen(true)
+                    }}
+                    className="flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
+                  >
+                    {t('connectorImportJson')}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -283,54 +288,6 @@ export function ConnectorsView(): ReactElement {
             placeholder={t('connectorsSearch')}
           />
         </label>
-
-        {customOpen ? (
-          <section className="ds-content-card mt-6 rounded-2xl p-4">
-            <div className="grid gap-3 md:grid-cols-2">
-              <input
-                value={customName}
-                onChange={(event) => setCustomName(event.target.value)}
-                className="h-10 rounded-xl border border-ds-border bg-ds-main/45 px-3 text-[14px] text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-                placeholder={t('pluginCustomName')}
-              />
-              <input
-                value={customCommand}
-                onChange={(event) => setCustomCommand(event.target.value)}
-                className="h-10 rounded-xl border border-ds-border bg-ds-main/45 px-3 text-[14px] text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-                placeholder={t('pluginCustomCommand')}
-              />
-            </div>
-            <textarea
-              value={customArgs}
-              onChange={(event) => setCustomArgs(event.target.value)}
-              className="mt-3 min-h-[80px] w-full rounded-xl border border-ds-border bg-ds-main/45 px-3 py-2 font-mono text-[13px] leading-5 text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-              placeholder={t('pluginCustomArgs')}
-              spellCheck={false}
-            />
-            <textarea
-              value={customConfig}
-              onChange={(event) => setCustomConfig(event.target.value)}
-              className="mt-3 min-h-[120px] w-full rounded-xl border border-ds-border bg-ds-main/45 px-3 py-2 font-mono text-[13px] leading-5 text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-              placeholder={t('pluginCustomMcpConfig')}
-              spellCheck={false}
-            />
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => void addCustom()}
-                disabled={busyId === 'custom:mcp'}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-userbubble px-4 py-2 text-center text-[13px] font-semibold leading-none text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                {busyId === 'custom:mcp' ? (
-                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                ) : (
-                  <Plus className="h-4 w-4" strokeWidth={2} />
-                )}
-                {t('pluginAddCustom')}
-              </button>
-            </div>
-          </section>
-        ) : null}
 
         {notice ? <NoticeView notice={notice} /> : null}
 
@@ -359,6 +316,19 @@ export function ConnectorsView(): ReactElement {
           />
         </div>
       </div>
+
+      <AddMcpServerDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        isDuplicate={isDuplicate}
+        onSubmit={appendMcpServer}
+      />
+      <ImportMcpJsonDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        isDuplicate={isDuplicate}
+        onSubmit={appendMcpServer}
+      />
     </div>
   )
 }

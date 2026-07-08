@@ -1,8 +1,10 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
-import { homedir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { homedir, tmpdir } from 'node:os'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import extract from 'extract-zip'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
 import type {
@@ -35,6 +37,7 @@ import {
   skillSaveFilePayloadSchema,
   skillDeletePayloadSchema,
   skillReadPayloadSchema,
+  skillInstallZipPayloadSchema,
   terminalCreateOptionsSchema,
   terminalInputPayloadSchema,
   marketplaceKindSchema,
@@ -182,6 +185,45 @@ function parseSkillDescription(content: string): string {
     .replace(/^description\s*:/, '')
     .trim()
     .replace(/^["']|["']$/g, '')
+}
+
+/** Pull the `name:` value out of a SKILL.md YAML frontmatter block. */
+function parseSkillFrontmatterName(content: string): string {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return ''
+  const nameLine = match[1].split(/\r?\n/).find((line) => /^name\s*:/.test(line))
+  if (!nameLine) return ''
+  return nameLine
+    .replace(/^name\s*:/, '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+}
+
+/**
+ * Recursively find the shallowest `SKILL.md` under `dir`, returning the
+ * directory that contains it. Returns null when no SKILL.md exists anywhere.
+ * Breadth-first so the top-most match wins (the intended skill folder).
+ */
+async function findShallowestSkillDir(dir: string): Promise<string | null> {
+  const queue: Array<{ path: string; depth: number }> = [{ path: dir, depth: 0 }]
+  let best: { path: string; depth: number } | null = null
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    if (best && current.depth > best.depth) continue
+    const entries = await readdir(current.path, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name === 'SKILL.md') {
+        if (!best || current.depth < best.depth) best = current
+      }
+    }
+    if (best && current.depth >= best.depth) continue
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        queue.push({ path: join(current.path, entry.name), depth: current.depth + 1 })
+      }
+    }
+  }
+  return best?.path ?? null
 }
 
 /**
@@ -654,6 +696,82 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
         ok: false as const,
         message: error instanceof Error ? error.message : String(error)
       }
+    }
+  })
+
+  ipcMain.handle('skill:install-zip', async (_, payload: unknown) => {
+    const request = parseIpcPayload('skill:install-zip', skillInstallZipPayloadSchema, payload)
+    const rootPath = expandHomePath(request.rootPath)
+    if (!rootPath) {
+      return { ok: false as const, message: 'Skill directory is required.' }
+    }
+    const bytes =
+      request.data instanceof ArrayBuffer ? Buffer.from(request.data) : Buffer.from(request.data)
+    const tmpBase = join(tmpdir(), `ds-skill-${randomUUID()}`)
+    const zipPath = `${tmpBase}.zip`
+    const extractDir = tmpBase
+    try {
+      await mkdir(rootPath, { recursive: true })
+      await writeFile(zipPath, bytes)
+      // zip-slip guard: reject any entry that would resolve outside extractDir.
+      await extract(zipPath, {
+        dir: extractDir,
+        onEntry: (entry) => {
+          const dest = resolve(extractDir, entry.fileName)
+          if (dest !== resolve(extractDir) && !dest.startsWith(resolve(extractDir) + sep)) {
+            throw new Error(`Unsafe zip entry: ${entry.fileName}`)
+          }
+        }
+      })
+
+      const skillContentDir = await findShallowestSkillDir(extractDir)
+      if (!skillContentDir) {
+        return { ok: false as const, message: 'No SKILL.md found in the archive.' }
+      }
+      // Derive the target folder name: prefer the wrapping dir name; if SKILL.md
+      // sits at the extract root, fall back to frontmatter `name:` then the
+      // uploaded file stem.
+      let derivedName: string
+      if (resolve(skillContentDir) === resolve(extractDir)) {
+        const md = await readFile(join(skillContentDir, 'SKILL.md'), 'utf8').catch(() => '')
+        derivedName =
+          parseSkillFrontmatterName(md) || basename(request.fileName, extname(request.fileName))
+      } else {
+        derivedName = basename(skillContentDir)
+      }
+
+      const skillName = normalizeSkillFolderName(derivedName)
+      const finalDir = join(rootPath, skillName)
+      if (!isPathWithinRoot(finalDir, rootPath)) {
+        return { ok: false as const, message: 'Skill path escapes the skill root.' }
+      }
+
+      const exists = await access(finalDir)
+        .then(() => true)
+        .catch(() => false)
+      if (exists) {
+        const isBuiltin = await access(join(finalDir, SYSTEM_SKILL_MARKER))
+          .then(() => true)
+          .catch(() => false)
+        if (isBuiltin) {
+          return { ok: false as const, message: 'Built-in skills cannot be overwritten.' }
+        }
+        if (!request.overwrite) {
+          return { ok: false as const, conflict: true as const, message: skillName }
+        }
+        await rm(finalDir, { recursive: true, force: true })
+      }
+
+      await rename(skillContentDir, finalDir)
+      return { ok: true as const, path: join(finalDir, 'SKILL.md') }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    } finally {
+      await rm(zipPath, { force: true }).catch(() => undefined)
+      await rm(extractDir, { recursive: true, force: true }).catch(() => undefined)
     }
   })
 

@@ -3,6 +3,7 @@ export type McpServerEntry = {
   args?: string[]
   url?: string
   env?: Record<string, string>
+  timeout?: number
   enabled?: boolean
   disabled?: boolean
   required?: boolean
@@ -69,7 +70,8 @@ export function removeMcpServerFromConfig(raw: string, serverId: string): string
 export function buildMcpServerEntry(
   command: string,
   args: string[],
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  timeout?: number
 ): McpServerEntry {
   const entry: McpServerEntry = {
     command,
@@ -80,6 +82,67 @@ export function buildMcpServerEntry(
   }
   if (env && Object.keys(env).length > 0) {
     entry.env = env
+  }
+  if (typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0) {
+    entry.timeout = timeout
+  }
+  return entry
+}
+
+/**
+ * Split a pasted command line into a command + args, honoring single/double
+ * quotes so paths with spaces survive. Not a full shell parser — no escapes or
+ * variable expansion — but enough for the common `npx -y pkg "/some path"` case.
+ */
+export function tokenizeCommandLine(input: string): { command: string; args: string[] } {
+  const tokens: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let hasCurrent = false
+  for (const char of input.trim()) {
+    if (quote) {
+      if (char === quote) quote = null
+      else current += char
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      hasCurrent = true
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (hasCurrent) {
+        tokens.push(current)
+        current = ''
+        hasCurrent = false
+      }
+      continue
+    }
+    current += char
+    hasCurrent = true
+  }
+  if (hasCurrent) tokens.push(current)
+  const [command = '', ...args] = tokens
+  return { command, args }
+}
+
+/** Build an SSE (URL-based) MCP server entry. Mirrors {@link buildMcpServerEntry}. */
+export function buildSseServerEntry(
+  url: string,
+  env?: Record<string, string>,
+  timeout?: number
+): McpServerEntry {
+  const entry: McpServerEntry = {
+    url,
+    enabled: true,
+    disabled: false,
+    required: false
+  }
+  if (env && Object.keys(env).length > 0) {
+    entry.env = env
+  }
+  if (typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0) {
+    entry.timeout = timeout
   }
   return entry
 }
