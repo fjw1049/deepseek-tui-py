@@ -1208,10 +1208,10 @@ export function Workbench(): ReactElement {
                   aria-orientation="horizontal"
                   aria-label={t('terminalPanelResize')}
                   title={t('terminalPanelResize')}
-                  className="ds-bottom-terminal__handle ds-no-drag group flex h-3.5 shrink-0 items-center justify-center cursor-row-resize touch-none select-none"
+                  className="ds-bottom-terminal__handle ds-no-drag group flex h-2 shrink-0 items-center justify-center cursor-row-resize touch-none select-none"
                   onPointerDown={beginBottomTerminalResize}
                 >
-                  <span className="pointer-events-none h-1 w-10 rounded-full bg-ds-border-strong transition group-hover:w-16 group-hover:bg-ds-accent/70" />
+                  <span className="pointer-events-none h-0.5 w-8 rounded-full bg-ds-border-strong transition group-hover:w-12 group-hover:bg-ds-accent/70" />
                 </div>
                 <AppTerminalPanel
                   workspaceRoot={activeWorkspaceRoot}

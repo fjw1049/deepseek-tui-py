@@ -1419,8 +1419,8 @@ samp {
 }
 
 .ds-bottom-terminal__handle {
-  /* Dedicated chrome row above tabs — not overlaid on the tab bar. */
-  min-height: 1rem;
+  /* Thin dedicated chrome row above tabs — not overlaid on the tab bar. */
+  min-height: 0.5rem;
 }
 
 .ds-terminal-panel__tabs {
@@ -1439,7 +1439,7 @@ samp {
 }
 
 .ds-terminal-host .xterm {
-  padding: 0.35rem 0.75rem 0.5rem;
+  padding: 0.15rem 0.6rem 0.25rem;
 }
 
 /* xterm.css defaults viewport to #000 — shows as a thick black frame with padding */
