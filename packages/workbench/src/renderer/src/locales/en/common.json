@@ -40,6 +40,7 @@
   "connectorsInstalled": "Installed connectors",
   "connectorsSearch": "Search connectors",
   "connectorReload": "Reload",
+  "listReloaded": "List refreshed",
   "connectorDelete": "Delete",
   "connectorDeleteConfirm": "Delete connector \"{{name}}\"? This removes it from mcp.json.",
   "connectorDeleted": "Deleted connector \"{{name}}\"",

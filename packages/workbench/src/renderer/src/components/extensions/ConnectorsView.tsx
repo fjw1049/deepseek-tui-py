@@ -11,7 +11,7 @@ import {
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
-import { loadInstalledPlugins, saveInstalledPlugins, storageKey, type Notice } from './marketplace-shared'
+import { loadInstalledPlugins, saveInstalledPlugins, storageKey, useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
@@ -27,6 +27,7 @@ export function ConnectorsView(): ReactElement {
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  useNoticeAutoDismiss(notice, setNotice)
   const [menuOpen, setMenuOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)

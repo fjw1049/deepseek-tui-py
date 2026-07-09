@@ -10,6 +10,7 @@ import {
   loadInstalledPlugins,
   saveInstalledPlugins,
   storageKey,
+  useNoticeAutoDismiss,
   type Notice
 } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
@@ -23,6 +24,7 @@ export function SkillsView(): ReactElement {
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  useNoticeAutoDismiss(notice, setNotice)
   const [installOpen, setInstallOpen] = useState(false)
   const [skillsDir, setSkillsDir] = useState('~/.deepseek/skills')
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
@@ -156,10 +158,14 @@ export function SkillsView(): ReactElement {
             <button
               type="button"
               onClick={() => {
-                void refreshSkillsList()
                 // Bump the market catalog refresh alongside the local scan so
                 // the single top button updates all three tabs.
                 setMarketRefreshSignal((n) => n + 1)
+                // Manual reload gets an explicit "done" toast so the user
+                // knows it ran; automatic refreshes stay quiet.
+                void refreshSkillsList().then(() =>
+                  setNotice({ tone: 'success', message: t('listReloaded') })
+                )
               }}
               disabled={skillsListLoading}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"

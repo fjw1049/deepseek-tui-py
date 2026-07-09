@@ -4,11 +4,33 @@
  * duplicating it.
  */
 
+import { useEffect } from 'react'
+
 export type NoticeTone = 'success' | 'error' | 'info'
 
 export type Notice = {
   tone: NoticeTone
   message: string
+}
+
+/**
+ * Auto-dismiss a transient notice so success/error banners don't linger
+ * forever (which is what left a stale "Not Found" error on screen after the
+ * runtime came back up). Errors stay a bit longer since they matter more;
+ * success/info clear faster. A fresh notice restarts the timer; unmount
+ * clears it. Callers that want a permanent banner should render NoticeView
+ * directly from a condition instead of going through setNotice.
+ */
+export function useNoticeAutoDismiss(
+  notice: Notice | null,
+  setNotice: (value: Notice | null) => void
+): void {
+  useEffect(() => {
+    if (!notice) return
+    const ms = notice.tone === 'error' ? 5000 : 2000
+    const timer = window.setTimeout(() => setNotice(null), ms)
+    return () => window.clearTimeout(timer)
+  }, [notice, setNotice])
 }
 
 /** Which on-disk artifact an extension item writes to. */

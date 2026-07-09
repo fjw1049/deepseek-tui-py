@@ -40,6 +40,7 @@
   "connectorsInstalled": "已安装连接器",
   "connectorsSearch": "搜索连接器",
   "connectorReload": "重新加载",
+  "listReloaded": "列表已刷新",
   "connectorDelete": "删除",
   "connectorDeleteConfirm": "确定删除连接器「{{name}}」吗？此操作会从 mcp.json 移除该配置。",
   "connectorDeleted": "已删除连接器「{{name}}」",

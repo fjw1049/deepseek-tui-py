@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useChatStore } from '../../store/chat-store'
-import type { Notice } from './marketplace-shared'
+import { useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 
 type PluginRow = {
@@ -50,6 +50,7 @@ export function PluginsView(): ReactElement {
   const [loading, setLoading] = useState(false)
   const [busyName, setBusyName] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  useNoticeAutoDismiss(notice, setNotice)
   const [installOpen, setInstallOpen] = useState(false)
   const installMenuRef = useRef<HTMLDivElement>(null)
   const [registry, setRegistry] = useState<RegistryEntry[] | null>(null)
@@ -69,24 +70,30 @@ export function PluginsView(): ReactElement {
     return () => window.removeEventListener('mousedown', handleClick)
   }, [installOpen])
 
-  const refresh = useCallback(async (): Promise<void> => {
-    if (typeof window.dsGui?.runtimeRequest !== 'function') return
-    setLoading(true)
-    try {
-      const qs = workspaceRoot ? `?workspace=${encodeURIComponent(workspaceRoot)}` : ''
-      const result = await window.dsGui.runtimeRequest(`/v1/plugins${qs}`, 'GET')
-      if (!result.ok) {
-        setNotice({ tone: 'error', message: extractApiError(result.body) || t('pluginActionFailed') })
-        return
+  const refresh = useCallback(
+    async (announce = false): Promise<void> => {
+      if (typeof window.dsGui?.runtimeRequest !== 'function') return
+      setLoading(true)
+      try {
+        const qs = workspaceRoot ? `?workspace=${encodeURIComponent(workspaceRoot)}` : ''
+        const result = await window.dsGui.runtimeRequest(`/v1/plugins${qs}`, 'GET')
+        if (!result.ok) {
+          setNotice({ tone: 'error', message: extractApiError(result.body) || t('pluginActionFailed') })
+          return
+        }
+        const parsed = JSON.parse(result.body) as { plugins?: PluginRow[] }
+        setPlugins(parsed.plugins ?? [])
+        // Manual reload gets an explicit "done" toast so the user knows
+        // it ran; automatic refreshes (mount / after a mutation) stay quiet.
+        setNotice(announce ? { tone: 'success', message: t('listReloaded') } : null)
+      } catch (error) {
+        setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+      } finally {
+        setLoading(false)
       }
-      const parsed = JSON.parse(result.body) as { plugins?: PluginRow[] }
-      setPlugins(parsed.plugins ?? [])
-    } catch (error) {
-      setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
-    } finally {
-      setLoading(false)
-    }
-  }, [workspaceRoot, t])
+    },
+    [workspaceRoot, t]
+  )
 
   useEffect(() => {
     void refresh()
@@ -263,7 +270,7 @@ export function PluginsView(): ReactElement {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void refresh()}
+              onClick={() => void refresh(true)}
               disabled={loading}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"
             >
