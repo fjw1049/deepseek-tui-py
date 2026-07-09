@@ -83,6 +83,46 @@ def _detect_focus_mcp(text: str, manager: object | None) -> str | None:
     return None
 
 
+_PLUGIN_MOUNT_QUALIFIER = "plugin:"
+
+
+def _detect_plugin_mount(text: str) -> str | None:
+    """解析形如 `@plugin:hello-probe ...` 的挂载前缀，返回插件名（或哨兵）。
+
+    与 :func:`_detect_focus_mcp` 共用 `@` sigil，但用 ``plugin:`` 限定符区分：
+    首个 token 必须恰为 ``@plugin:<name>`` 才命中，裸 ``@mcp`` 不受影响。
+    ``@plugin:off`` / ``@plugin:none`` / ``@plugin:`` 空 一律返回 ``"off"``
+    表示摘除。未命中返回 ``None``（调用方回退，把 `@plugin:x` 当普通文本）。
+    """
+    name = _detect_focus_prefix(text, "@")
+    if name is None:
+        return None
+    lowered = name.lower()
+    if not lowered.startswith(_PLUGIN_MOUNT_QUALIFIER):
+        return None
+    plugin = name[len(_PLUGIN_MOUNT_QUALIFIER):]
+    if not plugin or plugin.lower() in ("off", "none"):
+        return "off"
+    return plugin
+
+
+def _strip_plugin_mount(text: str, name: str) -> str:
+    """移除整条消息首个 ``@plugin:<name>`` token（对称于 detect）。
+
+    ``name`` 为 :func:`_detect_plugin_mount` 返回的插件名或哨兵 ``"off"``。
+    复用 :func:`_strip_focus_prefix`，前缀是 ``plugin:<name>``（哨兵时是
+    ``plugin:`` 本身，覆盖 ``@plugin:``/``@plugin:off`` 两种写法）。
+    """
+    if name == "off":
+        # 尝试剥 `@plugin:off` / `@plugin:none`，再退到裸 `@plugin:`。
+        for token in ("plugin:off", "plugin:none", "plugin:"):
+            stripped = _strip_focus_prefix(text, "@", token)
+            if stripped != (text or ""):
+                return stripped
+        return text or ""
+    return _strip_focus_prefix(text, "@", f"{_PLUGIN_MOUNT_QUALIFIER}{name}")
+
+
 def _resolve_app_mode(mode: str) -> _AppMode:
     """Convert a mode string to AppMode, falling back to AGENT."""
     try:

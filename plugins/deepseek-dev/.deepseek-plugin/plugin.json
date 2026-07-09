@@ -1,0 +1,22 @@
+{
+  "name": "deepseek-dev",
+  "version": "0.1.0",
+  "description": "DeepSeek-TUI / Workbench development pack: repo conventions, UI/plugin/runtime skills, session context hook, and a read-only repo MCP helper.",
+  "permissions": ["read"],
+  "skills": "./skills",
+  "hooks": [
+    {
+      "event": "session_start",
+      "name": "dev-context",
+      "command": "sh ${PLUGIN_DIR}/hooks/on_session_start.sh",
+      "continue_on_error": true
+    }
+  ],
+  "mcpServers": {
+    "repo": {
+      "command": "python3",
+      "args": ["${PLUGIN_DIR}/mcp/repo_server.py"],
+      "lazy": true
+    }
+  }
+}

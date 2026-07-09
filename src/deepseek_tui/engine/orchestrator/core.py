@@ -55,8 +55,10 @@ from deepseek_tui.engine.orchestrator.helpers import (
     _detect_focus_mcp,
     _detect_focus_skill,
     _detect_locale,
+    _detect_plugin_mount,
     _resolve_app_mode,
     _strip_focus_prefix,
+    _strip_plugin_mount,
 )
 from deepseek_tui.engine.orchestrator.lifecycle import LifecycleLspMixin
 from deepseek_tui.engine.orchestrator.maintenance import SessionMaintenanceMixin
@@ -195,6 +197,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # ``_get_tools_with_mcp`` 只返回交集。由 ``_handle_send_message_inner``
         # 在 try/finally 中设置与复位，不跨 turn 保留。
         self._focus_tool_whitelist: frozenset[str] | None = None
+        # 插件挂载（@plugin:name）：会话级持续态，与单轮聚焦不同不在 turn 末
+        # 复位。挂载后每轮开头把它折算进 ``_focus_tool_whitelist`` —— 模型只
+        # 看到「只读底座 + 按插件 permissions 的写工具 + 该插件的 skill/MCP
+        # 工具」。用户显式打 `/skill` 或 `@mcp` 时该轮让位（前缀优先）。
+        self._active_plugin: object | None = None
         # Per-tool snapshots for /undo.
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
@@ -267,24 +274,105 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
         return self.tool_context.metadata.get(MCP_MANAGER_KEY)
 
-    def _mcp_focus_whitelist(self, server: str) -> frozenset[str]:
-        """聚焦某个 MCP 连接器时的工具白名单：该 server 的工具 + 基础读工具。
+    def _server_tool_names(self, server: str) -> set[str]:
+        """某 MCP server 在 catalog 里的最终限定工具名集合。
 
-        server 工具名取 ``grouped_discovered_tools()[server]`` 的 ``model_name``
-        （即 catalog 里的最终限定名），避免 ``mcp_<server>_<tool>`` 下划线歧义；
-        基础读工具复用 ``FOCUS_MODE_TOOLS`` 的只读子集，不另立常量。
+        取 ``grouped_discovered_tools()[server]`` 的 ``model_name``，避免
+        ``mcp_<server>_<tool>`` 下划线歧义。无 manager / 未发现 → 空集。
         """
-        base_read = FOCUS_MODE_TOOLS & {"read_file", "grep", "list_dir"}
         mcp = self.mcp_manager
         if mcp is None:
-            return frozenset(base_read)
+            return set()
         grouped = mcp.grouped_discovered_tools()
-        server_tools = {
+        return {
             entry["model_name"]
             for entry in grouped.get(server, [])
             if entry.get("model_name")
         }
-        return frozenset(server_tools | base_read)
+
+    def _mcp_focus_whitelist(self, server: str) -> frozenset[str]:
+        """聚焦某个 MCP 连接器时的工具白名单：该 server 的工具 + 基础读工具。
+
+        基础读工具复用 ``FOCUS_MODE_TOOLS`` 的只读子集，不另立常量。
+        """
+        base_read = FOCUS_MODE_TOOLS & {"read_file", "grep", "list_dir"}
+        return frozenset(self._server_tool_names(server) | base_read)
+
+    def set_active_plugin(self, name: str | None) -> str:
+        """挂载 / 摘除会话级插件。``name=None`` 或 ``"off"`` → 摘除。
+
+        按名在已发现插件里大小写不敏感查找并存入 ``self._active_plugin``；
+        返回一条给用户看的结果说明。未找到时保持原状并回错。
+        """
+        if name is None or name.lower() == "off":
+            self._active_plugin = None
+            return "已摘除插件，恢复全量工具与技能。"
+        from deepseek_tui.integrations.plugins import discover_plugins
+
+        ws = self.tool_context.working_directory
+        try:
+            plugins = discover_plugins(workspace=ws)
+        except Exception:  # noqa: BLE001 — 发现失败不该炸会话
+            logger.warning("plugin discovery failed for mount", exc_info=True)
+            plugins = []
+        match = next(
+            (p for p in plugins if p.manifest.name.lower() == name.lower()), None
+        )
+        if match is None:
+            return f"未找到插件：{name}（用 plugin list 查看已安装）。"
+        self._active_plugin = match
+        m = match.manifest
+        note = f"已应用插件 {m.name}，本会话仅用其工具 + 基础工具。"
+        # trusted 才收 MCP（collect_contributions 语义）；未信任时提示。
+        if m.mcp_servers and not getattr(match, "trusted", False):
+            note += " 注意：该插件的 MCP 未激活，需先信任该插件。"
+        return note
+
+    def _active_plugin_skills(self) -> list[object]:
+        """当前挂载插件贡献的 skill 集（用于收窄 system prompt 注入）。"""
+        if self._active_plugin is None:
+            return []
+        from deepseek_tui.integrations.plugins import collect_contributions
+
+        try:
+            return list(collect_contributions([self._active_plugin]).skills)
+        except Exception:  # noqa: BLE001
+            logger.warning("collect plugin skills failed", exc_info=True)
+            return []
+
+    def _active_plugin_whitelist(self) -> frozenset[str] | None:
+        """当前挂载插件的每轮工具白名单（收窄语义）。
+
+        只读底座 + 按插件 permissions 决定是否加写工具 + 插件 skill 声明的
+        allowed-tools + 插件自带 MCP server 的全部工具。None = 未挂载。
+        """
+        plugin = self._active_plugin
+        if plugin is None:
+            return None
+        from deepseek_tui.integrations.plugins import (
+            capability_values_from_permissions,
+            collect_contributions,
+        )
+
+        allowed: set[str] = set(
+            FOCUS_MODE_TOOLS & {"read_file", "grep", "list_dir", "load_skill"}
+        )
+        caps = capability_values_from_permissions(plugin.manifest.permissions)
+        if "writes_files" in caps:
+            allowed |= {"write_file", "edit_file"}
+        try:
+            contribs = collect_contributions([plugin])
+        except Exception:  # noqa: BLE001
+            logger.warning("collect plugin contributions failed", exc_info=True)
+            contribs = None
+        if contribs is not None:
+            for skill in contribs.skills:
+                declared = getattr(skill, "allowed_tools", None)
+                if declared:
+                    allowed |= set(declared)
+            for server in contribs.mcp_servers:
+                allowed |= self._server_tool_names(server.name)
+        return frozenset(allowed)
 
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
@@ -557,9 +645,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def _render_skills_context(self, only: object | None = None) -> str | None:
         """Render skills context for system prompt injection.
 
-        ``only`` 为聚焦模式的目标 Skill：传入时只把这一个 skill 列进
-        ``## Skills`` 段（用临时单-skill registry，不改 ``self.skill_registry``）；
-        为 ``None`` 时渲染全量（默认）。
+        ``only`` 为聚焦目标：可传单个 Skill（skill 聚焦）或一组 Skill 列表
+        （插件挂载时其自带的多个 skill）。传入时只把这些 skill 列进
+        ``## Skills`` 段（用临时 registry，不改 ``self.skill_registry``）；
+        为 ``None`` 时渲染全量（默认）。空列表视同 ``None``。
         """
         if self.skill_registry is None:
             return None
@@ -570,7 +659,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         registry = self.skill_registry
         if only is not None:
-            registry = SkillRegistry(skills=[only])
+            skills = list(only) if isinstance(only, (list, tuple)) else [only]
+            if not skills:
+                return None
+            registry = SkillRegistry(skills=skills)
         return render_available_skills_context(registry) or None
 
     def _accrue_child_token_cost_from_metadata(
@@ -899,6 +991,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 上下文。skill 聚焦用 `/` 前缀无此冲突。命中时把首个 `@<name>`
         # token 剥掉再处理，处理完再拼回用户消息，模型仍能看到连接器线索。
         raw_content = op.content or ""
+        # 插件挂载（@plugin:name / @plugin:off）：必须早于 _detect_focus_mcp，
+        # 否则 `@plugin:x` 会被当成聚焦名为 `plugin` 的 MCP。命中则更新会话级
+        # _active_plugin、剥掉前缀、拼一条系统提示，本轮起即生效（持续态）。
+        plugin_mount = _detect_plugin_mount(raw_content)
+        if plugin_mount is not None:
+            mount_note = self.set_active_plugin(
+                None if plugin_mount == "off" else plugin_mount
+            )
+            raw_content = _strip_plugin_mount(raw_content, plugin_mount)
+            await self.handle.emit(StatusEvent(message=f"[plugin] {mount_note}"))
         focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
         content_for_prepare = raw_content
         if focus_mcp_ahead is not None:
@@ -1006,6 +1108,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
             # skill 声明 ``allowed-tools`` 则完全覆盖固定白名单；否则回退到
             # ``FOCUS_MODE_TOOLS``。MCP 连接器聚焦：该 server 工具 + 基础读工具。
+            # 显式前缀（/skill、@mcp）优先级最高；两者都未命中且挂载了插件时，
+            # 回退到插件白名单（持续态）。都无 → 全量（None）。
             if focus_skill is not None:
                 declared = getattr(focus_skill, "allowed_tools", None)
                 self._focus_tool_whitelist = (
@@ -1013,6 +1117,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             elif focus_mcp is not None:
                 self._focus_tool_whitelist = self._mcp_focus_whitelist(focus_mcp)
+            elif self._active_plugin is not None:
+                self._focus_tool_whitelist = self._active_plugin_whitelist()
+                # Read-only放行插件自身目录（工作区外），让模型能 read_file/
+                # list_dir/grep 插件的 skill/清单等资源；写工具仍锁工作区。
+                # 将来 skills 的 companion-file 根可在此 append。
+                self.tool_context.extra_read_roots = (
+                    self._active_plugin.path.expanduser().resolve(),
+                )
             else:
                 self._focus_tool_whitelist = None
             await self.handle.emit(
@@ -1026,7 +1138,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             sys_prompt = build_system_prompt(
                 op.system_prompt,
                 mode=_resolve_app_mode(self.mode),
-                skills_context=self._render_skills_context(only=focus_skill),
+                skills_context=self._render_skills_context(
+                    only=focus_skill
+                    if focus_skill is not None
+                    else (
+                        self._active_plugin_skills()
+                        if focus_mcp is None and self._active_plugin is not None
+                        else None
+                    )
+                ),
                 working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,
                 locale_tag=_detect_locale(processed.display_text or ""),
@@ -1169,6 +1289,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.handle.clear_response_id()
             # 复位聚焦模式白名单，确保不跨 turn 保留。
             self._focus_tool_whitelist = None
+            # 同理复位只读放行根：仅在挂载插件的 turn 内有效，取消/异常也不泄漏。
+            self.tool_context.extra_read_roots = ()
 
     def _enqueue_subagent_completion(self, completion: SubAgentCompletion) -> None:
         """Thread-safe enqueue from sub-agent driver tasks (#756)."""

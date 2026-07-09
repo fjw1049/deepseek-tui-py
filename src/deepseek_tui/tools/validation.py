@@ -66,7 +66,7 @@ class ValidateDataTool(ToolSpec):
             raise ToolError("Missing required field: path or content")
 
         if path_str:
-            resolved = context.resolve_path(str(path_str))
+            resolved = context.resolve_path(str(path_str), allow_read_roots=True)
             raw = resolved.read_text(encoding="utf-8")
             source = str(path_str)
             ext = resolved.suffix.lstrip(".").lower() if resolved.suffix else None

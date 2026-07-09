@@ -116,6 +116,12 @@ class ToolContext:
     working_directory: Path
     timeout_ms: int | None = None
     trust_mode: bool = False
+    # Extra directories that read-only tools may read from even though they
+    # lie outside ``working_directory`` (e.g. a mounted plugin's own dir).
+    # Only consulted when a caller passes ``allow_read_roots=True``; writes
+    # stay confined to the workspace. Skills' companion-file roots can be
+    # appended here later with no API change.
+    extra_read_roots: tuple[Path, ...] = ()
     active_task_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Policy | None = None
@@ -125,7 +131,16 @@ class ToolContext:
     execution_sandbox_policy: ExecutionSandboxPolicy | None = None
     elevated_sandbox_policy: ExecutionSandboxPolicy | None = None
 
-    def resolve_path(self, path: str) -> Path:
+    @staticmethod
+    def _within(child: Path, parent: Path) -> bool:
+        """True when ``child`` is ``parent`` or nested under it."""
+        try:
+            child.relative_to(parent)
+        except ValueError:
+            return False
+        return True
+
+    def resolve_path(self, path: str, *, allow_read_roots: bool = False) -> Path:
         """Resolve ``path`` against the workspace, refusing escapes.
 
         When the resolved path falls outside ``working_directory``, raise
@@ -136,6 +151,11 @@ class ToolContext:
 
         ``trust_mode`` bypasses the check (used for system-initiated
         operations that must touch e.g. ``~/.deepseek``).
+
+        Read-only callers pass ``allow_read_roots=True`` to also accept
+        paths under ``extra_read_roots`` (and their subdirs) — e.g. a
+        mounted plugin's own directory. Write callers leave it False so
+        writes stay confined to the workspace.
         """
         workspace = self.working_directory.expanduser().resolve()
         candidate = Path(path).expanduser()
@@ -143,14 +163,15 @@ class ToolContext:
             resolved = candidate.resolve()
         else:
             resolved = (workspace / candidate).resolve()
-        if not self.trust_mode:
-            try:
-                resolved.relative_to(workspace)
-            except ValueError as exc:
+        if not self.trust_mode and not self._within(resolved, workspace):
+            allowed = allow_read_roots and any(
+                self._within(resolved, root) for root in self.extra_read_roots
+            )
+            if not allowed:
                 raise ValueError(
                     f"path escapes workspace: {path!r} "
                     f"(workspace: {workspace}). Use a relative path."
-                ) from exc
+                )
         return resolved
 
 

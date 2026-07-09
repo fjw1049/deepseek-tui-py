@@ -62,3 +62,56 @@ def test_write_text_atomic_failure_preserves_original(tmp_path, monkeypatch) -> 
 
     assert target.read_text(encoding="utf-8") == "original"
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_resolve_path_allows_extra_read_root_and_subdirs(tmp_path) -> None:
+    """Read-only callers may reach files under a declared extra_read_root
+    (and its nested subdirs) even though it lies outside the workspace."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plugin_root = tmp_path / "plugin"
+    (plugin_root / "a" / "b").mkdir(parents=True)
+    (plugin_root / "a" / "b" / "f.json").write_text("{}", encoding="utf-8")
+
+    ctx = ToolContext(
+        working_directory=workspace,
+        extra_read_roots=(plugin_root.resolve(),),
+    )
+
+    top = ctx.resolve_path(str(plugin_root / "manifest.json"), allow_read_roots=True)
+    assert top == (plugin_root / "manifest.json").resolve()
+    nested = ctx.resolve_path(str(plugin_root / "a" / "b" / "f.json"), allow_read_roots=True)
+    assert nested == (plugin_root / "a" / "b" / "f.json").resolve()
+
+
+def test_resolve_path_write_still_confined_to_workspace(tmp_path) -> None:
+    """A read root does NOT grant write access: without allow_read_roots the
+    same outside path is still rejected."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plugin_root = tmp_path / "plugin"
+    plugin_root.mkdir()
+
+    ctx = ToolContext(
+        working_directory=workspace,
+        extra_read_roots=(plugin_root.resolve(),),
+    )
+
+    with pytest.raises(ValueError, match="escapes workspace"):
+        ctx.resolve_path(str(plugin_root / "out.txt"))
+
+
+def test_resolve_path_default_context_unchanged(tmp_path) -> None:
+    """Regression: with no extra_read_roots, behavior is exactly as before —
+    inside-workspace ok, outside raises regardless of allow_read_roots."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "elsewhere" / "f.txt"
+
+    ctx = ToolContext(working_directory=workspace)
+
+    inside = ctx.resolve_path("note.txt")
+    assert inside == (workspace / "note.txt").resolve()
+
+    with pytest.raises(ValueError, match="escapes workspace"):
+        ctx.resolve_path(str(outside), allow_read_roots=True)

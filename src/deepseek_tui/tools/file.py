@@ -50,7 +50,7 @@ class ReadFileTool(ToolSpec):
         return [ToolCapability.READ_ONLY]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        path = context.resolve_path(_require_string(input_data, "path"))
+        path = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
         content = await _read_text(path)
         offset = _optional_non_negative_int(input_data, "offset")
         limit = _optional_non_negative_int(input_data, "limit")

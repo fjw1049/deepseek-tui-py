@@ -551,3 +551,106 @@ async def test_engine_create_loads_plugin_components(tmp_path, monkeypatch) -> N
         assert "demo:session_start" in hook_names
     finally:
         await engine.shutdown_session()
+
+
+# ── @plugin:name mount (session-level focus) ──────────────────────────────
+
+
+def test_detect_plugin_mount_distinguishes_prefixes() -> None:
+    """`@plugin:name` mounts; bare `@mcp` / `/skill` / plain text do not."""
+    from deepseek_tui.engine.orchestrator.helpers import _detect_plugin_mount
+
+    assert _detect_plugin_mount("@plugin:hello-probe run the probe") == "hello-probe"
+    assert _detect_plugin_mount("@plugin:off") == "off"
+    assert _detect_plugin_mount("@plugin:none") == "off"
+    assert _detect_plugin_mount("@plugin:") == "off"
+    # bare @mcp connector focus, not a plugin mount
+    assert _detect_plugin_mount("@github look here") is None
+    # skill focus prefix
+    assert _detect_plugin_mount("/data-extract go") is None
+    # plain text
+    assert _detect_plugin_mount("just a normal question") is None
+    # only the FIRST token counts (focus semantics)
+    assert _detect_plugin_mount("look @plugin:foo") is None
+
+
+def test_strip_plugin_mount_removes_prefix() -> None:
+    from deepseek_tui.engine.orchestrator.helpers import _strip_plugin_mount
+
+    assert _strip_plugin_mount("@plugin:hello run it", "hello") == "run it"
+    assert _strip_plugin_mount("@plugin:off", "off") == ""
+    assert _strip_plugin_mount("@plugin:none rest", "off") == "rest"
+
+
+async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
+    """A read-permission plugin narrows to read-only base tools (no write)."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(
+        plugins_dir,
+        "ro-plugin",
+        with_mcp=False,
+        with_hook=False,
+        extra_manifest={"permissions": ["read"]},
+    )
+    set_plugin_trusted("ro-plugin", True, plugins_dir)
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        note = engine.set_active_plugin("ro-plugin")
+        assert "ro-plugin" in note
+        wl = engine._active_plugin_whitelist()
+        assert wl is not None
+        assert {"read_file", "grep", "list_dir", "load_skill"} <= wl
+        assert "write_file" not in wl
+        assert "edit_file" not in wl
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_active_plugin_whitelist_write_permission(tmp_path, monkeypatch) -> None:
+    """A write-permission plugin adds write_file/edit_file to the whitelist."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(
+        plugins_dir,
+        "rw-plugin",
+        with_mcp=False,
+        with_hook=False,
+        extra_manifest={"permissions": ["write"]},
+    )
+    set_plugin_trusted("rw-plugin", True, plugins_dir)
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        engine.set_active_plugin("rw-plugin")
+        wl = engine._active_plugin_whitelist()
+        assert wl is not None
+        assert {"write_file", "edit_file"} <= wl
+        # clearing restores full toolset (None sentinel)
+        engine.set_active_plugin("off")
+        assert engine._active_plugin_whitelist() is None
+    finally:
+        await engine.shutdown_session()

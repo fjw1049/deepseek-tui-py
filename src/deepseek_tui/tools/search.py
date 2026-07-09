@@ -71,7 +71,7 @@ class GrepFilesTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         pattern = _require_string(input_data, "pattern")
-        root = context.resolve_path(_require_string(input_data, "path"))
+        root = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
         ignore_case = bool(input_data.get("ignore_case", False))
         try:
             flags = re.IGNORECASE if ignore_case else 0
@@ -128,7 +128,7 @@ class FileSearchTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         pattern = _require_string(input_data, "pattern")
-        root = context.resolve_path(_require_string(input_data, "path"))
+        root = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
         matches = await asyncio.to_thread(_file_search, root, pattern)
         logger.info(
             "file_search pattern=%r root=%s match_count=%d",
