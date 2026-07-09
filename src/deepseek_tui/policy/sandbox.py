@@ -341,10 +341,16 @@ class SandboxManager:
     def prepare(self, spec: CommandSpec) -> ExecEnv:
         sandbox_type = self.select_sandbox(spec.sandbox_policy)
         if sandbox_type == SandboxType.NONE:
-            if spec.sandbox_policy.should_sandbox() and sys.platform == "darwin":
+            if spec.sandbox_policy.should_sandbox():
+                # No OS sandbox is available (e.g. workspace-write on Linux,
+                # where Seatbelt does not exist, or macOS without Seatbelt).
+                # Warn on every platform - previously this was gated on
+                # ``darwin`` so Linux silently ran unsandboxed.
                 logger.warning(
-                    "sandbox policy %s requested but seatbelt unavailable; running unsandboxed",
+                    "sandbox policy %s requested but no OS sandbox is "
+                    "available on %s; running unsandboxed",
                     spec.sandbox_policy.kind,
+                    sys.platform,
                 )
             return self._prepare_unsandboxed(spec)
         if sandbox_type == SandboxType.MACOS_SEATBELT:

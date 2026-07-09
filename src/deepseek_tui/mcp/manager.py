@@ -252,22 +252,69 @@ class McpManager:
         client = self._clients.get(name)
         return client is not None and client.is_running
 
+    def _match_configured_server(self, qualified: str) -> str | None:
+        """Longest ``mcp_<sanitized_server>_`` prefix match among configs.
+
+        Identifies the **server** only. Safe for capability lookups; must not
+        be used alone to invent a raw tool name (sanitization is lossy).
+        """
+        best_server: str | None = None
+        best_len = -1
+        for name in self._configs:
+            prefix = qualify_tool_name(name, "")
+            plen = len(prefix)
+            if plen > best_len and qualified.startswith(prefix) and len(qualified) > plen:
+                best_server = name
+                best_len = plen
+        return best_server
+
+    def _resolve_qualified(
+        self, qualified: str
+    ) -> tuple[str, str] | None:
+        """Resolve a qualified MCP tool name to ``(server, raw_tool_name)``.
+
+        Order:
+        1. Authoritative tool maps (real ``(server, tool)`` captured at
+           discovery / disk cache) — only source of truth for raw tool names.
+        2. If a configured server claims the qualified prefix but no map
+           entry exists, return ``None`` (fail closed). Never invent a raw
+           tool name from the sanitized suffix (``do-thing`` → ``do_thing``).
+        3. ``parse_qualified_tool_name`` only when no configured server
+           claims the name. That parse is ambiguous for underscore server
+           names and typically points at an unconfigured server, so
+           ``call_tool`` then fails closed at ``_ensure_client``.
+        """
+        mapping = self._tool_map.get(qualified) or self._cached_tool_map.get(qualified)
+        if mapping is not None:
+            return mapping
+        if self._match_configured_server(qualified) is not None:
+            return None
+        return parse_qualified_tool_name(qualified)
+
     def declared_capabilities(self, qualified_tool_name: str) -> list[str]:
         """Capability hints declared for the tool's server (may be empty).
 
         Plugin manifests can declare ``permissions`` which land on
         ``McpServerConfig.capabilities``; the approval gate uses them to
         relax the blanket "MCP action requires approval" default.
+
+        Only needs the **server** identity, so a prefix match against
+        configured servers is enough when the tool map has not been built
+        yet (lazy plugin MCP).
         """
-        mapping = self._tool_map.get(qualified_tool_name) or (
-            self._cached_tool_map.get(qualified_tool_name)
+        mapping = self._tool_map.get(qualified_tool_name) or self._cached_tool_map.get(
+            qualified_tool_name
         )
-        if mapping is None:
-            parsed = parse_qualified_tool_name(qualified_tool_name)
-            if parsed is None:
-                return []
-            mapping = parsed
-        cfg = self._configs.get(mapping[0])
+        if mapping is not None:
+            server_name = mapping[0]
+        else:
+            server_name = self._match_configured_server(qualified_tool_name)
+            if server_name is None:
+                parsed = parse_qualified_tool_name(qualified_tool_name)
+                if parsed is None:
+                    return []
+                server_name = parsed[0]
+        cfg = self._configs.get(server_name)
         return list(cfg.capabilities) if cfg is not None else []
 
     def preload_status(self) -> dict[str, Any]:
@@ -619,9 +666,7 @@ class McpManager:
             qualified = fn.get("name")
             if not isinstance(qualified, str):
                 continue
-            mapping = self._cached_tool_map.get(qualified)
-            if mapping is None:
-                mapping = parse_qualified_tool_name(qualified)
+            mapping = self._resolve_qualified(qualified)
             if mapping is None:
                 continue
             server_name, raw_name = mapping
@@ -645,9 +690,7 @@ class McpManager:
             qualified = fn.get("name")
             if not isinstance(qualified, str):
                 continue
-            mapping = self._cached_tool_map.get(qualified)
-            if mapping is None:
-                mapping = parse_qualified_tool_name(qualified)
+            mapping = self._resolve_qualified(qualified)
             if mapping is None:
                 continue
             server_name, raw_name = mapping
@@ -840,22 +883,18 @@ class McpManager:
             qualified = fn.get("name")
             if not isinstance(qualified, str):
                 continue
-            # Prefer the persisted (server, tool) pair — string parsing is
-            # ambiguous when the server name contains underscores.
-            mapping = self._cached_tool_map.get(qualified)
-            if mapping is None:
-                mapping = parse_qualified_tool_name(qualified)
+            # _resolve_qualified prefers the persisted (server, tool) pair
+            # and falls back to an unambiguous prefix match - string parsing
+            # is ambiguous when the server name contains underscores.
+            mapping = self._resolve_qualified(qualified)
             if mapping is None:
                 continue
             self._tool_map[qualified] = mapping
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        mapping = self._tool_map.get(qualified_name)
+        mapping = self._resolve_qualified(qualified_name)
         if mapping is None:
-            parsed = parse_qualified_tool_name(qualified_name)
-            if parsed is None:
-                raise McpError(f"Not an MCP tool: {qualified_name}")
-            mapping = parsed
+            raise McpError(f"Not an MCP tool: {qualified_name}")
         server_name, tool_name = mapping
         client = await self._ensure_client(server_name)
         return await client.call_tool(tool_name, arguments)

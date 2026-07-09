@@ -4,6 +4,7 @@ contribution fan-out, and Engine.create integration."""
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from deepseek_tui.integrations.plugins import (
@@ -19,6 +20,7 @@ from deepseek_tui.integrations.plugins import (
     set_plugin_enabled,
     set_plugin_trusted,
     uninstall_plugin,
+    update_plugin,
 )
 from deepseek_tui.integrations.skills import InstallOutcome, SkillRegistry
 
@@ -204,13 +206,66 @@ def test_install_local_records_lockfile(tmp_path: Path) -> None:
     assert outcome == InstallOutcome.INSTALLED
     assert "stay inactive" in message  # trust warning for hooks/MCP
     entry = read_lockfile(target)["demo"]
-    assert entry["source"] == f"local:{src}"
+    # Bare absolute path (not ``local:<path>``) so the recorded source can
+    # round-trip through InstallSource.parse when update_plugin re-resolves it.
+    assert entry["source"] == str(src.resolve())
     assert entry["version"] == "1.2.3"
     assert entry["enabled"] is True and entry["trusted"] is False
 
     # Duplicate install refuses.
     outcome, _ = install_plugin(str(src), target)
     assert outcome == InstallOutcome.ALREADY_EXISTS
+
+    # The recorded local source must be updatable (regression: previously the
+    # ``local:`` prefix made InstallSource.parse reject it).
+    outcome, _ = update_plugin("demo", target)
+    assert outcome == InstallOutcome.UPDATED
+
+
+def test_update_failure_preserves_existing_plugin(tmp_path: Path) -> None:
+    """A failed re-install must not delete the live plugin (staging swap).
+
+    Regression: update_plugin used to rmtree the plugin dir before installing,
+    so any failure left the plugin gone.
+    """
+    src = make_plugin(tmp_path / "src")
+    target = tmp_path / "installed"
+    install_plugin(str(src), target)
+    # Point the recorded source at a now-missing dir so re-install fails.
+    shutil.rmtree(src)
+    outcome, _ = update_plugin("demo", target)
+    assert outcome == InstallOutcome.FAILED
+    # Live copy and its manifest survive the failed update.
+    assert (target / "demo").is_dir()
+    assert load_plugin_manifest(target / "demo") is not None
+
+
+def test_update_refreshes_live_lockfile_version(tmp_path: Path) -> None:
+    """Successful update must write the new version onto the live lockfile.
+
+    Staging's lockfile is discarded with the staging dir; only the live
+    ``installed_plugins.json`` matters after swap.
+    """
+    src = make_plugin(tmp_path / "src")
+    target = tmp_path / "installed"
+    install_plugin(str(src), target)
+    assert read_lockfile(target)["demo"]["version"] == "1.2.3"
+
+    # Bump the source manifest version, then update.
+    mpath = src / ".deepseek-plugin" / "plugin.json"
+    data = json.loads(mpath.read_text(encoding="utf-8"))
+    data["version"] = "9.9.9"
+    mpath.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome, _ = update_plugin("demo", target)
+    assert outcome == InstallOutcome.UPDATED
+    entry = read_lockfile(target)["demo"]
+    assert entry["version"] == "9.9.9"
+    assert entry["source"] == str(src.resolve())
+    assert entry["enabled"] is True
+    assert (target / "demo").is_dir()
+    assert not (target / ".update-staging-demo").exists()
+    assert not (target / ".update-backup-demo").exists()
 
 
 def test_install_with_trust_flag(tmp_path: Path) -> None:
@@ -321,6 +376,26 @@ async def test_start_all_skips_lazy_servers() -> None:
     assert summary.ready == []
     assert summary.failed == []
     await manager.stop_all()
+
+
+def test_declared_capabilities_prefix_match_without_tool_map() -> None:
+    """Caps resolve for a hyphenated plugin server before discovery runs.
+
+    Regression: the ambiguous ``parse_qualified_tool_name`` fallback split
+    ``mcp_demo_srv_run`` as ("demo", "srv_run"), so ``_configs.get("demo")``
+    missed the real ``demo-srv`` server and returned no capabilities —
+    breaking the read-only approval relaxation for lazy plugin servers whose
+    tool map isn't populated yet.
+    """
+    from deepseek_tui.mcp.client import qualify_tool_name
+    from deepseek_tui.mcp.config import McpServerConfig
+    from deepseek_tui.mcp.manager import McpManager
+
+    manager = McpManager(
+        [McpServerConfig(name="demo-srv", command="cat", capabilities=["read_only"])]
+    )
+    qualified = qualify_tool_name("demo-srv", "run")
+    assert manager.declared_capabilities(qualified) == ["read_only"]
 
 
 # ── Claude Code interop ──────────────────────────────────────────────────

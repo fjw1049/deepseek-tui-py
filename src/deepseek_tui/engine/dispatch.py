@@ -264,6 +264,9 @@ logger = logging.getLogger(__name__)
 TASK_MAX_TOOL_ROUND_TRIPS = 30
 CRON_MAX_TOOL_ROUND_TRIPS = 12
 CRON_TASK_WALL_CLOCK_SECONDS = 300
+# Non-cron background tasks still need a hard ceiling so a wedged emit/queue
+# cannot run forever. 30 minutes matches long agent work without being unbounded.
+TASK_WALL_CLOCK_SECONDS = 1800
 
 
 def _is_cron_task(prompt: str) -> bool:
@@ -453,11 +456,69 @@ async def _run_task_engine_turn(
         except Exception:  # noqa: BLE001 -- progress logging must never break the task
             logger.debug("task_tool_timeline_record_failed id=%s", task.id, exc_info=True)
 
-    try:
-        await engine.run_single_turn(task.prompt, model=task.model)
-        result_text, error_msg = await _collect_turn_events(
-            handle, cancel, on_tool_event=_record_tool_event
+    # Consume events concurrently with the turn. run_single_turn emits into a
+    # bounded queue (maxsize=4096); awaiting the turn first then draining
+    # deadlocks once the queue fills (long streams / tool chatter).
+    #
+    # Also bridge the TaskManager cancel token onto handle.cancel_event.
+    # run_single_turn() calls reset_cancel() at entry, so we re-assert after
+    # the turn becomes active (or immediately if cancel was already set).
+    async def _bridge_cancel() -> None:
+        await cancel.wait()
+        handle._cancel_reason = "executor_cancelled"
+        handle.cancel_event.set()
+
+    async def _run_turn_bridged() -> None:
+        turn_task = asyncio.create_task(
+            engine.run_single_turn(task.prompt, model=task.model)
         )
+        try:
+            while not handle.is_turn_active() and not turn_task.done():
+                await asyncio.sleep(0)
+            if cancel.is_set():
+                handle._cancel_reason = "executor_cancelled"
+                handle.cancel_event.set()
+            await turn_task
+        except BaseException:
+            if not turn_task.done():
+                turn_task.cancel()
+                try:
+                    await turn_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise
+
+    bridge_task = asyncio.create_task(_bridge_cancel())
+    collect_task = asyncio.create_task(
+        _collect_turn_events(handle, cancel, on_tool_event=_record_tool_event)
+    )
+    try:
+        try:
+            await _run_turn_bridged()
+        except BaseException:
+            # Turn blew up without a terminal event — stop the collector so
+            # we don't hang forever on handle.events().
+            if not collect_task.done():
+                collect_task.cancel()
+                try:
+                    await collect_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise
+        try:
+            result_text, error_msg = await asyncio.wait_for(
+                collect_task, timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            collect_task.cancel()
+            try:
+                await collect_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return TaskExecutionResult(
+                summary="",
+                error="Task ended without a turn completion event",
+            )
         if error_msg:
             return TaskExecutionResult(
                 summary=result_text or "Task failed",
@@ -468,6 +529,17 @@ async def _run_task_engine_turn(
             return TaskExecutionResult(summary=result_text, error="canceled")
         return TaskExecutionResult(summary=result_text, detail=None, error=None)
     finally:
+        bridge_task.cancel()
+        try:
+            await bridge_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        if not collect_task.done():
+            collect_task.cancel()
+            try:
+                await collect_task
+            except (asyncio.CancelledError, Exception):
+                pass
         # shutdown() (not shutdown_session()) so the per-task LLM client
         # built above is closed — otherwise every task leaks its HTTP
         # connection pool. SessionEndedEvent is swallowed by try/except
@@ -482,24 +554,28 @@ async def real_task_executor(
     """Run one Engine turn for a queued task (shared TaskManager)."""
     from deepseek_tui.tools.task import TaskExecutionResult
 
-    if _is_cron_task(task.prompt):
-        try:
-            return await asyncio.wait_for(
-                _run_task_engine_turn(task, cancel),
-                timeout=CRON_TASK_WALL_CLOCK_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            cancel.set()
-            logger.warning(
-                "[task_executor] cron wall-clock timeout task_id=%s after=%ds",
-                task.id,
-                CRON_TASK_WALL_CLOCK_SECONDS,
-            )
-            return TaskExecutionResult(
-                summary="",
-                error=f"Task timed out after {CRON_TASK_WALL_CLOCK_SECONDS}s",
-            )
-    return await _run_task_engine_turn(task, cancel)
+    wall_clock = (
+        CRON_TASK_WALL_CLOCK_SECONDS
+        if _is_cron_task(task.prompt)
+        else TASK_WALL_CLOCK_SECONDS
+    )
+    try:
+        return await asyncio.wait_for(
+            _run_task_engine_turn(task, cancel),
+            timeout=wall_clock,
+        )
+    except asyncio.TimeoutError:
+        cancel.set()
+        logger.warning(
+            "[task_executor] wall-clock timeout task_id=%s after=%ds cron=%s",
+            task.id,
+            wall_clock,
+            _is_cron_task(task.prompt),
+        )
+        return TaskExecutionResult(
+            summary="",
+            error=f"Task timed out after {wall_clock}s",
+        )
 
 
 async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> AgentRunOutput:

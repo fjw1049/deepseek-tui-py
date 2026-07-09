@@ -67,6 +67,30 @@ STREAM_MAX_DURATION_SECS = 1800
 STREAM_MAX_CONTENT_BYTES = 10 * 1024 * 1024
 MAX_TRANSPARENT_STREAM_RETRIES = 2
 
+# Compact callback may return a bare message list (legacy) or
+# ``(messages, summary_prompt)`` so emergency recovery can inject the
+# archive into the *current* request's system prompt.
+CompactFnResult = list[Message] | tuple[list[Message], str | None]
+CompactFn = Callable[[list[Message]], Awaitable[CompactFnResult]]
+
+
+def _apply_compact_result(
+    request: MessageRequest,
+    result: CompactFnResult,
+) -> None:
+    """Apply compaction output to the in-flight request (messages + summary)."""
+    summary: str | None = None
+    if isinstance(result, tuple):
+        new_messages, summary = result
+    else:
+        new_messages = result
+    request.messages[:] = new_messages
+    if summary:
+        existing = request.system_prompt or ""
+        request.system_prompt = (
+            f"{existing}\n\n{summary}" if existing else summary
+        )
+
 
 class TurnOutcomeStatus(enum.Enum):
     """Outcome status of a turn."""
@@ -102,7 +126,7 @@ class TurnLoop:
     def __init__(
         self,
         client: LLMClient,
-        compact_fn: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
+        compact_fn: CompactFn | None = None,
     ) -> None:
         self.client = client
         self._compact_fn = compact_fn
@@ -277,8 +301,9 @@ class TurnLoop:
                             )
                         state.context_recovery_attempts += 1
                         if self._compact_fn is not None:
-                            request.messages[:] = await self._compact_fn(
-                                request.messages
+                            _apply_compact_result(
+                                request,
+                                await self._compact_fn(request.messages),
                             )
                         continue
 
@@ -410,8 +435,9 @@ class TurnLoop:
                                 state.context_recovery_attempts,
                                 MAX_CONTEXT_RECOVERY_ATTEMPTS,
                             )
-                            request.messages[:] = await self._compact_fn(
-                                request.messages
+                            _apply_compact_result(
+                                request,
+                                await self._compact_fn(request.messages),
                             )
                             break  # retry with compacted history
                         # Transparent retry: only if no content received yet

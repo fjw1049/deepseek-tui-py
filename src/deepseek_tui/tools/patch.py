@@ -12,6 +12,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.utils import write_text_atomic
+
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
     ToolCapability,
@@ -171,8 +173,7 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
             target = context.resolve_path(path)
             created = not target.exists()
             backups.append(_backup_file(target))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            write_text_atomic(target, content)
             touched.append(path)
             summaries.append(
                 FileSummary(
@@ -240,8 +241,7 @@ def _apply_file_patches(
                     )
                 created = True
                 backups.append(_backup_file(target))
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("", encoding="utf-8")
+                write_text_atomic(target, "")
 
             if not created:
                 backups.append(_backup_file(target))
@@ -257,7 +257,7 @@ def _apply_file_patches(
             out = "\n".join(lines)
             if trailing_newline or (out and not out.endswith("\n")):
                 out += "\n"
-            target.write_text(out, encoding="utf-8")
+            write_text_atomic(target, out)
 
             agg.hunks_applied += file_stats.hunks_applied
             agg.fuzz_used += file_stats.fuzz_used
@@ -824,6 +824,5 @@ def apply_patch_to_file(
     out = "\n".join(lines)
     if newline_trailing or (out and not out.endswith("\n")):
         out += "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(out, encoding="utf-8")
+    write_text_atomic(path, out)
     return stats

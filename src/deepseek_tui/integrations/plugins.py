@@ -699,7 +699,12 @@ def install_plugin(
                 f"Plugin {manifest.name} already exists at {dest}",
             )
         shutil.copytree(src, dest)
-        _record_install(target_dir, manifest, f"local:{src}", trust)
+        # Store the bare absolute path (not ``local:<path>``): the recorded
+        # source must round-trip through ``InstallSource.parse`` for
+        # ``update_plugin`` to re-resolve it, and that parser recognizes a
+        # bare existing dir, not a ``local:`` prefix. Absolute so a later
+        # update from a different cwd still resolves.
+        _record_install(target_dir, manifest, str(src.resolve()), trust)
         return (
             InstallOutcome.INSTALLED,
             _install_message(manifest, dest, trust),
@@ -839,24 +844,86 @@ def uninstall_plugin(name: str, plugins_dir: Path | None = None) -> str:
 def update_plugin(
     name: str, plugins_dir: Path | None = None
 ) -> tuple[InstallOutcome, str]:
-    """Re-install a plugin from its recorded source spec."""
+    """Re-install a plugin from its recorded source spec.
+
+    Installs into a staging dir first, then swaps via
+    ``live → backup → staged → live`` so a crash mid-swap can still roll
+    back to the previous copy. Failed re-installs never delete the live
+    plugin. Claude Code interop plugins (files owned by ``~/.claude``, no
+    reinstallable source of ours) are refused.
+    """
     target_dir = plugins_dir or user_plugins_dir()
     entry = read_lockfile(target_dir).get(name)
     if entry is None:
         return (InstallOutcome.FAILED, f"Plugin not in lockfile: {name}")
+    plugin_path = target_dir / name
+    if not plugin_path.is_dir() and any(
+        manifest.name == name for manifest, _ in discover_claude_plugins()
+    ):
+        return (
+            InstallOutcome.FAILED,
+            f"Plugin {name} is managed by Claude Code; update it there",
+        )
     spec = str(entry.get("source", ""))
     if not spec:
         return (InstallOutcome.FAILED, f"No source recorded for {name}")
     was_trusted = bool(entry.get("trusted", False))
     was_enabled = bool(entry.get("enabled", True))
-    plugin_path = target_dir / name
-    if plugin_path.is_dir():
-        shutil.rmtree(plugin_path)
-    outcome, message = install_plugin(spec, target_dir, trust=was_trusted)
-    if outcome == InstallOutcome.INSTALLED:
-        _update_lockfile_entry(target_dir, name, enabled=was_enabled)
-        return (InstallOutcome.UPDATED, f"Updated {name} from {spec}")
-    return (outcome, message)
+
+    staging = target_dir / f".update-staging-{name}"
+    backup = target_dir / f".update-backup-{name}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    if backup.exists():
+        shutil.rmtree(backup)
+    staging.mkdir(parents=True, exist_ok=True)
+    staged_manifest: PluginManifest | None = None
+    try:
+        outcome, message = install_plugin(spec, staging, trust=was_trusted)
+        if outcome != InstallOutcome.INSTALLED:
+            return (outcome, message)
+        staged_plugin = staging / name
+        if not staged_plugin.is_dir():
+            return (
+                InstallOutcome.FAILED,
+                f"Re-installed source for {name} produced a different plugin name",
+            )
+        staged_manifest = load_plugin_manifest(staged_plugin)
+
+        # live → backup, then staged → live. If the second replace fails,
+        # restore backup so the user never loses the previous install.
+        if plugin_path.is_dir():
+            os.replace(plugin_path, backup)
+        try:
+            os.replace(staged_plugin, plugin_path)
+        except BaseException:
+            if backup.is_dir() and not plugin_path.exists():
+                try:
+                    os.replace(backup, plugin_path)
+                except OSError:
+                    pass
+            raise
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        # Orphan backup from a previous crashed update — keep live intact.
+        if backup.exists() and plugin_path.is_dir():
+            shutil.rmtree(backup, ignore_errors=True)
+
+    # Refresh live lockfile (staging's lockfile was discarded with staging).
+    # Preserve enabled/trusted; update source/version/installed_at.
+    fields: dict[str, Any] = {
+        "source": spec,
+        "enabled": was_enabled,
+        "trusted": was_trusted,
+        "installed_at": _now_iso(),
+    }
+    if staged_manifest is not None and staged_manifest.version:
+        fields["version"] = staged_manifest.version
+    _update_lockfile_entry(target_dir, name, **fields)
+    return (InstallOutcome.UPDATED, f"Updated {name} from {spec}")
 
 
 def _plugin_known(name: str, target_dir: Path) -> bool:

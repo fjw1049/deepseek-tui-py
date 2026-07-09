@@ -35,8 +35,22 @@ async def test_compact_thread_emits_context_compaction_item(
                 Message.user("c"),
             ],
             mode=kwargs.get("mode", "agent"),
-            _emergency_compact=AsyncMock(
-                return_value=[Message.user("summary"), Message.assistant("ok")]
+            turn_usage_ledger=SimpleNamespace(
+                reset=lambda: None,
+                totals=lambda: {},
+                items=[],
+            ),
+            session_cache_hit_total=0,
+            session_cache_miss_total=0,
+            session_cost_usd=0.0,
+            session_cost_cny=0.0,
+            _run_compaction=AsyncMock(
+                return_value=SimpleNamespace(
+                    messages=[Message.user("summary"), Message.assistant("ok")],
+                    success=True,
+                    retries_used=0,
+                    summary_prompt=None,
+                )
             ),
             run=lambda: asyncio.sleep(3600),
         )

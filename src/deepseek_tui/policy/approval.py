@@ -85,7 +85,10 @@ class PolicyRule:
 # Fingerprint shapes:
 #
 # - ``apply_patch`` → ``patch:<hash of sorted unique file paths>``
-# - ``exec_shell*`` → ``shell:<classify_command(tokens)>`` (flags dropped)
+# - ``exec_shell*`` → ``shell:<positional tokens, flags dropped>``
+#   so ``rm a.txt`` ≠ ``rm b.txt``, while ``git status -s`` ≡
+#   ``git status --porcelain``.
+# - ``write_file`` / ``edit_file`` → ``file:<name>:<path>``
 # - ``fetch_url`` / ``web_fetch`` → ``net:<hostname>``
 # - everything else → ``tool:<tool_name>``
 #
@@ -93,9 +96,6 @@ class PolicyRule:
 # calls with the same fingerprint auto-approve for the rest of the
 # session. When false, the grant is one-shot: the next call with the same
 # key still has to re-prompt.
-
-
-from deepseek_tui.policy.command_safety import classify_command
 
 
 _SHELL_TOOLS = {
@@ -107,6 +107,7 @@ _SHELL_TOOLS = {
 }
 _PATCH_TOOLS = {"apply_patch"}
 _FETCH_TOOLS = {"fetch_url", "web.fetch", "web_fetch"}
+_FILE_WRITE_TOOLS = {"write_file", "edit_file"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,14 +182,18 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
         return ApprovalKey(f"shell:{_command_prefix(tool_input)}")
     if tool_name in _FETCH_TOOLS:
         return ApprovalKey(f"net:{_parse_host(tool_input)}")
+    if tool_name in _FILE_WRITE_TOOLS:
+        return ApprovalKey(f"file:{tool_name}:{_file_path_key(tool_input)}")
     return ApprovalKey(f"tool:{tool_name}")
 
 
 def _command_prefix(tool_input: Any) -> str:
-    """Canonical command prefix via the arity dictionary.
+    """Fingerprint shell commands by positional tokens (flags dropped).
 
     ``git status -s`` and ``git status --porcelain`` fingerprint identical;
-    ``git push`` fingerprints differently.
+    ``rm a.txt`` and ``rm b.txt`` fingerprint differently so a session
+    remember cannot cross paths. Flags (``-`` / ``--``) are ignored so
+    cosmetic option differences do not re-prompt.
     """
     command = ""
     if isinstance(tool_input, dict):
@@ -198,7 +203,28 @@ def _command_prefix(tool_input: Any) -> str:
     tokens = command.split()
     if not tokens:
         return "<empty>"
-    return classify_command(tokens)
+    positional = [t.lower() for t in tokens if not t.startswith("-")]
+    if not positional:
+        return "<flags-only>"
+    # Bound key size for very long argument lists while keeping identity.
+    joined = " ".join(positional)
+    if len(joined) <= 200:
+        return joined
+    digest = hashlib.blake2b(joined.encode("utf-8"), digest_size=8).hexdigest()
+    head = " ".join(positional[:3])
+    return f"{head}:{digest}"
+
+
+def _file_path_key(tool_input: Any) -> str:
+    """Normalize the path argument for write/edit approval fingerprints."""
+    path = ""
+    if isinstance(tool_input, dict):
+        raw = tool_input.get("path")
+        if isinstance(raw, str):
+            path = raw.strip().replace("\\", "/")
+    if not path:
+        return "no_path"
+    return path
 
 
 def _hash_patch_paths(tool_input: Any) -> str:

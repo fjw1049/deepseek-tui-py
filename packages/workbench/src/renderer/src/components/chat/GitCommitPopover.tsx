@@ -570,7 +570,7 @@ export function GitCommitPopover({
       <div
         className={`${rowClassName} ${
           enabled
-            ? 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+            ? 'text-ds-ink hover:bg-ds-hover/60'
             : 'cursor-default text-ds-faint opacity-55'
         }`}
       >

@@ -380,7 +380,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 plugin_contribs = collect_contributions(
                     discover_plugins(workspace=ws)
                 )
-            except OSError:
+            except Exception:  # noqa: BLE001 — a malformed plugin must not
+                # crash engine construction; degrade to no plugin contributions.
                 logger.warning("plugin discovery failed", exc_info=True)
             if plugin_contribs is not None:
                 for warning in plugin_contribs.warnings:
@@ -1260,14 +1261,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             )
             deadline = time.monotonic() + 600.0
+            timed_out = False
             while running > 0:
                 if self.handle.cancel_event.is_set():
+                    # Hard cancel: do not inject; caller aborts the turn.
                     return False
                 if time.monotonic() > deadline:
+                    timed_out = True
                     logger.warning(
-                        "subagent_handoff_timeout running=%d", running
+                        "subagent_handoff_timeout running=%d collected=%d",
+                        running,
+                        len(completions),
                     )
-                    return False
+                    break
                 try:
                     completion = await asyncio.wait_for(
                         self._subagent_completions.get(), timeout=0.25
@@ -1278,6 +1284,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     pass
                 completions.extend(self._drain_subagent_completions())
                 running = mgr.running_count()
+            if timed_out:
+                completions.extend(self._drain_subagent_completions())
         else:
             completions.extend(self._drain_subagent_completions())
 
@@ -1353,13 +1361,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
             # Capacity pre-request checkpoint
             # 观测 token/工具调用密度,容量预检查；改写式（删旧+塞摘要）
-            await run_pre_request_checkpoint(
+            _cap_decision, _compacted, cap_summary = await run_pre_request_checkpoint(
                 self.capacity_controller,
                 self.turn_counter,
                 model,
                 messages,
                 compact_fn=self._emergency_compact,
             )
+            if cap_summary:
+                system_prompt = (
+                    f"{system_prompt}\n\n{cap_summary}"
+                    if system_prompt
+                    else cap_summary
+                )
             # 层级压缩；L1 = 192K、L2 = 384K、L3 = 576K
             # 发请求前,用真实 token 数判断是否越过 L1/L2/L3 阈值;若越过且该级未产出过,
             # 就用便宜的 Flash 模型把"逐字窗口之前的旧消息"(或已有接缝)压成一段浓缩摘要,

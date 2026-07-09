@@ -1410,6 +1410,19 @@ samp {
   background: var(--ds-bg-canvas);
 }
 
+.ds-bottom-terminal .ds-terminal-panel {
+  border-top: none;
+}
+
+.ds-bottom-terminal .ds-terminal-panel__tabs {
+  border-bottom: none;
+}
+
+.ds-bottom-terminal__handle {
+  /* Dedicated chrome row above tabs — not overlaid on the tab bar. */
+  min-height: 1rem;
+}
+
 .ds-terminal-panel__tabs {
   background: color-mix(in srgb, var(--ds-bg-canvas) 92%, var(--ds-surface-subtle) 8%);
 }
@@ -2453,7 +2466,7 @@ select:focus-visible,
   font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: -0.005em;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
@@ -2503,25 +2516,27 @@ select:focus-visible,
   line-height: 1.55;
 }
 
-/* Operation dock: quiet flat card on the chat canvas. */
+/* Operation dock: stronger border + a light outer shadow. */
 .ds-operation-dock.ds-hero-panel.ds-glass {
   background: var(--ds-card-strong);
-  border-color: var(--ds-border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.14);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.34);
 }
 
 .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
   transform: none;
-  border-color: var(--ds-border-strong);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.38);
 }
 
 .ds-operation-rail {

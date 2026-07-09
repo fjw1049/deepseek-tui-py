@@ -814,8 +814,11 @@ class ToolExecutionMixin:
         )
         try:
             approved = await asyncio.wait_for(fut, timeout=600.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except asyncio.TimeoutError:
             approved = False
+        except asyncio.CancelledError:
+            # Hard cancel must not be reinterpreted as "user denied elevation".
+            raise
 
         if not approved:
             await self.handle.emit(
@@ -870,6 +873,19 @@ class ToolExecutionMixin:
                 return {
                     "tool": name,
                     "error": f"Tool '{name}' is not read-only; denied",
+                    "success": "false",
+                }
+            # Align with batch parallelization: tools that need an approval
+            # prompt (or never-block) must not bypass _execute_single_tool.
+            from deepseek_tui.tools.approval import plan_requires_approval
+
+            if plan_requires_approval(tool, self.exec_policy.approval_policy):
+                return {
+                    "tool": name,
+                    "error": (
+                        f"Tool '{name}' requires approval and cannot run "
+                        "inside multi_tool_use.parallel; call it directly"
+                    ),
                     "success": "false",
                 }
             try:

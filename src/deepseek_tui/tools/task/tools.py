@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.registry import (
@@ -60,6 +61,9 @@ class TaskCreateTool(ToolSpec):
         )
 
     def input_schema(self) -> dict[str, Any]:
+        # trust_mode / auto_approve are intentionally omitted: the model must
+        # not self-escalate privileges. Automation / runtime code can still
+        # set them via NewTaskRequest when enqueueing tasks programmatically.
         return {
             "type": "object",
             "properties": {
@@ -68,8 +72,6 @@ class TaskCreateTool(ToolSpec):
                 "workspace": {"type": "string"},
                 "mode": {"type": "string", "enum": ["agent", "plan", "yolo"]},
                 "allow_shell": {"type": "boolean"},
-                "trust_mode": {"type": "boolean"},
-                "auto_approve": {"type": "boolean"},
             },
             "required": ["prompt"],
             "additionalProperties": False,
@@ -93,8 +95,8 @@ class TaskCreateTool(ToolSpec):
             workspace=_optional_string(input_data, "workspace"),
             mode=_optional_string(input_data, "mode"),
             allow_shell=_optional_bool(input_data, "allow_shell"),
-            trust_mode=_optional_bool(input_data, "trust_mode"),
-            auto_approve=_optional_bool(input_data, "auto_approve"),
+            trust_mode=False,
+            auto_approve=False,
             thread_id=origin_thread if isinstance(origin_thread, str) else None,
         )
         try:
@@ -273,22 +275,20 @@ class TaskGateRunTool(ToolSpec):
         timeout_ms = _optional_int(input_data, "timeout_ms") or self._DEFAULT_TIMEOUT_MS
         timeout_ms = min(timeout_ms, self._MAX_TIMEOUT_MS)
 
-        from deepseek_tui.tools.shell import check_command_policy
+        from deepseek_tui.tools.shell import check_command_policy, spawn_sandboxed_shell
 
         refusal = check_command_policy(command, context)
         if refusal is not None:
             return refusal
 
-        # Execute the command
+        # Execute the command (sandboxed, same path as ExecShellTool)
         start = _time.monotonic()
         timed_out = False
         spawn_error: str | None = None
+        proc: asyncio.subprocess.Process | None = None
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd=cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            proc, _exec_env = await spawn_sandboxed_shell(
+                command, Path(cwd), context, timeout_ms
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout_ms / 1000
@@ -299,11 +299,12 @@ class TaskGateRunTool(ToolSpec):
             exit_code = None
             stdout_bytes = b""
             stderr_bytes = b"Gate timed out"
-            try:
-                proc.kill()  # type: ignore[possibly-undefined]
-                await proc.wait()  # type: ignore[possibly-undefined]
-            except (OSError, ProcessLookupError):
-                pass
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except (OSError, ProcessLookupError):
+                    pass
         except OSError as exc:
             spawn_error = str(exc)
             exit_code = None

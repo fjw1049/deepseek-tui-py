@@ -9,6 +9,7 @@ from pathlib import Path
 from deepseek_tui.tools.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.utils import write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,10 @@ class EditFileTool(ToolSpec):
         path = context.resolve_path(_require_string(input_data, "path"))
         search = _require_string_with_alias(input_data, "search", "old_string")
         replace = _require_string_with_alias(input_data, "replace", "new_string")
+        # Empty search matches every character gap in str.replace/count and
+        # would rewrite the entire file — reject before touching disk.
+        if search == "":
+            raise ToolError("edit_file search string must not be empty")
         content = await _read_text(path)
         count = content.count(search)
         if count == 0:
@@ -230,8 +235,7 @@ async def _read_text(path: Path) -> str:
 
 
 async def _write_text(path: Path, content: str) -> None:
-    await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
-    await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+    await asyncio.to_thread(write_text_atomic, path, content)
 
 
 async def _list_dir_structured(path: Path) -> list[dict[str, object]]:

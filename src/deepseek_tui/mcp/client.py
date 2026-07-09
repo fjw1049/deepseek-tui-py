@@ -109,18 +109,56 @@ class McpClient:
         self._reader_task: asyncio.Task[None] | None = None
         self._closed = False
 
+    def _mark_dead(self, exc: BaseException | None = None) -> None:
+        """Mark this client unusable after reader/transport failure.
+
+        Sets ``_closed`` so ``is_running`` becomes False while leaving
+        ``_transport`` for ``stop()`` / ``_ensure_client`` to tear down
+        (stdio child process, SSE client, etc.).
+        """
+        self._closed = True
+        self._initialized = False
+        err = McpError(
+            f"MCP transport closed: {exc}" if exc is not None else "MCP client dead"
+        )
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(err)
+        self._pending.clear()
+
     @property
     def is_running(self) -> bool:
-        return self._transport is not None and not self._closed
+        """True only while transport + reader are alive and not closed.
+
+        After a transport/reader failure we mark the client dead so
+        ``McpManager._ensure_client`` rebuilds instead of reusing a zombie.
+        """
+        if self._closed or self._transport is None:
+            return False
+        reader = self._reader_task
+        if reader is None or reader.done():
+            return False
+        return True
 
     async def start(self) -> None:
-        if self._transport is not None:
+        if self.is_running:
             return
+        # Tear down any leftover transport/reader from a previous death so a
+        # direct restart (not only manager replacement) does not leak children.
+        if self._transport is not None or self._reader_task is not None:
+            await self.stop()
+        self._closed = False
+        self._initialized = False
+        self._pending.clear()
         transport = build_transport(self.config)
         await transport.start()
         self._transport = transport
         self._reader_task = asyncio.create_task(self._reader_loop())
-        await self._initialize()
+        try:
+            await self._initialize()
+        except BaseException:
+            await self.stop()
+            raise
 
     async def stop(self) -> None:
         self._closed = True
@@ -225,18 +263,11 @@ class McpClient:
         except asyncio.CancelledError:
             pass
         except McpTransportError as exc:
-            # Transport gone — fail in-flight requests now instead of letting
-            # them hang until their read timeout.
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(McpError(f"MCP transport closed: {exc}"))
-            self._pending.clear()
+            # Transport gone — fail waiters and mark dead so the manager
+            # rebuilds on the next call instead of reusing a zombie.
+            self._mark_dead(exc)
         except Exception as exc:  # noqa: BLE001
-            # Propagate to any waiters so they unblock.
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(McpError(f"MCP reader died: {exc}"))
-            self._pending.clear()
+            self._mark_dead(exc)
 
     async def _send_request(
         self,

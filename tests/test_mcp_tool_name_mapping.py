@@ -74,3 +74,72 @@ def test_rebuild_falls_back_to_parsing_without_cached_map() -> None:
     ]
     mgr._rebuild_tool_map_from_cache()
     assert mgr._tool_map["mcp_fetch_get"] == ("fetch", "get")
+
+
+@pytest.mark.asyncio
+async def test_call_tool_routes_via_cached_map_not_parse() -> None:
+    """call_tool must use the cached (server, tool) pair, not string parse.
+
+    Regression: ``parse_qualified_tool_name("mcp_demo_srv_run")`` yields
+    ``("demo", "srv_run")``. With an authoritative map entry we route to
+    ``demo-srv`` / ``run`` instead.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.mcp.config import McpServerConfig
+
+    manager = McpManager(
+        [McpServerConfig(name="demo-srv", command="cat", capabilities=["read_only"])]
+    )
+    qualified = qualify_tool_name("demo-srv", "run")
+    assert qualified == "mcp_demo_srv_run"
+    assert parse_qualified_tool_name(qualified) == ("demo", "srv_run")  # the bug
+    manager._cached_tool_map[qualified] = ("demo-srv", "run")
+
+    fake_client = MagicMock()
+    fake_client.call_tool = AsyncMock(return_value={"ok": True})
+    manager._ensure_client = AsyncMock(return_value=fake_client)
+
+    result = await manager.call_tool(qualified, {"x": 1})
+    assert result == {"ok": True}
+    manager._ensure_client.assert_awaited_once_with("demo-srv")
+    fake_client.call_tool.assert_awaited_once_with("run", {"x": 1})
+
+
+@pytest.mark.asyncio
+async def test_call_tool_fails_closed_without_map_for_known_server() -> None:
+    """Prefix match alone must not invent a raw tool name (hyphen loss).
+
+    ``qualify_tool_name`` sanitizes ``do-thing`` → ``do_thing``. Deriving the
+    tool suffix from the qualified string would call the MCP server with the
+    wrong name. Without a map entry we refuse instead.
+    """
+    from deepseek_tui.mcp.client import McpError
+    from deepseek_tui.mcp.config import McpServerConfig
+
+    manager = McpManager([McpServerConfig(name="demo-srv", command="cat")])
+    qualified = qualify_tool_name("demo-srv", "do-thing")
+    assert qualified == "mcp_demo_srv_do_thing"
+    assert manager._resolve_qualified(qualified) is None
+    with pytest.raises(McpError, match="Not an MCP tool"):
+        await manager.call_tool(qualified, {})
+
+
+def test_resolve_qualified_picks_longest_server_via_map() -> None:
+    """A server named ``my`` must not shadow ``my_server`` when maps exist."""
+    from deepseek_tui.mcp.config import McpServerConfig
+
+    manager = McpManager(
+        [
+            McpServerConfig(name="my", command="cat"),
+            McpServerConfig(name="my_server", command="cat"),
+        ]
+    )
+    qualified = qualify_tool_name("my_server", "do_thing")
+    assert qualified == "mcp_my_server_do_thing"
+    # Without a map entry: known-server prefix match fails closed (no invented
+    # raw name), rather than returning a sanitized suffix.
+    assert manager._resolve_qualified(qualified) is None
+    manager._cached_tool_map[qualified] = ("my_server", "do_thing")
+    assert manager._resolve_qualified(qualified) == ("my_server", "do_thing")
+

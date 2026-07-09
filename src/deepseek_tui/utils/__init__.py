@@ -48,6 +48,31 @@ def write_json_atomic(path: Path, value: Any) -> None:
         raise
 
 
+def write_text_atomic(path: Path, content: str) -> None:
+    """Write *content* to *path* atomically (write-tmp + rename).
+
+    A crash mid-write leaves the original file intact instead of a
+    truncated/partial file. The temp file lives in the same directory so
+    ``os.replace`` stays on one filesystem.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def summarize_text(text: str, limit: int = 280) -> str:
     """Truncate *text* to *limit* chars, appending '...' if needed."""
     take = max(limit - 3, 0)

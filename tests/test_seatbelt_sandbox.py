@@ -39,6 +39,65 @@ class TestExecutionSandboxPolicy:
         assert agent.kind == "workspace-write"
         assert agent.network_access is True
 
+    def test_prepare_warns_when_sandbox_unavailable_on_any_platform(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """H8: a sandbox policy with no OS sandbox available must warn on
+        every platform (not just darwin). Previously Linux silently ran
+        unsandboxed because the warning was gated on ``sys.platform == "darwin"``.
+        """
+        from unittest.mock import patch
+
+        from deepseek_tui.policy import sandbox as sandbox_module
+
+        manager = sandbox_module.SandboxManager()
+        spec = CommandSpec(
+            program="echo",
+            args=["hi"],
+            cwd=tmp_path,
+            sandbox_policy=sandbox_policy_for_mode("agent", tmp_path),
+        )
+        assert spec.sandbox_policy.should_sandbox()  # workspace-write
+
+        # Simulate "no OS sandbox available" (the Linux / no-Seatbelt case)
+        # regardless of the platform this test runs on.
+        with patch.object(sandbox_module, "get_platform_sandbox", return_value=None):
+            with caplog.at_level("WARNING", logger="deepseek_tui.policy.sandbox"):
+                env = manager.prepare(spec)
+
+        # Non-breaking: still runs, just unsandboxed.
+        assert env.sandbox_type == SandboxType.NONE
+        assert any(
+            "no OS sandbox is available" in rec.message
+            and "workspace-write" in rec.message
+            for rec in caplog.records
+        ), [rec.message for rec in caplog.records]
+
+    def test_prepare_does_not_warn_when_sandbox_opted_out(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """danger-full-access explicitly opts out of sandboxing - no warning."""
+        from unittest.mock import patch
+
+        from deepseek_tui.policy import sandbox as sandbox_module
+
+        manager = sandbox_module.SandboxManager()
+        spec = CommandSpec(
+            program="echo",
+            args=["hi"],
+            cwd=tmp_path,
+            sandbox_policy=ExecutionSandboxPolicy.danger_full_access(),
+        )
+        assert not spec.sandbox_policy.should_sandbox()
+
+        with patch.object(sandbox_module, "get_platform_sandbox", return_value=None):
+            with caplog.at_level("WARNING", logger="deepseek_tui.policy.sandbox"):
+                env = manager.prepare(spec)
+
+        assert env.sandbox_type == SandboxType.NONE
+        assert not [rec for rec in caplog.records if "no OS sandbox" in rec.message]
+
+
     def test_writable_roots_protect_deepseek(self, tmp_path: Path) -> None:
         deepseek_dir = tmp_path / ".deepseek"
         deepseek_dir.mkdir()

@@ -197,24 +197,26 @@ class RunTestsTool(ToolSpec):
         if extra_args:
             cmd_str = f"{cmd_str} {extra_args}"
 
-        from deepseek_tui.tools.shell import check_command_policy
+        from deepseek_tui.tools.shell import check_command_policy, spawn_sandboxed_shell
 
         refusal = check_command_policy(cmd_str, context)
         if refusal is not None:
             return refusal
 
+        proc: asyncio.subprocess.Process | None = None
+        exec_env = None
         try:
-            proc = await asyncio.wait_for(
-                asyncio.create_subprocess_shell(
-                    cmd_str,
-                    cwd=str(workspace),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                ),
-                timeout=300,
+            proc, exec_env = await spawn_sandboxed_shell(
+                cmd_str, workspace, context, timeout_ms=300_000
             )
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=300)
         except asyncio.TimeoutError as exc:
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except (OSError, ProcessLookupError):
+                    pass
             raise ToolError("Test run timed out after 300s") from exc
 
         stdout = (stdout_b or b"").decode("utf-8", errors="replace")
@@ -230,6 +232,8 @@ class RunTestsTool(ToolSpec):
             "stdout": stdout,
             "stderr": stderr,
             "command": cmd_str,
+            "sandboxed": exec_env.is_sandboxed() if exec_env else False,
+            "sandbox_type": exec_env.sandbox_type.value if exec_env else "none",
         }
         return ToolResult(
             success=True,

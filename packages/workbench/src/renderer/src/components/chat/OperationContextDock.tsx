@@ -91,7 +91,7 @@ function SectionHeader({
       type="button"
       onClick={onToggle}
       aria-expanded={!collapsed}
-      className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-faint transition hover:text-ds-muted"
+      className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-muted transition hover:text-ds-ink"
     >
       <ChevronRight
         className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${
@@ -255,7 +255,7 @@ export function OperationContextDock({
         <button
           type="button"
           onClick={() => onOpenEditor?.()}
-          className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink`}
+          className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
         >
           <RowIcon icon={Code2} tint="violet" />
           <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
@@ -269,7 +269,7 @@ export function OperationContextDock({
             previewEnabled
               ? previewActive
                 ? 'bg-accent/[0.09] text-ds-ink'
-                : 'cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+                : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
               : 'cursor-default text-ds-faint opacity-55'
           }`}
           aria-pressed={previewActive}
@@ -290,7 +290,7 @@ export function OperationContextDock({
             terminalPanelEnabled
               ? terminalPanelOpen
                 ? 'bg-accent/[0.09] text-ds-ink'
-                : 'cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+                : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
               : 'cursor-default text-ds-faint opacity-55'
           }`}
           aria-pressed={terminalPanelOpen}
@@ -322,7 +322,7 @@ export function OperationContextDock({
           title={hasChanges ? t('operationDockOpenChanges') : t('operationDockNoChanges')}
           className={`${DOCK_ROW_CLASS} ${
             hasChanges
-              ? 'cursor-pointer text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+              ? 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
               : 'cursor-default text-ds-faint'
           }`}
         >
@@ -382,7 +382,7 @@ export function OperationContextDock({
         type="button"
         onClick={() => toggle('process')}
         aria-expanded={!collapsed.process}
-        className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-faint transition hover:text-ds-muted"
+        className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-muted transition hover:text-ds-ink"
       >
         <ChevronRight
           className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${

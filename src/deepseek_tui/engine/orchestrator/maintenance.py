@@ -174,7 +174,15 @@ class SessionMaintenanceMixin:
             # deletion of prior messages) while placing the summary where
             # the LLM can use it as a bridge between stale prefix and fresh
             # context.
-            messages.insert(verbatim_start, Message.assistant(seam_text))
+            #
+            # Align off Role.TOOL so we never split assistant(tool_calls)
+            # from its tool results (API orphan sequences).
+            from deepseek_tui.protocol.messages import Role
+
+            insert_at = verbatim_start
+            while insert_at > 0 and messages[insert_at].role == Role.TOOL:
+                insert_at -= 1
+            messages.insert(insert_at, Message.assistant(seam_text))
 
     async def _auto_persist_session(self) -> None:
         """Best-effort session persistence after each turn.
@@ -248,10 +256,18 @@ class SessionMaintenanceMixin:
         self._record_compaction_summary(result.summary_prompt)
         return result
 
-    async def _emergency_compact(self, messages: list[Message]) -> list[Message]:
-        """Emergency compaction callback for TurnLoop context overflow recovery."""
+    async def _emergency_compact(
+        self, messages: list[Message]
+    ) -> tuple[list[Message], str | None]:
+        """Emergency compaction for TurnLoop / capacity overflow recovery.
+
+        Returns ``(messages, summary_prompt)``. Callers must merge
+        ``summary_prompt`` into the *current* request's system prompt —
+        otherwise this turn only sees the pinned tail and the archive is
+        deferred until the next user turn.
+        """
         result = await self._run_compaction(messages)
-        return result.messages
+        return result.messages, result.summary_prompt
 
     async def _maybe_advance_cycle(
         self, messages: list[Message], model: str
@@ -377,7 +393,14 @@ class SessionMaintenanceMixin:
                 keep, len(messages),
             )
 
-        recent = messages[-keep:]
+        # Do not start the kept window on a tool-result message — that would
+        # orphan TOOL rows from their parent assistant(tool_calls) message.
+        from deepseek_tui.protocol.messages import Role
+
+        start = max(0, len(messages) - keep)
+        while start > 0 and messages[start].role == Role.TOOL:
+            start -= 1
+        recent = messages[start:]
 
         messages.clear()
         for sd in seed_dicts:

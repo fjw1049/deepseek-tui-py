@@ -929,6 +929,26 @@ async def _spawn_from_exec_env(exec_env: ExecEnv) -> Process:
     )
 
 
+async def spawn_sandboxed_shell(
+    command: str,
+    cwd: Path,
+    context: ToolContext,
+    timeout_ms: int,
+) -> tuple[asyncio.subprocess.Process, ExecEnv]:
+    """Spawn a shell command under the workspace sandbox.
+
+    Shared entry point for subprocess-based tools (``ExecShellTool``,
+    ``run_tests``, ``task_gate_run``) so they apply the same Seatbelt /
+    workspace-write policy as the main shell tool instead of escaping it
+    via a bare ``asyncio.create_subprocess_shell``. Returns the spawned
+    process and the resolved (possibly sandboxed) exec env.
+    """
+    policy = _resolve_policy(context)
+    exec_env = _prepare_shell_exec(command, cwd, policy, None, timeout_ms)
+    process = await _spawn_from_exec_env(exec_env)
+    return process, exec_env
+
+
 def _extract_primary_command(command: str) -> str | None:
     normalized = command.strip()
     if not normalized:

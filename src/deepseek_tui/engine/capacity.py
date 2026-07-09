@@ -394,10 +394,12 @@ async def run_pre_request_checkpoint(
     model: str,
     messages: list[Message],
     compact_fn: object | None = None,
-) -> tuple[CapacityDecision, bool]:
+) -> tuple[CapacityDecision, bool, str | None]:
     """Pre-request checkpoint: if TARGETED_CONTEXT_REFRESH, trigger compaction.
 
-    Returns (decision, compacted) where compacted is True if messages were modified.
+    Returns ``(decision, compacted, summary_prompt)``. When compaction
+    returns a summary, the caller must merge it into the current turn's
+    system prompt (same as the active ``/compact`` path).
     """
     obs = build_observation(turn_index, model, messages)
     snapshot: CapacitySnapshot | None = controller.observe_pre_turn(obs)
@@ -407,13 +409,18 @@ async def run_pre_request_checkpoint(
         if compact_fn is not None and callable(compact_fn):
             try:
                 result = await compact_fn(messages)
-                messages[:] = result
+                summary: str | None = None
+                if isinstance(result, tuple):
+                    messages[:] = result[0]
+                    summary = result[1]
+                else:
+                    messages[:] = result
                 logger.info("capacity: pre-request compaction triggered (turn %d)", turn_index)
-                return decision, True
+                return decision, True, summary
             except Exception:
                 logger.warning("capacity: pre-request compaction failed", exc_info=True)
 
-    return decision, False
+    return decision, False, None
 
 
 async def run_post_tool_checkpoint(

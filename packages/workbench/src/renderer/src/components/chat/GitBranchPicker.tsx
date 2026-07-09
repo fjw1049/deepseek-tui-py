@@ -271,7 +271,7 @@ export function GitBranchPicker({
         type="button"
         className={
           compact
-            ? 'flex h-7 w-full items-center gap-1.5 rounded-lg px-1.5 text-left text-[12.5px] font-medium text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink'
+            ? 'flex h-7 w-full items-center gap-1.5 rounded-lg px-1.5 text-left text-[12.5px] font-medium text-ds-ink transition hover:bg-ds-hover/60'
             : 'flex h-8 max-w-[320px] items-center gap-2 rounded-lg px-2 text-[14px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
         }
         onClick={() => setOpen((v) => !v)}

@@ -1200,7 +1200,7 @@ export function Workbench(): ReactElement {
             </div>
             {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
               <div
-                className="ds-bottom-terminal ds-no-drag relative shrink-0"
+                className="ds-bottom-terminal ds-no-drag flex shrink-0 flex-col border-t-2 border-ds-border"
                 style={{ height: bottomTerminalHeight }}
               >
                 <div
@@ -1208,10 +1208,10 @@ export function Workbench(): ReactElement {
                   aria-orientation="horizontal"
                   aria-label={t('terminalPanelResize')}
                   title={t('terminalPanelResize')}
-                  className="ds-bottom-terminal__handle ds-no-drag group absolute inset-x-0 top-0 z-40 flex h-3 items-center justify-center cursor-row-resize touch-none select-none"
+                  className="ds-bottom-terminal__handle ds-no-drag group flex h-3.5 shrink-0 items-center justify-center cursor-row-resize touch-none select-none"
                   onPointerDown={beginBottomTerminalResize}
                 >
-                  <span className="pointer-events-none h-1 w-10 rounded-full bg-ds-border transition group-hover:w-16 group-hover:bg-ds-accent/70" />
+                  <span className="pointer-events-none h-1 w-10 rounded-full bg-ds-border-strong transition group-hover:w-16 group-hover:bg-ds-accent/70" />
                 </div>
                 <AppTerminalPanel
                   workspaceRoot={activeWorkspaceRoot}
@@ -1219,7 +1219,7 @@ export function Workbench(): ReactElement {
                   mountActive
                   visible
                   onClose={() => setBottomTerminalOpen(false)}
-                  className="h-full max-h-full w-full border-t border-ds-border-muted"
+                  className="min-h-0 w-full flex-1 border-0"
                 />
               </div>
             ) : null}
