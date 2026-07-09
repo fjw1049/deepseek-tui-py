@@ -32,8 +32,8 @@ dist/
 .idea/
 *.swp
 .DS_Store
-scratch/*
-tests/*
+# scratch/*
+# tests/*
 
 # Local debug session dumps
 session_*.json
