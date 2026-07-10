@@ -95,8 +95,8 @@ class Skill:
     path: Path
     allowed_tools: tuple[str, ...] | None = None
     """Optional focus-mode tool whitelist from the ``allowed-tools``
-    frontmatter key. When set, overrides ``FOCUS_MODE_TOOLS`` for this
-    skill. ``None`` means "not declared" (fall back to the fixed set).
+    frontmatter key. When set, overrides ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``
+    for this skill. ``None`` means "not declared" (fall back to the fixed set).
 
     An intentional addition for the focus-mode feature; mirrors workflow
     ``allowed_tools`` semantics.
@@ -209,7 +209,7 @@ def _parse_allowed_tools(
     - YAML block list:    ``allowed-tools:`` then ``  - read_file`` lines
 
     Empty / whitespace-only declarations yield ``None`` (treated as
-    "not declared" so focus mode falls back to ``FOCUS_MODE_TOOLS``).
+    "not declared" so focus mode falls back to ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``).
     """
     value = value.strip()
 

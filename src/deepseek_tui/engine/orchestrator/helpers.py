@@ -11,9 +11,25 @@ from typing import Any
 from deepseek_tui.engine.prompts import AppMode as _AppMode
 from deepseek_tui.protocol.messages import Message, TextBlock
 
-FOCUS_MODE_TOOLS = frozenset(
-    {"read_file", "list_dir", "grep", "load_skill", "write_file", "edit_file"}
+# Read-only exploration base - always available in every focus mode
+# (skill / mcp / plugin mount). These carry no write/exec risk and are
+# universally needed to orient and inspect code, so confining them would
+# only cripple the model without improving safety. Note ``grep_files``
+# (not ``grep``) - the old ``"grep"`` literal was a name mismatch that
+# silently excluded grep from every focus mode.
+FOCUS_READ_BASE = frozenset(
+    {
+        "read_file", "list_dir", "grep_files", "file_search",
+        "project_map", "diagnostics",
+        "git_status", "git_diff", "git_log", "git_blame", "git_show",
+        "load_skill", "note", "update_plan", "retrieve_tool_result",
+        "current_time",
+    }
 )
+
+# Write tools - included only when the focus target permits writes
+# (skill focus; mcp focus; plugin with the ``writes_files`` permission).
+FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file", "apply_patch"})
 
 
 def _detect_focus_prefix(text: str, sigil: str) -> str | None:

@@ -669,9 +669,14 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         assert "ro-plugin" in note
         wl = engine._active_plugin_whitelist()
         assert wl is not None
-        assert {"read_file", "grep", "list_dir", "load_skill"} <= wl
-        assert "write_file" not in wl
-        assert "edit_file" not in wl
+        # Read-only plugin gets the full read base (grep_files, not the old
+        # buggy "grep"; plus file_search, git read, project_map, ...).
+        assert {"read_file", "grep_files", "list_dir", "load_skill"} <= wl
+        assert {"file_search", "git_status", "git_diff", "project_map"} <= wl
+        # No write tools for a read-only plugin (incl. apply_patch).
+        assert {"write_file", "edit_file", "apply_patch"}.isdisjoint(wl)
+        # No exec either.
+        assert {"exec_shell", "code_execution"}.isdisjoint(wl)
     finally:
         await engine.shutdown_session()
 
@@ -705,7 +710,9 @@ async def test_active_plugin_whitelist_write_permission(tmp_path, monkeypatch) -
         engine.set_active_plugin("rw-plugin")
         wl = engine._active_plugin_whitelist()
         assert wl is not None
-        assert {"write_file", "edit_file"} <= wl
+        assert {"write_file", "edit_file", "apply_patch"} <= wl
+        # Read base still present alongside writes.
+        assert {"read_file", "grep_files", "file_search"} <= wl
         # clearing restores full toolset (None sentinel)
         engine.set_active_plugin("off")
         assert engine._active_plugin_whitelist() is None

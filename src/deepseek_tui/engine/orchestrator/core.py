@@ -51,7 +51,8 @@ from deepseek_tui.engine.handle import (
     SendMessageOp,
 )
 from deepseek_tui.engine.orchestrator.helpers import (
-    FOCUS_MODE_TOOLS,
+    FOCUS_READ_BASE,
+    FOCUS_WRITE_BASE,
     _assistant_preface_text,
     _detect_focus_mcp,
     _detect_focus_skill,
@@ -299,12 +300,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         }
 
     def _mcp_focus_whitelist(self, server: str) -> frozenset[str]:
-        """聚焦某个 MCP 连接器时的工具白名单：该 server 的工具 + 基础读工具。
+        """聚焦某个 MCP 连接器时的工具白名单：该 server 的工具 + 基座。
 
-        基础读工具复用 ``FOCUS_MODE_TOOLS`` 的只读子集，不另立常量。
+        基座为只读探索 + 写工具（``FOCUS_READ_BASE | FOCUS_WRITE_BASE``）：
+        连接器聚焦不仅查询连接器，还要能对工作区文件动手（如根据 PR
+        改代码），所以写工具一并放行。Exec/网络等领域工具不进基座。
         """
-        base_read = FOCUS_MODE_TOOLS & {"read_file", "grep", "list_dir"}
-        return frozenset(self._server_tool_names(server) | base_read)
+        return frozenset(
+            self._server_tool_names(server) | FOCUS_READ_BASE | FOCUS_WRITE_BASE
+        )
 
     def set_active_plugin(self, name: str | None) -> str:
         """挂载 / 摘除会话级插件。``name=None`` 或 ``"off"`` → 摘除。
@@ -351,8 +355,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def _active_plugin_whitelist(self) -> frozenset[str] | None:
         """当前挂载插件的每轮工具白名单（收窄语义）。
 
-        只读底座 + 按插件 permissions 决定是否加写工具 + 插件 skill 声明的
+        只读探索基座（``FOCUS_READ_BASE``）始终放行；按插件 permissions
+        决定是否加写工具（``FOCUS_WRITE_BASE``）；再加插件 skill 声明的
         allowed-tools + 插件自带 MCP server 的全部工具。None = 未挂载。
+        Exec/网络等领域工具不进基座，需插件 skill 显式 allowed-tools 声明。
         """
         plugin = self._active_plugin
         if plugin is None:
@@ -362,12 +368,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             collect_contributions,
         )
 
-        allowed: set[str] = set(
-            FOCUS_MODE_TOOLS & {"read_file", "grep", "list_dir", "load_skill"}
-        )
+        allowed: set[str] = set(FOCUS_READ_BASE)
         caps = capability_values_from_permissions(plugin.manifest.permissions)
         if "writes_files" in caps:
-            allowed |= {"write_file", "edit_file"}
+            allowed |= set(FOCUS_WRITE_BASE)
         try:
             contribs = collect_contributions([plugin])
         except Exception:  # noqa: BLE001
@@ -1208,13 +1212,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
             # skill 声明 ``allowed-tools`` 则完全覆盖固定白名单；否则回退到
-            # ``FOCUS_MODE_TOOLS``。MCP 连接器聚焦：该 server 工具 + 基础读工具。
+            # ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``（技能引导任务，需完整读写；
+            # exec/领域工具由 skill 用 allowed-tools 显式 opt-in）。
+            # MCP 连接器聚焦：该 server 工具 + 读基座 + 写基座。
             # 显式前缀（/skill、@mcp）优先级最高；两者都未命中且挂载了插件时，
-            # 回退到插件白名单（持续态）。都无 → 全量（None）。
+            # 回退到插件白名单（持续态）。都无 -> 全量（None）。
             if focus_skill is not None:
                 declared = getattr(focus_skill, "allowed_tools", None)
                 self._focus_tool_whitelist = (
-                    frozenset(declared) if declared else FOCUS_MODE_TOOLS
+                    frozenset(declared)
+                    if declared
+                    else (FOCUS_READ_BASE | FOCUS_WRITE_BASE)
                 )
             elif focus_mcp is not None:
                 self._focus_tool_whitelist = self._mcp_focus_whitelist(focus_mcp)
