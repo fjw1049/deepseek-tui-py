@@ -674,38 +674,36 @@ export function SettingsView(): ReactElement {
                   }
                 />
                 <SettingRow
-                  controlWidth="full"
-                  title={t('petMascotEnabled')}
-                  description={
-                    <PetMascotSettingPreview
-                      enabled={petEnabled}
-                      selectedSlug={petSlug}
-                      selectedName={
-                        favoritePets.find((pet) => pet.slug === petSlug)?.displayName ?? petSlug
-                      }
-                      description={t('petMascotEnabledDesc')}
+                  title={t('autoStart')}
+                  description={t('autoStartDesc')}
+                  control={
+                    <Toggle
+                      checked={form.deepseek.autoStart}
+                      onChange={(v) => update({ deepseek: { autoStart: v } })}
                     />
                   }
+                />
+                <SettingRow
+                  title={t('port')}
+                  description={t('portDesc')}
                   control={
-                    <PetMascotSettingsControl
-                      enabled={petEnabled}
-                      selectedSlug={petSlug}
-                      favoritePets={favoritePets}
-                      favoriteCount={petFavoriteSlugs.length}
-                      searchQuery={petCatalogQuery}
-                      searchResults={petSearchResults}
-                      loading={petCatalogLoading}
-                      error={petCatalogError}
-                      onEnabledChange={(value) => {
-                        setPetEnabled(value)
-                        writePetEnabled(value)
-                      }}
-                      onRefresh={() => void loadPetCatalog(true)}
-                      onSearchQueryChange={setPetCatalogQuery}
-                      onSelect={(pet) => void selectPetSlug(pet)}
-                      onAddFavorite={addFavoritePet}
-                      onRemoveFavorite={removeFavoritePet}
-                    />
+                    <div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        className={`w-28 rounded-xl border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:outline-none focus:ring-1 ${
+                          portError
+                            ? 'border-red-400 focus:ring-red-300'
+                            : 'border-ds-border focus:border-accent/40 focus:ring-accent/30'
+                        }`}
+                        value={form.deepseek.port}
+                        onChange={(e) => update({ deepseek: { port: Number(e.target.value) } })}
+                      />
+                      {portError ? (
+                        <p className="mt-1 text-[12px] text-red-700 dark:text-red-300">{portError}</p>
+                      ) : null}
+                    </div>
                   }
                 />
                 <SettingRow
@@ -757,45 +755,6 @@ export function SettingsView(): ReactElement {
                     </div>
                   }
                 />
-              </SettingsCard>
-
-              <SettingsCard title={t('sectionRuntime')} className="mt-6">
-                <SettingRow
-                  title={t('autoStart')}
-                  description={t('autoStartDesc')}
-                  control={
-                    <Toggle
-                      checked={form.deepseek.autoStart}
-                      onChange={(v) => update({ deepseek: { autoStart: v } })}
-                    />
-                  }
-                />
-                <SettingRow
-                  title={t('port')}
-                  description={t('portDesc')}
-                  control={
-                    <div>
-                      <input
-                        type="number"
-                        min={1}
-                        max={65535}
-                        className={`w-28 rounded-xl border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:outline-none focus:ring-1 ${
-                          portError
-                            ? 'border-red-400 focus:ring-red-300'
-                            : 'border-ds-border focus:border-accent/40 focus:ring-accent/30'
-                        }`}
-                        value={form.deepseek.port}
-                        onChange={(e) => update({ deepseek: { port: Number(e.target.value) } })}
-                      />
-                      {portError ? (
-                        <p className="mt-1 text-[12px] text-red-700 dark:text-red-300">{portError}</p>
-                      ) : null}
-                    </div>
-                  }
-                />
-              </SettingsCard>
-
-              <SettingsCard title={t('logTitle')} className="mt-6">
                 <SettingRow
                   relaxed
                   title={t('logDir')}
@@ -837,6 +796,44 @@ export function SettingsView(): ReactElement {
                         </p>
                       ) : null}
                     </div>
+                  }
+                />
+              </SettingsCard>
+
+              <SettingsCard title={t('sectionPet')} className="mt-6">
+                <SettingRow
+                  controlWidth="full"
+                  title={t('petMascotEnabled')}
+                  description={
+                    <PetMascotSettingPreview
+                      enabled={petEnabled}
+                      selectedSlug={petSlug}
+                      selectedName={
+                        favoritePets.find((pet) => pet.slug === petSlug)?.displayName ?? petSlug
+                      }
+                      description={t('petMascotEnabledDesc')}
+                    />
+                  }
+                  control={
+                    <PetMascotSettingsControl
+                      enabled={petEnabled}
+                      selectedSlug={petSlug}
+                      favoritePets={favoritePets}
+                      favoriteCount={petFavoriteSlugs.length}
+                      searchQuery={petCatalogQuery}
+                      searchResults={petSearchResults}
+                      loading={petCatalogLoading}
+                      error={petCatalogError}
+                      onEnabledChange={(value) => {
+                        setPetEnabled(value)
+                        writePetEnabled(value)
+                      }}
+                      onRefresh={() => void loadPetCatalog(true)}
+                      onSearchQueryChange={setPetCatalogQuery}
+                      onSelect={(pet) => void selectPetSlug(pet)}
+                      onAddFavorite={addFavoritePet}
+                      onRemoveFavorite={removeFavoritePet}
+                    />
                   }
                 />
               </SettingsCard>
