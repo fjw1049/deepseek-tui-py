@@ -1,43 +1,13 @@
-import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Download,
-  Loader2,
-  Plus,
-  Puzzle,
-  RefreshCw,
-  Search,
-  Shield,
-  ShieldCheck,
-  Store,
-  Trash2
-} from 'lucide-react'
+import { Loader2, Plus, RefreshCw, Search } from 'lucide-react'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useChatStore } from '../../store/chat-store'
 import { useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
-
-type PluginRow = {
-  name: string
-  version: string
-  description: string
-  path: string
-  scope: string
-  enabled: boolean
-  trusted: boolean
-  permissions: string[]
-  components: { skills: boolean; hooks: boolean; mcp_servers: boolean }
-}
-
-type RegistryEntry = {
-  name: string
-  source: string
-  description: string
-  version: string
-  components: string[]
-  permissions: string[]
-}
+import { ExtensionsToolbar } from './ExtensionsToolbar'
+import { InstalledPluginsPanel, type PluginRow, type RegistryEntry } from './InstalledPluginsPanel'
 
 /** Plugins are bundles of skills + hooks + MCP servers managed by the Python
  * runtime (`/v1/plugins`). Skills load as-is; hooks and MCP servers stay
@@ -58,7 +28,6 @@ export function PluginsView(): ReactElement {
   const [registryError, setRegistryError] = useState(false)
   const [installingSource, setInstallingSource] = useState<string | null>(null)
 
-  // Close the install popover when clicking anywhere outside it.
   useEffect(() => {
     if (!installOpen) return
     const handleClick = (event: MouseEvent): void => {
@@ -83,8 +52,6 @@ export function PluginsView(): ReactElement {
         }
         const parsed = JSON.parse(result.body) as { plugins?: PluginRow[] }
         setPlugins(parsed.plugins ?? [])
-        // Manual reload gets an explicit "done" toast so the user knows
-        // it ran; automatic refreshes (mount / after a mutation) stay quiet.
         setNotice(announce ? { tone: 'success', message: t('listReloaded') } : null)
       } catch (error) {
         setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
@@ -99,8 +66,6 @@ export function PluginsView(): ReactElement {
     void refresh()
   }, [refresh])
 
-  // Marketplace index is a best-effort remote fetch; failure hides the
-  // section content behind a quiet hint instead of an error banner.
   useEffect(() => {
     if (!WORKBENCH_FEATURES.pluginMarketplace) return
     if (typeof window.dsGui?.runtimeRequest !== 'function') return
@@ -257,22 +222,22 @@ export function PluginsView(): ReactElement {
     <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-[24px] font-semibold text-ds-ink">{t('extPlugins')}</h1>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void refresh(true)}
-              disabled={loading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-              {t('connectorReload')}
-            </button>
+          <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">{t('extPlugins')}</h1>
+          <ExtensionsToolbar
+            menuItems={[
+              {
+                label: t('connectorReload'),
+                icon: <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} strokeWidth={1.75} />,
+                onClick: () => void refresh(true),
+                disabled: loading
+              }
+            ]}
+          >
             <div className="relative" ref={installMenuRef}>
               <button
                 type="button"
                 onClick={() => setInstallOpen((open) => !open)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:opacity-90"
+                className="ds-ext-primary-action inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110"
               >
                 <Plus className="h-4 w-4" strokeWidth={1.9} />
                 {t('pluginSysInstall')}
@@ -287,7 +252,7 @@ export function PluginsView(): ReactElement {
                 />
               ) : null}
             </div>
-          </div>
+          </ExtensionsToolbar>
         </div>
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('pluginSysSubtitle')}</p>
 
@@ -297,158 +262,38 @@ export function PluginsView(): ReactElement {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t('pluginSysSearch')}
-            className="h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
+            className="ds-ext-search h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
           />
         </label>
 
         {notice ? <NoticeView notice={notice} /> : null}
 
-        <div className="ds-content-card mt-6 overflow-hidden rounded-2xl">
-          <div className="flex items-center justify-between gap-4 border-b border-ds-border-muted px-5 py-3.5">
-            <div className="flex items-center gap-1.5 text-[15px] font-semibold text-ds-ink">
-              {t('skillTabInstalled')}
-              <span className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-ds-ink/10 px-1.5 text-[11px] font-semibold text-ds-ink">
-                {plugins.length}
-              </span>
-            </div>
-            <span className="text-[12px] text-ds-faint">{t('pluginSysRestartHint')}</span>
-          </div>
-          {loading && plugins.length === 0 ? (
-            <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">
-              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-              {t('skillsLoading')}
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="px-5 py-10 text-center text-[13px] text-ds-faint">
-              {plugins.length === 0 ? t('pluginSysEmpty') : t('pluginNoResults')}
-            </div>
-          ) : (
-            <ul className="divide-y divide-ds-border-muted/70">
-              {filtered.map((plugin) => (
-                <PluginListRow
-                  key={`${plugin.scope}:${plugin.name}`}
-                  plugin={plugin}
-                  busy={busyName === plugin.name}
-                  onTrust={() => handleTrust(plugin)}
-                  onUpdate={() => handleUpdate(plugin)}
-                  onRemove={() => handleRemove(plugin)}
-                />
-              ))}
-            </ul>
-          )}
+        <div className="mt-6">
+          <InstalledPluginsPanel
+            plugins={filtered}
+            loading={loading}
+            busyName={busyName}
+            marketplaceEnabled={WORKBENCH_FEATURES.pluginMarketplace}
+            registry={registry}
+            registryLoading={registryLoading}
+            registryError={registryError}
+            filteredRegistry={filteredRegistry}
+            installedNames={installedNames}
+            installingSource={installingSource}
+            onTrust={handleTrust}
+            onUpdate={handleUpdate}
+            onRemove={handleRemove}
+            onMarketplaceInstall={(entry) => void handleMarketplaceInstall(entry)}
+            headerRight={
+              <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
+                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{t('pluginSysRestartHint')}</span>
+              </div>
+            }
+          />
         </div>
-
-        {WORKBENCH_FEATURES.pluginMarketplace ? (
-          <div className="ds-content-card mt-6 overflow-hidden rounded-2xl">
-            <div className="flex items-center justify-between gap-4 border-b border-ds-border-muted px-5 py-3.5">
-              <div className="flex items-center gap-1.5 text-[15px] font-semibold text-ds-ink">
-                <Store className="h-4 w-4 text-ds-muted" strokeWidth={1.75} />
-                {t('pluginSysMarketplace')}
-                {registry ? (
-                  <span className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-ds-ink/10 px-1.5 text-[11px] font-semibold text-ds-ink">
-                    {registry.length}
-                  </span>
-                ) : null}
-              </div>
-              <span className="text-[12px] text-ds-faint">{t('pluginSysMarketplaceHint')}</span>
-            </div>
-            {registryLoading ? (
-              <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">
-                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                {t('skillsLoading')}
-              </div>
-            ) : registryError || registry === null ? (
-              <div className="px-5 py-10 text-center text-[13px] text-ds-faint">
-                {t('pluginSysMarketplaceUnavailable')}
-              </div>
-            ) : filteredRegistry.length === 0 ? (
-              <div className="px-5 py-10 text-center text-[13px] text-ds-faint">
-                {registry.length === 0 ? t('pluginSysMarketplaceEmpty') : t('pluginNoResults')}
-              </div>
-            ) : (
-              <ul className="divide-y divide-ds-border-muted/70">
-                {filteredRegistry.map((entry) => (
-                  <MarketplaceRow
-                    key={entry.source}
-                    entry={entry}
-                    installed={installedNames.has(entry.name.toLowerCase())}
-                    installing={installingSource === entry.source}
-                    onInstall={() => void handleMarketplaceInstall(entry)}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : null}
       </div>
     </div>
-  )
-}
-
-function MarketplaceRow({
-  entry,
-  installed,
-  installing,
-  onInstall
-}: {
-  entry: RegistryEntry
-  installed: boolean
-  installing: boolean
-  onInstall: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  return (
-    <li className="flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <Puzzle className="h-4.5 w-4.5" strokeWidth={1.6} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[15px] font-semibold text-ds-ink">{entry.name}</span>
-          {entry.version ? (
-            <span className="font-mono text-[11px] text-ds-faint">v{entry.version}</span>
-          ) : null}
-          <PermissionChips permissions={entry.permissions} />
-        </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-          {entry.description ? (
-            <p className="line-clamp-1 text-[13px] leading-5 text-ds-muted" title={entry.description}>
-              {entry.description}
-            </p>
-          ) : null}
-          <span className="shrink-0 font-mono text-[11px] text-ds-faint">{entry.source}</span>
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onInstall}
-        disabled={installed || installing}
-        className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-ds-subtle px-3 py-1.5 text-[12px] font-semibold text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
-      >
-        {installing ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-        ) : (
-          <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-        )}
-        {installed ? t('pluginSysInstalled') : t('pluginSysInstall')}
-      </button>
-    </li>
-  )
-}
-
-function PermissionChips({ permissions }: { permissions: string[] }): ReactElement | null {
-  if (permissions.length === 0) return null
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1">
-      {permissions.map((perm) => (
-        <span
-          key={perm}
-          className="inline-flex items-center rounded-full border border-ds-border-muted px-1.5 py-0.5 font-mono text-[10px] text-ds-faint"
-        >
-          {perm}
-        </span>
-      ))}
-    </span>
   )
 }
 
@@ -462,138 +307,6 @@ function extractApiError(body: string): string {
     /* fall through */
   }
   return body
-}
-
-function PluginListRow({
-  plugin,
-  busy,
-  onTrust,
-  onUpdate,
-  onRemove
-}: {
-  plugin: PluginRow
-  busy: boolean
-  onTrust: () => void
-  onUpdate: () => void
-  onRemove: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const hasExecutable = plugin.components.hooks || plugin.components.mcp_servers
-  // Claude Code installs are surfaced read-only: enable/trust state lives in
-  // our lockfile, but the files belong to Claude Code (no update/remove).
-  const managedElsewhere = plugin.scope === 'claude'
-  const stopRemove = (event: ReactMouseEvent): void => {
-    event.stopPropagation()
-    onRemove()
-  }
-  return (
-    <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <Puzzle className="h-4.5 w-4.5" strokeWidth={1.6} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[15px] font-semibold text-ds-ink">{plugin.name}</span>
-          <span className="font-mono text-[11px] text-ds-faint">v{plugin.version}</span>
-          <ScopeBadge scope={plugin.scope} />
-          {hasExecutable ? (
-            plugin.trusted ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                <ShieldCheck className="h-3 w-3" strokeWidth={2} />
-                {t('pluginSysTrusted')}
-              </span>
-            ) : (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400"
-                title={t('pluginSysUntrustedHint')}
-              >
-                <Shield className="h-3 w-3" strokeWidth={2} />
-                {t('pluginSysUntrusted')}
-              </span>
-            )
-          ) : null}
-          <PermissionChips permissions={plugin.permissions} />
-        </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-          {plugin.description ? (
-            <p className="line-clamp-1 text-[13px] leading-5 text-ds-muted" title={plugin.description}>
-              {plugin.description}
-            </p>
-          ) : null}
-          <span className="shrink-0 font-mono text-[11px] text-ds-faint">
-            {[
-              plugin.components.skills ? 'Skills' : null,
-              plugin.components.hooks ? 'Hooks' : null,
-              plugin.components.mcp_servers ? 'MCP' : null
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        {hasExecutable ? (
-          <button
-            type="button"
-            onClick={onTrust}
-            disabled={busy}
-            title={plugin.trusted ? t('pluginSysUntrustAction') : t('pluginSysTrustAction')}
-            aria-label={plugin.trusted ? t('pluginSysUntrustAction') : t('pluginSysTrustAction')}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ds-muted opacity-0 transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50 group-hover:opacity-100 focus-visible:opacity-100"
-          >
-            {plugin.trusted ? (
-              <Shield className="h-4 w-4" strokeWidth={1.75} />
-            ) : (
-              <ShieldCheck className="h-4 w-4" strokeWidth={1.75} />
-            )}
-          </button>
-        ) : null}
-        {managedElsewhere ? null : (
-          <>
-            <button
-              type="button"
-              onClick={onUpdate}
-              disabled={busy}
-              title={t('pluginSysUpdateAction')}
-              aria-label={t('pluginSysUpdateAction')}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-ds-muted opacity-0 transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50 group-hover:opacity-100 focus-visible:opacity-100"
-            >
-              <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-            <button
-              type="button"
-              onClick={stopRemove}
-              disabled={busy}
-              title={t('connectorDelete')}
-              aria-label={t('connectorDelete')}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 opacity-0 transition hover:bg-red-50 disabled:opacity-50 group-hover:opacity-100 focus-visible:opacity-100 dark:hover:bg-red-950/30"
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-              ) : (
-                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-              )}
-            </button>
-          </>
-        )}
-      </div>
-    </li>
-  )
-}
-
-function ScopeBadge({ scope }: { scope: string }): ReactElement {
-  const { t } = useTranslation('common')
-  const label =
-    scope === 'project'
-      ? t('pluginSysScopeProject')
-      : scope === 'claude'
-        ? t('pluginSysScopeClaude')
-        : t('pluginSysScopeUser')
-  return (
-    <span className="inline-flex items-center rounded-full bg-ds-subtle px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
-      {label}
-    </span>
-  )
 }
 
 function InstallPluginPopover({
@@ -644,7 +357,7 @@ function InstallPluginPopover({
         type="button"
         onClick={() => void submit()}
         disabled={!spec.trim() || submitting}
-        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+        className="ds-ext-primary-action mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110 disabled:opacity-60"
       >
         {submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : null}
         {t('pluginSysInstall')}

@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileText, FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
 
 export type InstalledSkill = {
   id: string
@@ -46,18 +47,16 @@ export function InstalledSkillsPanel({
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<SkillTab>('installed')
 
+  const tabItems = [
+    { value: 'installed' as const, label: `${t('skillTabInstalled')} (${skills.length})` },
+    { value: 'marketplace' as const, label: t('marketplaceTitle') }
+  ]
+
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="flex items-center justify-between gap-4 border-b border-ds-border-muted px-5 pt-4">
-        <div className="flex items-center gap-5">
-          <SkillTabButton active={tab === 'installed'} count={skills.length} onClick={() => setTab('installed')}>
-            {t('skillTabInstalled')}
-          </SkillTabButton>
-          <SkillTabButton active={tab === 'marketplace'} onClick={() => setTab('marketplace')}>
-            {t('marketplaceTitle')}
-          </SkillTabButton>
-        </div>
-        {headerRight ? <div className="pb-3 pl-3">{headerRight}</div> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
+        <GlassSegmentedControl value={tab} onChange={setTab} items={tabItems} segmentClassName="px-3 py-1.5" />
+        {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
       </div>
 
       {tab === 'marketplace' ? null : loading ? (
@@ -94,39 +93,6 @@ export function InstalledSkillsPanel({
   )
 }
 
-function SkillTabButton({
-  active,
-  count,
-  onClick,
-  children
-}: {
-  active: boolean
-  count?: number
-  onClick: () => void
-  children: string
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative -mb-px flex items-center gap-1.5 border-b-2 pb-3 text-[15px] font-semibold transition ${
-        active ? 'border-ds-ink text-ds-ink' : 'border-transparent text-ds-muted hover:text-ds-ink'
-      }`}
-    >
-      {children}
-      {count !== undefined ? (
-        <span
-          className={`inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold ${
-            active ? 'bg-ds-ink/10 text-ds-ink' : 'bg-ds-subtle text-ds-faint'
-          }`}
-        >
-          {count}
-        </span>
-      ) : null}
-    </button>
-  )
-}
-
 function SkillRow({
   skill,
   busy,
@@ -157,7 +123,7 @@ function SkillRow({
         }
       }}
       title={t('skillPreviewHint')}
-      className="group flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 focus:bg-ds-subtle/50 focus:outline-none"
+      className="group flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70 focus:bg-ds-subtle/50 focus:outline-none"
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
         <FileText className="h-4.5 w-4.5" strokeWidth={1.6} />
@@ -168,13 +134,13 @@ function SkillRow({
           {skill.description || skill.path}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+      <div className="flex shrink-0 items-center gap-1.5 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <button
           type="button"
           onClick={stop(onOpen)}
           title={t('skillOpen')}
           aria-label={t('skillOpen')}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+          className="ds-ext-row-action flex h-8 w-8 items-center justify-center rounded-lg text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
         >
           <FolderOpen className="h-4 w-4" strokeWidth={1.75} />
         </button>
@@ -185,7 +151,7 @@ function SkillRow({
             disabled={busy}
             title={t('skillDelete')}
             aria-label={t('skillDelete')}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+            className="ds-ext-row-action flex h-8 w-8 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
           </button>

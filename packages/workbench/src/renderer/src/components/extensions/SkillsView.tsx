@@ -15,6 +15,7 @@ import {
 } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
+import { ExtensionsToolbar } from './ExtensionsToolbar'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 export function SkillsView(): ReactElement {
@@ -153,39 +154,32 @@ export function SkillsView(): ReactElement {
     <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-[24px] font-semibold text-ds-ink">{t('extSkills')}</h1>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                // Bump the market catalog refresh alongside the local scan so
-                // the single top button updates all three tabs.
-                setMarketRefreshSignal((n) => n + 1)
-                // Manual reload gets an explicit "done" toast so the user
-                // knows it ran; automatic refreshes stay quiet.
-                void refreshSkillsList().then(() =>
-                  setNotice({ tone: 'success', message: t('listReloaded') })
-                )
-              }}
-              disabled={skillsListLoading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"
-            >
-              <RefreshCw className={`h-4 w-4 ${skillsListLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-              {t('connectorReload')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void openSkillsDir()}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover"
-            >
-              <Settings className="h-4 w-4" strokeWidth={1.75} />
-              {t('pluginManage')}
-            </button>
+          <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">{t('extSkills')}</h1>
+          <ExtensionsToolbar
+            menuItems={[
+              {
+                label: t('connectorReload'),
+                icon: <RefreshCw className={`h-3.5 w-3.5 ${skillsListLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />,
+                onClick: () => {
+                  setMarketRefreshSignal((n) => n + 1)
+                  void refreshSkillsList().then(() =>
+                    setNotice({ tone: 'success', message: t('listReloaded') })
+                  )
+                },
+                disabled: skillsListLoading
+              },
+              {
+                label: t('pluginManage'),
+                icon: <Settings className="h-3.5 w-3.5" strokeWidth={1.75} />,
+                onClick: () => void openSkillsDir()
+              }
+            ]}
+          >
             <div className="relative" ref={installMenuRef}>
               <button
                 type="button"
                 onClick={() => setInstallOpen((value) => !value)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:opacity-90"
+                className="ds-ext-primary-action inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110"
               >
                 <Plus className="h-4 w-4" strokeWidth={1.9} />
                 {t('pluginCreate')}
@@ -200,7 +194,7 @@ export function SkillsView(): ReactElement {
                 }}
               />
             </div>
-          </div>
+          </ExtensionsToolbar>
         </div>
 
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('pluginSkillTitle')}</p>
@@ -210,7 +204,7 @@ export function SkillsView(): ReactElement {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
+            className="ds-ext-search h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
             placeholder={t('pluginSearchSkill')}
           />
         </label>

@@ -18,6 +18,7 @@ import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { AddMcpServerDialog } from './AddMcpServerDialog'
 import { ImportMcpJsonDialog } from './ImportMcpJsonDialog'
 import { resolveMcpInstall } from './modelscope-install'
+import { ExtensionsToolbar } from './ExtensionsToolbar'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 export function ConnectorsView(): ReactElement {
@@ -222,30 +223,27 @@ export function ConnectorsView(): ReactElement {
     <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-[24px] font-semibold text-ds-ink">{t('extConnectors')}</h1>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void reloadMcp()}
-              disabled={reloading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover disabled:opacity-60"
-            >
-              <RefreshCw className={`h-4 w-4 ${reloading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-              {t('connectorReload')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void openConfigDir()}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-ds-subtle px-3 py-2 text-center text-[13px] font-semibold leading-none text-ds-ink transition hover:bg-ds-hover"
-            >
-              <Settings className="h-4 w-4" strokeWidth={1.75} />
-              {t('pluginManage')}
-            </button>
+          <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">{t('extConnectors')}</h1>
+          <ExtensionsToolbar
+            menuItems={[
+              {
+                label: t('connectorReload'),
+                icon: <RefreshCw className={`h-3.5 w-3.5 ${reloading ? 'animate-spin' : ''}`} strokeWidth={1.75} />,
+                onClick: () => void reloadMcp(),
+                disabled: reloading
+              },
+              {
+                label: t('pluginManage'),
+                icon: <Settings className="h-3.5 w-3.5" strokeWidth={1.75} />,
+                onClick: () => void openConfigDir()
+              }
+            ]}
+          >
             <div className="relative" ref={menuRef}>
               <button
                 type="button"
                 onClick={() => setMenuOpen((value) => !value)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:opacity-90"
+                className="ds-ext-primary-action inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110"
               >
                 <Plus className="h-4 w-4" strokeWidth={1.9} />
                 {t('pluginCreate')}
@@ -258,7 +256,7 @@ export function ConnectorsView(): ReactElement {
                       setMenuOpen(false)
                       setAddOpen(true)
                     }}
-                    className="flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
+                    className="ds-ext-menu-item flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
                   >
                     {t('connectorAddMcp')}
                   </button>
@@ -268,14 +266,14 @@ export function ConnectorsView(): ReactElement {
                       setMenuOpen(false)
                       setImportOpen(true)
                     }}
-                    className="flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
+                    className="ds-ext-menu-item flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
                   >
                     {t('connectorImportJson')}
                   </button>
                 </div>
               ) : null}
             </div>
-          </div>
+          </ExtensionsToolbar>
         </div>
 
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('connectorsIntro')}</p>
@@ -285,7 +283,7 @@ export function ConnectorsView(): ReactElement {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
+            className="ds-ext-search h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
             placeholder={t('connectorsSearch')}
           />
         </label>

@@ -199,7 +199,7 @@ export function MarketplaceBrowser({ kind, onInstall, isInstalled, query, refres
             return (
               <div
                 key={item.id}
-                className="ds-content-card ds-content-card--interactive my-2 flex min-h-[92px] items-center gap-5 rounded-2xl px-4 py-4"
+                className="ds-ext-market-card my-2 flex min-h-[92px] items-center gap-5 rounded-2xl border border-ds-border bg-ds-card px-4 py-4 transition duration-150 hover:border-ds-border-strong hover:bg-ds-elevated/60"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -217,8 +217,8 @@ export function MarketplaceBrowser({ kind, onInstall, isInstalled, query, refres
                   disabled={installed || busy}
                   onClick={() => void install(item)}
                   title={installed ? t('marketplaceInstalled') : t('marketplaceInstall')}
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition ${
-                    installed ? 'text-ds-faint' : 'bg-ds-subtle text-ds-ink hover:bg-ds-hover disabled:opacity-60'
+                  className={`ds-ext-row-action flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition ${
+                    installed ? 'text-accent' : 'bg-ds-subtle text-ds-ink hover:bg-ds-hover disabled:opacity-60'
                   }`}
                 >
                   {busy ? (
@@ -256,7 +256,7 @@ function CategoryChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-3 py-1.5 text-[12px] font-medium leading-none transition ${
+      className={`ds-ext-category-chip rounded-full px-3 py-1.5 text-[12px] font-medium leading-none transition active:scale-[0.97] ${
         active ? 'bg-ds-userbubble text-ds-userbubbleFg' : 'bg-ds-subtle text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
       }`}
     >

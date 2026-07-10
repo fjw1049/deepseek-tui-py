@@ -420,8 +420,31 @@ samp {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
+/* Floating composer over an active thread: translucent material so timeline
+   scrolls underneath (Apple-style floating chrome). Empty-state hero keeps the
+   solid card for legibility on the dotted canvas. */
+.ds-chat-composer:not(.ds-composer-empty) {
+  background: color-mix(in srgb, var(--ds-card-strong) 68%, transparent);
+  border-color: color-mix(in srgb, var(--ds-border) 72%, transparent);
+  border-top-color: color-mix(in srgb, #ffffff 42%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 4px 24px rgba(15, 23, 42, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
 [data-theme='dark'] .ds-chat-composer {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme='dark'] .ds-chat-composer:not(.ds-composer-empty) {
+  background: color-mix(in srgb, var(--surface-1) 76%, transparent);
+  border-color: color-mix(in srgb, var(--ds-border) 80%, transparent);
+  border-top-color: color-mix(in srgb, #ffffff 8%, transparent);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .ds-chat-composer::before,
@@ -432,6 +455,19 @@ samp {
 .ds-chat-composer-focus {
   border-color: var(--ds-border-strong);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.ds-chat-composer:not(.ds-composer-empty).ds-chat-composer-focus {
+  border-color: color-mix(in srgb, var(--ds-accent) 28%, var(--ds-border-strong));
+  box-shadow:
+    0 6px 28px rgba(15, 23, 42, 0.08),
+    0 0 0 1px color-mix(in srgb, var(--ds-accent) 12%, transparent);
+}
+
+[data-theme='dark'] .ds-chat-composer:not(.ds-composer-empty).ds-chat-composer-focus {
+  box-shadow:
+    0 10px 36px rgba(0, 0, 0, 0.32),
+    0 0 0 1px color-mix(in srgb, var(--ds-accent) 18%, transparent);
 }
 
 /* Empty-state composer: compact card under the hero. */
@@ -485,6 +521,32 @@ samp {
     box-shadow 0.15s ease,
     opacity 0.15s ease,
     transform 0.15s ease;
+}
+
+/* Apple-style press feedback: respond on pointer-down, not release. */
+.ds-sidebar-link:not(:disabled):active,
+.ds-sidebar-workspace:active {
+  background: color-mix(in srgb, var(--ds-surface-hover) 220%, transparent);
+  transition-duration: 0ms;
+}
+
+.ds-sidebar-toggle-button:active,
+.ds-chat-composer button:active:not(:disabled),
+.ds-sidebar-expand-droplet:active {
+  transform: scale(0.97);
+  transition:
+    transform 80ms ease-out,
+    background 0ms,
+    color 0ms,
+    filter 0ms;
+}
+
+.ds-sidebar-toggle-button:active {
+  background: color-mix(in srgb, var(--ds-surface-hover) 180%, transparent);
+}
+
+.ds-chat-composer button.rounded-full:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 .ds-shiny-text {
@@ -628,7 +690,9 @@ samp {
 @media (prefers-reduced-motion: reduce) {
   .ds-shiny-text,
   .ds-work-logo-pulse,
-  .ds-workflow-running::before {
+  .ds-workflow-running::before,
+  .ds-task-card-active,
+  .ds-workflow-spinner {
     animation: none;
   }
 }
@@ -747,6 +811,11 @@ samp {
     width 0.32s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.ds-glass-segment-thumb ~ button:active:not(:disabled) {
+  transform: scale(0.98);
+  transition: transform 80ms ease-out, color 0ms;
+}
+
 [data-theme='dark'] .ds-glass-segment-thumb {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
@@ -792,6 +861,7 @@ samp {
   font-weight: 600;
   line-height: 1.25;
   letter-spacing: -0.02em;
+  font-optical-sizing: auto;
   color: var(--text-primary);
 }
 
@@ -2924,6 +2994,31 @@ select:focus-visible,
   width: 100%;
 }
 
+/* ── Extensions pages (plugins / skills / connectors) ─────────────────────── */
+.ds-ext-primary-action:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 80ms ease-out, filter 0ms;
+}
+
+.ds-ext-toolbar-menu:active {
+  transform: scale(0.97);
+  transition: transform 80ms ease-out, background 0ms;
+}
+
+.ds-ext-row-action:active:not(:disabled) {
+  transform: scale(0.95);
+  transition: transform 80ms ease-out;
+}
+
+.ds-ext-menu-item:active:not(:disabled) {
+  background: color-mix(in srgb, var(--ds-surface-hover) 180%, transparent);
+  transition-duration: 0ms;
+}
+
+.ds-ext-market-card:active {
+  background: color-mix(in srgb, var(--ds-surface-hover) 120%, transparent);
+}
+
 .ds-plugin-page section > .grid {
   gap: 0.25rem 0.75rem;
 }
@@ -3008,7 +3103,8 @@ select:focus-visible,
   .ds-card-interactive,
   .ds-transition,
   .ds-sidebar-toggle-button,
-  .ds-sidebar-expand-droplet {
+  .ds-sidebar-expand-droplet,
+  .ds-chat-composer button {
     transition: none;
   }
 
@@ -3016,7 +3112,14 @@ select:focus-visible,
   .ds-hero-panel.ds-content-card--interactive:hover,
   .ds-card-interactive:hover,
   .ds-sidebar-toggle-button:hover,
-  .ds-sidebar-expand-droplet:hover {
+  .ds-sidebar-expand-droplet:hover,
+  .ds-sidebar-toggle-button:active,
+  .ds-chat-composer button:active:not(:disabled),
+  .ds-sidebar-expand-droplet:active,
+  .ds-ext-primary-action:active:not(:disabled),
+  .ds-ext-toolbar-menu:active,
+  .ds-ext-row-action:active:not(:disabled),
+  .ds-ext-category-chip:active {
     transform: none;
   }
 }

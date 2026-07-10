@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Cable, Loader2, Trash2 } from 'lucide-react'
+import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
 
 export type ConnectorItem = {
   id: string
@@ -42,18 +43,16 @@ export function InstalledConnectorsPanel({
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<ConnectorTab>('installed')
 
+  const tabItems = [
+    { value: 'installed' as const, label: `${t('skillTabInstalled')} (${connectors.length})` },
+    { value: 'marketplace' as const, label: t('marketplaceTitle') }
+  ]
+
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="flex items-center justify-between gap-4 border-b border-ds-border-muted px-5 pt-4">
-        <div className="flex items-center gap-5">
-          <TabButton active={tab === 'installed'} count={connectors.length} onClick={() => setTab('installed')}>
-            {t('skillTabInstalled')}
-          </TabButton>
-          <TabButton active={tab === 'marketplace'} onClick={() => setTab('marketplace')}>
-            {t('marketplaceTitle')}
-          </TabButton>
-        </div>
-        {headerRight ? <div className="pb-3 pl-3">{headerRight}</div> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
+        <GlassSegmentedControl value={tab} onChange={setTab} items={tabItems} segmentClassName="px-3 py-1.5" />
+        {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
       </div>
 
       {tab === 'marketplace' ? null : loading ? (
@@ -89,39 +88,6 @@ export function InstalledConnectorsPanel({
   )
 }
 
-function TabButton({
-  active,
-  count,
-  onClick,
-  children
-}: {
-  active: boolean
-  count?: number
-  onClick: () => void
-  children: string
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative -mb-px flex items-center gap-1.5 border-b-2 pb-3 text-[15px] font-semibold transition ${
-        active ? 'border-ds-ink text-ds-ink' : 'border-transparent text-ds-muted hover:text-ds-ink'
-      }`}
-    >
-      {children}
-      {count !== undefined ? (
-        <span
-          className={`inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold ${
-            active ? 'bg-ds-ink/10 text-ds-ink' : 'bg-ds-subtle text-ds-faint'
-          }`}
-        >
-          {count}
-        </span>
-      ) : null}
-    </button>
-  )
-}
-
 function ConnectorRow({
   connector,
   busy,
@@ -139,7 +105,7 @@ function ConnectorRow({
     onDelete()
   }
   return (
-    <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50">
+    <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
         <Cable className="h-4.5 w-4.5" strokeWidth={1.6} />
       </div>
@@ -149,14 +115,14 @@ function ConnectorRow({
           {connector.summary}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <button
           type="button"
           onClick={stopDelete}
           disabled={busy}
           title={t('connectorDelete')}
           aria-label={t('connectorDelete')}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 opacity-0 transition hover:bg-red-50 disabled:opacity-50 group-hover:opacity-100 focus-within:opacity-100 dark:hover:bg-red-950/30"
+          className="ds-ext-row-action flex h-8 w-8 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
         </button>
@@ -182,7 +148,7 @@ function ConnectorToggle({
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${
+      className={`ds-ext-toggle relative h-7 w-12 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 active:scale-[0.97] ${
         checked ? 'bg-emerald-500' : 'bg-ds-faint'
       }`}
     >

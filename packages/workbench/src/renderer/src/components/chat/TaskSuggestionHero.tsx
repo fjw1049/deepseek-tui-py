@@ -25,32 +25,12 @@ const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
 const EMPTY_HERO_PANEL_CLASS = 'ds-empty-hero-panel'
 const TRENDING_REPO_LIMIT = 8
 const VISIBLE_TOPIC_COUNT = 2
-const CARD_THEMES = [
-  {
-    border: 'hover:border-emerald-400/35',
-    rail: 'from-emerald-400/65 via-cyan-400/25 to-transparent',
-    rank: 'border-emerald-400/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-    action: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-  },
-  {
-    border: 'hover:border-sky-400/35',
-    rail: 'from-sky-400/65 via-blue-400/25 to-transparent',
-    rank: 'border-sky-400/25 bg-sky-500/10 text-sky-700 dark:text-sky-300',
-    action: 'bg-sky-500/10 text-sky-700 dark:text-sky-300'
-  },
-  {
-    border: 'hover:border-violet-400/35',
-    rail: 'from-violet-400/65 via-fuchsia-400/20 to-transparent',
-    rank: 'border-violet-400/25 bg-violet-500/10 text-violet-700 dark:text-violet-300',
-    action: 'bg-violet-500/10 text-violet-700 dark:text-violet-300'
-  },
-  {
-    border: 'hover:border-amber-400/35',
-    rail: 'from-amber-400/70 via-orange-400/25 to-transparent',
-    rank: 'border-amber-400/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
-    action: 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
-  }
-] as const
+const CARD_THEME = {
+  border: 'hover:border-ds-border-strong',
+  rail: 'from-accent/35 via-accent/12 to-transparent',
+  rank: 'border-accent/18 bg-accent/8 text-accent',
+  action: 'bg-accent/10 text-accent'
+} as const
 
 type Props = {
   onSelectSuggestion?: (prompt: string) => void
@@ -105,13 +85,13 @@ function RepoRow({
   onAnalyze: (repo: TrendingRepo) => void
 }): ReactElement {
   const { t } = useTranslation('common')
-  const theme = CARD_THEMES[(repo.rank - 1) % CARD_THEMES.length]
+  const theme = CARD_THEME
   const { owner, repo: repoName } = splitRepoName(repo.name)
 
   return (
     <div
       className={[
-        'group relative flex min-h-[88px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-ds-elevated hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]',
+        'group relative flex min-h-[88px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-150 hover:bg-ds-elevated',
         theme.border
       ].join(' ')}
     >
@@ -119,7 +99,7 @@ function RepoRow({
       <button
         type="button"
         onClick={() => onAnalyze(repo)}
-        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2.5 text-left"
+        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2.5 text-left active:bg-ds-hover/60"
       >
         <div className="flex min-w-0 items-center gap-2 pr-7">
           <span
@@ -150,7 +130,7 @@ function RepoRow({
         title={t('trendingOpenGithub')}
         aria-label={`${t('trendingOpenGithub')}: ${repo.name}`}
         onClick={() => void window.dsGui.openExternal(repo.url)}
-        className="absolute right-0 top-0 flex h-8 w-8 shrink-0 items-center justify-center rounded-bl-[12px] rounded-tr-[12px] text-ds-faint transition hover:bg-ds-card hover:text-accent"
+        className="absolute right-0 top-0 flex h-8 w-8 shrink-0 items-center justify-center rounded-bl-[12px] rounded-tr-[12px] text-ds-faint transition hover:bg-ds-card hover:text-accent active:scale-95"
       >
         <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
       </button>
