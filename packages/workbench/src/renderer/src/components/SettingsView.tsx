@@ -162,10 +162,6 @@ export function SettingsView(): ReactElement {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showAsrKey, setShowAsrKey] = useState(false)
-  const [showRuntimeToken, setShowRuntimeToken] = useState(false)
-  const [tokenFingerprint, setTokenFingerprint] = useState('')
-  const [tokenRegenBusy, setTokenRegenBusy] = useState(false)
-  const [tokenRegenError, setTokenRegenError] = useState<string | null>(null)
   const [logPath, setLogPath] = useState('')
   const [petEnabled, setPetEnabled] = useState(() => readPetEnabled())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
@@ -195,7 +191,6 @@ export function SettingsView(): ReactElement {
   const formAppearance = form?.appearance
   const formWorkspaceRoot = form?.workspaceRoot
   const formPort = form?.deepseek.port
-  const formDeepseekBinaryPath = form?.deepseek.binaryPath ?? ''
 
   useEffect(() => {
     return subscribePetPreferences(() => {
@@ -373,24 +368,6 @@ export function SettingsView(): ReactElement {
     void window.dsGui.getLogPath().then((p) => setLogPath(p))
   }, [category])
 
-  // Display the cached runtime-token fingerprint when entering general settings.
-  useEffect(() => {
-    if (category !== 'general') return
-    if (typeof window.dsGui?.getRuntimeTokenFingerprint !== 'function') return
-    let cancelled = false
-    void window.dsGui
-      .getRuntimeTokenFingerprint()
-      .then((res) => {
-        if (!cancelled) setTokenFingerprint(res.fingerprint)
-      })
-      .catch(() => {
-        /* best-effort; field falls back to "auto-managed" copy */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [category])
-
   useEffect(() => {
     if (!form || initializedCategory.current) return
     initializedCategory.current = true
@@ -414,27 +391,6 @@ export function SettingsView(): ReactElement {
     if (!hasValidPort({ deepseek: { port: formPort } } as AppSettingsV1)) return t('portInvalid')
     return null
   }, [formPort, t])
-
-  const handleRegenerateRuntimeToken = async (): Promise<void> => {
-    if (typeof window.dsGui?.regenerateRuntimeToken !== 'function') return
-    setTokenRegenBusy(true)
-    setTokenRegenError(null)
-    try {
-      const result = await window.dsGui.regenerateRuntimeToken()
-      if (result.ok) {
-        setTokenFingerprint(result.fingerprint)
-        // Drop any explicit override so the runtime continues reading the
-        // (now-rotated) token file rather than a stale settings value.
-        update({ deepseek: { runtimeToken: '' } })
-      } else {
-        setTokenRegenError(result.message)
-      }
-    } catch (e) {
-      setTokenRegenError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setTokenRegenBusy(false)
-    }
-  }
 
   const openHooksConfigDir = async (): Promise<void> => {
     if (typeof window.dsGui?.openHooksDir !== 'function') return
@@ -573,8 +529,6 @@ export function SettingsView(): ReactElement {
       </div>
     )
   }
-
-  const corsValue = (form.deepseek.extraCorsOrigins ?? []).join(', ')
 
   const update = (partial: SettingsPatch): void => {
     const next = mergeSettings(form, partial)
@@ -839,106 +793,9 @@ export function SettingsView(): ReactElement {
                     </div>
                   }
                 />
-                <SettingRow
-                  title={t('deepseekBinary')}
-                  description={t('deepseekBinaryHint')}
-                  controlWidth="medium"
-                  control={
-                    <input
-                      className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                      placeholder={t('deepseekBinaryPlaceholder')}
-                      value={form.deepseek.binaryPath}
-                      onChange={(e) => update({ deepseek: { binaryPath: e.target.value } })}
-                    />
-                  }
-                />
-                <SettingRow
-                  title={t('runtimeToken')}
-                  description={t('runtimeTokenDesc')}
-                  controlWidth="medium"
-                  control={
-                    <div className="flex w-full flex-col gap-2">
-                      <input
-                        type="text"
-                        readOnly
-                        className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 font-mono text-[12px] text-ds-ink/70 shadow-sm focus:outline-none"
-                        value={
-                          tokenFingerprint ||
-                          (form.deepseek.runtimeToken
-                            ? `${form.deepseek.runtimeToken.slice(0, 8)}…${form.deepseek.runtimeToken.slice(-4)}`
-                            : t('runtimeTokenAutoManaged'))
-                        }
-                        aria-label={t('runtimeToken')}
-                      />
-                      <button
-                        type="button"
-                        disabled={tokenRegenBusy}
-                        className="inline-flex items-center justify-center gap-1.5 self-start rounded-md border border-ds-border px-2 py-1 text-center text-[12px] leading-none hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-55"
-                        onClick={() => void handleRegenerateRuntimeToken()}
-                      >
-                        {tokenRegenBusy ? (
-                          <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
-                        ) : null}
-                        {t('runtimeTokenRegenerate')}
-                      </button>
-                      {tokenRegenError ? (
-                        <p className="text-[12px] text-red-700 dark:text-red-300">{tokenRegenError}</p>
-                      ) : null}
-                    </div>
-                  }
-                />
-                <SettingRow
-                  title={t('corsOrigins')}
-                  description={t('corsOriginsDesc')}
-                  controlWidth="medium"
-                  control={
-                    <input
-                      className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                      value={corsValue}
-                      onChange={(e) =>
-                        update({
-                          deepseek: {
-                            extraCorsOrigins: e.target.value
-                              .split(',')
-                              .map((s) => s.trim())
-                              .filter(Boolean)
-                          }
-                        })
-                      }
-                    />
-                  }
-                />
               </SettingsCard>
 
               <SettingsCard title={t('logTitle')} className="mt-6">
-                <SettingRow
-                  title={t('logEnabled')}
-                  description={t('logEnabledDesc')}
-                  control={
-                    <Toggle
-                      checked={form.log.enabled}
-                      onChange={(v) => update({ log: { enabled: v } })}
-                    />
-                  }
-                />
-                <SettingRow
-                  title={t('logRetention')}
-                  description={t('logRetentionDesc')}
-                  control={
-                    <SettingsSelect
-                      value={form.log.retentionDays}
-                      onChange={(e) =>
-                        update({ log: { retentionDays: Number(e.target.value) } })
-                      }
-                    >
-                      <option value={1}>{t('logRetentionOne')}</option>
-                      <option value={2}>{t('logRetentionTwo')}</option>
-                      <option value={3}>{t('logRetentionThree')}</option>
-                      <option value={5}>{t('logRetentionFive')}</option>
-                      <option value={7}>{t('logRetentionSeven')}</option>
-                    </SettingsSelect>
-                  }
-                />
                 <SettingRow
                   relaxed
                   title={t('logDir')}
