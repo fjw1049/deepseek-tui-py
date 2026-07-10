@@ -414,6 +414,36 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             has_mcp=has_mcp,
         )
 
+    def _advanced_tool_flags(self) -> tuple[bool, bool]:
+        """Whether ``tool_search`` / ``code_execution`` are included this turn.
+
+        ``ensure_advanced_tooling`` re-adds these two meta-tools to the catalog
+        AFTER the focus whitelist filter, so without gating them here they
+        would bypass the whitelist and break the plugin mount's confinement
+        (e.g. a ``permissions: ["read"]`` plugin would still leave
+        ``code_execution`` - arbitrary Python incl. ``subprocess`` - callable).
+
+        When a focus whitelist is active (plugin mount / skill / mcp focus),
+        the meta-tools are included ONLY if the whitelist explicitly lists
+        them (e.g. a plugin skill declared them via ``allowed-tools``).
+        Otherwise the normal profile-based defaults apply.
+        """
+        wl = self._focus_tool_whitelist
+        if wl is None:
+            return (
+                profile_includes_tool_search(self.tool_profile),
+                self.tool_profile is None,
+            )
+        from deepseek_tui.engine.tools import (
+            CODE_EXECUTION_TOOL_NAME,
+            TOOL_SEARCH_BM25_NAME,
+            TOOL_SEARCH_REGEX_NAME,
+        )
+
+        include_search = bool({TOOL_SEARCH_BM25_NAME, TOOL_SEARCH_REGEX_NAME} & wl)
+        include_code = CODE_EXECUTION_TOOL_NAME in wl
+        return include_search, include_code
+
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
         from deepseek_tui.server.metrics import get_turn_latency, now_ms
@@ -843,10 +873,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         apply_mcp_tool_deferral(mcp, mode)
         catalog = native + mcp
 
+        _include_search, _include_code = self._advanced_tool_flags()
         ensure_advanced_tooling(
             catalog,
-            include_tool_search=profile_includes_tool_search(self.tool_profile),
-            include_code_execution=self.tool_profile is None,
+            include_tool_search=_include_search,
+            include_code_execution=_include_code,
         )
         active_names = initial_active_tools(catalog)
         return active_tools_for_step(catalog, active_names, force_update_plan_first=False)
@@ -1033,15 +1064,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         raw_content = op.content or ""
         # 插件挂载（@plugin:name / @plugin:off）：必须早于 _detect_focus_mcp，
         # 否则 `@plugin:x` 会被当成聚焦名为 `plugin` 的 MCP。命中则更新会话级
-        # _active_plugin、剥掉前缀、拼一条系统提示，本轮起即生效（持续态）。
+        # _active_plugin、剥掉前缀，本轮起即生效（持续态）。UI 只靠
+        # PluginMountEvent（composer 底部徽章），不再发带 [plugin] 前缀的
+        # StatusEvent，避免时间线重复系统气泡。
         plugin_mount = _detect_plugin_mount(raw_content)
         if plugin_mount is not None:
             mount_note = self.set_active_plugin(
                 None if plugin_mount == "off" else plugin_mount
             )
             raw_content = _strip_plugin_mount(raw_content, plugin_mount)
-            await self.handle.emit(StatusEvent(message=f"[plugin] {mount_note}"))
-            # Structured state change for the UI (persistent chip) and for
+            # Structured state change for the UI (persistent badge) and for
             # reload-restore. Only emit on a real transition: unmount always
             # clears; mount only when the plugin was actually found & applied.
             mounted = self._active_plugin
@@ -1061,6 +1093,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         message=mount_note,
                     )
                 )
+            # Mount/unmount-only turn (no remaining user text): skip the LLM.
+            if not (raw_content or "").strip():
+                await self.handle.emit(
+                    TurnStartedEvent(user_text="" if op.hidden else "")
+                )
+                await self.handle.emit(
+                    TurnCompleteEvent(assistant_message=None, success=True)
+                )
+                return
         focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
         content_for_prepare = raw_content
         if focus_mcp_ahead is not None:
@@ -1503,6 +1544,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         再带上工具向 LLM 发一次请求;若模型回工具调用就执行工具、把结果塞回消息列表进入下一轮,直到模型给出最终答案(或触发取消/错误上限),返回 TurnResult
         """
         tools = await self._get_tools_with_mcp()
+        # Advanced meta-tool (tool_search / code_execution) inclusion is gated
+        # by the focus whitelist so a plugin mount can actually confine them.
+        _turn_include_search, _turn_include_code = self._advanced_tool_flags()
         self.turn_counter += 1
         step_error_count = 0
         consecutive_tool_error_steps = 0
@@ -1643,8 +1687,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self.handle.emit,
                     self.handle.cancel_event,
                     tools=tools,
-                    include_tool_search=profile_includes_tool_search(self.tool_profile),
-                    include_code_execution=self.tool_profile is None,
+                    include_tool_search=_turn_include_search,
+                    include_code_execution=_turn_include_code,
                     extra_active_tools=self._activated_tool_names,
                     latency_turn_id=latency_turn_id,
                     round_idx=round_idx,

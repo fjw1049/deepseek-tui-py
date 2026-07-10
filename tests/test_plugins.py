@@ -774,6 +774,67 @@ async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
         await engine.shutdown_session()
 
 
+async def test_plugin_mount_confines_advanced_meta_tools(
+    tmp_path, monkeypatch
+) -> None:
+    """Mounting a read-only plugin confines code_execution + tool_search.
+
+    Regression: ``ensure_advanced_tooling`` re-added these meta-tools to the
+    catalog AFTER the focus whitelist filter, so a ``permissions: ["read"]``
+    plugin still left ``code_execution`` (arbitrary Python incl.
+    ``subprocess``) callable - breaking the read-only confinement.
+    ``_advanced_tool_flags`` now gates them by the whitelist.
+    """
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(
+        plugins_dir,
+        "ro-plugin",
+        with_mcp=False,
+        with_hook=False,
+        extra_manifest={"permissions": ["read"]},
+    )
+    set_plugin_trusted("ro-plugin", True, plugins_dir)
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        engine.set_active_plugin("ro-plugin")
+        engine._focus_tool_whitelist = engine._active_plugin_whitelist()
+        # read-only plugin whitelist has only read tools -> both meta-tools
+        # confined (this is the regression: previously code_execution stayed
+        # available via ensure_advanced_tooling bypassing the whitelist).
+        assert engine._advanced_tool_flags() == (False, False)
+
+        # If the whitelist explicitly lists code_execution (e.g. a plugin
+        # skill declared it via allowed-tools), it is allowed through.
+        engine._focus_tool_whitelist = frozenset({"read_file", "code_execution"})
+        assert engine._advanced_tool_flags() == (False, True)
+
+        # tool_search同理: only when whitelisted.
+        engine._focus_tool_whitelist = frozenset(
+            {"read_file", "tool_search_tool_bm25", "tool_search_tool_regex"}
+        )
+        assert engine._advanced_tool_flags() == (True, False)
+
+        # No whitelist -> normal profile defaults (both included when full).
+        engine._focus_tool_whitelist = None
+        _search, _code = engine._advanced_tool_flags()
+        assert _code is True  # tool_profile None -> code_execution included
+    finally:
+        await engine.shutdown_session()
+
+
 async def test_render_plugin_context_block_includes_path_and_read_grant(
     tmp_path, monkeypatch
 ) -> None:
