@@ -152,6 +152,9 @@ paths:
                   type: string
                 model:
                   type: string
+                reasoning_effort:
+                  type: string
+                  nullable: true
                 mode:
                   type: string
                 allow_shell:

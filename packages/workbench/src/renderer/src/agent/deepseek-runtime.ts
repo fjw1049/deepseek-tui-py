@@ -1060,6 +1060,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       mode?: string
       provider?: string
       model?: string
+      reasoningEffort?: string
       uiSubmitAtMs?: number
       /** Skip persisting a user_message item (plugin mount/unmount control). */
       hidden?: boolean
@@ -1075,6 +1076,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         mode: options?.mode,
         provider: options?.provider,
         model: options?.model,
+        reasoning_effort: options?.reasoningEffort,
         ui_submit_at_ms: options?.uiSubmitAtMs,
         ...(options?.hidden ? { hidden: true } : {}),
         ...flags

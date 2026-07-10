@@ -94,6 +94,7 @@ export type ChatState = {
   composerModel: string
   composerPickList: string[]
   composerModelMeta: Record<string, ComposerModelMeta>
+  composerReasoningEffort: string
   queuedMessages: QueuedUserMessage[]
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
@@ -107,6 +108,7 @@ export type ChatState = {
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void
+  setComposerReasoningEffort: (effort: string) => void
   loadComposerModels: () => Promise<void>
   setRoute: (r: AppRoute) => void
   setActivePlugin: (plugin: ActivePluginMeta | null) => void

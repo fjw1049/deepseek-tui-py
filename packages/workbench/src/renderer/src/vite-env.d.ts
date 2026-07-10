@@ -21,6 +21,7 @@ declare module 'react' {
         src?: string
         webpreferences?: string
       }
+      'reasoning-effort-selector': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement>
     }
   }
 }

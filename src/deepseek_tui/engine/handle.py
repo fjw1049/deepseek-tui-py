@@ -22,6 +22,7 @@ class SendMessageOp:
     system_prompt: str | None = None
     hidden: bool = False
     internal_kind: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

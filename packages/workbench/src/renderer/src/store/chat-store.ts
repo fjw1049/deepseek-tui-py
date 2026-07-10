@@ -48,8 +48,10 @@ import {
   mergeComposerPickList,
   optimisticUserModelLabel,
   persistComposerModel,
+  persistComposerEffort,
   PINNED_THREADS_LIMIT,
   readStoredComposerModel,
+  readStoredComposerEffort,
   rememberTurnModel,
   savePinnedThreadIds
 } from './chat-store-helpers'
@@ -1121,6 +1123,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   composerModel: 'deepseek-v4-pro',
   composerPickList: mergeComposerPickList(false, []),
   composerModelMeta: {},
+  composerReasoningEffort: readStoredComposerEffort(),
   queuedMessages: [],
   watchTurnCompletion: {},
   unreadThreadIds: {},
@@ -1136,6 +1139,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get,
     i18n,
     persistComposerModel,
+    persistComposerEffort,
     readStoredComposerModel,
     mergeComposerPickList,
     getComposerModelLoadPromise: () => composerModelLoadPromise,
@@ -2031,6 +2035,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const { turnId, userMessageItemId } = await p.sendUserMessage(activeThreadId, trimmedText, {
         mode,
         uiSubmitAtMs: now,
+        reasoningEffort: get().composerReasoningEffort,
         ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
         ...(selectedModel.modelId ? { model: selectedModel.modelId } : {}),
         ...(hidden ? { hidden: true } : {})

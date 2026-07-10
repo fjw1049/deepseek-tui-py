@@ -190,6 +190,7 @@ class StartTurnRequest(BaseModel):
     input_summary: str | None = None
     provider: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
     mode: str | None = None
     allow_shell: bool | None = None
     trust_mode: bool | None = None

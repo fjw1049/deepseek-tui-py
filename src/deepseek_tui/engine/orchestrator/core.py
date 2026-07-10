@@ -1278,6 +1278,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 model=op.model or self.default_model,
                 system_prompt=sys_prompt,
                 max_tokens=op.max_tokens,
+                reasoning_effort=op.reasoning_effort,
             )
 
             duration_ms = int((time.monotonic() - start) * 1000)
@@ -1545,6 +1546,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         model: str,
         system_prompt: str,
         max_tokens: int | None,
+        reasoning_effort: str | None = None,
     ) -> TurnResult:
         """
         是单个 turn 的核心工具循环——最多跑 max_tool_round_trips+1 轮,
@@ -1674,7 +1676,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 max_tokens=max_tokens,
                 temperature=self.default_temperature,
                 top_p=self.default_top_p,
-                reasoning_effort=self.default_reasoning_effort,
+                reasoning_effort=reasoning_effort or self.default_reasoning_effort,
                 extra_body=dict(self.default_extra_body),
             )
             logger.info(

@@ -32,6 +32,27 @@ export function persistComposerModel(model: string): void {
   }
 }
 
+const COMPOSER_EFFORT_STORAGE_KEY = 'deepseekgui.composerReasoningEffort'
+const VALID_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+export function readStoredComposerEffort(): string {
+  try {
+    const raw = localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)
+    if (raw && (VALID_EFFORTS as readonly string[]).includes(raw)) return raw
+  } catch {
+    /* ignore */
+  }
+  return 'high'
+}
+
+export function persistComposerEffort(effort: string): void {
+  try {
+    localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, effort)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function mergeComposerPickList(upstreamOk: boolean, upstreamIds: string[]): string[] {
   const ordered = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
   if (upstreamOk) {

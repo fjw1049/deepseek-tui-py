@@ -1026,6 +1026,7 @@ class RuntimeThreadManager:
                 model=model,
                 hidden=req.hidden,
                 internal_kind=req.internal_kind,
+                reasoning_effort=req.reasoning_effort,
             )
         )
         # Monitor runs concurrently; ensure task is referenced until turn ends.

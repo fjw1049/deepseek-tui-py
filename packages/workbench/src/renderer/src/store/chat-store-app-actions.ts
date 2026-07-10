@@ -15,6 +15,7 @@ type CreateAppActionsOptions = {
   get: ChatStoreGet
   i18n: typeof i18next
   persistComposerModel: (model: string) => void
+  persistComposerEffort: (effort: string) => void
   readStoredComposerModel: (allowedIds: readonly string[]) => string
   mergeComposerPickList: (upstreamOk: boolean, upstreamIds: string[]) => string[]
   getComposerModelLoadPromise: () => Promise<void> | null
@@ -31,6 +32,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
   ChatState,
   | 'setError'
   | 'setComposerModel'
+  | 'setComposerReasoningEffort'
   | 'loadComposerModels'
   | 'setRoute'
   | 'openSettings'
@@ -68,6 +70,11 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     setComposerModel: (modelId) => {
       persistComposerModel(modelId)
       set({ composerModel: modelId })
+    },
+
+    setComposerReasoningEffort: (effort) => {
+      persistComposerEffort(effort)
+      set({ composerReasoningEffort: effort })
     },
 
     loadComposerModels: async () => {

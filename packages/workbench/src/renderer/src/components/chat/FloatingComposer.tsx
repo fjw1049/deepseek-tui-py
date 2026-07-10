@@ -10,7 +10,6 @@ import {
 import {
   Bot,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Clock3,
   FileDiff,
@@ -39,6 +38,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
+import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { countPendingApprovals } from '../../store/chat-store-runtime-helpers'
 import {
   filterComposerModelOptions,
@@ -222,6 +222,8 @@ export function FloatingComposer({
   const blocks = useChatStore((s) => s.blocks)
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
+  const composerReasoningEffort = useChatStore((s) => s.composerReasoningEffort)
+  const setComposerReasoningEffort = useChatStore((s) => s.setComposerReasoningEffort)
   // Session-level mounted plugin (drives the footer badge, like plan mode) +
   // send action used by the badge's unmount (× sends `@plugin:off` as a hidden turn).
   const activePlugin = useChatStore((s) => s.activePlugin)
@@ -302,6 +304,10 @@ export function FloatingComposer({
   )
   const activeModelId = composerModel.trim() || modelOptions[0] || 'deepseek-v4-pro'
   const activeModelLabel = formatComposerModelLabel(activeModelId, composerModelMeta)
+  const selectorModels = useMemo(
+    () => modelOptions.map((id) => ({ id, label: formatComposerModelLabel(id, composerModelMeta) })),
+    [modelOptions, composerModelMeta]
+  )
 
   const modeLabel =
     mode === 'plan'
@@ -1922,49 +1928,14 @@ export function FloatingComposer({
 
             <div className="min-w-0 flex-1" />
 
-            <div className="relative min-w-0 shrink-0">
-              <button
-                type="button"
-                disabled={!canChangeModel}
-                onClick={() => {
-                  setActiveCommand(null)
-                  setPlusMenuOpen(false)
-                  clearAttachNotice()
-                  setModelMenuOpen((open) => !open)
-                }}
-                className="ds-no-drag inline-flex max-w-[min(100%,280px)] items-center gap-1.5 rounded-full border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
-                title={t('composerModel')}
-              >
-                <span className="ds-composer-model-label truncate">{activeModelLabel}</span>
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-              </button>
-              {modelMenuOpen ? (
-                <div className="ds-glass absolute bottom-full right-0 z-40 mb-2 w-max min-w-[220px] max-w-[min(420px,calc(100vw-32px))] overflow-hidden rounded-2xl p-1.5">
-                  <div className="flex w-full items-center justify-center px-2 py-1 text-center text-[11px] font-medium uppercase tracking-wide text-ds-faint">
-                    {t('composerModelSection')}
-                  </div>
-                  {modelOptions.map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        onComposerModelChange(id)
-                        setModelMenuOpen(false)
-                        focusComposer()
-                      }}
-                      className={`flex w-full min-w-0 items-center justify-center rounded-xl px-2.5 py-2 text-center text-[13px] font-medium transition ${
-                        id === activeModelId
-                          ? 'bg-accent/10 text-ds-ink'
-                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                      }`}
-                    >
-                      <span className="ds-composer-model-label truncate whitespace-nowrap">{formatComposerModelLabel(id, composerModelMeta)}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <ReasoningEffortSelector
+              models={selectorModels}
+              model={activeModelId}
+              onModelChange={onComposerModelChange}
+              value={composerReasoningEffort}
+              onChange={setComposerReasoningEffort}
+              disabled={!canChangeModel}
+            />
 
             {isMediaCaptureSupported() ? (
               <button
