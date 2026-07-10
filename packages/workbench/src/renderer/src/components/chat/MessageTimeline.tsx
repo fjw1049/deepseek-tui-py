@@ -27,7 +27,10 @@ import {
   GitFork,
   Loader2,
   PencilLine,
+  Plug,
+  Puzzle,
   Search,
+  Sparkles,
   Terminal,
   Wrench,
   X
@@ -77,6 +80,7 @@ import {
   type TodoTurnSession
 } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
+import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
 
@@ -269,20 +273,51 @@ export function MessageTimeline({
       }
     }
     el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
+    // wheel/touchmove/keydown only fire on genuine user input, never on
+    // programmatic scrollTop - so they reliably mark "the user is scrolling
+    // right now" for the streaming auto-scroll cooldown.
+    const markUserScroll = (): void => {
+      userScrolledAtRef.current = performance.now()
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'PageUp' ||
+        event.key === 'PageDown' ||
+        event.key === 'Home' ||
+        event.key === 'End'
+      ) {
+        markUserScroll()
+      }
+    }
+    el.addEventListener('wheel', markUserScroll, { passive: true })
+    el.addEventListener('touchmove', markUserScroll, { passive: true })
+    el.addEventListener('keydown', onKeyDown)
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      el.removeEventListener('wheel', markUserScroll)
+      el.removeEventListener('touchmove', markUserScroll)
+      el.removeEventListener('keydown', onKeyDown)
+    }
   }, [hiddenTurnCount, loadEarlierTurns])
 
   useEffect(() => {
     if (!stickToBottomRef.current) return
+    // Back off while the user is actively scrolling so streaming per-frame
+    // stick-to-bottom doesn't fight their gesture (the jitter the user saw).
+    if (performance.now() - userScrolledAtRef.current < 350) return
     if (scrollFrameRef.current !== null) {
       window.cancelAnimationFrame(scrollFrameRef.current)
     }
     scrollFrameRef.current = window.requestAnimationFrame(() => {
       scrollFrameRef.current = null
-      endRef.current?.scrollIntoView({
-        behavior: live || liveReasoning ? 'auto' : 'smooth',
-        block: 'end'
-      })
+      // Set scrollTop directly on the timeline container instead of
+      // endRef.scrollIntoView: scrollIntoView also repositions every
+      // scrollable ancestor, which made the whole dialog layout jitter
+      // every frame during streaming.
+      const el = containerRef.current
+      if (el) el.scrollTop = el.scrollHeight
     })
   }, [blocks, live, liveReasoning])
 
@@ -294,7 +329,10 @@ export function MessageTimeline({
       window.cancelAnimationFrame(scrollFrameRef.current)
       scrollFrameRef.current = null
     }
-    endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+    // Container-scoped jump (not scrollIntoView) to avoid repositioning
+    // scrollable ancestors on thread switch.
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [activeThreadId])
 
   useEffect(() => {
@@ -305,7 +343,10 @@ export function MessageTimeline({
     }
     scrollFrameRef.current = window.requestAnimationFrame(() => {
       scrollFrameRef.current = null
-      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      // Container-scoped smooth scroll on send (not scrollIntoView) so only
+      // the timeline scrolls, not its ancestors.
+      const el = containerRef.current
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     })
   }, [currentTurnUserId])
 
@@ -2089,6 +2130,48 @@ function ModelMetaTag({
   )
 }
 
+/** Icon + name chip for `@plugin:` / `/skill` / `@connector` wire prefixes. */
+function UserFocusChip({
+  kind,
+  name
+}: {
+  kind: 'plugin' | 'skill' | 'connector'
+  name: string
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const meta =
+    kind === 'plugin'
+      ? {
+          Icon: Puzzle,
+          className:
+            'border-[rgba(168,85,247,0.4)] bg-[rgba(168,85,247,0.14)] text-[#a855f7]',
+          title: t('composerPluginFocus', { name })
+        }
+      : kind === 'skill'
+        ? {
+            Icon: Sparkles,
+            className:
+              'border-[rgba(79,124,255,0.4)] bg-[rgba(79,124,255,0.14)] text-[#4f7cff]',
+            title: t('composerSkillFocus', { name })
+          }
+        : {
+            Icon: Plug,
+            className:
+              'border-[rgba(16,185,129,0.4)] bg-[rgba(16,185,129,0.14)] text-[#10b981]',
+            title: t('composerConnectorFocus', { name })
+          }
+  const Icon = meta.Icon
+  return (
+    <span
+      title={meta.title}
+      className={`mb-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${meta.className}`}
+    >
+      <Icon className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
+      <span className="truncate">{name}</span>
+    </span>
+  )
+}
+
 /**
  * User message bubble with hover affordance to rewind/edit. Click the rewind
  * pill, the bubble flips into a textarea, and Resend submits an edited
@@ -2106,6 +2189,8 @@ function UserMessageBubble({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(block.text)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const focus = useMemo(() => parseUserFocusPrefix(block.text), [block.text])
+  const displayBody = focus ? focus.body : block.text
 
   useEffect(() => {
     if (!editing) return
@@ -2192,14 +2277,17 @@ function UserMessageBubble({
   return (
     <div id={`block-${block.id}`} className="ds-user-message group relative">
       <div className="ds-user-message-bubble min-w-0">
-        <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">
-          {block.text}
-        </div>
+        {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
+        {displayBody ? (
+          <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">
+            {displayBody}
+          </div>
+        ) : null}
       </div>
       <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-ds-faint opacity-90 transition group-hover:opacity-100">
         <ModelMetaTag label={block.modelLabel} className="flex-1 justify-start text-left" />
         <div className="flex items-center justify-end gap-3">
-          <CopyFeedbackButton text={block.text} iconOnly />
+          <CopyFeedbackButton text={displayBody || block.text} iconOnly />
           <button
             type="button"
             onClick={startEdit}
