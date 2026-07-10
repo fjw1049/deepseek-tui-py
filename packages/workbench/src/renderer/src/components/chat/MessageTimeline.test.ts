@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import type { ChatBlock } from '../../agent/types'
 import {
-  findFallbackFinalAnswer,
   groupProcessRows,
   isSubagentOrchestrationToolName,
   placeAssistantContentBlock,
@@ -80,7 +79,7 @@ describe('isSubagentOrchestrationToolName', () => {
 })
 
 describe('placeAssistantContentBlock', () => {
-  it('keeps mid-turn prefaces in the work trace of a finished turn', () => {
+  it('routes blocks purely by their persisted segment metadata', () => {
     const processBlocks: ChatBlock[] = []
     const answerBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
     const preface = {
@@ -96,87 +95,26 @@ describe('placeAssistantContentBlock', () => {
       agentSegment: 'final_answer' as const
     }
 
-    placeAssistantContentBlock(
-      preface,
-      preface,
-      {
-        hasExplicitFinalAnswer: true,
-        isProcessing: false,
-        index: 0,
-        trailingAssistantContentStart: 99
-      },
-      processBlocks,
-      answerBlocks
-    )
-    placeAssistantContentBlock(
-      finalBlock,
-      finalBlock,
-      {
-        hasExplicitFinalAnswer: true,
-        isProcessing: false,
-        index: 1,
-        trailingAssistantContentStart: 99
-      },
-      processBlocks,
-      answerBlocks
-    )
+    placeAssistantContentBlock(preface, preface, processBlocks, answerBlocks)
+    placeAssistantContentBlock(finalBlock, finalBlock, processBlocks, answerBlocks)
 
     expect(processBlocks).toEqual([preface])
     expect(answerBlocks).toEqual([finalBlock])
   })
 
-  it('shows mid-turn prefaces in the work trace while the turn is processing', () => {
+  it('never promotes an untagged assistant block to the answer bubble', () => {
     const processBlocks: ChatBlock[] = []
     const answerBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
-    const preface = {
+    const untagged = {
       kind: 'assistant' as const,
-      id: 'preface',
-      text: '开始探索代码库结构。',
-      agentSegment: 'mid_turn_preface' as const
+      id: 'legacy',
+      text: '一段没有元数据的历史消息'
     }
 
-    placeAssistantContentBlock(
-      preface,
-      preface,
-      {
-        hasExplicitFinalAnswer: false,
-        isProcessing: true,
-        index: 0,
-        trailingAssistantContentStart: 99
-      },
-      processBlocks,
-      answerBlocks
-    )
+    placeAssistantContentBlock(untagged, untagged, processBlocks, answerBlocks)
 
-    expect(processBlocks).toEqual([preface])
+    expect(processBlocks).toEqual([untagged])
     expect(answerBlocks).toHaveLength(0)
-  })
-})
-
-describe('findFallbackFinalAnswer', () => {
-  it('promotes the last reasoning block when no explicit final answer exists', () => {
-    const blocks: ChatBlock[] = [
-      { kind: 'reasoning', id: 'item_r1', text: 'internal trace' },
-      { kind: 'reasoning', id: 'item_r2', text: '用户可见正文' }
-    ]
-    expect(findFallbackFinalAnswer(blocks)).toEqual({
-      kind: 'assistant',
-      id: 'item_r2',
-      text: '用户可见正文',
-      agentSegment: 'final_answer'
-    })
-  })
-
-  it('returns null when a final answer block already exists', () => {
-    const blocks: ChatBlock[] = [
-      {
-        kind: 'assistant',
-        id: 'item_a1',
-        text: 'done',
-        agentSegment: 'final_answer'
-      }
-    ]
-    expect(findFallbackFinalAnswer(blocks)).toBeNull()
   })
 })
 

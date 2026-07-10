@@ -22,6 +22,7 @@ import {
   Paperclip,
   Plus,
   Plug,
+  Puzzle,
   Search,
   Send,
   Settings2,
@@ -220,6 +221,10 @@ export function FloatingComposer({
   const blocks = useChatStore((s) => s.blocks)
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
+  // Session-level mounted plugin (drives the persistent chip) + send action
+  // used by the chip's unmount (× sends `@plugin:off`).
+  const activePlugin = useChatStore((s) => s.activePlugin)
+  const sendMessage = useChatStore((s) => s.sendMessage)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
   const composingRef = useRef(false)
@@ -229,7 +234,7 @@ export function FloatingComposer({
   const [focused, setFocused] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   // Which second-level panel the `+` menu is currently revealing on hover.
-  const [plusSubmenu, setPlusSubmenu] = useState<'mode' | 'skills' | 'connectors' | null>(null)
+  const [plusSubmenu, setPlusSubmenu] = useState<'mode' | 'skills' | 'connectors' | 'plugins' | null>(null)
   const [composerSkills, setComposerSkills] = useState<Array<{ name: string; description?: string }>>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const [skillsLoaded, setSkillsLoaded] = useState(false)
@@ -256,6 +261,17 @@ export function FloatingComposer({
   // Focus-mode MCP connector, same lifecycle as focusSkill but prepended as
   // `@name ` on send so the runtime's leading-token connector detection fires.
   const [focusConnector, setFocusConnector] = useState<string | null>(null)
+  // Focus-mode plugin mount: held as an inline chip and prepended as
+  // `@plugin:<name> ` on send. After send the chip is cleared and the
+  // persistent mount state arrives from the backend via `activePlugin`.
+  const [focusPlugin, setFocusPlugin] = useState<string | null>(null)
+  // Plugins list for the `+` > Plugins picker (mirrors skills/connectors).
+  const [composerPlugins, setComposerPlugins] = useState<
+    Array<{ name: string; description?: string; trusted: boolean; enabled: boolean }>
+  >([])
+  const [pluginsLoading, setPluginsLoading] = useState(false)
+  const [pluginsLoaded, setPluginsLoaded] = useState(false)
+  const [pluginQuery, setPluginQuery] = useState('')
   const [activeCommand, setActiveCommand] = useState<{
     id: ComposerActionCommandId
     args: string
@@ -273,7 +289,8 @@ export function FloatingComposer({
   // A picked skill alone is enough to send (the runtime just runs it), even
   // with no typed request yet.
   const canSend =
-    canCompose && (outboundPreview.length > 0 || focusSkill != null || focusConnector != null)
+    canCompose &&
+    (outboundPreview.length > 0 || focusSkill != null || focusConnector != null || focusPlugin != null)
   const petSlashQuery = getPetSlashQuery(input)
   const slashQuery = petSlashQuery == null ? getSlashQuery(input) : null
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -567,6 +584,7 @@ export function FloatingComposer({
       setPlusSubmenu(null)
       setSkillQuery('')
       setConnectorQuery('')
+      setPluginQuery('')
     }
   }, [plusMenuOpen])
 
@@ -616,6 +634,7 @@ export function FloatingComposer({
     // `/name ` is prepended only at send time.
     setFocusSkill(name)
     setFocusConnector(null)
+    setFocusPlugin(null)
     setInput('')
     setActiveCommand(null)
     focusComposer()
@@ -661,6 +680,64 @@ export function FloatingComposer({
     // prepended only at send time. Focus skill/connector are mutually exclusive.
     setFocusConnector(id)
     setFocusSkill(null)
+    setFocusPlugin(null)
+    setInput('')
+    setActiveCommand(null)
+    focusComposer()
+  }
+
+  const loadComposerPlugins = useCallback((): void => {
+    if (pluginsLoaded || pluginsLoading) return
+    if (!runtimeReady) {
+      setPluginsLoaded(true)
+      return
+    }
+    setPluginsLoading(true)
+    const qs = effectiveWorkspaceRoot
+      ? `?workspace=${encodeURIComponent(effectiveWorkspaceRoot)}`
+      : ''
+    void window.dsGui
+      .runtimeRequest(`/v1/plugins${qs}`, 'GET')
+      .then((result) => {
+        if (!result.ok) return
+        try {
+          const parsed = JSON.parse(result.body) as {
+            plugins?: Array<{
+              name: string
+              description?: string
+              enabled?: boolean
+              trusted?: boolean
+            }>
+          }
+          setComposerPlugins(
+            (parsed.plugins ?? [])
+              .filter((p) => p.enabled !== false)
+              .map((p) => ({
+                name: p.name,
+                description: p.description,
+                trusted: p.trusted === true,
+                enabled: p.enabled !== false
+              }))
+          )
+        } catch {
+          // Malformed JSON: leave the list as-is rather than crashing the menu.
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        setPluginsLoaded(true)
+        setPluginsLoading(false)
+      })
+  }, [runtimeReady, pluginsLoaded, pluginsLoading, effectiveWorkspaceRoot])
+
+  const handlePickPlugin = (name: string): void => {
+    // Hold the plugin as an inline chip; `@plugin:<name> ` is prepended only at
+    // send time. After send the chip clears and the persistent mount state
+    // arrives from the backend via `activePlugin`. Mutually exclusive with
+    // skill/connector focus.
+    setFocusPlugin(name)
+    setFocusSkill(null)
+    setFocusConnector(null)
     setInput('')
     setActiveCommand(null)
     focusComposer()
@@ -972,13 +1049,16 @@ export function FloatingComposer({
     }
     const body = buildOutboundMessage(attachments, input)
     // Prepend the focus target as a leading token so the runtime detects it
-    // (chips are UI-only; wire format is unchanged): skill → `/name`, MCP
-    // connector → `@name`. The two are mutually exclusive by construction.
+    // (chips are UI-only; wire format is unchanged): skill -> `/name`, MCP
+    // connector -> `@name`, plugin mount -> `@plugin:name`. Mutually exclusive
+    // by construction.
     const payload = focusSkill
       ? `/${focusSkill} ${body}`.trim()
       : focusConnector
         ? `@${focusConnector} ${body}`.trim()
-        : body
+        : focusPlugin
+          ? `@plugin:${focusPlugin} ${body}`.trim()
+          : body
     if (!payload.trim()) return
     attachTimersRef.current.forEach((timer) => clearInterval(timer))
     attachTimersRef.current.clear()
@@ -986,6 +1066,7 @@ export function FloatingComposer({
     setInput('')
     setFocusSkill(null)
     setFocusConnector(null)
+    setFocusPlugin(null)
     onSend(payload)
   }
 
@@ -1302,6 +1383,69 @@ export function FloatingComposer({
             </div>
           ) : null}
 
+          {focusPlugin ? (
+            <div className="flex flex-wrap gap-2 px-1 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusPlugin(null)
+                  focusComposer()
+                }}
+                title={t('composerPluginFocus', { name: focusPlugin })}
+                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(168,85,247,0.4)] bg-[rgba(168,85,247,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#a855f7] transition hover:bg-[rgba(168,85,247,0.22)]"
+              >
+                <Puzzle className="h-3 w-3 shrink-0" strokeWidth={2} />
+                <span className="truncate">{focusPlugin}</span>
+                <X
+                  className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
+                  strokeWidth={2}
+                />
+              </button>
+            </div>
+          ) : null}
+
+          {activePlugin ? (
+            <div className="flex flex-wrap gap-2 px-1 pt-1">
+              <button
+                type="button"
+                title={t('composerPluginMounted', {
+                  name: activePlugin.name,
+                  path: activePlugin.path
+                })}
+                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(168,85,247,0.5)] bg-[rgba(168,85,247,0.18)] px-2.5 py-1 text-[12px] font-semibold text-[#a855f7] transition hover:bg-[rgba(168,85,247,0.26)]"
+              >
+                <Puzzle className="h-3 w-3 shrink-0" strokeWidth={2} />
+                <span className="truncate">{activePlugin.name}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={t('composerPluginUnmount', { name: activePlugin.name })}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    void sendMessage('@plugin:off', undefined, {
+                      displayText: t('composerPluginUnmounted', { name: activePlugin.name })
+                    })
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void sendMessage('@plugin:off', undefined, {
+                        displayText: t('composerPluginUnmounted', { name: activePlugin.name })
+                      })
+                    }
+                  }}
+                  className="inline-flex items-center"
+                >
+                  <X
+                    className="h-3 w-3 shrink-0 opacity-60 transition group-hover:opacity-100"
+                    strokeWidth={2}
+                  />
+                </span>
+              </button>
+            </div>
+          ) : null}
+
           <textarea
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
@@ -1470,6 +1614,27 @@ export function FloatingComposer({
                     >
                       <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                       <span className="flex-1">{t('composerPlusConnectors')}</span>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseEnter={() => {
+                        setPlusSubmenu('plugins')
+                        loadComposerPlugins()
+                      }}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setPlusSubmenu('plugins')
+                        loadComposerPlugins()
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
+                        plusSubmenu === 'plugins'
+                          ? 'bg-ds-hover text-ds-ink'
+                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                      }`}
+                    >
+                      <Puzzle className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                      <span className="flex-1">{t('composerPlusPlugins')}</span>
                       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
                     </button>
                   </div>
@@ -1668,6 +1833,80 @@ export function FloatingComposer({
                                 ) : null}
                               </button>
                             ))
+                          })()
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {plusSubmenu === 'plugins' ? (
+                    <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                      <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
+                        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                        <input
+                          type="text"
+                          value={pluginQuery}
+                          onChange={(event) => setPluginQuery(event.target.value)}
+                          placeholder={t('composerPluginSearchPlaceholder')}
+                          className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
+                        />
+                      </div>
+                      <div className="ds-scroll-surface min-h-0 flex-1 space-y-1 overflow-y-auto">
+                        {pluginsLoading ? (
+                          <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        ) : !runtimeReady ? (
+                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                            {t('composerPluginsNeedRuntime')}
+                          </div>
+                        ) : (
+                          (() => {
+                            const q = pluginQuery.trim().toLowerCase()
+                            const filtered = composerPlugins.filter(
+                              (p) =>
+                                !q ||
+                                p.name.toLowerCase().includes(q) ||
+                                (p.description ?? '').toLowerCase().includes(q)
+                            )
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                                  {t('composerPluginsEmpty')}
+                                </div>
+                              )
+                            }
+                            return filtered.map((plugin) => {
+                              const alreadyMounted =
+                                activePlugin?.name.toLowerCase() === plugin.name.toLowerCase()
+                              return (
+                                <button
+                                  key={plugin.name}
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    handlePickPlugin(plugin.name)
+                                    setPlusMenuOpen(false)
+                                  }}
+                                  className="block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover"
+                                >
+                                  <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
+                                    <Puzzle className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                                    <span className="truncate">{plugin.name}</span>
+                                    {alreadyMounted ? (
+                                      <span className="ml-auto shrink-0 rounded-full bg-[rgba(168,85,247,0.16)] px-1.5 py-0.5 text-[10px] font-semibold text-[#a855f7]">
+                                        {t('composerPluginActive')}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  {plugin.description ? (
+                                    <div className="mt-0.5 line-clamp-2 pl-6 text-[11px] leading-4 text-ds-faint">
+                                      {plugin.description}
+                                    </div>
+                                  ) : null}
+                                </button>
+                              )
+                            })
                           })()
                         )}
                       </div>

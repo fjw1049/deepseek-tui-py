@@ -95,6 +95,49 @@ def render_environment_block(
     )
 
 
+def render_plugin_context(
+    *,
+    name: str,
+    version: str,
+    path: str,
+    permissions: tuple[str, ...] | list[str],
+    trusted: bool,
+    mcp_active: bool,
+    has_mcp: bool,
+) -> str:
+    """Render the ``## Active Plugin`` block for a mounted plugin.
+
+    Tells the model two things as one bundle: (a) the plugin's directory
+    path, and (b) that ``read_file`` / ``list_dir`` / ``grep`` are permitted
+    under it. The read grant is applied silently via
+    ``ToolContext.extra_read_roots`` at runtime; without this block the model
+    only sees base.md's path-escape rule ("paths outside the workspace are
+    rejected") and would never attempt to read plugin files. The block
+    overrides that rule for the plugin directory only, for read operations.
+
+    Session-stable (path/permissions don't change mid-session), so it sits
+    above the volatile-content boundary and is KV-prefix-cache friendly.
+    """
+    perms = ", ".join(permissions) if permissions else "none"
+    lines = [
+        "## Active Plugin",
+        "",
+        f'You are operating with the plugin "{name}" (v{version}) mounted for this session.',
+        "",
+        f"- Plugin directory: {path}",
+        "- Read access: you MAY use read_file / list_dir / grep under the plugin "
+        "directory above. This OVERRIDES the path-escape rule (paths outside the "
+        "workspace are normally rejected) for this directory only, for read operations.",
+        "- Write operations remain confined to the workspace.",
+        f"- Declared permissions: {perms}",
+    ]
+    if has_mcp and not mcp_active:
+        lines.append(
+            "- MCP servers from this plugin are NOT active (plugin not trusted)."
+        )
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     override: str | None = None,
     *,
@@ -103,6 +146,7 @@ def build_system_prompt(
     workspace: Path | None = None,
     working_set_summary: str | None = None,
     skills_context: str | None = None,
+    plugin_context: str | None = None,
     locale_tag: str = "en",
     project_context_enabled: bool = True,
     workflow_guidelines: bool = False,
@@ -118,12 +162,13 @@ def build_system_prompt(
       3. ## Environment block (lang / version / platform / shell / pwd)
       4. context management guidance (Agent/Yolo only)
       5. skills context (available skills list)
-      6. compaction handoff template
-      7. previous-session handoff (volatile)
-      8. working-set summary (volatile)
+      6. plugin context (mounted plugin dir + read grant, when mounted)
+      7. compaction handoff template
+      8. previous-session handoff (volatile)
+      9. working-set summary (volatile)
 
     Setting ``project_context_enabled=False`` skips the project_context
-    block — used by tests that don't want disk I/O. The auto-generate
+    block - used by tests that don't want disk I/O. The auto-generate
     side effect is suppressed in that case.
     """
     if override is not None and override.strip():
@@ -167,6 +212,12 @@ def build_system_prompt(
     # Skills context
     if skills_context and skills_context.strip():
         full_prompt += "\n\n" + skills_context
+
+    # Plugin context - mounted plugin directory + read grant. Sits above the
+    # volatile-content boundary (session-stable) so it benefits from KV prefix
+    # cache hits. Only present while a plugin is mounted.
+    if plugin_context and plugin_context.strip():
+        full_prompt += "\n\n" + plugin_context
 
     if workflow_guidelines:
         from deepseek_tui.workflow.adapters import workflow_guidelines_snippet

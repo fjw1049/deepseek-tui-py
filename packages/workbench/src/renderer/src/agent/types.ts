@@ -52,9 +52,48 @@ export type ToolBlock = {
   meta?: Record<string, unknown>
 }
 
+/**
+ * Structured narration frame persisted by the runtime alongside a mid-turn
+ * preface. Semantics come from these fields, never from parsing display text.
+ * `source: 'none'` means no wording exists yet: render a neutral progress
+ * state from `phase` / `toolCount` / `anchors`.
+ */
+export type ProcessIntentMeta = {
+  scope: 'pre_tool' | 'milestone'
+  source: 'primary_model' | 'narration_service' | 'none'
+  phase?: string
+  batch?: string
+  toolCount?: number
+  anchors?: string[]
+}
+
+/**
+ * Session-level mounted-plugin state. Mirrors the runtime's
+ * `metadata.active_plugin` (a `null` payload means explicitly unmounted).
+ * Not a per-message property - lives on the chat store and drives the
+ * composer's persistent mount chip. `permissions` are the manifest's
+ * declared permission strings (e.g. `['read']`).
+ */
+export type ActivePluginMeta = {
+  name: string
+  version: string
+  path: string
+  scope: string
+  trusted: boolean
+  permissions: string[]
+  mcpActive: boolean
+}
+
 export type ChatBlock =
   | { kind: 'user'; id: string; createdAt?: string; text: string; modelLabel?: string }
-  | { kind: 'assistant'; id: string; createdAt?: string; text: string; agentSegment?: 'mid_turn_preface' | 'final_answer' }
+  | {
+      kind: 'assistant'
+      id: string
+      createdAt?: string
+      text: string
+      agentSegment?: 'mid_turn_preface' | 'final_answer'
+      processIntent?: ProcessIntentMeta
+    }
   | { kind: 'reasoning'; id: string; createdAt?: string; text: string; narration?: string }
   | ToolBlock
   | { kind: 'system'; id: string; createdAt?: string; text: string }
@@ -244,7 +283,9 @@ export type ThreadEventSink = {
   onLiveSegmentComplete?(
     kind: 'agent_reasoning' | 'agent_message',
     itemId: string,
-    createdAt?: string
+    createdAt?: string,
+    text?: string,
+    processIntent?: ProcessIntentMeta
   ): void
   /** Terminal final answer persisted on the runtime. */
   onFinalAnswer?(itemId: string, text: string, createdAt?: string): void
@@ -259,6 +300,12 @@ export type ThreadEventSink = {
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
   /** Optional: workflow orchestration progress (upsert by toolCallId). */
   onWorkflowProgress?(ev: WorkflowProgressPayload): void
+  /**
+   * Optional: session-level mounted-plugin state changed. `null` means
+   * explicitly unmounted; the callback is also called on thread load with
+   * the latest persisted state. Drives the composer's persistent mount chip.
+   */
+  onActivePluginChange?(plugin: ActivePluginMeta | null): void
 }
 
 export interface AgentProvider {
@@ -281,6 +328,8 @@ export interface AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    /** Latest mounted-plugin state derived from persisted items. */
+    activePlugin?: ActivePluginMeta | null
   }>
   /** Runtime HTTP: GET /v1/items/{id} — lazy-load full tool detail after truncation. */
   fetchItemDetail?(itemId: string): Promise<{ detail: string | null }>

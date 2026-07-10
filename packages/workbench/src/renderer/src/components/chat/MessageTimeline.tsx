@@ -781,7 +781,6 @@ function turnHasPendingRuntimeWork(turn: Turn): boolean {
   return turn.blocks.some(blockHasPendingRuntimeWork)
 }
 
-const TURN_EPILOGUE_TOOL_RE = /(?:todo|checklist)_(?:update|write|add|list)$/i
 const SUBAGENT_ORCHESTRATION_TOOL_RE =
   /^(?:agent_spawn|spawn_agent|delegate_to_agent|agent_wait|wait|agent_result|agent_list)$/i
 
@@ -796,73 +795,49 @@ export function isSubagentOrchestrationToolName(name: string | undefined): boole
   return !!name && SUBAGENT_ORCHESTRATION_TOOL_RE.test(name.trim())
 }
 
-function isTurnEpilogueBlock(block: ChatBlock): boolean {
-  if (block.kind !== 'tool') return false
-  const toolName = toolNameFromProcessBlock(block)
-  if (TURN_EPILOGUE_TOOL_RE.test(toolName)) return true
-  return TURN_EPILOGUE_TOOL_RE.test(block.summary.trim().split(/[:(]/, 1)[0]?.trim() ?? '')
-}
-
-function findTrailingAssistantContentStart(blocks: ChatBlock[]): number {
-  let scanEnd = blocks.length
-  while (scanEnd > 0 && isTurnEpilogueBlock(blocks[scanEnd - 1]!)) {
-    scanEnd -= 1
-  }
-
-  let start = scanEnd
-  for (let index = scanEnd - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (block.kind !== 'assistant') break
-
-    const split = splitThink(block.text)
-    if (!split.content.trim()) break
-    start = index
-  }
-
-  return start
-}
-
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
 
-function isFinalAnswerAssistantBlock(block: ChatBlock): block is AssistantContentBlock {
-  return block.kind === 'assistant' && block.agentSegment === 'final_answer'
+/**
+ * Neutral progress line for a narration frame without wording. Everything
+ * shown here comes from structured metadata (tool anchors and count), so it is
+ * language- and model-independent; i18n supplies the label.
+ */
+function NeutralIntentLine({
+  intent
+}: {
+  intent: NonNullable<AssistantContentBlock['processIntent']>
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const anchors = (intent.anchors ?? []).slice(0, 3)
+  return (
+    <div className="flex items-start gap-1.5 py-0.5">
+      <Bot
+        className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse"
+        strokeWidth={1.8}
+      />
+      <p className="text-[13.5px] leading-6 text-ds-faint">
+        {anchors.length > 0
+          ? t('processNeutralIntentTargets', { targets: anchors.join(', ') })
+          : t('processNeutralIntent', { count: intent.toolCount ?? 1 })}
+      </p>
+    </div>
+  )
 }
 
 export function placeAssistantContentBlock(
   block: AssistantContentBlock,
   contentBlock: AssistantContentBlock,
-  options: {
-    hasExplicitFinalAnswer: boolean
-    isProcessing: boolean
-    index: number
-    trailingAssistantContentStart: number
-  },
   nextProcessBlocks: ChatBlock[],
   nextAssistantContentBlocks: AssistantContentBlock[]
 ): void {
-  // Mid-turn model prefaces are the storyline the user follows while tools
-  // execute. Keep them in the work trace for finished turns too, so reopening
-  // history shows the same throughline the user saw live.
-  if (block.agentSegment === 'mid_turn_preface') {
-    nextProcessBlocks.push(contentBlock)
-    return
-  }
-  if (options.hasExplicitFinalAnswer) {
-    if (block.agentSegment === 'final_answer') {
-      nextAssistantContentBlocks.push(contentBlock)
-    } else {
-      nextProcessBlocks.push(contentBlock)
-    }
-    return
-  }
-  if (
-    !options.isProcessing &&
-    options.index >= options.trailingAssistantContentStart
-  ) {
+  // Route purely on the persisted segment metadata. The runtime tags every
+  // agent_message; anything untagged (legacy threads) stays in the work trace
+  // rather than being promoted to an answer by position or text shape.
+  if (block.agentSegment === 'final_answer') {
     nextAssistantContentBlocks.push(contentBlock)
-  } else {
-    nextProcessBlocks.push(contentBlock)
+    return
   }
+  nextProcessBlocks.push(contentBlock)
 }
 
 export function reasoningDetailTextFromBlocks(blocks: ChatBlock[]): string {
@@ -883,39 +858,6 @@ export function reasoningNarrationFromBlocks(blocks: ChatBlock[]): string {
     }
   }
   return ''
-}
-
-export function findFallbackFinalAnswer(
-  blocks: ChatBlock[]
-): Extract<ChatBlock, { kind: 'assistant' }> | null {
-  if (blocks.some(isFinalAnswerAssistantBlock)) return null
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (
-      block?.kind === 'assistant' &&
-      block.agentSegment !== 'mid_turn_preface' &&
-      block.text.trim()
-    ) {
-      return {
-        ...block,
-        text: block.text.trim(),
-        agentSegment: 'final_answer'
-      }
-    }
-  }
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (block?.kind === 'reasoning' && block.text.trim()) {
-      return {
-        kind: 'assistant',
-        id: block.id,
-        createdAt: block.createdAt,
-        text: block.text.trim(),
-        agentSegment: 'final_answer'
-      }
-    }
-  }
-  return null
 }
 
 function MessageTurn({
@@ -957,28 +899,18 @@ function MessageTurn({
     const nextProcessBlocks: ChatBlock[] = []
     const nextSystemBlocks: Array<Extract<ChatBlock, { kind: 'system' }>> = []
     const nextAssistantContentBlocks: Array<Extract<ChatBlock, { kind: 'assistant' }>> = []
-    const hasExplicitFinalAnswer = turn.blocks.some(isFinalAnswerAssistantBlock)
-    const trailingAssistantContentStart = isProcessing
-      ? turn.blocks.length
-      : findTrailingAssistantContentStart(turn.blocks)
 
-    for (const [index, block] of turn.blocks.entries()) {
+    for (const block of turn.blocks) {
       if (block.kind === 'assistant') {
         const split = splitThink(block.text)
         if (split.think) {
           nextProcessBlocks.push({ kind: 'reasoning', id: `${block.id}-think`, text: split.think })
         }
-        if (split.content.trim()) {
+        if (split.content.trim() || block.processIntent) {
           const contentBlock = { ...block, text: split.content }
           placeAssistantContentBlock(
             block,
             contentBlock,
-            {
-              hasExplicitFinalAnswer,
-              isProcessing,
-              index,
-              trailingAssistantContentStart
-            },
             nextProcessBlocks,
             nextAssistantContentBlocks
           )
@@ -1029,19 +961,6 @@ function MessageTurn({
           return [{ ...block, filePath: resolvedFilePath }]
         })
       : []
-
-    if (!isProcessing) {
-      const fallbackAnswer = findFallbackFinalAnswer(turn.blocks)
-      return {
-        processBlocks: nextProcessBlocks,
-        assistantContentBlocks:
-          nextAssistantContentBlocks.length > 0 || !fallbackAnswer
-            ? nextAssistantContentBlocks
-            : [fallbackAnswer],
-        turnFileChanges: nextTurnFileChanges,
-        systemBlocks: nextSystemBlocks
-      }
-    }
 
     return {
       processBlocks: nextProcessBlocks,
@@ -1909,6 +1828,12 @@ function ProcessStream({
 }): ReactElement {
   const visible = visibleExecutionBlocks(blocks, todoSession, subagentSummary)
   const rows = groupProcessRows(visible)
+  // Only the first reasoning segment of a turn earns a live preview. Once a
+  // completed reasoning item exists, later reasoning stays collapsed so the
+  // transcript remains an execution story rather than a scrolling thought log.
+  const showLiveReasoningPreview = !blocks.some(
+    (block) => block.kind === 'reasoning' && block.id !== 'live-reasoning'
+  )
 
   return (
     <div className="ds-process-rail flex flex-col gap-1.5 pt-1">
@@ -1927,6 +1852,7 @@ function ProcessStream({
             todoSession={todoSession}
             todoEvents={todoEvents}
             subagentSummary={subagentSummary}
+            showLiveReasoningPreview={showLiveReasoningPreview}
           />
         )
       )}
@@ -1939,13 +1865,15 @@ function ProcessStreamEntry({
   processing,
   todoSession = null,
   todoEvents = [],
-  subagentSummary = null
+  subagentSummary = null,
+  showLiveReasoningPreview = false
 }: {
   block: ChatBlock
   processing: boolean
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
+  showLiveReasoningPreview?: boolean
 }): ReactElement | null {
   // Inline todo card at its anchor block.
   if (todoSession && isTodoToolBlock(block) && block.id === todoSession.anchorBlockId) {
@@ -1994,13 +1922,25 @@ function ProcessStreamEntry({
     return <ToolCard block={block} />
   }
   if (block.kind === 'reasoning') {
-    return <ReasoningEntry block={block} processing={processing} />
+    return (
+      <ReasoningEntry
+        block={block}
+        processing={processing}
+        showLivePreview={showLiveReasoningPreview}
+      />
+    )
   }
   if (block.kind === 'assistant') {
     // The model's 承上启下 storyline line written before a tool batch. Render
     // it like the reasoning narration line (Bot + muted text) so it reads as
-    // the throughline the user follows while tools execute.
+    // the throughline the user follows while tools execute. When the frame
+    // carries no wording yet (structured intent only), show a neutral
+    // progress state derived from metadata instead of fabricating prose.
     if (block.agentSegment === 'mid_turn_preface') {
+      if (!block.text.trim()) {
+        if (!block.processIntent) return null
+        return <NeutralIntentLine intent={block.processIntent} />
+      }
       return (
         <div className="flex items-start gap-1.5 py-0.5">
           <Bot
@@ -2047,16 +1987,39 @@ function ProcessStreamEntry({
  */
 function ReasoningEntry({
   block,
-  processing
+  processing,
+  showLivePreview
 }: {
   block: Extract<ChatBlock, { kind: 'reasoning' }>
   processing: boolean
+  showLivePreview: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const narration = block.narration?.trim()
   const text = block.text.trim()
   const isLive = block.id === 'live-reasoning'
+  const showStreamingPreview = isLive && processing && showLivePreview && !!text
+
+  if (showStreamingPreview) {
+    // Keep a short trailing window so the preview stays scannable while
+    // streaming; older tokens dissolve under the top fade mask.
+    const preview = text.length > 480 ? text.slice(-480) : text
+    return (
+      <div className="ds-live-thinking py-0.5">
+        <div className="flex items-center gap-1.5 text-[12px] font-medium text-ds-faint">
+          <Bot className="h-3.5 w-3.5 ds-work-logo-pulse" strokeWidth={1.8} />
+          <span className="ds-shiny-text">{t('thinkingNow')}</span>
+        </div>
+        <div className="ds-live-thinking-viewport mt-1.5">
+          <p className="whitespace-pre-wrap text-[12.5px] leading-[1.55] text-ds-muted/90">
+            {preview}
+            <span className="ds-live-thinking-caret" aria-hidden />
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   // Narration is the user-facing line — show it directly, no toggle.
   if (narration) {

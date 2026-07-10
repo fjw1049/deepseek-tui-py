@@ -30,6 +30,7 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ElevationRequiredEvent,
     ErrorEvent,
+    PluginMountEvent,
     StatusEvent,
     SubAgentMailboxEvent,
     TextDeltaEvent,
@@ -46,18 +47,20 @@ from deepseek_tui.server.agent_segments import (
     AGENT_SEGMENT_KEY,
     FINAL_ANSWER,
     MID_TURN_PREFACE,
-    REASONING_FALLBACK_NOTICE,
-    extract_terminal_display_text,
 )
 from deepseek_tui.server.phase_bridge import (
     PHASE_BRIDGE_AFTER_REASONING_KEY,
     PHASE_BRIDGE_METADATA_KEY,
+    PROCESS_INTENT_METADATA_KEY,
     BatchKind,
+    ProcessIntent,
     ReasoningSegment,
     TurnNarrationState,
+    build_process_intent,
     classify_batch,
     compute_narration_display,
-    decide_and_prepare,
+    gate_decision,
+    infer_next_phase,
     note_published,
     resolve_narration_locale,
 )
@@ -109,6 +112,10 @@ from deepseek_tui.server.threads.usage import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on narration-service calls that word silent tool rounds within a
+# single turn; the neutral structured frame is always shown regardless.
+MAX_INTENT_FILLS_PER_TURN = 6
 
 
 def _resolved_workspace_path(raw: str) -> Path:
@@ -1321,6 +1328,7 @@ class RuntimeThreadManager:
         engine = await Engine.create(**create_kwargs)
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
+        self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
         if self._elevation_bridge is not None:
             engine.tool_context.metadata["elevation_bridge"] = self._elevation_bridge
@@ -1347,6 +1355,42 @@ class RuntimeThreadManager:
         messages = reconstruct_messages_from_turns(self.store, thread.id)
         if messages:
             engine.sync_session(messages, model=thread.model)
+
+    def _restore_active_plugin(self, engine: Engine, thread: ThreadRecord) -> None:
+        """Re-apply the session's mounted plugin after engine reconstruction.
+
+        The mount (``@plugin:<name>``) is session-level in-memory state on the
+        engine, lost when an engine is rebuilt on thread resume. Scan the
+        thread's persisted STATUS items for the latest ``active_plugin``
+        metadata (turns are chronologically ordered, so the last signal wins)
+        and re-mount so the next turn keeps the narrowed tool whitelist, the
+        read-only plugin-dir grant, and the ``## Active Plugin`` prompt block.
+        A null signal (explicit ``@plugin:off``) means intentionally unmounted.
+        """
+        from deepseek_tui.server.phase_bridge import ACTIVE_PLUGIN_METADATA_KEY
+
+        latest_name: str | None = None
+        saw_signal = False
+        for turn in self.store.list_turns_for_thread(thread.id):
+            for item in self.store.list_items_for_turn(turn.id):
+                meta = item.metadata if isinstance(item.metadata, dict) else None
+                if not meta or ACTIVE_PLUGIN_METADATA_KEY not in meta:
+                    continue
+                saw_signal = True
+                raw = meta[ACTIVE_PLUGIN_METADATA_KEY]
+                if isinstance(raw, dict):
+                    name = raw.get("name")
+                    latest_name = str(name) if isinstance(name, str) and name else None
+                else:
+                    latest_name = None  # explicit unmount (null marker)
+        if not saw_signal or not latest_name:
+            return
+        try:
+            engine.set_active_plugin(latest_name)
+        except Exception:  # noqa: BLE001 - restore is best-effort
+            logger.warning(
+                "restore_active_plugin failed name=%s", latest_name, exc_info=True
+            )
 
     def _build_approval_handler(self, thread_id: str) -> ApprovalHandler:
         from deepseek_tui.server.approval import (
@@ -1771,6 +1815,11 @@ class RuntimeThreadManager:
         """Consume engine events and persist turn items + runtime events."""
         current_message_text = ""
         current_message_item_id: str | None = None
+        # Preface item already finalized earlier in this round (a ToolCallEvent
+        # closes the open message before AgentRoundComplete arrives). Kept so
+        # the round-complete handler can attach the structured narration frame
+        # to it instead of persisting a duplicate from event.preface_text.
+        round_preface_item_id: str | None = None
         current_reasoning_item_id: str | None = None
         current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
@@ -1797,6 +1846,7 @@ class RuntimeThreadManager:
         narration_compute_tasks: list[asyncio.Task[None]] = []
         recent_tool_summaries: list[str] = []
         recent_tool_had_error = False
+        intent_fill_count = 0
         turn_input_summary = self.store.load_turn(turn_id).input_summary
         narration_cfg = self.config.ui.process_narration
         narration_locale = resolve_narration_locale(
@@ -1809,8 +1859,11 @@ class RuntimeThreadManager:
             text: str,
             batch_kind: BatchKind,
             tool_calls: tuple,
+            intent: ProcessIntent | None = None,
         ) -> None:
-            await self._persist_phase_bridge(thread_id, turn_id, segment, text)
+            await self._persist_phase_bridge(
+                thread_id, turn_id, segment, text, intent=intent
+            )
             note_published(
                 narration_state,
                 text,
@@ -1873,15 +1926,22 @@ class RuntimeThreadManager:
             *,
             agent_segment: str | None = None,
             status: TurnItemLifecycleStatus | None = None,
+            extra_metadata: dict[str, Any] | None = None,
         ) -> None:
-            nonlocal current_message_item_id, current_message_text
+            nonlocal current_message_item_id, current_message_text, round_preface_item_id
             if current_message_item_id is None:
                 return
+            if agent_segment == MID_TURN_PREFACE:
+                round_preface_item_id = current_message_item_id
             await flush_delta_batch()
             item = self.store.load_item(current_message_item_id)
-            if agent_segment:
+            if agent_segment or extra_metadata:
                 base_meta = item.metadata if isinstance(item.metadata, dict) else {}
-                item.metadata = {**base_meta, AGENT_SEGMENT_KEY: agent_segment}
+                item.metadata = {
+                    **base_meta,
+                    **(extra_metadata or {}),
+                    **({AGENT_SEGMENT_KEY: agent_segment} if agent_segment else {}),
+                }
             item.status = status or TurnItemLifecycleStatus.COMPLETED
             item.summary = summarize_text(current_message_text, SUMMARY_LIMIT)
             item.detail = current_message_text
@@ -1902,23 +1962,54 @@ class RuntimeThreadManager:
             current_message_item_id = None
             current_message_text = ""
 
-        async def promote_reasoning_to_final_answer(
-            segment: ReasoningSegment,
-            display_text: str,
-        ) -> None:
-            item = self.store.load_item(segment.item_id)
+        async def persist_round_intent(text: str, intent: ProcessIntent) -> str:
+            """Persist a pre-tool narration frame.
+
+            ``text`` may be empty: the frame then carries only structured
+            fields (``source == "none"``) and the UI renders a neutral
+            progress state until the narration service upserts wording.
+            """
+            cleaned = text.strip()
+            now = datetime.now(timezone.utc)
+            item_id = f"item_{uuid.uuid4().hex[:8]}"
+            item = TurnItemRecord(
+                id=item_id,
+                turn_id=turn_id,
+                kind=TurnItemKind.AGENT_MESSAGE,
+                status=TurnItemLifecycleStatus.COMPLETED,
+                summary=summarize_text(cleaned, SUMMARY_LIMIT) if cleaned else "",
+                detail=cleaned or None,
+                metadata={
+                    AGENT_SEGMENT_KEY: MID_TURN_PREFACE,
+                    PROCESS_INTENT_METADATA_KEY: intent.to_metadata(),
+                },
+                started_at=now,
+                ended_at=now,
+            )
+            self.store.save_item(item)
+            self._attach_item_to_turn(turn_id, item_id)
+            await self._emit_event(
+                thread_id,
+                turn_id,
+                item_id,
+                "item.completed",
+                {"item": item.model_dump(mode="json")},
+            )
+            return item_id
+
+        async def tag_item_process_intent(item_id: str, intent: ProcessIntent) -> None:
+            """Attach the structured frame to an already-finalized preface item."""
+            item = self.store.load_item(item_id)
             base_meta = item.metadata if isinstance(item.metadata, dict) else {}
-            item.kind = TurnItemKind.AGENT_MESSAGE
-            item.status = TurnItemLifecycleStatus.COMPLETED
-            item.detail = display_text
-            item.summary = summarize_text(display_text, SUMMARY_LIMIT)
-            item.metadata = {**base_meta, AGENT_SEGMENT_KEY: FINAL_ANSWER}
-            item.ended_at = datetime.now(timezone.utc)
+            item.metadata = {
+                **base_meta,
+                PROCESS_INTENT_METADATA_KEY: intent.to_metadata(),
+            }
             self.store.save_item(item)
             await self._emit_event(
                 thread_id,
                 turn_id,
-                segment.item_id,
+                item_id,
                 "item.completed",
                 {"item": item.model_dump(mode="json")},
             )
@@ -1973,17 +2064,16 @@ class RuntimeThreadManager:
                 return
             tool_calls = round_event.tool_calls
             batch_kind = classify_batch(tool_calls)
-            decision, immediate = decide_and_prepare(
+            decision = gate_decision(
                 state=narration_state,
                 segment=segment,
                 tool_calls=tool_calls,
-                preface_text=round_event.preface_text,
                 narrated_ids=narrated_reasoning_ids,
                 min_chars=narration_cfg.min_chars,
                 has_tool_error=recent_tool_had_error,
                 pending_scheduled=len(narration_compute_tasks),
-                locale=narration_locale,
                 max_published=narration_cfg.max_per_turn,
+                min_interval_s=narration_cfg.min_interval_s,
             )
             if decision == "skip":
                 logger.debug(
@@ -1996,25 +2086,17 @@ class RuntimeThreadManager:
             narrated_reasoning_ids.add(segment.item_id)
             last_completed_reasoning = None
             tc_tuple = tuple(tool_calls)
-
-            if decision == "use_preface" and immediate:
-                # The model already narrated this batch in its own words; surface
-                # it directly instead of regenerating via the flash model.
-                preface_line = immediate
-
-                async def persist_preface() -> None:
-                    await persist_segment_narration(
-                        segment, preface_line, batch_kind, tc_tuple
-                    )
-
-                narration_compute_tasks.append(
-                    asyncio.create_task(
-                        persist_preface(),
-                        name=f"phase-bridge-preface-{segment.item_id}",
-                    )
-                )
-                return
-
+            milestone_intent = build_process_intent(
+                scope="milestone",
+                source="narration_service",
+                phase=infer_next_phase(
+                    narration_state.phase,
+                    batch_kind,
+                    has_tool_error=recent_tool_had_error,
+                ),
+                tool_calls=tool_calls,
+                locale=narration_locale,
+            )
             recent = recent_tool_summaries[-narration_cfg.include_recent_tool_results :]
 
             async def run_and_persist() -> None:
@@ -2036,12 +2118,78 @@ class RuntimeThreadManager:
                     )
                     return
                 if text:
-                    await persist_segment_narration(segment, text, batch_kind, tc_tuple)
+                    await persist_segment_narration(
+                        segment, text, batch_kind, tc_tuple, milestone_intent
+                    )
 
             task = asyncio.create_task(
                 run_and_persist(), name=f"phase-bridge-{segment.item_id}"
             )
             narration_compute_tasks.append(task)
+
+        def schedule_intent_fill(
+            item_id: str,
+            intent: ProcessIntent,
+            segment: ReasoningSegment | None,
+            tool_calls: tuple,
+        ) -> bool:
+            """Ask the narration service to word a silent round's frame.
+
+            Returns True when a fill was scheduled. The neutral frame is
+            already visible; this only upserts wording, so any failure simply
+            leaves the neutral state in place.
+            """
+            nonlocal intent_fill_count
+            if not narration_cfg.enabled or segment is None:
+                return False
+            if intent_fill_count >= MAX_INTENT_FILLS_PER_TURN:
+                return False
+            intent_fill_count += 1
+            recent = recent_tool_summaries[-narration_cfg.include_recent_tool_results :]
+
+            async def run_and_fill() -> None:
+                try:
+                    text = await self._compute_phase_bridge(
+                        thread_id=thread_id,
+                        user_prompt=turn_input_summary,
+                        state=narration_state,
+                        segment=segment,
+                        tool_calls=tool_calls,
+                        recent_tool_results=recent,
+                        locale=narration_locale,
+                    )
+                except Exception:
+                    logger.exception(
+                        "intent_fill compute failed turn=%s item=%s", turn_id, item_id
+                    )
+                    return
+                if not text:
+                    return
+                item = self.store.load_item(item_id)
+                item.detail = text
+                item.summary = summarize_text(text, SUMMARY_LIMIT)
+                base_meta = item.metadata if isinstance(item.metadata, dict) else {}
+                item.metadata = {
+                    **base_meta,
+                    PROCESS_INTENT_METADATA_KEY: {
+                        **intent.to_metadata(),
+                        "source": "narration_service",
+                    },
+                }
+                item.ended_at = datetime.now(timezone.utc)
+                self.store.save_item(item)
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    "item.completed",
+                    {"item": item.model_dump(mode="json")},
+                )
+
+            narration_compute_tasks.append(
+                asyncio.create_task(run_and_fill(), name=f"intent-fill-{item_id}")
+            )
+            return True
 
         def note_tool_result_timing(tool_call_id: str) -> None:
             trace = get_turn_latency(turn_id)
@@ -2380,6 +2528,47 @@ class RuntimeThreadManager:
                     {"item": item.model_dump(mode="json")},
                 )
 
+            elif isinstance(event, PluginMountEvent):
+                # Persist the mount/unmount as a STATUS item carrying structured
+                # active_plugin metadata, so the UI can render a persistent chip
+                # and _restore_active_plugin can re-apply the mount on reload.
+                from deepseek_tui.server.phase_bridge import (
+                    ACTIVE_PLUGIN_METADATA_KEY,
+                    PluginMountInfo,
+                )
+
+                now = datetime.now(timezone.utc)
+                item_id = f"item_{uuid.uuid4().hex[:8]}"
+                info = PluginMountInfo(
+                    name=event.name,
+                    version=event.version,
+                    path=event.path,
+                    scope=event.scope,
+                    trusted=event.trusted,
+                    permissions=event.permissions,
+                    mcp_active=event.mcp_active,
+                )
+                summary = summarize_text(event.message, SUMMARY_LIMIT)
+                item = TurnItemRecord(
+                    id=item_id,
+                    turn_id=turn_id,
+                    kind=TurnItemKind.STATUS,
+                    status=TurnItemLifecycleStatus.COMPLETED,
+                    summary=summary,
+                    detail=event.message,
+                    started_at=now,
+                    ended_at=now,
+                    metadata={ACTIVE_PLUGIN_METADATA_KEY: info.to_metadata()},
+                )
+                self.store.save_item(item)
+                self._attach_item_to_turn(turn_id, item_id)
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    "item.completed",
+                    {"item": item.model_dump(mode="json")},
+                )
 
             elif isinstance(event, UserInputRequiredEvent):
                 self._pending_user_inputs[event.tool_call_id] = _PendingUserInputRecord(
@@ -2468,39 +2657,65 @@ class RuntimeThreadManager:
                 segment = await finalize_open_reasoning()
                 if not event.tool_calls:
                     last_completed_reasoning = None
-                    display, is_raw_fallback = extract_terminal_display_text(
-                        text=event.preface_text,
-                        thinking=event.round_thinking,
-                    )
                     preface = (event.preface_text or "").strip()
-                    # Raw reasoning fallback: the round produced no answer
-                    # `content` AND the thinking doesn't use the
-                    # "(reasoning omitted)" protocol. This typically means the
-                    # output budget was too small and reasoning was
-                    # length-truncated before the model could emit its answer.
-                    # Prepend a visible notice so it isn't mistaken for a clean
-                    # reply (see max_output_tokens_for_model).
-                    if display and is_raw_fallback:
-                        logger.warning(
-                            "terminal_reasoning_fallback turn=%s thinking_chars=%d "
-                            "— no answer content, showing reasoning as final answer",
-                            turn_id,
-                            len(display),
-                        )
-                        display = f"{REASONING_FALLBACK_NOTICE}\n\n{display}"
-                    if display and segment is not None and not preface:
-                        await promote_reasoning_to_final_answer(segment, display)
-                    elif display and current_message_item_id is not None:
+                    if preface and current_message_item_id is not None:
                         await finalize_open_message(agent_segment=FINAL_ANSWER)
-                    elif display:
-                        await persist_final_answer_message(text=display)
-                    else:
+                    elif preface:
+                        await persist_final_answer_message(text=preface)
+                    elif current_message_item_id is not None:
                         await finalize_open_message(agent_segment=FINAL_ANSWER)
                 else:
-                    await finalize_open_message(agent_segment=MID_TURN_PREFACE)
+                    # The model's own preface is passed through verbatim as the
+                    # pre-tool storyline (no content vetting — wording quality
+                    # is owned by the prompt, not runtime rules). A silent
+                    # round gets a structured neutral frame that the narration
+                    # service may later fill with wording.
                     segment = segment or last_completed_reasoning
-                    if segment is not None:
+                    batch_kind = classify_batch(event.tool_calls)
+                    intent_phase = infer_next_phase(
+                        narration_state.phase,
+                        batch_kind,
+                        has_tool_error=recent_tool_had_error,
+                    )
+                    preface = (event.preface_text or "").strip()
+                    fill_scheduled = False
+                    if current_message_item_id is not None or round_preface_item_id or preface:
+                        intent = build_process_intent(
+                            scope="pre_tool",
+                            source="primary_model",
+                            phase=intent_phase,
+                            tool_calls=event.tool_calls,
+                            locale=narration_locale,
+                        )
+                        if current_message_item_id is not None:
+                            await finalize_open_message(
+                                agent_segment=MID_TURN_PREFACE,
+                                extra_metadata={
+                                    PROCESS_INTENT_METADATA_KEY: intent.to_metadata()
+                                },
+                            )
+                        elif round_preface_item_id:
+                            # The preface item was already closed by this
+                            # round's first ToolCallEvent; only attach the
+                            # structured frame instead of duplicating it.
+                            await tag_item_process_intent(round_preface_item_id, intent)
+                        else:
+                            await persist_round_intent(preface, intent)
+                    else:
+                        intent = build_process_intent(
+                            scope="pre_tool",
+                            source="none",
+                            phase=intent_phase,
+                            tool_calls=event.tool_calls,
+                            locale=narration_locale,
+                        )
+                        frame_id = await persist_round_intent("", intent)
+                        fill_scheduled = schedule_intent_fill(
+                            frame_id, intent, segment, event.tool_calls
+                        )
+                    if segment is not None and not fill_scheduled:
                         schedule_phase_bridge(segment, event)
+                round_preface_item_id = None
                 await flush_narration_tasks()
 
             elif isinstance(event, TurnCompleteEvent):
@@ -2602,6 +2817,11 @@ class RuntimeThreadManager:
                 status=orphan_status,
             )
 
+        if turn_status == RuntimeTurnStatus.COMPLETED:
+            recovered_answer = await self._recover_missing_final_answer(thread_id, turn_id)
+            if recovered_answer:
+                await persist_final_answer_message(text=recovered_answer)
+
         # Finalize the turn record
         ended_at = datetime.now(timezone.utc)
         turn = self.store.load_turn(turn_id)
@@ -2684,7 +2904,9 @@ class RuntimeThreadManager:
         async with self._active_lock:
             active = self._active.get(thread_id)
             if active is not None:
-                client = active.engine.client
+                engine_client = getattr(active.engine, "client", None)
+                if engine_client is not None:
+                    client = engine_client
                 thread = self.store.load_thread(thread_id)
                 narration_config = self._config_for_provider(
                     active.provider, thread.model
@@ -2702,15 +2924,100 @@ class RuntimeThreadManager:
                 locale=locale,
             )
 
+    async def _recover_missing_final_answer(self, thread_id: str, turn_id: str) -> str | None:
+        """Produce a safe final reply when a completed turn emitted none.
+
+        This is deliberately a tool-free synthesis of persisted evidence. It
+        never reruns the agent loop, so a missing answer cannot repeat edits or
+        commands. The provider client owns transport retries; semantic recovery
+        is capped at two attempts to avoid holding a completed turn hostage.
+        """
+        turn = self.store.load_turn(turn_id)
+        evidence: list[str] = []
+        for item_id in turn.item_ids:
+            item = self.store.load_item(item_id)
+            metadata = item.metadata if isinstance(item.metadata, dict) else {}
+            if (
+                item.kind == TurnItemKind.AGENT_MESSAGE
+                and metadata.get(AGENT_SEGMENT_KEY) == FINAL_ANSWER
+                and (item.detail or item.summary or "").strip()
+            ):
+                return None
+            if item.kind in {
+                TurnItemKind.TOOL_CALL,
+                TurnItemKind.COMMAND_EXECUTION,
+                TurnItemKind.FILE_CHANGE,
+                TurnItemKind.ERROR,
+            }:
+                text = (item.summary or item.detail or "").strip()
+                if text:
+                    evidence.append(summarize_text(text, 240))
+
+        if not evidence:
+            return None
+
+        from deepseek_tui.engine.usage_ledger import usage_source
+        from deepseek_tui.protocol.messages import Message, MessageRequest
+        from deepseek_tui.protocol.responses import StreamTextDelta
+
+        thread = self.store.load_thread(thread_id)
+        client = self._get_llm_client()
+        async with self._active_lock:
+            active = self._active.get(thread_id)
+            engine_client = getattr(active.engine, "client", None) if active else None
+            if engine_client is not None:
+                client = engine_client
+
+        prompt = (
+            "The agent completed a coding task but produced no final answer. "
+            "Write a concise user-facing completion summary using ONLY the "
+            "verified execution evidence below. Do not mention hidden reasoning, "
+            "do not call tools, and do not claim unverified outcomes.\n\n"
+            "Verified evidence:\n"
+            + "\n".join(f"- {line}" for line in evidence[-12:])
+        )
+        request = MessageRequest(
+            model=thread.model or "deepseek-chat",
+            messages=[Message.user(prompt)],
+            system_prompt=(
+                "Return only the final user-facing answer. Be concise, factual, "
+                "and state any failed verification plainly."
+            ),
+            max_tokens=768,
+            temperature=0.1,
+            reasoning_effort="low",
+        )
+        for _ in range(2):
+            try:
+                chunks: list[str] = []
+                with usage_source("final_answer_recovery"):
+                    async for event in client.stream_chat_completion(request):
+                        if isinstance(event, StreamTextDelta):
+                            chunks.append(event.text)
+                text = "".join(chunks).strip()
+                if text:
+                    return text
+            except Exception:
+                logger.info("final_answer_recovery failed turn=%s", turn_id, exc_info=True)
+        return None
+
     async def _persist_phase_bridge(
         self,
         thread_id: str,
         turn_id: str,
         segment: ReasoningSegment,
         text: str,
+        *,
+        intent: ProcessIntent | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
         item_id = f"item_{uuid.uuid4().hex[:8]}"
+        metadata: dict[str, Any] = {
+            PHASE_BRIDGE_METADATA_KEY: True,
+            PHASE_BRIDGE_AFTER_REASONING_KEY: segment.item_id,
+        }
+        if intent is not None:
+            metadata[PROCESS_INTENT_METADATA_KEY] = intent.to_metadata()
         item = TurnItemRecord(
             id=item_id,
             turn_id=turn_id,
@@ -2718,10 +3025,7 @@ class RuntimeThreadManager:
             status=TurnItemLifecycleStatus.COMPLETED,
             summary=summarize_text(text, SUMMARY_LIMIT),
             detail=text,
-            metadata={
-                PHASE_BRIDGE_METADATA_KEY: True,
-                PHASE_BRIDGE_AFTER_REASONING_KEY: segment.item_id,
-            },
+            metadata=metadata,
             started_at=now,
             ended_at=now,
         )

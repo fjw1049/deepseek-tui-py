@@ -1,8 +1,8 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef } from 'react'
+import { lazy, memo, Suspense, useCallback, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { FileEdit, Search, Terminal, Wrench } from 'lucide-react'
 import { cn } from './cn'
-import { buildToolRenderContext, isPendingState, type ToolRenderContext } from './render-context'
+import { buildToolRenderContext, isPendingState } from './render-context'
 import { resolveToolRenderer } from './registry'
 import { useDisclosure } from '../model/use-disclosure'
 import { ToolBody, ToolCopyButton, ToolErrorState, ToolHeaderRow } from './primitives'
@@ -37,32 +37,16 @@ function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): 
   return Wrench
 }
 
-function isSuccessfulShell(ctx: ToolRenderContext): boolean {
-  const meta = ctx.meta
-  if (typeof meta !== 'object' || meta === null) return true
-  const reason = meta.reason
-  if (reason === 'error' || reason === 'timeout' || reason === 'abort' || reason === 'closed') {
-    return false
-  }
-  const status = meta.status
-  if (status === 'running' || status === 'failed' || status === 'stopped') return false
-  if (status === 'exited') return meta.exit_code === 0
-  const code = meta.exit_code
-  if (typeof code === 'number') return code === 0
-  return true
-}
-
 /**
  * Tool-card host. Builds a normalised render context from a `ToolBlock`,
  * resolves a renderer from the registry, and renders Header + (optional)
  * Output/Footer inside a collapsible shell. Expand state is persisted via
  * `useDisclosure` so it survives remounts.
  *
- * Auto-open/close rules (mirror Tanzo tool-card.tsx):
- *  - running shell → auto-open (so the user sees streaming stdout live)
- *  - shell that exited 0 → auto-close (success collapses, noise recedes)
- *  - any failure stays open
- * User interaction overrides auto behaviour.
+ * Default is collapsed for every state (running / success / error). Status is
+ * shown by color and the header icon — not by auto-expanding the body — so
+ * the work trace stays a quiet, consistent list. Users can still open a card
+ * manually to inspect output or error detail.
  */
 export const ToolCard = memo(function ToolCard({
   block,
@@ -70,36 +54,16 @@ export const ToolCard = memo(function ToolCard({
 }: ToolCardProps): React.JSX.Element | null {
   const ctx = useMemo(() => buildToolRenderContext(block), [block])
   const disclosureKey = `tool:${ctx.toolCallId}`
-  const [storedOpen, setDisclosureOpen, hasStoredOpen] = useDisclosure(
-    disclosureKey,
-    ctx.state === 'error'
-  )
-  const autoOpenedRef = useRef(false)
-  const userInteractedRef = useRef(false)
+  const [storedOpen, setDisclosureOpen] = useDisclosure(disclosureKey, false)
 
   const isShell = SHELL_TOOL_NAMES.has(ctx.toolName) || ctx.isCommand
-  const shouldAutoOpen = isShell && ctx.state === 'running'
-  const shouldAutoClose = isShell && ctx.state === 'success' && isSuccessfulShell(ctx)
 
   const setUserOpen = useCallback(
     (next: boolean) => {
-      userInteractedRef.current = true
       setDisclosureOpen(next)
     },
     [setDisclosureOpen]
   )
-
-  useEffect(() => {
-    if (!shouldAutoOpen || hasStoredOpen || userInteractedRef.current) return
-    autoOpenedRef.current = true
-    setDisclosureOpen(true)
-  }, [hasStoredOpen, setDisclosureOpen, shouldAutoOpen])
-
-  useEffect(() => {
-    if (!shouldAutoClose || !autoOpenedRef.current || userInteractedRef.current) return
-    autoOpenedRef.current = false
-    setDisclosureOpen(false)
-  }, [setDisclosureOpen, shouldAutoClose])
 
   const renderer = resolveToolRenderer(ctx)
   const HeaderComp = renderer?.Header ?? null
@@ -114,7 +78,7 @@ export const ToolCard = memo(function ToolCard({
     Boolean(renderer?.renderWhenPending) ||
     !isPendingState(ctx.state)
 
-  const open = canExpand && (ctx.state === 'running' ? true : storedOpen)
+  const open = canExpand && storedOpen
   const Icon = pickIcon(ctx.toolName, ctx.isFileChange, ctx.isCommand)
 
   // Visual tiering (mirrors cursor/codex): only running / error / file mutations
@@ -137,9 +101,9 @@ export const ToolCard = memo(function ToolCard({
   )
 
   const handleToggle = useCallback(() => {
-    if (!canExpand || ctx.state === 'running') return
+    if (!canExpand) return
     setUserOpen(!open)
-  }, [canExpand, ctx.state, open, setUserOpen])
+  }, [canExpand, open, setUserOpen])
 
   const expandedBody = renderOutput ? (
     renderer?.fullBleed && OutputComp ? (
@@ -188,9 +152,9 @@ export const ToolCard = memo(function ToolCard({
   const interactionProps = {
     onClick: handleToggle,
     role: canExpand ? ('button' as const) : undefined,
-    tabIndex: canExpand && ctx.state !== 'running' ? 0 : undefined,
+    tabIndex: canExpand ? 0 : undefined,
     onKeyDown: (e: React.KeyboardEvent) => {
-      if (canExpand && ctx.state !== 'running' && (e.key === 'Enter' || e.key === ' ')) {
+      if (canExpand && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault()
         handleToggle()
       }
@@ -239,7 +203,7 @@ export const ToolCard = memo(function ToolCard({
       <div
         className={cn(
           'flex items-center px-3 py-2',
-          canExpand && ctx.state !== 'running' ? 'cursor-pointer hover:bg-ds-hover/40' : ''
+          canExpand ? 'cursor-pointer hover:bg-ds-hover/40' : ''
         )}
         {...interactionProps}
       >

@@ -5,25 +5,25 @@ from __future__ import annotations
 from deepseek_tui.engine.events import AgentRoundCompleteEvent
 from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.server.phase_bridge import (
+    NARRATION_TOOL_NAME,
     BatchKind,
     NarrationPlan,
     Phase,
+    ProcessIntent,
     ReasoningSegment,
     TurnNarrationState,
-    batch_intent_text,
     build_intent_bundle,
+    build_process_intent,
     classify_batch,
     contains_tool_name,
-    decide_and_prepare,
+    extract_anchors,
     extract_confirmed_facts,
     gate_decision,
-    locale_preface,
-    note_published,
-    preface_matches_locale,
+    narration_tool_schema,
+    plan_from_arguments,
     render_plan,
     resolve_narration_locale,
     template_narration,
-    usable_preface,
     validate_plan,
 )
 
@@ -42,7 +42,6 @@ def test_gate_skips_empty_tools() -> None:
         state=state,
         segment=_segment(),
         tool_calls=(),
-        preface_text=None,
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,
@@ -61,22 +60,6 @@ def test_gate_skips_homogeneous_parallel_reads_without_phase_change() -> None:
         state=state,
         segment=_segment(),
         tool_calls=tools,
-        preface_text=None,
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-    ) == "compute"
-    note_published(
-        state,
-        batch_intent_text(BatchKind.EXPLORE_READ, tools, locale="zh"),
-        batch=BatchKind.EXPLORE_READ,
-        tool_calls=tools,
-    )
-    assert gate_decision(
-        state=state,
-        segment=_segment(item_id="item_reason_2"),
-        tool_calls=tools,
-        preface_text=None,
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,
@@ -94,46 +77,10 @@ def test_gate_allows_explore_read_on_phase_transition() -> None:
         state=state,
         segment=_segment(),
         tool_calls=tools,
-        preface_text=None,
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,
     ) == "compute"
-
-
-def test_gate_uses_model_preface_when_usable() -> None:
-    state = TurnNarrationState()
-    tools = (_tool("list_dir", path="src"),)
-    preface = "先从项目结构入手，了解整体模块划分"
-    decision, immediate = decide_and_prepare(
-        state=state,
-        segment=_segment(),
-        tool_calls=tools,
-        preface_text=preface,
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-        locale="zh",
-    )
-    assert decision == "use_preface"
-    assert immediate == preface
-
-
-def test_gate_computes_when_no_usable_preface() -> None:
-    state = TurnNarrationState()
-    tools = (_tool("list_dir", path="src"),)
-    decision, immediate = decide_and_prepare(
-        state=state,
-        segment=_segment(),
-        tool_calls=tools,
-        preface_text=None,
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-        locale="zh",
-    )
-    assert decision == "compute"
-    assert immediate is None
 
 
 def test_gate_compute_for_mutate_batch() -> None:
@@ -143,7 +90,6 @@ def test_gate_compute_for_mutate_batch() -> None:
         state=state,
         segment=_segment(),
         tool_calls=tools,
-        preface_text=None,
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,
@@ -156,7 +102,6 @@ def test_gate_respects_publish_cap() -> None:
         state=state,
         segment=_segment(),
         tool_calls=(_tool("apply_patch", path="x"),),
-        preface_text=None,
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,
@@ -188,9 +133,71 @@ def test_render_plan_joins_finding_and_next_goal() -> None:
     assert not contains_tool_name(text)
 
 
-def test_usable_preface_rejects_tool_names() -> None:
-    assert usable_preface("接下来 list_dir src") is None
-    assert usable_preface("先从整体结构入手，了解模块划分") is not None
+def test_validate_plan_accepts_any_language() -> None:
+    # Language/style belong to the narration model (locale is in the request);
+    # validation stays structural so any provider/language combination works.
+    plan = NarrationPlan(
+        publish=True,
+        phase="explore",
+        finding="Confirmed the router registers all endpoints.",
+        next_goal="Verify the handler chain next.",
+    )
+    assert validate_plan(plan, locale="zh") is True
+
+
+def test_narration_tool_schema_shape() -> None:
+    schema = narration_tool_schema()
+    assert schema["function"]["name"] == NARRATION_TOOL_NAME
+    params = schema["function"]["parameters"]
+    assert set(params["required"]) == {"publish", "finding"}
+    assert set(params["properties"]) == {"publish", "phase", "finding", "next_goal"}
+
+
+def test_plan_from_arguments_round_trip() -> None:
+    plan = plan_from_arguments(
+        {
+            "publish": True,
+            "phase": "verify",
+            "finding": "已确认修改生效",
+            "next_goal": "运行测试",
+        }
+    )
+    assert plan.publish is True
+    assert plan.phase == "verify"
+    assert plan.finding == "已确认修改生效"
+    assert plan.next_goal == "运行测试"
+
+
+def test_extract_anchors_from_structured_arguments() -> None:
+    anchors = extract_anchors(
+        (
+            _tool("read_file", path="src/a.py"),
+            _tool("grep_files", query="RuntimeThreadManager"),
+            _tool("read_file", path="src/a.py"),
+        )
+    )
+    assert anchors == ("src/a.py", "RuntimeThreadManager")
+
+
+def test_build_process_intent_metadata() -> None:
+    intent = build_process_intent(
+        scope="pre_tool",
+        source="none",
+        phase=Phase.LOCATE,
+        tool_calls=(
+            _tool("read_file", path="src/a.py"),
+            _tool("read_file", path="src/b.py"),
+        ),
+        locale="zh",
+    )
+    assert isinstance(intent, ProcessIntent)
+    meta = intent.to_metadata()
+    assert meta["scope"] == "pre_tool"
+    assert meta["source"] == "none"
+    assert meta["phase"] == "locate"
+    assert meta["batch"] == "explore_read"
+    assert meta["tool_count"] == 2
+    assert meta["anchors"] == ["src/a.py", "src/b.py"]
 
 
 def test_extract_confirmed_facts_from_tool_summaries() -> None:
@@ -226,38 +233,6 @@ def test_resolve_narration_locale_from_chinese_input() -> None:
 
 def test_resolve_narration_locale_from_english_input() -> None:
     assert resolve_narration_locale("Explain how the workflow engine orchestrates turns.") == "en"
-
-
-def test_locale_preface_rejects_english_for_chinese_turn() -> None:
-    assert locale_preface("Starting with the project structure.", "zh") is None
-    assert preface_matches_locale("Starting with the project structure.", "zh") is False
-    assert locale_preface("开始探索代码库结构。", "zh") == "开始探索代码库结构。"
-
-
-def test_gate_uses_compute_when_preface_language_mismatches() -> None:
-    state = TurnNarrationState()
-    tools = (_tool("list_dir", path="src"),)
-    assert gate_decision(
-        state=state,
-        segment=_segment(),
-        tool_calls=tools,
-        preface_text="Starting with the project structure.",
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-        locale="zh",
-    ) == "compute"
-
-
-def test_validate_plan_rejects_wrong_output_language() -> None:
-    plan = NarrationPlan(
-        publish=True,
-        phase="explore",
-        finding="Starting with the project structure.",
-        next_goal="Read the core modules next.",
-    )
-    assert validate_plan(plan, locale="zh") is False
-    assert render_plan(plan, locale="zh") is None
 
 
 def test_template_narration_localizes_for_chinese() -> None:

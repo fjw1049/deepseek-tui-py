@@ -1,11 +1,13 @@
 import type {
   AgentProvider,
   AgentProviderId,
+  ActivePluginMeta,
   ApprovalRequestPayload,
   ElevationRequestPayload,
   EvolutionProposalPayload,
   ChatBlock,
   NormalizedThread,
+  ProcessIntentMeta,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
   ThreadEventSink,
@@ -216,11 +218,6 @@ function statusFromString(s: string | undefined): 'running' | 'success' | 'error
   if (s === 'failed' || s === 'canceled' || s === 'interrupted' || s === 'error') return 'error'
   if (s === 'in_progress' || s === 'queued' || s === 'started') return 'running'
   return 'success'
-}
-
-function runtimeStatusLooksRunning(status?: string): boolean {
-  const normalized = status?.trim().toLowerCase()
-  return normalized === 'running' || normalized === 'in_progress' || normalized === 'queued' || normalized === 'started'
 }
 
 function displayModelFromUserMessageMeta(metadata: Record<string, unknown> | null | undefined): string | undefined {
@@ -495,6 +492,57 @@ function readAgentSegment(it: TurnItemJson): 'mid_turn_preface' | 'final_answer'
   const segment = it.metadata?.agent_segment
   if (segment === 'mid_turn_preface' || segment === 'final_answer') return segment
   return undefined
+}
+
+function readProcessIntent(it: TurnItemJson): ProcessIntentMeta | undefined {
+  const raw = it.metadata?.process_intent
+  if (!raw || typeof raw !== 'object') return undefined
+  const meta = raw as Record<string, unknown>
+  const scope = meta.scope
+  const source = meta.source
+  if (scope !== 'pre_tool' && scope !== 'milestone') return undefined
+  if (source !== 'primary_model' && source !== 'narration_service' && source !== 'none') {
+    return undefined
+  }
+  return {
+    scope,
+    source,
+    phase: typeof meta.phase === 'string' ? meta.phase : undefined,
+    batch: typeof meta.batch === 'string' ? meta.batch : undefined,
+    toolCount: typeof meta.tool_count === 'number' ? meta.tool_count : undefined,
+    anchors: Array.isArray(meta.anchors)
+      ? meta.anchors.filter((a): a is string => typeof a === 'string')
+      : undefined
+  }
+}
+
+/**
+ * Read session-level mounted-plugin state from a STATUS item's metadata.
+ * Returns:
+ *  - `undefined` when the item carries no `active_plugin` signal (normal status)
+ *  - `null` when the payload is null (explicit `@plugin:off` unmount)
+ *  - the parsed meta when a plugin is mounted
+ */
+function readActivePlugin(it: TurnItemJson): ActivePluginMeta | null | undefined {
+  const meta = it.metadata
+  if (!meta || typeof meta !== 'object' || !('active_plugin' in meta)) return undefined
+  const raw = (meta as Record<string, unknown>).active_plugin
+  if (raw === null || raw === undefined) return null
+  if (typeof raw !== 'object') return undefined
+  const p = raw as Record<string, unknown>
+  const name = p.name
+  if (typeof name !== 'string' || !name) return null
+  return {
+    name,
+    version: typeof p.version === 'string' ? p.version : '',
+    path: typeof p.path === 'string' ? p.path : '',
+    scope: typeof p.scope === 'string' ? p.scope : '',
+    trusted: Boolean(p.trusted),
+    permissions: Array.isArray(p.permissions)
+      ? p.permissions.filter((x): x is string => typeof x === 'string')
+      : [],
+    mcpActive: Boolean(p.mcp_active)
+  }
 }
 
 function isSubagentMailboxItem(it: TurnItemJson): boolean {
@@ -870,7 +918,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       const text = it.summary?.trim()
       if (afterId && text) narrationByReasoningId.set(afterId, text)
     }
+    // Latest mounted-plugin signal across the whole thread (last wins; items
+    // are chronological). null = explicit unmount, undefined = never mounted.
+    let activePlugin: ActivePluginMeta | null | undefined = undefined
     for (const it of detail.items) {
+      const ap = readActivePlugin(it)
+      if (ap !== undefined) activePlugin = ap
       latestTurnId = deriveTurnId(it) ?? latestTurnId
       if (it.kind === 'user_message') {
         latestUserMessageId = it.id
@@ -888,22 +941,20 @@ export class DeepseekRuntimeProvider implements AgentProvider {
           ...(modelLabel ? { modelLabel } : {})
         })
       } else if (it.kind === 'agent_message') {
+        // Route purely on persisted metadata: the runtime tags every
+        // agent_message with its segment. Untagged legacy items stay in the
+        // process trace; nothing is promoted by position or turn status.
         const text = it.detail ?? it.summary
-        let agentSegment = readAgentSegment(it)
-        if (
-          !agentSegment &&
-          runtimeStatusLooksRunning(latestTurnStatus) &&
-          statusFromString(it.status) !== 'error'
-        ) {
-          agentSegment = 'mid_turn_preface'
-        }
-        if (text.trim()) {
+        const agentSegment = readAgentSegment(it)
+        const processIntent = readProcessIntent(it)
+        if (text.trim() || processIntent) {
           blocks.push({
             kind: 'assistant',
             id: it.id,
             createdAt: itemCreatedAt(it),
             text,
-            ...(agentSegment ? { agentSegment } : {})
+            ...(agentSegment ? { agentSegment } : {}),
+            ...(processIntent ? { processIntent } : {})
           })
         }
       } else if (it.kind === 'agent_reasoning') {
@@ -976,7 +1027,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       latestSeq: detail.latest_seq ?? 0,
       threadStatus: detail.thread.status ?? latestTurnStatus,
       latestTurnId,
-      latestUserMessageId
+      latestUserMessageId,
+      ...(activePlugin !== undefined ? { activePlugin } : {})
     }
   }
 
@@ -1326,6 +1378,13 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   if (afterId && text) sink.onPhaseNarration(afterId, text)
                   return
                 }
+                // Plugin mount/unmount rides on a STATUS item's metadata; surface
+                // it as session state (composer chip) in addition to the status
+                // transcript line below. Does not return: the note still renders.
+                if (it && it.kind === 'status' && sink.onActivePluginChange) {
+                  const ap = readActivePlugin(it)
+                  if (ap !== undefined) sink.onActivePluginChange(ap)
+                }
                 if (
                   it &&
                   (it.kind === 'status' || it.kind === 'context_compaction') &&
@@ -1363,7 +1422,13 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   (it.kind === 'agent_reasoning' || it.kind === 'agent_message') &&
                   sink.onLiveSegmentComplete
                 ) {
-                  sink.onLiveSegmentComplete(it.kind, it.id, itemCreatedAt(it))
+                  sink.onLiveSegmentComplete(
+                    it.kind,
+                    it.id,
+                    itemCreatedAt(it),
+                    (it.detail ?? it.summary ?? '').trim(),
+                    readProcessIntent(it)
+                  )
                   return
                 }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {

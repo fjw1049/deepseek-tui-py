@@ -1,5 +1,6 @@
 import type {
   AgentProviderId,
+  ActivePluginMeta,
   ChatBlock,
   NormalizedThread,
   RuntimeConnectionStatus,
@@ -94,12 +95,15 @@ export type ChatState = {
   sidebarSearchQuery: string
   chatsCollapsed: boolean
   scrollToBlockId: string | null
+  /** Session-level mounted plugin (drives the composer chip). null = none. */
+  activePlugin: ActivePluginMeta | null
   usageRefreshKey: number
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void
   loadComposerModels: () => Promise<void>
   setRoute: (r: AppRoute) => void
+  setActivePlugin: (plugin: ActivePluginMeta | null) => void
   openCode: () => Promise<void>
   openSettings: (section?: SettingsRouteSection) => void
   openPlugins: (host?: PluginHostRoute) => void

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   NormalizedThread,
+  ProcessIntentMeta,
   SubagentMailboxPayload,
   ThreadDeltaEvent,
   ThreadEventSink,
@@ -184,15 +185,25 @@ function appendLiveReasoningBlock(
   const sanitized = sanitizeReasoningPlaceholders(text)
   if (!sanitized) return blocks
   const now = Date.now()
-  return [
-    ...blocks,
-    {
-      kind: 'reasoning' as const,
-      id: itemId ?? `r-${now}`,
-      createdAt: createdAt ?? new Date(now).toISOString(),
-      text: sanitized
-    }
-  ]
+  const nextBlock = {
+    kind: 'reasoning' as const,
+    id: itemId ?? `r-${now}`,
+    createdAt: createdAt ?? new Date(now).toISOString(),
+    text: sanitized
+  }
+  const existingIndex = blocks.findIndex(
+    (block) => block.kind === 'reasoning' && block.id === nextBlock.id
+  )
+  if (existingIndex < 0) return [...blocks, nextBlock]
+  const existing = blocks[existingIndex]
+  if (existing.kind !== 'reasoning') return blocks
+  const next = [...blocks]
+  next[existingIndex] = {
+    ...existing,
+    ...nextBlock,
+    narration: existing.narration
+  }
+  return next
 }
 
 function appendLiveAssistantBlock(
@@ -200,20 +211,28 @@ function appendLiveAssistantBlock(
   text: string,
   itemId?: string,
   createdAt?: string,
-  agentSegment?: 'mid_turn_preface' | 'final_answer'
+  agentSegment?: 'mid_turn_preface' | 'final_answer',
+  processIntent?: ProcessIntentMeta
 ): ChatBlock[] {
-  if (!text.trim()) return blocks
+  // A text-less block is still meaningful when it carries a structured
+  // narration frame (neutral progress state, possibly worded later).
+  if (!text.trim() && !processIntent) return blocks
   const now = Date.now()
-  return [
-    ...blocks,
-    {
-      kind: 'assistant' as const,
-      id: itemId ?? `a-${now}`,
-      createdAt: createdAt ?? new Date(now).toISOString(),
-      text,
-      ...(agentSegment ? { agentSegment } : {})
-    }
-  ]
+  const nextBlock = {
+    kind: 'assistant' as const,
+    id: itemId ?? `a-${now}`,
+    createdAt: createdAt ?? new Date(now).toISOString(),
+    text,
+    ...(agentSegment ? { agentSegment } : {}),
+    ...(processIntent ? { processIntent } : {})
+  }
+  const existingIndex = itemId ? blocks.findIndex((block) => block.id === itemId) : -1
+  if (existingIndex < 0) return [...blocks, nextBlock]
+  const existing = blocks[existingIndex]
+  if (existing.kind !== 'assistant') return blocks
+  const next = [...blocks]
+  next[existingIndex] = { ...existing, ...nextBlock }
+  return next
 }
 
 function clearTurnCompletionProbe(): void {
@@ -873,6 +892,7 @@ function buildThreadEventSink(
           ]
         }
       }),
+    onActivePluginChange: (plugin) => set({ activePlugin: plugin }),
     onSubagentMailbox: (ev: SubagentMailboxPayload) => {
       const mailboxStatus = ev.message.status
       if (mailboxStatus === 'running' || mailboxStatus === 'pending') {
@@ -929,7 +949,7 @@ function buildThreadEventSink(
         }
       })
     },
-    onLiveSegmentComplete: (kind, itemId, createdAt) => {
+    onLiveSegmentComplete: (kind, itemId, createdAt, text, processIntent) => {
       resetBusyRecoveryAttempts()
       set((s) => {
         if (kind === 'agent_reasoning' && s.liveReasoning.trim()) {
@@ -938,18 +958,20 @@ function buildThreadEventSink(
             liveReasoning: ''
           }
         }
-        if (kind === 'agent_message' && s.liveAssistant.trim()) {
+        if (kind === 'agent_message' && (text?.trim() || s.liveAssistant.trim() || processIntent)) {
           // Any agent_message reaching here is a mid-turn preface (final answers
           // route through onFinalAnswer). Persist it inline so it renders above
           // its tool batch in real time. Use the real itemId so the server-side
-          // copy replaces it cleanly on reload.
+          // copy replaces it cleanly on reload, and so the narration service's
+          // later wording upserts the same block.
           return {
             blocks: appendLiveAssistantBlock(
               s.blocks,
-              s.liveAssistant,
+              text?.trim() || s.liveAssistant,
               itemId,
               createdAt,
-              'mid_turn_preface'
+              'mid_turn_preface',
+              processIntent
             ),
             liveAssistant: ''
           }
@@ -962,6 +984,7 @@ function buildThreadEventSink(
       resetBusyRecoveryAttempts()
       set((s) => ({
         blocks: upsertFinalAnswerBlock(s.blocks, itemId, text, createdAt),
+        liveReasoning: '',
         liveAssistant: ''
       }))
       scheduleTurnCompletionProbe(get, sink)
@@ -974,32 +997,23 @@ function buildThreadEventSink(
           (block) => block.kind === 'reasoning' && block.id === reasoningItemId
         )
         if (!hasBlock) {
-          // The narration is the "承上启下" intro for the batch of tools this
-          // phase runs. It arrives from a phase_bridge event that the backend
-          // emits at phase *close*, so by now the phase's tool rows may have
-          // already streamed in and been appended. Appending the narration at
-          // the end would render it *below* its own tools. Instead, insert it
-          // just before the trailing run of tool/workflow blocks so the line
-          // always sits above the tools it introduces.
-          const narrationBlock = {
-            kind: 'reasoning' as const,
-            id: reasoningItemId,
-            createdAt: new Date().toISOString(),
-            text: '',
-            narration: trimmed
+          // Phase narration is a retrospective milestone. If its reasoning
+          // segment has not arrived yet (SSE reconnect / batching race), keep
+          // a stable placeholder at the current tail instead of guessing which
+          // trailing tools it belongs before. The later segment upserts this
+          // same id and preserves the narration.
+          return {
+            blocks: [
+              ...s.blocks,
+              {
+                kind: 'reasoning' as const,
+                id: reasoningItemId,
+                createdAt: new Date().toISOString(),
+                text: '',
+                narration: trimmed
+              }
+            ]
           }
-          let insertAt = s.blocks.length
-          while (insertAt > 0) {
-            const prev = s.blocks[insertAt - 1]
-            if (prev.kind === 'tool' || prev.kind === 'workflow') {
-              insertAt -= 1
-              continue
-            }
-            break
-          }
-          const blocks = s.blocks.slice()
-          blocks.splice(insertAt, 0, narrationBlock)
-          return { blocks }
         }
         return {
           blocks: s.blocks.map((block) =>
@@ -1113,6 +1127,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sidebarSearchQuery: '',
   chatsCollapsed: false,
   scrollToBlockId: null,
+  activePlugin: null,
   usageRefreshKey: 0,
 
   ...createAppActions({
@@ -1565,7 +1580,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         latestSeq,
         threadStatus,
         latestTurnId,
-        latestUserMessageId
+        latestUserMessageId,
+        activePlugin: loadedPlugin
       } = await p.getThreadDetail(activeThreadId)
       const blocks = hydrateBlockModelLabels(activeThreadId, rawBlocks)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
@@ -1583,6 +1599,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         liveAssistant: '',
         error: busy ? i18n.t('common:runtimeStreamRecovering') : null,
         busy,
+        activePlugin: loadedPlugin ?? null,
         currentTurnId,
         currentTurnUserId,
         queuedMessages: s.queuedMessages,
@@ -1682,7 +1699,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         latestSeq,
         threadStatus,
         latestTurnId,
-        latestUserMessageId
+        latestUserMessageId,
+        activePlugin: loadedPlugin
       } = await p.getThreadDetail(id)
       const blocks = hydrateBlockModelLabels(id, rawBlocks)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
@@ -1704,6 +1722,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         liveAssistant: '',
         error: null,
         busy,
+        activePlugin: loadedPlugin ?? null,
         currentTurnId: busy ? latestTurnId ?? null : null,
         currentTurnUserId,
         turnStartedAtByUserId: {},
@@ -2231,6 +2250,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearScrollTarget: () => set({ scrollToBlockId: null }),
+
+  setActivePlugin: (plugin) => set({ activePlugin: plugin }),
 
   compactActiveThread: async () => {
     const threadId = get().activeThreadId

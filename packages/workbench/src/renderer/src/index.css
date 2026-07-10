@@ -633,6 +633,58 @@ samp {
   }
 }
 
+/* Live thinking preview: fixed-height refreshing window. Newest tokens stay
+   visible at the bottom; older text dissolves under a top fade mask so the
+   stream never grows into a wall of reasoning. */
+.ds-live-thinking-viewport {
+  max-height: 5.75rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 18%,
+    #000 38%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 18%,
+    #000 38%
+  );
+}
+
+.ds-live-thinking-caret {
+  display: inline-block;
+  width: 0.42em;
+  height: 0.95em;
+  margin-left: 0.12em;
+  vertical-align: -0.12em;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--ds-text-muted) 55%, transparent);
+  animation: ds-live-thinking-caret 1.05s ease-in-out infinite;
+}
+
+@keyframes ds-live-thinking-caret {
+  0%,
+  45% {
+    opacity: 0.7;
+  }
+  55%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-live-thinking-caret {
+    animation: none;
+    opacity: 0.45;
+  }
+}
+
 /* Work-process entry detail cards inside the lighter OpenBridge-style sections. */
 .ds-work-timeline-detail {
   margin-top: 0.35rem;

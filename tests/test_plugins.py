@@ -553,6 +553,63 @@ async def test_engine_create_loads_plugin_components(tmp_path, monkeypatch) -> N
         await engine.shutdown_session()
 
 
+async def test_load_skill_resolves_plugin_skill_via_engine_registry(
+    tmp_path, monkeypatch
+) -> None:
+    """load_skill resolves plugin skills by name via the engine's merged
+    registry exposed in tool_context.metadata.
+
+    Regression: plugin skills are merged into engine.skill_registry in
+    Engine.create (and listed in the system prompt), but load_skill used to
+    re-discover via discover_in_workspace - which does NOT merge plugin
+    contributions - so load_skill(name=...) returned 'not found' for any
+    plugin skill. The engine now exposes its registry in metadata and
+    load_skill prefers it.
+    """
+    from unittest.mock import AsyncMock
+    import pytest
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(plugins_dir, "demo", with_hook=False, with_mcp=False)
+    set_plugin_trusted("demo", True, plugins_dir)
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+    from deepseek_tui.tools.knowledge import SkillLoadTool
+    from deepseek_tui.tools.registry import ToolContext, ToolError
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        # The engine exposes its merged registry (incl. the plugin skill) in
+        # tool_context.metadata, which is what load_skill reads.
+        reg = engine.tool_context.metadata.get("skill_registry")
+        assert reg is not None
+        assert reg.get("demo-skill") is not None
+
+        tool = SkillLoadTool()
+        # load_skill(name=...) now resolves the plugin skill (previously
+        # 'not found' because discover_in_workspace skips plugin skills).
+        result = await tool.execute({"name": "demo-skill"}, engine.tool_context)
+        assert result.success
+        assert result.content  # the SKILL.md body
+
+        # Engine-less context (no metadata) falls back to discover_in_workspace,
+        # which does NOT include plugin skills -> the plugin skill is
+        # unreachable. This proves the metadata path is what fixes it.
+        bare_ctx = ToolContext(working_directory=workspace)
+        with pytest.raises(ToolError):
+            await tool.execute({"name": "demo-skill"}, bare_ctx)
+    finally:
+        await engine.shutdown_session()
+
+
 # ── @plugin:name mount (session-level focus) ──────────────────────────────
 
 
@@ -652,5 +709,293 @@ async def test_active_plugin_whitelist_write_permission(tmp_path, monkeypatch) -
         # clearing restores full toolset (None sentinel)
         engine.set_active_plugin("off")
         assert engine._active_plugin_whitelist() is None
+    finally:
+        await engine.shutdown_session()
+
+
+# ── Trust gate + plugin_context prompt block + restore ───────────────────
+
+
+async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
+    tmp_path, monkeypatch
+) -> None:
+    """The explicit ``if plugin.trusted`` gate in _active_plugin_whitelist
+    excludes MCP tool names even if collect_contributions were to return
+    servers for an untrusted plugin (defense in depth vs future refactors)."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(plugins_dir, "mcp-plugin", with_hook=False)  # has MCP, untrusted
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+    from deepseek_tui.integrations import plugins as plugin_mod
+    from deepseek_tui.integrations.plugins import PluginContributions
+    from deepseek_tui.mcp.config import McpServerConfig
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        engine.set_active_plugin("mcp-plugin")
+        assert engine._active_plugin is not None
+        assert not engine._active_plugin.trusted  # sanity: untrusted
+
+        # Bypass collect_contributions's own trust gating: return a server
+        # anyway, and stub _server_tool_names, to prove the explicit gate in
+        # _active_plugin_whitelist is what blocks the name (not the absence of
+        # contributed servers).
+        fake_contribs = PluginContributions(
+            mcp_servers=[McpServerConfig(name="mcp-plugin-srv", command="cat")]
+        )
+        monkeypatch.setattr(
+            plugin_mod, "collect_contributions", lambda *a, **k: fake_contribs
+        )
+        engine._server_tool_names = lambda server: frozenset(  # type: ignore[assignment]
+            {"mcp_mcp-plugin-srv__do"}
+        )
+
+        wl = engine._active_plugin_whitelist()
+        assert wl is not None
+        assert "mcp_mcp-plugin-srv__do" not in wl  # gate blocked (untrusted)
+
+        # Trust + re-mount -> gate allows the name through.
+        set_plugin_trusted("mcp-plugin", True, plugins_dir)
+        engine.set_active_plugin("mcp-plugin")
+        wl2 = engine._active_plugin_whitelist()
+        assert wl2 is not None
+        assert "mcp_mcp-plugin-srv__do" in wl2
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_render_plugin_context_block_includes_path_and_read_grant(
+    tmp_path, monkeypatch
+) -> None:
+    """The ## Active Plugin block tells the model the plugin directory and
+    that reads under it are permitted (paired with extra_read_roots)."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(
+        plugins_dir,
+        "ro",
+        with_mcp=False,
+        with_hook=False,
+        extra_manifest={"permissions": ["read"]},
+    )
+    set_plugin_trusted("ro", True, plugins_dir)
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        engine.set_active_plugin("ro")
+        block = engine._render_plugin_context()
+        assert block is not None
+        assert "## Active Plugin" in block
+        assert 'plugin "ro"' in block
+        # The resolved plugin directory path is communicated to the model.
+        assert str((plugins_dir / "ro").resolve()) in block
+        # The read grant is stated explicitly (overrides path-escape rule).
+        assert "read_file / list_dir / grep" in block
+        assert "OVERRIDES the path-escape rule" in block
+        assert "Declared permissions: read" in block
+        # No MCP -> no inactive-MCP note.
+        assert "MCP servers from this plugin are NOT active" not in block
+
+        # Unmount -> no block.
+        engine.set_active_plugin("off")
+        assert engine._render_plugin_context() is None
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_render_plugin_context_notes_inactive_mcp_when_untrusted(
+    tmp_path, monkeypatch
+) -> None:
+    """An untrusted plugin with MCP gets a 'MCP NOT active' line in the block."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(plugins_dir, "mcp-untrusted", with_hook=False)  # has MCP, untrusted
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        engine.set_active_plugin("mcp-untrusted")
+        block = engine._render_plugin_context()
+        assert block is not None
+        assert "MCP servers from this plugin are NOT active (plugin not trusted)" in block
+    finally:
+        await engine.shutdown_session()
+
+
+def test_plugin_mount_info_roundtrip() -> None:
+    """PluginMountInfo survives a to_metadata -> from_metadata round-trip;
+    an unmounted sentinel (name=None) serializes to null."""
+    from deepseek_tui.server.phase_bridge import PluginMountInfo
+
+    info = PluginMountInfo(
+        name="p",
+        version="1.2.3",
+        path="/abs/p",
+        scope="user",
+        trusted=True,
+        permissions=("read", "network"),
+        mcp_active=True,
+    )
+    raw = info.to_metadata()
+    assert raw == {
+        "name": "p",
+        "version": "1.2.3",
+        "path": "/abs/p",
+        "scope": "user",
+        "trusted": True,
+        "permissions": ["read", "network"],
+        "mcp_active": True,
+    }
+    assert PluginMountInfo.from_metadata(raw) == info
+    # Unmount sentinel -> null payload; from_metadata(None) is no-signal.
+    assert PluginMountInfo(name=None).to_metadata() is None
+    assert PluginMountInfo.from_metadata(None) is None
+    assert PluginMountInfo.from_metadata("not a dict") is None
+
+
+async def test_restore_active_plugin_from_persisted_items(
+    tmp_path, monkeypatch
+) -> None:
+    """_restore_active_plugin re-mounts the latest plugin from persisted
+    STATUS items, and respects a later @plugin:off (null marker)."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(
+        plugins_dir,
+        "restorable",
+        with_hook=False,
+        with_mcp=False,
+        extra_manifest={"permissions": ["read"]},
+    )
+    set_plugin_trusted("restorable", True, plugins_dir)
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+    from deepseek_tui.server.phase_bridge import (
+        ACTIVE_PLUGIN_METADATA_KEY,
+        PluginMountInfo,
+    )
+    from deepseek_tui.server.threads.manager import RuntimeThreadManager
+    from deepseek_tui.server.threads.models import (
+        RuntimeTurnStatus,
+        ThreadRecord,
+        TurnItemKind,
+        TurnItemLifecycleStatus,
+        TurnItemRecord,
+        TurnRecord,
+    )
+    from deepseek_tui.server.threads.store import RuntimeThreadStore
+
+    store = RuntimeThreadStore(tmp_path / "store")
+    now = datetime.now(timezone.utc)
+    thread = ThreadRecord(
+        id="t1", created_at=now, updated_at=now, model="m", workspace=str(tmp_path)
+    )
+    store.save_thread(thread)
+    turn = TurnRecord(
+        id="turn1",
+        thread_id="t1",
+        status=RuntimeTurnStatus.COMPLETED,
+        input_summary="mount",
+        created_at=now,
+    )
+    store.save_turn(turn)
+    info = PluginMountInfo(
+        name="restorable",
+        version="1.2.3",
+        path=str(plugins_dir / "restorable"),
+        scope="user",
+        trusted=True,
+        permissions=("read",),
+        mcp_active=False,
+    )
+    mount_item = TurnItemRecord(
+        id="i1",
+        turn_id="turn1",
+        kind=TurnItemKind.STATUS,
+        status=TurnItemLifecycleStatus.COMPLETED,
+        summary="mounted",
+        detail="mounted",
+        started_at=now,
+        ended_at=now,
+        metadata={ACTIVE_PLUGIN_METADATA_KEY: info.to_metadata()},
+    )
+    store.save_item(mount_item)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    stub = SimpleNamespace(store=store)
+    try:
+        assert engine._active_plugin is None
+        RuntimeThreadManager._restore_active_plugin(stub, engine, thread)
+        assert engine._active_plugin is not None
+        assert engine._active_plugin.name == "restorable"
+
+        # A later @plugin:off (null marker) must win -> restore stays unmounted.
+        later = datetime.now(timezone.utc)
+        turn2 = TurnRecord(
+            id="turn2",
+            thread_id="t1",
+            status=RuntimeTurnStatus.COMPLETED,
+            input_summary="off",
+            created_at=later,
+        )
+        store.save_turn(turn2)
+        unmount_item = TurnItemRecord(
+            id="i2",
+            turn_id="turn2",
+            kind=TurnItemKind.STATUS,
+            status=TurnItemLifecycleStatus.COMPLETED,
+            summary="unmounted",
+            detail="off",
+            started_at=later,
+            ended_at=later,
+            metadata={ACTIVE_PLUGIN_METADATA_KEY: None},
+        )
+        store.save_item(unmount_item)
+        engine.set_active_plugin("off")
+        assert engine._active_plugin is None
+        RuntimeThreadManager._restore_active_plugin(stub, engine, thread)
+        assert engine._active_plugin is None  # latest signal was unmount
     finally:
         await engine.shutdown_session()

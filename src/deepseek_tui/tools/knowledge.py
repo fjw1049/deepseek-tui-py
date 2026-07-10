@@ -241,7 +241,15 @@ class SkillLoadTool(ToolSpec):
             skills_directories,
         )
 
-        registry = discover_in_workspace(workspace=context.working_directory)
+        # Prefer the engine's merged skill registry (workspace + plugin
+        # skills) when the tool runs inside an engine; fall back to a fresh
+        # workspace discovery for engine-less contexts (tests, standalone).
+        # Without this, plugin skills - which are merged into the engine
+        # registry in Engine.create but not by discover_in_workspace - would
+        # be unreachable by name despite being listed in the system prompt.
+        registry = context.metadata.get("skill_registry") or discover_in_workspace(
+            workspace=context.working_directory
+        )
         skill = registry.get(name)
         if skill is None:
             available = registry.list_names()

@@ -18,7 +18,8 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.server.agent_segments import AGENT_SEGMENT_KEY, FINAL_ANSWER, MID_TURN_PREFACE
+from deepseek_tui.server.agent_segments import AGENT_SEGMENT_KEY, MID_TURN_PREFACE
+from deepseek_tui.server.phase_bridge import PROCESS_INTENT_METADATA_KEY
 from deepseek_tui.server.threads import (
     CreateThreadRequest,
     RuntimeTurnStatus,
@@ -91,18 +92,16 @@ async def test_monitor_turn_segments_preface_and_terminal_reasoning(runtime_app:
     items = [manager.store.load_item(item_id) for item_id in turn.item_ids]
     messages = [item for item in items if item.kind == TurnItemKind.AGENT_MESSAGE]
 
-    assert len(messages) == 2
-    preface = next(
-        item
-        for item in messages
-        if isinstance(item.metadata, dict)
-        and item.metadata.get(AGENT_SEGMENT_KEY) == MID_TURN_PREFACE
-    )
-    final = next(
-        item
-        for item in messages
-        if isinstance(item.metadata, dict)
-        and item.metadata.get(AGENT_SEGMENT_KEY) == FINAL_ANSWER
-    )
+    # The pre-tool preface is passed through verbatim and tagged with a
+    # structured narration frame. Raw reasoning is never promoted to a final
+    # answer: with no reachable model for recovery, no final message exists.
+    assert len(messages) == 1
+    preface = messages[0]
+    assert isinstance(preface.metadata, dict)
+    assert preface.metadata.get(AGENT_SEGMENT_KEY) == MID_TURN_PREFACE
     assert preface.detail == "开始探索代码库结构。"
-    assert "最终分析报告" in (final.detail or "")
+    intent = preface.metadata.get(PROCESS_INTENT_METADATA_KEY)
+    assert isinstance(intent, dict)
+    assert intent["scope"] == "pre_tool"
+    assert intent["source"] == "primary_model"
+    assert intent["anchors"] == ["src"]

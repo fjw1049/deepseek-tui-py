@@ -35,6 +35,7 @@ from deepseek_tui.engine.dispatch import (
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
     ErrorEvent,
+    PluginMountEvent,
     SessionEndedEvent,
     SessionStartedEvent,
     StatusEvent,
@@ -223,6 +224,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             hook_executor if isinstance(hook_executor, HookExecutor) else HookExecutor.disabled()
         )
         self.tool_context.metadata["hook_executor"] = self.hook_executor
+        # Expose the merged skill registry (workspace + plugin skills) so the
+        # ``load_skill`` tool can resolve plugin skills by name. Without this,
+        # load_skill re-discovers via discover_in_workspace which does not
+        # merge plugin contributions, so plugin skills would be unreachable
+        # by name even though they are listed in the system prompt.
+        if skill_registry is not None:
+            self.tool_context.metadata["skill_registry"] = skill_registry
         # Cycle / seam managers — instantiated but disabled by default. The
         # full archive-and-replan logic lives in cycle_manager.py /
         # seam_manager.py; ``Engine`` keeps surface integration minimal:
@@ -370,9 +378,41 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 declared = getattr(skill, "allowed_tools", None)
                 if declared:
                     allowed |= set(declared)
-            for server in contribs.mcp_servers:
-                allowed |= self._server_tool_names(server.name)
+            # Defense in depth: collect_contributions already skips MCP
+            # servers for untrusted plugins (and Engine.create never started
+            # the server, so _server_tool_names would be empty anyway). Gate
+            # explicitly here too so the whitelist invariant - "untrusted ->
+            # no MCP tool names" - holds even if contribution collection is
+            # later refactored to collect servers eagerly.
+            if plugin.trusted:
+                for server in contribs.mcp_servers:
+                    allowed |= self._server_tool_names(server.name)
         return frozenset(allowed)
+
+    def _render_plugin_context(self) -> str | None:
+        """Render the ``## Active Plugin`` system-prompt block.
+
+        Tells the model the plugin directory + that reads under it are
+        permitted, paired with the silent ``extra_read_roots`` grant applied
+        each turn. Without this block the model only sees base.md's
+        path-escape rule and would never read plugin files. Returns ``None``
+        when no plugin is mounted.
+        """
+        plugin = self._active_plugin
+        if plugin is None:
+            return None
+        from deepseek_tui.engine.prompts import render_plugin_context
+
+        has_mcp = bool(plugin.manifest.mcp_servers)
+        return render_plugin_context(
+            name=plugin.name,
+            version=plugin.manifest.version,
+            path=str(plugin.path.expanduser().resolve()),
+            permissions=plugin.manifest.permissions,
+            trusted=plugin.trusted,
+            mcp_active=has_mcp and plugin.trusted,
+            has_mcp=has_mcp,
+        )
 
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
@@ -1001,6 +1041,26 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             )
             raw_content = _strip_plugin_mount(raw_content, plugin_mount)
             await self.handle.emit(StatusEvent(message=f"[plugin] {mount_note}"))
+            # Structured state change for the UI (persistent chip) and for
+            # reload-restore. Only emit on a real transition: unmount always
+            # clears; mount only when the plugin was actually found & applied.
+            mounted = self._active_plugin
+            if plugin_mount == "off":
+                await self.handle.emit(PluginMountEvent(name=None, message=mount_note))
+            elif mounted is not None and mounted.name.lower() == plugin_mount.lower():
+                has_mcp = bool(mounted.manifest.mcp_servers)
+                await self.handle.emit(
+                    PluginMountEvent(
+                        name=mounted.name,
+                        version=mounted.manifest.version,
+                        path=str(mounted.path.expanduser().resolve()),
+                        scope=mounted.scope,
+                        trusted=mounted.trusted,
+                        permissions=mounted.manifest.permissions,
+                        mcp_active=has_mcp and mounted.trusted,
+                        message=mount_note,
+                    )
+                )
         focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
         content_for_prepare = raw_content
         if focus_mcp_ahead is not None:
@@ -1146,6 +1206,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         if focus_mcp is None and self._active_plugin is not None
                         else None
                     )
+                ),
+                plugin_context=(
+                    self._render_plugin_context()
+                    if focus_mcp is None and self._active_plugin is not None
+                    else None
                 ),
                 working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,

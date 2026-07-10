@@ -7,9 +7,6 @@ from deepseek_tui.server.agent_segments import (
     assistant_thinking_text,
     extract_terminal_display_text,
 )
-from deepseek_tui.server.phase_bridge import usable_preface as phase_usable_preface
-
-
 def test_extract_terminal_display_text_prefers_text() -> None:
     text, fallback = extract_terminal_display_text(text="hello", thinking="hidden")
     assert text == "hello"
@@ -38,7 +35,3 @@ def test_assistant_thinking_text_collects_thinking_blocks() -> None:
         ],
     )
     assert assistant_thinking_text(msg) == "plan"
-
-
-def test_usable_preface_accepts_short_explore_preface() -> None:
-    assert phase_usable_preface("开始探索代码库结构。") == "开始探索代码库结构。"

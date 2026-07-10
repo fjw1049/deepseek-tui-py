@@ -162,6 +162,27 @@ class UserInputRequiredEvent:
     questions: list[dict[str, object]]
 
 
+@dataclass(frozen=True, slots=True)
+class PluginMountEvent:
+    """Session-level plugin mount/unmount state change.
+
+    Emitted when the user mounts (``@plugin:<name>``) or unmounts
+    (``@plugin:off``) a plugin. ``name is None`` means unmounted. The server
+    persists the structured fields as turn-item metadata (``active_plugin``)
+    so the UI can render a persistent chip that survives reload; ``message``
+    is the human line shown in the transcript.
+    """
+
+    name: str | None
+    version: str = ""
+    path: str = ""
+    scope: str = ""
+    trusted: bool = False
+    permissions: tuple[str, ...] = ()
+    mcp_active: bool = False
+    message: str = ""
+
+
 
 @dataclass(frozen=True, slots=True)
 class SessionStartedEvent:
@@ -193,6 +214,7 @@ EngineEvent = (
     | WorkflowProgressEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
+    | PluginMountEvent
     | SessionStartedEvent
     | SessionEndedEvent
 )

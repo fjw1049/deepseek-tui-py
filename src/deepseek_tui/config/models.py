@@ -55,14 +55,14 @@ class ProviderConfig(BaseModel):
 
 
 class ProcessNarrationConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     model: str | None = None
     min_chars: int = 80
-    min_interval_s: float = 3.0
+    min_interval_s: float = 60.0
     flash_timeout_s: float = 8.0
     turn_wait_s: float = 6.0
     include_recent_tool_results: int = 3
-    max_per_turn: int = 12
+    max_per_turn: int = 2
 
 
 class UiConfig(BaseModel):
