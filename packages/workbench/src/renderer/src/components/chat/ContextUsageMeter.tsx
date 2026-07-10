@@ -188,16 +188,34 @@ export function ContextUsageMeter({
 
   if (!hasActiveThread || !usage || !effectiveBreakdown) {
     return (
-      <div className="ml-auto shrink-0 text-right text-[12px] text-ds-faint">
-        {t('contextUsageIdle')}
+      <div
+        className="ml-auto flex shrink-0 items-center gap-1.5 text-[12px] text-ds-faint"
+        aria-label={t('contextUsageIdle')}
+        title={t('contextUsageIdle')}
+      >
+        <UsageRing percent={0} tone="idle" />
+        <span>—</span>
       </div>
     )
   }
 
   const tone =
     usage.level === 'critical'
-      ? 'text-rose-600 dark:text-rose-300'
+      ? 'critical'
       : usage.level === 'high'
+        ? 'high'
+        : 'ok'
+
+  const percentLabel = `${Math.round(usage.percent)}%`
+  const detailLabel = t('contextUsageLabel', {
+    used: formatTokenCount(usage.usedTokens),
+    max: formatTokenCount(usage.maxTokens),
+    percent: Math.round(usage.percent)
+  })
+  const toneText =
+    tone === 'critical'
+      ? 'text-rose-600 dark:text-rose-300'
+      : tone === 'high'
         ? 'text-amber-700 dark:text-amber-200'
         : 'text-ds-faint'
 
@@ -289,9 +307,11 @@ export function ContextUsageMeter({
       <button
         ref={buttonRef}
         type="button"
-        className={`text-right text-[12px] font-medium tabular-nums transition hover:text-ds-ink ${tone} ${
+        className={`flex items-center gap-1.5 text-[12px] font-medium tabular-nums transition hover:text-ds-ink ${toneText} ${
           open ? 'text-ds-ink' : ''
         }`}
+        aria-label={detailLabel}
+        title={detailLabel}
         aria-expanded={open}
         aria-haspopup="dialog"
         onMouseDown={(event) => event.stopPropagation()}
@@ -300,13 +320,47 @@ export function ContextUsageMeter({
           setOpen((value) => !value)
         }}
       >
-        {t('contextUsageLabel', {
-          used: formatTokenCount(usage.usedTokens),
-          max: formatTokenCount(usage.maxTokens),
-          percent: Math.round(usage.percent)
-        })}
+        <UsageRing percent={usage.percent} tone={tone} />
+        <span>{percentLabel}</span>
       </button>
       {panel}
     </div>
+  )
+}
+
+const RING_SIZE = 14
+
+function UsageRing({
+  percent,
+  tone
+}: {
+  percent: number
+  tone: 'idle' | 'ok' | 'high' | 'critical'
+}): ReactElement {
+  // Keep a visible wedge even at very low usage so the meter never looks empty/white.
+  const clamped = Math.max(0, Math.min(100, percent))
+  const fillPercent = clamped <= 0 ? 0 : Math.max(clamped, 6)
+
+  const fill =
+    tone === 'critical'
+      ? 'var(--ds-danger)'
+      : tone === 'high'
+        ? '#d97706'
+        : '#8ec5ff'
+  const track = 'var(--ds-accent-soft)'
+
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block shrink-0 rounded-full"
+      style={{
+        width: RING_SIZE,
+        height: RING_SIZE,
+        background:
+          fillPercent <= 0
+            ? track
+            : `conic-gradient(${fill} 0% ${fillPercent}%, ${track} ${fillPercent}% 100%)`
+      }}
+    />
   )
 }
