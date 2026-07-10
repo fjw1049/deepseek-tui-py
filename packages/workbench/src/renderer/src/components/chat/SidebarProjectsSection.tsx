@@ -26,6 +26,7 @@ import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
+import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
 import {
   isChatsWorkspace,
   isClawWorkspacePath,
@@ -813,11 +814,15 @@ export function ThreadRow({
         ) : (
           <span
             className={[
-              'ds-sidebar-thread min-w-0 flex-1 truncate',
+              'ds-sidebar-thread min-w-0 max-w-[90%] flex-1 overflow-hidden whitespace-nowrap',
               showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
             ].join(' ')}
+            title={thread.title}
           >
-            {thread.title}
+            {(() => {
+              const focus = parseUserFocusPrefix(thread.title)
+              return focus ? focus.body || focus.name : thread.title
+            })()}
           </span>
         )}
         {showCompleted ? (
@@ -834,7 +839,7 @@ export function ThreadRow({
           </span>
         )}
       </button>
-      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
+      <div className="flex shrink-0 items-center pr-1">
         <button
           type="button"
           onClick={(event) => {
@@ -854,6 +859,8 @@ export function ThreadRow({
             <Pin className="h-3.5 w-3.5" strokeWidth={1.9} />
           )}
         </button>
+      </div>
+      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
         {canCompact ? (
           <button
             type="button"

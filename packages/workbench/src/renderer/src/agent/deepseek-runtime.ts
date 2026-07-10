@@ -545,6 +545,13 @@ function readActivePlugin(it: TurnItemJson): ActivePluginMeta | null | undefined
   }
 }
 
+/** Plugin mount/unmount STATUS items drive the composer badge only — not the timeline. */
+function isPluginMountStatusItem(it: TurnItemJson): boolean {
+  if (readActivePlugin(it) !== undefined) return true
+  const text = (it.detail ?? it.summary ?? '').trim()
+  return text.startsWith('[plugin]')
+}
+
 function isSubagentMailboxItem(it: TurnItemJson): boolean {
   const meta = it.metadata && typeof it.metadata === 'object' ? it.metadata : undefined
   return it.kind === 'status' && meta?.subagent_mailbox === true
@@ -1018,6 +1025,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         }
       } else if (it.kind === 'status' || it.kind === 'context_compaction') {
         if (isPhaseBridgeItem(it)) continue
+        // Mount/unmount notes are session chrome (footer badge), not chat lines.
+        if (it.kind === 'status' && isPluginMountStatusItem(it)) continue
         const text = it.summary || it.kind
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
       }
@@ -1047,7 +1056,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
   async sendUserMessage(
     threadId: string,
     text: string,
-    options?: { mode?: string; provider?: string; model?: string; uiSubmitAtMs?: number }
+    options?: {
+      mode?: string
+      provider?: string
+      model?: string
+      uiSubmitAtMs?: number
+      /** Skip persisting a user_message item (plugin mount/unmount control). */
+      hidden?: boolean
+    }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }> {
     const settings = await window.dsGui.getSettings()
     const flags = runtimeExecutionFlags(settings)
@@ -1060,6 +1076,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         provider: options?.provider,
         model: options?.model,
         ui_submit_at_ms: options?.uiSubmitAtMs,
+        ...(options?.hidden ? { hidden: true } : {}),
         ...flags
       })
     )
@@ -1378,12 +1395,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   if (afterId && text) sink.onPhaseNarration(afterId, text)
                   return
                 }
-                // Plugin mount/unmount rides on a STATUS item's metadata; surface
-                // it as session state (composer chip) in addition to the status
-                // transcript line below. Does not return: the note still renders.
+                // Plugin mount/unmount rides on STATUS metadata → composer badge
+                // only. Do not also push a system transcript line.
                 if (it && it.kind === 'status' && sink.onActivePluginChange) {
                   const ap = readActivePlugin(it)
                   if (ap !== undefined) sink.onActivePluginChange(ap)
+                }
+                if (it && it.kind === 'status' && isPluginMountStatusItem(it)) {
+                  return
                 }
                 if (
                   it &&

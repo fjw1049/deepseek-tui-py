@@ -28,6 +28,7 @@ import {
   getDefaultThreadTitle,
   shouldAutoTitleThread
 } from '../lib/thread-title'
+import { isPluginControlOnlyMessage } from '../lib/user-focus-prefix'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
@@ -1777,6 +1778,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providerId } = get()
     const trimmedText = text.trim()
     if (!trimmedText) return false
+    const hidden =
+      overrides?.hidden === true ||
+      overrides?.queued?.hidden === true ||
+      isPluginControlOnlyMessage(trimmedText)
     const displayText =
       overrides?.displayText?.trim() ||
       overrides?.queued?.displayText?.trim() ||
@@ -1790,7 +1795,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (get().busy || hasPendingActiveTurn) {
       const activeThreadId = get().activeThreadId
       const turnId = get().currentTurnId
+      // Plugin control turns must not be steered into an in-flight reply.
       if (
+        !hidden &&
         activeThreadId &&
         turnId &&
         typeof p.steerUserMessage === 'function'
@@ -1845,9 +1852,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(displayText !== trimmedText ? { displayText } : {}),
             ...(mode ? { mode } : {}),
             ...(composerModel ? { model: composerModel } : {}),
-            ...(userModelChip ? { modelLabel: userModelChip } : {})
+            ...(userModelChip ? { modelLabel: userModelChip } : {}),
+            ...(hidden ? { hidden: true } : {})
           }
         ],
+        // Optimistic unmount while waiting for the active turn to finish.
+        ...(hidden && /^@plugin:(off|none)\s*$/i.test(trimmedText)
+          ? { activePlugin: null }
+          : {}),
         error: null
       }))
       // UI/runtime can briefly drift (busy=false while runtime still has an active turn).
@@ -1866,6 +1878,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ? get().threads.find((thread) => thread.id === activeThreadId) ?? null
       : null
     let shouldRenameThreadAfterSend =
+      !hidden &&
       !!activeThreadId &&
       get().blocks.every((block) => block.kind !== 'user') &&
       shouldAutoTitleThread(activeThread)
@@ -1884,27 +1897,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const previousTurnReasoningFirstAtByUserId = get().turnReasoningFirstAtByUserId
     const previousTurnReasoningLastAtByUserId = get().turnReasoningLastAtByUserId
     const previousQueuedMessages = get().queuedMessages
+    const previousActivePlugin = get().activePlugin
     resetBusyRecoveryAttempts()
     set((s) => ({
       busy: true,
-      blocks: [
-        ...s.blocks,
-        {
-          kind: 'user' as const,
-          id: userBlockId,
-          createdAt: new Date(now).toISOString(),
-          text: displayText,
-          ...(userModelChip ? { modelLabel: userModelChip } : {})
-        }
-      ],
+      blocks: hidden
+        ? s.blocks
+        : [
+            ...s.blocks,
+            {
+              kind: 'user' as const,
+              id: userBlockId,
+              createdAt: new Date(now).toISOString(),
+              text: displayText,
+              ...(userModelChip ? { modelLabel: userModelChip } : {})
+            }
+          ],
       liveReasoning: '',
       liveAssistant: '',
       error: null,
-      currentTurnUserId: userBlockId,
-      turnStartedAtByUserId: { ...s.turnStartedAtByUserId, [userBlockId]: now },
+      currentTurnUserId: hidden ? s.currentTurnUserId : userBlockId,
+      turnStartedAtByUserId: hidden
+        ? s.turnStartedAtByUserId
+        : { ...s.turnStartedAtByUserId, [userBlockId]: now },
+      // Optimistic unmount so the footer badge clears immediately.
+      ...(hidden && /^@plugin:(off|none)\s*$/i.test(trimmedText)
+        ? { activePlugin: null }
+        : {}),
       queuedMessages: queued ? s.queuedMessages.filter((message) => message.id !== queued.id) : s.queuedMessages
     }))
-    emitPetEvent({ type: 'user_message' })
+    if (!hidden) emitPetEvent({ type: 'user_message' })
     if (!activeThreadId) {
       try {
         const settings = await window.dsGui.getSettings()
@@ -1920,6 +1942,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             turnReasoningFirstAtByUserId: previousTurnReasoningFirstAtByUserId,
             turnReasoningLastAtByUserId: previousTurnReasoningLastAtByUserId,
             queuedMessages: previousQueuedMessages,
+            activePlugin: previousActivePlugin,
             error: i18n.t('common:workspaceRequiredToCreateThread')
           })
           return false
@@ -1929,7 +1952,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? get().threads.find((thread) => thread.id === reusableThreadId) ?? null
           : null
         shouldRenameThreadAfterSend =
-          reusableThreadId != null && shouldAutoTitleThread(reusableThread)
+          !hidden &&
+          reusableThreadId != null &&
+          shouldAutoTitleThread(reusableThread)
         const createdThread =
           reusableThreadId == null
             ? await p.createThread({
@@ -1975,6 +2000,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           turnReasoningFirstAtByUserId: previousTurnReasoningFirstAtByUserId,
           turnReasoningLastAtByUserId: previousTurnReasoningLastAtByUserId,
           queuedMessages: previousQueuedMessages,
+          activePlugin: previousActivePlugin,
           error: formatRuntimeError(e),
           ...(settingsSectionForRuntimeError(e)
             ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
@@ -2006,16 +2032,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         mode,
         uiSubmitAtMs: now,
         ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
-        ...(selectedModel.modelId ? { model: selectedModel.modelId } : {})
+        ...(selectedModel.modelId ? { model: selectedModel.modelId } : {}),
+        ...(hidden ? { hidden: true } : {})
       })
       set({ activeThreadWarmup: { threadId: activeThreadId, status: 'ready' } })
       // Mirror the composer model selection against the runtime's stable
       // user_message item id so the badge survives page refresh / thread
       // re-selection. The runtime itself doesn't persist per-turn metadata.
-      if (userMessageItemId && userModelChip) {
+      if (!hidden && userMessageItemId && userModelChip) {
         rememberTurnModel(activeThreadId, userMessageItemId, userModelChip)
       }
-      if (userMessageItemId && userMessageItemId !== userBlockId) {
+      if (!hidden && userMessageItemId && userMessageItemId !== userBlockId) {
         set((s) => ({
           blocks: reconcileOptimisticUserBlock(
             s.blocks,
@@ -2094,6 +2121,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           turnReasoningFirstAtByUserId: previousTurnReasoningFirstAtByUserId,
           turnReasoningLastAtByUserId: previousTurnReasoningLastAtByUserId,
           queuedMessages: previousQueuedMessages,
+          activePlugin: previousActivePlugin,
           error: i18n.t('common:runtimeActiveTurn')
         })
         await get().recoverActiveTurn()
@@ -2105,6 +2133,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         busy: false,
         currentTurnId: null,
         queuedMessages: previousQueuedMessages,
+        activePlugin: previousActivePlugin,
         ...(settingsSectionForRuntimeError(e)
           ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})

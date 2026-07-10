@@ -5,6 +5,7 @@
 // Depends on: ChatBlock shape only — no React, no DOM.
 
 import type { ChatBlock } from '../../agent/types'
+import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
 
 /** One tick on the navigation trail — a single query the user sent. */
 export interface QueryTrailItem {
@@ -91,10 +92,12 @@ export function deriveQueryTrailItems(blocks: readonly ChatBlock[]): QueryTrailI
   let currentTurnIndex = -1
   for (const block of blocks) {
     if (block.kind === 'user') {
+      const focus = parseUserFocusPrefix(block.text)
+      const previewSource = focus ? focus.body || focus.name : block.text
       items.push({
         id: block.id,
         ordinal: items.length + 1,
-        preview: normalizePreview(block.text),
+        preview: normalizePreview(previewSource),
         responsePreview: ''
       })
       currentTurnIndex = items.length - 1

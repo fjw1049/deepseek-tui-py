@@ -234,6 +234,7 @@ export function MessageTimeline({
   const endRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
+  const userScrolledAtRef = useRef(0)
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const prependInFlightRef = useRef(false)
   const scrollFrameRef = useRef<number | null>(null)
@@ -2053,7 +2054,7 @@ function ReasoningEntry({
           <span className="ds-shiny-text">{t('thinkingNow')}</span>
         </div>
         <div className="ds-live-thinking-viewport mt-1.5">
-          <p className="whitespace-pre-wrap text-[12.5px] leading-[1.55] text-ds-muted/90">
+          <p className="whitespace-pre-wrap text-[12.5px] leading-[1.55] text-ds-faint/70">
             {preview}
             <span className="ds-live-thinking-caret" aria-hidden />
           </p>
@@ -2069,7 +2070,7 @@ function ReasoningEntry({
         {isLive || processing ? (
           <Bot className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
         ) : null}
-        <p className="text-[13.5px] leading-6 text-ds-muted">{narration}</p>
+        <p className="text-[13.5px] leading-6 text-ds-faint/85">{narration}</p>
       </div>
     )
   }
@@ -2095,7 +2096,7 @@ function ReasoningEntry({
       </button>
       {expanded ? (
         <div className="mt-1 border-l-2 border-ds-border-muted/35 pl-3">
-          <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
+          <div className="ds-markdown text-[13.5px] leading-6 text-ds-faint/80">
             <AssistantMarkdown text={text} streaming={isLive && processing} />
           </div>
         </div>
@@ -2726,7 +2727,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
   }
   if (block.kind === 'reasoning') {
     return (
-      <div id={`block-${block.id}`} className="ds-card-soft rounded-[12px] px-4 py-3 text-[13.5px] leading-6 text-ds-muted">
+      <div id={`block-${block.id}`} className="ds-card-soft rounded-[12px] px-4 py-3 text-[13.5px] leading-6 text-ds-faint/80">
         <div className="ds-markdown">
           <BoundedReasoningMarkdown text={block.text} />
         </div>

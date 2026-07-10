@@ -126,6 +126,7 @@ function fileBadge(name: string): FileBadge {
 type QueuedComposerMessage = {
   id: string
   text: string
+  hidden?: boolean
 }
 
 type Props = {
@@ -221,8 +222,8 @@ export function FloatingComposer({
   const blocks = useChatStore((s) => s.blocks)
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  // Session-level mounted plugin (drives the persistent chip) + send action
-  // used by the chip's unmount (× sends `@plugin:off`).
+  // Session-level mounted plugin (drives the footer badge, like plan mode) +
+  // send action used by the badge's unmount (× sends `@plugin:off` as a hidden turn).
   const activePlugin = useChatStore((s) => s.activePlugin)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -1099,17 +1100,20 @@ export function FloatingComposer({
           </div>
         </div>
       ) : null}
-      {queuedMessages.length > 0 ? (
+      {(() => {
+        const visibleQueued = queuedMessages.filter((message) => !message.hidden)
+        if (visibleQueued.length === 0) return null
+        return (
         <div className="mb-2 rounded-[14px] border border-ds-border bg-ds-card/88 px-4 py-3 shadow-sm backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-[13px] font-medium text-ds-ink">
               <Clock3 className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
-              <span>{t('queuedMessagesTitle', { count: queuedMessages.length })}</span>
+              <span>{t('queuedMessagesTitle', { count: visibleQueued.length })}</span>
             </div>
             <div className="text-[12px] text-ds-muted">{t('queuedMessagesHint')}</div>
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {queuedMessages.map((message, index) => (
+            {visibleQueued.map((message, index) => (
               <div
                 key={message.id}
                 className="flex min-w-0 max-w-full items-center gap-2 rounded-full border border-ds-border-muted bg-ds-main/80 px-3 py-1.5 text-[13px] text-ds-ink"
@@ -1129,7 +1133,8 @@ export function FloatingComposer({
             ))}
           </div>
         </div>
-      ) : null}
+        )
+      })()}
 
       <div className="relative">
         {activeCommand ? (
@@ -1379,69 +1384,6 @@ export function FloatingComposer({
                   className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
                   strokeWidth={2}
                 />
-              </button>
-            </div>
-          ) : null}
-
-          {focusPlugin ? (
-            <div className="flex flex-wrap gap-2 px-1 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setFocusPlugin(null)
-                  focusComposer()
-                }}
-                title={t('composerPluginFocus', { name: focusPlugin })}
-                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(168,85,247,0.4)] bg-[rgba(168,85,247,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#a855f7] transition hover:bg-[rgba(168,85,247,0.22)]"
-              >
-                <Puzzle className="h-3 w-3 shrink-0" strokeWidth={2} />
-                <span className="truncate">{focusPlugin}</span>
-                <X
-                  className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
-                  strokeWidth={2}
-                />
-              </button>
-            </div>
-          ) : null}
-
-          {activePlugin ? (
-            <div className="flex flex-wrap gap-2 px-1 pt-1">
-              <button
-                type="button"
-                title={t('composerPluginMounted', {
-                  name: activePlugin.name,
-                  path: activePlugin.path
-                })}
-                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(168,85,247,0.5)] bg-[rgba(168,85,247,0.18)] px-2.5 py-1 text-[12px] font-semibold text-[#a855f7] transition hover:bg-[rgba(168,85,247,0.26)]"
-              >
-                <Puzzle className="h-3 w-3 shrink-0" strokeWidth={2} />
-                <span className="truncate">{activePlugin.name}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label={t('composerPluginUnmount', { name: activePlugin.name })}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void sendMessage('@plugin:off', undefined, {
-                      displayText: t('composerPluginUnmounted', { name: activePlugin.name })
-                    })
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      void sendMessage('@plugin:off', undefined, {
-                        displayText: t('composerPluginUnmounted', { name: activePlugin.name })
-                      })
-                    }
-                  }}
-                  className="inline-flex items-center"
-                >
-                  <X
-                    className="h-3 w-3 shrink-0 opacity-60 transition group-hover:opacity-100"
-                    strokeWidth={2}
-                  />
-                </span>
               </button>
             </div>
           ) : null}
@@ -1928,6 +1870,53 @@ export function FloatingComposer({
                   aria-hidden
                 />
                 <span>{modeLabel}</span>
+              </div>
+            ) : null}
+
+            {activePlugin || focusPlugin ? (
+              <div
+                className="ds-no-drag group inline-flex h-8 max-w-[min(100%,200px)] shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-[#a855f7]"
+                title={
+                  activePlugin
+                    ? t('composerPluginMounted', { name: activePlugin.name, path: activePlugin.path })
+                    : t('composerPluginFocus', { name: focusPlugin })
+                }
+              >
+                <Puzzle className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+                <span className="truncate">{activePlugin ? activePlugin.name : focusPlugin}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={
+                    activePlugin
+                      ? t('composerPluginUnmount', { name: activePlugin.name })
+                      : t('composerPluginFocus', { name: focusPlugin })
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (activePlugin) {
+                      void sendMessage('@plugin:off')
+                    } else {
+                      setFocusPlugin(null)
+                      focusComposer()
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      if (activePlugin) {
+                        void sendMessage('@plugin:off')
+                      } else {
+                        setFocusPlugin(null)
+                        focusComposer()
+                      }
+                    }
+                  }}
+                  className="inline-flex items-center rounded-sm p-0.5 opacity-50 transition hover:bg-[rgba(168,85,247,0.16)] hover:opacity-100"
+                >
+                  <X className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+                </span>
               </div>
             ) : null}
 

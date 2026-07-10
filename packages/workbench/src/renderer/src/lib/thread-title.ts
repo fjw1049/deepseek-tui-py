@@ -1,5 +1,6 @@
 import type { NormalizedThread } from '../agent/types'
 import i18n from '../i18n'
+import { parseUserFocusPrefix } from './user-focus-prefix'
 
 const LEGACY_PLACEHOLDER_TITLES = new Set(['New Thread', '新会话'])
 const MAX_THREAD_TITLE_LENGTH = 48
@@ -22,10 +23,7 @@ function stripTrailingPunctuation(text: string): string {
 
 function shortenTitle(text: string): string {
   if (text.length <= MAX_THREAD_TITLE_LENGTH) return text
-  const sliced = text.slice(0, MAX_THREAD_TITLE_LENGTH)
-  const lastSpace = sliced.lastIndexOf(' ')
-  const compact = lastSpace >= 18 ? sliced.slice(0, lastSpace) : sliced
-  return `${compact.trim()}...`
+  return text.slice(0, MAX_THREAD_TITLE_LENGTH).trim()
 }
 
 export function getDefaultThreadTitle(): string {
@@ -34,7 +32,11 @@ export function getDefaultThreadTitle(): string {
 
 export function deriveThreadTitleFromPrompt(prompt: string): string {
   const fallback = getDefaultThreadTitle()
-  const lines = prompt
+  // Strip focus prefixes (@plugin:, /skill, @connector) so the sidebar title
+  // shows the user's actual question, not the raw wire command.
+  const focus = parseUserFocusPrefix(prompt)
+  const cleanPrompt = focus ? focus.body || focus.name : prompt
+  const lines = cleanPrompt
     .split(/\r?\n/)
     .filter((line) => !/^\s*(```|~~~)/.test(line))
     .map((line) => normalizeTitleLine(line))

@@ -17,12 +17,18 @@ export type QueuedUserMessage = {
   mode?: string
   model?: string
   modelLabel?: string
+  hidden?: boolean
 }
 
 export type SendMessageOverrides = {
   queued?: QueuedUserMessage
   /** Shown in the timeline; `text` is still sent to the runtime. */
   displayText?: string
+  /**
+   * Skip the optimistic user bubble and ask the runtime not to persist a
+   * user_message item (plugin mount/unmount-only control turns).
+   */
+  hidden?: boolean
 }
 
 export type SettingsRouteSection =

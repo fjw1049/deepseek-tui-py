@@ -159,15 +159,6 @@ export function PluginsView(): ReactElement {
     [refresh, t, workspaceRoot]
   )
 
-  const handleToggle = useCallback(
-    (plugin: PluginRow, enabled: boolean) => {
-      void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}/action`, 'POST', {
-        action: enabled ? 'enable' : 'disable'
-      })
-    },
-    [mutate]
-  )
-
   const handleTrust = useCallback(
     (plugin: PluginRow) => {
       if (!plugin.trusted) {
@@ -338,7 +329,6 @@ export function PluginsView(): ReactElement {
                   key={`${plugin.scope}:${plugin.name}`}
                   plugin={plugin}
                   busy={busyName === plugin.name}
-                  onToggle={(enabled) => handleToggle(plugin, enabled)}
                   onTrust={() => handleTrust(plugin)}
                   onUpdate={() => handleUpdate(plugin)}
                   onRemove={() => handleRemove(plugin)}
@@ -477,14 +467,12 @@ function extractApiError(body: string): string {
 function PluginListRow({
   plugin,
   busy,
-  onToggle,
   onTrust,
   onUpdate,
   onRemove
 }: {
   plugin: PluginRow
   busy: boolean
-  onToggle: (enabled: boolean) => void
   onTrust: () => void
   onUpdate: () => void
   onRemove: () => void
@@ -499,7 +487,7 @@ function PluginListRow({
     onRemove()
   }
   return (
-    <li className={`group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 ${plugin.enabled ? '' : 'opacity-60'}`}>
+    <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
         <Puzzle className="h-4.5 w-4.5" strokeWidth={1.6} />
       </div>
@@ -588,7 +576,6 @@ function PluginListRow({
             </button>
           </>
         )}
-        <PluginToggle checked={plugin.enabled} disabled={busy} onChange={onToggle} />
       </div>
     </li>
   )
@@ -606,35 +593,6 @@ function ScopeBadge({ scope }: { scope: string }): ReactElement {
     <span className="inline-flex items-center rounded-full bg-ds-subtle px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
       {label}
     </span>
-  )
-}
-
-function PluginToggle({
-  checked,
-  disabled,
-  onChange
-}: {
-  checked: boolean
-  disabled?: boolean
-  onChange: (enabled: boolean) => void
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${
-        checked ? 'bg-emerald-500' : 'bg-ds-faint'
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
-          checked ? 'left-6' : 'left-0.5'
-        }`}
-      />
-    </button>
   )
 }
 
