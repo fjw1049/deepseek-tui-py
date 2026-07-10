@@ -115,6 +115,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
         <Row
           title={t('fontScale')}
           description={t('fontScaleDesc')}
+          controlMaxWidth="sm:max-w-[120px]"
           control={
             <SettingsSelect
               value={form.uiFontScale}
@@ -596,11 +597,13 @@ function Card({ children }: { children: ReactNode }): ReactElement {
 function Row({
   title,
   description,
-  control
+  control,
+  controlMaxWidth = 'sm:max-w-[280px]'
 }: {
   title: string
   description?: ReactNode
   control: ReactNode
+  controlMaxWidth?: string
 }): ReactElement {
   return (
     <div className="ds-density-row flex flex-col gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
@@ -612,7 +615,7 @@ function Row({
           </p>
         ) : null}
       </div>
-      <div className="w-full min-w-0 sm:ml-auto sm:max-w-[280px] sm:shrink-0">
+      <div className={`w-full min-w-0 sm:ml-auto ${controlMaxWidth} sm:shrink-0`}>
         <div className="flex w-full justify-end">{control}</div>
       </div>
     </div>

@@ -761,17 +761,15 @@ export function SettingsView(): ReactElement {
                   description={t('logDirDesc')}
                   controlWidth="medium"
                   control={
-                    <div className="flex w-full flex-col items-end gap-2">
+                    <div className="flex w-full flex-col items-end gap-1.5">
                       {logPath ? (
-                        <code
-                          className="block w-full max-w-[280px] truncate rounded-xl bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-muted shadow-sm"
+                        <span
+                          className="block max-w-full truncate font-mono text-[11px] text-ds-faint"
                           title={logPath}
                         >
                           {logPath}
-                        </code>
-                      ) : (
-                        <span className="text-[13px] text-ds-faint">…</span>
-                      )}
+                        </span>
+                      ) : null}
                       <button
                         type="button"
                         className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-center text-[13px] font-medium leading-none text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:opacity-50"
