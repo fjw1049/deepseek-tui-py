@@ -93,7 +93,7 @@ export function SidebarChatsSection({
   }
 
   return (
-    <div className="ds-no-drag mt-2 shrink-0 border-t border-ds-border-muted/20 px-1 pt-2">
+    <div className="ds-sidebar-zone ds-no-drag shrink-0 px-1 pb-2">
       <div className="ds-sidebar-projects-toolbar">
         <button
           type="button"
@@ -124,7 +124,7 @@ export function SidebarChatsSection({
       </div>
 
       {collapsed ? null : (
-      <div className="ds-sidebar-thread-list max-h-[30vh] space-y-0.5 overflow-y-auto px-1.5 pb-1">
+      <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
         {visibleChats.map((thread) => (
           <ThreadRow
             key={thread.id}

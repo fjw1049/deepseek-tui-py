@@ -59,21 +59,9 @@ type SidebarProjectsSectionProps = {
 
 type WorkspaceGroup = [string, NormalizedThread[]]
 
-const PROJECT_ICON_TINTS = [
-  'text-sky-500/85 dark:text-sky-400/85',
-  'text-violet-500/85 dark:text-violet-400/85',
-  'text-emerald-500/85 dark:text-emerald-400/85',
-  'text-amber-500/90 dark:text-amber-400/85',
-  'text-rose-500/85 dark:text-rose-400/85',
-  'text-cyan-500/85 dark:text-cyan-400/85'
-] as const
-
-function workspaceIconTint(path: string): string {
-  let hash = 0
-  for (let i = 0; i < path.length; i += 1) {
-    hash = path.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return PROJECT_ICON_TINTS[Math.abs(hash) % PROJECT_ICON_TINTS.length]
+function workspaceHasActiveThread(list: NormalizedThread[], activeThreadId: string | null): boolean {
+  if (!activeThreadId) return false
+  return list.some((thread) => thread.id === activeThreadId)
 }
 
 function latestWorkspaceActivity(list: NormalizedThread[]): number {
@@ -103,7 +91,6 @@ export function SidebarProjectsSection({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
-  const [searchExpanded, setSearchExpanded] = useState(false)
   const [folderHover, setFolderHover] = useState<{ path: string; anchor: DOMRect } | null>(null)
   const folderHoverTimerRef = useRef<number | null>(null)
   // Folder card self-dismisses after a few seconds of cursor inactivity, same as
@@ -119,7 +106,6 @@ export function SidebarProjectsSection({
   const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
   const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const searchOpen = searchExpanded || searchQuery.trim().length > 0
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
   // The active conversation's task ids come straight from its loaded message
   // blocks, so it can light up even for tasks created before thread_id wiring
@@ -129,11 +115,6 @@ export function SidebarProjectsSection({
     if (!activeThreadId) return false
     return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
   }, [activeThreadId, activeThreadBlocks, activeTaskIds])
-
-  useEffect(() => {
-    if (!searchOpen) return
-    searchInputRef.current?.focus()
-  }, [searchOpen])
 
   useEffect(() => {
     if (!activeThreadId) return
@@ -334,6 +315,8 @@ export function SidebarProjectsSection({
     const workspaceExpanded = expandedWorkspaces[workspacePath] === true
     const hasOverflow = sortedThreads.length > 5
     const visibleThreads = workspaceExpanded ? sortedThreads : sortedThreads.slice(0, 5)
+    const folderHasActive = workspaceHasActiveThread(list, activeThreadId)
+    const folderIconClass = folderHasActive ? 'text-accent' : 'text-ds-muted'
 
     return (
       <div key={workspacePath} className="mb-1">
@@ -372,22 +355,14 @@ export function SidebarProjectsSection({
               <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
             )}
             {isCollapsed ? (
-              <Folder
-                className={`h-4 w-4 shrink-0 ${workspaceIconTint(workspacePath)}`}
-                strokeWidth={1.85}
-                aria-hidden
-              />
+              <Folder className={`h-4 w-4 shrink-0 ${folderIconClass}`} strokeWidth={1.85} aria-hidden />
             ) : (
-              <FolderOpen
-                className={`h-4 w-4 shrink-0 ${workspaceIconTint(workspacePath)}`}
-                strokeWidth={1.85}
-                aria-hidden
-              />
+              <FolderOpen className={`h-4 w-4 shrink-0 ${folderIconClass}`} strokeWidth={1.85} aria-hidden />
             )}
             <span className="ds-sidebar-project-label min-w-0 flex-1 truncate">{folderName}</span>
             <span className="ds-sidebar-project-count">{list.length}</span>
           </button>
-          <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+          <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-40 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
             <button
               type="button"
               onClick={(event) => {
@@ -459,7 +434,7 @@ export function SidebarProjectsSection({
   const noVisible = filteredPinnedThreads.length === 0 && filteredGroups.length === 0
 
   return (
-    <div className="ds-no-drag flex min-h-0 flex-1 flex-col px-1">
+    <div className="ds-no-drag shrink-0 px-1 pt-1">
       {filteredPinnedThreads.length > 0 ? (
         <div className="mb-1">
           <div className="ds-sidebar-projects-toolbar">
@@ -473,54 +448,35 @@ export function SidebarProjectsSection({
         </div>
       ) : null}
 
-      <div className="ds-sidebar-projects-panel flex min-h-0 flex-1 flex-col">
+      <div className="ds-sidebar-projects-panel">
         <div className="ds-sidebar-projects-toolbar">
           <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
-          {searchOpen ? (
-            <label className="relative min-w-0 flex-1">
-              <Search
-                className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
-                strokeWidth={2}
-                aria-hidden
-              />
-              <input
-                ref={searchInputRef}
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                onBlur={() => {
-                  if (!searchQuery.trim()) setSearchExpanded(false)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  event.preventDefault()
-                  if (searchQuery.trim()) {
-                    setSearchQuery('')
-                    return
-                  }
-                  setSearchExpanded(false)
-                  searchInputRef.current?.blur()
-                }}
-                placeholder={t('sidebarSearchProjects')}
-                aria-label={t('sidebarSearchProjects')}
-                className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
-              />
-            </label>
-          ) : (
-            <div className="min-w-0 flex-1" aria-hidden />
-          )}
+          <label className="relative min-w-0 flex-1">
+            <Search
+              className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
+              strokeWidth={2}
+              aria-hidden
+            />
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return
+                event.preventDefault()
+                if (searchQuery.trim()) {
+                  setSearchQuery('')
+                  return
+                }
+                searchInputRef.current?.blur()
+              }}
+              placeholder={t('sidebarSearchProjects')}
+              aria-label={t('sidebarSearchProjects')}
+              className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
+            />
+          </label>
           <div className="flex shrink-0 items-center gap-0.5">
-            {!searchOpen ? (
-              <button
-                type="button"
-                onClick={() => setSearchExpanded(true)}
-                title={t('sidebarSearchProjects')}
-                aria-label={t('sidebarSearchProjects')}
-                className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-              >
-                <Search className="h-3.5 w-3.5" strokeWidth={1.75} />
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={onPickWorkspace}
@@ -532,7 +488,7 @@ export function SidebarProjectsSection({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 pt-1">
+        <div className="px-1.5 pb-2 pt-1">
           {filteredGroups.length > 0 ? (
             <div className="mb-1">{filteredGroups.map(renderWorkspace)}</div>
           ) : null}
@@ -756,7 +712,7 @@ export function ThreadRow({
         renaming
           ? ''
           : active
-            ? 'bg-black/[0.045] text-ds-ink dark:bg-white/[0.055]'
+            ? 'ds-sidebar-thread-row--active'
             : 'hover:bg-ds-hover/40 dark:hover:bg-white/[0.03]'
       }`}
     >
@@ -814,7 +770,7 @@ export function ThreadRow({
         ) : (
           <span
             className={[
-              'ds-sidebar-thread min-w-0 max-w-[90%] flex-1 overflow-hidden whitespace-nowrap',
+              'ds-sidebar-thread min-w-0 flex-1 truncate',
               showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
             ].join(' ')}
             title={thread.title}
