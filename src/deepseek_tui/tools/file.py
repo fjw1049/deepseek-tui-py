@@ -185,7 +185,11 @@ class ListDirTool(ToolSpec):
 
         raw_path = input_data.get("path")
         path_str = raw_path if isinstance(raw_path, str) and raw_path.strip() else "."
-        path = context.resolve_path(path_str)
+        # READ_ONLY tool: pass allow_read_roots=True so a mounted plugin's
+        # own directory (granted via ToolContext.extra_read_roots) is listable
+        # just like read_file/grep_files. Without this, list_dir on the plugin
+        # dir is rejected as "path escapes workspace" even when mounted.
+        path = context.resolve_path(path_str, allow_read_roots=True)
         entries = await _list_dir_structured(path)
         payload = json.dumps(entries, ensure_ascii=False, indent=2)
         return ToolResult(

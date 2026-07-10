@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
 
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.file import ReadFileTool
+from deepseek_tui.tools.file import ListDirTool, ReadFileTool
 
 
 @pytest.mark.asyncio
@@ -102,7 +103,7 @@ def test_resolve_path_write_still_confined_to_workspace(tmp_path) -> None:
 
 
 def test_resolve_path_default_context_unchanged(tmp_path) -> None:
-    """Regression: with no extra_read_roots, behavior is exactly as before —
+    """Regression: with no extra_read_roots, behavior is exactly as before -
     inside-workspace ok, outside raises regardless of allow_read_roots."""
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -115,3 +116,34 @@ def test_resolve_path_default_context_unchanged(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="escapes workspace"):
         ctx.resolve_path(str(outside), allow_read_roots=True)
+
+
+@pytest.mark.asyncio
+async def test_list_dir_honors_extra_read_roots(tmp_path) -> None:
+    """list_dir is READ_ONLY and must honor extra_read_roots (e.g. a mounted
+    plugin's own dir), like read_file/grep_files. Regression: list_dir used to
+    call resolve_path without allow_read_roots=True, so listing a mounted
+    plugin's directory was rejected as 'path escapes workspace' even though
+    read_file on the same dir worked - forcing the model to fall back to
+    exec_shell."""
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plugin_root = tmp_path / "plugin" / "demo"
+    (plugin_root / "skills").mkdir(parents=True)
+    (plugin_root / "skills" / "SKILL.md").write_text("x", encoding="utf-8")
+    (plugin_root / "plugin.json").write_text("{}", encoding="utf-8")
+
+    ctx = ToolContext(working_directory=workspace, extra_read_roots=(plugin_root.resolve(),))
+
+    # Listing the plugin dir (outside workspace) now succeeds via the grant.
+    result = await ListDirTool().execute({"path": str(plugin_root)}, ctx)
+    assert result.success
+    names = {e["name"] for e in json.loads(result.content)}
+    assert "plugin.json" in names and "skills" in names
+
+    # Without the grant (default context), list_dir on the plugin dir is
+    # still rejected - the grant is opt-in per context, not global.
+    bare_ctx = ToolContext(working_directory=workspace)
+    with pytest.raises(Exception, match="escapes workspace"):
+        await ListDirTool().execute({"path": str(plugin_root)}, bare_ctx)
