@@ -4,7 +4,7 @@ import { AlertCircle, GitCommitHorizontal, Loader2, RefreshCw, X } from 'lucide-
 import { useTranslation } from 'react-i18next'
 import type { GitLogCommit, GitLogResult } from '@shared/git-log'
 import { computeGitGraphLayout, GIT_GRAPH_ROW_HEIGHT } from '../../lib/git-graph-layout'
-import { GitGraphRowSvg } from './GitGraphRowSvg'
+import { GitGraphSvg } from './GitGraphSvg'
 
 type Props = {
   workspaceRoot: string
@@ -191,72 +191,70 @@ export function GitLogDialog({
               {t('gitLogEmpty')}
             </div>
           ) : log && graphLayout ? (
-            <ul className="py-1">
-              {log.commits.map((commit, index) => {
-                const tags = commitTags(commit, log)
-                const isHead = commit.hash === log.headHash
-                const isUpstream = log.upstream?.hash === commit.hash
-                const graphRow = graphLayout.rows[index]
-                return (
-                  <li
-                    key={commit.hash}
-                    className={`grid h-9 items-center gap-x-3 border-b border-ds-border-muted/55 px-4 ${
-                      isHead ? 'bg-accent/[0.05]' : index % 2 === 1 ? 'bg-ds-subtle/30' : ''
-                    }`}
-                    style={{
-                      gridTemplateColumns: `${graphWidth}px minmax(0,1fr) 88px 80px 64px`,
-                      minHeight: GIT_GRAPH_ROW_HEIGHT
-                    }}
-                  >
-                    <div className="flex h-full items-center justify-center self-stretch">
-                      {graphRow ? (
-                        <GitGraphRowSvg
-                          row={index}
-                          lane={graphRow.lane}
-                          colorIndex={graphRow.colorIndex}
-                          layout={graphLayout}
-                          isHead={isHead}
-                          isUpstream={isUpstream}
-                        />
-                      ) : null}
-                    </div>
+            <div className="relative py-1">
+              <div className="pointer-events-none absolute left-4 top-1" aria-hidden>
+                <GitGraphSvg layout={graphLayout} headHash={log.headHash} />
+              </div>
+              <ul>
+                {log.commits.map((commit, index) => {
+                  const tags = commitTags(commit, log)
+                  const isHead = commit.hash === log.headHash
+                  const isMainline = graphLayout.rows[index]?.isMainline ?? true
+                  return (
+                    <li
+                      key={commit.hash}
+                      className={`grid h-9 items-center gap-x-3 border-b border-ds-border-muted/55 px-4 ${
+                        isHead ? 'bg-accent/[0.05]' : index % 2 === 1 ? 'bg-ds-subtle/30' : ''
+                      }`}
+                      style={{
+                        gridTemplateColumns: `${graphWidth}px minmax(0,1fr) 88px 80px 64px`,
+                        minHeight: GIT_GRAPH_ROW_HEIGHT
+                      }}
+                    >
+                      <div aria-hidden />
 
-                    <div className="flex min-w-0 items-center">
-                      <div className="flex min-w-0 items-center gap-2">
-                        {tags.length > 0 ? (
-                          <div className="flex shrink-0 flex-wrap gap-1">
-                            {tags.map((tag) => (
-                              <span
-                                key={tag.key}
-                                className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold leading-none ${tagClassName(tag.tone)}`}
-                              >
-                                {tag.label}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                        <p
-                          className="min-w-0 truncate text-[13px] leading-5 text-ds-ink"
-                          title={commit.subject}
-                        >
-                          {commit.subject}
-                        </p>
+                      <div className="flex min-w-0 items-center">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {tags.length > 0 ? (
+                            <div className="flex shrink-0 flex-wrap gap-1">
+                              {tags.map((tag) => (
+                                <span
+                                  key={tag.key}
+                                  className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold leading-none ${tagClassName(tag.tone)}`}
+                                >
+                                  {tag.label}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          <p
+                            className={`min-w-0 truncate text-[13px] leading-5 ${
+                              isMainline ? 'text-ds-ink' : 'text-ds-faint'
+                            }`}
+                            title={commit.subject}
+                          >
+                            {commit.subject}
+                          </p>
+                        </div>
                       </div>
-                    </div>
 
-                    <span className="truncate text-[12px] tabular-nums text-ds-faint">
-                      {formatCommitDate(commit.authoredAt)}
-                    </span>
-                    <span className="truncate text-[12px] text-ds-muted" title={commit.author}>
-                      {commit.author}
-                    </span>
-                    <span className="truncate font-mono text-[11px] tabular-nums text-ds-faint">
-                      {commit.shortHash}
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
+                      <span className="truncate text-[12px] tabular-nums text-ds-faint">
+                        {formatCommitDate(commit.authoredAt)}
+                      </span>
+                      <span
+                        className={`truncate text-[12px] ${isMainline ? 'text-ds-muted' : 'text-ds-faint'}`}
+                        title={commit.author}
+                      >
+                        {commit.author}
+                      </span>
+                      <span className="truncate font-mono text-[11px] tabular-nums text-ds-faint">
+                        {commit.shortHash}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
           ) : (
             <div className="flex min-h-[320px] items-center justify-center px-5 text-[13px] text-ds-faint">
               {t('gitLogEmpty')}

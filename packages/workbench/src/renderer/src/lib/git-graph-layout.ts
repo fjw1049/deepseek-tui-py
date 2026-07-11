@@ -1,31 +1,37 @@
 import type { GitLogCommit } from '@shared/git-log'
 
-export const GIT_GRAPH_LANE_WIDTH = 14
+export const GIT_GRAPH_LANE_WIDTH = 16
 export const GIT_GRAPH_PADDING = 4
 export const GIT_GRAPH_ROW_HEIGHT = 36
 export const GIT_GRAPH_MAX_LANES = 4
 
 export const GIT_GRAPH_COLORS = [
-  '#8b5cf6',
   '#3b82f6',
-  '#06b6d4',
-  '#10b981',
   '#f59e0b',
+  '#ef4444',
+  '#10b981',
+  '#8b5cf6',
   '#ec4899',
-  '#6366f1',
-  '#14b8a6'
+  '#06b6d4',
+  '#6366f1'
 ] as const
 
-export type GitGraphEdgeKind = 'straight' | 'merge-fork' | 'merge-join'
-
+/**
+ * An edge is a continuous line between two commit dots (or the bottom of the
+ * graph for lines whose parent falls outside the loaded window).
+ *
+ * The line starts at (fromRow, fromLane), immediately bends into `viaLane`
+ * if needed, travels straight down `viaLane`, then bends into (toRow, toLane).
+ */
 export type GitGraphEdge = {
   id: string
-  kind: GitGraphEdgeKind
-  colorIndex: number
+  fromRow: number
   fromLane: number
+  /** May equal the number of rows: the line runs off the bottom edge. */
+  toRow: number
   toLane: number
-  startRow: number
-  endRow: number
+  viaLane: number
+  colorIndex: number
 }
 
 export type GitGraphRow = {
@@ -33,6 +39,8 @@ export type GitGraphRow = {
   row: number
   lane: number
   colorIndex: number
+  /** True when the commit sits on the first-parent chain of the top commit. */
+  isMainline: boolean
 }
 
 export type GitGraphLayout = {
@@ -40,224 +48,27 @@ export type GitGraphLayout = {
   edges: GitGraphEdge[]
   maxLanes: number
   graphWidth: number
+  rowCount: number
 }
 
-type LaneReservation = string | null
-
-function rowIndexForHash(commits: GitLogCommit[], hash: string): number | null {
-  const index = commits.findIndex((commit) => commit.hash === hash)
-  return index >= 0 ? index : null
+type Column = {
+  lane: number
+  expectedHash: string
+  colorIndex: number
+  anchorRow: number
+  anchorLane: number
 }
 
-function ensureColumn(columns: LaneReservation[], colors: number[], index: number): void {
-  while (columns.length <= index) {
-    columns.push(null)
-    colors.push(columns.length - 1)
+function mainlineHashes(commits: GitLogCommit[]): Set<string> {
+  const byHash = new Map(commits.map((commit) => [commit.hash, commit]))
+  const chain = new Set<string>()
+  let current: GitLogCommit | undefined = commits[0]
+  while (current && !chain.has(current.hash)) {
+    chain.add(current.hash)
+    const firstParent: string | undefined = current.parents[0]
+    current = firstParent ? byHash.get(firstParent) : undefined
   }
-}
-
-function trimColumns(columns: LaneReservation[]): void {
-  while (columns.length > 0 && columns[columns.length - 1] === null) {
-    columns.pop()
-  }
-}
-
-function hashStillNeeded(commits: GitLogCommit[], fromRow: number, hash: string): boolean {
-  for (let row = fromRow + 1; row < commits.length; row += 1) {
-    const commit = commits[row]!
-    if (commit.hash === hash) return true
-    if (commit.parents.includes(hash)) return true
-  }
-  return false
-}
-
-function allocateColumn(
-  columns: LaneReservation[],
-  commits: GitLogCommit[],
-  currentRow: number,
-  forHash?: string
-): number {
-  if (forHash) {
-    const existing = columns.findIndex((hash) => hash === forHash)
-    if (existing >= 0) return existing
-  }
-
-  const free = columns.findIndex((hash) => hash === null)
-  if (free >= 0) return free
-  if (columns.length < GIT_GRAPH_MAX_LANES) return columns.length
-
-  for (let index = columns.length - 1; index >= 1; index -= 1) {
-    const reserved = columns[index]
-    if (reserved === null) return index
-    if (!hashStillNeeded(commits, currentRow, reserved)) return index
-  }
-
-  return Math.min(GIT_GRAPH_MAX_LANES - 1, columns.length - 1)
-}
-
-function assignLanes(commits: GitLogCommit[]): { lanes: number[]; laneColors: number[] } {
-  const lanes = new Array<number>(commits.length).fill(0)
-  const laneColors: number[] = []
-  const columns: LaneReservation[] = []
-
-  for (let row = 0; row < commits.length; row += 1) {
-    const commit = commits[row]!
-    const column = allocateColumn(columns, commits, row, commit.hash)
-    ensureColumn(columns, laneColors, column)
-    columns[column] = null
-    lanes[row] = column
-
-    const parents = commit.parents
-    if (parents.length === 0) {
-      trimColumns(columns)
-      continue
-    }
-
-    ensureColumn(columns, laneColors, column)
-    columns[column] = parents[0]!
-
-    for (let parentIndex = 1; parentIndex < parents.length; parentIndex += 1) {
-      const parent = parents[parentIndex]!
-      const parentColumn = allocateColumn(columns, commits, row, parent)
-      ensureColumn(columns, laneColors, parentColumn)
-      columns[parentColumn] = parent
-    }
-
-    trimColumns(columns)
-  }
-
-  return { lanes, laneColors }
-}
-
-function compactLaneMap(lanes: number[]): { lanes: number[]; colors: number[] } {
-  const order = [...new Set(lanes)].sort((left, right) => left - right)
-  const remap = new Map(order.map((lane, index) => [lane, index]))
-  return {
-    lanes: lanes.map((lane) => remap.get(lane) ?? 0),
-    colors: order.map((_, index) => index)
-  }
-}
-
-function laneColorIndex(laneColors: number[], lane: number): number {
-  return laneColors[lane] ?? lane % GIT_GRAPH_COLORS.length
-}
-
-function buildEdges(commits: GitLogCommit[], lanes: number[], laneColors: number[]): GitGraphEdge[] {
-  const edges: GitGraphEdge[] = []
-  const edgeKeys = new Set<string>()
-
-  const pushEdge = (edge: GitGraphEdge): void => {
-    const key = `${edge.kind}:${edge.fromLane}:${edge.toLane}:${edge.startRow}:${edge.endRow}:${edge.colorIndex}`
-    if (edgeKeys.has(key)) return
-    edgeKeys.add(key)
-    edges.push(edge)
-  }
-
-  for (let row = 0; row < commits.length - 1; row += 1) {
-    const lane = lanes[row]!
-    const nextLane = lanes[row + 1]!
-    if (lane !== nextLane) continue
-    pushEdge({
-      id: `s-${row}-${row + 1}`,
-      kind: 'straight',
-      colorIndex: laneColorIndex(laneColors, lane),
-      fromLane: lane,
-      toLane: lane,
-      startRow: row,
-      endRow: row + 1
-    })
-  }
-
-  for (let row = 0; row < commits.length; row += 1) {
-    const firstParent = commits[row]?.parents[0]
-    if (!firstParent) continue
-    const parentRow = rowIndexForHash(commits, firstParent)
-    if (parentRow === null || parentRow <= row + 1) continue
-
-    const lane = lanes[row]!
-    const parentLane = lanes[parentRow]!
-    if (lane !== parentLane || lane !== 0) continue
-
-    let crossesOtherLane = false
-    for (let crossRow = row + 1; crossRow < parentRow; crossRow += 1) {
-      if (lanes[crossRow] !== lane) {
-        crossesOtherLane = true
-        break
-      }
-    }
-    if (!crossesOtherLane) continue
-
-    pushEdge({
-      id: `pt-${row}-${parentRow}`,
-      kind: 'straight',
-      colorIndex: laneColorIndex(laneColors, lane),
-      fromLane: lane,
-      toLane: lane,
-      startRow: row,
-      endRow: parentRow
-    })
-  }
-
-  for (let row = 0; row < commits.length; row += 1) {
-    const commit = commits[row]!
-    const commitLane = lanes[row]!
-    const parents = commit.parents
-    if (parents.length <= 1) continue
-
-    for (let parentIndex = 1; parentIndex < parents.length; parentIndex += 1) {
-      const parent = parents[parentIndex]!
-      const parentRow = rowIndexForHash(commits, parent)
-      if (parentRow === null || parentRow <= row) continue
-
-      const branchLane = lanes[parentRow]!
-      const colorIndex = laneColorIndex(laneColors, branchLane)
-
-      pushEdge({
-        id: `mf-${commit.hash.slice(0, 8)}-${parentIndex}`,
-        kind: 'merge-fork',
-        colorIndex,
-        fromLane: commitLane,
-        toLane: branchLane,
-        startRow: row,
-        endRow: row
-      })
-
-      if (row + 1 < commits.length && lanes[row + 1] === branchLane) {
-        pushEdge({
-          id: `mb-${row}-${branchLane}`,
-          kind: 'straight',
-          colorIndex,
-          fromLane: branchLane,
-          toLane: branchLane,
-          startRow: row,
-          endRow: row + 1
-        })
-      }
-    }
-  }
-
-  for (let row = 0; row < commits.length - 1; row += 1) {
-    const fromLane = lanes[row]!
-    const toLane = lanes[row + 1]!
-    if (fromLane === toLane || toLane >= fromLane) continue
-
-    const mergeForkAtRow = edges.some(
-      (edge) => edge.kind === 'merge-fork' && edge.startRow === row && edge.fromLane === fromLane
-    )
-    if (mergeForkAtRow) continue
-
-    pushEdge({
-      id: `mj-${row}-${fromLane}-${toLane}`,
-      kind: 'merge-join',
-      colorIndex: laneColorIndex(laneColors, toLane),
-      fromLane,
-      toLane,
-      startRow: row,
-      endRow: row + 1
-    })
-  }
-
-  return edges
+  return chain
 }
 
 export function computeGitGraphLayout(commits: GitLogCommit[]): GitGraphLayout {
@@ -266,46 +77,118 @@ export function computeGitGraphLayout(commits: GitLogCommit[]): GitGraphLayout {
       rows: [],
       edges: [],
       maxLanes: 1,
-      graphWidth: GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_PADDING * 2
+      graphWidth: GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_PADDING * 2,
+      rowCount: 0
     }
   }
 
-  const assigned = assignLanes(commits)
-  const compacted = compactLaneMap(assigned.lanes)
-  const lanes = compacted.lanes
-  const laneColors = compacted.colors
+  const mainline = mainlineHashes(commits)
+  const columns: Array<Column | null> = []
+  const rows: GitGraphRow[] = []
+  const edges: GitGraphEdge[] = []
+  let nextColor = 0
 
-  const remapLane = (lane: number): number => {
-    const order = [...new Set(assigned.lanes)].sort((left, right) => left - right)
-    const map = new Map(order.map((value, index) => [value, index]))
-    return map.get(lane) ?? 0
+  const allocLane = (): number => {
+    const free = columns.findIndex((column) => column === null)
+    if (free >= 0) return free
+    if (columns.length < GIT_GRAPH_MAX_LANES) {
+      columns.push(null)
+      return columns.length - 1
+    }
+    return -1
   }
 
-  const rawEdges = buildEdges(commits, assigned.lanes, assigned.laneColors)
-  const edges = rawEdges.map((edge) => ({
-    ...edge,
-    fromLane: remapLane(edge.fromLane),
-    toLane: remapLane(edge.toLane)
-  }))
+  for (let row = 0; row < commits.length; row += 1) {
+    const commit = commits[row]!
+    const matching = columns.filter(
+      (column): column is Column => column !== null && column.expectedHash === commit.hash
+    )
 
-  const rows: GitGraphRow[] = commits.map((commit, row) => ({
-    hash: commit.hash,
-    row,
-    lane: lanes[row] ?? 0,
-    colorIndex: laneColorIndex(laneColors, lanes[row] ?? 0)
-  }))
+    let lane: number
+    let colorIndex: number
 
-  const maxLanes = Math.min(
-    GIT_GRAPH_MAX_LANES,
-    Math.max(1, ...rows.map((entry) => entry.lane), ...edges.flatMap((edge) => [edge.fromLane, edge.toLane])) +
-      1
+    if (matching.length > 0) {
+      lane = matching[0]!.lane
+      colorIndex = matching[0]!.colorIndex
+      for (const column of matching) {
+        edges.push({
+          id: `e-${column.anchorRow}-${column.lane}-${row}`,
+          fromRow: column.anchorRow,
+          fromLane: column.anchorLane,
+          toRow: row,
+          toLane: lane,
+          viaLane: column.lane,
+          colorIndex: column.colorIndex
+        })
+        columns[column.lane] = null
+      }
+    } else {
+      const alloc = allocLane()
+      lane = alloc >= 0 ? alloc : GIT_GRAPH_MAX_LANES - 1
+      colorIndex = nextColor % GIT_GRAPH_COLORS.length
+      nextColor += 1
+    }
+
+    rows.push({
+      hash: commit.hash,
+      row,
+      lane,
+      colorIndex,
+      isMainline: mainline.has(commit.hash)
+    })
+
+    const firstParent = commit.parents[0]
+    if (firstParent) {
+      columns[lane] = {
+        lane,
+        expectedHash: firstParent,
+        colorIndex,
+        anchorRow: row,
+        anchorLane: lane
+      }
+    }
+
+    for (let parentIndex = 1; parentIndex < commit.parents.length; parentIndex += 1) {
+      const parent = commit.parents[parentIndex]!
+      if (parent === firstParent) continue
+      const parentLane = allocLane()
+      if (parentLane < 0) continue
+      columns[parentLane] = {
+        lane: parentLane,
+        expectedHash: parent,
+        colorIndex: nextColor % GIT_GRAPH_COLORS.length,
+        anchorRow: row,
+        anchorLane: lane
+      }
+      nextColor += 1
+    }
+  }
+
+  for (const column of columns) {
+    if (!column) continue
+    edges.push({
+      id: `e-${column.anchorRow}-${column.lane}-end`,
+      fromRow: column.anchorRow,
+      fromLane: column.anchorLane,
+      toRow: commits.length,
+      toLane: column.lane,
+      viaLane: column.lane,
+      colorIndex: column.colorIndex
+    })
+  }
+
+  const maxLanes = Math.max(
+    1,
+    ...rows.map((entry) => entry.lane + 1),
+    ...edges.map((edge) => Math.max(edge.fromLane, edge.toLane, edge.viaLane) + 1)
   )
 
   return {
     rows,
     edges,
     maxLanes,
-    graphWidth: maxLanes * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_PADDING * 2
+    graphWidth: maxLanes * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_PADDING * 2,
+    rowCount: commits.length
   }
 }
 
@@ -313,4 +196,8 @@ export function laneCenterX(lane: number, maxLanes: number, width: number): numb
   const inner = width - GIT_GRAPH_PADDING * 2
   const step = inner / Math.max(maxLanes, 1)
   return GIT_GRAPH_PADDING + lane * step + step / 2
+}
+
+export function rowCenterY(row: number): number {
+  return row * GIT_GRAPH_ROW_HEIGHT + GIT_GRAPH_ROW_HEIGHT / 2
 }
