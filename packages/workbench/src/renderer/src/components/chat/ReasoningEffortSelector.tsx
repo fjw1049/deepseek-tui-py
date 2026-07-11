@@ -85,5 +85,5 @@ export function ReasoningEffortSelector({
     return () => el.removeEventListener('change', handler)
   }, [])
 
-  return <reasoning-effort-selector ref={ref} value={String(index)} model={model} />
+  return <reasoning-effort-selector ref={ref} className="ds-no-drag" value={String(index)} model={model} />
 }

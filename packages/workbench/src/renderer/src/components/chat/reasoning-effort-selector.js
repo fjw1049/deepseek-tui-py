@@ -103,9 +103,9 @@ class ChatGPTModelSelector extends HTMLElement {
         background: var(--pill-bg);
         display: flex;
         align-items: center;
-        justify-content: center;
+        gap: 6px;
         position: relative;
-        padding: 0 34px 0 14px;
+        padding: 0 11px 0 14px;
         transition: background-color 140ms var(--ease-out), scale 140ms var(--ease-out);
       }
       .pill:hover { background: var(--pill-bg-hover); }
@@ -115,43 +115,61 @@ class ChatGPTModelSelector extends HTMLElement {
         outline: 2px solid var(--blue);
         outline-offset: 2px;
       }
-      .pill .bolt { color: var(--ink); margin-right: 6px; flex: none; }
+      .pill .bolt { color: var(--ink); flex: none; }
+      /* label is the flexible slot — it shrinks so tier + chev never get squeezed.
+         model-name truncates; tier is the status and never truncates. */
       .pill .label {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 5px;
+        justify-content: center;
+        overflow: hidden;
         font-size: 14px;
         font-weight: 600;
         color: var(--ink);
         letter-spacing: -0.01em;
         white-space: nowrap;
       }
+      .pill .model-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
       .pill .tier {
+        flex: none;
         font-weight: 400;
         color: var(--ink-2);
-        margin-left: 5px;
-        display: inline-block;
         transition: color 220ms var(--ease-out);
       }
       .pill .tier.is-ultra { color: var(--ultra-text); }
       .pill .chev {
-        position: absolute;
-        right: 13px;
-        top: 50%;
-        translate: 0 -50%;
+        flex: none;
         color: var(--ink-2);
         transition: rotate 200ms var(--ease-out);
       }
       .pill[aria-expanded="true"] .chev { rotate: 180deg; }
 
-      /* ============ Popover ============ */
+      /* ============ Popover — translucent material (§12) ============
+         A floating functional layer: blur + saturate + a semi-transparent
+         fill, with a bright top hairline (light catching the material) and a
+         deeper shadow so the bigger surface reads as thicker. Content scrolls
+         underneath; nothing here is opaque. */
       .popover {
         position: absolute;
         bottom: calc(100% + 8px);
         left: 0;
         width: 100%;
-        background: color-mix(in srgb, var(--ds-card-strong, #fff) 80%, transparent);
-        backdrop-filter: blur(20px) saturate(180%);
-        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        background: color-mix(in srgb, var(--ds-card-strong, #fff) 72%, transparent);
+        backdrop-filter: blur(28px) saturate(180%);
+        -webkit-backdrop-filter: blur(28px) saturate(180%);
         border-radius: var(--r-card);
-        box-shadow: 0 0 0 0.5px rgba(26, 29, 33, 0.05), 0 2px 6px rgba(26, 29, 33, 0.06), 0 12px 32px rgba(26, 29, 33, 0.13);
+        box-shadow:
+          inset 0 0.5px 0 rgba(255, 255, 255, 0.5),
+          0 0 0 0.5px rgba(26, 29, 33, 0.06),
+          0 2px 8px rgba(26, 29, 33, 0.08),
+          0 18px 44px rgba(26, 29, 33, 0.18);
         transform-origin: 50% calc(100% + 16px);
         overflow: hidden;
         z-index: 10;
@@ -204,11 +222,18 @@ class ChatGPTModelSelector extends HTMLElement {
         font-size: 13px;
         font-weight: 500;
         color: var(--ink-2);
-        transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+        transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
       }
-      .model-item:hover { background: var(--pill-bg); color: var(--ink); }
-      .model-item.is-active { background: var(--ds-accent-soft, rgba(3, 113, 221, 0.1)); color: var(--ink); font-weight: 600; }
-      .pill .model-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+      .model-item:hover {
+        background: color-mix(in srgb, var(--ink) 6%, transparent);
+        color: var(--ink);
+      }
+      .model-item.is-active {
+        background: color-mix(in srgb, var(--blue) 14%, transparent);
+        box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.35);
+        color: var(--ink);
+        font-weight: 600;
+      }
       .row {
         width: 100%;
         height: 36px;
@@ -420,6 +445,14 @@ class ChatGPTModelSelector extends HTMLElement {
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
       }
+      @media (prefers-reduced-transparency: reduce) {
+        .popover {
+          background: var(--ds-card-strong, #fff);
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+        }
+        .model-item.is-active { box-shadow: none; }
+      }
     </style>
 
     <button class="pill" aria-haspopup="dialog" aria-expanded="false">
@@ -599,6 +632,7 @@ class ChatGPTModelSelector extends HTMLElement {
   set models(list) {
     this.#models = Array.isArray(list) ? list : [];
     this.#renderModelList();
+    this.#updatePillModel();
   }
 
   #clampIndex(v) { return Math.min(4, Math.max(0, Number.isFinite(v) ? Math.round(v) : 1)); }
@@ -620,6 +654,7 @@ class ChatGPTModelSelector extends HTMLElement {
           bubbles: true,
           detail: { type: 'model', id: m.id },
         }));
+        this.#close();
       });
       this.$modelList.appendChild(btn);
     }
@@ -738,7 +773,8 @@ class ChatGPTModelSelector extends HTMLElement {
     this.#layoutSlider();
     this.#sizeCanvas();
     // sparkle loop starts when the advanced view is shown, not while the menu hides it
-    this.$advChip.focus({ preventScroll: true });
+    const firstModel = this.$modelList.querySelector('.model-item');
+    (firstModel || this.$advChip).focus({ preventScroll: true });
   }
 
   #close() {

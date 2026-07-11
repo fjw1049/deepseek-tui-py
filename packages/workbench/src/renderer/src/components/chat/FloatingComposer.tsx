@@ -251,7 +251,6 @@ export function FloatingComposer({
   const [connectorsLoading, setConnectorsLoading] = useState(false)
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
@@ -552,17 +551,16 @@ export function FloatingComposer({
   }, [petSlashQuery, slashQuery])
 
   useEffect(() => {
-    if (!plusMenuOpen && !modelMenuOpen) return
+    if (!plusMenuOpen) return
     const onPointerDown = (event: MouseEvent): void => {
       const target = event.target
       if (!(target instanceof Node) || !shellRef.current?.contains(target)) {
         setPlusMenuOpen(false)
-        setModelMenuOpen(false)
       }
     }
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [modelMenuOpen, plusMenuOpen])
+  }, [plusMenuOpen])
 
   // When the runtime transitions from offline→ready, invalidate the cached
   // skills/connectors lists. Without this, a user who opened the `+` menu
@@ -626,7 +624,6 @@ export function FloatingComposer({
   const applySlashCommand = (command: SlashCommand): void => {
     if (command.kind === 'action') {
       setPlusMenuOpen(false)
-      setModelMenuOpen(false)
       setActiveCommand({ id: command.id as ComposerActionCommandId, args: '' })
     } else {
       setMode(command.id as ComposerMode)
@@ -867,7 +864,6 @@ export function FloatingComposer({
 
     speechBaseRef.current = input
     setPlusMenuOpen(false)
-    setModelMenuOpen(false)
     clearAttachNotice()
     const started = await startRecordingRef.current()
     if (!started.ok) {
@@ -1478,7 +1474,6 @@ export function FloatingComposer({
                 disabled={!canCompose}
                 onClick={() => {
                   setActiveCommand(null)
-                  setModelMenuOpen(false)
                   clearAttachNotice()
                   setPlusMenuOpen((open) => !open)
                 }}
@@ -1931,7 +1926,10 @@ export function FloatingComposer({
             <ReasoningEffortSelector
               models={selectorModels}
               model={activeModelId}
-              onModelChange={onComposerModelChange}
+              onModelChange={(id) => {
+                onComposerModelChange(id)
+                focusComposer()
+              }}
               value={composerReasoningEffort}
               onChange={setComposerReasoningEffort}
               disabled={!canChangeModel}
