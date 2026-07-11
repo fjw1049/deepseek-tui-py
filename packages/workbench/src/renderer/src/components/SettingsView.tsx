@@ -844,25 +844,27 @@ export function SettingsView(): ReactElement {
 
           {category === 'models' && (
             <>
-              <SettingsCard title={t('sectionModels')}>
-                  <SettingRow
+              <section className="ds-content-card rounded-2xl">
+                <div className="px-5 pt-4 pb-1.5">
+                  <h2 className="text-[12px] font-medium tracking-wide text-ds-muted">
+                    {t('sectionModels')}
+                  </h2>
+                </div>
+                <div className="divide-y divide-ds-border-muted">
+                  <GroupedField
                     title={t('configFilePath')}
-                    help={
-                      <FieldHelpPopover title={t('configFilePath')} intro={t('configFilePathDesc')} />
-                    }
-                    controlWidth="medium"
+                    help={<FieldHelpPopover title={t('configFilePath')} intro={t('configFilePathDesc')} />}
                     control={
-                      <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
-                        <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
+                      <div className="flex w-full min-w-0 items-center rounded-xl border border-ds-border bg-ds-main/40 px-3 py-2 transition-colors focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/30">
+                        <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-ds-muted">
                           {deepseekPaths.configPath}
                         </code>
                       </div>
                     }
                   />
-                  <SettingRow
+                  <GroupedField
                     title={t('apiKey')}
                     help={<FieldHelpPopover title={t('apiKey')} intro={t('apiKeyDesc')} />}
-                    controlWidth="medium"
                     control={
                       <SecretInput
                         value={form.deepseek.apiKey}
@@ -877,26 +879,27 @@ export function SettingsView(): ReactElement {
                       />
                     }
                   />
-                  <SettingRow
+                  <GroupedField
                     title={t('baseUrl')}
                     help={<FieldHelpPopover title={t('baseUrl')} intro={t('baseUrlDesc')} />}
-                    controlWidth="medium"
                     control={
                       <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                         placeholder={t('baseUrlPlaceholder')}
                         value={form.deepseek.baseUrl}
                         onChange={(e) => update({ deepseek: { baseUrl: e.target.value } })}
                       />
                     }
                   />
-                  <div className="mt-2 flex items-center gap-3 px-4 pt-4">
-                    <span className="text-[12px] font-semibold uppercase tracking-wide text-ds-faint">
-                      {t('asrGroupLabel')}
-                    </span>
-                    <span className="h-px flex-1 bg-ds-border" />
-                  </div>
-                  <SettingRow
+                </div>
+
+                <div className="px-5 pt-6 pb-1.5">
+                  <h2 className="text-[12px] font-medium tracking-wide text-ds-muted">
+                    {t('asrGroupLabel')}
+                  </h2>
+                </div>
+                <div className="divide-y divide-ds-border-muted pb-1">
+                  <GroupedField
                     title={t('asrBaseUrl')}
                     help={
                       <FieldHelpPopover
@@ -904,17 +907,16 @@ export function SettingsView(): ReactElement {
                         intro={t('asrBaseUrlDesc', { path: asrConfigPath })}
                       />
                     }
-                    controlWidth="medium"
                     control={
                       <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                         value={asrForm.baseUrl}
                         onChange={(e) => updateAsr({ baseUrl: e.target.value })}
                         placeholder={t('asrBaseUrlPlaceholder')}
                       />
                     }
                   />
-                  <SettingRow
+                  <GroupedField
                     title={t('asrApiKey')}
                     help={
                       <FieldHelpPopover
@@ -922,7 +924,6 @@ export function SettingsView(): ReactElement {
                         intro={t('asrApiKeyDesc', { path: asrConfigPath })}
                       />
                     }
-                    controlWidth="medium"
                     control={
                       <SecretInput
                         value={asrForm.apiKey}
@@ -936,20 +937,20 @@ export function SettingsView(): ReactElement {
                       />
                     }
                   />
-                  <SettingRow
+                  <GroupedField
                     title={t('asrModel')}
                     help={<FieldHelpPopover title={t('asrModel')} intro={t('asrModelDesc')} />}
-                    controlWidth="medium"
                     control={
                       <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
                         value={asrForm.model}
                         onChange={(e) => updateAsr({ model: e.target.value })}
                         placeholder="glm-asr-2512"
                       />
                     }
                   />
-                </SettingsCard>
+                </div>
+              </section>
 
                 <SettingsCard title={t('customEndpoints')} className="mt-6">
                   <CustomEndpointsPanel
@@ -1288,6 +1289,26 @@ function SettingRow({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function GroupedField({
+  title,
+  help,
+  control
+}: {
+  title: string
+  help?: ReactNode
+  control: ReactNode
+}): ReactElement {
+  return (
+    <div className="ds-density-row flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:gap-5">
+      <div className="flex min-w-0 items-center gap-1.5 sm:w-[180px] sm:shrink-0">
+        <span className="text-[13px] font-medium text-ds-ink">{title}</span>
+        {help}
+      </div>
+      <div className="min-w-0 flex-1 sm:ml-auto sm:max-w-[360px]">{control}</div>
     </div>
   )
 }
@@ -1832,6 +1853,46 @@ function CustomEndpointsPanel({
                 showLabel={t('showSecret')}
                 hideLabel={t('hideSecret')}
               />
+              {ep.models.length > 0 ? (
+                <div className="space-y-1.5">
+                  <div
+                    className="px-0.5 text-[11px] font-medium tracking-wide text-ds-muted"
+                    title={t('modelContextWindowHint')}
+                  >
+                    {t('models')}
+                  </div>
+                  <div className="divide-y divide-ds-border-muted overflow-hidden rounded-xl border border-ds-border bg-ds-hover/30">
+                    {ep.models.map((model) => {
+                      const ctxKey = `${ep.id}::${model.id}`
+                      return (
+                        <div key={model.id} className="flex items-center gap-3 px-3 py-2.5">
+                          <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">
+                            {model.id}
+                          </span>
+                          <label
+                            className="flex shrink-0 items-center gap-2 text-[11px] text-ds-muted"
+                            title={t('modelContextWindowHint')}
+                          >
+                            <span>{t('modelContextWindowLabel')}</span>
+                            <input
+                              type="number"
+                              min={CUSTOM_MODEL_CONTEXT_WINDOW_MIN}
+                              max={CUSTOM_MODEL_CONTEXT_WINDOW_MAX}
+                              step={1000}
+                              className="w-[96px] rounded-lg border border-ds-border bg-ds-card px-2 py-1 text-right font-mono text-[12px] tabular-nums text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                              value={contextWindowDrafts[ctxKey] ?? String(model.contextWindow)}
+                              onChange={(event) =>
+                                setContextWindowDrafts((prev) => ({ ...prev, [ctxKey]: event.target.value }))
+                              }
+                              onBlur={() => commitModelContextWindow(index, model.id)}
+                            />
+                          </label>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -1902,24 +1963,6 @@ function CustomEndpointsPanel({
                 <div key={model.id} className="rounded-lg border border-ds-border-muted bg-ds-hover/30 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">{model.id}</span>
-                    <label
-                      className="flex items-center gap-1 text-[10px] text-ds-faint"
-                      title={t('modelContextWindowHint')}
-                    >
-                      {t('modelContextWindowLabel')}
-                      <input
-                        type="number"
-                        min={CUSTOM_MODEL_CONTEXT_WINDOW_MIN}
-                        max={CUSTOM_MODEL_CONTEXT_WINDOW_MAX}
-                        step={1000}
-                        className="w-[88px] rounded-md border border-ds-border bg-ds-card px-1.5 py-0.5 text-right font-mono text-[11px] text-ds-ink focus:border-accent/40 focus:outline-none"
-                        value={contextWindowDrafts[testKey] ?? String(model.contextWindow)}
-                        onChange={(event) =>
-                          setContextWindowDrafts((prev) => ({ ...prev, [testKey]: event.target.value }))
-                        }
-                        onBlur={() => commitModelContextWindow(index, model.id)}
-                      />
-                    </label>
                     <span className={`text-[10px] ${model.testStatus === 'passed' ? 'text-emerald-600' : model.testStatus === 'failed' ? 'text-red-600' : 'text-ds-faint'}`}>
                       {model.testStatus === 'passed' ? t('modelTestPassed') : model.testStatus === 'failed' ? t('modelTestFailed') : t('modelUntested')}
                     </span>
