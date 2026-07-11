@@ -267,7 +267,7 @@ export function WorkspaceFileTree({ workspaceRoot, dirtyPaths, patchMap, onOpenF
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-ds-border-muted/60 bg-ds-sidebar">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
       <div className="shrink-0 border-b border-ds-border-muted/40 px-3 py-2">
         <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ds-faint">
           {t('workspaceTreeTitle')}
