@@ -157,6 +157,14 @@ export async function getGitBranches(workspaceRoot: string): Promise<GitBranches
   }
 }
 
+function isDirtyWorktreeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    /would be overwritten by (checkout|merge)/i.test(message) ||
+    /commit your changes or stash them/i.test(message)
+  )
+}
+
 export async function switchGitBranch(
   workspaceRoot: string,
   branchName: string
@@ -168,9 +176,70 @@ export async function switchGitBranch(
   try {
     try {
       await runGit(cwd, ['switch', branch], 20_000)
-    } catch {
+    } catch (switchError) {
+      if (isDirtyWorktreeError(switchError)) throw switchError
       await runGit(cwd, ['checkout', branch], 20_000)
     }
+    return getGitBranches(cwd)
+  } catch (error) {
+    if (isDirtyWorktreeError(error)) {
+      return {
+        ok: false,
+        reason: 'dirty_worktree',
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+    return gitFailure(error)
+  }
+}
+
+export async function stashAndSwitchGitBranch(
+  workspaceRoot: string,
+  branchName: string
+): Promise<GitBranchesResult> {
+  const cwd = workspaceRoot.trim()
+  const branch = branchName.trim()
+  if (!cwd) return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
+  try {
+    const stashMessage = `workbench: auto stash before switching to ${branch}`
+    const pushResult = await runGit(
+      cwd,
+      ['stash', 'push', '--include-untracked', '-m', stashMessage],
+      30_000
+    )
+    const stashed = !/No local changes to save/i.test(pushResult.stdout)
+
+    try {
+      try {
+        await runGit(cwd, ['switch', branch], 20_000)
+      } catch {
+        await runGit(cwd, ['checkout', branch], 20_000)
+      }
+    } catch (switchError) {
+      // Restore the user's changes on the original branch before reporting.
+      if (stashed) {
+        try {
+          await runGit(cwd, ['stash', 'pop'], 30_000)
+        } catch {
+          // Leave the stash in place; it is still recoverable via `git stash pop`.
+        }
+      }
+      throw switchError
+    }
+
+    if (stashed) {
+      try {
+        await runGit(cwd, ['stash', 'pop'], 30_000)
+      } catch (popError) {
+        return {
+          ok: false,
+          reason: 'stash_pop_conflict',
+          message: popError instanceof Error ? popError.message : String(popError)
+        }
+      }
+    }
+
     return getGitBranches(cwd)
   } catch (error) {
     return gitFailure(error)

@@ -377,6 +377,7 @@ export type DsGuiApi = {
   getGitLog: (workspaceRoot: string) => Promise<GitLogResult>
   getGitWorkingChanges: (workspaceRoot: string) => Promise<GitWorkingChangesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
+  stashAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   commitGitChanges: (
     workspaceRoot: string,

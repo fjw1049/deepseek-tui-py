@@ -65,7 +65,7 @@ import {
   resolveEffectiveRuntimeToken,
   runtimeTokenFilePath
 } from '../deepseek-process'
-import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
+import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import {
   fetchSkillMarkdown,
@@ -1163,6 +1163,13 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     async (_, payload: unknown) => {
       const request = parseIpcPayload('git:switch-branch', gitBranchPayloadSchema, payload)
       return switchGitBranch(request.workspaceRoot, request.branch)
+    }
+  )
+  ipcMain.handle(
+    'git:stash-and-switch-branch',
+    async (_, payload: unknown) => {
+      const request = parseIpcPayload('git:stash-and-switch-branch', gitBranchPayloadSchema, payload)
+      return stashAndSwitchGitBranch(request.workspaceRoot, request.branch)
     }
   )
   ipcMain.handle(

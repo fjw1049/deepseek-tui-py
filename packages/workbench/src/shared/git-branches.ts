@@ -13,6 +13,12 @@ export type GitBranchesResult =
     }
   | {
       ok: false
-      reason: 'no_workspace' | 'not_git_repo' | 'git_unavailable' | 'error'
+      reason:
+        | 'no_workspace'
+        | 'not_git_repo'
+        | 'git_unavailable'
+        | 'dirty_worktree'
+        | 'stash_pop_conflict'
+        | 'error'
       message: string
     }

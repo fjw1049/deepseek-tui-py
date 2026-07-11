@@ -86,6 +86,8 @@ const api = {
     ipcRenderer.invoke('git:working-changes', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
+  stashAndSwitchGitBranch: (workspaceRoot, branch) =>
+    ipcRenderer.invoke('git:stash-and-switch-branch', { workspaceRoot, branch }),
   createAndSwitchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:create-and-switch-branch', { workspaceRoot, branch }),
   commitGitChanges: (workspaceRoot, message, paths) =>

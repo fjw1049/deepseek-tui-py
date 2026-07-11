@@ -37,6 +37,9 @@ export function GitBranchPicker({
   const { result, loading, reload, setResult } = useGitBranches(root)
   const [actingBranch, setActingBranch] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Action-level warning that must survive branch list refreshes (unlike `error`).
+  const [notice, setNotice] = useState<string | null>(null)
+  const [dirtyConflictBranch, setDirtyConflictBranch] = useState<string | null>(null)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -48,6 +51,8 @@ export function GitBranchPicker({
     setLogOpen(false)
     setQuery('')
     setError(null)
+    setNotice(null)
+    setDirtyConflictBranch(null)
     setActingBranch(null)
   }, [root])
 
@@ -151,8 +156,42 @@ export function GitBranchPicker({
     }
     setActingBranch(branch)
     setError(null)
+    setNotice(null)
+    setDirtyConflictBranch(null)
     try {
       const next = await window.dsGui.switchGitBranch(root, branch)
+      if (!next.ok && next.reason === 'dirty_worktree') {
+        setDirtyConflictBranch(branch)
+        setNotice(t('gitDirtySwitchBlocked', { branch }))
+        return
+      }
+      setResult(next)
+      if (!next.ok) {
+        setError(next.message)
+        return
+      }
+      setOpen(false)
+      setQuery('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setActingBranch(null)
+    }
+  }
+
+  const stashAndSwitch = async (branch: string): Promise<void> => {
+    if (!root || !branch) return
+    setActingBranch(branch)
+    setError(null)
+    setNotice(null)
+    setDirtyConflictBranch(null)
+    try {
+      const next = await window.dsGui.stashAndSwitchGitBranch(root, branch)
+      if (!next.ok && next.reason === 'stash_pop_conflict') {
+        setNotice(t('gitStashPopConflict'))
+        void reload()
+        return
+      }
       setResult(next)
       if (!next.ok) {
         setError(next.message)
@@ -213,10 +252,25 @@ export function GitBranchPicker({
           </div>
         ) : null}
 
-        {error ? (
-          <div className="mb-2 flex gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/35 dark:text-amber-100">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
-            <span className="min-w-0 break-words">{error}</span>
+        {error || notice ? (
+          <div className="mb-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/35 dark:text-amber-100">
+            <div className="flex gap-2">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+              <span className="min-w-0 break-words">{error ?? notice}</span>
+            </div>
+            {dirtyConflictBranch ? (
+              <button
+                type="button"
+                disabled={actingBranch != null}
+                onClick={() => void stashAndSwitch(dirtyConflictBranch)}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-400/70 bg-amber-100 px-2.5 py-1 text-[12px] font-medium text-amber-900 transition hover:bg-amber-200 disabled:opacity-45 dark:border-amber-600/60 dark:bg-amber-900/40 dark:text-amber-100 dark:hover:bg-amber-900/70"
+              >
+                {actingBranch === dirtyConflictBranch ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                ) : null}
+                {t('gitStashAndSwitch', { branch: dirtyConflictBranch })}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
