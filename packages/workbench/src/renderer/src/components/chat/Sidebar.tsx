@@ -14,7 +14,6 @@ import {
   Sparkles
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
-import { useSidebarExtensionCounts } from '../../hooks/use-sidebar-extension-counts'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { SidebarProjectsSection } from './SidebarProjectsSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
@@ -70,7 +69,6 @@ export function Sidebar({
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const togglePin = useChatStore((s) => s.togglePin)
-  const extensionCounts = useSidebarExtensionCounts(workspaceRoot)
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const pluginsActive = route === 'plugins'
@@ -148,7 +146,6 @@ export function Sidebar({
                 variant="flat"
                 indent
                 active={pluginsActive}
-                badge={extensionCounts.plugins}
               />
               <SidebarLink
                 icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
@@ -157,7 +154,6 @@ export function Sidebar({
                 variant="flat"
                 indent
                 active={skillsActive}
-                badge={extensionCounts.skills}
               />
               <SidebarLink
                 icon={<Cable className="h-4 w-4" strokeWidth={1.9} />}
@@ -166,7 +162,6 @@ export function Sidebar({
                 variant="flat"
                 indent
                 active={connectorsActive}
-                badge={extensionCounts.connectors}
               />
             </div>
           ) : null}
@@ -252,7 +247,6 @@ type SidebarLinkProps = {
   active?: boolean
   indent?: boolean
   trailing?: ReactElement
-  badge?: number
 }
 
 function SidebarLink({
@@ -265,8 +259,7 @@ function SidebarLink({
   variant = 'flat',
   active = false,
   indent = false,
-  trailing,
-  badge
+  trailing
 }: SidebarLinkProps): ReactElement {
   const variantClass =
     variant === 'action'
@@ -301,9 +294,6 @@ function SidebarLink({
         {icon}
       </span>
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-      {badge !== undefined && badge > 0 ? (
-        <span className="ds-sidebar-link-badge shrink-0 tabular-nums">{badge}</span>
-      ) : null}
       {shortcut && !disabled ? (
         <kbd className="ds-kbd ds-sidebar-link-shortcut hidden items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono font-medium text-ds-faint group-hover:inline-flex group-focus-within:inline-flex">
           <Command className="h-2.5 w-2.5" strokeWidth={2} />
