@@ -68,7 +68,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
   // reads like a GitHub contribution graph rather than a black slab.
   const layout = useMemo(() => {
     if (!fillHeight || plotBox.width <= 0 || plotBox.height <= 0) {
-      return { dayCount: undefined as number | undefined, cellPx: 0 }
+      return { dayCount: undefined as number | undefined, cellPx: 0, gridWidth: 0 }
     }
     const gridHeight = plotBox.height - MONTH_ROW_HEIGHT - MONTH_ROW_GAP
     const gridWidth = plotBox.width - WEEKDAY_LABEL_WIDTH - COLUMN_GAP
@@ -78,13 +78,26 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
       53,
       Math.max(1, Math.floor((gridWidth + SQUARE_GAP) / (side + SQUARE_GAP)))
     )
-    return { dayCount: weeks * HEATMAP_ROWS, cellPx: side }
+    return { dayCount: weeks * HEATMAP_ROWS, cellPx: side, gridWidth }
   }, [fillHeight, plotBox.width, plotBox.height])
 
   const grid = useMemo(
     () => buildHeatmapGrid(daily, i18n.language, layout.dayCount, referenceDate),
     [daily, i18n.language, layout.dayCount, referenceDate]
   )
+
+  // buildHeatmapGrid pads the range to full Mon–Sun weeks, so weekCount can be
+  // one more than the `weeks` we planned for. When it is, the grid at `cellPx`
+  // would be a column wider than the panel and the right edge (the current
+  // week) gets clipped. Shrink the cell so all weekCount columns fit — the
+  // current week stays complete and flush to the right edge, no clipping.
+  const fittedCellPx = useMemo(() => {
+    if (!fillHeight || layout.cellPx <= 0 || grid.weekCount <= 0) return layout.cellPx
+    const avail = layout.gridWidth - (grid.weekCount - 1) * SQUARE_GAP
+    if (avail <= 0) return layout.cellPx
+    const fit = avail / grid.weekCount
+    return Math.max(MIN_CELL_PX, Math.min(layout.cellPx, fit))
+  }, [fillHeight, layout.cellPx, layout.gridWidth, grid.weekCount])
 
   const levelFor = useMemo(() => {
     const tokens = grid.cells
@@ -113,12 +126,13 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
         '--hm-grid-h': `calc(${HEATMAP_ROWS} * var(--hm-cell) + ${(HEATMAP_ROWS - 1) * SQUARE_GAP}px)`
       } as CSSProperties
     }
+    const cell = fittedCellPx
     return {
-      '--hm-cell': `${layout.cellPx}px`,
-      '--hm-grid-w': `${wc * layout.cellPx + (wc - 1) * SQUARE_GAP}px`,
-      '--hm-grid-h': `${HEATMAP_ROWS * layout.cellPx + (HEATMAP_ROWS - 1) * SQUARE_GAP}px`
+      '--hm-cell': `${cell}px`,
+      '--hm-grid-w': `${wc * cell + (wc - 1) * SQUARE_GAP}px`,
+      '--hm-grid-h': `${HEATMAP_ROWS * cell + (HEATMAP_ROWS - 1) * SQUARE_GAP}px`
     } as CSSProperties
-  }, [grid.weekCount, layout.cellPx])
+  }, [grid.weekCount, layout.cellPx, fittedCellPx])
 
   if (grid.cells.length === 0) {
     return (
