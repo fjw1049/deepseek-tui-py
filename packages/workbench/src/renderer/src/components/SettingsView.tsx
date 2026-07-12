@@ -53,6 +53,7 @@ import {
 } from '../lib/pet/pet-preferences'
 import { resolvePetSpritesheetSrc } from '../lib/pet/pet-catalog'
 import { filterManifestPets } from '@shared/pet-catalog-utils'
+import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
@@ -85,8 +86,6 @@ type InlineNotice = {
   tone: 'success' | 'error' | 'info'
   message: string
 }
-
-const DEFAULT_WORKSPACE_ROOT = '~/.deepseekgui/default_workspace'
 
 function splitSettingsList(raw: string): string[] {
   return raw
@@ -162,7 +161,6 @@ export function SettingsView(): ReactElement {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showAsrKey, setShowAsrKey] = useState(false)
-  const [logPath, setLogPath] = useState('')
   const [petEnabled, setPetEnabled] = useState(() => readPetEnabled())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
   const [petFavoriteSlugs, setPetFavoriteSlugs] = useState(() => readPetFavoriteSlugs())
@@ -362,11 +360,6 @@ export function SettingsView(): ReactElement {
     if (!formAppearance) return
     applyAppearance(formAppearance)
   }, [formAppearance])
-
-  useEffect(() => {
-    if (typeof window.dsGui?.getLogPath !== 'function') return
-    void window.dsGui.getLogPath().then((p) => setLogPath(p))
-  }, [category])
 
   useEffect(() => {
     if (!form || initializedCategory.current) return
@@ -716,45 +709,54 @@ export function SettingsView(): ReactElement {
                     />
                   }
                 />
-                <SettingRow
-                  layout="stacked"
-                  title={t('workspaceRoot')}
-                  description={t('workspaceRootDesc')}
-                  control={
-                    <div className="flex w-full min-w-0 flex-col gap-2">
-                      <div className="grid w-full gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-4">
-                        <input
-                          className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                          value={form.workspaceRoot}
-                          onChange={(e) => update({ workspaceRoot: e.target.value })}
-                          placeholder={t('workspaceRootPlaceholder')}
-                          title={form.workspaceRoot}
-                        />
-                        <div className="flex flex-col gap-2 sm:min-w-[8.5rem]">
-                          <button
-                            type="button"
-                            onClick={resetWorkspaceToDefault}
-                            className={settingsBlockButtonClass()}
-                          >
-                            {t('restoreWorkspaceDefault')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void pickWorkspace()}
-                            className={settingsBlockButtonClass()}
-                          >
-                            {t('browse')}
-                          </button>
-                        </div>
+                <div className="ds-density-row flex flex-col gap-4 px-4 py-5">
+                  {/* Title line + 还原默认 aligned to the title. */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1 text-[14px] font-semibold text-ds-ink">
+                        <span>{t('workspaceRoot')}</span>
                       </div>
-                      {workspacePickerError ? (
-                        <p className="text-[13px] leading-5 text-amber-700 dark:text-amber-300">
-                          {workspacePickerError}
-                        </p>
-                      ) : null}
+                      <p className="mt-1 max-w-2xl text-[13px] leading-6 text-ds-muted">
+                        {t('workspaceRootDesc')}
+                      </p>
                     </div>
-                  }
-                />
+                    <div className="w-[8.5rem] shrink-0">
+                      <button
+                        type="button"
+                        onClick={resetWorkspaceToDefault}
+                        className={settingsBlockButtonClass()}
+                      >
+                        {t('restoreWorkspaceDefault')}
+                      </button>
+                    </div>
+                  </div>
+                  {/* Address input + 选择目录 aligned to the input. */}
+                  <div className="flex w-full min-w-0 flex-col gap-2">
+                    <div className="flex w-full items-center gap-4">
+                      <input
+                        className="w-full min-w-0 flex-1 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        value={form.workspaceRoot}
+                        onChange={(e) => update({ workspaceRoot: e.target.value })}
+                        placeholder={t('workspaceRootPlaceholder')}
+                        title={form.workspaceRoot}
+                      />
+                      <div className="w-[8.5rem] shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => void pickWorkspace()}
+                          className={settingsBlockButtonClass()}
+                        >
+                          {t('browse')}
+                        </button>
+                      </div>
+                    </div>
+                    {workspacePickerError ? (
+                      <p className="text-[13px] leading-5 text-amber-700 dark:text-amber-300">
+                        {workspacePickerError}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
                 <SettingRow
                   relaxed
                   title={t('logDir')}
@@ -762,14 +764,6 @@ export function SettingsView(): ReactElement {
                   controlWidth="medium"
                   control={
                     <div className="flex w-full flex-col items-end gap-1.5">
-                      {logPath ? (
-                        <span
-                          className="block max-w-full truncate font-mono text-[11px] text-ds-faint"
-                          title={logPath}
-                        >
-                          {logPath}
-                        </span>
-                      ) : null}
                       <button
                         type="button"
                         className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-center text-[13px] font-medium leading-none text-ds-ink shadow-sm transition hover:bg-ds-hover disabled:opacity-50"
@@ -979,6 +973,9 @@ export function SettingsView(): ReactElement {
             <SettingsCard title={t('permissions')}>
               <SettingRow
                 title={t('approvalPolicy')}
+                help={
+                  <FieldHelpPopover title={t('approvalPolicy')} intro={t('approvalPolicyHelp')} />
+                }
                 description={t('approvalPolicyDesc')}
                 control={
                   <SettingsSelect
@@ -1001,6 +998,9 @@ export function SettingsView(): ReactElement {
               />
               <SettingRow
                 title={t('sandboxMode')}
+                help={
+                  <FieldHelpPopover title={t('sandboxMode')} intro={t('sandboxModeHelp')} />
+                }
                 description={t('sandboxModeDesc')}
                 control={
                   <SettingsSelect
@@ -1029,24 +1029,24 @@ export function SettingsView(): ReactElement {
                 relaxed
                 alignControl="center"
                 title={t('hooksConfigPath')}
+                help={
+                  <FieldHelpPopover
+                    title={t('hooksConfigPath')}
+                    intro={t('hooksConfigPathDesc')}
+                  />
+                }
                 description={
-                  <>
-                    <p className="text-[13px] leading-6 text-ds-muted">{t('hooksConfigPathDesc')}</p>
-                    <p className="text-[13px] leading-6 text-ds-muted">{t('hooksDesc')}</p>
-                  </>
+                  <p className="text-[13px] leading-6 text-ds-muted">{t('hooksDesc')}</p>
                 }
                 controlWidth="medium"
                 control={
                   <div
                     className="w-full max-w-[280px] rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm"
-                    title={`${deepseekPaths.configPath} · [hooks]\n${deepseekPaths.hooksDir}`}
+                    title={`${deepseekPaths.configPath} · [hooks]`}
                   >
                     <code className="block truncate rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
                       {deepseekPaths.configPath} · [hooks]
                     </code>
-                    <span className="mt-1.5 block truncate text-[11px] text-ds-faint">
-                      {deepseekPaths.hooksDir}
-                    </span>
                   </div>
                 }
               />
@@ -1054,11 +1054,14 @@ export function SettingsView(): ReactElement {
                 relaxed
                 alignControl="center"
                 title={t('hooksActions')}
+                help={
+                  <FieldHelpPopover
+                    title={t('hooksActions')}
+                    intro={t('hooksOpenConfigHint')}
+                  />
+                }
                 description={
-                  <>
-                    <p className="text-[13px] leading-6 text-ds-muted">{t('hooksActionsDesc')}</p>
-                    <p className="text-[13px] leading-6 text-ds-faint">{t('hooksOpenConfigHint')}</p>
-                  </>
+                  <p className="text-[13px] leading-6 text-ds-muted">{t('hooksActionsDesc')}</p>
                 }
                 control={
                   <div className="flex flex-col items-end gap-2">

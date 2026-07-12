@@ -33,6 +33,9 @@ def make_plugin(
     with_skill: bool = True,
     with_hook: bool = True,
     with_mcp: bool = True,
+    with_command: bool = False,
+    with_agent: bool = False,
+    declare_components: bool = True,
     extra_manifest: dict | None = None,
 ) -> Path:
     plugin = root / name
@@ -45,7 +48,29 @@ def make_plugin(
             "---\nname: demo-skill\ndescription: A demo skill.\n---\n\nBody.\n",
             encoding="utf-8",
         )
-        manifest["skills"] = "./skills"
+        if declare_components:
+            manifest["skills"] = "./skills"
+    if with_command:
+        cmds = plugin / "commands"
+        cmds.mkdir(parents=True)
+        (cmds / "greet.md").write_text(
+            "---\ndescription: Greet someone.\nargument-hint: <name>\n---\n"
+            "Say hello to $ARGUMENTS in a friendly way.\n",
+            encoding="utf-8",
+        )
+        if declare_components:
+            manifest["commands"] = "./commands"
+    if with_agent:
+        agents = plugin / "agents"
+        agents.mkdir(parents=True)
+        (agents / "specialist.md").write_text(
+            "---\nname: demo-specialist\ndescription: A specialist persona.\n"
+            "model: opus\ntools: Read, Grep\n---\n"
+            "You are a focused specialist. Do the task well.\n",
+            encoding="utf-8",
+        )
+        if declare_components:
+            manifest["agents"] = "./agents"
     if with_hook:
         (plugin / "hooks.json").write_text(
             json.dumps(
@@ -96,16 +121,306 @@ def test_manifest_claude_code_compat_location(tmp_path: Path) -> None:
 
 def test_manifest_unsupported_components_flagged(tmp_path: Path) -> None:
     plugin = make_plugin(
-        tmp_path, extra_manifest={"commands": "./commands", "agents": "./agents"}
+        tmp_path,
+        extra_manifest={"outputStyles": "./styles", "lspServers": "./lsp"},
     )
     manifest = load_plugin_manifest(plugin)
     assert manifest is not None
-    assert set(manifest.unsupported) == {"commands", "agents"}
+    assert set(manifest.unsupported) == {"outputStyles", "lspServers"}
 
 
 def test_manifest_missing_returns_none(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     assert load_plugin_manifest(tmp_path / "empty") is None
+
+
+def make_codebuddy_plugin(root: Path, name: str = "cb") -> Path:
+    """A CodeBuddy-style plugin: ``.codebuddy-plugin`` manifest, skills declared
+    as leaf dirs, agents/rules declared as .md files."""
+    plugin = root / name
+    (plugin / "skills" / "alpha-skill").mkdir(parents=True)
+    (plugin / "skills" / "alpha-skill" / "SKILL.md").write_text(
+        "---\nname: fsi-alpha\ndescription: Alpha skill.\n---\nAlpha body.\n",
+        encoding="utf-8",
+    )
+    (plugin / "agents").mkdir(parents=True)
+    (plugin / "agents" / "worker.md").write_text(
+        "---\nname: cb_worker\ndescription: A worker.\n"
+        "tools: Glob, Grep\nmodel: claude-haiku-4.5\n---\nYou are a worker.\n",
+        encoding="utf-8",
+    )
+    (plugin / "rules").mkdir(parents=True)
+    (plugin / "rules" / "core.md").write_text(
+        "---\ndescription: Core directive.\nalwaysApply: true\nenabled: true\n---\n"
+        "You MUST follow the core workflow.\n",
+        encoding="utf-8",
+    )
+    (plugin / "rules" / "disabled.md").write_text(
+        "---\ndescription: off.\nenabled: false\n---\nShould not load.\n",
+        encoding="utf-8",
+    )
+    mdir = plugin / ".codebuddy-plugin"
+    mdir.mkdir(parents=True)
+    (mdir / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": "1.0.0",
+                "description": "codebuddy plugin",
+                "skills": ["./skills/alpha-skill"],
+                "agents": ["./agents/worker.md"],
+                "rules": ["./rules/core.md", "./rules/disabled.md"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return plugin
+
+
+def test_codebuddy_manifest_location_recognized(tmp_path: Path) -> None:
+    plugin = make_codebuddy_plugin(tmp_path)
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.name == "cb"
+    assert manifest.skills == ("./skills/alpha-skill",)
+    assert manifest.agents == ("./agents/worker.md",)
+    assert manifest.rules == ("./rules/core.md", "./rules/disabled.md")
+
+
+def test_codebuddy_leaf_skills_files_agents_and_rules(tmp_path: Path) -> None:
+    make_codebuddy_plugin(tmp_path)
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    # Leaf skill dir (SKILL.md directly inside) loads.
+    assert [s.name for s in contribs.skills] == ["fsi-alpha"]
+    # Agent declared as a .md file loads.
+    assert [a.name for a in contribs.agents] == ["cb_worker"]
+    assert contribs.agents[0].model == "claude-haiku-4.5"
+    assert contribs.agents[0].tools == ("Glob", "Grep")
+    # Rules: enabled core loads, disabled one is skipped.
+    assert [r.name for r in contribs.rules] == ["core"]
+    assert contribs.rules[0].always_apply is True
+    assert "core workflow" in contribs.rules[0].body
+
+
+def test_bare_skill_folder_synthesizes_single_skill_plugin(tmp_path: Path) -> None:
+    # A folder whose root holds SKILL.md and no manifest (CodeBuddy/WorkBuddy
+    # standalone skills like ardot-slides / pptx-generator).
+    plugin = tmp_path / "ardot-slides"
+    plugin.mkdir()
+    (plugin / "SKILL.md").write_text(
+        "---\nname: ardot-slides\ndescription: Slide design.\n---\nDeck workflow.\n",
+        encoding="utf-8",
+    )
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.name == "ardot-slides"
+    assert manifest.skills == (".",)
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    assert [s.name for s in contribs.skills] == ["ardot-slides"]
+
+
+def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
+    plugin = tmp_path / "ppt"
+    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / "hooks").mkdir()
+    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {"name": "ppt", "version": "1.0.0", "hooks": "./hooks/hooks.json"}
+        ),
+        encoding="utf-8",
+    )
+    (plugin / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": 'node "${CODEBUDDY_PLUGIN_ROOT}/x.js" '
+                                    '"${CODEBUDDY_PROJECT_DIR}"',
+                                    "timeout": 10000,
+                                }
+                            ]
+                        }
+                    ],
+                    "PreToolUse": [
+                        {
+                            "matcher": "Skill",
+                            "hooks": [{"type": "command", "command": "echo pre"}],
+                        }
+                    ],
+                    "Stop": [
+                        {"hooks": [{"type": "command", "command": "echo stop"}]}
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    set_plugin_trusted("ppt", True, plugins_dir=tmp_path)  # hooks need trust
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    events = {h.event: h for h in contribs.hook_entries}
+    assert "session_start" in events
+    assert "tool_call_before" in events
+    # Timeout ms -> seconds.
+    assert events["session_start"].timeout_secs == 10.0
+    # Plugin-root token resolved to absolute path; project-dir -> runtime env.
+    assert "${CODEBUDDY_PLUGIN_ROOT}" not in events["session_start"].command
+    assert "${DEEPSEEK_WORKSPACE}" in events["session_start"].command
+    # matcher mapped to our tool taxonomy so the hook actually fires.
+    assert events["tool_call_before"].condition == {
+        "type": "tool_name_any",
+        "names": ["load_skill"],
+    }
+    # Unsupported event skipped with a warning.
+    assert any("Stop" in w for w in contribs.warnings)
+
+
+def test_current_date_template_substituted_in_rules(tmp_path: Path) -> None:
+    from deepseek_tui.engine.prompts import (
+        render_plugin_rules_context,
+        substitute_builtin_template_vars,
+    )
+
+    assert "{{.CurrentDate}}" not in substitute_builtin_template_vars(
+        "today is {{.CurrentDate}}"
+    )
+    assert "{{.Other}}" in substitute_builtin_template_vars("keep {{.Other}}")
+    plugin = tmp_path / "dr"
+    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / "rules").mkdir()
+    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {"name": "dr", "version": "1.0.0", "rules": ["./rules/r.md"]}
+        ),
+        encoding="utf-8",
+    )
+    (plugin / "rules" / "r.md").write_text(
+        "---\ndescription: d\nalwaysApply: true\n---\nThe date is {{.CurrentDate}}.\n",
+        encoding="utf-8",
+    )
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    ctx = render_plugin_rules_context(contribs.rules)
+    assert "{{.CurrentDate}}" not in ctx
+    assert "The date is" in ctx
+
+
+def test_rules_autodiscovered_without_manifest_key(tmp_path: Path) -> None:
+    plugin = tmp_path / "cb2"
+    (plugin / "rules").mkdir(parents=True)
+    (plugin / "rules" / "r.md").write_text(
+        "---\ndescription: d\n---\nRule body.\n", encoding="utf-8"
+    )
+    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "cb2", "version": "1.0.0"}), encoding="utf-8"
+    )
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.rules == ("./rules",)
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    assert [r.name for r in contribs.rules] == ["r"]
+
+
+def test_load_marketplace_resolves_local_plugins(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import load_marketplace
+
+    repo = tmp_path / "repo"
+    (repo / "plugins").mkdir(parents=True)
+    make_plugin(repo / "plugins", "alpha", with_hook=False, with_mcp=False)
+    make_plugin(repo / "plugins", "beta", with_hook=False, with_mcp=False)
+    market = repo / ".claude-plugin"
+    market.mkdir(parents=True)
+    (market / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-market",
+                "plugins": [
+                    {"name": "alpha", "source": "./plugins/alpha"},
+                    {"name": "beta", "source": "./plugins/beta"},
+                    # Remote git-subdir entries are skipped.
+                    {"name": "remote", "source": {"source": "git-subdir"}},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    entries = load_marketplace(repo)
+    assert {e.name for e in entries} == {"alpha", "beta"}
+    assert all(e.path.is_dir() for e in entries)
+
+
+def test_manifest_autodiscovers_components_without_declaration(tmp_path: Path) -> None:
+    # Mainstream (Claude Code) plugins ship a minimal manifest and lay
+    # components out as directories; auto-discovery must find all three.
+    plugin = make_plugin(
+        tmp_path,
+        with_command=True,
+        with_agent=True,
+        declare_components=False,
+        with_hook=False,
+        with_mcp=False,
+    )
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.skills == ("./skills",)
+    assert manifest.commands == ("./commands",)
+    assert manifest.agents == ("./agents",)
+
+
+def test_collect_commands_and_agents(tmp_path: Path) -> None:
+    make_plugin(
+        tmp_path,
+        with_command=True,
+        with_agent=True,
+        with_hook=False,
+        with_mcp=False,
+    )
+    loaded = discover_plugins(plugins_dir=tmp_path)
+    contribs = collect_contributions(loaded)
+    assert len(contribs.commands) == 1
+    cmd = contribs.commands[0]
+    assert cmd.qualified == "demo:greet"
+    assert cmd.argument_hint == "<name>"
+    assert "$ARGUMENTS" in cmd.body
+    assert len(contribs.agents) == 1
+    agent = contribs.agents[0]
+    assert agent.name == "demo-specialist"
+    assert agent.model == "opus"
+    assert agent.tools == ("Read", "Grep")
+    assert "specialist" in agent.body.lower()
+
+
+def test_collect_command_no_frontmatter_falls_back_to_body(tmp_path: Path) -> None:
+    plugin = tmp_path / "bare"
+    (plugin / "commands").mkdir(parents=True)
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "bare", "version": "1.0.0"}), encoding="utf-8"
+    )
+    (plugin / "commands" / "raw.md").write_text(
+        "Just a bare command body with no frontmatter.\n", encoding="utf-8"
+    )
+    loaded = discover_plugins(plugins_dir=tmp_path)
+    contribs = collect_contributions(loaded)
+    assert len(contribs.commands) == 1
+    assert contribs.commands[0].qualified == "bare:raw"
+    assert "bare command body" in contribs.commands[0].body
+
+
+def test_commands_and_agents_load_even_when_untrusted(tmp_path: Path) -> None:
+    # Declarative text (like skills) must load regardless of trust; only
+    # hooks/MCP are trust-gated.
+    make_plugin(tmp_path, with_command=True, with_agent=True)
+    loaded = discover_plugins(plugins_dir=tmp_path)
+    assert all(not p.trusted for p in loaded)
+    contribs = collect_contributions(loaded)
+    assert contribs.commands and contribs.agents
+    # hooks/MCP skipped while untrusted
+    assert not contribs.hook_entries
+    assert not contribs.mcp_servers
 
 
 # ── Discovery + lockfile ─────────────────────────────────────────────────
@@ -551,6 +866,100 @@ async def test_engine_create_loads_plugin_components(tmp_path, monkeypatch) -> N
         assert "demo:session_start" in hook_names
     finally:
         await engine.shutdown_session()
+
+
+async def test_engine_registers_plugin_commands_and_agents(
+    tmp_path, monkeypatch
+) -> None:
+    """Plugin commands + agent personas reach the engine: commands expand
+    into messages, agents are exposed to agent_spawn via metadata."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    make_plugin(
+        plugins_dir,
+        "demo",
+        with_command=True,
+        with_agent=True,
+        with_hook=False,
+        with_mcp=False,
+    )
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        assert "demo:greet" in engine.plugin_commands
+        assert "demo-specialist" in engine.plugin_agents
+        assert "plugin_agents" in engine.tool_context.metadata
+
+        # Command expansion substitutes $ARGUMENTS.
+        expanded = engine._expand_plugin_command("/demo:greet World")
+        assert expanded is not None
+        assert "World" in expanded
+        assert "$ARGUMENTS" not in expanded
+
+        # Non-command messages and unknown commands pass through.
+        assert engine._expand_plugin_command("hello there") is None
+        assert engine._expand_plugin_command("/demo:missing x") is None
+
+        # Components surface in the system prompt block.
+        block = engine._render_plugin_components_context()
+        assert block is not None
+        assert "/demo:greet" in block
+        assert "demo-specialist" in block
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:
+    """agent_spawn resolves a plugin agent name to a CUSTOM/general spawn
+    whose system prompt is the persona body."""
+    from deepseek_tui.integrations.plugins import PluginAgent
+    from deepseek_tui.tools.registry import ToolContext
+    from deepseek_tui.tools.subagent.manager import SubAgentManager
+    from deepseek_tui.tools.subagent.tools import AgentSpawnTool
+
+    persona = PluginAgent(
+        name="demo-specialist",
+        plugin="demo",
+        description="A specialist.",
+        body="You are a focused specialist persona.",
+        path=tmp_path / "a.md",
+        model="opus",
+        tools=("Read", "Grep"),
+    )
+    manager = SubAgentManager(workspace=tmp_path)
+    context = ToolContext(
+        working_directory=tmp_path,
+        subagent_manager=manager,
+        metadata={"plugin_agents": {"demo-specialist": persona}},
+    )
+    result = await AgentSpawnTool().execute(
+        {"prompt": "do the thing", "type": "demo-specialist"}, context
+    )
+    assert result.success
+    agent_id = result.metadata["agent_id"]
+    spawned = manager._agents[agent_id]
+    assert spawned.system_prompt == "You are a focused specialist persona."
+    # Unknown persona names still raise.
+    import pytest
+
+    from deepseek_tui.tools.registry import ToolError
+
+    with pytest.raises(ToolError):
+        await AgentSpawnTool().execute(
+            {"prompt": "x", "type": "nonexistent-agent"}, context
+        )
+    await manager.shutdown()
 
 
 async def test_load_skill_resolves_plugin_skill_via_engine_registry(

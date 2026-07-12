@@ -33,6 +33,7 @@ import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
 import { decodeModelRef } from '@shared/model-ref'
+import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import type {
   AppRoute,
   ChatState,
@@ -81,10 +82,10 @@ import {
 
 export type { AppRoute, SettingsRouteSection } from './chat-store-types'
 
-// Literal default-workspace path for Chats (temporary) threads. Main expands
-// the leading "~"; this keeps a brand-new chat from inheriting the active
-// project workspace.
-const DEFAULT_CHATS_WORKSPACE_ROOT = '~/.deepseekgui/default_workspace'
+// Default-workspace path for Chats (temporary) threads. Main expands the
+// leading "~"; this keeps a brand-new chat from inheriting the active project
+// workspace. Sourced from the shared single source of truth.
+const DEFAULT_CHATS_WORKSPACE_ROOT = DEFAULT_WORKSPACE_ROOT
 
 let sseAbort: AbortController | null = null
 const sseAbortRef = {
@@ -1338,19 +1339,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return bootPromise
   },
 
-  chooseWorkspace: async ({ createThreadAfter = false } = {}) => {
+  activateWorkspace: async (workspacePath, { createThreadAfter = false } = {}) => {
+    const requested = normalizeWorkspaceRoot(workspacePath)
+    if (!requested) return null
     try {
-      if (typeof window.dsGui === 'undefined' || typeof window.dsGui.pickWorkspaceDirectory !== 'function') {
+      if (typeof window.dsGui === 'undefined' || typeof window.dsGui.setSettings !== 'function') {
         throw new Error(i18n.t('common:workspacePickerUnavailable'))
       }
-      const picked = await window.dsGui.pickWorkspaceDirectory(get().workspaceRoot || undefined)
-      if (picked.canceled || !picked.path) {
-        if (createThreadAfter) {
-          set({ error: i18n.t('common:workspaceRequiredToCreateThread') })
-        }
-        return null
-      }
-      const next = await window.dsGui.setSettings({ workspaceRoot: picked.path })
+      const next = await window.dsGui.setSettings({ workspaceRoot: requested })
       const workspaceRoot = normalizeWorkspaceRoot(next.workspaceRoot)
       set({
         workspaceRoot,
@@ -1359,8 +1355,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       await get().refreshThreads()
       if (workspaceRoot) {
-        const workspaceThreads = get().threads
-          .filter((thread) => threadBelongsToWorkspace(thread, workspaceRoot))
+        const workspaceThreads = get()
+          .threads.filter((thread) => threadBelongsToWorkspace(thread, workspaceRoot))
           .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 
         if (createThreadAfter || workspaceThreads.length === 0) {
@@ -1373,6 +1369,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
       return workspaceRoot
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e)
+      })
+      return null
+    }
+  },
+
+  chooseWorkspace: async ({ createThreadAfter = false } = {}) => {
+    try {
+      if (typeof window.dsGui === 'undefined' || typeof window.dsGui.pickWorkspaceDirectory !== 'function') {
+        throw new Error(i18n.t('common:workspacePickerUnavailable'))
+      }
+      const picked = await window.dsGui.pickWorkspaceDirectory(get().workspaceRoot || undefined)
+      if (picked.canceled || !picked.path) {
+        if (createThreadAfter) {
+          set({ error: i18n.t('common:workspaceRequiredToCreateThread') })
+        }
+        return null
+      }
+      return await get().activateWorkspace(picked.path, { createThreadAfter })
     } catch (e) {
       set({
         error: formatWorkspacePickerError(e)

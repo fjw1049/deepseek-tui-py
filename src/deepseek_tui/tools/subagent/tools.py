@@ -115,6 +115,18 @@ def _running_agent_ids(manager: SubAgentManager) -> list[str]:
     ]
 
 
+def _resolve_plugin_agent(raw_type: str, context: ToolContext) -> Any | None:
+    """Look up a plugin-contributed persona by name (case-insensitive).
+
+    Plugin agents are registered on the parent turn's ToolContext under
+    ``metadata['plugin_agents']`` as a ``{name_lower: PluginAgent}`` map.
+    """
+    registry = context.metadata.get("plugin_agents")
+    if not isinstance(registry, dict):
+        return None
+    return registry.get(raw_type.strip().lower())
+
+
 class AgentSpawnTool(ToolSpec):
     def name(self) -> str:
         return "agent_spawn"
@@ -199,16 +211,36 @@ class AgentSpawnTool(ToolSpec):
             raise ToolError("prompt (or message/objective) is required")
         raw_type = _pick_str(input_data, "type", "agent_type", "agent_name") or "general"
         agent_type = SubAgentType.parse(raw_type)
+        # A name that is not a built-in type may be a plugin-contributed
+        # persona (Claude Code agents/<name>.md). Its markdown body becomes
+        # the sub-agent's system prompt.
+        plugin_persona = None
+        persona_prompt: str | None = None
         if agent_type is None:
-            valid_types = ", ".join([
-                "general", "explore", "plan", "review",
-                "implementer", "verifier", "custom"
-            ])
-            raise ToolError(
-                f"Unknown sub-agent type: {raw_type}. "
-                f"Valid types: {valid_types}. "
-                f"Use 'nickname' parameter for custom display names."
-            )
+            plugin_persona = _resolve_plugin_agent(raw_type, context)
+            if plugin_persona is None:
+                valid_types = ", ".join([
+                    "general", "explore", "plan", "review",
+                    "implementer", "verifier", "custom"
+                ])
+                registry = context.metadata.get("plugin_agents")
+                plugin_names = (
+                    sorted(a.name for a in registry.values())
+                    if isinstance(registry, dict) else []
+                )
+                extra = (
+                    f" Plugin agents: {', '.join(plugin_names)}."
+                    if plugin_names else ""
+                )
+                raise ToolError(
+                    f"Unknown sub-agent type: {raw_type}. "
+                    f"Valid types: {valid_types}.{extra} "
+                    f"Use 'nickname' parameter for custom display names."
+                )
+            agent_type = SubAgentType.GENERAL
+            from deepseek_tui.engine.prompts import substitute_builtin_template_vars
+
+            persona_prompt = substitute_builtin_template_vars(plugin_persona.body)
         role = _pick_str(input_data, "role")
         allowed_raw = input_data.get("allowed_tools")
         allowed_tools: list[str] | None = None
@@ -228,10 +260,12 @@ class AgentSpawnTool(ToolSpec):
             assignment=SubAgentAssignment(objective=prompt, role=role),
             allowed_tools=allowed_tools,
             model=_pick_str(input_data, "model"),
-            nickname=_pick_str(input_data, "nickname"),
+            nickname=_pick_str(input_data, "nickname")
+            or (plugin_persona.name if plugin_persona else None),
             parent_depth=int(context.metadata.get("subagent_depth", 0) or 0),
             fork_context=fork_context,
             fork_messages=fork_messages,
+            system_prompt=persona_prompt,
         )
         runtime_raw = context.metadata.get("subagent_runtime")
         if runtime_raw is not None and hasattr(runtime_raw, "would_exceed_depth"):

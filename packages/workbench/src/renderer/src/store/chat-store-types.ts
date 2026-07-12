@@ -121,6 +121,11 @@ export type ChatState = {
   boot: () => Promise<void>
   probeRuntime: (mode?: 'user' | 'background') => Promise<void>
   chooseWorkspace: (options?: { createThreadAfter?: boolean }) => Promise<string | null>
+  /** Switch to a known workspace path (same post-pick semantics as chooseWorkspace). */
+  activateWorkspace: (
+    workspacePath: string,
+    options?: { createThreadAfter?: boolean }
+  ) => Promise<string | null>
   clearWorkspace: () => Promise<void>
   deleteWorkspace: (workspacePath: string) => Promise<void>
   refreshThreads: () => Promise<void>

@@ -96,22 +96,25 @@ class DeepSeekTUI(App[None]):
     """Main TUI application."""
 
     TITLE = "DeepSeek TUI"
-    # Composer chrome (2026-05-11 polish pass v2): the composer is the
-    # primary interaction surface, so it gets a full rounded border and
-    # is bumped from 3 → 5 rows (one for each border + 3 for text). The
-    # ``margin-bottom: 1`` carves a blank row between it and the
-    # ``KeyHints`` strip so the muted chip row reads as separate chrome
-    # rather than a continuation of the input.
+    # Composer chrome (2026-07 polish pass v3, Cursor-style): the
+    # composer reads as a floating rounded card — subtle gray border at
+    # rest that brightens to the accent color on focus. The StatusBar
+    # beneath it is inset (see its margin) and muted so it reads as a
+    # gray context strip tucked behind the card rather than a second
+    # competing surface.
     CSS = """
     Composer {
         dock: bottom;
         height: auto;
         min-height: 5;
         max-height: 12;
-        border: round $accent;
+        border: round $panel-lighten-2;
         margin: 0 1 1 1;
         padding: 0 1;
         background: $surface;
+    }
+    Composer:focus {
+        border: round $accent;
     }
     """
 
@@ -295,6 +298,7 @@ class DeepSeekTUI(App[None]):
             else:
                 status.set_status(applied)
             self._engine.mode = self._interaction_mode
+            self._announce_plugins()
             await self._engine.run_lifecycle_hook("session_start")
             await self._flush_pending_messages()
         except Exception:  # noqa: BLE001 — surface startup failure in UI
@@ -312,6 +316,33 @@ class DeepSeekTUI(App[None]):
             self._engine_task = None
         finally:
             self._engine_starting = False
+
+    def _announce_plugins(self) -> None:
+        """Surface a one-line banner of loaded plugins in the transcript.
+
+        The Textual TUI has no plugins panel; this makes background-loaded
+        plugins visible at session start.
+        """
+        engine = self._engine
+        if engine is None:
+            return
+        summary = getattr(engine, "plugin_summary", {}) or {}
+        count = summary.get("plugins", 0)
+        if not count:
+            return
+        parts = [
+            f"{summary[k]} {k}"
+            for k in ("skills", "commands", "agents", "rules", "hooks", "mcp")
+            if summary.get(k)
+        ]
+        detail = f" — {', '.join(parts)}" if parts else ""
+        try:
+            self.query_one(Transcript).add_notice(
+                f"Loaded {count} plugin(s){detail}. Type /plugins for details.",
+                severity="info",
+            )
+        except Exception:  # noqa: BLE001 — banner is best-effort
+            pass
 
     def _apply_resume_or_fork(self) -> str | None:
         """Restore session messages from disk if a resume/fork id was given.
@@ -527,6 +558,15 @@ class DeepSeekTUI(App[None]):
         self.query_one(SlashMenu).hide()
         result = dispatch(event.raw_input, self)
         transcript = self.query_one(Transcript)
+        if result.submit_message is not None:
+            # Plugin prompt command — submit as a user turn; the engine
+            # expands the /<plugin>:<command> template into the message.
+            self.run_worker(
+                self._submit_user_message(result.submit_message),
+                exclusive=False,
+                name="plugin-command-submit",
+            )
+            return
         if result.output:
             transcript.add_notice(result.output, severity="info")
         if result.error:
@@ -1271,6 +1311,10 @@ class DeepSeekTUI(App[None]):
                 tasks=filter_sidebar_tasks(tasks_data),
                 agents=filter_sidebar_agents(
                     agents_data, turn_agent_ids=self._turn_agent_ids
+                ),
+                plugin_names=list(getattr(self._engine, "plugin_names", []) or []),
+                plugin_summary=dict(
+                    getattr(self._engine, "plugin_summary", {}) or {}
                 ),
             )
         )

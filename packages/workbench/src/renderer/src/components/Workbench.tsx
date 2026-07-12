@@ -667,7 +667,7 @@ export function Workbench(): ReactElement {
     // belongs to that project (inherit its workspace); otherwise it is a
     // temporary (Chats) thread. Reveal the Chats section so the new temporary
     // thread is visible even if it was collapsed.
-    // Note: a temporary chat's workspace is `~/.deepseekgui/default_workspace`,
+    // Note: a temporary chat's workspace is the shared DEFAULT_WORKSPACE_ROOT,
     // which is non-empty, so test `isChatsWorkspace` (not just an empty root).
     const activeThread = activeThreadId
       ? threads.find((thread) => thread.id === activeThreadId)

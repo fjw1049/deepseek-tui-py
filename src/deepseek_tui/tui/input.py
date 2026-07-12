@@ -37,7 +37,8 @@ class ComposerHint(Static):
     ComposerHint {
         dock: bottom;
         height: 1;
-        padding: 0 1;
+        padding: 0 2;
+        margin: 0 3;
         color: $text-muted;
     }
     """
@@ -236,7 +237,7 @@ class SlashMenu(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("[bold]Commands[/]")
-        completions = get_completions("/")
+        completions = get_completions("/", getattr(self, "app", None))
         options = [
             Option(f"{cmd}  [dim]{desc}[/]", id=cmd)
             for cmd, desc in completions
@@ -245,7 +246,7 @@ class SlashMenu(Vertical):
 
     def show(self, filter_text: str = "") -> None:
         prefix = filter_text if filter_text.startswith("/") else "/"
-        completions = get_completions(prefix)
+        completions = get_completions(prefix, getattr(self, "app", None))
         try:
             option_list = self.query_one(OptionList)
             option_list.clear_options()
@@ -300,7 +301,7 @@ class CommandPalette(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="palette-container"):
             yield Input(placeholder="Type a command...", id="palette-input")
-            completions = get_completions("/")
+            completions = get_completions("/", getattr(self, "app", None))
             options = [
                 Option(f"{cmd}  [dim]{desc}[/]", id=cmd)
                 for cmd, desc in completions
@@ -313,7 +314,7 @@ class CommandPalette(ModalScreen[str | None]):
     def on_input_changed(self, event: Input.Changed) -> None:
         text = event.value.strip()
         prefix = text if text.startswith("/") else f"/{text}"
-        completions = get_completions(prefix)
+        completions = get_completions(prefix, getattr(self, "app", None))
         try:
             option_list = self.query_one("#palette-list", OptionList)
             option_list.clear_options()

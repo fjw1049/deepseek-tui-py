@@ -55,7 +55,7 @@ import {
 import { ContextUsageMeter } from './ContextUsageMeter'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
-import { GitBranchPicker } from './GitBranchPicker'
+import { WorkspaceContextBar } from './WorkspaceContextBar'
 import {
   joinSpeechText,
   useAudioRecorder,
@@ -1265,7 +1265,9 @@ export function FloatingComposer({
         <div
           ref={shellRef}
             className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col px-4 transition sm:px-5 ${
-              stageCentered ? 'ds-composer-empty gap-1.5 py-2.5' : 'gap-1.5 py-2.5'
+              stageCentered
+                ? 'ds-composer-empty relative z-10 gap-1.5 py-2.5'
+                : 'gap-1.5 py-2.5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -1983,27 +1985,22 @@ export function FloatingComposer({
           </div>
         </div>
       </div>
-      <div className="mt-0 grid min-h-6 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
-        <div className="min-w-0">
-          {stageCentered ? (
-            <GitBranchPicker
-              key={effectiveWorkspaceRoot}
-              workspaceRoot={effectiveWorkspaceRoot}
-              usePortal
-              menuPlacement="above"
+      {stageCentered ? (
+        <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
+      ) : (
+        <div className="mt-0 grid min-h-6 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
+          <div className="min-w-0" />
+          <span />
+          <div className="min-w-0 justify-self-end">
+            <ContextUsageMeter
+              blocks={blocks}
+              model={activeModelId}
+              hasActiveThread={hasActiveThread}
+              threadId={activeThreadId}
             />
-          ) : null}
+          </div>
         </div>
-        <span />
-        <div className="min-w-0 justify-self-end">
-          <ContextUsageMeter
-            blocks={blocks}
-            model={activeModelId}
-            hasActiveThread={hasActiveThread}
-            threadId={activeThreadId}
-          />
-        </div>
-      </div>
+      )}
       {!runtimeReady ? (
         <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">
           {t('composerOfflineHint')}

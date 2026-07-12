@@ -198,6 +198,7 @@ class SubAgentManager:
                 mailbox=self._mailbox,
                 loop_runtime=self._loop_runtime_for_spawn(request, child_depth),
                 output_schema=request.output_schema,
+                system_prompt=request.system_prompt,
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()

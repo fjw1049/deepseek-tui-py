@@ -204,6 +204,23 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 看到「只读底座 + 按插件 permissions 的写工具 + 该插件的 skill/MCP
         # 工具」。用户显式打 `/skill` 或 `@mcp` 时该轮让位（前缀优先）。
         self._active_plugin: object | None = None
+        # Plugin-contributed prompt commands and agent personas, populated in
+        # ``Engine.create`` from plugin contributions. Commands map their
+        # ``<plugin>:<stem>`` invocation (lowercased) → PluginCommand and are
+        # expanded into the user message in ``_handle_send_message_inner``.
+        # Agents map ``<name>`` (lowercased) → PluginAgent and are exposed to
+        # ``agent_spawn`` via ``tool_context.metadata['plugin_agents']``.
+        self.plugin_commands: dict[str, Any] = {}
+        self.plugin_agents: dict[str, Any] = {}
+        # Plugin ``rules`` — always-on system-level directives (CodeBuddy
+        # convention). Their bodies are injected into the system prompt every
+        # turn (declarative text, no execution).
+        self.plugin_rules: list[Any] = []
+        # Names of skills contributed by plugins (for UI surfacing / labeling).
+        self.plugin_skill_names: set[str] = set()
+        # Loaded-plugin summary + names for the startup banner and sidebar.
+        self.plugin_summary: dict[str, int] = {}
+        self.plugin_names: list[str] = []
         # Per-tool snapshots for /undo.
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
@@ -418,6 +435,39 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             has_mcp=has_mcp,
         )
 
+    def _render_plugin_components_context(self) -> str | None:
+        """Render the ``## Plugin Commands & Agents`` block, or ``None``.
+
+        Lists plugin-contributed slash commands and agent personas so the
+        model knows they exist. Suppressed while a plugin is mounted (the
+        mount already narrows the surface to one plugin) to avoid noise.
+        """
+        if self._active_plugin is not None:
+            return None
+        if not self.plugin_commands and not self.plugin_agents:
+            return None
+        from deepseek_tui.engine.prompts import render_plugin_components_context
+
+        block = render_plugin_components_context(
+            list(self.plugin_commands.values()),
+            list(self.plugin_agents.values()),
+        )
+        return block or None
+
+    def _render_plugin_rules_context(self) -> str | None:
+        """Render always-on plugin ``rules`` bodies as a system-prompt block.
+
+        CodeBuddy plugins carry their core behavior in ``rules`` marked
+        ``alwaysApply: true`` — system-level directives. Suppressed while a
+        plugin is mounted (the mount already scopes behavior).
+        """
+        if self._active_plugin is not None or not self.plugin_rules:
+            return None
+        from deepseek_tui.engine.prompts import render_plugin_rules_context
+
+        block = render_plugin_rules_context(self.plugin_rules)
+        return block or None
+
     def _advanced_tool_flags(self) -> tuple[bool, bool]:
         """Whether ``tool_search`` / ``code_execution`` are included this turn.
 
@@ -538,10 +588,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 discover_plugins,
             )
 
+            loaded_plugins: list[Any] = []
             try:
-                plugin_contribs = collect_contributions(
-                    discover_plugins(workspace=ws)
-                )
+                loaded_plugins = discover_plugins(workspace=ws)
+                plugin_contribs = collect_contributions(loaded_plugins)
             except Exception:  # noqa: BLE001 — a malformed plugin must not
                 # crash engine construction; degrade to no plugin contributions.
                 logger.warning("plugin discovery failed", exc_info=True)
@@ -649,6 +699,31 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine.turn_loop = TurnLoop(engine.client, compact_fn=engine._emergency_compact)
         if isinstance(tool_runtime, ToolRuntime):
             engine._owns_tool_runtime = False
+        # Register plugin prompt commands + agent personas so slash commands
+        # expand into messages and agent_spawn can resolve persona names.
+        if plugin_contribs is not None:
+            engine.plugin_commands = {
+                c.qualified.lower(): c for c in plugin_contribs.commands
+            }
+            engine.plugin_agents = {
+                a.name.lower(): a for a in plugin_contribs.agents
+            }
+            if engine.plugin_agents:
+                engine.tool_context.metadata["plugin_agents"] = engine.plugin_agents
+            engine.plugin_rules = [
+                r for r in plugin_contribs.rules if r.always_apply
+            ]
+            engine.plugin_skill_names = {s.name for s in plugin_contribs.skills}
+            engine.plugin_summary = {
+                "plugins": len(loaded_plugins),
+                "skills": len(plugin_contribs.skills),
+                "commands": len(plugin_contribs.commands),
+                "agents": len(plugin_contribs.agents),
+                "rules": len(plugin_contribs.rules),
+                "hooks": len(plugin_contribs.hook_entries),
+                "mcp": len(plugin_contribs.mcp_servers),
+            }
+            engine.plugin_names = [p.name for p in loaded_plugins]
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
@@ -1045,6 +1120,34 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             finally:
                 self.handle._mark_turn_idle()
 
+    def _expand_plugin_command(self, content: str) -> str | None:
+        """Expand a ``/<plugin>:<command> [args]`` invocation, else ``None``.
+
+        Matches a leading slash token that contains a ``:`` namespace (so it
+        never collides with built-in ``/skill-name`` focus, which has no
+        colon). Substitutes ``$ARGUMENTS`` / ``${ARGUMENTS}`` in the command
+        body with the trailing arguments; appends any args when the template
+        declares no placeholder.
+        """
+        if not self.plugin_commands:
+            return None
+        text = (content or "").strip()
+        if not text.startswith("/") or ":" not in text.split(maxsplit=1)[0]:
+            return None
+        parts = text[1:].split(maxsplit=1)
+        token = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+        command = self.plugin_commands.get(token.lower())
+        if command is None:
+            return None
+        body = command.body
+        if "$ARGUMENTS" in body or "${ARGUMENTS}" in body:
+            body = body.replace("${ARGUMENTS}", args).replace("$ARGUMENTS", args)
+        elif args:
+            body = f"{body}\n\n{args}"
+        logger.info("plugin_command_expanded command=%s", command.qualified)
+        return body
+
     async def _handle_send_message_inner(
         self, op: SendMessageOp, turn_id: str
     ) -> None:
@@ -1066,6 +1169,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 上下文。skill 聚焦用 `/` 前缀无此冲突。命中时把首个 `@<name>`
         # token 剥掉再处理，处理完再拼回用户消息，模型仍能看到连接器线索。
         raw_content = op.content or ""
+        # 插件命令（/<plugin>:<command> [args]）：把命令 markdown 正文按
+        # $ARGUMENTS 展开后替换成用户消息，随后照常走 @mention/聚焦处理。
+        # 声明式文本，任何 surface（CLI/TUI/server）发进来都在此统一展开。
+        expanded_cmd = self._expand_plugin_command(raw_content)
+        if expanded_cmd is not None:
+            raw_content = expanded_cmd
         # 插件挂载（@plugin:name / @plugin:off）：必须早于 _detect_focus_mcp，
         # 否则 `@plugin:x` 会被当成聚焦名为 `plugin` 的 MCP。命中则更新会话级
         # _active_plugin、剥掉前缀，本轮起即生效（持续态）。UI 只靠
@@ -1261,6 +1370,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     if focus_mcp is None and self._active_plugin is not None
                     else None
                 ),
+                plugin_components_context=self._render_plugin_components_context(),
+                plugin_rules_context=self._render_plugin_rules_context(),
                 working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,
                 locale_tag=_detect_locale(processed.display_text or ""),

@@ -23,10 +23,11 @@ import {
   normalizeAppearanceSettings
 } from '../shared/appearance'
 import { DEFAULT_DEV_PREVIEW_URL } from '../shared/dev-preview-url'
+import { DEFAULT_WORKSPACE_SEGMENTS } from '../shared/workspace-defaults'
 
 export type { AppSettingsV1 }
 
-const DEFAULT_WORKSPACE_ROOT = join(homedir(), '.deepseekgui', 'default_workspace')
+const DEFAULT_WORKSPACE_ROOT = join(homedir(), ...DEFAULT_WORKSPACE_SEGMENTS)
 const DEFAULT_CLAW_CHANNELS_ROOT = join(homedir(), '.deepseekgui', 'claw')
 
 function expandHomePath(raw: string | null | undefined): string {

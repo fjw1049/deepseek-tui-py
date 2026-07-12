@@ -307,6 +307,8 @@ class InfoSidebarData:
     todos_in_progress_id: int | None = None
     tasks: list[dict[str, Any]] = field(default_factory=list)
     agents: list[dict[str, Any]] = field(default_factory=list)
+    plugin_names: list[str] = field(default_factory=list)
+    plugin_summary: dict[str, int] = field(default_factory=dict)
 
 
 _ACTIVE_TASK_STATUSES = frozenset({"running", "queued"})
@@ -473,6 +475,7 @@ class InfoSidebar(Widget):
         self._todos = Static("", classes="info-section")
         self._tasks = Static("", classes="info-section")
         self._agents = Static("", classes="info-section")
+        self._plugins = Static("", classes="info-section")
 
     def compose(self):  # type: ignore[override]
         with VerticalScroll(classes="info-scroll"):
@@ -480,6 +483,7 @@ class InfoSidebar(Widget):
             yield self._todos
             yield self._tasks
             yield self._agents
+            yield self._plugins
 
     def on_mount(self) -> None:
         self._refresh()
@@ -519,6 +523,11 @@ class InfoSidebar(Widget):
 
             agents_body, agents_active = self._render_agents()
             self._agents.update(self._section("Agents", agents_body, agents_active))
+
+            plugins_body, plugins_active = self._render_plugins()
+            self._plugins.update(
+                self._section("Plugins", plugins_body, plugins_active)
+            )
         except Exception:
             pass
 
@@ -667,6 +676,36 @@ class InfoSidebar(Widget):
             row.append(atype, style="bright_cyan")
             row.append(f"  {status}", style=colour)
             lines.append(row)
+        return Group(*lines), True
+
+    def _render_plugins(self) -> tuple[Group, bool]:
+        names = self._data.plugin_names
+        summary = self._data.plugin_summary
+        if not names:
+            return (
+                Group(Text("🔌 No plugins loaded", style="dim italic bright_green")),
+                False,
+            )
+        header = Text()
+        header.append(f"{len(names)} plugin(s)", style="bold bright_white")
+        parts = [
+            f"{summary[k]} {k}"
+            for k in ("skills", "commands", "agents", "rules", "hooks", "mcp")
+            if summary.get(k)
+        ]
+        if parts:
+            header.append(f"  ({', '.join(parts)})", style="dim bright_white")
+        lines: list[Text] = [header]
+        for name in names[:8]:
+            row = Text()
+            row.append(" • ", style="bright_green")
+            row.append(escape(name[:36]), style="bright_cyan")
+            lines.append(row)
+        remaining = max(0, len(names) - 8)
+        if remaining:
+            lines.append(
+                Text(f"  +{remaining} more", style="dim italic bright_black")
+            )
         return Group(*lines), True
 
 

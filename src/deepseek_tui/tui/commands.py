@@ -44,6 +44,9 @@ class CommandResult:
     output: str = ""
     error: str = ""
     exit_app: bool = False
+    # When set, the app submits this text as a user message (used by plugin
+    # ``/<plugin>:<command>`` commands — the engine expands the template).
+    submit_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,12 +158,35 @@ def resolve(input_name: str) -> CommandEntry | None:
     return None
 
 
-def get_completions(prefix: str = "") -> list[tuple[str, str]]:
-    """Return (name, description) pairs matching a prefix."""
+def _plugin_commands(app: DeepSeekTUI | None) -> dict[str, object]:
+    """The engine's registered plugin commands, or empty when unavailable."""
+    engine = getattr(app, "_engine", None) if app is not None else None
+    commands = getattr(engine, "plugin_commands", None)
+    return commands if isinstance(commands, dict) else {}
+
+
+def _is_plugin_command(cmd_name: str, app: DeepSeekTUI | None) -> bool:
+    """True when ``cmd_name`` (``/plugin:command``) is a known plugin command."""
+    return cmd_name.lstrip("/").lower() in _plugin_commands(app)
+
+
+def get_completions(
+    prefix: str = "", app: DeepSeekTUI | None = None
+) -> list[tuple[str, str]]:
+    """Return (name, description) pairs matching a prefix.
+
+    Built-in commands plus any plugin ``/<plugin>:<command>`` entries when an
+    engine is available on ``app``.
+    """
     results: list[tuple[str, str]] = []
     for entry in REGISTRY:
         if entry.name.startswith(prefix):
             results.append((entry.name, entry.description))
+    for cmd in _plugin_commands(app).values():
+        name = f"/{cmd.qualified}"
+        if name.startswith(prefix):
+            desc = getattr(cmd, "description", "") or "plugin command"
+            results.append((name, desc))
     return results
 
 
@@ -175,6 +201,10 @@ def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
 
     entry = resolve(cmd_name)
     if entry is None:
+        # Plugin prompt command (/<plugin>:<command>): hand the raw text to
+        # the engine, which expands the template and sends it as a message.
+        if ":" in cmd_name and _is_plugin_command(cmd_name, app):
+            return CommandResult(submit_message=raw_input.strip())
         return CommandResult(
             error=f"unknown command: {cmd_name}. Type /help",
         )
@@ -1508,23 +1538,46 @@ def cmd_skills(args: str, app: DeepSeekTUI) -> CommandResult:
 
     prefix = arg.lower() if arg else None
 
-    if not skills_dir.is_dir():
-        return CommandResult(output="No skills installed.")
+    local: list[str] = []
+    if skills_dir.is_dir():
+        for d in sorted(skills_dir.iterdir()):
+            if not d.is_dir() or not (d / "SKILL.md").exists():
+                continue
+            if prefix and not d.name.lower().startswith(prefix):
+                continue
+            local.append(d.name)
 
-    skills: list[str] = []
-    for d in sorted(skills_dir.iterdir()):
-        if not d.is_dir():
-            continue
-        if not (d / "SKILL.md").exists():
-            continue
-        if prefix and not d.name.lower().startswith(prefix):
-            continue
-        skills.append(f"  {d.name}")
-    if not skills:
+    # Plugin-contributed skills, labeled by their owning plugin.
+    plugin_skills: list[tuple[str, str]] = []
+    try:
+        from deepseek_tui.integrations.plugins import (
+            collect_contributions,
+            discover_plugins,
+        )
+
+        for p in discover_plugins(workspace=Path.cwd()):
+            for s in collect_contributions([p]).skills:
+                if prefix and not s.name.lower().startswith(prefix):
+                    continue
+                plugin_skills.append((s.name, p.name))
+    except Exception:  # noqa: BLE001 — plugin listing is best-effort
+        pass
+
+    if not local and not plugin_skills:
         if prefix:
             return CommandResult(output=f"No skills match prefix `{prefix}`.")
         return CommandResult(output="No skills installed.")
-    return CommandResult(output="Installed skills:\n\n" + "\n".join(skills))
+
+    lines: list[str] = []
+    if local:
+        lines.append("Installed skills:\n")
+        lines.extend(f"  {n}" for n in local)
+    if plugin_skills:
+        if lines:
+            lines.append("")
+        lines.append(f"Plugin skills ({len(plugin_skills)}):\n")
+        lines.extend(f"  {n}  ({owner})" for n, owner in plugin_skills)
+    return CommandResult(output="\n".join(lines))
 
 
 # ── /skill ───────────────────────────────────────────────────────────────
@@ -1634,6 +1687,8 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
 
     raw = args.strip()
     if not raw:
+        from deepseek_tui.integrations.plugins import collect_contributions
+
         plugins = discover_plugins(workspace=Path.cwd(), include_disabled=True)
         if not plugins:
             return CommandResult(
@@ -1642,15 +1697,41 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
                     "Install one with `/plugins install <github:owner/repo|path>`."
                 )
             )
-        lines = ["Installed plugins:\n"]
+        lines = [f"Installed plugins ({len(plugins)}):\n"]
         for p in plugins:
             flags = [p.scope]
             if not p.enabled:
                 flags.append("disabled")
             if p.trusted:
                 flags.append("trusted")
-            desc = f" — {p.manifest.description}" if p.manifest.description else ""
-            lines.append(f"  {p.name} v{p.manifest.version} ({', '.join(flags)}){desc}")
+            lines.append(f"  {p.name} v{p.manifest.version} ({', '.join(flags)})")
+            if not p.enabled:
+                continue
+            c = collect_contributions([p])
+            parts: list[str] = []
+            if c.skills:
+                parts.append(f"{len(c.skills)} skills")
+            if c.commands:
+                parts.append(f"{len(c.commands)} commands")
+            if c.agents:
+                parts.append(f"{len(c.agents)} agents")
+            if c.rules:
+                parts.append(f"{len(c.rules)} rules")
+            if c.hook_entries:
+                parts.append(f"{len(c.hook_entries)} hooks")
+            elif p.manifest.hooks and not p.trusted:
+                parts.append("hooks(needs trust)")
+            if c.mcp_servers:
+                parts.append(f"{len(c.mcp_servers)} mcp")
+            elif p.manifest.mcp_servers and not p.trusted:
+                parts.append("mcp(needs trust)")
+            if parts:
+                lines.append(f"      {', '.join(parts)}")
+            for a in c.agents:
+                lines.append(f"      · agent: {a.name}")
+            for r in c.rules:
+                lines.append(f"      · rule: {r.plugin}/{r.name}")
+        lines.append("\nTip: skills load on demand; rules are always active.")
         return CommandResult(output="\n".join(lines))
 
     parts = raw.split(None, 1)

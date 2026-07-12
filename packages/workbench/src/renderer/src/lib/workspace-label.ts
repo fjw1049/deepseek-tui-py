@@ -1,17 +1,8 @@
 import i18n from '../i18n'
-
-const DEFAULT_WORKSPACE_PATH_SUFFIX = '/.deepseekgui/default_workspace'
-
-function normalizePathForMatch(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-}
+import { isDefaultWorkspaceRoot } from '@shared/workspace-defaults'
 
 function isDefaultWorkspacePath(path: string): boolean {
-  const normalized = normalizePathForMatch(path)
-  return (
-    normalized === '~/.deepseekgui/default_workspace'
-    || normalized.endsWith(DEFAULT_WORKSPACE_PATH_SUFFIX)
-  )
+  return isDefaultWorkspaceRoot(path)
 }
 
 /** Hide generic default workspace path in compact chrome (e.g. top bar). */

@@ -1,3 +1,5 @@
+import { isDefaultWorkspaceRoot } from '@shared/workspace-defaults'
+
 function normalizePathForMatch(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
@@ -22,7 +24,7 @@ export function isChatsWorkspace(path?: string): boolean {
   const trimmed = path?.trim() ?? ''
   if (!trimmed) return true
   if (isInternalTemporaryWorkspace(trimmed)) return true
-  return normalizePathForMatch(trimmed).endsWith('/.deepseekgui/default_workspace')
+  return isDefaultWorkspaceRoot(trimmed)
 }
 
 export function isClawWorkspacePath(path?: string): boolean {

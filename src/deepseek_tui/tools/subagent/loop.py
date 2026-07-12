@@ -135,7 +135,11 @@ async def run_subagent_loop(
         StructuredOutputTool,
     )
 
-    system_prompt = build_subagent_system_prompt(agent.agent_type, agent.assignment)
+    system_prompt = build_subagent_system_prompt(
+        agent.agent_type,
+        agent.assignment,
+        base_override=getattr(agent, "system_prompt", None),
+    )
     extra_tools = []
     if agent.output_schema:
         extra_tools.append(StructuredOutputTool(agent.output_schema))

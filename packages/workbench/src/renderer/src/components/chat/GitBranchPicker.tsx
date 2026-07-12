@@ -325,18 +325,18 @@ export function GitBranchPicker({
         type="button"
         className={
           compact
-            ? 'flex h-7 w-full items-center gap-1.5 rounded-lg px-1.5 text-left text-[12.5px] font-medium text-ds-ink transition hover:bg-ds-hover/60'
+            ? 'ds-workspace-context-chip flex h-7 max-w-[160px] items-center gap-1.5 rounded-md px-2 py-1 text-left'
             : 'flex h-8 max-w-[320px] items-center gap-2 rounded-lg px-2 text-[14px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
         }
         onClick={() => setOpen((v) => !v)}
         title={t('gitBranch')}
       >
-        <GitBranch className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+        <GitBranch className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {loading ? (
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-ds-faint" strokeWidth={2} />
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-ds-faint" strokeWidth={2} />
         ) : (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={2} />
+          <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
         )}
       </button>
 

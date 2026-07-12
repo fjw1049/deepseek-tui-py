@@ -644,6 +644,9 @@ class HookExecutor:
             return True
         if ctype == "tool_name":
             return ctx.tool_name == cond.get("name")
+        if ctype == "tool_name_any":
+            names = cond.get("names") or []
+            return ctx.tool_name in names
         if ctype == "tool_category":
             return _tool_category(ctx.tool_name) == cond.get("category")
         if ctype == "mode":

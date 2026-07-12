@@ -64,12 +64,14 @@ class SubAgent:
         mailbox: Mailbox | None = None,
         loop_runtime: SubAgentRuntime | None = None,
         output_schema: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
         self.prompt = prompt
         self.assignment = assignment
         self.model = model
+        self.system_prompt = system_prompt
         self.nickname = nickname
         self.status: SubAgentStatus = SubAgentStatus.running()
         self.result: str | None = None

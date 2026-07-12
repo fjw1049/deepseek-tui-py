@@ -15,9 +15,16 @@ Manifest locations (first match wins)::
     <plugin>/plugin.json
 
 Field names follow the Claude Code plugin manifest so existing
-community plugins can be dropped in. Component types we do not support
-yet (``commands``, ``agents``, ``outputStyles``, ``lspServers``) are
-surfaced as warnings, not errors.
+community plugins can be dropped in. Mainstream plugins ship minimal
+manifests (``name`` / ``version`` / ``description`` only) and expose
+their components as on-disk directories, so ``skills`` / ``commands`` /
+``agents`` are auto-discovered from ``./skills`` / ``./commands`` /
+``./agents`` when the manifest omits the key (Claude Code convention).
+Like skills, ``commands`` and ``agents`` are declarative text (prompt
+templates and persona system prompts) and always load; only executable
+components (``hooks`` / ``mcpServers``) stay gated behind trust.
+Component types we do not wire yet (``outputStyles``, ``lspServers``)
+are surfaced as warnings, not errors.
 
 Scopes:
 
@@ -55,6 +62,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -63,6 +71,10 @@ from typing import Any
 
 from deepseek_tui.config.models import LifecycleHookEntry
 from deepseek_tui.integrations.hooks import LIFECYCLE_EVENTS
+from deepseek_tui.integrations.plugin_compat import (
+    matcher_to_condition,
+    normalize_installed_plugin,
+)
 from deepseek_tui.integrations.skills import (
     GITHUB_ALLOWED_HOSTS,
     REGISTRY_ALLOWED_HOSTS,
@@ -75,6 +87,7 @@ from deepseek_tui.integrations.skills import (
     _extract_tarball,
     _github_archive_urls,
     _host_is_allowed,
+    _parse_skill_file,
     _stream_download,
 )
 from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config, servers_from_document
@@ -84,9 +97,13 @@ __all__ = [
     "LOCKFILE_NAME",
     "PLUGIN_MANIFEST_CANDIDATES",
     "LoadedPlugin",
+    "MarketplaceEntry",
+    "PluginAgent",
+    "PluginCommand",
     "PluginContributions",
     "PluginManifest",
     "PluginRegistryDocument",
+    "PluginRule",
     "PluginRegistryEntry",
     "capability_values_from_permissions",
     "claude_plugins_dir",
@@ -95,6 +112,7 @@ __all__ = [
     "discover_plugins",
     "fetch_plugin_registry",
     "install_plugin",
+    "load_marketplace",
     "load_plugin_manifest",
     "merge_plugin_skills",
     "plugins_directories",
@@ -114,11 +132,21 @@ LOCKFILE_NAME = "installed_plugins.json"
 PLUGIN_MANIFEST_CANDIDATES = (
     Path(".deepseek-plugin") / "plugin.json",
     Path(".claude-plugin") / "plugin.json",
+    Path(".codebuddy-plugin") / "plugin.json",
     Path("plugin.json"),
 )
 
 # Component manifest keys we accept but do not wire yet.
-_UNSUPPORTED_COMPONENT_KEYS = ("commands", "agents", "outputStyles", "lspServers")
+_UNSUPPORTED_COMPONENT_KEYS = ("outputStyles", "lspServers")
+
+# Auto-discovery defaults: mainstream (Claude Code) plugins omit these
+# manifest keys and lay the components out as directories at the plugin
+# root. When the key is absent but the directory holds the expected
+# files, we assume the conventional relative path.
+_DEFAULT_SKILLS_PATH = "./skills"
+_DEFAULT_COMMANDS_PATH = "./commands"
+_DEFAULT_AGENTS_PATH = "./agents"
+_DEFAULT_RULES_PATH = "./rules"
 
 # Manifest ``permissions`` values → ToolCapability values. Consumed at
 # approval time for the plugin's MCP tools (see ``tools/approval.py``).
@@ -218,6 +246,9 @@ class PluginManifest:
     version: str = "0.0.0"
     description: str = ""
     skills: tuple[str, ...] = ()
+    commands: tuple[str, ...] = ()
+    agents: tuple[str, ...] = ()
+    rules: tuple[str, ...] = ()
     hooks: tuple[Any, ...] = ()
     mcp_servers: Any = None
     unsupported: tuple[str, ...] = ()
@@ -252,6 +283,61 @@ def _as_str_tuple(value: Any) -> tuple[str, ...]:
     return ()
 
 
+def _skills_dir_has_skills(plugin_dir: Path) -> bool:
+    """True when ``skills/<name>/SKILL.md`` exists under the plugin root."""
+    skills_dir = plugin_dir / "skills"
+    if not skills_dir.is_dir():
+        return False
+    try:
+        for child in skills_dir.iterdir():
+            if child.is_dir() and (child / "SKILL.md").is_file():
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _dir_has_markdown(plugin_dir: Path, subdir: str) -> bool:
+    """True when ``<subdir>/*.md`` exists under the plugin root.
+
+    Used to auto-discover ``commands/`` and ``agents/`` directories laid
+    out per the Claude Code convention when the manifest omits the key.
+    """
+    target = plugin_dir / subdir
+    if not target.is_dir():
+        return False
+    try:
+        return any(
+            child.is_file() and child.suffix == ".md"
+            for child in target.iterdir()
+        )
+    except OSError:
+        return False
+
+
+def _synthesize_single_skill_manifest(plugin_dir: Path) -> PluginManifest | None:
+    """Treat a manifest-less folder whose root holds ``SKILL.md`` as a plugin.
+
+    Mainstream ecosystems ship standalone skills this way (CodeBuddy/WorkBuddy
+    ``pptx-generator``, ``ardot-slides``): a folder with a top-level ``SKILL.md``
+    and no ``plugin.json``. We synthesize a single-skill manifest so it installs
+    and loads like any other plugin. ``skills=(".",)`` points ``_collect_skills``
+    at the plugin dir itself, which is a leaf skill dir.
+    """
+    leaf = plugin_dir / "SKILL.md"
+    if not leaf.is_file():
+        return None
+    name = plugin_dir.name
+    description = ""
+    try:
+        meta, _ = _parse_md_frontmatter(leaf)
+        name = (meta.get("name") or "").strip() or plugin_dir.name
+        description = meta.get("description", "")
+    except OSError:
+        pass
+    return PluginManifest(name=name, description=description, skills=(".",))
+
+
 def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
     """Load and parse the plugin manifest, or ``None`` when absent/invalid."""
     manifest_path: Path | None = None
@@ -261,7 +347,7 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
             manifest_path = p
             break
     if manifest_path is None:
-        return None
+        return _synthesize_single_skill_manifest(plugin_dir)
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -284,11 +370,29 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
 
     unsupported = tuple(k for k in _UNSUPPORTED_COMPONENT_KEYS if data.get(k))
 
+    # Mainstream plugins omit these keys and lay components out on disk;
+    # assume the conventional relative dir when present (Claude Code compat).
+    skills = _as_str_tuple(data.get("skills"))
+    if not skills and _skills_dir_has_skills(plugin_dir):
+        skills = (_DEFAULT_SKILLS_PATH,)
+    commands = _as_str_tuple(data.get("commands"))
+    if not commands and _dir_has_markdown(plugin_dir, "commands"):
+        commands = (_DEFAULT_COMMANDS_PATH,)
+    agents = _as_str_tuple(data.get("agents"))
+    if not agents and _dir_has_markdown(plugin_dir, "agents"):
+        agents = (_DEFAULT_AGENTS_PATH,)
+    rules = _as_str_tuple(data.get("rules"))
+    if not rules and _dir_has_markdown(plugin_dir, "rules"):
+        rules = (_DEFAULT_RULES_PATH,)
+
     return PluginManifest(
         name=name.strip(),
         version=str(data.get("version") or "0.0.0"),
         description=str(data.get("description") or ""),
-        skills=_as_str_tuple(data.get("skills")),
+        skills=skills,
+        commands=commands,
+        agents=agents,
+        rules=rules,
         hooks=hooks,
         mcp_servers=data.get("mcpServers", data.get("mcp_servers")),
         unsupported=unsupported,
@@ -500,11 +604,73 @@ def discover_claude_plugins(
 # ── Contributions ────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
+class PluginCommand:
+    """A prompt command contributed by a plugin (``commands/<stem>.md``).
+
+    Invoked as ``/<plugin>:<command>``. ``body`` is a prompt template
+    expanded (``$ARGUMENTS`` substitution) and sent as the user message.
+    """
+
+    name: str  # invocation stem, e.g. "python-scaffold"
+    plugin: str  # owning plugin name
+    description: str
+    body: str
+    path: Path
+    argument_hint: str = ""
+
+    @property
+    def qualified(self) -> str:
+        """Namespaced invocation name, e.g. ``python-development:python-scaffold``."""
+        return f"{self.plugin}:{self.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class PluginAgent:
+    """A persona contributed by a plugin (``agents/<stem>.md``).
+
+    Spawnable as a sub-agent whose system prompt is ``body``. ``model`` and
+    ``tools`` mirror the Claude Code agent frontmatter; they are advisory
+    (recorded for display / doctor) — foreign model IDs and cross-ecosystem
+    tool names are not forced onto the DeepSeek runtime so the persona always
+    runs. When ``tools`` is empty the sub-agent gets the full registry.
+    """
+
+    name: str  # frontmatter name, e.g. "unit-testing-test-automator"
+    plugin: str
+    description: str
+    body: str
+    path: Path
+    model: str = ""
+    tools: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PluginRule:
+    """An always-on instruction contributed by a plugin (``rules/<stem>.md``).
+
+    CodeBuddy plugins carry their core behavior in ``rules`` — system-level
+    directives (``alwaysApply: true``) injected into the system prompt.
+    Declarative text (no execution), so it loads without trust, mirroring the
+    project-context / skills injection model. ``enabled: false`` opts out.
+    """
+
+    name: str
+    plugin: str
+    description: str
+    body: str
+    path: Path
+    always_apply: bool = True
+
+
 @dataclass(slots=True)
 class PluginContributions:
     """Aggregated components from all enabled plugins."""
 
     skills: list[Skill] = field(default_factory=list)
+    commands: list[PluginCommand] = field(default_factory=list)
+    agents: list[PluginAgent] = field(default_factory=list)
+    rules: list[PluginRule] = field(default_factory=list)
     hook_entries: list[LifecycleHookEntry] = field(default_factory=list)
     mcp_servers: list[McpServerConfig] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -514,14 +680,166 @@ def _substitute(value: str, plugin_dir: Path) -> str:
     return value.replace(_PLUGIN_DIR_TOKEN, str(plugin_dir))
 
 
+_MD_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def _parse_md_frontmatter(path: Path) -> tuple[dict[str, str], str]:
+    """Parse a Markdown file's YAML-ish frontmatter into ``(meta, body)``.
+
+    Tolerant of files without frontmatter (mainstream plugins ship some
+    commands with a bare body): returns ``({}, full_text)`` in that case.
+    Only simple ``key: value`` scalar lines are read — enough for the
+    ``name`` / ``description`` / ``model`` / ``argument-hint`` / ``tools``
+    keys these components use.
+    """
+    content = path.read_text(encoding="utf-8")
+    meta: dict[str, str] = {}
+    body = content
+    match = _MD_FRONTMATTER_RE.match(content)
+    if match:
+        for line in match.group(1).splitlines():
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            meta[key.strip().lower()] = value.strip()
+        body = content[match.end():]
+    return meta, body.strip()
+
+
+def _plugin_child_dir(plugin: LoadedPlugin, rel: str) -> Path | None:
+    """Resolve ``rel`` under the plugin dir, rejecting path escapes."""
+    resolved = (plugin.path / rel).resolve()
+    try:
+        resolved.relative_to(plugin.path.resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
+def _resolve_markdown_targets(
+    plugin: LoadedPlugin, rel: str, out: PluginContributions, kind: str
+) -> list[Path]:
+    """Resolve a manifest component entry to a list of ``*.md`` files.
+
+    A manifest entry may point at either an individual ``.md`` file
+    (CodeBuddy convention, e.g. ``./agents/research-subagent.md``) or a
+    directory to glob (Claude Code / agents-main convention, e.g.
+    ``./commands``). Path escapes are rejected with a warning.
+    """
+    resolved = _plugin_child_dir(plugin, rel)
+    if resolved is None:
+        out.warnings.append(
+            f"plugin {plugin.name}: {kind} path escapes plugin dir: {rel}"
+        )
+        return []
+    if resolved.is_file() and resolved.suffix == ".md":
+        return [resolved]
+    if resolved.is_dir():
+        return sorted(resolved.glob("*.md"))
+    return []
+
+
+def _collect_commands(plugin: LoadedPlugin, out: PluginContributions) -> None:
+    seen = {c.qualified for c in out.commands}
+    for rel in plugin.manifest.commands:
+        for md in _resolve_markdown_targets(plugin, rel, out, "commands"):
+            try:
+                meta, body = _parse_md_frontmatter(md)
+            except OSError as exc:
+                out.warnings.append(
+                    f"plugin {plugin.name}: failed to read command {md.name}: {exc}"
+                )
+                continue
+            command = PluginCommand(
+                name=md.stem,
+                plugin=plugin.name,
+                description=meta.get("description", ""),
+                body=body,
+                path=md,
+                argument_hint=meta.get("argument-hint", ""),
+            )
+            if command.qualified in seen:
+                continue
+            out.commands.append(command)
+            seen.add(command.qualified)
+
+
+def _collect_agents(plugin: LoadedPlugin, out: PluginContributions) -> None:
+    seen = {a.name.lower() for a in out.agents}
+    for rel in plugin.manifest.agents:
+        for md in _resolve_markdown_targets(plugin, rel, out, "agents"):
+            try:
+                meta, body = _parse_md_frontmatter(md)
+            except OSError as exc:
+                out.warnings.append(
+                    f"plugin {plugin.name}: failed to read agent {md.name}: {exc}"
+                )
+                continue
+            name = meta.get("name") or md.stem
+            if name.lower() in seen:
+                continue
+            tools_raw = meta.get("tools", "")
+            tools = tuple(
+                t.strip().strip("[]'\"")
+                for t in tools_raw.split(",")
+                if t.strip().strip("[]'\"")
+            )
+            out.agents.append(
+                PluginAgent(
+                    name=name,
+                    plugin=plugin.name,
+                    description=meta.get("description", ""),
+                    body=body,
+                    path=md,
+                    model=meta.get("model", ""),
+                    tools=tools,
+                )
+            )
+            seen.add(name.lower())
+
+
+def _collect_rules(plugin: LoadedPlugin, out: PluginContributions) -> None:
+    seen = {(r.plugin, r.name) for r in out.rules}
+    for rel in plugin.manifest.rules:
+        for md in _resolve_markdown_targets(plugin, rel, out, "rules"):
+            try:
+                meta, body = _parse_md_frontmatter(md)
+            except OSError as exc:
+                out.warnings.append(
+                    f"plugin {plugin.name}: failed to read rule {md.name}: {exc}"
+                )
+                continue
+            if meta.get("enabled", "true").strip().lower() == "false":
+                continue
+            key = (plugin.name, md.stem)
+            if key in seen:
+                continue
+            always = meta.get("alwaysapply", "true").strip().lower() != "false"
+            out.rules.append(
+                PluginRule(
+                    name=md.stem,
+                    plugin=plugin.name,
+                    description=meta.get("description", ""),
+                    body=body,
+                    path=md,
+                    always_apply=always,
+                )
+            )
+            seen.add(key)
+
+
 def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
     """Fan a plugin list out into per-subsystem contribution lists.
 
-    Skills always load. Hooks / MCP servers require ``trusted``.
+    Skills / commands / agents are declarative text and always load.
+    Hooks / MCP servers require ``trusted``.
     """
     out = PluginContributions()
     for plugin in plugins:
         _collect_skills(plugin, out)
+        _collect_commands(plugin, out)
+        _collect_agents(plugin, out)
+        _collect_rules(plugin, out)
         if plugin.manifest.unsupported:
             out.warnings.append(
                 f"plugin {plugin.name}: unsupported components ignored: "
@@ -541,60 +859,189 @@ def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
 
 
 def _collect_skills(plugin: LoadedPlugin, out: PluginContributions) -> None:
+    seen = {s.name.lower() for s in out.skills}
+
+    def _add(skill: Skill) -> None:
+        if skill.name.lower() not in seen:
+            out.skills.append(skill)
+            seen.add(skill.name.lower())
+
     for rel in plugin.manifest.skills:
-        skills_dir = (plugin.path / rel).resolve()
-        try:
-            skills_dir.relative_to(plugin.path.resolve())
-        except ValueError:
+        skills_dir = _plugin_child_dir(plugin, rel)
+        if skills_dir is None:
             out.warnings.append(
                 f"plugin {plugin.name}: skills path escapes plugin dir: {rel}"
             )
             continue
+        if not skills_dir.is_dir():
+            continue
+        # Leaf skill dir — SKILL.md directly inside (CodeBuddy declares each
+        # skill's own dir, e.g. ``./skills/comps-analysis``).
+        leaf = skills_dir / "SKILL.md"
+        if leaf.is_file():
+            try:
+                _add(_parse_skill_file(leaf))
+            except Exception as exc:  # noqa: BLE001 — one bad skill must not
+                # abort the rest of the plugin's contributions.
+                out.warnings.append(
+                    f"plugin {plugin.name}: failed to parse {leaf}: {exc}"
+                )
+            continue
+        # Container dir — ``<name>/SKILL.md`` (Claude Code / agents-main).
         reg = SkillRegistry.discover(skills_dir)
-        out.skills.extend(reg.skills)
+        for skill in reg.skills:
+            _add(skill)
         out.warnings.extend(reg.warnings)
+
+
+# CamelCase lifecycle events used by Claude Code / CodeBuddy hooks.json,
+# mapped to our snake_case ``LIFECYCLE_EVENTS``. Events without a runtime
+# equivalent (Stop, SubagentStop, Notification, PreCompact) are skipped.
+_FOREIGN_HOOK_EVENT_MAP = {
+    "sessionstart": "session_start",
+    "sessionend": "session_end",
+    "userpromptsubmit": "message_submit",
+    "pretooluse": "tool_call_before",
+    "posttooluse": "tool_call_after",
+}
+
+
+def _substitute_hook_command(command: str, plugin_dir: Path) -> str:
+    """Resolve plugin-root / project-dir tokens across ecosystems.
+
+    ``${PLUGIN_DIR}`` (native), ``${CODEBUDDY_PLUGIN_ROOT}`` and
+    ``${CLAUDE_PLUGIN_ROOT}`` resolve to the plugin's absolute path at load
+    time. Project-dir tokens become ``${DEEPSEEK_WORKSPACE}`` — the env var the
+    hook runner exports at execution time (shell-expanded in the subprocess).
+    """
+    command = _substitute(command, plugin_dir)
+    root = str(plugin_dir)
+    for token in ("${CODEBUDDY_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_ROOT}"):
+        command = command.replace(token, root)
+    for token in ("${CODEBUDDY_PROJECT_DIR}", "${CLAUDE_PROJECT_DIR}"):
+        command = command.replace(token, "${DEEPSEEK_WORKSPACE}")
+    return command
+
+
+def _append_native_hook(
+    plugin: LoadedPlugin, raw_entry: dict[str, Any], out: PluginContributions
+) -> None:
+    event = raw_entry.get("event")
+    command = raw_entry.get("command")
+    if event not in LIFECYCLE_EVENTS or not isinstance(command, str):
+        out.warnings.append(
+            f"plugin {plugin.name}: invalid hook entry skipped (event={event!r})"
+        )
+        return
+    out.hook_entries.append(
+        LifecycleHookEntry(
+            event=event,
+            command=_substitute_hook_command(command, plugin.path),
+            condition=raw_entry.get("condition"),
+            timeout_secs=float(raw_entry.get("timeout_secs", 30.0)),
+            background=bool(raw_entry.get("background", False)),
+            continue_on_error=bool(raw_entry.get("continue_on_error", True)),
+            name=f"{plugin.name}:{raw_entry.get('name') or event}",
+        )
+    )
+
+
+def _append_foreign_hooks(
+    plugin: LoadedPlugin, event_dict: dict[str, Any], out: PluginContributions
+) -> None:
+    """Parse the Claude Code / CodeBuddy ``{EventName: [group, ...]}`` schema.
+
+    Each group is ``{matcher?, hooks: [{type: command, command, timeout}]}``.
+    ``timeout`` is milliseconds. ``matcher`` (a tool-name pattern) is recorded
+    as an advisory ``tool_name`` condition for tool events.
+    """
+    for event_name, groups in event_dict.items():
+        mapped = _FOREIGN_HOOK_EVENT_MAP.get(str(event_name).lower())
+        if mapped is None:
+            out.warnings.append(
+                f"plugin {plugin.name}: unsupported hook event "
+                f"{event_name!r} skipped"
+            )
+            continue
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            matcher = group.get("matcher")
+            condition = None
+            if matcher and mapped in ("tool_call_before", "tool_call_after"):
+                # Map the foreign tool-name matcher to our taxonomy so the hook
+                # actually fires (e.g. ``Edit|Write`` → edit_file/write_file).
+                condition = matcher_to_condition(matcher)
+            specs = group.get("hooks", [])
+            if not isinstance(specs, list):
+                continue
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    continue
+                command = spec.get("command")
+                if not isinstance(command, str):
+                    continue
+                if spec.get("type", "command") != "command":
+                    out.warnings.append(
+                        f"plugin {plugin.name}: unsupported hook type "
+                        f"{spec.get('type')!r} skipped"
+                    )
+                    continue
+                timeout = spec.get("timeout")
+                timeout_secs = (
+                    float(timeout) / 1000.0
+                    if isinstance(timeout, (int, float))
+                    else 30.0
+                )
+                out.hook_entries.append(
+                    LifecycleHookEntry(
+                        event=mapped,
+                        command=_substitute_hook_command(command, plugin.path),
+                        condition=condition,
+                        timeout_secs=timeout_secs,
+                        background=False,
+                        continue_on_error=True,
+                        name=f"{plugin.name}:{event_name}",
+                    )
+                )
 
 
 def _collect_hooks(plugin: LoadedPlugin, out: PluginContributions) -> None:
     for item in plugin.manifest.hooks:
-        entries: list[dict[str, Any]] = []
         if isinstance(item, str):
-            hook_path = (plugin.path / item).resolve()
+            hook_path = _plugin_child_dir(plugin, item)
+            if hook_path is None:
+                out.warnings.append(
+                    f"plugin {plugin.name}: hooks path escapes plugin dir: {item}"
+                )
+                continue
             try:
-                hook_path.relative_to(plugin.path.resolve())
-                raw = json.loads(hook_path.read_text(encoding="utf-8"))
+                raw: Any = json.loads(hook_path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 out.warnings.append(
                     f"plugin {plugin.name}: failed to load hooks file {item}: {exc}"
                 )
                 continue
-            if isinstance(raw, dict):
-                raw = raw.get("hooks", [])
-            if isinstance(raw, list):
-                entries = [e for e in raw if isinstance(e, dict)]
         elif isinstance(item, dict):
-            entries = [item]
+            raw = item
+        else:
+            continue
 
-        for raw_entry in entries:
-            event = raw_entry.get("event")
-            command = raw_entry.get("command")
-            if event not in LIFECYCLE_EVENTS or not isinstance(command, str):
-                out.warnings.append(
-                    f"plugin {plugin.name}: invalid hook entry skipped "
-                    f"(event={event!r})"
-                )
-                continue
-            out.hook_entries.append(
-                LifecycleHookEntry(
-                    event=event,
-                    command=_substitute(command, plugin.path),
-                    condition=raw_entry.get("condition"),
-                    timeout_secs=float(raw_entry.get("timeout_secs", 30.0)),
-                    background=bool(raw_entry.get("background", False)),
-                    continue_on_error=bool(raw_entry.get("continue_on_error", True)),
-                    name=f"{plugin.name}:{raw_entry.get('name') or event}",
-                )
-            )
+        # Unwrap an optional ``{"hooks": ...}`` envelope.
+        inner = raw.get("hooks", raw) if isinstance(raw, dict) else raw
+        if isinstance(inner, dict) and "event" in inner:
+            # Native single inline entry.
+            _append_native_hook(plugin, inner, out)
+        elif isinstance(inner, dict):
+            # Claude Code / CodeBuddy event-keyed schema.
+            _append_foreign_hooks(plugin, inner, out)
+        elif isinstance(inner, list):
+            # Native flat list of entries.
+            for raw_entry in inner:
+                if isinstance(raw_entry, dict):
+                    _append_native_hook(plugin, raw_entry, out)
 
 
 def _collect_mcp(plugin: LoadedPlugin, out: PluginContributions) -> None:
@@ -699,6 +1146,7 @@ def install_plugin(
                 f"Plugin {manifest.name} already exists at {dest}",
             )
         shutil.copytree(src, dest)
+        _finalize_installed_plugin(dest)
         # Store the bare absolute path (not ``local:<path>``): the recorded
         # source must round-trip through ``InstallSource.parse`` for
         # ``update_plugin`` to re-resolve it, and that parser recognizes a
@@ -788,6 +1236,7 @@ def _install_from_github(
     if root != staging:
         shutil.rmtree(staging, ignore_errors=True)
 
+    _finalize_installed_plugin(dest)
     _record_install(
         target_dir, manifest, f"github:{source.owner}/{source.repo}", trust
     )
@@ -808,11 +1257,31 @@ def _record_install(
     )
 
 
+def _finalize_installed_plugin(dest: Path) -> None:
+    """Normalize the installed copy into canonical form (best-effort).
+
+    Never raises: a normalization failure must not break the install — the
+    runtime loader's tolerance shims still load the un-normalized copy.
+    """
+    try:
+        notes = normalize_installed_plugin(dest)
+        if notes:
+            _LOG.info("normalized plugin %s: %s", dest.name, "; ".join(notes))
+    except Exception as exc:  # noqa: BLE001 — normalization is best-effort
+        _LOG.warning("plugin normalization skipped for %s: %s", dest, exc)
+
+
 def _install_message(manifest: PluginManifest, dest: Path, trust: bool) -> str:
     parts = [f"Installed plugin {manifest.name} v{manifest.version} to {dest}"]
     components: list[str] = []
     if manifest.skills:
         components.append("skills")
+    if manifest.commands:
+        components.append("commands")
+    if manifest.agents:
+        components.append("agents")
+    if manifest.rules:
+        components.append("rules")
     if manifest.hooks:
         components.append("hooks")
     if manifest.mcp_servers:
@@ -1029,3 +1498,71 @@ def fetch_plugin_registry(url: str | None = None) -> PluginRegistryDocument | No
     except Exception:  # noqa: BLE001 — registry fetch is best-effort
         _LOG.debug("Failed to fetch plugin registry from %s", target)
         return None
+
+
+# ── Local marketplace (.claude-plugin/marketplace.json) ──────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class MarketplaceEntry:
+    """One local plugin advertised by a repo ``marketplace.json``."""
+
+    name: str
+    path: Path  # resolved absolute path to the plugin directory
+    description: str = ""
+    version: str = ""
+    category: str = ""
+
+
+def load_marketplace(repo: Path) -> list[MarketplaceEntry]:
+    """Parse a Claude Code ``marketplace.json`` and resolve local plugins.
+
+    ``repo`` may be the repo root (holding ``.claude-plugin/marketplace.json``)
+    or the path to a ``marketplace.json`` directly. Only entries with a local
+    ``source`` (a relative/absolute directory path, the mainstream case) are
+    returned — remote ``git-subdir`` entries are skipped since they need a
+    separate clone step. Raises ``FileNotFoundError`` when no marketplace file
+    is present so callers can fall back to single-plugin install.
+    """
+    repo = repo.expanduser()
+    if repo.is_file():
+        market_path = repo
+    else:
+        market_path = repo / ".claude-plugin" / "marketplace.json"
+        if not market_path.is_file():
+            alt = repo / "marketplace.json"
+            market_path = alt if alt.is_file() else market_path
+    if not market_path.is_file():
+        raise FileNotFoundError(f"No marketplace.json under {repo}")
+
+    base = market_path.parent.parent  # repo root (parent of .claude-plugin)
+    raw = json.loads(market_path.read_text(encoding="utf-8"))
+    entries: list[MarketplaceEntry] = []
+    plugins = raw.get("plugins", []) if isinstance(raw, dict) else []
+    if not isinstance(plugins, list):
+        return entries
+    for item in plugins:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        source = item.get("source")
+        if not isinstance(name, str) or not name:
+            continue
+        # Local sources are plain path strings; remote sources are dicts.
+        if not isinstance(source, str):
+            continue
+        src_path = Path(source)
+        if not src_path.is_absolute():
+            src_path = (base / src_path).resolve()
+        if not src_path.is_dir():
+            continue
+        entries.append(
+            MarketplaceEntry(
+                name=name,
+                path=src_path,
+                description=str(item.get("description") or ""),
+                version=str(item.get("version") or ""),
+                category=str(item.get("category") or ""),
+            )
+        )
+    return entries

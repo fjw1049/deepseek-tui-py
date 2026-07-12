@@ -196,10 +196,24 @@ def whale_nickname_for_index(index: int) -> str:
 
 
 def build_subagent_system_prompt(
-    agent_type: SubAgentType, assignment: SubAgentAssignment
+    agent_type: SubAgentType,
+    assignment: SubAgentAssignment,
+    base_override: str | None = None,
 ) -> str:
-    """Build the sub-agent system prompt."""
-    base = agent_type.system_prompt()
+    """Build the sub-agent system prompt.
+
+    ``base_override`` supplies the persona body for a plugin agent
+    (Claude Code ``agents/<name>.md``). When set it replaces the built-in
+    type prompt but still carries the shared output-format contract so the
+    sub-agent's deliverable stays consistent.
+    """
+    if base_override is not None and base_override.strip():
+        from deepseek_tui.engine.prompts import load_prompt
+
+        output_contract = load_prompt("subagent_output_format")
+        base = f"{base_override.strip()}\n\n{output_contract}"
+    else:
+        base = agent_type.system_prompt()
     role = (assignment.role or "").strip()
     if role:
         return f"{base}\n\nYou are operating in the role of `{role}`."
@@ -288,3 +302,6 @@ class SpawnRequest:
     fork_messages: list[dict[str, Any]] | None = None
     output_schema: dict[str, Any] | None = None
     auto_approve: bool | None = None
+    # Persona system prompt for a plugin agent (overrides the built-in
+    # ``agent_type`` prompt). ``None`` keeps the standard type prompt.
+    system_prompt: str | None = None

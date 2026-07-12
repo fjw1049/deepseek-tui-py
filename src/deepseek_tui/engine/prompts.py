@@ -7,7 +7,9 @@ Engine-level system prompt builder.
 from __future__ import annotations
 
 import os
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -138,6 +140,84 @@ def render_plugin_context(
     return "\n".join(lines)
 
 
+def render_plugin_components_context(
+    commands: list[Any] | None,
+    agents: list[Any] | None,
+) -> str:
+    """Render the ``## Plugin Commands & Agents`` block.
+
+    Lists plugin-contributed slash commands (invoked as ``/<plugin>:<cmd>``)
+    and agent personas (spawnable via ``agent_spawn`` with ``type=<name>``) so
+    the model knows they exist and how to reach them. Session-stable, so it
+    sits in the KV-prefix-cache-friendly prefix.
+    """
+    commands = commands or []
+    agents = agents or []
+    if not commands and not agents:
+        return ""
+    lines: list[str] = ["## Plugin Commands & Agents", ""]
+    if commands:
+        lines.append(
+            "Slash commands from installed plugins — a user message of "
+            "`/<plugin>:<command> [args]` expands the command's prompt "
+            "template. Available:"
+        )
+        for c in commands:
+            hint = f" (args: {c.argument_hint})" if c.argument_hint else ""
+            desc = f" — {c.description}" if c.description else ""
+            lines.append(f"- /{c.qualified}{hint}{desc}")
+        lines.append("")
+    if agents:
+        lines.append(
+            "Agent personas from installed plugins — spawn one with the "
+            "`agent_spawn` tool using `type=\"<name>\"` (its persona system "
+            "prompt is applied automatically). Available:"
+        )
+        for a in agents:
+            desc = f" — {a.description}" if a.description else ""
+            lines.append(f"- {a.name}{desc}")
+    return "\n".join(lines).rstrip()
+
+
+_CURRENT_DATE_RE = re.compile(r"\{\{\s*\.CurrentDate\s*\}\}")
+
+
+def substitute_builtin_template_vars(text: str) -> str:
+    """Replace safe built-in Go-template vars used by CodeBuddy/Claude content.
+
+    Only ``{{.CurrentDate}}`` is substituted (with the current local date);
+    any other ``{{...}}`` tokens are left verbatim so unknown/unsafe variables
+    are never silently resolved.
+    """
+    if "{{" not in text:
+        return text
+    today = datetime.now().strftime("%A, %B %d, %Y")
+    return _CURRENT_DATE_RE.sub(today, text)
+
+
+def render_plugin_rules_context(rules: list[Any] | None) -> str:
+    """Render always-on plugin ``rules`` bodies into a system-prompt block.
+
+    Each rule (CodeBuddy convention, ``alwaysApply: true``) is a system-level
+    directive; its full body is injected verbatim under a labeled header so
+    the model treats it with the priority the plugin author intended.
+    """
+    rules = rules or []
+    if not rules:
+        return ""
+    lines: list[str] = ["## Plugin Rules", ""]
+    lines.append(
+        "The following directives come from installed plugins and are active "
+        "for this session. Treat them as authoritative instructions."
+    )
+    for r in rules:
+        lines.append("")
+        lines.append(f"### Rule: {r.plugin}/{r.name}")
+        lines.append("")
+        lines.append(substitute_builtin_template_vars(r.body))
+    return "\n".join(lines).rstrip()
+
+
 def build_system_prompt(
     override: str | None = None,
     *,
@@ -147,6 +227,8 @@ def build_system_prompt(
     working_set_summary: str | None = None,
     skills_context: str | None = None,
     plugin_context: str | None = None,
+    plugin_components_context: str | None = None,
+    plugin_rules_context: str | None = None,
     locale_tag: str = "en",
     project_context_enabled: bool = True,
     workflow_guidelines: bool = False,
@@ -218,6 +300,14 @@ def build_system_prompt(
     # cache hits. Only present while a plugin is mounted.
     if plugin_context and plugin_context.strip():
         full_prompt += "\n\n" + plugin_context
+
+    # Plugin commands & agent personas from installed plugins (session-stable).
+    if plugin_components_context and plugin_components_context.strip():
+        full_prompt += "\n\n" + plugin_components_context
+
+    # Always-on plugin rules (system-level directives, session-stable).
+    if plugin_rules_context and plugin_rules_context.strip():
+        full_prompt += "\n\n" + plugin_rules_context
 
     if workflow_guidelines:
         from deepseek_tui.workflow.adapters import workflow_guidelines_snippet
