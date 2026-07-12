@@ -127,6 +127,8 @@ const api = {
     ipcRenderer.invoke('file:read-workspace', options),
   writeWorkspaceFile: (options) =>
     ipcRenderer.invoke('file:write-workspace', options),
+  getWorkspaceHtmlPreviewUrl: (options) =>
+    ipcRenderer.invoke('workspace:html-preview-url', options),
   listWorkspaceDirectory: (workspaceRoot, directoryPath) =>
     ipcRenderer.invoke('file:list-workspace', { workspaceRoot, directoryPath }),
   startSse: (threadId, sinceSeq, streamId) =>

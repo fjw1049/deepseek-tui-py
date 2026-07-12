@@ -37,6 +37,9 @@ type Props = {
   blocks: ChatBlock[]
   devPreviewBlocks: ChatBlock[]
   latestDevPreviewUrl: string | null
+  previewError?: string | null
+  onPreferredUrlConsumed?: () => void
+  onPreviewErrorConsumed?: () => void
   onTabChange: (tab: RightSidebarTab) => void
   onToggleCollapsed: () => void
   onClose: () => void
@@ -96,6 +99,9 @@ export function WorkbenchRightSidebar({
   blocks,
   devPreviewBlocks,
   latestDevPreviewUrl,
+  previewError = null,
+  onPreferredUrlConsumed,
+  onPreviewErrorConsumed,
   onTabChange,
   onToggleCollapsed,
   onClose,
@@ -144,6 +150,9 @@ export function WorkbenchRightSidebar({
         <DevBrowserPanel
           blocks={devPreviewBlocks}
           preferredUrl={latestDevPreviewUrl}
+          externalError={previewError}
+          onPreferredUrlConsumed={onPreferredUrlConsumed}
+          onExternalErrorConsumed={onPreviewErrorConsumed}
           className="h-full max-h-full w-full flex-col"
         />
       </Suspense>

@@ -399,6 +399,12 @@ export type DsGuiApi = {
   resolveWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileResolveResult>
   readWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileReadResult>
   writeWorkspaceFile: (options: WorkspaceFileWriteTarget) => Promise<WorkspaceFileWriteResult>
+  getWorkspaceHtmlPreviewUrl: (options: {
+    path: string
+    workspaceRoot?: string
+  }) => Promise<
+    { ok: true; url: string; path: string } | { ok: false; message: string }
+  >
   listWorkspaceDirectory: (
     workspaceRoot: string,
     directoryPath?: string

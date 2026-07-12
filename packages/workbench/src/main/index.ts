@@ -56,6 +56,7 @@ import { createRuntimeReadyCache } from './runtime-ready-cache'
 import { sseStartPayloadSchema, streamIdSchema } from './ipc/app-ipc-schemas'
 import { createTerminalService } from './services/terminal-service'
 import { registerAppIpcHandlers } from './ipc/register-app-ipc-handlers'
+import { shutdownWorkspacePreviewServers } from './services/workspace-preview-server'
 
 const mainDir = import.meta.dirname
 const APP_USER_MODEL_ID = 'com.deepseek.workbench'
@@ -1168,4 +1169,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   abortAllSseStreams()
   stopDeepseekChild()
+  void shutdownWorkspacePreviewServers()
 })

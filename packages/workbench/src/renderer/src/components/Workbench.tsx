@@ -10,6 +10,10 @@ import {
   formatDevPreviewUrlLabel
 } from '../lib/dev-preview-detection'
 import {
+  extractLatestTurnHtmlPreviewPaths
+} from '../lib/html-preview-detection'
+import { isHtmlPreviewPath } from '@shared/html-preview'
+import {
   WORKSPACE_FILE_PREVIEW_EVENT,
   type WorkspaceFilePreviewDetail
 } from '../lib/workspace-file-preview'
@@ -24,7 +28,7 @@ import {
 } from '../lib/right-sidebar-state'
 import { closeAllTerminalSessions } from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
-import { isChatsWorkspace, resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { isChatsWorkspace, resolveActiveThreadWorkspace, resolveThreadFilesystemRoot } from '../lib/workspace-path'
 import { AppTerminalPanel } from './AppTerminalPanel'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
@@ -309,6 +313,14 @@ export function Workbench(): ReactElement {
     [devPreviewBlocks]
   )
   const latestDevPreviewUrl = detectedDevPreviewUrls[0] ?? null
+  const detectedHtmlPreviewPaths = useMemo(
+    () => extractLatestTurnHtmlPreviewPaths(devPreviewBlocks),
+    [devPreviewBlocks]
+  )
+  const latestHtmlPreviewPath = detectedHtmlPreviewPaths[0] ?? null
+  const [workspacePreviewUrl, setWorkspacePreviewUrl] = useState<string | null>(null)
+  const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null)
+  const preferredPreviewUrl = workspacePreviewUrl ?? latestDevPreviewUrl
   const showDevPreviewCard =
     route === 'chat' &&
     latestDevPreviewUrl !== null
@@ -324,6 +336,14 @@ export function Workbench(): ReactElement {
     () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
   )
+  const threadFilesystemRoot = useMemo(
+    () => resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot),
+    [activeThreadId, threads, workspaceRoot]
+  )
+  const showHtmlPreviewCard =
+    route === 'chat' &&
+    latestHtmlPreviewPath !== null &&
+    threadFilesystemRoot.trim().length > 0
   const showOperationColumn =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !stageCentered
   const showRightSidebarToggle =
@@ -495,10 +515,41 @@ export function Workbench(): ReactElement {
     const onPreview = (event: Event): void => {
       const detail = (event as CustomEvent<WorkspaceFilePreviewDetail>).detail
       if (!detail?.path) return
+      const root = (threadFilesystemRoot || detail.workspaceRoot || activeWorkspaceRoot).trim()
+      if (isHtmlPreviewPath(detail.path) && root) {
+        openRightSidebar('preview')
+        void (async () => {
+          const api = window.dsGui?.getWorkspaceHtmlPreviewUrl
+          if (typeof api !== 'function') {
+            console.error(
+              '[html-preview] getWorkspaceHtmlPreviewUrl missing — restart Workbench to load the new preload bridge'
+            )
+            return
+          }
+          try {
+            const result = await api({
+              path: detail.path,
+              workspaceRoot: root
+            })
+            if (!result.ok) {
+              console.error('[html-preview]', result.message)
+              openRightSidebar('editor')
+              void openEditorFile(detail.path, root, detail.line, detail.column)
+              return
+            }
+            setWorkspacePreviewUrl(result.url)
+          } catch (error) {
+            console.error('[html-preview] failed to resolve preview URL', error)
+            openRightSidebar('editor')
+            void openEditorFile(detail.path, root, detail.line, detail.column)
+          }
+        })()
+        return
+      }
       openRightSidebar('editor')
       void openEditorFile(
         detail.path,
-        detail.workspaceRoot ?? activeWorkspaceRoot,
+        root || activeWorkspaceRoot,
         detail.line,
         detail.column
       )
@@ -506,7 +557,7 @@ export function Workbench(): ReactElement {
 
     window.addEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
     return () => window.removeEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
-  }, [activeWorkspaceRoot, openEditorFile, openRightSidebar])
+  }, [activeWorkspaceRoot, openEditorFile, openRightSidebar, threadFilesystemRoot])
 
   useEffect(() => {
     const onOpenChanges = (): void => openRightSidebar('changes')
@@ -518,6 +569,8 @@ export function Workbench(): ReactElement {
     if (previewThreadId.current === activeThreadId) return
     previewThreadId.current = activeThreadId
     autoOpenedPreviewUrlRef.current = null
+    setWorkspacePreviewUrl(null)
+    setHtmlPreviewError(null)
     if (rightSidebarOpen && rightSidebarTab === 'preview') {
       closeRightSidebar()
     }
@@ -721,9 +774,79 @@ export function Workbench(): ReactElement {
   const openDevPreview = (): void => {
     if (latestDevPreviewUrl) {
       autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
+      setWorkspacePreviewUrl(null)
     }
     openRightSidebar('preview')
   }
+
+  const openHtmlPreview = useCallback((): void => {
+    const path = latestHtmlPreviewPath?.trim()
+    if (!path) {
+      console.error('[html-preview] missing html path')
+      return
+    }
+    // Prefer the thread's real filesystem root; if missing and the HTML path
+    // is absolute, fall back to that file's parent directory so preview still
+    // works when UI "project" state was blanked for temporary workspaces.
+    let root = threadFilesystemRoot.trim()
+    if (!root && (path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path))) {
+      const normalized = path.replace(/\\/g, '/')
+      const slash = normalized.lastIndexOf('/')
+      root = slash > 0 ? normalized.slice(0, slash) : ''
+    }
+    void (async () => {
+      const api = window.dsGui?.getWorkspaceHtmlPreviewUrl
+      if (typeof api !== 'function') {
+        console.error(
+          '[html-preview] getWorkspaceHtmlPreviewUrl missing — fully restart Workbench (preload must reload)'
+        )
+        return
+      }
+      try {
+        const result = await api({
+          path,
+          ...(root ? { workspaceRoot: root } : {})
+        })
+        if (!result.ok) {
+          console.error('[html-preview]', result.message, { path, root })
+          openRightSidebar('preview')
+          setWorkspacePreviewUrl(null)
+          setHtmlPreviewError(result.message)
+          return
+        }
+        setHtmlPreviewError(null)
+        setWorkspacePreviewUrl(result.url)
+        openRightSidebar('preview')
+      } catch (error) {
+        console.error('[html-preview] failed to resolve preview URL', error)
+        openRightSidebar('preview')
+        setHtmlPreviewError(
+          error instanceof Error ? error.message : 'Failed to open HTML preview'
+        )
+      }
+    })()
+  }, [latestHtmlPreviewPath, openRightSidebar, threadFilesystemRoot])
+
+  const clearWorkspacePreviewUrl = useCallback((): void => {
+    setWorkspacePreviewUrl(null)
+  }, [])
+
+  const clearHtmlPreviewError = useCallback((): void => {
+    setHtmlPreviewError(null)
+  }, [])
+
+  const previewLaunchCard =
+    showDevPreviewCard && latestDevPreviewUrl ? (
+      <DevPreviewLaunchCard url={latestDevPreviewUrl} onOpen={openDevPreview} />
+    ) : null
+
+  const htmlPreviewAction = useMemo(
+    () =>
+      showHtmlPreviewCard && latestHtmlPreviewPath
+        ? { path: latestHtmlPreviewPath, onOpen: openHtmlPreview }
+        : null,
+    [showHtmlPreviewCard, latestHtmlPreviewPath, openHtmlPreview]
+  )
 
   const beginLeftResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (leftSidebarCollapsed || event.button !== 0) return
@@ -1031,14 +1154,8 @@ export function Workbench(): ReactElement {
                         onOpenSettings={() => openSettings('general')}
                         onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                         onSelectSuggestion={(text) => setInput(text)}
-                        devPreviewCard={
-                          showDevPreviewCard ? (
-                            <DevPreviewLaunchCard
-                              url={latestDevPreviewUrl}
-                              onOpen={openDevPreview}
-                            />
-                          ) : null
-                        }
+                        htmlPreviewAction={htmlPreviewAction}
+                        devPreviewCard={previewLaunchCard}
                       />
                     </div>
                     <div className="ds-chat-stage ds-empty-stage-composer mt-auto shrink-0">
@@ -1083,14 +1200,8 @@ export function Workbench(): ReactElement {
                       onOpenSettings={() => openSettings('general')}
                       onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                       onSelectSuggestion={(text) => setInput(text)}
-                      devPreviewCard={
-                        showDevPreviewCard ? (
-                          <DevPreviewLaunchCard
-                            url={latestDevPreviewUrl}
-                            onOpen={openDevPreview}
-                          />
-                        ) : null
-                      }
+                      htmlPreviewAction={htmlPreviewAction}
+                      devPreviewCard={previewLaunchCard}
                     />
                     {showOperationColumn ? (
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
@@ -1159,14 +1270,8 @@ export function Workbench(): ReactElement {
                     onOpenSettings={() => openSettings('general')}
                     onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                     onSelectSuggestion={(text) => setInput(text)}
-                    devPreviewCard={
-                      showDevPreviewCard ? (
-                        <DevPreviewLaunchCard
-                          url={latestDevPreviewUrl}
-                          onOpen={openDevPreview}
-                        />
-                      ) : null
-                    }
+                    htmlPreviewAction={htmlPreviewAction}
+                    devPreviewCard={previewLaunchCard}
                   />
                   <div className="mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
                     <ComposerStage
@@ -1236,7 +1341,10 @@ export function Workbench(): ReactElement {
             workspaceRoot={activeWorkspaceRoot}
             blocks={blocks}
             devPreviewBlocks={devPreviewBlocks}
-            latestDevPreviewUrl={latestDevPreviewUrl}
+            latestDevPreviewUrl={preferredPreviewUrl}
+            previewError={htmlPreviewError}
+            onPreferredUrlConsumed={clearWorkspacePreviewUrl}
+            onPreviewErrorConsumed={clearHtmlPreviewError}
             onTabChange={setRightSidebarTab}
             onToggleCollapsed={() => setRightSidebarCollapsed((current) => !current)}
             onClose={closeRightSidebarPanel}

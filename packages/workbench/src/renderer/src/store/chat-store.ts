@@ -1493,7 +1493,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const rawThreads = await p.listThreads()
       const threads = rawThreads.map((thread) => ({
         ...thread,
-        workspace: normalizeWorkspaceRoot(thread.workspace)
+        // Persist the runtime workspace verbatim. Display code that wants
+        // "no project / chats-only" semantics must call normalizeWorkspaceRoot
+        // at read time. Blanking here broke filesystem ops (preview, file
+        // open) for any temporary workspace path the runtime actually used.
+        workspace: thread.workspace?.trim() || undefined
       }))
       const activeThreadId = get().activeThreadId
       const shouldClearSelection =

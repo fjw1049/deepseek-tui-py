@@ -26,6 +26,7 @@ import {
 } from '../../lib/file-references'
 import { useValidatedFileReference } from '../../lib/file-reference-validation'
 import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
+import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
 import { useChatStore } from '../../store/chat-store'
 import { StreamdownMermaidBlock } from './StreamdownMermaidBlock'
@@ -347,8 +348,8 @@ function InlineFileReferenceCode({
   target: FileReferenceTarget
   className?: string
 }): ReactNode {
-  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
-  const validation = useValidatedFileReference(target, workspaceRoot)
+  const workspaceRoot = useThreadFilesystemRoot()
+  const validation = useValidatedFileReference(target, workspaceRoot || undefined)
 
   if (validation.status !== 'valid') {
     return (
@@ -364,11 +365,14 @@ function InlineFileReferenceCode({
   const resolvedTarget = { ...target, path: validation.path }
 
   const handlePreview = (): void => {
-    previewWorkspaceFile({ ...resolvedTarget, workspaceRoot })
+    previewWorkspaceFile({
+      ...resolvedTarget,
+      workspaceRoot: workspaceRoot || undefined
+    })
   }
 
   const handleOpenEditor = (): void => {
-    void openWorkspacePathInEditor(resolvedTarget, workspaceRoot).then((result) => {
+    void openWorkspacePathInEditor(resolvedTarget, workspaceRoot || undefined).then((result) => {
       if (!result.ok) {
         void window.dsGui?.logError?.('editor-open', 'Failed to open inline file reference', {
           message: result.message,

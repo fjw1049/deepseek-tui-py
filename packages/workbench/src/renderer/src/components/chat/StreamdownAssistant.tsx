@@ -6,8 +6,8 @@ import 'streamdown/styles.css'
 import { parseFileReferenceHref, rehypeFileReferences } from '../../lib/file-references'
 import { useValidatedFileReference } from '../../lib/file-reference-validation'
 import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
+import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
-import { useChatStore } from '../../store/chat-store'
 import { StreamdownCode } from './StreamdownCode'
 
 /**
@@ -47,9 +47,9 @@ function StreamdownLink({
   className,
   title
 }: StreamdownLinkProps): ReactElement {
-  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const workspaceRoot = useThreadFilesystemRoot()
   const fileTarget = parseFileReferenceHref(href)
-  const validation = useValidatedFileReference(fileTarget, workspaceRoot)
+  const validation = useValidatedFileReference(fileTarget, workspaceRoot || undefined)
   const isExternal = href ? /^(https?:|mailto:)/i.test(href) : false
   const cleanClassName = className?.replace(/\bds-file-reference-link\b/g, '').trim()
 
@@ -69,7 +69,10 @@ function StreamdownLink({
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (resolvedFileTarget) {
       event.preventDefault()
-      previewWorkspaceFile({ ...resolvedFileTarget, workspaceRoot })
+      previewWorkspaceFile({
+        ...resolvedFileTarget,
+        workspaceRoot: workspaceRoot || undefined
+      })
       return
     }
 
@@ -82,7 +85,10 @@ function StreamdownLink({
   const handleDoubleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (!resolvedFileTarget) return
     event.preventDefault()
-    void openWorkspacePathInEditor(resolvedFileTarget, workspaceRoot).then((result) => {
+    void openWorkspacePathInEditor(
+      resolvedFileTarget,
+      workspaceRoot || undefined
+    ).then((result) => {
       if (!result.ok) {
         void window.dsGui?.logError?.('editor-open', 'Failed to open file reference', {
           message: result.message,

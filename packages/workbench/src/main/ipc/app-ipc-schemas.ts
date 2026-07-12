@@ -213,6 +213,13 @@ export const workspaceFileTargetPayloadSchema = z
   })
   .strict()
 
+export const workspaceHtmlPreviewPayloadSchema = z
+  .object({
+    path: trimmedString(MAX_PATH_LENGTH),
+    workspaceRoot: optionalTrimmedString(MAX_PATH_LENGTH)
+  })
+  .strict()
+
 export const shellOpenExternalUrlSchema = trimmedString(MAX_URL_LENGTH).refine(
   isSafeOpenExternalUrl,
   { message: 'Only http, https, and mailto URLs are allowed.' }

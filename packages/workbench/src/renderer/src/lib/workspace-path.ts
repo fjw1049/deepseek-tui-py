@@ -51,3 +51,22 @@ export function resolveActiveThreadWorkspace(
     : undefined
   return normalizeWorkspaceRoot(activeThreadWorkspace) || normalizeWorkspaceRoot(fallbackWorkspaceRoot)
 }
+
+/**
+ * Absolute filesystem root for the active thread — including temporary
+ * workspaces under /tmp. Unlike {@link resolveActiveThreadWorkspace}, this
+ * does NOT blank out internal temp dirs; file preview / read / write need
+ * the real path the runtime used when creating the thread.
+ */
+export function resolveThreadFilesystemRoot(
+  activeThreadId: string | null | undefined,
+  threads: ReadonlyArray<{ id: string; workspace?: string }>,
+  fallbackWorkspaceRoot?: string | null
+): string {
+  const activeThreadWorkspace = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)?.workspace
+    : undefined
+  const fromThread = activeThreadWorkspace?.trim() ?? ''
+  if (fromThread) return fromThread
+  return fallbackWorkspaceRoot?.trim() ?? ''
+}

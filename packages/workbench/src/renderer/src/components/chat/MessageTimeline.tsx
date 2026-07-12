@@ -25,6 +25,7 @@ import {
   FileText,
   FolderOpen,
   GitFork,
+  Globe2,
   Loader2,
   PencilLine,
   Plug,
@@ -35,6 +36,7 @@ import {
   Wrench,
   X
 } from 'lucide-react'
+import { formatHtmlPreviewPathLabel } from '../../lib/html-preview-detection'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import type {
   ChatBlock,
@@ -98,6 +100,9 @@ type Props = {
   onOpenSettings: () => void
   onOpenDiagnostics: () => void
   onSelectSuggestion?: (prompt: string) => void
+  /** Local HTML artifact from this turn — nested under file changes when present. */
+  htmlPreviewAction?: { path: string; onOpen: () => void } | null
+  /** Localhost / URL web preview card (not a workspace file). */
   devPreviewCard?: ReactElement | null
   stageCentered?: boolean
   useChatStageWidth?: boolean
@@ -214,6 +219,7 @@ export function MessageTimeline({
   onOpenSettings,
   onOpenDiagnostics,
   onSelectSuggestion,
+  htmlPreviewAction = null,
   devPreviewCard,
   stageCentered = false,
   useChatStageWidth = true,
@@ -630,6 +636,7 @@ export function MessageTimeline({
               liveStartedAt={liveStartedAt}
               durationMs={durationMs}
               reasoningDurationMs={reasoningDurationMs}
+              htmlPreviewAction={isLatestTurn ? htmlPreviewAction : null}
               devPreviewCard={isLatestTurn ? devPreviewCard : null}
               viewportRef={containerRef}
             />
@@ -654,6 +661,7 @@ export function MessageTimeline({
             isProcessing={busy}
             liveReasoning={liveReasoning}
             live={live}
+            htmlPreviewAction={htmlPreviewAction}
             devPreviewCard={devPreviewCard}
             viewportRef={containerRef}
             liveStartedAt={
@@ -910,6 +918,7 @@ function MessageTurn({
   liveStartedAt,
   durationMs,
   reasoningDurationMs,
+  htmlPreviewAction,
   devPreviewCard,
   viewportRef
 }: {
@@ -920,6 +929,7 @@ function MessageTurn({
   liveStartedAt?: number
   durationMs?: number
   reasoningDurationMs?: number
+  htmlPreviewAction?: { path: string; onOpen: () => void } | null
   devPreviewCard?: ReactElement | null
   viewportRef: RefObject<HTMLDivElement | null>
 }): ReactElement {
@@ -1093,11 +1103,22 @@ function MessageTurn({
             <MessageBubble block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }} />
           ) : null}
 
-          {!isProcessing && devPreviewCard ? devPreviewCard : null}
-
           {!isProcessing && turnFileChanges.length > 0 ? (
-            <TurnChangeSummary changes={turnFileChanges} viewportRef={viewportRef} />
+            <TurnChangeSummary
+              changes={turnFileChanges}
+              viewportRef={viewportRef}
+              htmlPreview={htmlPreviewAction ?? null}
+            />
           ) : null}
+
+          {!isProcessing && turnFileChanges.length === 0 && htmlPreviewAction ? (
+            <HtmlPreviewStandaloneCard
+              path={htmlPreviewAction.path}
+              onOpen={htmlPreviewAction.onOpen}
+            />
+          ) : null}
+
+          {!isProcessing && devPreviewCard ? devPreviewCard : null}
         </>
       )}
     </div>
@@ -1112,16 +1133,31 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.liveStartedAt === next.liveStartedAt &&
   prev.durationMs === next.durationMs &&
   prev.reasoningDurationMs === next.reasoningDurationMs &&
+  prev.htmlPreviewAction === next.htmlPreviewAction &&
   prev.devPreviewCard === next.devPreviewCard &&
   prev.viewportRef === next.viewportRef
 ))
 
+function normalizePathKey(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+function pathsReferToSameFile(a: string, b: string): boolean {
+  const na = normalizePathKey(a)
+  const nb = normalizePathKey(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  return na.endsWith(`/${nb}`) || nb.endsWith(`/${na}`)
+}
+
 function TurnChangeSummary({
   changes,
-  viewportRef
+  viewportRef,
+  htmlPreview
 }: {
   changes: ToolBlock[]
   viewportRef: RefObject<HTMLDivElement | null>
+  htmlPreview?: { path: string; onOpen: () => void } | null
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
@@ -1152,6 +1188,8 @@ function TurnChangeSummary({
     enabled: expanded,
     root: viewportRef
   })
+  const previewPath = htmlPreview?.path?.trim() ?? ''
+  const previewLabel = previewPath ? formatHtmlPreviewPathLabel(previewPath) : ''
 
   return (
     <section className="ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
@@ -1197,6 +1235,10 @@ function TurnChangeSummary({
             const stats = countDiffStats(change.detail)
             const open = activeId === change.id
             const primary = change.filePath ?? t('toolActionFile')
+            const isPreviewTarget =
+              Boolean(previewPath) &&
+              Boolean(change.filePath) &&
+              pathsReferToSameFile(change.filePath!, previewPath)
 
             return (
               <div key={change.id} className="border-b border-ds-border-muted/60 last:border-b-0">
@@ -1209,8 +1251,16 @@ function TurnChangeSummary({
                   }`}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block break-all text-[14px] font-medium text-ds-ink">
-                      {primary}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="block break-all text-[14px] font-medium text-ds-ink">
+                        {primary}
+                      </span>
+                      {isPreviewTarget ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
+                          <Globe2 className="h-3 w-3" strokeWidth={2} />
+                          HTML
+                        </span>
+                      ) : null}
                     </span>
                   </span>
                   {stats ? (
@@ -1242,7 +1292,72 @@ function TurnChangeSummary({
             : null}
         </div>
       ) : null}
+
+      {htmlPreview && previewPath ? (
+        <div className="border-t border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/25 to-transparent px-4 py-3">
+          <div className="relative flex items-center gap-3 overflow-hidden rounded-[12px] border border-amber-500/15 bg-ds-elevated/85 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] dark:border-amber-300/15 dark:bg-white/[0.035]">
+            <span
+              aria-hidden
+              className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-amber-500/70 dark:bg-amber-300/60"
+            />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300">
+              <Globe2 className="h-4 w-4" strokeWidth={1.9} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
+                {previewLabel}
+              </div>
+              <div className="mt-0.5 truncate text-[11.5px] text-ds-muted">
+                {t('htmlPreviewNestedHint')}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                htmlPreview.onOpen()
+              }}
+              className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
+              title={t('htmlPreviewCardOpen')}
+            >
+              {t('htmlPreviewCardOpen')}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
+  )
+}
+
+function HtmlPreviewStandaloneCard({
+  path,
+  onOpen
+}: {
+  path: string
+  onOpen: () => void
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const label = formatHtmlPreviewPathLabel(path)
+  return (
+    <div className="flex min-h-[64px] w-full items-center gap-3 rounded-[14px] border border-ds-border bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.06)]">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300">
+        <Globe2 className="h-5 w-5" strokeWidth={1.9} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[14.5px] font-semibold text-ds-ink">{label}</div>
+        <div className="mt-0.5 truncate text-[12px] text-ds-muted">
+          {t('htmlPreviewStandaloneHint')}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="inline-flex h-9 shrink-0 items-center justify-center rounded-full bg-accent px-4 text-[13px] font-semibold text-white shadow-[0_10px_24px_rgba(0,136,255,0.22)] transition hover:brightness-110 active:scale-[0.97]"
+        title={t('htmlPreviewCardOpen')}
+      >
+        {t('htmlPreviewCardOpen')}
+      </button>
+    </div>
   )
 }
 

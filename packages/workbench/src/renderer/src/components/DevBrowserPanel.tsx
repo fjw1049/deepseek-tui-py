@@ -1,5 +1,5 @@
 import type { FormEvent, ReactElement } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
@@ -8,11 +8,11 @@ import {
   Globe2,
   Loader2,
   Maximize2,
-  MoreVertical,
   Plus,
   RefreshCw,
   Send,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import {
@@ -47,31 +47,13 @@ type WebviewTitleEvent = Event & {
   title: string
 }
 
-const PREVIEW_URL_STORAGE_KEY = 'deepseekgui.devPreview.url'
+type PreviewTab = {
+  id: string
+  url: string | null
+  title: string
+}
+
 const PREVIEW_AUTO_FOLLOW_STORAGE_KEY = 'deepseekgui.devPreview.autoFollow'
-
-function readStoredUrl(): string | null {
-  try {
-    const raw = window.localStorage.getItem(PREVIEW_URL_STORAGE_KEY)
-    const normalized = raw ? normalizeDevPreviewUrlInput(raw) : null
-    if (!normalized) return null
-    const parsed = new URL(normalized)
-    const pathname = decodeURIComponent(parsed.pathname).toLowerCase()
-    if (/^\/(?:health|metrics|readyz?|livez?|v\d+)(?:\/|$)/.test(pathname)) return null
-    if (/\/(?:health|metrics|readyz?|livez?)(?:\/|$)/.test(pathname)) return null
-    return normalized
-  } catch {
-    return null
-  }
-}
-
-function persistUrl(url: string): void {
-  try {
-    window.localStorage.setItem(PREVIEW_URL_STORAGE_KEY, url)
-  } catch {
-    /* ignore persistence failures */
-  }
-}
 
 function readStoredAutoFollow(): boolean {
   try {
@@ -90,13 +72,34 @@ function persistAutoFollow(value: boolean): void {
   }
 }
 
-function formatAddressInput(url: string): string {
+function formatAddressInput(url: string | null): string {
+  if (!url) return ''
   try {
     const parsed = new URL(url)
     const path = parsed.pathname === '/' ? '' : parsed.pathname
     return `${parsed.host}${path}${parsed.search}${parsed.hash}`
   } catch {
     return url
+  }
+}
+
+function tabLabel(tab: PreviewTab, fallback: string): string {
+  if (tab.title.trim()) return tab.title.trim()
+  if (!tab.url) return fallback
+  try {
+    const parsed = new URL(tab.url)
+    const leaf = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).at(-1) ?? '')
+    return leaf || parsed.host || fallback
+  } catch {
+    return fallback
+  }
+}
+
+function createTab(url: string | null = null, title = ''): PreviewTab {
+  return {
+    id: `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    url,
+    title
   }
 }
 
@@ -107,30 +110,40 @@ type LoadOptions = {
 export function DevBrowserPanel({
   blocks,
   preferredUrl,
+  externalError,
+  onPreferredUrlConsumed,
+  onExternalErrorConsumed,
   className
 }: {
   blocks: ChatBlock[]
   preferredUrl?: string | null
+  externalError?: string | null
+  onPreferredUrlConsumed?: () => void
+  onExternalErrorConsumed?: () => void
   className?: string
 }): ReactElement {
   const { t } = useTranslation('common')
   const webviewRef = useRef<DevWebviewTag | null>(null)
   const iframeLoadedUrlRef = useRef<string | null>(null)
+  const preferredUrlRef = useRef<string | null>(null)
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
   const latestDetectedUrl = detectedUrls[0] ?? null
   const useElectronWebview = typeof window.dsGui?.openExternal === 'function'
+
   const normalizedPreferredUrl = useMemo(
     () => (preferredUrl ? normalizeDevPreviewUrlInput(preferredUrl) : null),
     [preferredUrl]
   )
-  const initialUrl = normalizedPreferredUrl ?? readStoredUrl() ?? latestDetectedUrl ?? DEFAULT_DEV_PREVIEW_URL
-  const preferredUrlRef = useRef<string | null>(normalizedPreferredUrl)
-  const [activeUrl, setActiveUrl] = useState(initialUrl)
-  const [draftUrl, setDraftUrl] = useState(() => formatAddressInput(initialUrl))
+
+  const [tabs, setTabs] = useState<PreviewTab[]>(() => [createTab(null)])
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0]!.id)
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!
+  const activeUrl = activeTab?.url ?? null
+
+  const [draftUrl, setDraftUrl] = useState('')
   const [autoFollow, setAutoFollow] = useState(readStoredAutoFollow)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [pageTitle, setPageTitle] = useState('')
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
   const [iframeBackStack, setIframeBackStack] = useState<string[]>([])
@@ -139,37 +152,99 @@ export function DevBrowserPanel({
   const canNavigateBack = useElectronWebview ? canGoBack : iframeBackStack.length > 0
   const canNavigateForward = useElectronWebview ? canGoForward : iframeForwardStack.length > 0
 
+  const updateActiveTab = useCallback(
+    (patch: Partial<PreviewTab>): void => {
+      setTabs((current) =>
+        current.map((tab) => (tab.id === activeTabId ? { ...tab, ...patch } : tab))
+      )
+    },
+    [activeTabId]
+  )
+
+  const openOrFocusUrl = useCallback(
+    (url: string, options: { title?: string; select?: boolean } = {}): void => {
+      const normalized = normalizeDevPreviewUrlInput(url)
+      if (!normalized) return
+      setTabs((current) => {
+        const existing = current.find((tab) => tab.url === normalized)
+        if (existing) {
+          if (options.select !== false) setActiveTabId(existing.id)
+          if (options.title) {
+            return current.map((tab) =>
+              tab.id === existing.id ? { ...tab, title: options.title ?? tab.title } : tab
+            )
+          }
+          return current
+        }
+
+        // Prefer filling an existing blank tab (usually the initial one) so we
+        // don't leave a stuck empty "first tab" beside the real preview.
+        const emptyIndex = current.findIndex((tab) => !tab.url)
+        if (emptyIndex >= 0) {
+          const target = current[emptyIndex]!
+          if (options.select !== false) setActiveTabId(target.id)
+          return current.map((tab, index) =>
+            index === emptyIndex
+              ? { ...tab, url: normalized, title: options.title ?? '' }
+              : tab
+          )
+        }
+
+        const next = createTab(normalized, options.title ?? '')
+        if (options.select !== false) setActiveTabId(next.id)
+        return [...current, next]
+      })
+      setLoadError(null)
+      setLoading(true)
+      setDraftUrl(formatAddressInput(normalized))
+      setIframeBackStack([])
+      setIframeForwardStack([])
+    },
+    []
+  )
+
   useEffect(() => {
     persistAutoFollow(autoFollow)
   }, [autoFollow])
 
   useEffect(() => {
-    persistUrl(activeUrl)
-  }, [activeUrl])
+    setDraftUrl(formatAddressInput(activeUrl))
+    setLoadError(null)
+    setCanGoBack(false)
+    setCanGoForward(false)
+    setIframeBackStack([])
+    setIframeForwardStack([])
+    setLoading(Boolean(activeUrl))
+  }, [activeTabId, activeUrl])
 
   useEffect(() => {
-    if (!normalizedPreferredUrl || preferredUrlRef.current === normalizedPreferredUrl) return
+    if (!externalError) return
+    setLoadError(externalError)
+    setLoading(false)
+    onExternalErrorConsumed?.()
+  }, [externalError, onExternalErrorConsumed])
+
+  useEffect(() => {
+    if (!normalizedPreferredUrl) {
+      preferredUrlRef.current = null
+      return
+    }
+    if (preferredUrlRef.current === normalizedPreferredUrl) return
     preferredUrlRef.current = normalizedPreferredUrl
-    setAutoFollow(true)
-    setActiveUrl(normalizedPreferredUrl)
-    setDraftUrl(formatAddressInput(normalizedPreferredUrl))
-    setPageTitle('')
-    setLoading(true)
-    setLoadError(null)
-  }, [normalizedPreferredUrl])
+    setAutoFollow(false)
+    openOrFocusUrl(normalizedPreferredUrl)
+    onPreferredUrlConsumed?.()
+  }, [normalizedPreferredUrl, onPreferredUrlConsumed, openOrFocusUrl])
 
   useEffect(() => {
-    if (!autoFollow || !latestDetectedUrl || latestDetectedUrl === activeUrl) return
-    setActiveUrl(latestDetectedUrl)
-    setDraftUrl(formatAddressInput(latestDetectedUrl))
-    setPageTitle('')
-    setLoading(true)
-    setLoadError(null)
-  }, [activeUrl, autoFollow, latestDetectedUrl])
+    if (!autoFollow || !latestDetectedUrl) return
+    if (tabs.some((tab) => tab.url === latestDetectedUrl)) return
+    openOrFocusUrl(latestDetectedUrl, { select: tabs.every((tab) => !tab.url) })
+  }, [autoFollow, latestDetectedUrl, openOrFocusUrl, tabs])
 
   useEffect(() => {
     const webview = webviewRef.current
-    if (!useElectronWebview || !webview) return
+    if (!useElectronWebview || !webview || !activeUrl) return
 
     const syncNavigationState = (): void => {
       try {
@@ -177,7 +252,7 @@ export function DevBrowserPanel({
         setCanGoForward(webview.canGoForward())
         const currentUrl = normalizeDevPreviewUrlInput(webview.getURL())
         if (currentUrl) {
-          setActiveUrl(currentUrl)
+          updateActiveTab({ url: currentUrl })
           setDraftUrl(formatAddressInput(currentUrl))
         }
       } catch {
@@ -196,7 +271,7 @@ export function DevBrowserPanel({
     const handleNavigate: EventListener = (event): void => {
       const currentUrl = normalizeDevPreviewUrlInput((event as WebviewNavigateEvent).url)
       if (!currentUrl) return
-      setActiveUrl(currentUrl)
+      updateActiveTab({ url: currentUrl })
       setDraftUrl(formatAddressInput(currentUrl))
       setLoadError(null)
       syncNavigationState()
@@ -209,7 +284,7 @@ export function DevBrowserPanel({
       syncNavigationState()
     }
     const handleTitle: EventListener = (event): void => {
-      setPageTitle((event as WebviewTitleEvent).title)
+      updateActiveTab({ title: (event as WebviewTitleEvent).title })
     }
 
     webview.addEventListener('did-start-loading', handleStartLoading)
@@ -227,10 +302,10 @@ export function DevBrowserPanel({
       webview.removeEventListener('did-fail-load', handleFailLoad)
       webview.removeEventListener('page-title-updated', handleTitle)
     }
-  }, [t, useElectronWebview])
+  }, [activeUrl, t, updateActiveTab, useElectronWebview])
 
   useEffect(() => {
-    if (useElectronWebview) return
+    if (useElectronWebview || !activeUrl) return
     iframeLoadedUrlRef.current = null
     setLoading(true)
     setLoadError(null)
@@ -244,6 +319,54 @@ export function DevBrowserPanel({
     return () => window.clearTimeout(timeout)
   }, [activeUrl, iframeReloadNonce, t, useElectronWebview])
 
+  const resetNavState = (): void => {
+    setCanGoBack(false)
+    setCanGoForward(false)
+    setIframeBackStack([])
+    setIframeForwardStack([])
+  }
+
+  const addTab = (): void => {
+    const next = createTab(null)
+    setAutoFollow(false)
+    setTabs((current) => [...current, next])
+    setActiveTabId(next.id)
+    setDraftUrl('')
+    setLoadError(null)
+    setLoading(false)
+    resetNavState()
+  }
+
+  const closeTab = (tabId: string): void => {
+    setTabs((current) => {
+      const target = current.find((tab) => tab.id === tabId)
+      if (!target) return current
+
+      // Sole tab: clear the page instead of recreating another blank tab
+      // (which made the X feel broken — "叉不掉").
+      if (current.length <= 1) {
+        if (!target.url && !target.title) return current
+        setDraftUrl('')
+        setLoadError(null)
+        setLoading(false)
+        resetNavState()
+        return [{ ...target, url: null, title: '' }]
+      }
+
+      const index = current.findIndex((tab) => tab.id === tabId)
+      const nextTabs = current.filter((tab) => tab.id !== tabId)
+      if (tabId === activeTabId) {
+        const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0]!
+        setActiveTabId(fallback.id)
+        setDraftUrl(formatAddressInput(fallback.url))
+        setLoadError(null)
+        setLoading(Boolean(fallback.url))
+        resetNavState()
+      }
+      return nextTabs
+    })
+  }
+
   const loadUrl = (value: string, options: LoadOptions = {}): void => {
     const normalized = normalizeDevPreviewUrlInput(value)
     if (!normalized) {
@@ -252,13 +375,12 @@ export function DevBrowserPanel({
     }
     if (!options.keepAutoFollow) setAutoFollow(false)
     setLoadError(null)
-    setPageTitle('')
     setLoading(true)
-    if (!useElectronWebview && normalized !== activeUrl) {
+    if (!useElectronWebview && activeUrl && normalized !== activeUrl) {
       setIframeBackStack((stack) => [...stack, activeUrl].slice(-30))
       setIframeForwardStack([])
     }
-    setActiveUrl(normalized)
+    updateActiveTab({ url: normalized, title: '' })
     setDraftUrl(formatAddressInput(normalized))
   }
 
@@ -268,9 +390,8 @@ export function DevBrowserPanel({
   }
 
   const reload = (): void => {
+    if (!activeUrl) return
     if (!useElectronWebview) {
-      const normalized = normalizeDevPreviewUrlInput(activeUrl)
-      if (!normalized) return
       iframeLoadedUrlRef.current = null
       setIframeReloadNonce((nonce) => nonce + 1)
       setLoading(true)
@@ -287,6 +408,7 @@ export function DevBrowserPanel({
   }
 
   const openExternal = (): void => {
+    if (!activeUrl) return
     const normalized = normalizeDevPreviewUrlInput(activeUrl)
     if (!normalized) return
     if (typeof window.dsGui?.openExternal === 'function') {
@@ -301,11 +423,10 @@ export function DevBrowserPanel({
       const previousUrl = iframeBackStack.at(-1)
       if (!previousUrl) return
       setIframeBackStack((stack) => stack.slice(0, -1))
-      setIframeForwardStack((stack) => [activeUrl, ...stack].slice(0, 30))
+      setIframeForwardStack((stack) => (activeUrl ? [activeUrl, ...stack] : stack).slice(0, 30))
       setLoadError(null)
-      setPageTitle('')
       setLoading(true)
-      setActiveUrl(previousUrl)
+      updateActiveTab({ url: previousUrl })
       setDraftUrl(formatAddressInput(previousUrl))
       return
     }
@@ -321,11 +442,10 @@ export function DevBrowserPanel({
       const nextUrl = iframeForwardStack[0]
       if (!nextUrl) return
       setIframeForwardStack((stack) => stack.slice(1))
-      setIframeBackStack((stack) => [...stack, activeUrl].slice(-30))
+      setIframeBackStack((stack) => (activeUrl ? [...stack, activeUrl] : stack).slice(-30))
       setLoadError(null)
-      setPageTitle('')
       setLoading(true)
-      setActiveUrl(nextUrl)
+      updateActiveTab({ url: nextUrl })
       setDraftUrl(formatAddressInput(nextUrl))
       return
     }
@@ -337,31 +457,68 @@ export function DevBrowserPanel({
   }
 
   return (
-    <aside
-      className={`ds-tool-panel ds-no-drag flex min-h-0 flex-col ${className ?? ''}`}
-    >
+    <aside className={`ds-tool-panel ds-no-drag flex min-h-0 flex-col ${className ?? ''}`}>
       <div className="shrink-0 border-b border-ds-border-muted bg-transparent">
-        <div className="flex h-12 min-w-0 items-center gap-2 px-3">
-          <div className="flex min-w-0 max-w-[240px] items-center gap-2 rounded-[12px] bg-ds-surface-subtle px-3 py-1.5 dark:bg-white/8">
-            <Globe2 className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.75} />
-            <span className="min-w-0 truncate text-[13px] font-medium text-ds-ink">
-              {pageTitle || t('browserTitle')}
-            </span>
+        <div className="flex h-11 min-w-0 items-center gap-1 px-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+            {tabs.map((tab) => {
+              const active = tab.id === activeTabId
+              const isSoleBlank = tabs.length === 1 && !tab.url
+              return (
+                <div
+                  key={tab.id}
+                  className={`group flex h-8 max-w-[180px] shrink-0 items-center gap-1 rounded-[10px] px-2 transition ${
+                    active
+                      ? 'bg-ds-surface-subtle text-ds-ink dark:bg-white/10'
+                      : 'text-ds-muted hover:bg-ds-hover/70 hover:text-ds-ink'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setActiveTabId(tab.id)}
+                    className="flex min-w-0 flex-1 items-center gap-1.5"
+                    title={tab.url ?? t('browserNewTab')}
+                  >
+                    <Globe2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                    <span className="min-w-0 truncate text-[12px] font-medium">
+                      {tabLabel(tab, t('browserNewTab'))}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSoleBlank}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      closeTab(tab.id)
+                    }}
+                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-30 ${
+                      active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    }`}
+                    aria-label={t('browserCloseTab')}
+                    title={isSoleBlank ? t('browserCloseTabDisabled') : t('browserCloseTab')}
+                  >
+                    <X className="h-3 w-3" strokeWidth={2} />
+                  </button>
+                </div>
+              )
+            })}
           </div>
           <button
             type="button"
-            onClick={() => loadUrl(DEFAULT_DEV_PREVIEW_URL)}
+            onClick={addTab}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
             aria-label={t('browserNewTab')}
             title={t('browserNewTab')}
           >
             <Plus className="h-4 w-4" strokeWidth={1.8} />
           </button>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={openExternal}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+              disabled={!activeUrl}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
               aria-label={t('browserOpenExternal')}
               title={t('browserOpenExternal')}
             >
@@ -407,7 +564,8 @@ export function DevBrowserPanel({
             <button
               type="button"
               onClick={reload}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+              disabled={!activeUrl}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
               aria-label={t('browserReload')}
               title={t('browserReload')}
             >
@@ -441,19 +599,12 @@ export function DevBrowserPanel({
             <button
               type="button"
               onClick={openExternal}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+              disabled={!activeUrl}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
               aria-label={t('browserOpenExternal')}
               title={t('browserOpenExternal')}
             >
               <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-              aria-label={t('browserMore')}
-              title={t('browserMore')}
-            >
-              <MoreVertical className="h-4 w-4" strokeWidth={1.8} />
             </button>
           </div>
         </form>
@@ -464,7 +615,10 @@ export function DevBrowserPanel({
               <button
                 key={url}
                 type="button"
-                onClick={() => loadUrl(url, { keepAutoFollow: true })}
+                onClick={() => {
+                  setAutoFollow(false)
+                  openOrFocusUrl(url)
+                }}
                 className="shrink-0 rounded-full border border-ds-border-muted bg-ds-surface-subtle px-2.5 py-1 text-[10.5px] font-medium text-ds-muted transition hover:border-ds-border-strong hover:text-ds-ink dark:bg-white/6"
                 title={url}
               >
@@ -482,8 +636,24 @@ export function DevBrowserPanel({
       ) : null}
 
       <div className="relative min-h-0 flex-1 bg-white dark:bg-ds-canvas">
-        {useElectronWebview ? (
+        {!activeUrl ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <Globe2 className="h-8 w-8 text-ds-faint" strokeWidth={1.5} />
+            <div className="text-[14px] font-medium text-ds-ink">{t('browserEmptyTitle')}</div>
+            <div className="max-w-sm text-[12.5px] leading-5 text-ds-muted">
+              {t('browserEmptyBody')}
+            </div>
+            <button
+              type="button"
+              onClick={() => loadUrl(DEFAULT_DEV_PREVIEW_URL)}
+              className="mt-1 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-white"
+            >
+              {t('browserOpenDefault')}
+            </button>
+          </div>
+        ) : useElectronWebview ? (
           <webview
+            key={activeTabId}
             ref={webviewRef}
             src={activeUrl}
             partition="persist:deepseek-dev-browser"
@@ -492,9 +662,9 @@ export function DevBrowserPanel({
           />
         ) : (
           <iframe
-            key={`${activeUrl}:${iframeReloadNonce}`}
+            key={`${activeTabId}:${activeUrl}:${iframeReloadNonce}`}
             src={activeUrl}
-            title={pageTitle || t('browserTitle')}
+            title={tabLabel(activeTab, t('browserTitle'))}
             sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
             referrerPolicy="no-referrer"
             onLoad={() => {

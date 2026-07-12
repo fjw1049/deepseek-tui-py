@@ -50,12 +50,14 @@ import {
   usageQueryPayloadSchema,
   workspaceFileTargetPayloadSchema,
   workspaceFileWritePayloadSchema,
+  workspaceHtmlPreviewPayloadSchema,
   workspaceListDirectoryPayloadSchema,
   workspacePickFilesPayloadSchema,
   asrTranscribePayloadSchema,
   asrConfigPayloadSchema,
   workspaceRootSchema
 } from './app-ipc-schemas'
+import { getWorkspacePreviewUrl } from '../services/workspace-preview-server'
 import type { JsonSettingsStore } from '../settings-store'
 import { getRuntimeBaseUrl } from '../settings-store'
 import {
@@ -1267,6 +1269,15 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       payload
     )
     return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '')
+  })
+
+  ipcMain.handle('workspace:html-preview-url', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'workspace:html-preview-url',
+      workspaceHtmlPreviewPayloadSchema,
+      payload
+    )
+    return getWorkspacePreviewUrl(request)
   })
 
   ipcMain.handle('shell:open-external', async (_, url: unknown) => {
