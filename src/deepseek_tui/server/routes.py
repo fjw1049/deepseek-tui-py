@@ -907,6 +907,82 @@ async def remove_plugin_route(request: Request, name: str) -> dict[str, Any]:
     return {"message": message}
 
 
+# /v1/plugins/marketplaces — registered marketplaces (two-level install:
+# register a repo once, then install individual plugins as <name>@<mp>).
+
+
+def _marketplaces_snapshot() -> list[dict[str, Any]]:
+    """Registered marketplaces + the plugins each one advertises."""
+    from deepseek_tui.integrations.plugins import load_marketplace, read_marketplaces
+
+    out: list[dict[str, Any]] = []
+    for name, entry in sorted(read_marketplaces().items()):
+        path = Path(str(entry.get("path", "")))
+        try:
+            plugins = [
+                {
+                    "name": e.name,
+                    "description": e.description,
+                    "version": e.version,
+                    "category": e.category,
+                    "spec": f"{e.name}@{name}",
+                }
+                for e in load_marketplace(path)
+            ]
+        except (FileNotFoundError, OSError, ValueError):
+            plugins = []
+        out.append(
+            {
+                "name": name,
+                "source": str(entry.get("source", "")),
+                "path": str(path),
+                "plugins": plugins,
+            }
+        )
+    return out
+
+
+@router_skills.get("/plugins/marketplaces")
+async def list_marketplaces_route(request: Request) -> dict[str, Any]:
+    return {"marketplaces": await asyncio.to_thread(_marketplaces_snapshot)}
+
+
+@router_skills.post("/plugins/marketplaces")
+async def add_marketplace_route(request: Request) -> dict[str, Any]:
+    """Register a marketplace from ``github:owner/repo`` or a local path."""
+    from deepseek_tui.integrations.plugins import add_marketplace
+
+    payload = await body(request)
+    spec = str(payload.get("spec") or "").strip()
+    if not spec:
+        raise api_error(400, "spec is required", error="validation_error")
+    outcome, message = await asyncio.to_thread(add_marketplace, spec)
+    if outcome.value == "failed":
+        raise api_error(400, message, error="marketplace_add_failed")
+    return {"outcome": outcome.value, "message": message}
+
+
+@router_skills.post("/plugins/marketplaces/{name}/update")
+async def update_marketplace_route(request: Request, name: str) -> dict[str, Any]:
+    from deepseek_tui.integrations.plugins import update_marketplace
+
+    outcome, message = await asyncio.to_thread(update_marketplace, name)
+    if outcome.value == "failed":
+        status = 404 if "not found" in message.lower() else 400
+        raise api_error(status, message, error="marketplace_update_failed")
+    return {"outcome": outcome.value, "message": message}
+
+
+@router_skills.delete("/plugins/marketplaces/{name}")
+async def remove_marketplace_route(request: Request, name: str) -> dict[str, Any]:
+    from deepseek_tui.integrations.plugins import remove_marketplace
+
+    message = await asyncio.to_thread(remove_marketplace, name)
+    if message.startswith("Marketplace not found"):
+        raise api_error(404, message, error="marketplace_not_found")
+    return {"message": message}
+
+
 # GET/POST /v1/tasks — durable background task queue.
 
 

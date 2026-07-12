@@ -140,9 +140,25 @@ def render_plugin_context(
     return "\n".join(lines)
 
 
+# Above this many commands (or agents), the per-item listing with
+# descriptions collapses to compact per-plugin name groups. Keeps the
+# session-stable prompt block bounded when many plugins are installed
+# (a full agents-main install ships 106 commands + 199 agents).
+PLUGIN_COMPONENT_LIST_LIMIT = 20
+
+
+def _group_by_plugin(items: list[Any]) -> dict[str, list[Any]]:
+    grouped: dict[str, list[Any]] = {}
+    for item in items:
+        grouped.setdefault(item.plugin, []).append(item)
+    return grouped
+
+
 def render_plugin_components_context(
     commands: list[Any] | None,
     agents: list[Any] | None,
+    *,
+    list_limit: int = PLUGIN_COMPONENT_LIST_LIMIT,
 ) -> str:
     """Render the ``## Plugin Commands & Agents`` block.
 
@@ -150,6 +166,10 @@ def render_plugin_components_context(
     and agent personas (spawnable via ``agent_spawn`` with ``type=<name>``) so
     the model knows they exist and how to reach them. Session-stable, so it
     sits in the KV-prefix-cache-friendly prefix.
+
+    Context governance: past ``list_limit`` entries the per-item listing
+    (with descriptions) collapses to per-plugin name groups so dozens of
+    installed plugins don't balloon the system prompt.
     """
     commands = commands or []
     agents = agents or []
@@ -162,10 +182,21 @@ def render_plugin_components_context(
             "`/<plugin>:<command> [args]` expands the command's prompt "
             "template. Available:"
         )
-        for c in commands:
-            hint = f" (args: {c.argument_hint})" if c.argument_hint else ""
-            desc = f" — {c.description}" if c.description else ""
-            lines.append(f"- /{c.qualified}{hint}{desc}")
+        if len(commands) <= list_limit:
+            for c in commands:
+                hint = f" (args: {c.argument_hint})" if c.argument_hint else ""
+                desc = f" — {c.description}" if c.description else ""
+                lines.append(f"- /{c.qualified}{hint}{desc}")
+        else:
+            lines[-1] = (
+                f"Slash commands from installed plugins ({len(commands)} "
+                "total) — a user message of `/<plugin>:<command> [args]` "
+                "expands the command's prompt template. Grouped by plugin "
+                "(descriptions omitted for brevity):"
+            )
+            for plugin, items in sorted(_group_by_plugin(commands).items()):
+                names = ", ".join(c.name for c in items)
+                lines.append(f"- {plugin}: {names}")
         lines.append("")
     if agents:
         lines.append(
@@ -173,9 +204,21 @@ def render_plugin_components_context(
             "`agent_spawn` tool using `type=\"<name>\"` (its persona system "
             "prompt is applied automatically). Available:"
         )
-        for a in agents:
-            desc = f" — {a.description}" if a.description else ""
-            lines.append(f"- {a.name}{desc}")
+        if len(agents) <= list_limit:
+            for a in agents:
+                desc = f" — {a.description}" if a.description else ""
+                lines.append(f"- {a.name}{desc}")
+        else:
+            lines[-1] = (
+                f"Agent personas from installed plugins ({len(agents)} total) "
+                "— spawn one with the `agent_spawn` tool using "
+                "`type=\"<name>\"` (its persona system prompt is applied "
+                "automatically). Grouped by plugin (descriptions omitted "
+                "for brevity):"
+            )
+            for plugin, items in sorted(_group_by_plugin(agents).items()):
+                names = ", ".join(a.name for a in items)
+                lines.append(f"- {plugin}: {names}")
     return "\n".join(lines).rstrip()
 
 
@@ -195,26 +238,56 @@ def substitute_builtin_template_vars(text: str) -> str:
     return _CURRENT_DATE_RE.sub(today, text)
 
 
-def render_plugin_rules_context(rules: list[Any] | None) -> str:
-    """Render always-on plugin ``rules`` bodies into a system-prompt block.
+def render_plugin_rules_context(
+    rules: list[Any] | None,
+    *,
+    active_plugin: str | None = None,
+) -> str:
+    """Render plugin ``rules`` into a system-prompt block.
 
-    Each rule (CodeBuddy convention, ``alwaysApply: true``) is a system-level
-    directive; its full body is injected verbatim under a labeled header so
-    the model treats it with the priority the plugin author intended.
+    Two modes (context governance):
+
+    - ``active_plugin`` set (plugin mounted via ``@plugin:name``): the mounted
+      plugin's rule bodies are injected verbatim — they carry the plugin's
+      core behavior (CodeBuddy scenario rules) and mounting is the user's
+      explicit opt-in. Other plugins' rules are omitted entirely.
+    - No mount: rules collapse to one summary line each with a mount hint.
+      Injecting every installed plugin's full rule bodies (tens of KB) both
+      taxes every turn's input tokens and dilutes the directives until the
+      model ignores them, so the bodies only ship when mounted.
     """
     rules = rules or []
     if not rules:
         return ""
-    lines: list[str] = ["## Plugin Rules", ""]
+    if active_plugin is not None:
+        own = [r for r in rules if r.plugin == active_plugin]
+        if not own:
+            return ""
+        lines = ["## Plugin Rules", ""]
+        lines.append(
+            f'The following directives come from the mounted plugin '
+            f'"{active_plugin}" and are active for this session. Treat them '
+            "as authoritative instructions."
+        )
+        for r in own:
+            lines.append("")
+            lines.append(f"### Rule: {r.plugin}/{r.name}")
+            lines.append("")
+            lines.append(substitute_builtin_template_vars(r.body))
+        return "\n".join(lines).rstrip()
+    lines = ["## Plugin Rules (inactive)", ""]
     lines.append(
-        "The following directives come from installed plugins and are active "
-        "for this session. Treat them as authoritative instructions."
+        "Installed plugins ship scenario rules that activate when the plugin "
+        "is mounted. None is mounted now. If the user's request clearly "
+        "matches one of these scenarios, suggest mounting it by starting a "
+        "message with `@plugin:<name>`:"
     )
-    for r in rules:
-        lines.append("")
-        lines.append(f"### Rule: {r.plugin}/{r.name}")
-        lines.append("")
-        lines.append(substitute_builtin_template_vars(r.body))
+    for plugin, items in sorted(_group_by_plugin(rules).items()):
+        descs = "; ".join(
+            (r.description or r.name).strip().splitlines()[0][:120]
+            for r in items
+        )
+        lines.append(f"- {plugin}: {descs}")
     return "\n".join(lines).rstrip()
 
 

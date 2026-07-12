@@ -1665,13 +1665,15 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
 
     Usage:
         /plugins                     — list installed plugins
-        /plugins install <spec>      — github:owner/repo or local path
+        /plugins install <spec>      — github:owner/repo, local path, or <plugin>@<marketplace>
         /plugins update <name>       — re-install from recorded source
         /plugins remove <name>       — uninstall
         /plugins enable <name>       — enable at user scope
         /plugins disable <name>      — disable at user scope
         /plugins trust <name>        — activate hooks/MCP servers
         /plugins untrust <name>      — deactivate hooks/MCP servers
+        /plugins marketplace [add <spec> | list | plugins <name> |
+                              update <name> | remove <name>]
 
     Changes take effect on the next session (engine restart).
     """
@@ -1740,8 +1742,11 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
     plugins_dir = user_plugins_dir()
     usage = (
         "Usage: /plugins [install <spec> | update <name> | remove <name> | "
-        "enable <name> | disable <name> | trust <name> | untrust <name>]"
+        "enable <name> | disable <name> | trust <name> | untrust <name> | "
+        "marketplace …]"
     )
+    if head == "marketplace":
+        return _plugins_marketplace(rest)
     if not rest:
         return CommandResult(error=usage)
 
@@ -1765,6 +1770,76 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
         return CommandResult(output=set_plugin_trusted(rest, True, plugins_dir))
     if head == "untrust":
         return CommandResult(output=set_plugin_trusted(rest, False, plugins_dir))
+    return CommandResult(error=usage)
+
+
+def _plugins_marketplace(raw: str) -> CommandResult:
+    """Handle ``/plugins marketplace …`` subcommands."""
+    from deepseek_tui.integrations.plugins import (
+        add_marketplace,
+        load_marketplace,
+        read_marketplaces,
+        remove_marketplace,
+        update_marketplace,
+    )
+
+    usage = (
+        "Usage: /plugins marketplace [add <github:owner/repo|path> | list | "
+        "plugins <name> | update <name> | remove <name>]"
+    )
+    parts = raw.split(None, 1)
+    head = parts[0] if parts else "list"
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if head == "list" or (head == "" and not rest):
+        table = read_marketplaces()
+        if not table:
+            return CommandResult(
+                output=(
+                    "No marketplaces registered.\n"
+                    "Add one with `/plugins marketplace add "
+                    "<github:owner/repo|path>`."
+                )
+            )
+        lines = [f"Registered marketplaces ({len(table)}):\n"]
+        for name, entry in sorted(table.items()):
+            try:
+                count = len(load_marketplace(Path(str(entry.get("path", "")))))
+            except (FileNotFoundError, OSError, ValueError):
+                count = 0
+            lines.append(f"  {name} ({entry.get('source', '?')}) — {count} plugins")
+        lines.append(
+            "\nInstall one plugin with `/plugins install <plugin>@<marketplace>`."
+        )
+        return CommandResult(output="\n".join(lines))
+    if not rest:
+        return CommandResult(error=usage)
+    if head == "add":
+        outcome, message = add_marketplace(rest)
+        if outcome.value == "failed":
+            return CommandResult(error=message)
+        return CommandResult(output=message)
+    if head == "plugins":
+        entry = read_marketplaces().get(rest)
+        if entry is None:
+            return CommandResult(error=f"Marketplace not found: {rest}")
+        try:
+            entries = load_marketplace(Path(str(entry.get("path", ""))))
+        except FileNotFoundError:
+            return CommandResult(error=f"Marketplace {rest} has no marketplace.json")
+        lines = [f"Plugins in {rest} ({len(entries)}):\n"]
+        for e in entries:
+            desc = f" — {e.description}" if e.description else ""
+            lines.append(f"  {e.name}{desc}")
+        lines.append(f"\nInstall with `/plugins install <plugin>@{rest}`.")
+        return CommandResult(output="\n".join(lines))
+    if head == "update":
+        outcome, message = update_marketplace(rest)
+        if outcome.value == "failed":
+            return CommandResult(error=message)
+        return CommandResult(output=message)
+    if head == "remove":
+        return CommandResult(output=remove_marketplace(rest))
     return CommandResult(error=usage)
 
 

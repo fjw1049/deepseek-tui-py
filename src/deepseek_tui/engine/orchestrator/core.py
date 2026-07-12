@@ -455,17 +455,23 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         return block or None
 
     def _render_plugin_rules_context(self) -> str | None:
-        """Render always-on plugin ``rules`` bodies as a system-prompt block.
+        """Render plugin ``rules`` as a system-prompt block.
 
         CodeBuddy plugins carry their core behavior in ``rules`` marked
-        ``alwaysApply: true`` — system-level directives. Suppressed while a
-        plugin is mounted (the mount already scopes behavior).
+        ``alwaysApply: true``. Mounted (``@plugin:name``): the mounted
+        plugin's rule bodies are injected verbatim — that IS the plugin's
+        behavior the user opted into. Unmounted: rules collapse to one
+        summary line each with a mount hint (full bodies from every
+        installed plugin would bloat and dilute the prompt).
         """
-        if self._active_plugin is not None or not self.plugin_rules:
+        if not self.plugin_rules:
             return None
         from deepseek_tui.engine.prompts import render_plugin_rules_context
 
-        block = render_plugin_rules_context(self.plugin_rules)
+        active = self._active_plugin.name if self._active_plugin else None
+        block = render_plugin_rules_context(
+            self.plugin_rules, active_plugin=active
+        )
         return block or None
 
     def _advanced_tool_flags(self) -> tuple[bool, bool]:

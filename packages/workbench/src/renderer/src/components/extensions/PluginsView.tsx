@@ -7,7 +7,12 @@ import { useChatStore } from '../../store/chat-store'
 import { useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { ExtensionsToolbar } from './ExtensionsToolbar'
-import { InstalledPluginsPanel, type PluginRow, type RegistryEntry } from './InstalledPluginsPanel'
+import {
+  InstalledPluginsPanel,
+  type MarketplaceInfo,
+  type PluginRow,
+  type RegistryEntry
+} from './InstalledPluginsPanel'
 
 /** Plugins are bundles of skills + hooks + MCP servers managed by the Python
  * runtime (`/v1/plugins`). Skills load as-is; hooks and MCP servers stay
@@ -27,6 +32,9 @@ export function PluginsView(): ReactElement {
   const [registryLoading, setRegistryLoading] = useState(false)
   const [registryError, setRegistryError] = useState(false)
   const [installingSource, setInstallingSource] = useState<string | null>(null)
+  const [marketplaces, setMarketplaces] = useState<MarketplaceInfo[]>([])
+  const [marketplacesLoading, setMarketplacesLoading] = useState(false)
+  const [busyMarketplace, setBusyMarketplace] = useState<string | null>(null)
 
   useEffect(() => {
     if (!installOpen) return
@@ -65,6 +73,25 @@ export function PluginsView(): ReactElement {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  const refreshMarketplaces = useCallback(async (): Promise<void> => {
+    if (typeof window.dsGui?.runtimeRequest !== 'function') return
+    setMarketplacesLoading(true)
+    try {
+      const result = await window.dsGui.runtimeRequest('/v1/plugins/marketplaces', 'GET')
+      if (!result.ok) return
+      const parsed = JSON.parse(result.body) as { marketplaces?: MarketplaceInfo[] }
+      setMarketplaces(parsed.marketplaces ?? [])
+    } catch {
+      /* marketplace listing is best-effort */
+    } finally {
+      setMarketplacesLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshMarketplaces()
+  }, [refreshMarketplaces])
 
   useEffect(() => {
     if (!WORKBENCH_FEATURES.pluginMarketplace) return
@@ -199,6 +226,91 @@ export function PluginsView(): ReactElement {
     [handleInstall]
   )
 
+  const handleMarketplaceAdd = useCallback(
+    async (spec: string): Promise<boolean> => {
+      if (typeof window.dsGui?.runtimeRequest !== 'function') return false
+      setNotice(null)
+      try {
+        const result = await window.dsGui.runtimeRequest(
+          '/v1/plugins/marketplaces',
+          'POST',
+          JSON.stringify({ spec })
+        )
+        if (!result.ok) {
+          setNotice({ tone: 'error', message: extractApiError(result.body) || t('pluginActionFailed') })
+          return false
+        }
+        const parsed = JSON.parse(result.body) as { message?: string }
+        setNotice({ tone: 'success', message: parsed.message ?? t('pluginSysDone') })
+        await refreshMarketplaces()
+        return true
+      } catch (error) {
+        setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+        return false
+      }
+    },
+    [refreshMarketplaces, t]
+  )
+
+  const handleMarketplaceMutation = useCallback(
+    async (name: string, path: string, method: string): Promise<void> => {
+      if (typeof window.dsGui?.runtimeRequest !== 'function') return
+      setBusyMarketplace(name)
+      setNotice(null)
+      try {
+        const result = await window.dsGui.runtimeRequest(path, method)
+        if (!result.ok) {
+          setNotice({ tone: 'error', message: extractApiError(result.body) || t('pluginActionFailed') })
+          return
+        }
+        const parsed = JSON.parse(result.body) as { message?: string }
+        setNotice({ tone: 'success', message: parsed.message ?? t('pluginSysDone') })
+        await refreshMarketplaces()
+      } catch (error) {
+        setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+      } finally {
+        setBusyMarketplace(null)
+      }
+    },
+    [refreshMarketplaces, t]
+  )
+
+  const handleMarketplaceUpdate = useCallback(
+    (name: string) => {
+      void handleMarketplaceMutation(
+        name,
+        `/v1/plugins/marketplaces/${encodeURIComponent(name)}/update`,
+        'POST'
+      )
+    },
+    [handleMarketplaceMutation]
+  )
+
+  const handleMarketplaceRemove = useCallback(
+    (name: string) => {
+      const ok = window.confirm(t('pluginMpRemoveConfirm', { name }))
+      if (!ok) return
+      void handleMarketplaceMutation(
+        name,
+        `/v1/plugins/marketplaces/${encodeURIComponent(name)}`,
+        'DELETE'
+      )
+    },
+    [handleMarketplaceMutation, t]
+  )
+
+  const handleMarketplacePluginInstall = useCallback(
+    async (spec: string): Promise<void> => {
+      setInstallingSource(spec)
+      try {
+        await handleInstall(spec, false)
+      } finally {
+        setInstallingSource(null)
+      }
+    },
+    [handleInstall]
+  )
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return plugins
@@ -280,10 +392,18 @@ export function PluginsView(): ReactElement {
             filteredRegistry={filteredRegistry}
             installedNames={installedNames}
             installingSource={installingSource}
+            marketplaces={marketplaces}
+            marketplacesLoading={marketplacesLoading}
+            busyMarketplace={busyMarketplace}
+            query={query}
             onTrust={handleTrust}
             onUpdate={handleUpdate}
             onRemove={handleRemove}
             onMarketplaceInstall={(entry) => void handleMarketplaceInstall(entry)}
+            onMarketplaceAdd={handleMarketplaceAdd}
+            onMarketplaceUpdate={handleMarketplaceUpdate}
+            onMarketplaceRemove={handleMarketplaceRemove}
+            onMarketplacePluginInstall={(spec) => void handleMarketplacePluginInstall(spec)}
             headerRight={
               <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
                 <RefreshCw className="h-3.5 w-3.5 shrink-0" />

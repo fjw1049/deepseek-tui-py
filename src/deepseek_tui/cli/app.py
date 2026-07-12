@@ -1368,13 +1368,16 @@ def plugin_list_cmd() -> None:
 
 @plugin_app.command("install")
 def plugin_install_cmd(
-    spec: str = typer.Argument(..., help="Source: github:owner/repo or local path."),
+    spec: str = typer.Argument(
+        ...,
+        help="Source: github:owner/repo, a local path, or <plugin>@<marketplace>.",
+    ),
     trust: bool = typer.Option(
         False, "--trust", help="Trust immediately (activates hooks/MCP servers)."
     ),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
-    """Install a plugin from GitHub or a local directory."""
+    """Install a plugin from GitHub, a local directory, or a marketplace."""
     from deepseek_tui.integrations.plugins import install_plugin
     from deepseek_tui.integrations.skills import InstallOutcome
 
@@ -1382,6 +1385,124 @@ def plugin_install_cmd(
     typer.echo(message)
     if outcome == InstallOutcome.FAILED:
         raise typer.Exit(1)
+
+
+@plugin_app.command("new")
+def plugin_new_cmd(
+    name: str = typer.Argument(..., help="Plugin name (lowercase kebab-case)."),
+    directory: Path = typer.Option(
+        Path("."), "--dir", help="Parent directory for the new plugin."
+    ),
+) -> None:
+    """Scaffold a new plugin in the canonical Claude Code layout."""
+    from deepseek_tui.integrations.plugins import scaffold_plugin
+    from deepseek_tui.integrations.skills import InstallOutcome
+
+    outcome, message = scaffold_plugin(name, directory.expanduser())
+    typer.echo(message)
+    if outcome == InstallOutcome.FAILED:
+        raise typer.Exit(1)
+
+
+# ── plugin marketplace … ─────────────────────────────────────────────────
+
+marketplace_app = typer.Typer(
+    help="Register plugin marketplaces (repos advertising many plugins)."
+)
+plugin_app.add_typer(marketplace_app, name="marketplace")
+
+
+@marketplace_app.callback(invoke_without_command=True)
+def marketplace_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        _marketplace_list()
+
+
+def _marketplace_list() -> None:
+    from deepseek_tui.integrations.plugins import load_marketplace, read_marketplaces
+
+    table = read_marketplaces()
+    if not table:
+        typer.echo("No marketplaces registered.")
+        typer.echo(
+            "Add one with `deepseek-tui plugin marketplace add "
+            "<github:owner/repo|path>`."
+        )
+        return
+    for name, entry in sorted(table.items()):
+        path = Path(str(entry.get("path", "")))
+        try:
+            count = len(load_marketplace(path))
+        except (FileNotFoundError, OSError, ValueError):
+            count = 0
+        typer.echo(f"{name} ({entry.get('source', '?')}) — {count} plugins")
+
+
+@marketplace_app.command("add")
+def marketplace_add_cmd(
+    spec: str = typer.Argument(..., help="Source: github:owner/repo or local path."),
+) -> None:
+    """Register a marketplace (downloads GitHub repos, references local ones)."""
+    from deepseek_tui.integrations.plugins import add_marketplace
+    from deepseek_tui.integrations.skills import InstallOutcome
+
+    outcome, message = add_marketplace(spec)
+    typer.echo(message)
+    if outcome == InstallOutcome.FAILED:
+        raise typer.Exit(1)
+
+
+@marketplace_app.command("list")
+def marketplace_list_cmd() -> None:
+    """List registered marketplaces."""
+    _marketplace_list()
+
+
+@marketplace_app.command("remove")
+def marketplace_remove_cmd(
+    name: str = typer.Argument(..., help="Marketplace name."),
+) -> None:
+    """Unregister a marketplace (deletes its downloaded copy)."""
+    from deepseek_tui.integrations.plugins import remove_marketplace
+
+    typer.echo(remove_marketplace(name))
+
+
+@marketplace_app.command("update")
+def marketplace_update_cmd(
+    name: str = typer.Argument(..., help="Marketplace name."),
+) -> None:
+    """Refresh a GitHub marketplace's downloaded copy."""
+    from deepseek_tui.integrations.plugins import update_marketplace
+    from deepseek_tui.integrations.skills import InstallOutcome
+
+    outcome, message = update_marketplace(name)
+    typer.echo(message)
+    if outcome == InstallOutcome.FAILED:
+        raise typer.Exit(1)
+
+
+@marketplace_app.command("plugins")
+def marketplace_plugins_cmd(
+    name: str = typer.Argument(..., help="Marketplace name."),
+) -> None:
+    """List the plugins a registered marketplace advertises."""
+    from deepseek_tui.integrations.plugins import load_marketplace, read_marketplaces
+
+    entry = read_marketplaces().get(name)
+    if entry is None:
+        typer.echo(f"Marketplace not found: {name}")
+        raise typer.Exit(1)
+    try:
+        entries = load_marketplace(Path(str(entry.get("path", ""))))
+    except FileNotFoundError:
+        typer.echo(f"Marketplace {name} has no marketplace.json anymore")
+        raise typer.Exit(1) from None
+    for e in entries:
+        cat = f" [{e.category}]" if e.category else ""
+        desc = f" — {e.description}" if e.description else ""
+        typer.echo(f"{e.name}{cat}{desc}")
+        typer.echo(f"  install: deepseek-tui plugin install {e.name}@{name}")
 
 
 @plugin_app.command("remove")

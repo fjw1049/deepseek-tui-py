@@ -155,6 +155,80 @@ async def test_plugins_registry_unavailable(
     assert resp.status_code == 503
 
 
+def _make_marketplace_repo(root: Path, name: str = "demo-market") -> Path:
+    repo = root / "market-repo"
+    _make_plugin_source(repo / "plugins", "alpha")
+    _make_plugin_source(repo / "plugins", "beta")
+    (repo / ".claude-plugin").mkdir(parents=True)
+    (repo / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "plugins": [
+                    {"name": "alpha", "source": "./plugins/alpha"},
+                    {"name": "beta", "source": "./plugins/beta"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return repo
+
+
+async def test_marketplaces_lifecycle(
+    client: AsyncClient, runtime_data_dir: Path
+) -> None:
+    resp = await client.get("/v1/plugins/marketplaces")
+    assert resp.status_code == 200
+    assert resp.json() == {"marketplaces": []}
+
+    repo = _make_marketplace_repo(runtime_data_dir)
+    resp = await client.post("/v1/plugins/marketplaces", json={"spec": str(repo)})
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "installed"
+
+    resp = await client.get("/v1/plugins/marketplaces")
+    rows = resp.json()["marketplaces"]
+    assert len(rows) == 1
+    assert rows[0]["name"] == "demo-market"
+    assert {p["name"] for p in rows[0]["plugins"]} == {"alpha", "beta"}
+    assert rows[0]["plugins"][0]["spec"] == "alpha@demo-market"
+
+    # Install a single plugin through the marketplace spec.
+    resp = await client.post(
+        "/v1/plugins/install", json={"spec": "alpha@demo-market"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "installed"
+    resp = await client.get("/v1/plugins")
+    assert [r["name"] for r in resp.json()["plugins"]] == ["alpha"]
+
+    # Local marketplaces are tracked in place; update is a no-op success.
+    resp = await client.post("/v1/plugins/marketplaces/demo-market/update")
+    assert resp.status_code == 200
+
+    resp = await client.request(
+        "DELETE", "/v1/plugins/marketplaces/demo-market"
+    )
+    assert resp.status_code == 200
+    resp = await client.get("/v1/plugins/marketplaces")
+    assert resp.json() == {"marketplaces": []}
+    # The local checkout is never deleted.
+    assert repo.is_dir()
+
+
+async def test_marketplaces_add_requires_spec(client: AsyncClient) -> None:
+    resp = await client.post("/v1/plugins/marketplaces", json={})
+    assert resp.status_code == 400
+
+
+async def test_marketplaces_missing_404(client: AsyncClient) -> None:
+    resp = await client.request("DELETE", "/v1/plugins/marketplaces/nope")
+    assert resp.status_code == 404
+    resp = await client.post("/v1/plugins/marketplaces/nope/update")
+    assert resp.status_code == 404
+
+
 async def test_plugins_project_scope(
     client: AsyncClient, runtime_data_dir: Path
 ) -> None:

@@ -15,11 +15,12 @@ Manifest locations (first match wins)::
     <plugin>/plugin.json
 
 Field names follow the Claude Code plugin manifest so existing
-community plugins can be dropped in. Mainstream plugins ship minimal
-manifests (``name`` / ``version`` / ``description`` only) and expose
-their components as on-disk directories, so ``skills`` / ``commands`` /
-``agents`` are auto-discovered from ``./skills`` / ``./commands`` /
-``./agents`` when the manifest omits the key (Claude Code convention).
+community plugins can be dropped in. Per that spec the manifest itself
+is *optional*: mainstream plugins ship minimal manifests (or none) and
+expose components as on-disk conventions, so ``skills`` / ``commands`` /
+``agents`` / ``rules`` are auto-discovered from the matching root
+directories, ``hooks`` from ``./hooks/hooks.json`` and ``mcpServers``
+from ``./.mcp.json`` when the manifest omits the key or is absent.
 Like skills, ``commands`` and ``agents`` are declarative text (prompt
 templates and persona system prompts) and always load; only executable
 components (``hooks`` / ``mcpServers``) stay gated behind trust.
@@ -95,6 +96,7 @@ from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config, servers_fr
 __all__ = [
     "DEFAULT_PLUGIN_REGISTRY_URL",
     "LOCKFILE_NAME",
+    "MARKETPLACES_REGISTRY_NAME",
     "PLUGIN_MANIFEST_CANDIDATES",
     "LoadedPlugin",
     "MarketplaceEntry",
@@ -105,6 +107,7 @@ __all__ = [
     "PluginRegistryDocument",
     "PluginRule",
     "PluginRegistryEntry",
+    "add_marketplace",
     "capability_values_from_permissions",
     "claude_plugins_dir",
     "collect_contributions",
@@ -114,13 +117,20 @@ __all__ = [
     "install_plugin",
     "load_marketplace",
     "load_plugin_manifest",
+    "marketplaces_dir",
     "merge_plugin_skills",
+    "parse_plugin_at_marketplace",
     "plugins_directories",
     "project_plugins_dir",
     "read_lockfile",
+    "read_marketplaces",
+    "remove_marketplace",
+    "resolve_marketplace_plugin",
+    "scaffold_plugin",
     "set_plugin_enabled",
     "set_plugin_trusted",
     "uninstall_plugin",
+    "update_marketplace",
     "update_plugin",
     "user_plugins_dir",
 ]
@@ -147,6 +157,8 @@ _DEFAULT_SKILLS_PATH = "./skills"
 _DEFAULT_COMMANDS_PATH = "./commands"
 _DEFAULT_AGENTS_PATH = "./agents"
 _DEFAULT_RULES_PATH = "./rules"
+_DEFAULT_HOOKS_PATH = "./hooks/hooks.json"
+_DEFAULT_MCP_PATH = "./.mcp.json"
 
 # Manifest ``permissions`` values → ToolCapability values. Consumed at
 # approval time for the plugin's MCP tools (see ``tools/approval.py``).
@@ -338,6 +350,51 @@ def _synthesize_single_skill_manifest(plugin_dir: Path) -> PluginManifest | None
     return PluginManifest(name=name, description=description, skills=(".",))
 
 
+def _default_hooks(plugin_dir: Path) -> tuple[str, ...]:
+    """``("./hooks/hooks.json",)`` when the conventional file exists."""
+    if (plugin_dir / "hooks" / "hooks.json").is_file():
+        return (_DEFAULT_HOOKS_PATH,)
+    return ()
+
+
+def _default_mcp(plugin_dir: Path) -> str | None:
+    """``"./.mcp.json"`` when the conventional file exists at the root."""
+    if (plugin_dir / ".mcp.json").is_file():
+        return _DEFAULT_MCP_PATH
+    return None
+
+
+def _synthesize_layout_manifest(plugin_dir: Path) -> PluginManifest | None:
+    """Treat a manifest-less folder with conventional component dirs as a plugin.
+
+    Per the Claude Code spec the manifest is *optional*: components are
+    auto-discovered from the directory layout (``skills/`` / ``commands/`` /
+    ``agents/`` / ``rules/`` / ``hooks/hooks.json`` / ``.mcp.json``). Returns
+    ``None`` when the folder holds none of them (i.e. it is not a plugin).
+    """
+    skills = (_DEFAULT_SKILLS_PATH,) if _skills_dir_has_skills(plugin_dir) else ()
+    commands = (
+        (_DEFAULT_COMMANDS_PATH,) if _dir_has_markdown(plugin_dir, "commands") else ()
+    )
+    agents = (
+        (_DEFAULT_AGENTS_PATH,) if _dir_has_markdown(plugin_dir, "agents") else ()
+    )
+    rules = (_DEFAULT_RULES_PATH,) if _dir_has_markdown(plugin_dir, "rules") else ()
+    hooks = _default_hooks(plugin_dir)
+    mcp = _default_mcp(plugin_dir)
+    if not (skills or commands or agents or rules or hooks) and mcp is None:
+        return None
+    return PluginManifest(
+        name=plugin_dir.name,
+        skills=skills,
+        commands=commands,
+        agents=agents,
+        rules=rules,
+        hooks=hooks,
+        mcp_servers=mcp,
+    )
+
+
 def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
     """Load and parse the plugin manifest, or ``None`` when absent/invalid."""
     manifest_path: Path | None = None
@@ -347,7 +404,10 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
             manifest_path = p
             break
     if manifest_path is None:
-        return _synthesize_single_skill_manifest(plugin_dir)
+        single = _synthesize_single_skill_manifest(plugin_dir)
+        if single is not None:
+            return single
+        return _synthesize_layout_manifest(plugin_dir)
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -366,7 +426,9 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
     elif isinstance(hooks_raw, list):
         hooks = tuple(hooks_raw)
     else:
-        hooks = ()
+        # Claude Code convention: hooks/hooks.json is the default location
+        # when the manifest omits the key.
+        hooks = _default_hooks(plugin_dir)
 
     unsupported = tuple(k for k in _UNSUPPORTED_COMPONENT_KEYS if data.get(k))
 
@@ -384,6 +446,11 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
     rules = _as_str_tuple(data.get("rules"))
     if not rules and _dir_has_markdown(plugin_dir, "rules"):
         rules = (_DEFAULT_RULES_PATH,)
+    mcp_servers = data.get("mcpServers", data.get("mcp_servers"))
+    if mcp_servers is None:
+        # Claude Code convention: .mcp.json at the plugin root is the
+        # default location when the manifest omits the key.
+        mcp_servers = _default_mcp(plugin_dir)
 
     return PluginManifest(
         name=name.strip(),
@@ -394,7 +461,7 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
         agents=agents,
         rules=rules,
         hooks=hooks,
-        mcp_servers=data.get("mcpServers", data.get("mcp_servers")),
+        mcp_servers=mcp_servers,
         unsupported=unsupported,
         permissions=tuple(
             p.strip().lower() for p in _as_str_tuple(data.get("permissions"))
@@ -1125,7 +1192,9 @@ def install_plugin(
     trust: bool = False,
     max_size_bytes: int = PLUGIN_MAX_SIZE_BYTES,
 ) -> tuple[InstallOutcome, str]:
-    """Install a plugin from ``github:owner/repo`` or a local directory.
+    """Install a plugin from ``github:owner/repo``, a local directory, or
+    ``<plugin>@<marketplace>`` (a marketplace registered via
+    :func:`add_marketplace`).
 
     Records the install in the scope lockfile (enabled, untrusted unless
     ``trust``). Returns ``(outcome, message)``.
@@ -1133,30 +1202,32 @@ def install_plugin(
     target_dir = plugins_dir or user_plugins_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    # <plugin>@<marketplace> — resolve through the registered marketplace.
+    # A bare existing dir wins (a local path could match the same shape).
+    at_spec = parse_plugin_at_marketplace(spec)
+    if at_spec is not None and not Path(spec).is_dir():
+        plugin_name, marketplace_name = at_spec
+        src = resolve_marketplace_plugin(plugin_name, marketplace_name)
+        if src is None:
+            return (
+                InstallOutcome.FAILED,
+                f"Plugin {plugin_name} not found in marketplace "
+                f"{marketplace_name} (register it with "
+                f"`plugin marketplace add <github:owner/repo|path>`)",
+            )
+        # Record the ``@`` spec so update re-resolves through the
+        # marketplace (picking up refreshed copies).
+        return _install_from_local(src, target_dir, spec.strip(), trust=trust)
+
     source = InstallSource.parse(spec)
     if source.kind == "local":
         src = Path(source.local_path)
-        manifest = load_plugin_manifest(src)
-        if manifest is None:
-            return (InstallOutcome.FAILED, f"No plugin manifest found in {src}")
-        dest = target_dir / manifest.name
-        if dest.exists():
-            return (
-                InstallOutcome.ALREADY_EXISTS,
-                f"Plugin {manifest.name} already exists at {dest}",
-            )
-        shutil.copytree(src, dest)
-        _finalize_installed_plugin(dest)
         # Store the bare absolute path (not ``local:<path>``): the recorded
         # source must round-trip through ``InstallSource.parse`` for
         # ``update_plugin`` to re-resolve it, and that parser recognizes a
         # bare existing dir, not a ``local:`` prefix. Absolute so a later
         # update from a different cwd still resolves.
-        _record_install(target_dir, manifest, str(src.resolve()), trust)
-        return (
-            InstallOutcome.INSTALLED,
-            _install_message(manifest, dest, trust),
-        )
+        return _install_from_local(src, target_dir, str(src.resolve()), trust=trust)
 
     if source.kind == "github":
         return _install_from_github(
@@ -1164,6 +1235,28 @@ def install_plugin(
         )
 
     return (InstallOutcome.FAILED, f"Invalid plugin source: {spec}")
+
+
+def _install_from_local(
+    src: Path, target_dir: Path, source_spec: str, *, trust: bool
+) -> tuple[InstallOutcome, str]:
+    """Copy a local plugin dir into the scope dir and record the install."""
+    manifest = load_plugin_manifest(src)
+    if manifest is None:
+        return (InstallOutcome.FAILED, f"No plugin manifest found in {src}")
+    dest = target_dir / manifest.name
+    if dest.exists():
+        return (
+            InstallOutcome.ALREADY_EXISTS,
+            f"Plugin {manifest.name} already exists at {dest}",
+        )
+    shutil.copytree(src, dest)
+    _finalize_installed_plugin(dest)
+    _record_install(target_dir, manifest, source_spec, trust)
+    return (
+        InstallOutcome.INSTALLED,
+        _install_message(manifest, dest, trust),
+    )
 
 
 def _install_from_github(
@@ -1294,6 +1387,58 @@ def _install_message(manifest: PluginManifest, dest: Path, trust: bool) -> str:
             f"`deepseek-tui plugin trust {manifest.name}`."
         )
     return " ".join(parts)
+
+
+_SCAFFOLD_SKILL_TEMPLATE = """\
+---
+name: {name}
+description: Describe when this skill should be used — the model reads this line to decide.
+---
+
+# {name}
+
+Write the skill's instructions here. Keep the body focused; move long
+reference material into a `references/` subdirectory and link to it.
+"""
+
+
+def scaffold_plugin(name: str, parent_dir: Path) -> tuple[InstallOutcome, str]:
+    """Generate a canonical (Claude-layout) plugin skeleton at
+    ``<parent_dir>/<name>``: ``.claude-plugin/plugin.json`` + one example
+    skill. Fails when the directory already exists.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+        return (
+            InstallOutcome.FAILED,
+            "Plugin names must be lowercase kebab-case (e.g. my-plugin)",
+        )
+    dest = parent_dir / name
+    if dest.exists():
+        return (InstallOutcome.FAILED, f"Directory already exists: {dest}")
+    manifest_dir = dest / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "plugin.json").write_text(
+        json.dumps(
+            {"name": name, "version": "0.1.0", "description": ""},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    skill_dir = dest / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        _SCAFFOLD_SKILL_TEMPLATE.format(name=name), encoding="utf-8"
+    )
+    return (
+        InstallOutcome.INSTALLED,
+        f"Created plugin skeleton at {dest}. Layout: .claude-plugin/plugin.json "
+        f"+ skills/{name}/SKILL.md. Add agents/*.md, commands/*.md, "
+        "hooks/hooks.json or .mcp.json at the root as needed — they are "
+        "auto-discovered. Test with `deepseek-tui plugin doctor "
+        f"{dest}`, install with `deepseek-tui plugin install {dest}`.",
+    )
 
 
 def uninstall_plugin(name: str, plugins_dir: Path | None = None) -> str:
@@ -1566,3 +1711,334 @@ def load_marketplace(repo: Path) -> list[MarketplaceEntry]:
             )
         )
     return entries
+
+
+# ── Registered marketplaces (two-level install model) ───────────────────
+#
+# Claude Code's distribution model: register a marketplace repo once
+# (``plugin marketplace add owner/repo``), then install individual plugins
+# from it (``plugin install <plugin>@<marketplace>``). GitHub marketplaces
+# are downloaded to ``~/.deepseek/marketplaces/<name>/``; local ones are
+# referenced in place (the user's checkout stays authoritative). The
+# registry file records name → source/path.
+
+MARKETPLACES_REGISTRY_NAME = "marketplaces.json"
+
+# A marketplace repo bundles many plugins (agents-main ships 88); allow a
+# far larger archive than a single plugin while keeping a bomb guard.
+MARKETPLACE_MAX_SIZE_BYTES = 100 * 1024 * 1024
+
+_PLUGIN_AT_MARKETPLACE_RE = re.compile(
+    r"^(?P<plugin>[A-Za-z0-9][A-Za-z0-9._-]*)@(?P<marketplace>[A-Za-z0-9][A-Za-z0-9._-]*)$"
+)
+
+
+def marketplaces_dir() -> Path:
+    """``~/.deepseek/marketplaces/`` — registered marketplace repos."""
+    from deepseek_tui.config.paths import user_deepseek_dir
+
+    return user_deepseek_dir() / "marketplaces"
+
+
+def parse_plugin_at_marketplace(spec: str) -> tuple[str, str] | None:
+    """Parse ``<plugin>@<marketplace>``, or ``None`` when not that shape."""
+    match = _PLUGIN_AT_MARKETPLACE_RE.match(spec.strip())
+    if match is None:
+        return None
+    return (match.group("plugin"), match.group("marketplace"))
+
+
+def read_marketplaces(root: Path | None = None) -> dict[str, dict[str, Any]]:
+    """Read the marketplace registry. Missing/corrupt → empty mapping."""
+    base = root or marketplaces_dir()
+    path = base / MARKETPLACES_REGISTRY_NAME
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _LOG.warning("failed to read marketplace registry %s: %s", path, exc)
+        return {}
+    table = data.get("marketplaces") if isinstance(data, dict) else None
+    if not isinstance(table, dict):
+        return {}
+    return {k: v for k, v in table.items() if isinstance(v, dict)}
+
+
+def _write_marketplaces(base: Path, table: dict[str, dict[str, Any]]) -> None:
+    from deepseek_tui.utils import write_json_atomic
+
+    write_json_atomic(
+        base / MARKETPLACES_REGISTRY_NAME, {"version": 1, "marketplaces": table}
+    )
+
+
+def _marketplace_json_path(repo: Path) -> Path | None:
+    for candidate in (repo / ".claude-plugin" / "marketplace.json", repo / "marketplace.json"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _marketplace_display_name(repo: Path, fallback: str) -> str:
+    """The ``name`` field of marketplace.json, or ``fallback``."""
+    path = _marketplace_json_path(repo)
+    if path is None:
+        return fallback
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return fallback
+    name = data.get("name") if isinstance(data, dict) else None
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return fallback
+
+
+def _find_marketplace_root(staging: Path) -> Path | None:
+    """marketplace.json at staging root, or exactly one level down."""
+    if _marketplace_json_path(staging) is not None:
+        return staging
+    for child in sorted(staging.iterdir()):
+        if child.is_dir() and _marketplace_json_path(child) is not None:
+            return child
+    return None
+
+
+def add_marketplace(
+    spec: str,
+    root: Path | None = None,
+    *,
+    max_size_bytes: int = MARKETPLACE_MAX_SIZE_BYTES,
+) -> tuple[InstallOutcome, str]:
+    """Register a marketplace from ``github:owner/repo`` or a local path.
+
+    GitHub sources are downloaded (hardened tarball path) into the
+    marketplaces dir; local sources are referenced in place. Returns
+    ``(outcome, message)``.
+    """
+    base = root or marketplaces_dir()
+    base.mkdir(parents=True, exist_ok=True)
+
+    source = InstallSource.parse(spec)
+    if source.kind == "local":
+        repo = Path(source.local_path).expanduser().resolve()
+        try:
+            entries = load_marketplace(repo)
+        except FileNotFoundError:
+            return (InstallOutcome.FAILED, f"No marketplace.json under {repo}")
+        name = _marketplace_display_name(repo, repo.name)
+        table = read_marketplaces(base)
+        if name in table:
+            return (
+                InstallOutcome.ALREADY_EXISTS,
+                f"Marketplace {name} already registered",
+            )
+        table[name] = {
+            "source": str(repo),
+            "path": str(repo),
+            "added_at": _now_iso(),
+        }
+        _write_marketplaces(base, table)
+        return (
+            InstallOutcome.INSTALLED,
+            f"Registered marketplace {name} ({len(entries)} plugins) from {repo}. "
+            f"Install one with `plugin install <name>@{name}`.",
+        )
+
+    if source.kind == "github":
+        return _add_marketplace_from_github(
+            source, base, spec, max_size_bytes=max_size_bytes
+        )
+
+    return (InstallOutcome.FAILED, f"Invalid marketplace source: {spec}")
+
+
+def _add_marketplace_from_github(
+    source: InstallSource,
+    base: Path,
+    spec: str,
+    *,
+    max_size_bytes: int,
+) -> tuple[InstallOutcome, str]:
+    urls = [
+        u
+        for u in _github_archive_urls(source)
+        if _host_is_allowed(u, GITHUB_ALLOWED_HOSTS)
+    ]
+    if not urls:
+        return (InstallOutcome.FAILED, "No allowed archive URLs for source")
+
+    data: bytes | None = None
+    last_error = ""
+    for candidate in urls:
+        try:
+            data = _stream_download(candidate, max_size_bytes)
+            break
+        except _DownloadTooLarge as exc:
+            return (
+                InstallOutcome.FAILED,
+                f"Download exceeds {max_size_bytes} bytes: {exc}",
+            )
+        except _DownloadMissing:
+            last_error = f"{candidate}: not found"
+            continue
+        except Exception as exc:  # noqa: BLE001 — surface any failure
+            last_error = f"{candidate}: {exc}"
+            continue
+    if data is None:
+        return (InstallOutcome.FAILED, f"Download failed: {last_error or 'unknown'}")
+
+    staging = base / f".{source.repo}.tmp"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    try:
+        _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(staging, ignore_errors=True)
+        return (InstallOutcome.FAILED, f"Extract failed: {exc}")
+
+    repo_root = _find_marketplace_root(staging)
+    if repo_root is None:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (
+            InstallOutcome.FAILED,
+            "No marketplace.json in repo (looked at top level and one nested dir)",
+        )
+    name = _marketplace_display_name(repo_root, source.repo)
+    table = read_marketplaces(base)
+    dest = base / name
+    if name in table or dest.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+        return (
+            InstallOutcome.ALREADY_EXISTS,
+            f"Marketplace {name} already registered",
+        )
+    try:
+        repo_root.rename(dest)
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (InstallOutcome.FAILED, f"Atomic rename failed: {exc}")
+    if repo_root != staging:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    try:
+        count = len(load_marketplace(dest))
+    except FileNotFoundError:
+        count = 0
+    table[name] = {"source": spec, "path": str(dest), "added_at": _now_iso()}
+    _write_marketplaces(base, table)
+    return (
+        InstallOutcome.INSTALLED,
+        f"Registered marketplace {name} ({count} plugins) from {spec}. "
+        f"Install one with `plugin install <name>@{name}`.",
+    )
+
+
+def remove_marketplace(name: str, root: Path | None = None) -> str:
+    """Unregister a marketplace; delete its downloaded copy (never a local
+    checkout referenced in place)."""
+    base = root or marketplaces_dir()
+    table = read_marketplaces(base)
+    entry = table.pop(name, None)
+    if entry is None:
+        return f"Marketplace not found: {name}"
+    path_str = entry.get("path")
+    if isinstance(path_str, str):
+        path = Path(path_str)
+        try:
+            inside = path.resolve().is_relative_to(base.resolve())
+        except OSError:
+            inside = False
+        if inside and path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    _write_marketplaces(base, table)
+    return f"Removed marketplace {name}"
+
+
+def update_marketplace(
+    name: str,
+    root: Path | None = None,
+    *,
+    max_size_bytes: int = MARKETPLACE_MAX_SIZE_BYTES,
+) -> tuple[InstallOutcome, str]:
+    """Refresh a GitHub marketplace's downloaded copy from its source.
+
+    Local marketplaces track their directory in place, so there is nothing
+    to refresh. The swap is staged: a failed re-download never deletes the
+    existing copy.
+    """
+    base = root or marketplaces_dir()
+    table = read_marketplaces(base)
+    entry = table.get(name)
+    if entry is None:
+        return (InstallOutcome.FAILED, f"Marketplace not found: {name}")
+    spec = str(entry.get("source", ""))
+    if not spec.startswith("github:"):
+        return (
+            InstallOutcome.UPDATED,
+            f"Marketplace {name} tracks a local directory; nothing to update",
+        )
+
+    staging_root = base / f".update-{name}"
+    if staging_root.exists():
+        shutil.rmtree(staging_root, ignore_errors=True)
+    staging_root.mkdir(parents=True)
+    try:
+        outcome, message = _add_marketplace_from_github(
+            InstallSource.parse(spec), staging_root, spec,
+            max_size_bytes=max_size_bytes,
+        )
+        if outcome != InstallOutcome.INSTALLED:
+            return (outcome, message)
+        staged = staging_root / name
+        if not staged.is_dir():
+            return (
+                InstallOutcome.FAILED,
+                f"Re-downloaded source for {name} produced a different name",
+            )
+        live = base / name
+        backup = base / f".backup-{name}"
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        if live.is_dir():
+            os.replace(live, backup)
+        try:
+            os.replace(staged, live)
+        except BaseException:
+            if backup.is_dir() and not live.exists():
+                try:
+                    os.replace(backup, live)
+                except OSError:
+                    pass
+            raise
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+    table[name] = {"source": spec, "path": str(base / name), "added_at": _now_iso()}
+    _write_marketplaces(base, table)
+    return (InstallOutcome.UPDATED, f"Updated marketplace {name} from {spec}")
+
+
+def resolve_marketplace_plugin(
+    plugin_name: str, marketplace_name: str, root: Path | None = None
+) -> Path | None:
+    """Resolve ``<plugin>@<marketplace>`` to the plugin's local directory."""
+    base = root or marketplaces_dir()
+    entry = read_marketplaces(base).get(marketplace_name)
+    if entry is None:
+        return None
+    repo = Path(str(entry.get("path", "")))
+    if not repo.is_dir():
+        return None
+    try:
+        entries = load_marketplace(repo)
+    except FileNotFoundError:
+        return None
+    for item in entries:
+        if item.name.lower() == plugin_name.lower():
+            return item.path
+    return None

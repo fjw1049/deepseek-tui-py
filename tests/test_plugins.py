@@ -134,6 +134,95 @@ def test_manifest_missing_returns_none(tmp_path: Path) -> None:
     assert load_plugin_manifest(tmp_path / "empty") is None
 
 
+# ── Claude-convention auto-discovery (manifest optional) ────────────────
+
+
+def _write_foreign_hooks_json(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {"type": "command", "command": "echo hi"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_manifestless_layout_dir_synthesizes_plugin(tmp_path: Path) -> None:
+    # Claude Code spec: the manifest is optional — components are discovered
+    # from the conventional directory layout.
+    plugin = tmp_path / "layout-only"
+    (plugin / "skills" / "s1").mkdir(parents=True)
+    (plugin / "skills" / "s1" / "SKILL.md").write_text(
+        "---\nname: s1\ndescription: One.\n---\nBody.\n", encoding="utf-8"
+    )
+    (plugin / "agents").mkdir()
+    (plugin / "agents" / "a1.md").write_text(
+        "---\nname: a1\ndescription: Agent.\n---\nPersona.\n", encoding="utf-8"
+    )
+    _write_foreign_hooks_json(plugin / "hooks" / "hooks.json")
+    (plugin / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"srv": {"command": "run"}}}), encoding="utf-8"
+    )
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.name == "layout-only"
+    assert manifest.skills == ("./skills",)
+    assert manifest.agents == ("./agents",)
+    assert manifest.hooks == ("./hooks/hooks.json",)
+    assert manifest.mcp_servers == "./.mcp.json"
+
+
+def test_manifestless_dir_without_components_is_not_a_plugin(tmp_path: Path) -> None:
+    plugin = tmp_path / "random"
+    (plugin / "docs").mkdir(parents=True)
+    (plugin / "docs" / "readme.md").write_text("hi\n", encoding="utf-8")
+    assert load_plugin_manifest(plugin) is None
+
+
+def test_manifest_omitting_hooks_key_discovers_hooks_json(tmp_path: Path) -> None:
+    # financial-analysis (WorkBuddy) case: hooks/hooks.json on disk but no
+    # ``hooks`` key in the manifest. Claude Code loads it by convention.
+    plugin = make_plugin(tmp_path, with_hook=False, with_mcp=False)
+    _write_foreign_hooks_json(plugin / "hooks" / "hooks.json")
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.hooks == ("./hooks/hooks.json",)
+    lock = {"plugins": {"demo": {"enabled": True, "trusted": True}}}
+    (tmp_path / "installed_plugins.json").write_text(
+        json.dumps(lock), encoding="utf-8"
+    )
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    assert [h.event for h in contribs.hook_entries] == ["session_start"]
+
+
+def test_manifest_omitting_mcp_key_discovers_mcp_json(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path, with_hook=False, with_mcp=False)
+    (plugin / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"srv": {"command": "${PLUGIN_DIR}/bin/x"}}}),
+        encoding="utf-8",
+    )
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert manifest.mcp_servers == "./.mcp.json"
+    lock = {"plugins": {"demo": {"enabled": True, "trusted": True}}}
+    (tmp_path / "installed_plugins.json").write_text(
+        json.dumps(lock), encoding="utf-8"
+    )
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    assert [s.name for s in contribs.mcp_servers] == ["demo-srv"]
+    assert contribs.mcp_servers[0].command == f"{plugin}/bin/x"
+
+
 def make_codebuddy_plugin(root: Path, name: str = "cb") -> Path:
     """A CodeBuddy-style plugin: ``.codebuddy-plugin`` manifest, skills declared
     as leaf dirs, agents/rules declared as .md files."""
@@ -302,9 +391,99 @@ def test_current_date_template_substituted_in_rules(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
-    ctx = render_plugin_rules_context(contribs.rules)
+    # Full bodies (and thus template substitution) only ship when mounted.
+    ctx = render_plugin_rules_context(contribs.rules, active_plugin="dr")
     assert "{{.CurrentDate}}" not in ctx
     assert "The date is" in ctx
+
+
+def test_plugin_rules_context_mounted_vs_unmounted(tmp_path: Path) -> None:
+    """Context governance: unmounted -> one summary line per plugin with a
+    mount hint (no rule bodies); mounted -> only the mounted plugin's full
+    rule bodies (other plugins' rules omitted)."""
+    from deepseek_tui.engine.prompts import render_plugin_rules_context
+
+    for name, body in (("alpha", "ALPHA-BODY-DIRECTIVE"), ("beta", "BETA-BODY")):
+        plugin = tmp_path / name
+        (plugin / ".codebuddy-plugin").mkdir(parents=True)
+        (plugin / "rules").mkdir()
+        (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+            json.dumps(
+                {"name": name, "version": "1.0.0", "rules": ["./rules/r.md"]}
+            ),
+            encoding="utf-8",
+        )
+        (plugin / "rules" / "r.md").write_text(
+            f"---\ndescription: {name} scenario\nalwaysApply: true\n---\n{body}\n",
+            encoding="utf-8",
+        )
+    rules = collect_contributions(discover_plugins(plugins_dir=tmp_path)).rules
+
+    unmounted = render_plugin_rules_context(rules)
+    assert "ALPHA-BODY-DIRECTIVE" not in unmounted
+    assert "BETA-BODY" not in unmounted
+    assert "alpha: alpha scenario" in unmounted
+    assert "@plugin:<name>" in unmounted
+
+    mounted = render_plugin_rules_context(rules, active_plugin="alpha")
+    assert "ALPHA-BODY-DIRECTIVE" in mounted
+    assert "BETA-BODY" not in mounted
+    assert 'mounted plugin "alpha"' in mounted
+
+    # Mounted plugin without rules -> empty block (not other plugins' rules).
+    assert render_plugin_rules_context(rules, active_plugin="gamma") == ""
+
+
+async def test_engine_mount_injects_own_rules(tmp_path, monkeypatch) -> None:
+    """Regression: mounting used to suppress ALL plugin rules — including the
+    mounted plugin's own, which carries its core behavior. Mounted -> own
+    rule bodies injected; unmounted -> summary only."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    plugin = plugins_dir / "ruled"
+    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / "rules").mkdir()
+    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {"name": "ruled", "version": "1.0.0", "rules": ["./rules/r.md"]}
+        ),
+        encoding="utf-8",
+    )
+    (plugin / "rules" / "r.md").write_text(
+        "---\ndescription: ruled scenario\nalwaysApply: true\n---\n"
+        "RULED-CORE-DIRECTIVE\n",
+        encoding="utf-8",
+    )
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        unmounted = engine._render_plugin_rules_context()
+        assert unmounted is not None
+        assert "RULED-CORE-DIRECTIVE" not in unmounted
+        assert "ruled" in unmounted
+
+        engine.set_active_plugin("ruled")
+        mounted = engine._render_plugin_rules_context()
+        assert mounted is not None
+        assert "RULED-CORE-DIRECTIVE" in mounted
+
+        engine.set_active_plugin(None)
+        assert "RULED-CORE-DIRECTIVE" not in (
+            engine._render_plugin_rules_context() or ""
+        )
+    finally:
+        await engine.shutdown_session()
 
 
 def test_rules_autodiscovered_without_manifest_key(tmp_path: Path) -> None:
@@ -350,6 +529,149 @@ def test_load_marketplace_resolves_local_plugins(tmp_path: Path) -> None:
     entries = load_marketplace(repo)
     assert {e.name for e in entries} == {"alpha", "beta"}
     assert all(e.path.is_dir() for e in entries)
+
+
+# ── Registered marketplaces (two-level install model) ───────────────────
+
+
+def make_marketplace_repo(root: Path, name: str = "demo-market") -> Path:
+    repo = root / "repo"
+    (repo / "plugins").mkdir(parents=True)
+    make_plugin(repo / "plugins", "alpha", with_hook=False, with_mcp=False)
+    make_plugin(repo / "plugins", "beta", with_hook=False, with_mcp=False)
+    market = repo / ".claude-plugin"
+    market.mkdir(parents=True)
+    (market / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "plugins": [
+                    {"name": "alpha", "source": "./plugins/alpha"},
+                    {"name": "beta", "source": "./plugins/beta"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return repo
+
+
+def test_add_marketplace_local_registers_in_place(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import add_marketplace, read_marketplaces
+
+    repo = make_marketplace_repo(tmp_path)
+    base = tmp_path / "marketplaces"
+    outcome, message = add_marketplace(str(repo), base)
+    assert outcome == InstallOutcome.INSTALLED
+    assert "demo-market" in message and "2 plugins" in message
+    table = read_marketplaces(base)
+    assert table["demo-market"]["source"] == str(repo.resolve())
+    # Local marketplaces are referenced in place, not copied.
+    assert table["demo-market"]["path"] == str(repo.resolve())
+    assert not (base / "demo-market").exists()
+    # Re-adding is idempotent.
+    outcome, _ = add_marketplace(str(repo), base)
+    assert outcome == InstallOutcome.ALREADY_EXISTS
+
+
+def test_add_marketplace_without_marketplace_json_fails(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import add_marketplace
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    outcome, message = add_marketplace(str(plain), tmp_path / "marketplaces")
+    assert outcome == InstallOutcome.FAILED
+    assert "marketplace.json" in message
+
+
+def test_install_plugin_at_marketplace_spec(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import add_marketplace
+
+    repo = make_marketplace_repo(tmp_path)
+    base = tmp_path / "marketplaces"
+    add_marketplace(str(repo), base)
+    plugins_dir = tmp_path / "plugins"
+
+    import deepseek_tui.integrations.plugins as plugins_mod
+
+    original = plugins_mod.marketplaces_dir
+    plugins_mod.marketplaces_dir = lambda: base  # type: ignore[assignment]
+    try:
+        outcome, message = install_plugin("alpha@demo-market", plugins_dir)
+        assert outcome == InstallOutcome.INSTALLED, message
+        assert (plugins_dir / "alpha").is_dir()
+        # Lockfile records the @ spec so update re-resolves the marketplace.
+        assert read_lockfile(plugins_dir)["alpha"]["source"] == "alpha@demo-market"
+
+        # Unknown plugin / marketplace fail with guidance.
+        outcome, message = install_plugin("nope@demo-market", plugins_dir)
+        assert outcome == InstallOutcome.FAILED
+        assert "not found in marketplace" in message
+        outcome, message = install_plugin("alpha@nowhere", plugins_dir)
+        assert outcome == InstallOutcome.FAILED
+
+        # update_plugin round-trips through the marketplace.
+        outcome, message = update_plugin("alpha", plugins_dir)
+        assert outcome == InstallOutcome.UPDATED, message
+    finally:
+        plugins_mod.marketplaces_dir = original  # type: ignore[assignment]
+
+
+def test_remove_marketplace_never_deletes_local_checkout(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import (
+        add_marketplace,
+        read_marketplaces,
+        remove_marketplace,
+    )
+
+    repo = make_marketplace_repo(tmp_path)
+    base = tmp_path / "marketplaces"
+    add_marketplace(str(repo), base)
+    assert "not found" in remove_marketplace("nope", base)
+    assert "Removed" in remove_marketplace("demo-market", base)
+    assert read_marketplaces(base) == {}
+    # The user's checkout is untouched (it lives outside the marketplaces dir).
+    assert repo.is_dir()
+
+
+def test_update_marketplace_local_is_noop(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import add_marketplace, update_marketplace
+
+    repo = make_marketplace_repo(tmp_path)
+    base = tmp_path / "marketplaces"
+    add_marketplace(str(repo), base)
+    outcome, message = update_marketplace("demo-market", base)
+    assert outcome == InstallOutcome.UPDATED
+    assert "local directory" in message
+
+
+def test_scaffold_plugin_generates_loadable_skeleton(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.plugins import scaffold_plugin
+
+    outcome, message = scaffold_plugin("my-plugin", tmp_path)
+    assert outcome == InstallOutcome.INSTALLED
+    dest = tmp_path / "my-plugin"
+    assert (dest / ".claude-plugin" / "plugin.json").is_file()
+    assert (dest / "skills" / "my-plugin" / "SKILL.md").is_file()
+    # The skeleton loads through the real pipeline.
+    manifest = load_plugin_manifest(dest)
+    assert manifest is not None and manifest.name == "my-plugin"
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+    assert [s.name for s in contribs.skills] == ["my-plugin"]
+    # Bad names and existing dirs fail.
+    assert scaffold_plugin("My_Plugin", tmp_path)[0] == InstallOutcome.FAILED
+    assert scaffold_plugin("my-plugin", tmp_path)[0] == InstallOutcome.FAILED
+
+
+def test_parse_plugin_at_marketplace() -> None:
+    from deepseek_tui.integrations.plugins import parse_plugin_at_marketplace
+
+    assert parse_plugin_at_marketplace("alpha@demo") == ("alpha", "demo")
+    assert parse_plugin_at_marketplace("a.b-c@m_1") == ("a.b-c", "m_1")
+    assert parse_plugin_at_marketplace("github:owner/repo") is None
+    assert parse_plugin_at_marketplace("/some/path") is None
+    assert parse_plugin_at_marketplace("@market") is None
+    assert parse_plugin_at_marketplace("plugin@") is None
 
 
 def test_manifest_autodiscovers_components_without_declaration(tmp_path: Path) -> None:
@@ -918,6 +1240,53 @@ async def test_engine_registers_plugin_commands_and_agents(
         assert "demo-specialist" in block
     finally:
         await engine.shutdown_session()
+
+
+def test_plugin_components_context_collapses_past_limit(tmp_path: Path) -> None:
+    """Context governance: many commands/agents collapse to per-plugin name
+    groups (no descriptions) so a large install doesn't balloon the prompt."""
+    from deepseek_tui.engine.prompts import render_plugin_components_context
+    from deepseek_tui.integrations.plugins import PluginAgent, PluginCommand
+
+    def cmd(i: int) -> PluginCommand:
+        return PluginCommand(
+            name=f"cmd{i}",
+            plugin=f"plug{i % 3}",
+            description=f"Command number {i} with a long description.",
+            body="…",
+            path=tmp_path / f"c{i}.md",
+        )
+
+    def agent(i: int) -> PluginAgent:
+        return PluginAgent(
+            name=f"agent{i}",
+            plugin=f"plug{i % 3}",
+            description=f"Agent number {i} with a long description.",
+            body="…",
+            path=tmp_path / f"a{i}.md",
+        )
+
+    # Under the limit: full per-item listing with descriptions.
+    small = render_plugin_components_context([cmd(1)], [agent(1)], list_limit=20)
+    assert "/plug1:cmd1" in small
+    assert "Command number 1" in small
+    assert "Agent number 1" in small
+
+    # Over the limit: grouped names only, totals stated, descriptions gone.
+    many_cmds = [cmd(i) for i in range(30)]
+    many_agents = [agent(i) for i in range(40)]
+    big = render_plugin_components_context(many_cmds, many_agents, list_limit=20)
+    assert "(30 total)" in big
+    assert "(40 total)" in big
+    assert "plug0:" in big and "plug1:" in big and "plug2:" in big
+    assert "cmd7" in big and "agent7" in big
+    assert "Command number" not in big
+    assert "Agent number" not in big
+    # The collapsed form must be materially smaller than the full listing.
+    full = render_plugin_components_context(
+        many_cmds, many_agents, list_limit=10_000
+    )
+    assert len(big) < len(full) / 2
 
 
 async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:

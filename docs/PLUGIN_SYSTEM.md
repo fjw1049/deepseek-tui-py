@@ -21,8 +21,15 @@
 ```
 <plugin>/.deepseek-plugin/plugin.json
 <plugin>/.claude-plugin/plugin.json      ← Claude Code 兼容
+<plugin>/.codebuddy-plugin/plugin.json   ← CodeBuddy/WorkBuddy 兼容
 <plugin>/plugin.json
 ```
+
+**清单是可选的**（对齐 Claude Code 规范）：无清单时按目录布局自动合成——
+根部 `SKILL.md`（单技能插件），或任意约定组件目录（`skills/` / `commands/` /
+`agents/` / `rules/` / `hooks/hooks.json` / `.mcp.json`）。清单存在但省略
+`hooks` / `mcpServers` 键时，`./hooks/hooks.json` 与 `./.mcp.json` 作为
+默认位置自动发现。
 
 字段跟随 Claude Code 插件格式，社区插件可直接拖入使用：
 
@@ -49,7 +56,7 @@
 - `mcpServers`：内联 mcp.json 形状的表，或指向文件的相对路径（经 `servers_from_document()` 解析）。
 - `permissions`：声明式权限（见 §5）。
 - `${PLUGIN_DIR}`：在 hook 命令和 MCP 的 command/args/env 中展开为插件根目录，插件可携带脚本并可移植地引用。
-- 暂不支持的组件键（`commands` / `agents` / `outputStyles` / `lspServers`）产生警告而非报错。
+- 暂不支持的组件键（`outputStyles` / `lspServers`）产生警告而非报错；`commands` / `agents` / `rules` 为已支持的声明式组件。
 
 ## 3. 作用域与发现
 
@@ -132,6 +139,47 @@ discover_plugins()                    发现（含三作用域 + lockfile 状态
 
 生命周期操作（全部写 lockfile）：`install` / `remove` / `update`（按记录的 source 重装，保留 enabled/trusted 状态）/ `enable` / `disable` / `trust` / `untrust`。
 
+## 9.5 两级 Marketplace 模型（对齐 Claude Code）
+
+一个 marketplace 是"广告多个插件的仓库"（`.claude-plugin/marketplace.json`，如
+agents-main 的 88 个插件）。分发是两级的：**先注册市场，再按需装单个插件**——
+避免全量灌入几十个插件导致上下文膨胀。
+
+```
+plugin marketplace add github:wshobson/agents   # 下载并注册（本地路径则原地引用）
+plugin marketplace list                          # 已注册市场 + 插件数
+plugin marketplace plugins <市场名>              # 市场里有什么
+plugin install debugging-toolkit@<市场名>        # 只装这一个
+plugin marketplace update <市场名>               # 刷新 GitHub 市场副本
+plugin marketplace remove <市场名>               # 注销（绝不删本地 checkout）
+```
+
+- GitHub 市场下载到 `~/.deepseek/marketplaces/<name>/`（100 MiB 上限，复用加固的下载/解压路径）；本地市场原地引用，用户的 checkout 是权威副本。
+- 注册表：`~/.deepseek/marketplaces/marketplaces.json`。
+- `<插件>@<市场>` 装入后 lockfile 的 `source` 记录该 spec，`plugin update` 会重新经市场解析（先 `marketplace update` 再 `plugin update` 即可升级）。
+- 三端入口：CLI `plugin marketplace …` / TUI `/plugins marketplace …` / REST `GET|POST /v1/plugins/marketplaces`、`POST /v1/plugins/marketplaces/{name}/update`、`DELETE /v1/plugins/marketplaces/{name}`；Workbench GUI 的 Marketplace 页签支持注册市场、按市场浏览并单个安装。
+
+## 9.6 上下文治理
+
+插件贡献的 commands/agents 清单注入系统提示时有折叠上限
+（`PLUGIN_COMPONENT_LIST_LIMIT = 20`）：超限后从"逐项列举 + 描述"降级为
+"按插件分组只列名字 + 总数"，防止大量安装（如 agents-main 全家桶 106
+commands + 199 agents）撑爆常驻提示。skills 本就渐进式披露（一行/技能），
+不受影响；`@plugin:name` 挂载时只展开该插件的能力面。
+
+rules（CodeBuddy `alwaysApply: true` 场景规则）按挂载状态两级披露：
+
+- **未挂载**：不注入规则正文，只按插件折叠为一行摘要（名称 + description +
+  `@plugin:<name>` 挂载提示）。全量注入正文既让每轮多付几万 token（实测
+  workbuddy 五个插件的 always-apply 规则合计 56K 字符），又会互相稀释——
+  模型对 33K 字符的 deep-research 流程指令实测完全无视。
+- **挂载后**：只注入该插件自己的规则正文（这正是插件的核心行为，挂载即
+  用户显式 opt-in），其他插件的规则完全省略。规则正文中的
+  `{{.CurrentDate}}` 会被替换为当前日期。
+
+注意历史行为差异：早期实现是"挂载时抑制所有规则"，导致挂载 deep-research
+反而看不到深度研究流程——现已反转为"挂载时才注入自己的规则"。
+
 ## 10. Marketplace（精选索引）
 
 - 索引格式：仓库 `plugins-registry/index.json`：
@@ -157,7 +205,7 @@ discover_plugins()                    发现（含三作用域 + lockfile 状态
 
 | 入口 | 能力 |
 |---|---|
-| CLI `deepseek-tui plugin …` | `list` / `install [--trust] [--project]` / `remove` / `update` / `enable` / `disable` / `trust` / `untrust` / `search [query] [--registry URL]` |
+| CLI `deepseek-tui plugin …` | `list` / `install <spec>@<市场>亦可` / `remove` / `update` / `enable` / `disable` / `trust` / `untrust` / `search` / `doctor` / `new`（脚手架）/ `marketplace add|list|plugins|update|remove` |
 | TUI `/plugins`（别名 `/plugin`） | 与 CLI 等价的会话内管理 |
 | HTTP API `/v1/plugins` | `GET /v1/plugins`（含 permissions/components/scope）、`GET /v1/plugins/registry`、`POST /v1/plugins/install`、`POST /v1/plugins/{name}/action`（enable/disable/trust/untrust/update）、`DELETE /v1/plugins/{name}` |
 | Workbench GUI（Extensions → Plugins） | 已装列表（scope 徽章、信任徽章、权限 chip、开关）、安装弹窗、信任确认（列权限）、市场卡片一键安装 |
