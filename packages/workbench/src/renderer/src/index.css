@@ -2271,6 +2271,191 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   font-weight: 600;
 }
 
+/* ── Document reading mode (sidebar MD preview) ─────────────────────────
+   Chat keeps the dense `.ds-markdown` defaults. Workspace file preview uses
+   a VS Code / Typora–inspired reading surface: roomier type, clearer heading
+   hierarchy, and a paper-like page on the panel chrome. */
+.ds-markdown-doc-shell {
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--ds-text) 4%, transparent), transparent 55%),
+    var(--ds-sidebar);
+}
+
+.ds-markdown-doc-page {
+  box-sizing: border-box;
+  margin: 0 auto;
+  max-width: 46rem;
+  min-height: 100%;
+  padding: 1.75rem 1.5rem 3.5rem;
+}
+
+@media (min-width: 640px) {
+  .ds-markdown-doc-page {
+    padding: 2.25rem 2rem 4rem;
+  }
+}
+
+.ds-markdown.ds-markdown--document {
+  font-size: 16px;
+  line-height: 1.72;
+  letter-spacing: -0.003em;
+  color: color-mix(in srgb, var(--ds-text) 96%, var(--ds-text-muted));
+  -webkit-font-smoothing: antialiased;
+}
+
+.ds-markdown.ds-markdown--document > :first-child {
+  margin-top: 0;
+}
+
+.ds-markdown.ds-markdown--document > :last-child {
+  margin-bottom: 0;
+}
+
+.ds-markdown.ds-markdown--document p,
+.ds-markdown.ds-markdown--document ul,
+.ds-markdown.ds-markdown--document ol,
+.ds-markdown.ds-markdown--document blockquote,
+.ds-markdown.ds-markdown--document pre,
+.ds-markdown.ds-markdown--document table,
+.ds-markdown.ds-markdown--document hr {
+  margin: 0 0 1.05em;
+}
+
+.ds-markdown.ds-markdown--document h1,
+.ds-markdown.ds-markdown--document h2,
+.ds-markdown.ds-markdown--document h3,
+.ds-markdown.ds-markdown--document h4 {
+  color: var(--ds-text);
+  font-family: var(--font-display);
+  font-weight: 650;
+  letter-spacing: -0.022em;
+  scroll-margin-top: 1rem;
+}
+
+.ds-markdown.ds-markdown--document h1 {
+  margin: 0 0 0.85em;
+  font-size: 1.85rem;
+  line-height: 1.2;
+}
+
+.ds-markdown.ds-markdown--document h2 {
+  margin: 1.65em 0 0.7em;
+  padding-bottom: 0.35em;
+  font-size: 1.35rem;
+  line-height: 1.28;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border) 88%, transparent);
+}
+
+.ds-markdown.ds-markdown--document h3 {
+  margin: 1.35em 0 0.55em;
+  font-size: 1.12rem;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+
+.ds-markdown.ds-markdown--document h4 {
+  margin: 1.15em 0 0.45em;
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.ds-markdown.ds-markdown--document h1 + p,
+.ds-markdown.ds-markdown--document h2 + p,
+.ds-markdown.ds-markdown--document h3 + p,
+.ds-markdown.ds-markdown--document h4 + p {
+  margin-top: 0;
+}
+
+.ds-markdown.ds-markdown--document ul,
+.ds-markdown.ds-markdown--document ol {
+  padding-left: 1.45rem;
+}
+
+.ds-markdown.ds-markdown--document li + li {
+  margin-top: 0.28em;
+}
+
+.ds-markdown.ds-markdown--document li > p {
+  margin: 0;
+}
+
+.ds-markdown.ds-markdown--document li > p + p {
+  margin-top: 0.45em;
+}
+
+.ds-markdown.ds-markdown--document li > ul,
+.ds-markdown.ds-markdown--document li > ol {
+  margin: 0.35em 0 0.15em;
+}
+
+.ds-markdown.ds-markdown--document strong {
+  font-weight: 650;
+  color: var(--ds-text);
+}
+
+.ds-markdown.ds-markdown--document em {
+  font-style: italic;
+}
+
+.ds-markdown.ds-markdown--document a {
+  color: var(--ds-accent, #4f7cff);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.ds-markdown.ds-markdown--document hr {
+  border: 0;
+  height: 1px;
+  margin: 1.75em 0;
+  background: color-mix(in srgb, var(--ds-border) 90%, transparent);
+}
+
+.ds-markdown.ds-markdown--document blockquote {
+  margin: 0 0 1.15em;
+  padding: 0.15em 0 0.15em 1em;
+  border-left: 3px solid color-mix(in srgb, var(--ds-accent, #4f7cff) 55%, var(--ds-border));
+  color: var(--ds-text-muted);
+}
+
+.ds-markdown.ds-markdown--document blockquote p {
+  margin-bottom: 0.55em;
+}
+
+.ds-markdown.ds-markdown--document blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.ds-markdown.ds-markdown--document p code,
+.ds-markdown.ds-markdown--document li code,
+.ds-markdown.ds-markdown--document td code {
+  font-size: 0.88em;
+  padding: 0.12em 0.38em;
+  border-radius: 5px;
+}
+
+.ds-markdown.ds-markdown--document pre {
+  margin: 0 0 1.2em;
+  border-radius: 12px;
+}
+
+.ds-markdown.ds-markdown--document table {
+  margin: 0 0 1.25em;
+  font-size: 0.94em;
+}
+
+.ds-markdown.ds-markdown--document th,
+.ds-markdown.ds-markdown--document td {
+  padding: 0.65rem 0.85rem;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ds-markdown-doc-shell {
+    background: var(--ds-sidebar);
+  }
+}
+
 /* Streamdown controls are rendered from node_modules and fullscreen tables are
    portaled to document.body, so keep a CSS fallback independent of Tailwind. */
 [data-streamdown='table-fullscreen'] {

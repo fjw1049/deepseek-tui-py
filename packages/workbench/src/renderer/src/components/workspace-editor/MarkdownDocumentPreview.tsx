@@ -8,11 +8,15 @@ type Props = {
 
 /** Scrollable rendered markdown for workspace file reading (non-edit) mode. */
 export function MarkdownDocumentPreview({ content }: Props): ReactElement {
+  const body = content.trim() ? content : '\u00a0'
+
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-ds-sidebar px-5 py-4">
-      <div className="ds-markdown mx-auto max-w-[52rem] text-[14px] leading-7 text-ds-ink">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-      </div>
+    <div className="ds-markdown-doc-shell min-h-0 flex-1 overflow-y-auto">
+      <article className="ds-markdown-doc-page">
+        <div className="ds-markdown ds-markdown--document">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+        </div>
+      </article>
     </div>
   )
 }

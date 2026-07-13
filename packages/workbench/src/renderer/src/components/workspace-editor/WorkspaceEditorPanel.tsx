@@ -239,6 +239,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
         <div className="h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
           <WorkspaceFileTree
             workspaceRoot={trimmedRoot}
+            activePath={activeTab?.path}
             dirtyPaths={dirtyPaths}
             patchMap={patchMap}
             onOpenFile={(path) => {

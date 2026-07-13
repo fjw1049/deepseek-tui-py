@@ -17,6 +17,7 @@ type TreeNodeState = {
 
 type Props = {
   workspaceRoot: string
+  activePath?: string | null
   dirtyPaths?: Set<string>
   patchMap?: Map<string, string>
   onOpenFile: (path: string) => void
@@ -63,10 +64,17 @@ function translateTreeError(message: string): string {
   return message
 }
 
-export function WorkspaceFileTree({ workspaceRoot, dirtyPaths, patchMap, onOpenFile }: Props): ReactElement {
+export function WorkspaceFileTree({
+  workspaceRoot,
+  activePath,
+  dirtyPaths,
+  patchMap,
+  onOpenFile
+}: Props): ReactElement {
   const { t } = useTranslation('common')
   const trimmedRoot = workspaceRoot.trim()
   const workspaceLabel = workspaceLabelFromPath(trimmedRoot) || trimmedRoot
+  const activeKey = activePath ? normalizePath(activePath) : null
   const trimmedRootRef = useRef(trimmedRoot)
   trimmedRootRef.current = trimmedRoot
 
@@ -244,19 +252,30 @@ export function WorkspaceFileTree({ workspaceRoot, dirtyPaths, patchMap, onOpenF
         ]
       }
 
+      const isActive = activeKey === entryKey
+
       return [
         <button
           key={entryKey}
           type="button"
           onClick={() => onOpenFile(entry.path)}
+          aria-current={isActive ? 'page' : undefined}
           className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition hover:bg-ds-hover/60 hover:text-ds-ink ${
-            isDirty ? 'text-ds-ink' : isChanged ? 'text-ds-diff-added' : 'text-ds-muted'
+            isActive
+              ? 'bg-[color-mix(in_srgb,var(--ds-selection)_72%,transparent)] text-ds-ink'
+              : isDirty
+                ? 'text-ds-ink'
+                : isChanged
+                  ? 'text-ds-diff-added'
+                  : 'text-ds-muted'
           }`}
           style={{ paddingLeft: `${depth * 12 + 20}px` }}
           title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
         >
           <FileCode2
-            className={`h-3.5 w-3.5 shrink-0 ${isChanged ? 'text-ds-diff-added' : 'text-ds-faint'}`}
+            className={`h-3.5 w-3.5 shrink-0 ${
+              isActive ? 'text-ds-ink' : isChanged ? 'text-ds-diff-added' : 'text-ds-faint'
+            }`}
             strokeWidth={1.85}
           />
           <span className="truncate font-medium">{entry.name}</span>
