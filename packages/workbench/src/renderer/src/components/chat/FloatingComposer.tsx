@@ -44,6 +44,7 @@ import {
   filterComposerModelOptions,
   formatComposerModelLabel
 } from '../../lib/composer-model-label'
+import { decodeModelRef } from '@shared/model-ref'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { formatBytes } from '../../lib/format-bytes'
 import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash-commands'
@@ -224,6 +225,7 @@ export function FloatingComposer({
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
   const composerReasoningEffort = useChatStore((s) => s.composerReasoningEffort)
   const setComposerReasoningEffort = useChatStore((s) => s.setComposerReasoningEffort)
+  const openSettings = useChatStore((s) => s.openSettings)
   // Session-level scenario plugin (drives the footer badge) +
   // send action used by the badge exit (× sends `@plugin:off` as a hidden turn).
   const activePlugin = useChatStore((s) => s.activePlugin)
@@ -304,7 +306,12 @@ export function FloatingComposer({
   const activeModelId = composerModel.trim() || modelOptions[0] || 'deepseek-v4-pro'
   const activeModelLabel = formatComposerModelLabel(activeModelId, composerModelMeta)
   const selectorModels = useMemo(
-    () => modelOptions.map((id) => ({ id, label: formatComposerModelLabel(id, composerModelMeta) })),
+    () =>
+      modelOptions.map((id) => ({
+        id,
+        label: formatComposerModelLabel(id, composerModelMeta),
+        providerId: decodeModelRef(id).providerId
+      })),
     [modelOptions, composerModelMeta]
   )
 
@@ -1942,6 +1949,7 @@ export function FloatingComposer({
               }}
               value={composerReasoningEffort}
               onChange={setComposerReasoningEffort}
+              onConfigureModels={() => openSettings('models')}
               disabled={!canChangeModel}
             />
 

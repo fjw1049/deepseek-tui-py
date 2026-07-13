@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import './reasoning-effort-selector.js'
 
 const EFFORT_TO_INDEX: Record<string, number> = {
@@ -13,6 +14,18 @@ const INDEX_TO_EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export interface ComposerModelOption {
   id: string
   label: string
+  /** Optional provider id for icon coloring (e.g. deepseek, hs). */
+  providerId?: string
+}
+
+export type ReasoningSelectorLabels = {
+  title: string
+  hint: string
+  warning: string
+  aria: string
+  desc: string
+  configure: string
+  dialog: string
 }
 
 interface ReasoningEffortSelectorProps {
@@ -24,20 +37,16 @@ interface ReasoningEffortSelectorProps {
   /** Current reasoning effort (API value: low/medium/high/xhigh/max). */
   value: string
   onChange: (effort: string) => void
+  /** Jump to Settings → Models (custom endpoints). */
+  onConfigureModels?: () => void
   disabled?: boolean
 }
 
 /**
  * React wrapper around the <reasoning-effort-selector> Web Component.
  *
- * The custom element owns its animation (magnetic slider, spring snap, canvas
- * sparkles, Ultra confetti) inside a Shadow DOM and renders both the model list
- * and the effort slider. React only syncs data in/out via attributes + the
- * `change` CustomEvent (detail.type = 'model' | 'effort') - it never touches
- * the shadow tree, so re-renders never disturb an in-flight animation.
- *
- * `models` is a complex type, so it is set as a DOM property (not an
- * attribute). `model`/`value` are strings set as attributes.
+ * Tier names (Light / Medium / High / …) stay English. Other chrome strings
+ * come from i18n via the `labels` DOM property.
  */
 export function ReasoningEffortSelector({
   models,
@@ -45,20 +54,41 @@ export function ReasoningEffortSelector({
   onModelChange,
   value,
   onChange,
+  onConfigureModels,
   disabled,
 }: ReasoningEffortSelectorProps) {
+  const { t } = useTranslation('common')
   const ref = useRef<HTMLElement>(null)
   const onModelChangeRef = useRef(onModelChange)
   const onChangeRef = useRef(onChange)
+  const onConfigureModelsRef = useRef(onConfigureModels)
   onModelChangeRef.current = onModelChange
   onChangeRef.current = onChange
+  onConfigureModelsRef.current = onConfigureModels
   const index = EFFORT_TO_INDEX[value] ?? 2
 
-  // models is a complex type -> must be set as a property, not an attribute
+  const labels = useMemo<ReasoningSelectorLabels>(
+    () => ({
+      title: t('composerReasoningTitle'),
+      hint: t('composerReasoningHint'),
+      warning: t('composerReasoningWarning'),
+      aria: t('composerReasoningAria'),
+      desc: t('composerReasoningDesc'),
+      configure: t('composerConfigureModels'),
+      dialog: t('composerModelSettingsAria'),
+    }),
+    [t]
+  )
+
   useEffect(() => {
     const el = ref.current
     if (el) el.models = models
   }, [models])
+
+  useEffect(() => {
+    const el = ref.current
+    if (el) el.labels = labels
+  }, [labels])
 
   useEffect(() => {
     const el = ref.current
@@ -77,6 +107,8 @@ export function ReasoningEffortSelector({
       if (!detail) return
       if (detail.type === 'model' && detail.id != null) {
         onModelChangeRef.current(detail.id)
+      } else if (detail.type === 'configure-models') {
+        onConfigureModelsRef.current?.()
       } else if (detail.index != null) {
         onChangeRef.current(INDEX_TO_EFFORT[detail.index] ?? 'high')
       }

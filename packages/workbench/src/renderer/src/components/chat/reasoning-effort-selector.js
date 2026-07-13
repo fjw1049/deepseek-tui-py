@@ -1,3 +1,5 @@
+import { resolveProviderIcon, uniquifySvgIds } from './provider-icons.js'
+
 class ChatGPTModelSelector extends HTMLElement {
   static observedAttributes = ['value', 'model', 'disabled'];
 
@@ -8,12 +10,20 @@ class ChatGPTModelSelector extends HTMLElement {
     { key: 'Extra High', valuetext: 'Extra High — much smarter' },
     { key: 'Ultra',      valuetext: 'Ultra — smartest, consumes usage limits faster' },
   ];
-  #index = 1;          // committed stop index (0–4)
-  #models = [];        // [{id,label}] injected from React
+  #index = 2;          // default High
+  #models = [];        // [{id,label,providerId?}] injected from React
   #modelId = '';       // currently selected model id
+  #labels = {
+    title: 'Reasoning',
+    hint: 'Faster ← → Smarter',
+    warning: 'Uses limits faster',
+    aria: 'Reasoning intensity',
+    desc: 'Left for faster responses, right for smarter responses.',
+    configure: 'Configure custom models',
+    dialog: 'Model settings',
+  };
   #dragPos = null;     // continuous 0–1 position while dragging, else null
   #open = false;
-  #view = 'menu';      // 'menu' | 'advanced'
   #dragging = false;
   #activePointer = null;
   #dragGeom = null;    // cached track geometry for the active gesture
@@ -38,9 +48,8 @@ class ChatGPTModelSelector extends HTMLElement {
     if (!e.composedPath().includes(this)) this.#close();
   };
   #onMotionPrefChange = () => {
-    // restart (or statically repaint) the sparkle loop under the new preference
-    if (this.#open && this.#view === 'advanced') this.#startSparkles();
-    if (this.#reducedMotion.matches) this.#stopConfetti(); // kill any in-flight burst
+    if (this.#open) this.#startSparkles();
+    if (this.#reducedMotion.matches) this.#stopConfetti();
   };
 
   constructor() {
@@ -64,7 +73,6 @@ class ChatGPTModelSelector extends HTMLElement {
         --r-row: 10px;
         --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
         --ease-swap: cubic-bezier(0.2, 0, 0, 1);
-        /* gently overdamped spring: single ~4% overshoot, no secondary oscillation */
         --spring: linear(0, 0.062 3.4%, 0.24 7.5%, 0.51 12.5%, 0.76 17.9%, 0.905 22.4%,
           0.997 27.2%, 1.038 32.4%, 1.05 37.4%, 1.044 42.7%, 1.028 49.2%,
           1.012 56.9%, 1.003 65.7%, 0.999 76%, 1);
@@ -95,7 +103,6 @@ class ChatGPTModelSelector extends HTMLElement {
         white-space: nowrap;
       }
 
-      /* ============ trigger pill — the whole visible component ============ */
       .pill {
         width: 220px;
         height: 36px;
@@ -105,7 +112,7 @@ class ChatGPTModelSelector extends HTMLElement {
         align-items: center;
         gap: 6px;
         position: relative;
-        padding: 0 11px 0 14px;
+        padding: 0 11px 0 10px;
         transition: background-color 140ms var(--ease-out), scale 140ms var(--ease-out);
       }
       .pill:hover { background: var(--pill-bg-hover); }
@@ -115,9 +122,26 @@ class ChatGPTModelSelector extends HTMLElement {
         outline: 2px solid var(--blue);
         outline-offset: 2px;
       }
-      .pill .bolt { color: var(--ink); flex: none; }
-      /* label is the flexible slot — it shrinks so tier + chev never get squeezed.
-         model-name truncates; tier is the status and never truncates. */
+      .pill-icon {
+        flex: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 12%, transparent);
+        color: var(--icon-color, var(--ink-2));
+      }
+      .pill-icon.is-colored {
+        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 10%, transparent);
+        color: inherit;
+      }
+      .pill-icon svg {
+        width: 12px;
+        height: 12px;
+        display: block;
+        overflow: visible;
+      }
       .pill .label {
         flex: 1 1 auto;
         min-width: 0;
@@ -151,16 +175,11 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .pill[aria-expanded="true"] .chev { rotate: 180deg; }
 
-      /* ============ Popover — translucent material (§12) ============
-         A floating functional layer: blur + saturate + a semi-transparent
-         fill, with a bright top hairline (light catching the material) and a
-         deeper shadow so the bigger surface reads as thicker. Content scrolls
-         underneath; nothing here is opaque. */
       .popover {
         position: absolute;
         bottom: calc(100% + 8px);
         left: 0;
-        width: 100%;
+        width: 300px;
         background: color-mix(in srgb, var(--ds-card-strong, #fff) 72%, transparent);
         backdrop-filter: blur(28px) saturate(180%);
         -webkit-backdrop-filter: blur(28px) saturate(180%);
@@ -180,8 +199,7 @@ class ChatGPTModelSelector extends HTMLElement {
         transition:
           opacity 150ms cubic-bezier(0.4, 0, 1, 1),
           scale 150ms cubic-bezier(0.4, 0, 1, 1),
-          translate 150ms cubic-bezier(0.4, 0, 1, 1),
-          height 260ms var(--ease-out);
+          translate 150ms cubic-bezier(0.4, 0, 1, 1);
       }
       .popover.is-open {
         opacity: 1;
@@ -190,38 +208,93 @@ class ChatGPTModelSelector extends HTMLElement {
         transition:
           opacity 220ms var(--ease-out),
           scale 220ms var(--ease-out),
-          translate 220ms var(--ease-out),
-          height 260ms var(--ease-out);
+          translate 220ms var(--ease-out);
       }
 
-      .view {
-        width: 100%;
+      .menu {
+        padding: 10px 8px 6px;
+      }
+
+      .intensity {
+        padding: 2px 8px 8px;
+      }
+      .intensity-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 22px;
+        margin-bottom: 8px;
+      }
+      .intensity-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+      }
+      .intensity-meta {
+        position: relative;
+        min-width: 72px;
+        height: 18px;
+        text-align: right;
+      }
+      .intensity-layer {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        opacity: 0;
+        translate: 0 2px;
+        filter: blur(2px);
+        pointer-events: none;
         transition: opacity 180ms var(--ease-swap), translate 180ms var(--ease-swap), filter 180ms var(--ease-swap);
       }
-      .view.is-hidden {
-        position: absolute;
-        inset: 0 0 auto 0;
-        opacity: 0;
-        pointer-events: none;
-        filter: blur(4px);
+      .intensity-layer.is-active {
+        opacity: 1;
+        translate: 0 0;
+        filter: blur(0);
       }
-      .view-menu.is-hidden { translate: -10px 0; }
-      .view-advanced.is-hidden { translate: 10px 0; }
+      .intensity-value {
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+      .intensity-value.is-ultra { color: var(--ultra-text); font-weight: 600; }
+      .intensity-hint {
+        font-size: 11px;
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .intensity-warning {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        background: linear-gradient(90deg, #7C3AED, #9333EA);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        white-space: nowrap;
+      }
 
-      /* ---- menu view ---- */
-      .view-menu { padding: 6px 6px 4px; }
-      .model-list { max-height: 168px; overflow-y: auto; }
+      .model-list {
+        max-height: 220px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 2px 0;
+        scrollbar-width: thin;
+      }
       .model-item {
         width: 100%;
-        height: 32px;
+        min-height: 36px;
         border-radius: var(--r-row);
         display: flex;
         align-items: center;
-        justify-content: center;
+        gap: 10px;
         padding: 0 10px;
         font-size: 13px;
         font-weight: 500;
         color: var(--ink-2);
+        text-align: left;
         transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
       }
       .model-item:hover {
@@ -234,108 +307,92 @@ class ChatGPTModelSelector extends HTMLElement {
         color: var(--ink);
         font-weight: 600;
       }
-      .row {
+      .model-item:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: -2px;
+      }
+      .model-icon {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 12%, transparent);
+        color: var(--icon-color, var(--ink-2));
+      }
+      .model-icon.is-colored {
+        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 10%, transparent);
+        color: inherit;
+      }
+      .model-icon svg {
+        width: 14px;
+        height: 14px;
+        display: block;
+        overflow: visible;
+      }
+      .model-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .model-effort {
+        flex: none;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+      .model-effort.is-ultra { color: var(--ultra-text); }
+      .model-check {
+        flex: none;
+        color: var(--blue);
+        opacity: 0;
+      }
+      .model-item.is-active .model-check { opacity: 1; }
+
+      .divider {
+        height: 1px;
+        background: var(--hairline);
+        margin: 6px 4px;
+      }
+
+      .configure-btn {
         width: 100%;
-        height: 36px;
+        min-height: 36px;
         border-radius: var(--r-row);
         display: flex;
         align-items: center;
-        padding: 0 10px 0 12px;
         gap: 8px;
-        text-align: left;
+        padding: 0 10px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ink-2);
+        transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
       }
-      .adv-chip:focus-visible, .back-btn:focus-visible {
+      .configure-btn:hover {
+        background: color-mix(in srgb, var(--ink) 6%, transparent);
+        color: var(--ink);
+      }
+      .configure-btn:focus-visible {
         outline: 2px solid var(--blue);
-        outline-offset: 2px;
+        outline-offset: -2px;
       }
-      .row .k { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; flex: 1; }
-      .row .v { font-size: 14px; color: var(--ink-2); }
-      .row .c { color: var(--ink-3); flex: none; }
-      .menu-stagger .row {
+      .configure-btn svg { flex: none; color: var(--ink-3); }
+
+      .menu-stagger .intensity,
+      .menu-stagger .model-list,
+      .menu-stagger .configure-btn {
         animation: row-in 260ms var(--ease-out) backwards;
       }
-      .menu-stagger .row:nth-child(2) { animation-delay: 30ms; }
-      .menu-stagger .row:nth-child(3) { animation-delay: 60ms; }
-      .menu-stagger .adv-chip-wrap { animation: row-in 260ms var(--ease-out) 90ms backwards; }
+      .menu-stagger .model-list { animation-delay: 40ms; }
+      .menu-stagger .configure-btn { animation-delay: 70ms; }
       @keyframes row-in {
         from { opacity: 0; translate: 0 5px; }
         to   { opacity: 1; translate: 0 0; }
       }
-      .divider {
-        height: 1px;
-        background: var(--hairline);
-        margin: 5px 3px;
-      }
-      .adv-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        height: 32px;
-        padding: 0 12px;
-        border-radius: var(--r-row);
-        font-size: 14px;
-        color: var(--ink-2);
-        transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
-      }
-      .adv-chip:hover { background: var(--pill-bg); color: #5F6368; }
-      .adv-chip:active { background: var(--pill-bg-hover); }
-      .adv-chip svg { translate: 0 1px; }
 
-      /* ---- advanced view ---- */
-      .view-advanced { padding: 13px 16px 15px; }
-      .adv-header {
-        position: relative;
-        height: 22px;
-        margin-bottom: 13px;
-      }
-      .hdr-layer {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        opacity: 0;
-        translate: 0 3px;
-        filter: blur(3px);
-        pointer-events: none;
-        transition: opacity 200ms var(--ease-swap), translate 200ms var(--ease-swap), filter 200ms var(--ease-swap);
-      }
-      .hdr-layer.is-active {
-        opacity: 1;
-        translate: 0 0;
-        filter: blur(0);
-        pointer-events: auto;
-      }
-      .hdr-adv { justify-content: space-between; }
-      .back-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 14px;
-        color: var(--ink-2);
-        border-radius: 7px;
-        min-height: 32px;
-        padding: 0 8px;
-        margin-left: -8px;
-        transition: color 140ms var(--ease-out), background-color 140ms var(--ease-out);
-      }
-      .back-btn:hover { color: var(--ink); background: #F5F5F7; }
-      .back-btn .c { color: var(--ink-3); transition: translate 160ms var(--ease-out); }
-      .back-btn:hover .c { translate: 2px 0; }
-      .hdr-adv .bolt-badge { color: var(--blue); margin-right: 1px; }
-      .hdr-labels { justify-content: space-between; }
-      .hdr-labels span { font-size: 14px; color: var(--ink-2); }
-      .hdr-warning { justify-content: center; }
-      .hdr-warning span {
-        font-size: 14px;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-        background: linear-gradient(90deg, #7C3AED, #9333EA);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-      }
-
-      /* ---- slider ---- */
       .slider {
         position: relative;
         height: 38px;
@@ -385,7 +442,6 @@ class ChatGPTModelSelector extends HTMLElement {
         width: 50%;
       }
       .fill::after {
-        /* ultra gradient layer, crossfaded over the solid blue */
         content: "";
         position: absolute;
         inset: 0;
@@ -401,7 +457,6 @@ class ChatGPTModelSelector extends HTMLElement {
         height: 100%;
         z-index: 1;
       }
-      /* celebration burst when reaching Ultra — overlays the slider, never intercepts input */
       .confetti {
         position: absolute;
         left: -32px;
@@ -424,8 +479,6 @@ class ChatGPTModelSelector extends HTMLElement {
           0 2px 6px rgba(26, 29, 33, 0.14);
         transition: scale 140ms var(--ease-out);
       }
-      /* deeper drag shadow lives on a pseudo-element and crossfades via opacity —
-         animating box-shadow itself repaints every frame while dragging */
       .knob::after {
         content: "";
         position: absolute;
@@ -456,72 +509,58 @@ class ChatGPTModelSelector extends HTMLElement {
     </style>
 
     <button class="pill" aria-haspopup="dialog" aria-expanded="false">
-      <svg class="bolt" width="13" height="13" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-        <path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h6.572l-1.305 6.093a.75.75 0 0 0 1.292.657l8.5-9.5A.75.75 0 0 0 17.25 8h-6.572l1.305-6.093Z"/>
-      </svg>
-      <span class="label"><span class="model-name">Model</span><span class="tier">Medium</span></span>
+      <span class="pill-icon" aria-hidden="true"></span>
+      <span class="label"><span class="model-name">Model</span><span class="tier">High</span></span>
       <svg class="chev" width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
         <path d="M2.5 4.25 6 7.75l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
 
     <div class="popover" role="dialog" aria-label="Model settings">
-      <div class="view view-menu">
-        <div class="model-list"></div>
-        <div class="divider" role="separator"></div>
-        <div class="row" data-row="effort">
-          <span class="k">Effort</span><span class="v effort-v">Medium</span>
-          <svg class="c" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-            <path d="M4.25 2.5 7.75 6l-3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <div class="divider" role="separator"></div>
-        <div class="adv-chip-wrap">
-          <button class="adv-chip">
-            Advanced
-            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-              <path d="M2.5 7.75 6 4.25l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div class="view view-advanced is-hidden">
-        <div class="adv-header">
-          <div class="hdr-layer hdr-adv is-active">
-            <button class="back-btn">
-              Advanced
-              <svg class="c" width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M4.25 2.5 7.75 6l-3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <svg class="bolt-badge" width="15" height="15" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h6.572l-1.305 6.093a.75.75 0 0 0 1.292.657l8.5-9.5A.75.75 0 0 0 17.25 8h-6.572l1.305-6.093Z"/>
-            </svg>
-          </div>
-          <div class="hdr-layer hdr-labels">
-            <span>Faster</span><span>Smarter</span>
-          </div>
-          <div class="hdr-layer hdr-warning">
-            <span>Consumes usage limits faster</span>
-          </div>
-        </div>
-
-        <div class="slider" role="slider" tabindex="0"
-             aria-orientation="horizontal"
-             aria-label="Model intelligence"
-             aria-describedby="slider-desc"
-             aria-valuemin="0" aria-valuemax="4">
-          <span class="visually-hidden" id="slider-desc">Left for faster responses, right for smarter responses.</span>
-          <div class="track">
-            <div class="ticks"></div>
-            <div class="fill">
-              <canvas class="sparkles" aria-hidden="true"></canvas>
+      <div class="menu">
+        <div class="intensity">
+          <div class="intensity-top">
+            <span class="intensity-title">Reasoning</span>
+            <div class="intensity-meta">
+              <div class="intensity-layer intensity-value-layer is-active">
+                <span class="intensity-value">High</span>
+              </div>
+              <div class="intensity-layer intensity-hint-layer" aria-hidden="true">
+                <span class="intensity-hint">Faster ← → Smarter</span>
+              </div>
+              <div class="intensity-layer intensity-warning-layer" aria-hidden="true">
+                <span class="intensity-warning">Uses limits faster</span>
+              </div>
             </div>
           </div>
-          <div class="knob"></div>
-          <canvas class="confetti" aria-hidden="true"></canvas>
+          <div class="slider" role="slider" tabindex="0"
+               aria-orientation="horizontal"
+               aria-label="Reasoning intensity"
+               aria-describedby="slider-desc"
+               aria-valuemin="0" aria-valuemax="4">
+            <span class="visually-hidden" id="slider-desc">Left for faster responses, right for smarter responses.</span>
+            <div class="track">
+              <div class="ticks"></div>
+              <div class="fill">
+                <canvas class="sparkles" aria-hidden="true"></canvas>
+              </div>
+            </div>
+            <div class="knob"></div>
+            <canvas class="confetti" aria-hidden="true"></canvas>
+          </div>
         </div>
+
+        <div class="divider" role="separator"></div>
+        <div class="model-list"></div>
+        <div class="divider" role="separator"></div>
+
+        <button type="button" class="configure-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 20h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Configure custom models
+        </button>
       </div>
     </div>
     `;
@@ -534,13 +573,7 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$pill = $('.pill');
     this.$tier = $('.tier');
     this.$popover = $('.popover');
-    this.$menu = $('.view-menu');
-    this.$advanced = $('.view-advanced');
-    this.$advChip = $('.adv-chip');
-    this.$backBtn = $('.back-btn');
-    this.$hdrAdv = $('.hdr-adv');
-    this.$hdrLabels = $('.hdr-labels');
-    this.$hdrWarning = $('.hdr-warning');
+    this.$menu = $('.menu');
     this.$slider = $('.slider');
     this.$track = $('.track');
     this.$ticks = $('.ticks');
@@ -548,10 +581,19 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$knob = $('.knob');
     this.$canvas = $('.sparkles');
     this.$confetti = $('.confetti');
-    this.$effortV = $('.effort-v');
+    this.$effortV = $('.intensity-value');
     this.$modelName = $('.model-name');
     this.$modelList = $('.model-list');
-    this.$effortRow = $('.row[data-row="effort"]');
+    this.$configureBtn = $('.configure-btn');
+    this.$pillIcon = $('.pill-icon');
+    this.$valueLayer = $('.intensity-value-layer');
+    this.$hintLayer = $('.intensity-hint-layer');
+    this.$warningLayer = $('.intensity-warning-layer');
+    this.$intensityTitle = $('.intensity-title');
+    this.$intensityHint = $('.intensity-hint');
+    this.$intensityWarning = $('.intensity-warning');
+    this.$sliderDesc = $('#slider-desc');
+    this.#applyLabels();
 
     if (this.hasAttribute('value')) {
       this.#index = this.#clampIndex(parseInt(this.getAttribute('value'), 10));
@@ -576,7 +618,7 @@ class ChatGPTModelSelector extends HTMLElement {
       if (this.#dragging) {
         this.#dragGeom = { rect: this.$track.getBoundingClientRect(), ...this.#metrics() };
       }
-      if (this.#open && this.#view === 'advanced') this.#startSparkles(); // repaint (static under reduced motion)
+      if (this.#open) this.#startSparkles();
     });
     this.#resizeObserver.observe(this.$track);
   }
@@ -592,7 +634,6 @@ class ChatGPTModelSelector extends HTMLElement {
     this.#snapSettleCb = null;
     clearTimeout(this.#closeTimer);
     clearTimeout(this.#snapTimer);
-    // reset to a closed, quiescent state so a later reconnect starts clean
     this.#open = false;
     this.#dragging = false;
     this.#activePointer = null;
@@ -611,10 +652,9 @@ class ChatGPTModelSelector extends HTMLElement {
       const i = this.#clampIndex(parseInt(val, 10));
       if (i !== this.#index) {
         this.#index = i;
-        // celebrate when the knob LANDS, not while it is still springing there
         this.#snapSettleCb = i === 4 ? () => { if (this.#index === 4) this.#fireConfetti(); } : null;
         this.#renderState({ snap: true });
-        if (i === 4 && this.#reducedMotion.matches) this.#snapSettleCb = null; // no snap runs; confetti is skipped under reduced motion anyway
+        if (i === 4 && this.#reducedMotion.matches) this.#snapSettleCb = null;
       }
     }
     if (name === 'model') {
@@ -634,17 +674,94 @@ class ChatGPTModelSelector extends HTMLElement {
     this.#renderModelList();
     this.#updatePillModel();
   }
+  get labels() { return this.#labels; }
+  set labels(next) {
+    if (!next || typeof next !== 'object') return;
+    this.#labels = { ...this.#labels, ...next };
+    this.#applyLabels();
+  }
 
-  #clampIndex(v) { return Math.min(4, Math.max(0, Number.isFinite(v) ? Math.round(v) : 1)); }
+  #applyLabels() {
+    const L = this.#labels;
+    if (this.$intensityTitle) this.$intensityTitle.textContent = L.title;
+    if (this.$intensityHint) this.$intensityHint.textContent = L.hint;
+    if (this.$intensityWarning) this.$intensityWarning.textContent = L.warning;
+    if (this.$slider) {
+      this.$slider.setAttribute('aria-label', L.aria);
+    }
+    if (this.$sliderDesc) this.$sliderDesc.textContent = L.desc;
+    if (this.$popover) this.$popover.setAttribute('aria-label', L.dialog);
+    if (this.$configureBtn) {
+      // Keep the pencil svg; replace only the trailing text node.
+      const svg = this.$configureBtn.querySelector('svg');
+      this.$configureBtn.textContent = '';
+      if (svg) this.$configureBtn.appendChild(svg);
+      this.$configureBtn.append(' ', L.configure);
+    }
+  }
+
+  #clampIndex(v) { return Math.min(4, Math.max(0, Number.isFinite(v) ? Math.round(v) : 2)); }
+
+  #inferProvider(id) {
+    const trimmed = String(id || '').trim();
+    const sep = trimmed.indexOf('::');
+    if (sep > 0) return trimmed.slice(0, sep);
+    return 'deepseek';
+  }
 
   #renderModelList() {
     if (!this.$modelList) return;
     this.$modelList.innerHTML = '';
+    const effortKey = this.#tiers[this.#index].key;
+    const isUltra = this.#index === 4;
     for (const m of this.#models) {
+      const active = m.id === this.#modelId;
+      const providerId = m.providerId || this.#inferProvider(m.id);
+      const icon = resolveProviderIcon({
+        providerId,
+        id: m.id,
+        label: m.label,
+      });
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'model-item' + (m.id === this.#modelId ? ' is-active' : '');
-      btn.textContent = m.label || m.id;
+      btn.className = 'model-item' + (active ? ' is-active' : '');
+
+      const iconEl = document.createElement('span');
+      iconEl.className = 'model-icon' + (icon.colored ? ' is-colored' : '');
+      iconEl.style.setProperty('--icon-color', icon.color);
+      iconEl.innerHTML = uniquifySvgIds(icon.svg);
+      iconEl.setAttribute('aria-hidden', 'true');
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'model-label';
+      labelEl.textContent = m.label || m.id;
+
+      btn.appendChild(iconEl);
+      btn.appendChild(labelEl);
+
+      if (active) {
+        const effortEl = document.createElement('span');
+        effortEl.className = 'model-effort' + (isUltra ? ' is-ultra' : '');
+        effortEl.textContent = effortKey;
+        btn.appendChild(effortEl);
+
+        const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        check.setAttribute('class', 'model-check');
+        check.setAttribute('width', '14');
+        check.setAttribute('height', '14');
+        check.setAttribute('viewBox', '0 0 16 16');
+        check.setAttribute('aria-hidden', 'true');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M3.5 8.2 6.4 11l6.1-6.4');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'currentColor');
+        path.setAttribute('stroke-width', '1.8');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+        check.appendChild(path);
+        btn.appendChild(check);
+      }
+
       btn.addEventListener('click', () => {
         if (m.id === this.#modelId) return;
         this.#modelId = m.id;
@@ -663,6 +780,16 @@ class ChatGPTModelSelector extends HTMLElement {
   #updatePillModel() {
     const m = this.#models.find((x) => x.id === this.#modelId);
     if (this.$modelName) this.$modelName.textContent = m ? (m.label || m.id) : 'Model';
+    if (this.$pillIcon) {
+      const icon = resolveProviderIcon({
+        providerId: m?.providerId || this.#inferProvider(this.#modelId),
+        id: this.#modelId || m?.id,
+        label: m?.label,
+      });
+      this.$pillIcon.className = 'pill-icon' + (icon.colored ? ' is-colored' : '');
+      this.$pillIcon.style.setProperty('--icon-color', icon.color);
+      this.$pillIcon.innerHTML = uniquifySvgIds(icon.svg);
+    }
   }
 
   /* ======================= events ======================= */
@@ -672,9 +799,13 @@ class ChatGPTModelSelector extends HTMLElement {
       if (this.hasAttribute('disabled')) return;
       this.#open ? this.#close() : this.#openPopover();
     });
-    this.$advChip.addEventListener('click', () => this.#switchView('advanced'));
-    this.$effortRow.addEventListener('click', () => this.#switchView('advanced'));
-    this.$backBtn.addEventListener('click', () => this.#switchView('menu'));
+    this.$configureBtn.addEventListener('click', () => {
+      this.dispatchEvent(new CustomEvent('change', {
+        bubbles: true,
+        detail: { type: 'configure-models' },
+      }));
+      this.#close();
+    });
 
     this.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.#open) {
@@ -684,20 +815,17 @@ class ChatGPTModelSelector extends HTMLElement {
       }
     });
 
-    // slider hover → header label crossfade
-    this.$slider.addEventListener('pointerenter', () => { this.#hoveringSlider = true; this.#syncHeader(); });
-    this.$slider.addEventListener('pointerleave', () => { this.#hoveringSlider = false; this.#syncHeader(); });
+    this.$slider.addEventListener('pointerenter', () => { this.#hoveringSlider = true; this.#syncIntensityMeta(); });
+    this.$slider.addEventListener('pointerleave', () => { this.#hoveringSlider = false; this.#syncIntensityMeta(); });
 
-    // drag / click on slider (single active pointer; ignore extra touches)
     this.$slider.addEventListener('pointerdown', (e) => {
       if (this.#activePointer !== null) return;
       this.#activePointer = e.pointerId;
       e.preventDefault();
-      this.$slider.focus({ preventScroll: true }); // preventDefault suppresses default focus
+      this.$slider.focus({ preventScroll: true });
       try { this.$slider.setPointerCapture(e.pointerId); } catch {}
       this.#dragging = true;
       this.#burstFiredThisGesture = false;
-      // cache geometry once per gesture — no per-move layout reads
       this.#dragGeom = { rect: this.$track.getBoundingClientRect(), ...this.#metrics() };
       this.$slider.classList.add('is-dragging');
       this.#stopSnap();
@@ -715,11 +843,8 @@ class ChatGPTModelSelector extends HTMLElement {
       const pos = this.#dragPos ?? this.#index / 4;
       this.#dragPos = null;
       const target = Math.round(pos * 4);
-      // reference order is settle-then-pop: celebrate when the knob lands at
-      // Ultra after release, once per gesture — not on the mid-drag crossing
       const celebrate = target === 4 && !this.#burstFiredThisGesture;
       if (celebrate) this.#burstFiredThisGesture = true;
-      // released right on the stop → no transition will fire; pop immediately
       const farFromStop = Math.abs(pos * 4 - target) * (this.#metrics().span / 4) > 2;
       if (celebrate && farFromStop) {
         this.#snapSettleCb = () => { if (this.#index === 4) this.#fireConfetti(); };
@@ -730,21 +855,19 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$slider.addEventListener('pointerup', release);
     this.$slider.addEventListener('pointercancel', release);
 
-    // keyboard on slider
     this.$slider.addEventListener('keydown', (e) => {
       const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
       if (step !== undefined) {
         e.preventDefault();
-        this.#commit(this.#index + step, { snap: false }); // keyboard = instant, no animation
+        this.#commit(this.#index + step, { snap: false });
       } else if (e.key === 'Home') { e.preventDefault(); this.#commit(0, { snap: false }); }
       else if (e.key === 'End')   { e.preventDefault(); this.#commit(4, { snap: false }); }
     });
 
-    // menu arrow-key navigation (convenience on plain buttons)
     this.$menu.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       e.preventDefault();
-      const items = [...this.$menu.querySelectorAll('button')];
+      const items = [...this.$menu.querySelectorAll('button, [role="slider"]')];
       const i = items.indexOf(this.shadowRoot.activeElement);
       const next = items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length];
       next.focus();
@@ -755,33 +878,27 @@ class ChatGPTModelSelector extends HTMLElement {
 
   #openPopover() {
     this.#open = true;
-    this.#view = 'menu';
     this.$pill.setAttribute('aria-expanded', 'true');
     const pop = this.$popover;
-    // anchor to the trigger pill's box
-    pop.style.left = (this.$pill.getBoundingClientRect().left - this.getBoundingClientRect().left) + 'px';
-    pop.style.width = this.$pill.offsetWidth + 'px';
+    const hostLeft = this.getBoundingClientRect().left;
+    const pillLeft = this.$pill.getBoundingClientRect().left;
+    pop.style.left = (pillLeft - hostLeft) + 'px';
+    pop.style.width = '300px';
     pop.style.display = 'block';
-    pop.style.height = 'auto';
-    this.#showView('menu', { instant: true });
     this.$menu.classList.add('menu-stagger');
-    // lock measured height so later view morphs can animate from a px value
-    const h = this.$menu.offsetHeight;
-    pop.style.height = h + 'px';
     requestAnimationFrame(() => pop.classList.add('is-open'));
     document.addEventListener('pointerdown', this.#onDocPointerDown, true);
     this.#layoutSlider();
     this.#sizeCanvas();
-    // sparkle loop starts when the advanced view is shown, not while the menu hides it
+    this.#startSparkles();
     const firstModel = this.$modelList.querySelector('.model-item');
-    (firstModel || this.$advChip).focus({ preventScroll: true });
+    (firstModel || this.$configureBtn).focus({ preventScroll: true });
   }
 
   #close() {
     if (!this.#open) return;
     this.#open = false;
     this.$pill.setAttribute('aria-expanded', 'false');
-    // if focus is inside the popover, hand it back to the trigger before hiding
     const active = this.shadowRoot.activeElement;
     if (active && this.$popover.contains(active)) this.$pill.focus();
     const pop = this.$popover;
@@ -801,47 +918,7 @@ class ChatGPTModelSelector extends HTMLElement {
       hide();
     };
     pop.addEventListener('transitionend', onEnd);
-    this.#closeTimer = setTimeout(hide, 240); // fallback if transitionend never fires
-  }
-
-  #switchView(view) {
-    if (this.#view === view) return;
-    this.#view = view;
-    this.$menu.classList.remove('menu-stagger');
-    const incoming = view === 'menu' ? this.$menu : this.$advanced;
-    this.#showView(view);
-    // height morph: from current px to incoming natural height
-    const pop = this.$popover;
-    pop.style.height = pop.offsetHeight + 'px';
-    requestAnimationFrame(() => {
-      pop.style.height = incoming.offsetHeight + 'px';
-    });
-    if (view === 'advanced') {
-      this.#layoutSlider();
-      this.#sizeCanvas();
-      this.#startSparkles(); // starts the loop, or repaints the static reduced-motion frame
-      this.$slider.focus({ preventScroll: true });
-    } else {
-      cancelAnimationFrame(this.#raf); // canvas is hidden behind the menu view
-      this.#raf = 0;
-      this.$advChip.focus({ preventScroll: true });
-    }
-    this.#syncHeader();
-  }
-
-  #showView(view, { instant = false } = {}) {
-    const on = view === 'menu' ? this.$menu : this.$advanced;
-    const off = view === 'menu' ? this.$advanced : this.$menu;
-    if (instant) {
-      for (const v of [on, off]) v.style.transitionDuration = '0ms';
-      requestAnimationFrame(() => {
-        for (const v of [on, off]) v.style.transitionDuration = '';
-      });
-    }
-    on.classList.remove('is-hidden');
-    off.classList.add('is-hidden');
-    off.setAttribute('inert', '');
-    on.removeAttribute('inert');
+    this.#closeTimer = setTimeout(hide, 240);
   }
 
   /* ======================= slider ======================= */
@@ -856,7 +933,7 @@ class ChatGPTModelSelector extends HTMLElement {
 
   #metrics() {
     const w = this.$track.clientWidth;
-    const K = 34;                 // knob diameter
+    const K = 34;
     const min = K / 2;
     const max = w - K / 2;
     return { w, K, min, max, span: max - min };
@@ -880,30 +957,24 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$fill.style.width = (cx + K / 2) + 'px';
   }
 
-  // interrupt an in-flight snap without teleporting: freeze the knob/fill at
-  // their current animated position, then drop the transition class
   #stopSnap() {
     if (this.$slider.classList.contains('is-snapping')) {
       this.$knob.style.left = getComputedStyle(this.$knob).left;
       this.$fill.style.width = getComputedStyle(this.$fill).width;
       this.$slider.classList.remove('is-snapping');
     }
-    this.#snapSettleCb = null; // an interrupted snap forfeits its celebration
+    this.#snapSettleCb = null;
     clearTimeout(this.#snapTimer);
   }
 
   #dragTo(e) {
-    // a snap started mid-drag (e.g. external value set) would make every move
-    // retarget a spring transition — the knob would chase the finger; kill it
     if (this.$slider.classList.contains('is-snapping')) this.#stopSnap();
     const { rect, w, K } = this.#dragGeom ?? { rect: this.$track.getBoundingClientRect(), ...this.#metrics() };
     if (!rect.width || w <= K) return;
-    // fraction along the track is scale-invariant (popover may be mid scale-transition)
     const frac = (e.clientX - rect.left) / rect.width;
     const pos = Math.min(1, Math.max(0, (frac * w - K / 2) / (w - K)));
     this.#dragPos = pos;
     this.#positionKnob(pos);
-    // live preview: nearest stop drives labels/theme while dragging
     const nearest = Math.round(pos * 4);
     if (nearest !== this.#index) {
       this.#index = nearest;
@@ -916,7 +987,7 @@ class ChatGPTModelSelector extends HTMLElement {
     const settle = this.#snapSettleCb;
     this.#snapSettleCb = null;
     if (this.#reducedMotion.matches) return;
-    if (this.#dragging) return; // never animate under an active finger
+    if (this.#dragging) return;
     this.$slider.classList.add('is-snapping');
     const clear = () => {
       this.$slider.classList.remove('is-snapping');
@@ -927,7 +998,7 @@ class ChatGPTModelSelector extends HTMLElement {
     const onEnd = (e) => { if (e.propertyName === 'left') clear(); };
     this.$knob.addEventListener('transitionend', onEnd);
     clearTimeout(this.#snapTimer);
-    this.#snapTimer = setTimeout(clear, 460); // fallback if transitionend never fires
+    this.#snapTimer = setTimeout(clear, 460);
   }
 
   #commit(i, { snap }) {
@@ -937,7 +1008,7 @@ class ChatGPTModelSelector extends HTMLElement {
     if (snap) this.#beginSnap();
     this.#renderState();
     if (changed) this.#emit();
-    if (changed && i === 4 && !snap) this.#fireConfetti(); // keyboard path: knob is already at the stop
+    if (changed && i === 4 && !snap) this.#fireConfetti();
   }
 
   #renderState({ position = true, animateTier = true, snap = false } = {}) {
@@ -952,19 +1023,26 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$slider.setAttribute('aria-valuenow', String(this.#index));
     this.$slider.setAttribute('aria-valuetext', t.valuetext);
 
-    // pill tier label crossfade
     if (this.$tier.textContent !== t.key) {
       this.#swapText(this.$tier, t.key, animateTier);
     }
     this.$tier.classList.toggle('is-ultra', isUltra);
-    this.$effortV.textContent = t.key;
 
-    this.#syncHeader();
+    if (this.$effortV.textContent !== t.key) {
+      this.#swapText(this.$effortV, t.key, animateTier);
+    }
+    this.$effortV.classList.toggle('is-ultra', isUltra);
+
+    // keep selected-row badge in sync without rebuilding the list (preserves scroll)
+    const badge = this.$modelList?.querySelector('.model-item.is-active .model-effort');
+    if (badge) {
+      badge.textContent = t.key;
+      badge.classList.toggle('is-ultra', isUltra);
+    }
+    this.#syncIntensityMeta();
   }
 
   #swapText(el, text, animate) {
-    // correctness never rides on the animation system: set text synchronously,
-    // then play a purely-cosmetic enter animation (no fill, auto-reverts)
     el.textContent = text;
     if (!animate || this.#reducedMotion.matches || !el.animate) return;
     el.getAnimations().forEach(a => a.cancel());
@@ -974,19 +1052,18 @@ class ChatGPTModelSelector extends HTMLElement {
     );
   }
 
-  #syncHeader() {
+  #syncIntensityMeta() {
     const isUltra = this.#index === 4;
-    const showLabels = !isUltra && (this.#hoveringSlider || this.#dragging);
+    const showHint = !isUltra && (this.#hoveringSlider || this.#dragging);
     const states = [
-      [this.$hdrWarning, isUltra],
-      [this.$hdrLabels, showLabels],
-      [this.$hdrAdv, !isUltra && !showLabels],
+      [this.$warningLayer, isUltra],
+      [this.$hintLayer, showHint],
+      [this.$valueLayer, !isUltra && !showHint],
     ];
     for (const [layer, active] of states) {
+      if (!layer) continue;
       layer.classList.toggle('is-active', active);
       layer.setAttribute('aria-hidden', String(!active));
-      if (active) layer.removeAttribute('inert');
-      else layer.setAttribute('inert', '');
     }
   }
 
@@ -1000,12 +1077,11 @@ class ChatGPTModelSelector extends HTMLElement {
   /* ======================= confetti burst (Ultra) ======================= */
 
   #fireConfetti() {
-    if (this.#reducedMotion.matches || !this.#open || this.#view !== 'advanced') return;
+    if (this.#reducedMotion.matches || !this.#open) return;
     const now = performance.now();
-    if (now - this.#lastBurst < 350) return; // rapid re-entries shouldn't spam
+    if (now - this.#lastBurst < 350) return;
     this.#lastBurst = now;
 
-    // size the overlay lazily, once per burst (slider + margins for flight room)
     const MX = 32, MY = 40;
     const sw = this.$slider.offsetWidth, sh = this.$slider.offsetHeight;
     if (!sw) return;
@@ -1019,15 +1095,10 @@ class ChatGPTModelSelector extends HTMLElement {
       this.#confettiBox = { w, h, dpr };
     }
 
-    // computed style = the knob's live on-screen position (style.left is only
-    // the transition target while a snap spring is in flight)
     const cx = (parseFloat(getComputedStyle(this.$knob).left) || sw / 2) + MX;
     const cy = sh / 2 + MY;
-    // reference look (34.mp4 f_128-f_135): a ring of chunky, evenly-sized
-    // lavender beads pops from the knob's rim and dissolves within ~0.2s,
-    // fading from the very first frame — no gravity, no rects
     const COLORS = ['#C9B0F0', '#BFA5F2', '#D4C3F7', '#B79EF5'];
-    const R = 17; // knob radius — dots spawn on the rim, not at the center
+    const R = 17;
     const N = 14;
     for (let i = 0; i < N; i++) {
       const ang = (i / N) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
@@ -1047,7 +1118,6 @@ class ChatGPTModelSelector extends HTMLElement {
       this.#confettiLast = now;
       this.#confettiRaf = requestAnimationFrame(this.#confettiTick);
     }
-    // settle-time micro-pulse on the knob; skipped mid-drag (finger owns the knob)
     if (!this.#dragging && this.$knob.animate) {
       this.$knob.animate(
         [{ scale: '1' }, { scale: '1.05' }, { scale: '1' }],
@@ -1057,7 +1127,6 @@ class ChatGPTModelSelector extends HTMLElement {
   }
 
   #confettiTick = (t) => {
-    // dt-based with a clamp: uneven frame pacing must never teleport particles
     const dt = Math.min(0.032, Math.max(0, (t - this.#confettiLast) / 1000));
     this.#confettiLast = t;
     const box = this.#confettiBox;
@@ -1069,13 +1138,13 @@ class ChatGPTModelSelector extends HTMLElement {
     this.#confettiParts = this.#confettiParts.filter((p) => {
       p.life += dt;
       if (p.life >= p.ttl) return false;
-      const damp = Math.exp(-6 * dt); // frame-rate-independent decay: pop, then hang
+      const damp = Math.exp(-6 * dt);
       p.vx *= damp;
-      p.vy = p.vy * damp - 20 * dt;   // slight upward lift, no gravity
+      p.vy = p.vy * damp - 20 * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       const k = p.life / p.ttl;
-      ctx.globalAlpha = Math.pow(1 - k, 1.5); // dissolving from the first frame, ease-out
+      ctx.globalAlpha = Math.pow(1 - k, 1.5);
       ctx.fillStyle = p.color;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size / 2, 0, Math.PI * 2);
@@ -1111,7 +1180,7 @@ class ChatGPTModelSelector extends HTMLElement {
     const h = this.$track.clientHeight;
     if (!w || !h) return;
     const b = this.#sparkBox;
-    if (b && b.w === w && b.h === h && b.dpr === dpr) return; // no-op: keep bitmap & particles
+    if (b && b.w === w && b.h === h && b.dpr === dpr) return;
     this.$canvas.width = w * dpr;
     this.$canvas.height = h * dpr;
     this.$canvas.style.width = w + 'px';
@@ -1121,18 +1190,14 @@ class ChatGPTModelSelector extends HTMLElement {
   }
 
   #seedParticles(w, h) {
-    // seed across the FULL track so particles already exist where the fill expands to.
-    // reference behavior (34.mp4): a sparse field of soft dots streams leftward at a
-    // constant fast pace — an energy flow through the bar — pure horizontal motion
-    // plus an in-place twinkle. speeds scaled to this track's proportions.
     const count = Math.max(6, Math.round(w / 24));
     this.#particles = Array.from({ length: count }, () => ({
       x: Math.random() * w,
       y: 4 + Math.random() * (h - 8),
       r: 0.8 + Math.random() * 0.9,
       phase: Math.random() * Math.PI * 2,
-      twinkle: 2.5 + Math.random() * 4.5,     // several visible pops per bar transit
-      flow: 85 + Math.random() * 50,          // leftward stream speed, px/s
+      twinkle: 2.5 + Math.random() * 4.5,
+      flow: 85 + Math.random() * 50,
     }));
   }
 
@@ -1154,8 +1219,7 @@ class ChatGPTModelSelector extends HTMLElement {
   #drawSparkles(t, staticFrame = false) {
     if (!this.#sparkBox) return;
     const ctx = this.$canvas.getContext('2d');
-    const { w, h, dpr } = this.#sparkBox; // sizing-time dpr, matches the backing store
-    // dt-based with a clamp: uneven frame pacing must never teleport the stream
+    const { w, h, dpr } = this.#sparkBox;
     const dt = staticFrame ? 0 : Math.min(0.032, Math.max(0, (t - this.#sparkLast) / 1000));
     this.#sparkLast = t;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1163,11 +1227,8 @@ class ChatGPTModelSelector extends HTMLElement {
     ctx.fillStyle = '#fff';
     const sec = t / 1000;
     for (const p of this.#particles) {
-      // constant leftward stream; wrap around to the right edge
       p.x -= p.flow * dt;
       if (p.x < -3) p.x += w + 6;
-      // squared sine: mostly invisible with brief bright "pops"; static frame
-      // uses each particle's phase for varied (not uniform) brightness
       const s = 0.5 + 0.5 * Math.sin(staticFrame ? p.phase * 3 : sec * p.twinkle + p.phase);
       ctx.globalAlpha = 0.06 + 0.74 * s * s;
       ctx.beginPath();
@@ -1178,4 +1239,6 @@ class ChatGPTModelSelector extends HTMLElement {
   }
 }
 
-customElements.define('reasoning-effort-selector', ChatGPTModelSelector);
+if (!customElements.get('reasoning-effort-selector')) {
+  customElements.define('reasoning-effort-selector', ChatGPTModelSelector);
+}
