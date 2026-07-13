@@ -5,11 +5,13 @@ import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { isMarkdownPath } from '../../lib/monaco-language-for-path'
 import {
   buildWorkspaceChangePatchMap,
   lookupPatchForPath
 } from '../../lib/workspace-change-patches'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
+import { MarkdownDocumentPreview } from './MarkdownDocumentPreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 const LazyWorkspaceEditorSurface = lazy(() =>
@@ -294,6 +296,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
               ) : null}
               {activeTab.loading ? (
                 <EditorSurfaceFallback />
+              ) : isMarkdownPath(activeTab.path) && !isEditing ? (
+                <MarkdownDocumentPreview content={activeTab.content} />
               ) : (
                 <Suspense fallback={<EditorSurfaceFallback />}>
                   <LazyWorkspaceEditorSurface

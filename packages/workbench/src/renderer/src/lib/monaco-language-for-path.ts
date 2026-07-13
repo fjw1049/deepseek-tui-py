@@ -1,3 +1,9 @@
+export function isMarkdownPath(path: string): boolean {
+  const fileName = path.split(/[/\\]/).pop() ?? path
+  const ext = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() : ''
+  return ext === 'md' || ext === 'markdown'
+}
+
 export function languageForPath(path: string): string {
   const fileName = path.split(/[/\\]/).pop() ?? path
   const ext = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() : ''
