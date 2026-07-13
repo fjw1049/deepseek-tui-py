@@ -6,6 +6,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  screen,
   session
 } from 'electron'
 import { existsSync } from 'node:fs'
@@ -588,14 +589,24 @@ async function waitForDevRenderer(url: string, timeoutMs = 60_000): Promise<bool
   return false
 }
 
+function defaultWindowSize(): { width: number; height: number } {
+  const { width: areaWidth, height: areaHeight } = screen.getPrimaryDisplay().workAreaSize
+  return {
+    width: Math.max(960, Math.round(areaWidth * 0.9)),
+    height: Math.max(640, Math.round(areaHeight * 0.95))
+  }
+}
+
 function createWindow(): void {
   traceStartup('createWindow:start')
   const preloadPath = resolvePreloadPath()
+  const { width, height } = defaultWindowSize()
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 840,
+    width,
+    height,
     minWidth: 960,
     minHeight: 640,
+    center: true,
     icon: appIcon.isEmpty() ? undefined : appIcon,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 14 } : undefined,
