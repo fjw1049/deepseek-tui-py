@@ -82,7 +82,7 @@ import {
   type TodoTurnSession
 } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
-import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
+import { parseUserFocusPrefix, composeUserFocusMessage } from '../../lib/user-focus-prefix'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
 
@@ -2304,11 +2304,11 @@ function UserMessageBubble({
   const { t } = useTranslation('common')
   const busy = useChatStore((s) => s.busy)
   const rewindAndResend = useChatStore((s) => s.rewindAndResend)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(block.text)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const focus = useMemo(() => parseUserFocusPrefix(block.text), [block.text])
   const displayBody = focus ? focus.body : block.text
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(displayBody)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (!editing) return
@@ -2324,26 +2324,28 @@ function UserMessageBubble({
 
   const startEdit = (): void => {
     if (busy) return
-    setDraft(block.text)
+    setDraft(focus ? focus.body : block.text)
     setEditing(true)
   }
 
   const cancelEdit = (): void => {
-    setDraft(block.text)
+    setDraft(focus ? focus.body : block.text)
     setEditing(false)
   }
 
   const submit = async (): Promise<void> => {
     const trimmed = draft.trim()
     if (!trimmed || busy) return
+    const wireText = focus ? composeUserFocusMessage(focus, trimmed) : trimmed
     setEditing(false)
-    await rewindAndResend(block.id, trimmed)
+    await rewindAndResend(block.id, wireText)
   }
 
   if (editing) {
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
         <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0">
+          {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
           <textarea
             ref={textareaRef}
             value={draft}

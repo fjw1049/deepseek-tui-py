@@ -1,10 +1,11 @@
-import { useEffect, useMemo, type ReactElement } from 'react'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronRight, FileEdit } from 'lucide-react'
+import { ChevronRight, FileCode, FileEdit } from 'lucide-react'
 import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
+import { DiffView } from './DiffView'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
 import {
   countDiffStats,
@@ -78,7 +79,8 @@ function mergeChangeItems(
 }
 
 /**
- * Right-side change list — opens files in the workspace editor with inline diff highlights.
+ * Right-side change list — expand a file to review its unified diff;
+ * open the full file in the workspace editor via an explicit action.
  */
 export function ChangeInspector({
   blocks,
@@ -109,6 +111,7 @@ export function ChangeInspector({
     () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
     [gitChanges]
   )
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const fileChanges = useMemo(() => {
     const sessionItems = sessionChangeItems(blocks)
@@ -134,14 +137,18 @@ export function ChangeInspector({
   useEffect(() => {
     if (fileChanges.length === 0) {
       if (selectedId !== null) selectInspectorItem(null)
+      setExpandedId(null)
       return
     }
     if (selectedId && fileChanges.some((item) => item.id === selectedId)) return
     selectInspectorItem(fileChanges[fileChanges.length - 1]?.id ?? null)
   }, [fileChanges, selectedId, selectInspectorItem])
 
-  const active =
-    fileChanges.find((item) => item.id === selectedId) ?? fileChanges[fileChanges.length - 1]
+  useEffect(() => {
+    if (expandedId && !fileChanges.some((item) => item.id === expandedId)) {
+      setExpandedId(null)
+    }
+  }, [expandedId, fileChanges])
 
   const gitStageLabel = (stage: GitWorkingChangeStage): string => {
     if (stage === 'staged') return t('gitStageStaged')
@@ -149,9 +156,9 @@ export function ChangeInspector({
     return t('gitStageUnstaged')
   }
 
-  const openItem = (item: InspectorChangeItem): void => {
+  const toggleItem = (item: InspectorChangeItem): void => {
     selectInspectorItem(item.id)
-    if (item.filePath) onOpenFileInEditor(item.filePath)
+    setExpandedId((current) => (current === item.id ? null : item.id))
   }
 
   return (
@@ -230,12 +237,13 @@ export function ChangeInspector({
                       item.filePath &&
                       gitCommitSelectedPaths.includes(item.filePath)
                   )
-                  const isActive = active?.id === item.id
+                  const isExpanded = expandedId === item.id
+                  const hasPatch = Boolean(item.detail.trim())
                   return (
                     <li key={item.id}>
                       <div
                         className={`flex w-full items-start gap-2.5 px-4 py-2.5 transition ${
-                          isActive ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
+                          isExpanded ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
                         }`}
                       >
                         {item.committable && item.filePath ? (
@@ -259,32 +267,63 @@ export function ChangeInspector({
                         )}
                         <button
                           type="button"
-                          onClick={() => openItem(item)}
-                          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                          onClick={() => toggleItem(item)}
+                          aria-expanded={isExpanded}
+                          className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
                         >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13px] text-ds-ink">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
                               {displayPath ?? t('toolActionFile')}
                             </div>
-                            {stats ? (
-                              <div className="mt-0.5">
-                                <ChangeDiffStatsLabel stats={stats} size="sm" />
-                              </div>
+                            {item.gitStage && item.gitStage !== 'unstaged' ? (
+                              <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium leading-none text-ds-muted">
+                                {gitStageLabel(item.gitStage)}
+                              </span>
                             ) : null}
+                            {item.status === 'running' ? (
+                              <span className="shrink-0 rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium leading-none text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
+                                {t('inspectorStatusRunning')}
+                              </span>
+                            ) : null}
+                            <ChevronRight
+                              className={`h-4 w-4 shrink-0 text-ds-faint transition-transform ${
+                                isExpanded ? 'rotate-90' : ''
+                              }`}
+                              strokeWidth={1.85}
+                            />
                           </div>
-                          {item.gitStage ? (
-                            <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium text-ds-muted">
-                              {gitStageLabel(item.gitStage)}
-                            </span>
-                          ) : null}
-                          {item.status === 'running' ? (
-                            <span className="rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
-                              {t('inspectorStatusRunning')}
-                            </span>
-                          ) : null}
-                          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.85} />
+                          {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
                         </button>
+                        {item.filePath ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onOpenFileInEditor(item.filePath!)
+                            }}
+                            className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                            title={t('inspectorOpenInEditor')}
+                            aria-label={t('inspectorOpenInEditor')}
+                          >
+                            <FileCode className="h-3.5 w-3.5" strokeWidth={1.85} />
+                          </button>
+                        ) : null}
                       </div>
+                      {isExpanded ? (
+                        <div className="border-t border-ds-border-muted/50 bg-ds-sidebar/40 px-3 py-2.5">
+                          {hasPatch ? (
+                            <DiffView
+                              patch={item.detail}
+                              filePath={item.filePath}
+                              maxHeight={360}
+                            />
+                          ) : (
+                            <div className="px-1 py-3 text-center text-[12px] text-ds-faint">
+                              {t('inspectorDiffEmpty')}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </li>
                   )
                 })}

@@ -57,3 +57,15 @@ export function parseUserFocusPrefix(text: string): UserFocusPrefix | null {
 
   return null
 }
+
+/** Rebuild wire-format text from a parsed focus chip + edited body. */
+export function composeUserFocusMessage(focus: UserFocusPrefix, body: string): string {
+  const trimmed = body.trim()
+  if (focus.kind === 'plugin') {
+    return trimmed ? `@plugin:${focus.name} ${trimmed}` : `@plugin:${focus.name}`
+  }
+  if (focus.kind === 'skill') {
+    return trimmed ? `/${focus.name} ${trimmed}` : `/${focus.name}`
+  }
+  return trimmed ? `@${focus.name} ${trimmed}` : `@${focus.name}`
+}

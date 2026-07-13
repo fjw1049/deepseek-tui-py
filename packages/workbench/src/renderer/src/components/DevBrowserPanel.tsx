@@ -7,11 +7,10 @@ import {
   ExternalLink,
   Globe2,
   Loader2,
-  Maximize2,
   Plus,
+  Radar,
   RefreshCw,
   Send,
-  Sparkles,
   X
 } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
@@ -522,19 +521,20 @@ export function DevBrowserPanel({
               aria-label={t('browserOpenExternal')}
               title={t('browserOpenExternal')}
             >
-              <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
             </button>
             <button
               type="button"
               onClick={() => setAutoFollow((value) => !value)}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-ds-hover ${
+              className={`inline-flex h-8 items-center justify-center gap-1 rounded-full px-2 transition hover:bg-ds-hover ${
                 autoFollow ? 'text-sky-500 dark:text-sky-300' : 'text-ds-faint hover:text-ds-ink'
               }`}
               aria-label={t('browserAutoFollow')}
               aria-pressed={autoFollow}
               title={t('browserAutoFollow')}
             >
-              <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <Radar className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <span className="text-[11px] font-medium">{t('browserAutoFollowShort')}</span>
             </button>
           </div>
         </div>
@@ -587,26 +587,14 @@ export function DevBrowserPanel({
             />
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="submit"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-              aria-label={t('browserOpen')}
-              title={t('browserOpen')}
-            >
-              <Send className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              onClick={openExternal}
-              disabled={!activeUrl}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
-              aria-label={t('browserOpenExternal')}
-              title={t('browserOpenExternal')}
-            >
-              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            aria-label={t('browserOpen')}
+            title={t('browserOpen')}
+          >
+            <Send className="h-3.5 w-3.5" strokeWidth={1.8} />
+          </button>
         </form>
 
         {detectedUrls.length > 0 ? (

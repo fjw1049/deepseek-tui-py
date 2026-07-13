@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isPluginControlOnlyMessage, parseUserFocusPrefix } from './user-focus-prefix'
+import {
+  isPluginControlOnlyMessage,
+  parseUserFocusPrefix,
+  composeUserFocusMessage
+} from './user-focus-prefix'
 
 describe('parseUserFocusPrefix', () => {
   it('parses plugin mount with body', () => {
@@ -30,6 +34,20 @@ describe('parseUserFocusPrefix', () => {
 
   it('returns null for plain text', () => {
     expect(parseUserFocusPrefix('just a question')).toBeNull()
+  })
+})
+
+describe('composeUserFocusMessage', () => {
+  it('rebuilds plugin / skill / connector wire text', () => {
+    expect(
+      composeUserFocusMessage({ kind: 'plugin', name: 'deep-research', body: '' }, '调研 harness')
+    ).toBe('@plugin:deep-research 调研 harness')
+    expect(composeUserFocusMessage({ kind: 'skill', name: 'data-extract', body: '' }, 'go')).toBe(
+      '/data-extract go'
+    )
+    expect(composeUserFocusMessage({ kind: 'connector', name: 'github', body: '' }, 'look')).toBe(
+      '@github look'
+    )
   })
 })
 
