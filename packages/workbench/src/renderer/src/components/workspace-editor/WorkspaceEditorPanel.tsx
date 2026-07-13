@@ -1,11 +1,17 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Pencil, Save, X } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ExternalLink, Loader2, Pencil, Save, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { EditorInfo } from '@shared/editor'
 import type { ChatBlock } from '../../agent/types'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
+import {
+  PREFERRED_EDITOR_CHANGED_EVENT,
+  readPreferredEditorId
+} from '../../lib/editor-preferences'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { isMarkdownPath } from '../../lib/monaco-language-for-path'
+import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
 import {
   buildWorkspaceChangePatchMap,
   lookupPatchForPath
@@ -73,11 +79,39 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
 
   const [treeWidth, setTreeWidth] = useState(readStoredTreeWidth)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const [preferredEditor, setPreferredEditor] = useState<EditorInfo | null>(null)
+  const [externalOpenError, setExternalOpenError] = useState<string | null>(null)
   const endPointerDragRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     return () => {
       endPointerDragRef.current?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (typeof window.dsGui?.listEditors !== 'function') return
+
+    const refreshPreferredEditor = (): void => {
+      void window.dsGui!.listEditors().then((result) => {
+        if (cancelled) return
+        const available = result.editors.filter((editor) => editor.available)
+        const stored = readPreferredEditorId()
+        const next =
+          available.find((editor) => editor.id === stored) ??
+          available.find((editor) => editor.id === result.defaultEditorId) ??
+          available[0] ??
+          null
+        setPreferredEditor(next)
+      })
+    }
+
+    refreshPreferredEditor()
+    window.addEventListener(PREFERRED_EDITOR_CHANGED_EVENT, refreshPreferredEditor)
+    return () => {
+      cancelled = true
+      window.removeEventListener(PREFERRED_EDITOR_CHANGED_EVENT, refreshPreferredEditor)
     }
   }, [])
 
@@ -109,6 +143,19 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const activePatch = activeTab ? lookupPatchForPath(patchMap, activeTab.path) : undefined
   const isEditing = Boolean(activeTab && editingTabId === activeTab.id)
+
+  const openActiveInExternalEditor = useCallback(async (): Promise<void> => {
+    if (!activeTab || activeTab.loading) return
+    setExternalOpenError(null)
+    const result = await openWorkspacePathInEditor(
+      { path: activeTab.path },
+      trimmedRoot || undefined
+    )
+    if (!result.ok) {
+      setExternalOpenError(result.message)
+    }
+  }, [activeTab, trimmedRoot])
+
   const dirtyPaths = useMemo(
     () =>
       new Set(
@@ -124,6 +171,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
 
   useEffect(() => {
     setEditingTabId(null)
+    setExternalOpenError(null)
   }, [activeTabId])
 
   useEffect(() => {
@@ -257,6 +305,22 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                   {formatFilePathForDisplay(activeTab.path, trimmedRoot) ?? activeTab.path}
                 </span>
                 <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void openActiveInExternalEditor()}
+                    disabled={!activeTab || activeTab.loading || !preferredEditor}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+                    title={
+                      preferredEditor
+                        ? t('workspaceEditorOpenExternal', { editor: preferredEditor.label })
+                        : t('editorPickerTitle')
+                    }
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.85} />
+                    {preferredEditor
+                      ? t('workspaceEditorOpenExternal', { editor: preferredEditor.label })
+                      : t('editorPickerTitle')}
+                  </button>
                   {isEditing ? (
                     <>
                       <button
@@ -289,6 +353,11 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                   )}
                 </div>
               </div>
+              {externalOpenError ? (
+                <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
+                  {t('workspaceEditorOpenExternalFailed', { message: externalOpenError })}
+                </div>
+              ) : null}
               {activeTab.error ? (
                 <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
                   {activeTab.error}

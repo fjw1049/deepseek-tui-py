@@ -34,6 +34,8 @@ type EditorCandidate = {
   commonCommandPaths?: string[]
   macAppName?: string
   macAppPaths?: string[]
+  /** Spotlight / Launch Services lookup when the app isn't under Applications. */
+  macBundleIds?: string[]
   winAppPaths?: string[]
   lineStyle?: EditorLineStyle
   alwaysAvailable?: boolean
@@ -53,10 +55,11 @@ type ResolveTargetOptions = {
   allowBasenameFallback?: boolean
 }
 
-const DEFAULT_EDITOR_ID = 'system'
+const DEFAULT_EDITOR_ID = 'vscode'
 const MAX_FILE_PREVIEW_BYTES = 1_500_000
 const MAX_FILE_WRITE_BYTES = 2_000_000
-const EDITOR_ICON_PX = 18
+/** Export at 2x+ so Retina menus stay crisp when shown at ~20px. */
+const EDITOR_ICON_PX = 64
 const SKIP_SEARCH_DIRS = new Set([
   '.git',
   '.hg',
@@ -78,18 +81,62 @@ const EDITOR_CANDIDATES: EditorCandidate[] = [
     commonCommandPaths: [
       '/usr/local/bin/code',
       '/opt/homebrew/bin/code',
-      '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'
+      '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code',
+      join(homedir(), 'Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'),
+      join(homedir(), 'Downloads/Visual Studio Code.app/Contents/Resources/app/bin/code')
     ],
     macAppName: 'Visual Studio Code',
     macAppPaths: [
       '/Applications/Visual Studio Code.app',
-      join(homedir(), 'Applications/Visual Studio Code.app')
+      join(homedir(), 'Applications/Visual Studio Code.app'),
+      join(homedir(), 'Downloads/Visual Studio Code.app')
     ],
+    macBundleIds: ['com.microsoft.VSCode'],
     winAppPaths: [
       join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Microsoft VS Code', 'Code.exe'),
       join(process.env.PROGRAMFILES ?? '', 'Microsoft VS Code', 'Code.exe')
     ],
     lineStyle: 'vscode'
+  },
+  {
+    id: 'vscode-insiders',
+    label: 'VS Code Insiders',
+    kind: 'editor',
+    commands: ['code-insiders'],
+    commonCommandPaths: [
+      '/usr/local/bin/code-insiders',
+      '/opt/homebrew/bin/code-insiders',
+      '/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code'
+    ],
+    macAppName: 'Visual Studio Code - Insiders',
+    macAppPaths: [
+      '/Applications/Visual Studio Code - Insiders.app',
+      join(homedir(), 'Applications/Visual Studio Code - Insiders.app'),
+      join(homedir(), 'Downloads/Visual Studio Code - Insiders.app')
+    ],
+    macBundleIds: ['com.microsoft.VSCodeInsiders'],
+    winAppPaths: [
+      join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Microsoft VS Code Insiders', 'Code - Insiders.exe')
+    ],
+    lineStyle: 'vscode'
+  },
+  {
+    id: 'typora',
+    label: 'Typora',
+    kind: 'editor',
+    commands: ['typora'],
+    commonCommandPaths: ['/usr/local/bin/typora', '/opt/homebrew/bin/typora'],
+    macAppName: 'Typora',
+    macAppPaths: [
+      '/Applications/Typora.app',
+      join(homedir(), 'Applications/Typora.app'),
+      join(homedir(), 'Downloads/Typora.app')
+    ],
+    macBundleIds: ['abnerworks.Typora'],
+    winAppPaths: [
+      join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Typora', 'Typora.exe'),
+      join(process.env.PROGRAMFILES ?? '', 'Typora', 'Typora.exe')
+    ]
   },
   {
     id: 'cursor',
@@ -103,6 +150,7 @@ const EDITOR_CANDIDATES: EditorCandidate[] = [
     ],
     macAppName: 'Cursor',
     macAppPaths: ['/Applications/Cursor.app', join(homedir(), 'Applications/Cursor.app')],
+    macBundleIds: ['com.todesktop.230313mzl4w4u92'],
     winAppPaths: [
       join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Cursor', 'Cursor.exe'),
       join(process.env.PROGRAMFILES ?? '', 'Cursor', 'Cursor.exe')
@@ -207,12 +255,6 @@ const EDITOR_CANDIDATES: EditorCandidate[] = [
     macAppName: 'Ghostty',
     macAppPaths: ['/Applications/Ghostty.app', join(homedir(), 'Applications/Ghostty.app')],
     openDirectory: true
-  },
-  {
-    id: 'system',
-    label: 'System default',
-    kind: 'viewer',
-    alwaysAvailable: true
   }
 ]
 
@@ -305,6 +347,29 @@ async function findFirstExistingPath(paths: string[] = []): Promise<string | und
   return undefined
 }
 
+async function findMacAppByBundleIds(bundleIds: string[] = []): Promise<string | undefined> {
+  if (process.platform !== 'darwin' || bundleIds.length === 0) return undefined
+  for (const bundleId of bundleIds) {
+    const id = bundleId.trim()
+    if (!id) continue
+    try {
+      const { stdout } = await execFileAsync(
+        'mdfind',
+        [`kMDItemCFBundleIdentifier == '${id}'`],
+        { timeout: 3_000, windowsHide: true }
+      )
+      const match = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.endsWith('.app'))
+      if (match && (await pathExists(match))) return match
+    } catch {
+      /* Spotlight unavailable — fall through */
+    }
+  }
+  return undefined
+}
+
 async function resolveEditor(candidate: EditorCandidate): Promise<ResolvedEditor | null> {
   if (!candidateSupportsPlatform(candidate)) return null
 
@@ -312,10 +377,13 @@ async function resolveEditor(candidate: EditorCandidate): Promise<ResolvedEditor
     ...(candidate.commonCommandPaths ?? []),
     ...(process.platform === 'win32' ? candidate.winAppPaths ?? [] : [])
   ])
-  const macAppPath =
+  let macAppPath =
     process.platform === 'darwin'
       ? await findFirstExistingPath(candidate.macAppPaths)
       : undefined
+  if (!macAppPath && process.platform === 'darwin') {
+    macAppPath = await findMacAppByBundleIds(candidate.macBundleIds)
+  }
   const available = Boolean(candidate.alwaysAvailable || command || macAppPath)
   if (!available) return null
 
