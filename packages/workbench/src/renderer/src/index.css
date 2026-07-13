@@ -519,10 +519,10 @@ samp {
    Fainter than composer input so hierarchy is obvious. */
 .ds-workspace-context-chip {
   font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 1.25;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   color: color-mix(in srgb, var(--ds-text-faint) 92%, var(--ds-text-muted));
   -webkit-font-smoothing: antialiased;
   transition:

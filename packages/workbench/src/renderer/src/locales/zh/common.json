@@ -459,7 +459,7 @@
   "contextBarSearchProjects": "搜索项目",
   "contextBarNewProject": "新建项目",
   "contextBarNoProject": "工作空间",
-  "contextBarWorkInProject": "在项目中工作",
+  "contextBarWorkInProject": "项目导入",
   "contextBarNoMatchingProjects": "没有匹配的项目。",
   "sessionUsageTokens": "{{tokens}} tokens",
   "sessionUsageCost": "{{cost}}",

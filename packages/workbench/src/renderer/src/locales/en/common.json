@@ -459,7 +459,7 @@
   "contextBarSearchProjects": "Search projects",
   "contextBarNewProject": "New project",
   "contextBarNoProject": "Workspace",
-  "contextBarWorkInProject": "Work in a project",
+  "contextBarWorkInProject": "Import project",
   "contextBarNoMatchingProjects": "No matching projects.",
   "sessionUsageTokens": "{{tokens}} tokens",
   "sessionUsageCost": "{{cost}}",

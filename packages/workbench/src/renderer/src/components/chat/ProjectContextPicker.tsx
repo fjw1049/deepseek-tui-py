@@ -9,7 +9,7 @@ import {
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Folder, LayoutGrid, Loader2, Plus, Search } from 'lucide-react'
+import { Check, ChevronDown, Folder, Import, LayoutGrid, Loader2, Plus, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
@@ -307,7 +307,11 @@ export function ProjectContextPicker({
         title={isTemporary ? t('contextBarWorkInProject') : activePath}
         aria-expanded={open}
       >
-        <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+        {isTemporary ? (
+          <Import className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+        ) : (
+          <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+        )}
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
         <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
       </button>
