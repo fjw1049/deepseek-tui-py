@@ -491,6 +491,10 @@ class HookExecutor:
         self.config = config
         self.default_working_dir = default_working_dir
         self.session_id = session_id or f"sess_{uuid.uuid4().hex[:8]}"
+        # When set (scenario mode via ``@plugin:name``), only that plugin's
+        # hooks run alongside user/config hooks (names without a ``plugin:``
+        # prefix). Other plugins' hooks are skipped until the scenario exits.
+        self.scenario_plugin: str | None = None
 
     @classmethod
     def from_config(cls, config: HooksConfig, workspace: Path) -> HookExecutor:
@@ -507,15 +511,37 @@ class HookExecutor:
     def has_hooks_for_event(self, event: str) -> bool:
         if not self.config.enabled:
             return False
-        return any(h.event == event for h in self.config.hooks)
+        return any(
+            h.event == event and self._hook_allowed_in_scenario(h)
+            for h in self.config.hooks
+        )
 
     def config_snapshot(self) -> HooksConfig:
         return self.config
 
+    @staticmethod
+    def _is_foreign_plugin_hook(hook: LifecycleHookEntry, active: str) -> bool:
+        """True when ``hook`` belongs to a different plugin than ``active``."""
+        name = hook.name or ""
+        if ":" not in name:
+            return False  # user / config hooks have no plugin prefix
+        prefix = name.split(":", 1)[0].lower()
+        return prefix != active.lower()
+
+    def _hook_allowed_in_scenario(self, hook: LifecycleHookEntry) -> bool:
+        active = self.scenario_plugin
+        if not active:
+            return True
+        return not self._is_foreign_plugin_hook(hook, active)
+
     async def execute(self, event: str, context: HookContext | None = None) -> list[HookResult]:
         if not self.config.enabled:
             return []
-        hooks = [h for h in self.config.hooks if h.event == event]
+        hooks = [
+            h
+            for h in self.config.hooks
+            if h.event == event and self._hook_allowed_in_scenario(h)
+        ]
         if not hooks:
             return []
         ctx = context or HookContext(session_id=self.session_id)

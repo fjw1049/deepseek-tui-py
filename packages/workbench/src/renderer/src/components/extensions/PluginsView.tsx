@@ -367,6 +367,9 @@ export function PluginsView(): ReactElement {
           </ExtensionsToolbar>
         </div>
         <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('pluginSysSubtitle')}</p>
+        <p className="mt-3 max-w-2xl rounded-xl border border-[rgba(168,85,247,0.35)] bg-[rgba(168,85,247,0.08)] px-3.5 py-2.5 text-[13px] leading-5 text-[#a855f7]">
+          {t('pluginSysScenarioHint')}
+        </p>
 
         <label className="relative mt-6 block">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />

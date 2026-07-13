@@ -22,7 +22,10 @@ export type PluginRow = {
   enabled: boolean
   trusted: boolean
   permissions: string[]
-  components: { skills: boolean; hooks: boolean; mcp_servers: boolean }
+  components: {
+    skills: boolean; hooks: boolean; mcp_servers: boolean
+    commands: boolean; agents: boolean; rules: boolean
+  }
 }
 
 export type RegistryEntry = {
@@ -484,7 +487,7 @@ function PluginListRow({
 }): ReactElement {
   const { t } = useTranslation('common')
   const hasExecutable = plugin.components.hooks || plugin.components.mcp_servers
-  const managedElsewhere = plugin.scope === 'claude'
+  const managedElsewhere = plugin.scope === 'claude' || plugin.scope === 'override'
   const stopRemove = (event: ReactMouseEvent): void => {
     event.stopPropagation()
     onRemove()
@@ -527,7 +530,10 @@ function PluginListRow({
             {[
               plugin.components.skills ? 'Skills' : null,
               plugin.components.hooks ? 'Hooks' : null,
-              plugin.components.mcp_servers ? 'MCP' : null
+              plugin.components.mcp_servers ? 'MCP' : null,
+              plugin.components.commands ? 'Commands' : null,
+              plugin.components.agents ? 'Agents' : null,
+              plugin.components.rules ? 'Rules' : null
             ]
               .filter(Boolean)
               .join(' · ')}
@@ -591,7 +597,9 @@ function ScopeBadge({ scope }: { scope: string }): ReactElement {
       ? t('pluginSysScopeProject')
       : scope === 'claude'
         ? t('pluginSysScopeClaude')
-        : t('pluginSysScopeUser')
+        : scope === 'override'
+          ? t('pluginSysScopeOverride')
+          : t('pluginSysScopeUser')
   return (
     <span className="inline-flex items-center rounded-full bg-ds-subtle px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
       {label}

@@ -1,0 +1,3 @@
+# Leftover emergency node_modules cleanup (iCloud Desktop).
+packages/workbench/.node_modules_trash_*/
+**/.node_modules_trash_*/

@@ -224,8 +224,8 @@ export function FloatingComposer({
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
   const composerReasoningEffort = useChatStore((s) => s.composerReasoningEffort)
   const setComposerReasoningEffort = useChatStore((s) => s.setComposerReasoningEffort)
-  // Session-level mounted plugin (drives the footer badge, like plan mode) +
-  // send action used by the badge's unmount (× sends `@plugin:off` as a hidden turn).
+  // Session-level scenario plugin (drives the footer badge) +
+  // send action used by the badge exit (× sends `@plugin:off` as a hidden turn).
   const activePlugin = useChatStore((s) => s.activePlugin)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -263,11 +263,11 @@ export function FloatingComposer({
   // Focus-mode MCP connector, same lifecycle as focusSkill but prepended as
   // `@name ` on send so the runtime's leading-token connector detection fires.
   const [focusConnector, setFocusConnector] = useState<string | null>(null)
-  // Focus-mode plugin mount: held as an inline chip and prepended as
+  // Scenario entry: held as an inline chip and prepended as
   // `@plugin:<name> ` on send. After send the chip is cleared and the
-  // persistent mount state arrives from the backend via `activePlugin`.
+  // persistent scenario state arrives from the backend via `activePlugin`.
   const [focusPlugin, setFocusPlugin] = useState<string | null>(null)
-  // Plugins list for the `+` > Plugins picker (mirrors skills/connectors).
+  // Plugins list for the `+` > Enter scenario picker (mirrors skills/connectors).
   const [composerPlugins, setComposerPlugins] = useState<
     Array<{ name: string; description?: string; trusted: boolean; enabled: boolean }>
   >([])
@@ -1842,7 +1842,11 @@ export function FloatingComposer({
                                       <span className="ml-auto shrink-0 rounded-full bg-[rgba(168,85,247,0.16)] px-1.5 py-0.5 text-[10px] font-semibold text-[#a855f7]">
                                         {t('composerPluginActive')}
                                       </span>
-                                    ) : null}
+                                    ) : (
+                                      <span className="ml-auto shrink-0 text-[10px] font-medium text-ds-faint">
+                                        {t('composerPluginEnterAction')}
+                                      </span>
+                                    )}
                                   </div>
                                   {plugin.description ? (
                                     <div className="mt-0.5 line-clamp-2 pl-6 text-[11px] leading-4 text-ds-faint">
@@ -1878,7 +1882,7 @@ export function FloatingComposer({
 
             {activePlugin || focusPlugin ? (
               <div
-                className="ds-no-drag group inline-flex h-8 max-w-[min(100%,200px)] shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-[#a855f7]"
+                className="ds-no-drag group inline-flex h-8 max-w-[min(100%,240px)] shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-[#a855f7]"
                 title={
                   activePlugin
                     ? t('composerPluginMounted', { name: activePlugin.name, path: activePlugin.path })
@@ -1886,7 +1890,11 @@ export function FloatingComposer({
                 }
               >
                 <Puzzle className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
-                <span className="truncate">{activePlugin ? activePlugin.name : focusPlugin}</span>
+                <span className="truncate">
+                  {activePlugin
+                    ? t('composerPluginBadge', { name: activePlugin.name })
+                    : t('composerPluginPendingBadge', { name: focusPlugin })}
+                </span>
                 <span
                   role="button"
                   tabIndex={0}

@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 import json
 import time
 from collections.abc import Callable
@@ -165,9 +165,33 @@ def _plugin_commands(app: DeepSeekTUI | None) -> dict[str, object]:
     return commands if isinstance(commands, dict) else {}
 
 
+def _plugin_index(app: DeepSeekTUI | None) -> dict[str, dict[str, Any]]:
+    """The engine's lockfile contribution index, or empty when unavailable."""
+    engine = getattr(app, "_engine", None) if app is not None else None
+    index = getattr(engine, "plugin_index", None)
+    return index if isinstance(index, dict) else {}
+
+
 def _is_plugin_command(cmd_name: str, app: DeepSeekTUI | None) -> bool:
-    """True when ``cmd_name`` (``/plugin:command``) is a known plugin command."""
-    return cmd_name.lstrip("/").lower() in _plugin_commands(app)
+    """True when ``cmd_name`` (``/plugin:command``) is a known plugin command.
+
+    Checks both activated commands (``plugin_commands``) and indexed-but-
+    unactivated commands (``plugin_index``) so the user can invoke a
+    plugin command before it has been heavy-assembled.
+    """
+    token = cmd_name.lstrip("/").lower()
+    if token in _plugin_commands(app):
+        return True
+    if ":" not in token:
+        return False
+    plugin_part, cmd_part = token.split(":", 1)
+    for pname, idx in _plugin_index(app).items():
+        if pname.lower() != plugin_part or not isinstance(idx, dict):
+            continue
+        for c in idx.get("commands", []):
+            if isinstance(c, dict) and c.get("name", "").lower() == cmd_part:
+                return True
+    return False
 
 
 def get_completions(
@@ -187,6 +211,19 @@ def get_completions(
         if name.startswith(prefix):
             desc = getattr(cmd, "description", "") or "plugin command"
             results.append((name, desc))
+    # Indexed-but-unactivated plugin commands.
+    for pname, idx in _plugin_index(app).items():
+        if not isinstance(idx, dict):
+            continue
+        for c in idx.get("commands", []):
+            if not isinstance(c, dict):
+                continue
+            cmd_name = c.get("name", "")
+            if not cmd_name:
+                continue
+            qual = f"/{pname}:{cmd_name}"
+            if qual.startswith(prefix):
+                results.append((qual, c.get("description", "") or "plugin command"))
     return results
 
 
@@ -1675,7 +1712,8 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
         /plugins marketplace [add <spec> | list | plugins <name> |
                               update <name> | remove <name>]
 
-    Changes take effect on the next session (engine restart).
+    Skills/commands/agents/rules apply after rediscover; hooks/MCP from
+    trusted plugins take effect on the next session (engine restart).
     """
     from deepseek_tui.integrations.plugins import (
         discover_plugins,
@@ -1730,10 +1768,13 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
             if parts:
                 lines.append(f"      {', '.join(parts)}")
             for a in c.agents:
-                lines.append(f"      · agent: {a.name}")
+                lines.append(f"      · agent: {a.plugin}:{a.name}")
             for r in c.rules:
                 lines.append(f"      · rule: {r.plugin}/{r.name}")
-        lines.append("\nTip: skills load on demand; rules are always active.")
+        lines.append(
+            "\nTip: skills/commands/agents load on demand; "
+            "hooks/MCP need trust + a new session."
+        )
         return CommandResult(output="\n".join(lines))
 
     parts = raw.split(None, 1)

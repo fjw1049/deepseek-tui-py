@@ -140,11 +140,13 @@ def render_plugin_context(
     return "\n".join(lines)
 
 
-# Above this many commands (or agents), the per-item listing with
-# descriptions collapses to compact per-plugin name groups. Keeps the
-# session-stable prompt block bounded when many plugins are installed
-# (a full agents-main install ships 106 commands + 199 agents).
-PLUGIN_COMPONENT_LIST_LIMIT = 20
+# When total commands+agents stay at or below this, keep a per-item listing
+# (helpful for small installs). Above it, switch to the thin per-plugin
+# catalog so large marketplaces don't balloon the session-stable prompt.
+PLUGIN_DETAILED_LIST_LIMIT = 10
+
+# Legacy alias used by older call sites / tests.
+PLUGIN_COMPONENT_LIST_LIMIT = PLUGIN_DETAILED_LIST_LIMIT
 
 
 def _group_by_plugin(items: list[Any]) -> dict[str, list[Any]]:
@@ -154,22 +156,73 @@ def _group_by_plugin(items: list[Any]) -> dict[str, list[Any]]:
     return grouped
 
 
+def render_installed_plugins_catalog(entries: list[Any] | None) -> str:
+    """Render the thin ``## Installed Plugins`` contribution catalog.
+
+    One line per plugin (name, description, component counts) plus invocation
+    hints. Prefer this over per-command/agent listings when many plugins are
+    installed — bodies stay on disk until ``/<plugin>:<cmd>``, ``load_skill``,
+    ``agent_spawn``, or ``@plugin:`` scenario mount.
+    """
+    entries = entries or []
+    if not entries:
+        return ""
+    lines = [
+        "## Installed Plugins (contributing)",
+        "",
+        "Enabled plugins contribute skills, slash commands, and agent "
+        "personas. Only the catalog below is loaded into this prompt; full "
+        "bodies activate on use.",
+        "",
+    ]
+    for e in entries:
+        name = getattr(e, "name", "") or ""
+        if not name:
+            continue
+        desc = (getattr(e, "description", "") or "").strip()
+        desc = " ".join(desc.split())
+        if len(desc) > 120:
+            desc = desc[:119] + "…"
+        parts: list[str] = []
+        for key, label in (
+            ("skills", "skills"),
+            ("commands", "commands"),
+            ("agents", "agents"),
+            ("rules", "rules"),
+            ("mcp", "mcp"),
+            ("hooks", "hooks"),
+        ):
+            n = int(getattr(e, key, 0) or 0)
+            if n:
+                parts.append(f"{label}:{n}")
+        counts = f" [{', '.join(parts)}]" if parts else ""
+        if desc:
+            lines.append(f"- {name}: {desc}{counts}")
+        else:
+            lines.append(f"- {name}{counts}")
+    lines.append("")
+    lines.append(
+        "Invoke slash commands with `/<plugin>:<command> [args]`; spawn a "
+        'plugin persona with `agent_spawn` using `type="<plugin>:<persona>"` '
+        "(bare persona name works when unique); "
+        "load skill bodies with `load_skill`. Enter a scenario (full rules) "
+        "with `@plugin:<name>`."
+    )
+    return "\n".join(lines).rstrip()
+
+
 def render_plugin_components_context(
     commands: list[Any] | None,
     agents: list[Any] | None,
     *,
-    list_limit: int = PLUGIN_COMPONENT_LIST_LIMIT,
+    list_limit: int = PLUGIN_DETAILED_LIST_LIMIT,
 ) -> str:
-    """Render the ``## Plugin Commands & Agents`` block.
+    """Render a detailed ``## Plugin Commands & Agents`` block (small installs).
 
-    Lists plugin-contributed slash commands (invoked as ``/<plugin>:<cmd>``)
-    and agent personas (spawnable via ``agent_spawn`` with ``type=<name>``) so
-    the model knows they exist and how to reach them. Session-stable, so it
-    sits in the KV-prefix-cache-friendly prefix.
-
-    Context governance: past ``list_limit`` entries the per-item listing
-    (with descriptions) collapses to per-plugin name groups so dozens of
-    installed plugins don't balloon the system prompt.
+    Prefer :func:`render_installed_plugins_catalog` when the total number of
+    commands+agents exceeds ``list_limit`` — callers (Engine) choose based on
+    that threshold. This function keeps the per-item listing for small
+    surfaces where the extra detail helps the model pick a command.
     """
     commands = commands or []
     agents = agents or []
@@ -182,43 +235,23 @@ def render_plugin_components_context(
             "`/<plugin>:<command> [args]` expands the command's prompt "
             "template. Available:"
         )
-        if len(commands) <= list_limit:
-            for c in commands:
-                hint = f" (args: {c.argument_hint})" if c.argument_hint else ""
-                desc = f" — {c.description}" if c.description else ""
-                lines.append(f"- /{c.qualified}{hint}{desc}")
-        else:
-            lines[-1] = (
-                f"Slash commands from installed plugins ({len(commands)} "
-                "total) — a user message of `/<plugin>:<command> [args]` "
-                "expands the command's prompt template. Grouped by plugin "
-                "(descriptions omitted for brevity):"
-            )
-            for plugin, items in sorted(_group_by_plugin(commands).items()):
-                names = ", ".join(c.name for c in items)
-                lines.append(f"- {plugin}: {names}")
+        for c in commands[: max(list_limit, 1) * 2]:
+            hint = f" (args: {c.argument_hint})" if c.argument_hint else ""
+            desc = f" — {c.description}" if c.description else ""
+            lines.append(f"- /{c.qualified}{hint}{desc}")
         lines.append("")
     if agents:
         lines.append(
             "Agent personas from installed plugins — spawn one with the "
-            "`agent_spawn` tool using `type=\"<name>\"` (its persona system "
-            "prompt is applied automatically). Available:"
+            '`agent_spawn` tool using `type="<plugin>:<name>"` (bare name '
+            "works when unique; persona system prompt is applied "
+            "automatically). Available:"
         )
-        if len(agents) <= list_limit:
-            for a in agents:
-                desc = f" — {a.description}" if a.description else ""
-                lines.append(f"- {a.name}{desc}")
-        else:
-            lines[-1] = (
-                f"Agent personas from installed plugins ({len(agents)} total) "
-                "— spawn one with the `agent_spawn` tool using "
-                "`type=\"<name>\"` (its persona system prompt is applied "
-                "automatically). Grouped by plugin (descriptions omitted "
-                "for brevity):"
-            )
-            for plugin, items in sorted(_group_by_plugin(agents).items()):
-                names = ", ".join(a.name for a in items)
-                lines.append(f"- {plugin}: {names}")
+        for a in agents[: max(list_limit, 1) * 2]:
+            desc = f" — {a.description}" if a.description else ""
+            plugin = getattr(a, "plugin", None) or ""
+            label = f"{plugin}:{a.name}" if plugin else a.name
+            lines.append(f"- {label}{desc}")
     return "\n".join(lines).rstrip()
 
 
@@ -260,6 +293,8 @@ def render_plugin_rules_context(
     if not rules:
         return ""
     if active_plugin is not None:
+        # Mounted: inject this plugin's rule bodies (including
+        # always_apply=false scenario-only rules — mounting is the opt-in).
         own = [r for r in rules if r.plugin == active_plugin]
         if not own:
             return ""
@@ -270,11 +305,21 @@ def render_plugin_rules_context(
             "as authoritative instructions."
         )
         for r in own:
+            body = getattr(r, "body", "") or ""
+            if not body.strip():
+                continue
             lines.append("")
             lines.append(f"### Rule: {r.plugin}/{r.name}")
             lines.append("")
-            lines.append(substitute_builtin_template_vars(r.body))
+            lines.append(substitute_builtin_template_vars(body))
         return "\n".join(lines).rstrip()
+    # Unmounted: catalog only always_apply rules. always_apply=false rules
+    # stay silent until `@plugin:<name>` mounts the scenario.
+    catalog = [
+        r for r in rules if getattr(r, "always_apply", True)
+    ]
+    if not catalog:
+        return ""
     lines = ["## Plugin Rules (inactive)", ""]
     lines.append(
         "Installed plugins ship scenario rules that activate when the plugin "
@@ -282,7 +327,7 @@ def render_plugin_rules_context(
         "matches one of these scenarios, suggest mounting it by starting a "
         "message with `@plugin:<name>`:"
     )
-    for plugin, items in sorted(_group_by_plugin(rules).items()):
+    for plugin, items in sorted(_group_by_plugin(catalog).items()):
         descs = "; ".join(
             (r.description or r.name).strip().splitlines()[0][:120]
             for r in items

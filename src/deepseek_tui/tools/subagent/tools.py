@@ -120,11 +120,30 @@ def _resolve_plugin_agent(raw_type: str, context: ToolContext) -> Any | None:
 
     Plugin agents are registered on the parent turn's ToolContext under
     ``metadata['plugin_agents']`` as a ``{name_lower: PluginAgent}`` map.
+    When deferred assembly is active the map may be empty until the owning
+    plugin is activated -- if the direct lookup misses, we check the
+    ``plugin_agent_index`` (agent name -> plugin name, built from the
+    lockfile index) and call ``activate_plugin`` to load that plugin's
+    agents on demand, then retry.
     """
+    key = raw_type.strip().lower()
     registry = context.metadata.get("plugin_agents")
-    if not isinstance(registry, dict):
-        return None
-    return registry.get(raw_type.strip().lower())
+    if isinstance(registry, dict):
+        match = registry.get(key)
+        if match is not None:
+            return match
+    # Deferred: activate the owning plugin, then retry.
+    agent_index = context.metadata.get("plugin_agent_index")
+    if isinstance(agent_index, dict):
+        plugin_name = agent_index.get(key)
+        if plugin_name is not None:
+            activate = context.metadata.get("activate_plugin")
+            if callable(activate):
+                activate(plugin_name)
+                registry = context.metadata.get("plugin_agents")
+                if isinstance(registry, dict):
+                    return registry.get(key)
+    return None
 
 
 class AgentSpawnTool(ToolSpec):
@@ -157,13 +176,16 @@ class AgentSpawnTool(ToolSpec):
                 },
                 "type": {
                     "type": "string",
-                    "description": "Agent type: general, explore, plan, review, implementer, verifier, custom",
-                    "enum": ["general", "explore", "plan", "review", "implementer", "verifier", "custom"]
+                    "description": (
+                        "Agent type. Built-in: general, explore, plan, review, "
+                        "implementer, verifier, custom. Plugin-contributed "
+                        "personas: prefer `plugin:persona` (or bare persona "
+                        "name when unique) as listed under Plugin Agents."
+                    ),
                 },
                 "agent_type": {
                     "type": "string",
-                    "description": "Alias for type",
-                    "enum": ["general", "explore", "plan", "review", "implementer", "verifier", "custom"]
+                    "description": "Alias for type"
                 },
                 "agent_name": {
                     "type": "string",
@@ -224,10 +246,29 @@ class AgentSpawnTool(ToolSpec):
                     "implementer", "verifier", "custom"
                 ])
                 registry = context.metadata.get("plugin_agents")
-                plugin_names = (
-                    sorted(a.name for a in registry.values())
-                    if isinstance(registry, dict) else []
-                )
+                if isinstance(registry, dict) and registry:
+                    plugin_names = sorted(
+                        {
+                            (
+                                f"{getattr(a, 'plugin', '')}:{a.name}"
+                                if getattr(a, "plugin", None)
+                                else a.name
+                            )
+                            for a in registry.values()
+                        }
+                    )
+                else:
+                    # Deferred: fall back to the lockfile agent index.
+                    agent_index = context.metadata.get("plugin_agent_index")
+                    plugin_names = (
+                        sorted(
+                            k
+                            for k in agent_index
+                            if isinstance(k, str) and ":" in k
+                        )
+                        if isinstance(agent_index, dict)
+                        else []
+                    )
                 extra = (
                     f" Plugin agents: {', '.join(plugin_names)}."
                     if plugin_names else ""
@@ -246,6 +287,24 @@ class AgentSpawnTool(ToolSpec):
         allowed_tools: list[str] | None = None
         if isinstance(allowed_raw, list):
             allowed_tools = [s for s in allowed_raw if isinstance(s, str)]
+        # Plugin persona frontmatter ``tools`` is advisory until applied here.
+        # Map Claude/CodeBuddy names (Read/Grep/…) onto DeepSeek tool ids.
+        if (
+            not allowed_tools
+            and plugin_persona is not None
+            and getattr(plugin_persona, "tools", None)
+        ):
+            from deepseek_tui.integrations.plugin_compat import map_tool_matcher
+
+            mapped: list[str] = []
+            seen: set[str] = set()
+            for tok in plugin_persona.tools:
+                for name in map_tool_matcher(str(tok)):
+                    if name not in seen:
+                        seen.add(name)
+                        mapped.append(name)
+            if mapped:
+                allowed_tools = mapped
         if agent_type is SubAgentType.CUSTOM and not allowed_tools:
             raise ToolError("Custom sub-agents require a non-empty allowed_tools list")
         fork_context = _pick_bool(input_data, "fork_context")
@@ -254,12 +313,21 @@ class AgentSpawnTool(ToolSpec):
             raw = context.metadata.get("parent_session_messages")
             if isinstance(raw, list):
                 fork_messages = [m for m in raw if isinstance(m, dict)]
+        # Persona ``model`` is only applied when it looks like a DeepSeek id;
+        # foreign labels (opus/sonnet/…) stay advisory and are ignored.
+        persona_model = ""
+        if plugin_persona is not None:
+            persona_model = (getattr(plugin_persona, "model", None) or "").strip()
+        user_model = _pick_str(input_data, "model")
+        chosen_model = user_model
+        if not chosen_model and persona_model.lower().startswith("deepseek"):
+            chosen_model = persona_model
         request = SpawnRequest(
             prompt=prompt,
             agent_type=agent_type,
             assignment=SubAgentAssignment(objective=prompt, role=role),
             allowed_tools=allowed_tools,
-            model=_pick_str(input_data, "model"),
+            model=chosen_model,
             nickname=_pick_str(input_data, "nickname")
             or (plugin_persona.name if plugin_persona else None),
             parent_depth=int(context.metadata.get("subagent_depth", 0) or 0),

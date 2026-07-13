@@ -124,6 +124,7 @@ __all__ = [
     "project_plugins_dir",
     "read_lockfile",
     "read_marketplaces",
+    "reindex_contribution_indexes",
     "remove_marketplace",
     "resolve_marketplace_plugin",
     "scaffold_plugin",
@@ -522,6 +523,10 @@ class LoadedPlugin:
     scope: str  # "project" | "user" | "override"
     enabled: bool
     trusted: bool
+    contribution_index: dict[str, Any] | None = None
+    """Pre-scanned name+description catalog from the lockfile (install-time).
+    Lets Engine.create render the prompt catalog without disk-scanning .md
+    files; ``None`` when the lockfile predates the index or the scan failed."""
 
     @property
     def name(self) -> str:
@@ -540,6 +545,42 @@ def _scope_for(plugins_dir: Path, workspace: Path | None, override: Path | None)
     return "user"
 
 
+def _ensure_contribution_index(
+    manifest: PluginManifest,
+    path: Path,
+    entry: dict[str, Any],
+    lock_dir: Path,
+) -> dict[str, Any] | None:
+    """Return a contribution index, backfilling the lockfile when missing.
+
+    Older installs predate ``contribution_index``. Building + writing once
+    lets subsequent Engine.create sessions use deferred assembly instead of
+    eager heavy scans. Failures degrade to ``None`` (eager fallback).
+    """
+    raw_index = entry.get("contribution_index")
+    if isinstance(raw_index, dict):
+        return raw_index
+    try:
+        index = build_contribution_index(path, manifest)
+    except Exception:  # noqa: BLE001 — index failure must not block discover
+        _LOG.warning(
+            "contribution index backfill failed for %s", manifest.name, exc_info=True
+        )
+        return None
+    try:
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        _update_lockfile_entry(
+            lock_dir, manifest.name, contribution_index=index
+        )
+    except Exception:  # noqa: BLE001 — still return in-memory index
+        _LOG.warning(
+            "contribution index lockfile write failed for %s",
+            manifest.name,
+            exc_info=True,
+        )
+    return index
+
+
 def discover_plugins(
     plugins_dir: Path | None = None,
     workspace: Path | None = None,
@@ -552,6 +593,10 @@ def discover_plugins(
     First scope wins on name conflicts (project overrides user, both
     override Claude Code installs). Disabled plugins are skipped unless
     ``include_disabled`` is set.
+
+    When a lockfile entry lacks ``contribution_index`` (pre-index installs),
+    the index is built and written back so the next session can defer heavy
+    assembly.
     """
     found: list[LoadedPlugin] = []
     seen_names: set[str] = set()
@@ -561,6 +606,7 @@ def discover_plugins(
         path: Path,
         scope: str,
         entry: dict[str, Any],
+        lock_dir: Path,
     ) -> None:
         key = manifest.name.lower()
         if key in seen_names:
@@ -570,6 +616,7 @@ def discover_plugins(
         trusted = bool(entry.get("trusted", False))
         if not enabled and not include_disabled:
             return
+        index = _ensure_contribution_index(manifest, path, entry, lock_dir)
         found.append(
             LoadedPlugin(
                 manifest=manifest,
@@ -577,6 +624,7 @@ def discover_plugins(
                 scope=scope,
                 enabled=enabled,
                 trusted=trusted,
+                contribution_index=index,
             )
         )
 
@@ -589,15 +637,28 @@ def discover_plugins(
             manifest = load_plugin_manifest(child)
             if manifest is None:
                 continue
-            _add(manifest, child, scope, lock.get(manifest.name, {}))
+            _add(
+                manifest,
+                child,
+                scope,
+                lock.get(manifest.name, {}),
+                scope_dir,
+            )
 
     # Claude Code interop: plugins installed via Claude Code are surfaced
     # read-only. Their enable/trust state lives in *our* user lockfile so
     # we never write into ~/.claude.
     if include_claude and plugins_dir is None:
-        user_lock = read_lockfile(user_plugins_dir())
+        user_dir = user_plugins_dir()
+        user_lock = read_lockfile(user_dir)
         for manifest, path in discover_claude_plugins():
-            _add(manifest, path, "claude", user_lock.get(manifest.name, {}))
+            _add(
+                manifest,
+                path,
+                "claude",
+                user_lock.get(manifest.name, {}),
+                user_dir,
+            )
     return found
 
 
@@ -895,18 +956,20 @@ def _collect_rules(plugin: LoadedPlugin, out: PluginContributions) -> None:
             seen.add(key)
 
 
-def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
-    """Fan a plugin list out into per-subsystem contribution lists.
+def collect_light_contributions(
+    plugins: list[LoadedPlugin],
+) -> PluginContributions:
+    """Collect hooks + MCP servers only (manifest-level, no .md disk scan).
 
-    Skills / commands / agents are declarative text and always load.
-    Hooks / MCP servers require ``trusted``.
+    Lightweight assembly for Engine.create startup: reads only the
+    already-parsed manifest. Hooks/MCP require ``trusted``; the declarative
+    text components (skills/commands/agents/rules) are NOT collected here.
+    Use :func:`collect_skill_contributions` for skills (eager at startup)
+    and :func:`collect_heavy_contributions` for commands/agents/rules
+    (deferred until activation).
     """
     out = PluginContributions()
     for plugin in plugins:
-        _collect_skills(plugin, out)
-        _collect_commands(plugin, out)
-        _collect_agents(plugin, out)
-        _collect_rules(plugin, out)
         if plugin.manifest.unsupported:
             out.warnings.append(
                 f"plugin {plugin.name}: unsupported components ignored: "
@@ -922,6 +985,61 @@ def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
         if plugin.trusted:
             _collect_hooks(plugin, out)
             _collect_mcp(plugin, out)
+    return out
+
+
+def collect_skill_contributions(
+    plugins: list[LoadedPlugin],
+) -> PluginContributions:
+    """Collect skills only (reads SKILL.md frontmatter from disk).
+
+    Skills are eager-loaded at Engine.create because the ``SkillRegistry``
+    needs them for ``load_skill`` tool resolution and the ``## Skills``
+    prompt section. The skill *body* is stored but small relative to
+    command/agent/rule bodies; the registry cost is bounded by plugin count.
+    """
+    out = PluginContributions()
+    for plugin in plugins:
+        _collect_skills(plugin, out)
+    return out
+
+
+def collect_heavy_contributions(
+    plugins: list[LoadedPlugin],
+) -> PluginContributions:
+    """Collect commands + agents + rules (reads .md files from disk).
+
+    The deferrable disk-scanning half of assembly. Called on-demand when a
+    plugin is activated (via :meth:`Engine.ensure_plugin_activated`) so a
+    workspace with many plugins does not pay the scan cost on every session.
+    Declarative text always loads (no trust gate) -- mirrors the original
+    ``collect_contributions`` semantics for these components.
+    """
+    out = PluginContributions()
+    for plugin in plugins:
+        _collect_commands(plugin, out)
+        _collect_agents(plugin, out)
+        _collect_rules(plugin, out)
+    return out
+
+
+def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
+    """Full assembly: light (hooks + MCP) + skills + heavy (commands/agents/rules).
+
+    Backwards-compatible entry point. Callers that want the split (e.g.
+    Engine.create for deferred assembly) should call
+    :func:`collect_light_contributions` + :func:`collect_skill_contributions`
+    at startup and :func:`collect_heavy_contributions` per-plugin on activation.
+    """
+    out = collect_light_contributions(plugins)
+    skills = collect_skill_contributions(plugins)
+    heavy = collect_heavy_contributions(plugins)
+    out.skills = skills.skills
+    out.commands = heavy.commands
+    out.agents = heavy.agents
+    out.rules = heavy.rules
+    out.warnings.extend(skills.warnings)
+    out.warnings.extend(heavy.warnings)
     return out
 
 
@@ -1252,7 +1370,7 @@ def _install_from_local(
         )
     shutil.copytree(src, dest)
     _finalize_installed_plugin(dest)
-    _record_install(target_dir, manifest, source_spec, trust)
+    _record_install(target_dir, manifest, source_spec, trust, plugin_path=dest)
     return (
         InstallOutcome.INSTALLED,
         _install_message(manifest, dest, trust),
@@ -1331,14 +1449,136 @@ def _install_from_github(
 
     _finalize_installed_plugin(dest)
     _record_install(
-        target_dir, manifest, f"github:{source.owner}/{source.repo}", trust
+        target_dir,
+        manifest,
+        f"github:{source.owner}/{source.repo}",
+        trust,
+        plugin_path=dest,
     )
     return (InstallOutcome.INSTALLED, _install_message(manifest, dest, trust))
 
 
+def build_contribution_index(
+    plugin_path: Path, manifest: PluginManifest
+) -> dict[str, Any]:
+    """Pre-scan a plugin's declarative components into a serializable index.
+
+    Captures name + description (no bodies) for skills / commands / agents /
+    rules plus MCP server names and hook event names, so Engine.create can
+    render the prompt catalog from the lockfile cache without reading plugin
+    .md files at startup. Called at install / update time; failures degrade
+    gracefully (caller logs and skips the index).
+    """
+    fake = LoadedPlugin(
+        manifest=manifest,
+        path=plugin_path,
+        scope="user",
+        enabled=True,
+        trusted=True,
+    )
+    contribs = collect_contributions([fake])
+    return {
+        "skills": [
+            {"name": s.name, "description": s.description}
+            for s in contribs.skills
+        ],
+        "commands": [
+            {"name": c.name, "description": c.description}
+            for c in contribs.commands
+        ],
+        "agents": [
+            {"name": a.name, "description": a.description}
+            for a in contribs.agents
+        ],
+        "rules": [
+            {
+                "name": r.name,
+                "description": r.description,
+                "always_apply": r.always_apply,
+            }
+            for r in contribs.rules
+        ],
+        "mcp_servers": [s.name for s in contribs.mcp_servers],
+        "hooks_events": sorted({h.event for h in contribs.hook_entries}),
+        "indexed_at": _now_iso(),
+    }
+
+
+def reindex_contribution_indexes(
+    plugins_dir: Path | None = None,
+    workspace: Path | None = None,
+    *,
+    include_claude: bool = True,
+) -> int:
+    """Force-rebuild ``contribution_index`` for every discoverable plugin.
+
+    Writes into each scope's lockfile (Claude plugins → user lockfile).
+    Returns the number of plugins successfully reindexed. Useful after an
+    upgrade that introduced the index, or when doctor finds stale catalogs.
+    """
+    count = 0
+    seen: set[str] = set()
+
+    def _reindex_one(
+        manifest: PluginManifest, path: Path, lock_dir: Path
+    ) -> None:
+        nonlocal count
+        key = manifest.name.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        try:
+            index = build_contribution_index(path, manifest)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            _update_lockfile_entry(
+                lock_dir, manifest.name, contribution_index=index
+            )
+            count += 1
+        except Exception:  # noqa: BLE001
+            _LOG.warning(
+                "reindex failed for %s", manifest.name, exc_info=True
+            )
+
+    for scope_dir in plugins_directories(plugins_dir, workspace):
+        if not scope_dir.is_dir():
+            continue
+        for child in sorted(scope_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            manifest = load_plugin_manifest(child)
+            if manifest is None:
+                continue
+            _reindex_one(manifest, child, scope_dir)
+
+    if include_claude and plugins_dir is None:
+        user_dir = user_plugins_dir()
+        for manifest, path in discover_claude_plugins():
+            _reindex_one(manifest, path, user_dir)
+    return count
+
+
 def _record_install(
-    plugins_dir: Path, manifest: PluginManifest, source_spec: str, trust: bool
+    plugins_dir: Path,
+    manifest: PluginManifest,
+    source_spec: str,
+    trust: bool,
+    plugin_path: Path | None = None,
 ) -> None:
+    """Record install in the scope's lockfile.
+
+    When ``plugin_path`` is given, pre-scan the plugin's declarative
+    components into ``contribution_index`` so Engine.create can render the
+    prompt catalog from cache (deferred assembly). Index failures degrade
+    gracefully: logged and skipped, install still succeeds.
+    """
+    index: dict[str, Any] | None = None
+    if plugin_path is not None:
+        try:
+            index = build_contribution_index(plugin_path, manifest)
+        except Exception:  # noqa: BLE001 - index failure must not block install
+            _LOG.warning(
+                "contribution index failed for %s", manifest.name, exc_info=True
+            )
     _update_lockfile_entry(
         plugins_dir,
         manifest.name,
@@ -1347,6 +1587,7 @@ def _record_install(
         installed_at=_now_iso(),
         enabled=True,
         trusted=trust,
+        contribution_index=index,
     )
 
 
@@ -1362,6 +1603,12 @@ def _finalize_installed_plugin(dest: Path) -> None:
             _LOG.info("normalized plugin %s: %s", dest.name, "; ".join(notes))
     except Exception as exc:  # noqa: BLE001 — normalization is best-effort
         _LOG.warning("plugin normalization skipped for %s: %s", dest, exc)
+
+
+_HOOKS_MCP_NEXT_SESSION = (
+    "Hooks/MCP take effect on the next session "
+    "(restart the engine / start a new chat)."
+)
 
 
 def _install_message(manifest: PluginManifest, dest: Path, trust: bool) -> str:
@@ -1386,6 +1633,9 @@ def _install_message(manifest: PluginManifest, dest: Path, trust: bool) -> str:
             "Hooks/MCP servers stay inactive until you run "
             f"`deepseek-tui plugin trust {manifest.name}`."
         )
+        parts.append(_HOOKS_MCP_NEXT_SESSION)
+    elif trust and (manifest.hooks or manifest.mcp_servers):
+        parts.append(_HOOKS_MCP_NEXT_SESSION)
     return " ".join(parts)
 
 
@@ -1444,15 +1694,23 @@ def scaffold_plugin(name: str, parent_dir: Path) -> tuple[InstallOutcome, str]:
 def uninstall_plugin(name: str, plugins_dir: Path | None = None) -> str:
     """Remove a plugin directory and its lockfile entry."""
     target_dir = plugins_dir or user_plugins_dir()
-    plugin_path = target_dir / name
-    if not plugin_path.is_dir():
+    plugin_path = _resolve_plugin_dir(name, target_dir)
+    if plugin_path is None:
         return f"Plugin not found: {name}"
+    manifest = load_plugin_manifest(plugin_path)
+    lock_name = manifest.name if manifest is not None else name
     shutil.rmtree(plugin_path)
     plugins = read_lockfile(target_dir)
-    if name in plugins:
-        del plugins[name]
+    # Drop both the manifest-name key and any legacy key matching the
+    # caller-supplied name (folder renames / older lockfiles).
+    changed = False
+    for key in {lock_name, name}:
+        if key in plugins:
+            del plugins[key]
+            changed = True
+    if changed:
         _write_lockfile(target_dir, plugins)
-    return f"Uninstalled plugin {name}"
+    return f"Uninstalled plugin {lock_name}"
 
 
 def update_plugin(
@@ -1467,25 +1725,37 @@ def update_plugin(
     reinstallable source of ours) are refused.
     """
     target_dir = plugins_dir or user_plugins_dir()
-    entry = read_lockfile(target_dir).get(name)
+    plugin_path = _resolve_plugin_dir(name, target_dir)
+    # Lockfile is keyed by manifest name; resolve before lookup when the
+    # on-disk folder name differs.
+    lock_name = name
+    if plugin_path is not None:
+        live_manifest = load_plugin_manifest(plugin_path)
+        if live_manifest is not None:
+            lock_name = live_manifest.name
+    entry = read_lockfile(target_dir).get(lock_name) or read_lockfile(
+        target_dir
+    ).get(name)
     if entry is None:
         return (InstallOutcome.FAILED, f"Plugin not in lockfile: {name}")
-    plugin_path = target_dir / name
-    if not plugin_path.is_dir() and any(
-        manifest.name == name for manifest, _ in discover_claude_plugins()
+    if plugin_path is None and any(
+        manifest.name.lower() == name.lower()
+        for manifest, _ in discover_claude_plugins()
     ):
         return (
             InstallOutcome.FAILED,
             f"Plugin {name} is managed by Claude Code; update it there",
         )
+    if plugin_path is None:
+        return (InstallOutcome.FAILED, f"Plugin not found: {name}")
     spec = str(entry.get("source", ""))
     if not spec:
         return (InstallOutcome.FAILED, f"No source recorded for {name}")
     was_trusted = bool(entry.get("trusted", False))
     was_enabled = bool(entry.get("enabled", True))
 
-    staging = target_dir / f".update-staging-{name}"
-    backup = target_dir / f".update-backup-{name}"
+    staging = target_dir / f".update-staging-{lock_name}"
+    backup = target_dir / f".update-backup-{lock_name}"
     if staging.exists():
         shutil.rmtree(staging)
     if backup.exists():
@@ -1496,20 +1766,38 @@ def update_plugin(
         outcome, message = install_plugin(spec, staging, trust=was_trusted)
         if outcome != InstallOutcome.INSTALLED:
             return (outcome, message)
-        staged_plugin = staging / name
+        staged_plugin = staging / lock_name
+        if not staged_plugin.is_dir():
+            # install uses manifest.name as the folder; pick whatever landed.
+            staged_plugin = next(
+                (
+                    c
+                    for c in sorted(staging.iterdir())
+                    if c.is_dir() and not c.name.startswith(".")
+                ),
+                staged_plugin,
+            )
         if not staged_plugin.is_dir():
             return (
                 InstallOutcome.FAILED,
                 f"Re-installed source for {name} produced a different plugin name",
             )
         staged_manifest = load_plugin_manifest(staged_plugin)
+        if staged_manifest is not None and staged_manifest.name != lock_name:
+            return (
+                InstallOutcome.FAILED,
+                f"Re-installed source for {name} produced a different plugin name",
+            )
 
         # live → backup, then staged → live. If the second replace fails,
         # restore backup so the user never loses the previous install.
+        # Prefer swapping onto the canonical manifest-named path.
+        live_dest = target_dir / lock_name
         if plugin_path.is_dir():
             os.replace(plugin_path, backup)
         try:
-            os.replace(staged_plugin, plugin_path)
+            os.replace(staged_plugin, live_dest)
+            plugin_path = live_dest
         except BaseException:
             if backup.is_dir() and not plugin_path.exists():
                 try:
@@ -1536,13 +1824,51 @@ def update_plugin(
     }
     if staged_manifest is not None and staged_manifest.version:
         fields["version"] = staged_manifest.version
-    _update_lockfile_entry(target_dir, name, **fields)
-    return (InstallOutcome.UPDATED, f"Updated {name} from {spec}")
+    # Rebuild contribution index from the freshly swapped live dir so the
+    # deferred-assembly catalog stays current after an update.
+    if staged_manifest is not None:
+        try:
+            fields["contribution_index"] = build_contribution_index(
+                plugin_path, staged_manifest
+            )
+        except Exception:  # noqa: BLE001 - index failure must not block update
+            _LOG.warning(
+                "contribution index failed for %s on update", lock_name, exc_info=True
+            )
+    _update_lockfile_entry(target_dir, lock_name, **fields)
+    return (InstallOutcome.UPDATED, f"Updated {lock_name} from {spec}")
+
+
+def _resolve_plugin_dir(name: str, target_dir: Path) -> Path | None:
+    """Resolve a plugin directory by folder name or manifest ``name``.
+
+    Installs normally land at ``<plugins_dir>/<manifest.name>/``, but bare
+    checkouts may use a different folder name. Returns the first matching
+    directory, or ``None``.
+    """
+    direct = target_dir / name
+    if direct.is_dir():
+        return direct
+    name_lower = name.lower()
+    try:
+        for child in sorted(target_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            manifest = load_plugin_manifest(child)
+            if manifest is not None and manifest.name.lower() == name_lower:
+                return child
+    except OSError:
+        return None
+    return None
 
 
 def _plugin_known(name: str, target_dir: Path) -> bool:
-    """Plugin exists in the scope dir, or (user scope) via Claude Code."""
-    if (target_dir / name).is_dir():
+    """Plugin exists in the scope dir, or (user scope) via Claude Code.
+
+    Checks both the directory name (fast path) and the manifest ``name``
+    field (the directory may differ from the manifest name).
+    """
+    if _resolve_plugin_dir(name, target_dir) is not None:
         return True
     try:
         is_user_scope = target_dir.resolve() == user_plugins_dir().resolve()
@@ -1550,8 +1876,10 @@ def _plugin_known(name: str, target_dir: Path) -> bool:
         return False
     if not is_user_scope:
         return False
+    name_lower = name.lower()
     return any(
-        manifest.name == name for manifest, _ in discover_claude_plugins()
+        manifest.name.lower() == name_lower
+        for manifest, _ in discover_claude_plugins()
     )
 
 
@@ -1562,8 +1890,16 @@ def set_plugin_enabled(
     if not _plugin_known(name, target_dir):
         return f"Plugin not found: {name}"
     target_dir.mkdir(parents=True, exist_ok=True)
-    _update_lockfile_entry(target_dir, name, enabled=enabled)
-    return f"{'Enabled' if enabled else 'Disabled'} plugin {name}"
+    # Lockfile keys are manifest names; resolve so a folder/name mismatch
+    # still updates the correct entry.
+    resolved = _resolve_plugin_dir(name, target_dir)
+    lock_name = name
+    if resolved is not None:
+        manifest = load_plugin_manifest(resolved)
+        if manifest is not None:
+            lock_name = manifest.name
+    _update_lockfile_entry(target_dir, lock_name, enabled=enabled)
+    return f"{'Enabled' if enabled else 'Disabled'} plugin {lock_name}"
 
 
 def set_plugin_trusted(
@@ -1573,8 +1909,18 @@ def set_plugin_trusted(
     if not _plugin_known(name, target_dir):
         return f"Plugin not found: {name}"
     target_dir.mkdir(parents=True, exist_ok=True)
-    _update_lockfile_entry(target_dir, name, trusted=trusted)
-    return f"{'Trusted' if trusted else 'Untrusted'} plugin {name}"
+    resolved = _resolve_plugin_dir(name, target_dir)
+    lock_name = name
+    if resolved is not None:
+        manifest = load_plugin_manifest(resolved)
+        if manifest is not None:
+            lock_name = manifest.name
+    _update_lockfile_entry(target_dir, lock_name, trusted=trusted)
+    if trusted:
+        return (
+            f"Trusted plugin {lock_name}. {_HOOKS_MCP_NEXT_SESSION}"
+        )
+    return f"Untrusted plugin {lock_name}"
 
 
 # ── Marketplace registry ─────────────────────────────────────────────────
@@ -1680,7 +2026,13 @@ def load_marketplace(repo: Path) -> list[MarketplaceEntry]:
     if not market_path.is_file():
         raise FileNotFoundError(f"No marketplace.json under {repo}")
 
-    base = market_path.parent.parent  # repo root (parent of .claude-plugin)
+    # Source paths in marketplace.json resolve relative to the repo root.
+    # For ``.claude-plugin/marketplace.json`` that's two levels up; for a
+    # root-level ``marketplace.json`` it's one level up.
+    if market_path.parent.name == ".claude-plugin":
+        base = market_path.parent.parent
+    else:
+        base = market_path.parent
     raw = json.loads(market_path.read_text(encoding="utf-8"))
     entries: list[MarketplaceEntry] = []
     plugins = raw.get("plugins", []) if isinstance(raw, dict) else []

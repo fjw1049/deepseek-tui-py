@@ -92,6 +92,123 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _path_under(path: Path, root: Path) -> bool:
+    """Whether ``path`` is inside ``root`` (both resolved)."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _index_command_proxies(plugin_index: dict[str, dict[str, Any]]) -> list[Any]:
+    """Build lightweight command proxies from the lockfile index.
+
+    Each proxy has the attributes ``render_plugin_components_context``
+    accesses (``plugin``, ``name``, ``qualified``, ``argument_hint``,
+    ``description``). ``qualified`` is reconstructed as ``<plugin>:<name>``;
+    ``argument_hint`` is not in the index and defaults to empty.
+    """
+    from types import SimpleNamespace
+
+    out: list[Any] = []
+    for plugin_name, idx in plugin_index.items():
+        for c in idx.get("commands", []):
+            name = c.get("name", "")
+            out.append(
+                SimpleNamespace(
+                    plugin=plugin_name,
+                    name=name,
+                    qualified=f"{plugin_name}:{name}",
+                    argument_hint="",
+                    description=c.get("description", ""),
+                )
+            )
+    return out
+
+
+def _index_agent_proxies(plugin_index: dict[str, dict[str, Any]]) -> list[Any]:
+    """Build lightweight agent proxies from the lockfile index."""
+    from types import SimpleNamespace
+
+    out: list[Any] = []
+    for plugin_name, idx in plugin_index.items():
+        for a in idx.get("agents", []):
+            out.append(
+                SimpleNamespace(
+                    plugin=plugin_name,
+                    name=a.get("name", ""),
+                    description=a.get("description", ""),
+                )
+            )
+    return out
+
+
+def _register_plugin_agent(registry: dict[str, Any], agent: Any) -> None:
+    """Register under ``plugin:name`` and bare ``name`` (first wins on bare)."""
+    name = (getattr(agent, "name", None) or "").strip()
+    if not name:
+        return
+    plugin = (getattr(agent, "plugin", None) or "").strip()
+    bare = name.lower()
+    if plugin:
+        registry[f"{plugin}:{name}".lower()] = agent
+    if bare not in registry:
+        registry[bare] = agent
+
+
+def _unique_plugin_agents(registry: dict[str, Any]) -> list[Any]:
+    """Deduplicate registry values (bare + qualified keys share one object)."""
+    seen: set[int] = set()
+    out: list[Any] = []
+    for agent in registry.values():
+        key = id(agent)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(agent)
+    return out
+
+
+def _agent_index_from_plugin_index(
+    plugin_index: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    """Map agent name / ``plugin:name`` → owning plugin (for deferred activate)."""
+    agent_index: dict[str, str] = {}
+    for pname, pidx in plugin_index.items():
+        for a in pidx.get("agents", []):
+            aname = (a.get("name") or "").strip().lower()
+            if not aname:
+                continue
+            agent_index[f"{pname.lower()}:{aname}"] = pname
+            agent_index.setdefault(aname, pname)
+    return agent_index
+
+
+def _index_rule_proxies(plugin_index: dict[str, dict[str, Any]]) -> list[Any]:
+    """Build lightweight rule proxies from the lockfile index.
+
+    Includes both ``always_apply`` and scenario (``always_apply: false``)
+    rules. ``body`` is empty -- unmounted rendering only uses ``name`` +
+    ``description``.
+    """
+    from types import SimpleNamespace
+
+    out: list[Any] = []
+    for plugin_name, idx in plugin_index.items():
+        for r in idx.get("rules", []):
+            out.append(
+                SimpleNamespace(
+                    plugin=plugin_name,
+                    name=r.get("name", ""),
+                    description=r.get("description", ""),
+                    always_apply=r.get("always_apply", True),
+                    body="",
+                )
+            )
+    return out
+
+
 class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def __init__(
         self,
@@ -199,6 +316,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # ``_get_tools_with_mcp`` 只返回交集。由 ``_handle_send_message_inner``
         # 在 try/finally 中设置与复位，不跨 turn 保留。
         self._focus_tool_whitelist: frozenset[str] | None = None
+        # Server-level allowlist paired with _focus_tool_whitelist. When a
+        # plugin mount / MCP focus covers a lazy (undiscovered) MCP server,
+        # tool names are unknown; the filter falls back to matching the
+        # tool's server via McpManager._match_configured_server (prefix-based,
+        # discovery-independent). frozenset() when focus active but no MCP
+        # server is whitelisted; None when no focus active at all.
+        self._focus_allowed_servers: frozenset[str] | None = None
         # 插件挂载（@plugin:name）：会话级持续态，与单轮聚焦不同不在 turn 末
         # 复位。挂载后每轮开头把它折算进 ``_focus_tool_whitelist`` —— 模型只
         # 看到「只读底座 + 按插件 permissions 的写工具 + 该插件的 skill/MCP
@@ -208,8 +332,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # ``Engine.create`` from plugin contributions. Commands map their
         # ``<plugin>:<stem>`` invocation (lowercased) → PluginCommand and are
         # expanded into the user message in ``_handle_send_message_inner``.
-        # Agents map ``<name>`` (lowercased) → PluginAgent and are exposed to
-        # ``agent_spawn`` via ``tool_context.metadata['plugin_agents']``.
+        # Agents map ``plugin:name`` (and bare ``name`` when unique) →
+        # PluginAgent and are exposed to ``agent_spawn`` via
+        # ``tool_context.metadata['plugin_agents']``.
         self.plugin_commands: dict[str, Any] = {}
         self.plugin_agents: dict[str, Any] = {}
         # Plugin ``rules`` — always-on system-level directives (CodeBuddy
@@ -221,6 +346,21 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Loaded-plugin summary + names for the startup banner and sidebar.
         self.plugin_summary: dict[str, int] = {}
         self.plugin_names: list[str] = []
+        # Plugin contribution index (from lockfile) - name+description catalog
+        # for prompt rendering without disk-scanning .md files. Populated in
+        # ``Engine.create``; keys are plugin names, values are the index dict.
+        self.plugin_index: dict[str, dict[str, Any]] = {}
+        # Discovered LoadedPlugins, retained for on-demand heavy assembly
+        # (commands/agents/rules). Skills are eager-merged into the registry;
+        # these are kept so ``ensure_plugin_activated`` can find a plugin by
+        # name without re-discovering.
+        self._loaded_plugins: list[Any] = []
+        # Lowercased plugin names present at Engine.create. Used to tip the
+        # user when a mid-session install is mounted before hooks/MCP reload.
+        self._session_plugin_names: set[str] = set()
+        # Names of plugins already heavy-assembled (commands/agents/rules
+        # loaded from disk). Idempotent guard for ``ensure_plugin_activated``.
+        self._activated_plugins: set[str] = set()
         # Per-tool snapshots for /undo.
         # Maps tool_call_id → list[(absolute_path, original_bytes_or_None)].
         # None means file did not exist before the tool ran.
@@ -316,26 +456,36 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if entry.get("model_name")
         }
 
-    def _mcp_focus_whitelist(self, server: str) -> frozenset[str]:
-        """聚焦某个 MCP 连接器时的工具白名单：该 server 的工具 + 基座。
+    def _mcp_focus_whitelist(
+        self, server: str
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        """聚焦某个 MCP 连接器时的工具白名单 + 放行 server 集合。
+
+        返回 ``(tool_names, server_names)``。tool_names 含该 server 已发现的
+        工具名 + 读基座 + 写基座；server_names 含该 server 名，让 lazy 未
+        discovery 的工具也能按 server 级放行（修白名单竞态：lazy server 在
+        首次工具调用前 tool 名未知，按 server 名前缀匹配兜底放行）。
 
         基座为只读探索 + 写工具（``FOCUS_READ_BASE | FOCUS_WRITE_BASE``）：
         连接器聚焦不仅查询连接器，还要能对工作区文件动手（如根据 PR
         改代码），所以写工具一并放行。Exec/网络等领域工具不进基座。
         """
-        return frozenset(
+        tool_names = frozenset(
             self._server_tool_names(server) | FOCUS_READ_BASE | FOCUS_WRITE_BASE
         )
+        return tool_names, frozenset({server})
 
     def set_active_plugin(self, name: str | None) -> str:
-        """挂载 / 摘除会话级插件。``name=None`` 或 ``"off"`` → 摘除。
+        """进入 / 退出会话级场景模式。``name=None`` 或 ``"off"`` → 退出。
 
         按名在已发现插件里大小写不敏感查找并存入 ``self._active_plugin``；
         返回一条给用户看的结果说明。未找到时保持原状并回错。
         """
         if name is None or name.lower() == "off":
             self._active_plugin = None
-            return "已摘除插件，恢复全量工具与技能。"
+            if self.hook_executor is not None:
+                self.hook_executor.scenario_plugin = None
+            return "已退出场景，恢复全量工具与技能。"
         from deepseek_tui.integrations.plugins import discover_plugins
 
         ws = self.tool_context.working_directory
@@ -350,65 +500,224 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if match is None:
             return f"未找到插件：{name}（用 plugin list 查看已安装）。"
         self._active_plugin = match
+        if self.hook_executor is not None:
+            self.hook_executor.scenario_plugin = match.manifest.name
         m = match.manifest
-        note = f"已应用插件 {m.name}，本会话仅用其工具 + 基础工具。"
+        note = f"已进入场景 {m.name}，本会话仅用其工具 + 基础工具。"
         # trusted 才收 MCP（collect_contributions 语义）；未信任时提示。
         if m.mcp_servers and not getattr(match, "trusted", False):
             note += " 注意：该插件的 MCP 未激活，需先信任该插件。"
+        if m.name.lower() not in self._session_plugin_names:
+            note += (
+                " 注意：本会话启动后新发现的插件，其 hooks/MCP "
+                "需新开会话才会生效。"
+            )
+        # Ensure heavy components (commands/agents/rules) are loaded for
+        # this plugin so prompt rendering and command dispatch work.
+        self.ensure_plugin_activated(m.name, plugin=match)
         return note
 
-    def _active_plugin_skills(self) -> list[object]:
-        """当前挂载插件贡献的 skill 集（用于收窄 system prompt 注入）。"""
-        if self._active_plugin is None:
-            return []
-        from deepseek_tui.integrations.plugins import collect_contributions
+    def ensure_plugin_activated(
+        self, name: str, *, plugin: object | None = None
+    ) -> bool:
+        """Lazily heavy-assemble a single plugin's commands/agents/rules.
+
+        Loads declarative text components from disk for the named plugin and
+        merges them into the engine's active state (``plugin_commands``,
+        ``plugin_agents``, ``plugin_rules``). Idempotent: a second call for an
+        already-activated plugin is a no-op. Returns ``True`` if the plugin
+        was found and is now (or already was) activated.
+
+        Skills are NOT handled here -- they are eager-merged into the
+        ``SkillRegistry`` at ``Engine.create`` because ``load_skill`` and the
+        ``## Skills`` prompt section need them without an activation step.
+
+        After activation the plugin's entry is removed from ``plugin_index``
+        so render methods don't double-list its commands/agents/rules (real
+        objects in the live dicts + stale proxies in the index). Name
+        matching is case-insensitive to stay consistent with
+        ``set_active_plugin`` and ``_expand_plugin_command``.
+        """
+        name_lower = name.lower()
+        if name_lower in self._activated_plugins:
+            return True
+        loaded = plugin
+        if loaded is None:
+            loaded = next(
+                (p for p in self._loaded_plugins if p.name.lower() == name_lower),
+                None,
+            )
+        if loaded is None:
+            # Plugin might have been installed after Engine.create.
+            from deepseek_tui.integrations.plugins import discover_plugins
+
+            try:
+                plugins = discover_plugins(
+                    workspace=self.tool_context.working_directory
+                )
+            except Exception:  # noqa: BLE001
+                plugins = []
+            loaded = next(
+                (p for p in plugins if p.name.lower() == name_lower), None
+            )
+            if loaded is not None:
+                self._loaded_plugins = plugins
+        if loaded is None:
+            return False
+        from deepseek_tui.integrations.plugins import (
+            collect_heavy_contributions,
+        )
 
         try:
-            return list(collect_contributions([self._active_plugin]).skills)
-        except Exception:  # noqa: BLE001
-            logger.warning("collect plugin skills failed", exc_info=True)
+            contribs = collect_heavy_contributions([loaded])
+        except Exception:  # noqa: BLE001 - a malformed plugin must not crash
+            logger.warning(
+                "plugin heavy assembly failed for %s", name, exc_info=True
+            )
+            return False
+        for c in contribs.commands:
+            self.plugin_commands[c.qualified.lower()] = c
+        for a in contribs.agents:
+            _register_plugin_agent(self.plugin_agents, a)
+        if self.plugin_agents:
+            self.tool_context.metadata["plugin_agents"] = self.plugin_agents
+        for r in contribs.rules:
+            if r not in self.plugin_rules:
+                self.plugin_rules.append(r)
+        self._activated_plugins.add(name_lower)
+        # Clear commands/agents/rules from the index so render methods don't
+        # double-list them (real objects are now in the live dicts). Skills
+        # are preserved -- ``_active_plugin_skills`` reads them from the
+        # index to filter the SkillRegistry when a plugin is mounted.
+        entry = self.plugin_index.get(loaded.name)
+        if isinstance(entry, dict):
+            entry["commands"] = []
+            entry["agents"] = []
+            entry["rules"] = []
+        logger.info("plugin_activated name=%s", loaded.name)
+        return True
+
+    def _active_plugin_skills(self) -> list[object]:
+        """当前挂载插件贡献的 skill 集（用于收窄 system prompt 注入）。
+
+        Skills are already in the registry (eager-loaded at create time);
+        filter by the mounted plugin's index instead of re-scanning disk.
+        """
+        if self._active_plugin is None:
             return []
+        if self.skill_registry is None:
+            return []
+        plugin_name = self._active_plugin.name
+        idx = self.plugin_index.get(plugin_name, {})
+        skill_names = {
+            s["name"]
+            for s in idx.get("skills", [])
+            if isinstance(s, dict) and s.get("name")
+        }
+        if not skill_names:
+            # No index -- fall back to registry skills whose path is under
+            # the plugin directory.
+            try:
+                plugin_root = self._active_plugin.path.resolve()
+            except (OSError, ValueError):
+                return []
+            return [
+                s
+                for s in self.skill_registry.skills
+                if _path_under(s.path, plugin_root)
+            ]
+        return [
+            s for s in self.skill_registry.skills if s.name in skill_names
+        ]
 
-    def _active_plugin_whitelist(self) -> frozenset[str] | None:
-        """当前挂载插件的每轮工具白名单（收窄语义）。
+    def _plugin_catalog_entries(self) -> list[Any]:
+        """Build thin-catalog rows from loaded plugins + index/live counts."""
+        from types import SimpleNamespace
 
-        只读探索基座（``FOCUS_READ_BASE``）始终放行；按插件 permissions
-        决定是否加写工具（``FOCUS_WRITE_BASE``）；再加插件 skill 声明的
-        allowed-tools + 插件自带 MCP server 的全部工具。None = 未挂载。
+        if not self._loaded_plugins:
+            return []
+        entries: list[Any] = []
+        for plugin in self._loaded_plugins:
+            name = plugin.name
+            idx = self.plugin_index.get(name) or {}
+            n_skills = len(idx.get("skills") or [])
+            n_commands = len(idx.get("commands") or []) + sum(
+                1
+                for c in self.plugin_commands.values()
+                if getattr(c, "plugin", None) == name
+            )
+            n_agents = len(idx.get("agents") or []) + sum(
+                1
+                for a in _unique_plugin_agents(self.plugin_agents)
+                if getattr(a, "plugin", None) == name
+            )
+            n_rules = len(idx.get("rules") or []) + sum(
+                1
+                for r in self.plugin_rules
+                if getattr(r, "plugin", None) == name
+            )
+            n_mcp = len(idx.get("mcp_servers") or [])
+            if not n_mcp and plugin.manifest.mcp_servers:
+                n_mcp = 1
+            n_hooks = len(idx.get("hooks_events") or [])
+            if not n_hooks and plugin.manifest.hooks:
+                n_hooks = len(plugin.manifest.hooks)
+            entries.append(
+                SimpleNamespace(
+                    name=name,
+                    description=plugin.manifest.description or "",
+                    skills=n_skills,
+                    commands=n_commands,
+                    agents=n_agents,
+                    rules=n_rules,
+                    mcp=n_mcp,
+                    hooks=n_hooks,
+                )
+            )
+        return entries
+
+    def _active_plugin_whitelist(
+        self,
+    ) -> tuple[frozenset[str], frozenset[str]] | None:
+        """当前挂载插件的每轮工具白名单 + 放行 server 集合。
+
+        返回 ``(tool_names, server_names)`` 或 ``None``（未挂载）。tool_names
+        含只读基座 + 按 permissions 的写工具 + skill allowed-tools + 已发现
+        的 MCP 工具名；server_names 含该插件声明的 trusted MCP server 名，
+        让 lazy 未 discovery 的工具按 server 级放行（修白名单竞态）。
+
         Exec/网络等领域工具不进基座，需插件 skill 显式 allowed-tools 声明。
+
+        Skills come from the eager-loaded registry (filtered by index); MCP
+        servers come from light contributions (manifest-level, no disk scan).
         """
         plugin = self._active_plugin
         if plugin is None:
             return None
         from deepseek_tui.integrations.plugins import (
             capability_values_from_permissions,
-            collect_contributions,
+            collect_light_contributions,
         )
 
         allowed: set[str] = set(FOCUS_READ_BASE)
         caps = capability_values_from_permissions(plugin.manifest.permissions)
         if "writes_files" in caps:
             allowed |= set(FOCUS_WRITE_BASE)
+        server_names: set[str] = set()
+        for skill in self._active_plugin_skills():
+            declared = getattr(skill, "allowed_tools", None)
+            if declared:
+                allowed |= set(declared)
         try:
-            contribs = collect_contributions([plugin])
+            contribs = collect_light_contributions([plugin])
         except Exception:  # noqa: BLE001
-            logger.warning("collect plugin contributions failed", exc_info=True)
+            logger.warning("collect plugin light contributions failed", exc_info=True)
             contribs = None
-        if contribs is not None:
-            for skill in contribs.skills:
-                declared = getattr(skill, "allowed_tools", None)
-                if declared:
-                    allowed |= set(declared)
-            # Defense in depth: collect_contributions already skips MCP
-            # servers for untrusted plugins (and Engine.create never started
-            # the server, so _server_tool_names would be empty anyway). Gate
-            # explicitly here too so the whitelist invariant - "untrusted ->
-            # no MCP tool names" - holds even if contribution collection is
-            # later refactored to collect servers eagerly.
-            if plugin.trusted:
-                for server in contribs.mcp_servers:
-                    allowed |= self._server_tool_names(server.name)
-        return frozenset(allowed)
+        if contribs is not None and plugin.trusted:
+            for server in contribs.mcp_servers:
+                allowed |= self._server_tool_names(server.name)
+                server_names.add(server.name)
+        return frozenset(allowed), frozenset(server_names)
 
     def _render_plugin_context(self) -> str | None:
         """Render the ``## Active Plugin`` system-prompt block.
@@ -436,22 +745,36 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         )
 
     def _render_plugin_components_context(self) -> str | None:
-        """Render the ``## Plugin Commands & Agents`` block, or ``None``.
+        """Render plugin contribution surface for the system prompt.
 
-        Lists plugin-contributed slash commands and agent personas so the
-        model knows they exist. Suppressed while a plugin is mounted (the
-        mount already narrows the surface to one plugin) to avoid noise.
+        Small installs keep a per-command/agent listing. Larger ones switch
+        to the thin ``## Installed Plugins`` catalog so marketplace-scale
+        installs don't dilute the session-stable prefix. Suppressed while a
+        plugin is mounted (scenario already narrows the surface).
         """
         if self._active_plugin is not None:
             return None
-        if not self.plugin_commands and not self.plugin_agents:
-            return None
-        from deepseek_tui.engine.prompts import render_plugin_components_context
-
-        block = render_plugin_components_context(
-            list(self.plugin_commands.values()),
-            list(self.plugin_agents.values()),
+        from deepseek_tui.engine.prompts import (
+            PLUGIN_DETAILED_LIST_LIMIT,
+            render_installed_plugins_catalog,
+            render_plugin_components_context,
         )
+
+        commands: list[Any] = list(self.plugin_commands.values())
+        agents: list[Any] = _unique_plugin_agents(self.plugin_agents)
+        if self.plugin_index:
+            commands = commands + _index_command_proxies(self.plugin_index)
+            agents = agents + _index_agent_proxies(self.plugin_index)
+        total = len(commands) + len(agents)
+        if total == 0 and not self._loaded_plugins:
+            return None
+        if total <= PLUGIN_DETAILED_LIST_LIMIT and total > 0:
+            block = render_plugin_components_context(commands, agents)
+            return block or None
+        catalog = self._plugin_catalog_entries()
+        if not catalog:
+            return None
+        block = render_installed_plugins_catalog(catalog)
         return block or None
 
     def _render_plugin_rules_context(self) -> str | None:
@@ -464,13 +787,21 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         summary line each with a mount hint (full bodies from every
         installed plugin would bloat and dilute the prompt).
         """
-        if not self.plugin_rules:
+        if not self.plugin_rules and not self.plugin_index:
             return None
         from deepseek_tui.engine.prompts import render_plugin_rules_context
 
         active = self._active_plugin.name if self._active_plugin else None
+        if active is not None:
+            rules = self.plugin_rules
+        else:
+            rules = list(self.plugin_rules)
+            if self.plugin_index:
+                rules = rules + _index_rule_proxies(self.plugin_index)
+        if not rules:
+            return None
         block = render_plugin_rules_context(
-            self.plugin_rules, active_plugin=active
+            rules, active_plugin=active
         )
         return block or None
 
@@ -541,13 +872,29 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         # 聚焦模式：收窄到最小工具白名单。在 catalog 层直接裁剪（而非依赖
         # defer_loading），确保模型无法经 tool-search 调回被屏蔽的工具。
+        # MCP 工具额外按 server 级放行：lazy server 未 discovery 时工具名
+        # 未知，通过 _match_configured_server 前缀匹配兜底（修白名单竞态）。
         if self._focus_tool_whitelist is not None:
             whitelist = self._focus_tool_whitelist
-            result = [
-                t
-                for t in result
-                if (t.get("function", t) or {}).get("name") in whitelist
-            ]
+            allowed_servers = self._focus_allowed_servers
+            mcp_mgr = self.mcp_manager
+
+            def _passes_focus(tool: dict[str, Any]) -> bool:
+                fn = tool.get("function", tool) or {}
+                name = fn.get("name")
+                if not isinstance(name, str):
+                    return True
+                if name in whitelist:
+                    return True
+                # Lazy MCP server: tool name unknown until discovery, so
+                # match by configured server prefix (discovery-independent).
+                if allowed_servers and mcp_mgr is not None:
+                    server = mcp_mgr._match_configured_server(name)
+                    if server is not None and server in allowed_servers:
+                        return True
+                return False
+
+            result = [t for t in result if _passes_focus(t)]
 
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
@@ -588,21 +935,27 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # existing subsystems: skills → SkillRegistry, hooks →
         # HookExecutor, MCP servers → McpManager (via create_tool_runtime).
         plugin_contribs = None
+        plugin_skill_contribs = None
+        loaded_plugins: list[Any] = []
         if cfg.features.plugins:
             from deepseek_tui.integrations.plugins import (
-                collect_contributions,
+                collect_light_contributions,
+                collect_skill_contributions,
                 discover_plugins,
             )
 
-            loaded_plugins: list[Any] = []
             try:
                 loaded_plugins = discover_plugins(workspace=ws)
-                plugin_contribs = collect_contributions(loaded_plugins)
+                plugin_contribs = collect_light_contributions(loaded_plugins)
+                plugin_skill_contribs = collect_skill_contributions(loaded_plugins)
             except Exception:  # noqa: BLE001 — a malformed plugin must not
                 # crash engine construction; degrade to no plugin contributions.
                 logger.warning("plugin discovery failed", exc_info=True)
             if plugin_contribs is not None:
                 for warning in plugin_contribs.warnings:
+                    logger.warning("plugin: %s", warning)
+            if plugin_skill_contribs is not None:
+                for warning in plugin_skill_contribs.warnings:
                     logger.warning("plugin: %s", warning)
         hooks_cfg = cfg
         if plugin_contribs is not None and plugin_contribs.hook_entries:
@@ -642,10 +995,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         register_provider_context_windows(cfg)
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
-        if plugin_contribs is not None and plugin_contribs.skills:
+        if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
             from deepseek_tui.integrations.plugins import merge_plugin_skills
 
-            merge_plugin_skills(skill_reg, plugin_contribs)
+            merge_plugin_skills(skill_reg, plugin_skill_contribs)
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()
@@ -705,31 +1058,77 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine.turn_loop = TurnLoop(engine.client, compact_fn=engine._emergency_compact)
         if isinstance(tool_runtime, ToolRuntime):
             engine._owns_tool_runtime = False
-        # Register plugin prompt commands + agent personas so slash commands
-        # expand into messages and agent_spawn can resolve persona names.
-        if plugin_contribs is not None:
-            engine.plugin_commands = {
-                c.qualified.lower(): c for c in plugin_contribs.commands
+        # Register plugin index + skill names for prompt rendering.
+        # Commands/agents/rules are deferred -- ``ensure_plugin_activated``
+        # loads them on-demand (mount, slash-command dispatch, agent_spawn).
+        # The lockfile contribution index drives the prompt catalog without
+        # disk-scanning .md files, so a workspace with many plugins pays
+        # zero heavy-assembly cost at startup.
+        #
+        # Plugins whose lockfile entry predates the index (or was written by
+        # an older install) have ``contribution_index is None``. For those we
+        # fall back to eager heavy assembly so backward compatibility holds --
+        # the optimization is opt-in per plugin, not all-or-nothing.
+        if loaded_plugins:
+            engine._loaded_plugins = loaded_plugins
+            engine._session_plugin_names = {
+                p.name.lower() for p in loaded_plugins
             }
-            engine.plugin_agents = {
-                a.name.lower(): a for a in plugin_contribs.agents
+            engine.plugin_index = {
+                p.name: p.contribution_index
+                for p in loaded_plugins
+                if p.contribution_index
             }
-            if engine.plugin_agents:
-                engine.tool_context.metadata["plugin_agents"] = engine.plugin_agents
-            engine.plugin_rules = [
-                r for r in plugin_contribs.rules if r.always_apply
-            ]
-            engine.plugin_skill_names = {s.name for s in plugin_contribs.skills}
+            engine.plugin_skill_names = {
+                s.name
+                for s in (plugin_skill_contribs.skills if plugin_skill_contribs else [])
+            }
+            # Backward-compatible eager assembly for plugins without an index.
+            unindexed = [p for p in loaded_plugins if p.contribution_index is None]
+            if unindexed:
+                from deepseek_tui.integrations.plugins import (
+                    collect_heavy_contributions,
+                )
+                heavy = collect_heavy_contributions(unindexed)
+                for c in heavy.commands:
+                    engine.plugin_commands[c.qualified.lower()] = c
+                for a in heavy.agents:
+                    _register_plugin_agent(engine.plugin_agents, a)
+                if engine.plugin_agents:
+                    engine.tool_context.metadata["plugin_agents"] = (
+                        engine.plugin_agents
+                    )
+                for r in heavy.rules:
+                    if r not in engine.plugin_rules:
+                        engine.plugin_rules.append(r)
+                for p in unindexed:
+                    engine._activated_plugins.add(p.name.lower())
+            # Summary counts: skills from eager collection, commands/agents/rules
+            # from the index + eager fallback, hooks/mcp from light contributions.
+            idx = engine.plugin_index
             engine.plugin_summary = {
                 "plugins": len(loaded_plugins),
-                "skills": len(plugin_contribs.skills),
-                "commands": len(plugin_contribs.commands),
-                "agents": len(plugin_contribs.agents),
-                "rules": len(plugin_contribs.rules),
-                "hooks": len(plugin_contribs.hook_entries),
-                "mcp": len(plugin_contribs.mcp_servers),
+                "skills": len(engine.plugin_skill_names),
+                "commands": sum(len(i.get("commands", [])) for i in idx.values())
+                + len(engine.plugin_commands),
+                "agents": sum(len(i.get("agents", [])) for i in idx.values())
+                + len(_unique_plugin_agents(engine.plugin_agents)),
+                "rules": sum(len(i.get("rules", [])) for i in idx.values())
+                + len(engine.plugin_rules),
+                "hooks": len(plugin_contribs.hook_entries) if plugin_contribs else 0,
+                "mcp": len(plugin_contribs.mcp_servers) if plugin_contribs else 0,
             }
             engine.plugin_names = [p.name for p in loaded_plugins]
+            # Wire activation callback + agent-name index into tool context so
+            # ``agent_spawn`` can lazily activate a plugin when resolving a
+            # persona that hasn't been heavy-assembled yet.
+            if engine.tool_context is not None:
+                engine.tool_context.metadata["activate_plugin"] = (
+                    engine.ensure_plugin_activated
+                )
+                engine.tool_context.metadata["plugin_agent_index"] = (
+                    _agent_index_from_plugin_index(engine.plugin_index)
+                )
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
@@ -1134,9 +1533,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         colon). Substitutes ``$ARGUMENTS`` / ``${ARGUMENTS}`` in the command
         body with the trailing arguments; appends any args when the template
         declares no placeholder.
+
+        If the command's plugin hasn't been activated yet (deferred heavy
+        assembly), activates it on-demand before looking up the body.
         """
-        if not self.plugin_commands:
-            return None
         text = (content or "").strip()
         if not text.startswith("/") or ":" not in text.split(maxsplit=1)[0]:
             return None
@@ -1144,6 +1544,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         token = parts[0]
         args = parts[1] if len(parts) > 1 else ""
         command = self.plugin_commands.get(token.lower())
+        if command is None:
+            # Deferred: activate the plugin on-demand, then retry.
+            plugin_name = token.split(":", 1)[0]
+            if any(n.lower() == plugin_name.lower() for n in self.plugin_names):
+                self.ensure_plugin_activated(plugin_name)
+                command = self.plugin_commands.get(token.lower())
         if command is None:
             return None
         body = command.body
@@ -1339,10 +1745,20 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     if declared
                     else (FOCUS_READ_BASE | FOCUS_WRITE_BASE)
                 )
+                self._focus_allowed_servers = frozenset()
             elif focus_mcp is not None:
-                self._focus_tool_whitelist = self._mcp_focus_whitelist(focus_mcp)
+                tools, servers = self._mcp_focus_whitelist(focus_mcp)
+                self._focus_tool_whitelist = tools
+                self._focus_allowed_servers = servers
             elif self._active_plugin is not None:
-                self._focus_tool_whitelist = self._active_plugin_whitelist()
+                wl_result = self._active_plugin_whitelist()
+                if wl_result is not None:
+                    self._focus_tool_whitelist, self._focus_allowed_servers = (
+                        wl_result
+                    )
+                else:
+                    self._focus_tool_whitelist = None
+                    self._focus_allowed_servers = None
                 # Read-only放行插件自身目录（工作区外），让模型能 read_file/
                 # list_dir/grep 插件的 skill/清单等资源；写工具仍锁工作区。
                 # 将来 skills 的 companion-file 根可在此 append。
@@ -1351,6 +1767,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             else:
                 self._focus_tool_whitelist = None
+                self._focus_allowed_servers = None
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
@@ -1521,6 +1938,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.handle.clear_response_id()
             # 复位聚焦模式白名单，确保不跨 turn 保留。
             self._focus_tool_whitelist = None
+            self._focus_allowed_servers = None
             # 同理复位只读放行根：仅在挂载插件的 turn 内有效，取消/异常也不泄漏。
             self.tool_context.extra_read_roots = ()
 

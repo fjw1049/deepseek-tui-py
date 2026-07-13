@@ -49,3 +49,6 @@ TestResults.xml
 
 ### Internal docs
 docs/R2_RELEASE.md
+
+# Emergency cleanup leftovers
+.node_modules_trash_*/

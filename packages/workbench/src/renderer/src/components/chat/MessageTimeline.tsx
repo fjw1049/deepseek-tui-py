@@ -2283,7 +2283,9 @@ function UserFocusChip({
       className={`mb-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${meta.className}`}
     >
       <Icon className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
-      <span className="truncate">{name}</span>
+      <span className="truncate">
+        {kind === 'plugin' ? t('composerPluginBadge', { name }) : name}
+      </span>
     </span>
   )
 }

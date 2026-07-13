@@ -17,6 +17,7 @@ from deepseek_tui.integrations.plugins import (
     load_plugin_manifest,
     merge_plugin_skills,
     read_lockfile,
+    reindex_contribution_indexes,
     set_plugin_enabled,
     set_plugin_trusted,
     uninstall_plugin,
@@ -1193,8 +1194,7 @@ async def test_engine_create_loads_plugin_components(tmp_path, monkeypatch) -> N
 async def test_engine_registers_plugin_commands_and_agents(
     tmp_path, monkeypatch
 ) -> None:
-    """Plugin commands + agent personas reach the engine: commands expand
-    into messages, agents are exposed to agent_spawn via metadata."""
+    """Plugin commands + agents are indexed at create and activate on demand."""
     from unittest.mock import AsyncMock
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
@@ -1219,34 +1219,43 @@ async def test_engine_registers_plugin_commands_and_agents(
         EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
     )
     try:
-        assert "demo:greet" in engine.plugin_commands
-        assert "demo-specialist" in engine.plugin_agents
-        assert "plugin_agents" in engine.tool_context.metadata
+        # Deferred: catalog in index, live maps empty until activation.
+        assert "demo" in engine.plugin_index
+        assert engine.plugin_index["demo"]["commands"]
+        assert engine.plugin_index["demo"]["agents"]
+        assert "demo:greet" not in engine.plugin_commands
 
-        # Command expansion substitutes $ARGUMENTS.
+        # Command expansion activates on demand and substitutes $ARGUMENTS.
         expanded = engine._expand_plugin_command("/demo:greet World")
         assert expanded is not None
         assert "World" in expanded
         assert "$ARGUMENTS" not in expanded
+        assert "demo:greet" in engine.plugin_commands
+        assert "demo-specialist" in engine.plugin_agents
+        assert "demo:demo-specialist" in engine.plugin_agents
+        assert "plugin_agents" in engine.tool_context.metadata
 
         # Non-command messages and unknown commands pass through.
         assert engine._expand_plugin_command("hello there") is None
         assert engine._expand_plugin_command("/demo:missing x") is None
 
-        # Components surface in the system prompt block.
+        # Components surface in the system prompt block (qualified agent id).
         block = engine._render_plugin_components_context()
         assert block is not None
         assert "/demo:greet" in block
-        assert "demo-specialist" in block
+        assert "demo:demo-specialist" in block or "demo-specialist" in block
     finally:
         await engine.shutdown_session()
 
 
 def test_plugin_components_context_collapses_past_limit(tmp_path: Path) -> None:
-    """Context governance: many commands/agents collapse to per-plugin name
-    groups (no descriptions) so a large install doesn't balloon the prompt."""
-    from deepseek_tui.engine.prompts import render_plugin_components_context
+    """Small installs keep per-item listings; large ones use the thin catalog."""
+    from deepseek_tui.engine.prompts import (
+        render_installed_plugins_catalog,
+        render_plugin_components_context,
+    )
     from deepseek_tui.integrations.plugins import PluginAgent, PluginCommand
+    from types import SimpleNamespace
 
     def cmd(i: int) -> PluginCommand:
         return PluginCommand(
@@ -1266,27 +1275,118 @@ def test_plugin_components_context_collapses_past_limit(tmp_path: Path) -> None:
             path=tmp_path / f"a{i}.md",
         )
 
-    # Under the limit: full per-item listing with descriptions.
-    small = render_plugin_components_context([cmd(1)], [agent(1)], list_limit=20)
+    # Under the detailed threshold: full per-item listing with descriptions.
+    small = render_plugin_components_context([cmd(1)], [agent(1)], list_limit=10)
     assert "/plug1:cmd1" in small
     assert "Command number 1" in small
     assert "Agent number 1" in small
 
-    # Over the limit: grouped names only, totals stated, descriptions gone.
-    many_cmds = [cmd(i) for i in range(30)]
-    many_agents = [agent(i) for i in range(40)]
-    big = render_plugin_components_context(many_cmds, many_agents, list_limit=20)
-    assert "(30 total)" in big
-    assert "(40 total)" in big
-    assert "plug0:" in big and "plug1:" in big and "plug2:" in big
-    assert "cmd7" in big and "agent7" in big
-    assert "Command number" not in big
-    assert "Agent number" not in big
-    # The collapsed form must be materially smaller than the full listing.
-    full = render_plugin_components_context(
-        many_cmds, many_agents, list_limit=10_000
+    # Large surfaces: thin per-plugin catalog (no per-command dump).
+    catalog = [
+        SimpleNamespace(
+            name="plug0",
+            description="First pack",
+            skills=2,
+            commands=10,
+            agents=13,
+            rules=0,
+            mcp=0,
+            hooks=0,
+        ),
+        SimpleNamespace(
+            name="plug1",
+            description="Second pack",
+            skills=0,
+            commands=10,
+            agents=14,
+            rules=1,
+            mcp=1,
+            hooks=0,
+        ),
+    ]
+    thin = render_installed_plugins_catalog(catalog)
+    assert "## Installed Plugins (contributing)" in thin
+    assert "plug0: First pack" in thin
+    assert "commands:10" in thin
+    assert "agents:13" in thin
+    assert "/plug0:cmd" not in thin
+    assert "`/<plugin>:<command>" in thin
+
+
+def test_plugin_rules_inactive_hides_non_always_apply() -> None:
+    """Unmounted catalog lists only always_apply rules; mount injects all."""
+    from deepseek_tui.engine.prompts import render_plugin_rules_context
+    from types import SimpleNamespace
+
+    rules = [
+        SimpleNamespace(
+            plugin="alpha",
+            name="core",
+            description="always on",
+            always_apply=True,
+            body="ALWAYS-BODY",
+        ),
+        SimpleNamespace(
+            plugin="alpha",
+            name="scenario",
+            description="scenario only",
+            always_apply=False,
+            body="SCENARIO-BODY",
+        ),
+    ]
+    unmounted = render_plugin_rules_context(rules)
+    assert "always on" in unmounted
+    assert "scenario only" not in unmounted
+    assert "SCENARIO-BODY" not in unmounted
+
+    mounted = render_plugin_rules_context(rules, active_plugin="alpha")
+    assert "ALWAYS-BODY" in mounted
+    assert "SCENARIO-BODY" in mounted
+
+
+def test_load_marketplace_resolves_root_level_json(tmp_path: Path) -> None:
+    """Root-level marketplace.json must resolve sources relative to the repo."""
+    from deepseek_tui.integrations.plugins import load_marketplace
+
+    repo = tmp_path / "repo"
+    (repo / "plugins").mkdir(parents=True)
+    make_plugin(repo / "plugins", "alpha", with_hook=False, with_mcp=False)
+    (repo / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "root-market",
+                "plugins": [{"name": "alpha", "source": "./plugins/alpha"}],
+            }
+        ),
+        encoding="utf-8",
     )
-    assert len(big) < len(full) / 2
+    entries = load_marketplace(repo)
+    assert {e.name for e in entries} == {"alpha"}
+    assert entries[0].path.is_dir()
+
+
+def test_trust_and_uninstall_resolve_manifest_name(tmp_path: Path) -> None:
+    """Folder name may differ from manifest name — trust/uninstall still work."""
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    folder = plugins / "my-fork"
+    folder.mkdir()
+    (folder / ".deepseek-plugin").mkdir()
+    (folder / ".deepseek-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "cool-plugin",
+                "version": "1.0.0",
+                "mcpServers": {"s": {"command": "true"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert "Trusted" in set_plugin_trusted("cool-plugin", True, plugins)
+    assert read_lockfile(plugins)["cool-plugin"]["trusted"] is True
+    assert "Uninstalled" in uninstall_plugin("cool-plugin", plugins)
+    assert not folder.exists()
+    assert "cool-plugin" not in read_lockfile(plugins)
 
 
 async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:
@@ -1319,6 +1419,10 @@ async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:
     agent_id = result.metadata["agent_id"]
     spawned = manager._agents[agent_id]
     assert spawned.system_prompt == "You are a focused specialist persona."
+    # Foreign tool names from the persona frontmatter map onto DeepSeek ids.
+    assert spawned.allowed_tools is not None
+    assert "read_file" in spawned.allowed_tools
+    assert "grep_files" in spawned.allowed_tools
     # Unknown persona names still raise.
     import pytest
 
@@ -1445,7 +1549,7 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
     try:
         note = engine.set_active_plugin("ro-plugin")
         assert "ro-plugin" in note
-        wl = engine._active_plugin_whitelist()
+        wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
         # Read-only plugin gets the full read base (grep_files, not the old
         # buggy "grep"; plus file_search, git read, project_map, ...).
@@ -1486,7 +1590,7 @@ async def test_active_plugin_whitelist_write_permission(tmp_path, monkeypatch) -
     )
     try:
         engine.set_active_plugin("rw-plugin")
-        wl = engine._active_plugin_whitelist()
+        wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
         assert {"write_file", "edit_file", "apply_patch"} <= wl
         # Read base still present alongside writes.
@@ -1545,14 +1649,14 @@ async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
             {"mcp_mcp-plugin-srv__do"}
         )
 
-        wl = engine._active_plugin_whitelist()
+        wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
         assert "mcp_mcp-plugin-srv__do" not in wl  # gate blocked (untrusted)
 
         # Trust + re-mount -> gate allows the name through.
         set_plugin_trusted("mcp-plugin", True, plugins_dir)
         engine.set_active_plugin("mcp-plugin")
-        wl2 = engine._active_plugin_whitelist()
+        wl2, servers2 = engine._active_plugin_whitelist()
         assert wl2 is not None
         assert "mcp_mcp-plugin-srv__do" in wl2
     finally:
@@ -1595,7 +1699,10 @@ async def test_plugin_mount_confines_advanced_meta_tools(
     )
     try:
         engine.set_active_plugin("ro-plugin")
-        engine._focus_tool_whitelist = engine._active_plugin_whitelist()
+        wl_result = engine._active_plugin_whitelist()
+        engine._focus_tool_whitelist = (
+            wl_result[0] if wl_result is not None else None
+        )
         # read-only plugin whitelist has only read tools -> both meta-tools
         # confined (this is the regression: previously code_execution stayed
         # available via ensure_advanced_tooling bypassing the whitelist).
@@ -1843,5 +1950,171 @@ async def test_restore_active_plugin_from_persisted_items(
         assert engine._active_plugin is None
         RuntimeThreadManager._restore_active_plugin(stub, engine, thread)
         assert engine._active_plugin is None  # latest signal was unmount
+    finally:
+        await engine.shutdown_session()
+
+
+def test_discover_backfills_contribution_index(tmp_path) -> None:
+    """Pre-index installs get a contribution_index written on discover."""
+    from deepseek_tui.integrations.plugins import LOCKFILE_NAME
+
+    plugins = tmp_path / "plugins"
+    make_plugin(plugins, "legacy", with_command=True, with_agent=True)
+    lock_path = plugins / LOCKFILE_NAME
+    lock_path.write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "legacy": {
+                        "source": str(plugins / "legacy"),
+                        "version": "1.2.3",
+                        "enabled": True,
+                        "trusted": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert "contribution_index" not in read_lockfile(plugins)["legacy"]
+    found = discover_plugins(plugins_dir=plugins, include_claude=False)
+    assert len(found) == 1
+    assert found[0].contribution_index is not None
+    assert found[0].contribution_index["commands"]
+    assert found[0].contribution_index["agents"]
+    lock = read_lockfile(plugins)["legacy"]
+    assert isinstance(lock.get("contribution_index"), dict)
+
+
+def test_reindex_contribution_indexes(tmp_path) -> None:
+    plugins = tmp_path / "plugins"
+    make_plugin(plugins, "a", with_command=True)
+    make_plugin(plugins, "b", with_agent=True)
+    n = reindex_contribution_indexes(plugins, include_claude=False)
+    assert n == 2
+    lock = read_lockfile(plugins)
+    assert "commands" in lock["a"]["contribution_index"]
+    assert "agents" in lock["b"]["contribution_index"]
+
+
+def test_install_message_mentions_next_session(tmp_path) -> None:
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    src = make_plugin(tmp_path / "src", "hooky", with_hook=True, with_mcp=True)
+    outcome, message = install_plugin(str(src), plugins, trust=True)
+    assert outcome.value == "installed"
+    assert "next session" in message.lower()
+
+
+def test_trust_message_mentions_next_session(tmp_path) -> None:
+    plugins = tmp_path / "plugins"
+    src = make_plugin(tmp_path / "src", "hooky", with_hook=True)
+    install_plugin(str(src), plugins, trust=False)
+    msg = set_plugin_trusted("hooky", True, plugins)
+    assert "Trusted plugin hooky" in msg
+    assert "next session" in msg.lower()
+
+
+async def test_scenario_isolates_plugin_hooks(tmp_path) -> None:
+    """In scenario mode only the active plugin's hooks (+ user hooks) run."""
+    from deepseek_tui.config.models import HooksConfig, LifecycleHookEntry
+    from deepseek_tui.integrations.hooks import HookExecutor
+
+    cfg = HooksConfig(
+        enabled=True,
+        hooks=[
+            LifecycleHookEntry(
+                event="session_start",
+                name="alpha:session_start",
+                command=f"echo alpha >> {tmp_path / 'out.txt'}",
+            ),
+            LifecycleHookEntry(
+                event="session_start",
+                name="beta:session_start",
+                command=f"echo beta >> {tmp_path / 'out.txt'}",
+            ),
+            LifecycleHookEntry(
+                event="session_start",
+                name="user-hook",
+                command=f"echo user >> {tmp_path / 'out.txt'}",
+            ),
+        ],
+    )
+    executor = HookExecutor(cfg, tmp_path)
+    executor.scenario_plugin = "alpha"
+    results = await executor.execute("session_start")
+    assert all(r.success for r in results)
+    text = (tmp_path / "out.txt").read_text(encoding="utf-8")
+    assert "alpha" in text
+    assert "user" in text
+    assert "beta" not in text
+    assert executor.has_hooks_for_event("session_start")
+
+
+async def test_agent_spawn_resolves_qualified_plugin_persona(tmp_path) -> None:
+    """``plugin:persona`` resolves; bare name still works when unique."""
+    from deepseek_tui.integrations.plugins import PluginAgent
+    from deepseek_tui.tools.registry import ToolContext
+    from deepseek_tui.tools.subagent.manager import SubAgentManager
+    from deepseek_tui.tools.subagent.tools import AgentSpawnTool
+
+    persona = PluginAgent(
+        name="demo-specialist",
+        plugin="demo",
+        description="A specialist.",
+        body="You are a focused specialist persona.",
+        path=tmp_path / "a.md",
+    )
+    registry = {
+        "demo:demo-specialist": persona,
+        "demo-specialist": persona,
+    }
+    manager = SubAgentManager(workspace=tmp_path)
+    context = ToolContext(
+        working_directory=tmp_path,
+        subagent_manager=manager,
+        metadata={"plugin_agents": registry},
+    )
+    tool = AgentSpawnTool()
+    result = await tool.execute(
+        {"prompt": "do the thing", "type": "demo:demo-specialist"}, context
+    )
+    assert result.success
+    result2 = await tool.execute(
+        {"prompt": "again", "type": "demo-specialist"}, context
+    )
+    assert result2.success
+    await manager.shutdown()
+
+
+async def test_set_active_plugin_scenario_copy_and_hook_filter(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins = tmp_path / "home" / "plugins"
+    make_plugin(plugins, "scene", with_command=True, with_hook=False)
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        note = engine.set_active_plugin("scene")
+        assert "已进入场景" in note
+        assert engine.hook_executor.scenario_plugin == "scene"
+        off = engine.set_active_plugin("off")
+        assert "已退出场景" in off
+        assert engine.hook_executor.scenario_plugin is None
+        # Mid-session discovery tip when name was not present at create.
+        engine._session_plugin_names.clear()
+        tip = engine.set_active_plugin("scene")
+        assert "新开会话" in tip
     finally:
         await engine.shutdown_session()

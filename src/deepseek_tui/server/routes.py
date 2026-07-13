@@ -763,6 +763,9 @@ def _plugin_to_dict(p: Any) -> dict[str, Any]:
             "skills": bool(p.manifest.skills),
             "hooks": bool(p.manifest.hooks),
             "mcp_servers": bool(p.manifest.mcp_servers),
+            "commands": bool(p.manifest.commands),
+            "agents": bool(p.manifest.agents),
+            "rules": bool(p.manifest.rules),
         },
     }
 

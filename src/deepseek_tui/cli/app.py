@@ -1556,7 +1556,7 @@ def plugin_trust_cmd(
     name: str = typer.Argument(..., help="Plugin name."),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
-    """Trust a plugin — activates its hooks and MCP servers."""
+    """Trust a plugin — hooks/MCP activate on the next session."""
     from deepseek_tui.integrations.plugins import set_plugin_trusted
 
     typer.echo(set_plugin_trusted(name, True, _plugins_dir(project)))
@@ -1571,6 +1571,33 @@ def plugin_untrust_cmd(
     from deepseek_tui.integrations.plugins import set_plugin_trusted
 
     typer.echo(set_plugin_trusted(name, False, _plugins_dir(project)))
+
+
+@plugin_app.command("reindex")
+def plugin_reindex_cmd(
+    project: bool = typer.Option(
+        False,
+        "--project",
+        help="Only reindex the project scope (default: all scopes).",
+    ),
+) -> None:
+    """Rebuild contribution indexes for deferred plugin assembly.
+
+    Older installs without an index get one written into the lockfile so
+    Engine.create can skip heavy disk scans. Safe to re-run anytime.
+    """
+    from deepseek_tui.integrations.plugins import (
+        project_plugins_dir,
+        reindex_contribution_indexes,
+    )
+
+    if project:
+        n = reindex_contribution_indexes(
+            project_plugins_dir(), Path.cwd(), include_claude=False
+        )
+    else:
+        n = reindex_contribution_indexes(workspace=Path.cwd())
+    typer.echo(f"Reindexed {n} plugin(s).")
 
 
 @plugin_app.command("search")
