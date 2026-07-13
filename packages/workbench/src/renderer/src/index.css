@@ -3696,6 +3696,51 @@ select:focus-visible,
     -18px 0 44px rgba(0, 0, 0, 0.4);
 }
 
+.ds-endpoint-press:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 100ms ease-out;
+}
+
+.ds-endpoint-sheet-backdrop {
+  animation: ds-endpoint-backdrop-in 0.28s ease-out;
+}
+
+.ds-endpoint-sheet {
+  animation: ds-endpoint-sheet-in 0.38s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform, opacity;
+}
+
+@keyframes ds-endpoint-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ds-endpoint-sheet-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-endpoint-press:active:not(:disabled) {
+    transform: none;
+  }
+
+  .ds-endpoint-sheet-backdrop,
+  .ds-endpoint-sheet {
+    animation: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .ds-feature-page,
   .ds-settings-page > .ds-page-scroll {

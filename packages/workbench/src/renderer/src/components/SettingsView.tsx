@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
   CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
@@ -1586,6 +1587,80 @@ function PetMascotSettingsControl({
   )
 }
 
+const endpointFieldClass =
+  'h-11 w-full rounded-[12px] border border-ds-border/80 bg-ds-main/40 px-3.5 text-[14px] tracking-[-0.01em] text-ds-ink outline-none transition-[border-color,box-shadow] duration-200 focus:border-accent/45 focus:ring-[3px] focus:ring-accent/20'
+
+const endpointGhostBtnClass =
+  'ds-endpoint-press inline-flex items-center justify-center gap-1.5 rounded-full border border-ds-border/70 bg-ds-card/80 px-3 py-1.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
+
+const endpointPrimaryBtnClass =
+  'ds-endpoint-press inline-flex items-center justify-center gap-1.5 rounded-full bg-ds-userbubble px-4 py-2 text-[13px] font-semibold tracking-[-0.01em] text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45'
+
+function EndpointConfigSheet({
+  open,
+  title,
+  children,
+  onClose,
+  footer
+}: {
+  open: boolean
+  title: string
+  children: ReactNode
+  onClose: () => void
+  footer: ReactNode
+}): ReactElement | null {
+  const { t: tCommon } = useTranslation('common')
+
+  useEffect(() => {
+    if (!open) return
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [open, onClose])
+
+  if (!open || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div
+      className="ds-modal-backdrop ds-endpoint-sheet-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="ds-modal-surface ds-endpoint-sheet flex max-h-[min(88vh,720px)] w-full max-w-[440px] flex-col overflow-hidden rounded-[22px]"
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-1 pt-5">
+          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.022em] text-ds-ink">
+            {title}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ds-endpoint-press flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ds-hover/90 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+            aria-label={tCommon('close')}
+          >
+            <X className="h-4 w-4" strokeWidth={2} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="flex shrink-0 justify-end gap-2.5 border-t border-ds-border-muted/70 px-5 py-4">
+          {footer}
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 function CustomEndpointsPanel({
   endpoints,
   onUpdate
@@ -1602,6 +1677,7 @@ function CustomEndpointsPanel({
   const [addUrl, setAddUrl] = useState('')
   const [addKey, setAddKey] = useState('')
   const [addProtocol, setAddProtocol] = useState<EndpointProtocol>('openai')
+  const [showAddKey, setShowAddKey] = useState(false)
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({})
   // Context-window inputs keyed `${epId}::${modelId}` — kept as raw text
   // while typing and clamped/committed on blur so mid-edit values (e.g.
@@ -1615,17 +1691,26 @@ function CustomEndpointsPanel({
   const [editProtocol, setEditProtocol] = useState<EndpointProtocol>('openai')
   const [showEditKey, setShowEditKey] = useState(false)
 
-  const cancelEndpointEdit = (): void => {
+  const resetAddForm = useCallback((): void => {
+    setShowAdd(false)
+    setAddName('')
+    setAddUrl('')
+    setAddKey('')
+    setAddProtocol('openai')
+    setShowAddKey(false)
+  }, [])
+
+  const cancelEndpointEdit = useCallback((): void => {
     setEditingEndpointId(null)
     setEditName('')
     setEditUrl('')
     setEditKey('')
     setEditProtocol('openai')
     setShowEditKey(false)
-  }
+  }, [])
 
   const startEndpointEdit = (endpoint: CustomEndpointV1): void => {
-    setShowAdd(false)
+    resetAddForm()
     setEditingEndpointId(endpoint.id)
     setEditName(endpoint.name)
     setEditUrl(endpoint.baseUrl)
@@ -1634,11 +1719,15 @@ function CustomEndpointsPanel({
     setShowEditKey(false)
   }
 
-  const saveEndpointEdit = (index: number): void => {
-    if (!editName.trim() || !editUrl.trim() || !editKey.trim()) return
+  const updateEndpoints = (next: CustomEndpointV1[]): void => {
+    onUpdate({ customEndpoints: next })
+  }
+
+  const saveEndpointEdit = (): void => {
+    if (!editingEndpointId || !editName.trim() || !editUrl.trim() || !editKey.trim()) return
     updateEndpoints(
-      endpoints.map((endpoint, i) =>
-        i === index
+      endpoints.map((endpoint) =>
+        endpoint.id === editingEndpointId
           ? {
               ...endpoint,
               name: editName.trim(),
@@ -1650,10 +1739,6 @@ function CustomEndpointsPanel({
       )
     )
     cancelEndpointEdit()
-  }
-
-  const updateEndpoints = (next: CustomEndpointV1[]): void => {
-    onUpdate({ customEndpoints: next })
   }
 
   const handleAdd = (): void => {
@@ -1676,11 +1761,7 @@ function CustomEndpointsPanel({
       models: []
     }
     updateEndpoints([...endpoints, newEndpoint])
-    setAddName('')
-    setAddUrl('')
-    setAddKey('')
-    setAddProtocol('openai')
-    setShowAdd(false)
+    resetAddForm()
   }
 
   const handleRemove = (index: number): void => {
@@ -1727,17 +1808,17 @@ function CustomEndpointsPanel({
         i === index
           ? {
               ...item,
-                models: [
-                  ...item.models,
-                  {
-                    id: modelId,
-                    enabled: true,
-                    contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
-                    testStatus: passed ? 'passed' as const : 'failed' as const,
-                    toolCalling: passed,
-                    lastTestedAt: now
-                  }
-                ]
+              models: [
+                ...item.models,
+                {
+                  id: modelId,
+                  enabled: true,
+                  contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+                  testStatus: passed ? ('passed' as const) : ('failed' as const),
+                  toolCalling: passed,
+                  lastTestedAt: now
+                }
+              ]
             }
           : item
       )
@@ -1757,7 +1838,7 @@ function CustomEndpointsPanel({
                 model.id === modelId
                   ? {
                       ...model,
-                      testStatus: passed ? 'passed' as const : 'failed' as const,
+                      testStatus: passed ? ('passed' as const) : ('failed' as const),
                       toolCalling: passed,
                       lastTestedAt: new Date().toISOString()
                     }
@@ -1811,281 +1892,371 @@ function CustomEndpointsPanel({
     )
   }
 
+  const editingEndpoint = endpoints.find((endpoint) => endpoint.id === editingEndpointId) ?? null
+  const editingIndex = editingEndpoint
+    ? endpoints.findIndex((endpoint) => endpoint.id === editingEndpoint.id)
+    : -1
+
   return (
     <div className="px-4 py-5">
-      <p className="mb-4 text-[13px] leading-6 text-ds-muted">
+      <p className="mb-5 max-w-xl text-[13px] leading-6 tracking-[-0.01em] text-ds-muted">
         {t('customEndpointsDesc')}
       </p>
 
-      {endpoints.map((ep, index) => {
-        const isEditing = editingEndpointId === ep.id
-        return (
-        <div key={ep.id} className="mb-3 rounded-xl border border-ds-border bg-ds-card p-4 shadow-sm">
-          {isEditing ? (
-            <div className="flex flex-col gap-3">
-              <h4 className="text-[14px] font-semibold text-ds-ink">{t('editEndpointTitle')}</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                  placeholder={t('endpointNamePlaceholder')}
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                />
-                <select
-                  className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                  value={editProtocol}
-                  onChange={(e) => setEditProtocol(e.target.value as EndpointProtocol)}
-                >
-                  <option value="openai">OpenAI compatible</option>
-                  <option value="anthropic">Anthropic compatible</option>
-                </select>
-              </div>
-              <input
-                className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                placeholder={t('endpointUrlPlaceholder')}
-                value={editUrl}
-                onChange={(e) => setEditUrl(e.target.value)}
-              />
-              <SecretInput
-                value={editKey}
-                onChange={setEditKey}
-                visible={showEditKey}
-                onToggleVisibility={() => setShowEditKey((value) => !value)}
-                placeholder={t('endpointKeyPlaceholder')}
-                autoComplete="off"
-                showLabel={t('showSecret')}
-                hideLabel={t('hideSecret')}
-              />
-              {ep.models.length > 0 ? (
-                <div className="space-y-1.5">
-                  <div
-                    className="px-0.5 text-[11px] font-medium tracking-wide text-ds-muted"
-                    title={t('modelContextWindowHint')}
+      <div className="space-y-3">
+        {endpoints.map((ep, index) => (
+          <div
+            key={ep.id}
+            className="ds-endpoint-card rounded-[18px] border border-ds-border/70 bg-ds-card/90 p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_rgba(0,0,0,0.04)]"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
+                    {ep.name}
+                  </span>
+                  <span className="rounded-full bg-ds-hover/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-ds-muted">
+                    {ep.protocol}
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      ep.enabled
+                        ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
+                        : 'bg-ds-hover text-ds-faint'
+                    }`}
                   >
-                    {t('models')}
-                  </div>
-                  <div className="divide-y divide-ds-border-muted overflow-hidden rounded-xl border border-ds-border bg-ds-hover/30">
-                    {ep.models.map((model) => {
-                      const ctxKey = `${ep.id}::${model.id}`
-                      return (
-                        <div key={model.id} className="flex items-center gap-3 px-3 py-2.5">
-                          <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">
-                            {model.id}
-                          </span>
-                          <label
-                            className="flex shrink-0 items-center gap-2 text-[11px] text-ds-muted"
-                            title={t('modelContextWindowHint')}
-                          >
-                            <span>{t('modelContextWindowLabel')}</span>
-                            <input
-                              type="number"
-                              min={CUSTOM_MODEL_CONTEXT_WINDOW_MIN}
-                              max={CUSTOM_MODEL_CONTEXT_WINDOW_MAX}
-                              step={1000}
-                              className="w-[96px] rounded-lg border border-ds-border bg-ds-card px-2 py-1 text-right font-mono text-[12px] tabular-nums text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                              value={contextWindowDrafts[ctxKey] ?? String(model.contextWindow)}
-                              onChange={(event) =>
-                                setContextWindowDrafts((prev) => ({ ...prev, [ctxKey]: event.target.value }))
-                              }
-                              onBlur={() => commitModelContextWindow(index, model.id)}
-                            />
-                          </label>
-                        </div>
-                      )
-                    })}
-                  </div>
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        ep.enabled ? 'bg-emerald-500' : 'bg-ds-faint'
+                      }`}
+                    />
+                    {ep.enabled ? t('endpointEnabled') : t('endpointDisabled')}
+                  </span>
                 </div>
-              ) : null}
-              <div className="flex items-center justify-end gap-2">
+                <div
+                  className="mt-1.5 truncate font-mono text-[12px] tracking-[-0.01em] text-ds-muted"
+                  title={ep.baseUrl}
+                >
+                  {ep.baseUrl}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={cancelEndpointEdit}
-                  className="rounded-xl border border-ds-border px-3 py-1.5 text-[13px] font-medium text-ds-muted hover:bg-ds-hover"
+                  onClick={() => startEndpointEdit(ep)}
+                  className={endpointGhostBtnClass}
                 >
-                  {t('cancelBtn')}
+                  <Pencil className="h-3 w-3" strokeWidth={2} />
+                  {t('editEndpointBtn')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => saveEndpointEdit(index)}
-                  disabled={!editName.trim() || !editUrl.trim() || !editKey.trim()}
-                  className="rounded-xl bg-ds-userbubble px-3 py-1.5 text-[13px] font-medium text-ds-userbubbleFg disabled:opacity-50"
+                  onClick={() => handleToggleEndpoint(index)}
+                  className={endpointGhostBtnClass}
                 >
-                  {t('saveEndpointBtn')}
+                  {ep.enabled ? t('disableEndpointBtn') : t('enableEndpointBtn')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(index)}
+                  className="ds-endpoint-press flex h-8 w-8 items-center justify-center rounded-full border border-ds-border/70 text-ds-muted transition hover:border-red-300/70 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                  aria-label={t('deleteEndpointBtn')}
+                >
+                  <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                 </button>
               </div>
             </div>
-          ) : (
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-semibold text-ds-ink">{ep.name}</span>
-                <span className="rounded-full bg-ds-hover px-2 py-0.5 text-[10px] font-medium uppercase text-ds-muted">
-                  {ep.protocol}
-                </span>
-                <span className={`text-[11px] ${ep.enabled ? 'text-emerald-600' : 'text-ds-faint'}`}>
-                  {ep.enabled ? t('endpointEnabled') : t('endpointDisabled')}
-                </span>
-              </div>
-              <div className="mt-1 truncate font-mono text-[12px] text-ds-muted" title={ep.baseUrl}>
-                {ep.baseUrl}
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => startEndpointEdit(ep)}
-                className="inline-flex items-center gap-1 rounded-lg border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover"
-              >
-                <Pencil className="h-3 w-3" strokeWidth={2} />
-                {t('editEndpointBtn')}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleToggleEndpoint(index)}
-                className="rounded-lg border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover"
-              >
-                {ep.enabled ? t('disableEndpointBtn') : t('enableEndpointBtn')}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRemove(index)}
-                className="rounded-lg border border-ds-border p-1 text-ds-muted hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-              >
-                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-            </div>
-          </div>
-          )}
 
-          {!isEditing ? (
-          <div className="mt-4 space-y-2">
-            {ep.models.map((model) => {
-              const testKey = `${ep.id}::${model.id}`
-              const test = testResults[testKey]
-              return (
-                <div key={model.id} className="rounded-lg border border-ds-border-muted bg-ds-hover/30 px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">{model.id}</span>
-                    <span className={`text-[10px] ${model.testStatus === 'passed' ? 'text-emerald-600' : model.testStatus === 'failed' ? 'text-red-600' : 'text-ds-faint'}`}>
-                      {model.testStatus === 'passed' ? t('modelTestPassed') : model.testStatus === 'failed' ? t('modelTestFailed') : t('modelUntested')}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={test?.testing}
-                      onClick={() => void handleRetestModel(index, model.id)}
-                      className="inline-flex items-center gap-1 rounded-md border border-ds-border px-2 py-0.5 text-[11px] text-ds-muted disabled:opacity-50"
-                    >
-                      {test?.testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
-                      {t('testBtn')}
-                    </button>
-                    <button type="button" onClick={() => handleRemoveModel(index, model.id)} className="text-ds-faint hover:text-red-600">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  {test && !test.testing ? (
-                    <div className={`mt-1 text-[11px] ${test.ok ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {test.message}
+            <div className="mt-4 space-y-2">
+              {ep.models.map((model) => {
+                const testKey = `${ep.id}::${model.id}`
+                const test = testResults[testKey]
+                return (
+                  <div
+                    key={model.id}
+                    className="rounded-[14px] border border-ds-border-muted/80 bg-ds-hover/25 px-3.5 py-2.5"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] tracking-[-0.01em] text-ds-ink">
+                        {model.id}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          model.testStatus === 'passed'
+                            ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
+                            : model.testStatus === 'failed'
+                              ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+                              : 'bg-ds-hover text-ds-faint'
+                        }`}
+                      >
+                        {model.testStatus === 'passed'
+                          ? t('modelTestPassed')
+                          : model.testStatus === 'failed'
+                            ? t('modelTestFailed')
+                            : t('modelUntested')}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={test?.testing}
+                        onClick={() => void handleRetestModel(index, model.id)}
+                        className="ds-endpoint-press inline-flex items-center gap-1 rounded-full border border-ds-border/70 px-2.5 py-1 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover disabled:opacity-50"
+                      >
+                        {test?.testing ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Zap className="h-3 w-3" />
+                        )}
+                        {t('testBtn')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveModel(index, model.id)}
+                        className="ds-endpoint-press flex h-7 w-7 items-center justify-center rounded-full text-ds-faint transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                  ) : null}
-                </div>
-              )
-            })}
-            <div className="flex gap-2">
-              <input
-                className="min-w-0 flex-1 rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 font-mono text-[12px] text-ds-ink"
-                placeholder={t('endpointModelPlaceholder')}
-                value={modelDrafts[ep.id] ?? ''}
-                onChange={(event) => setModelDrafts((prev) => ({ ...prev, [ep.id]: event.target.value }))}
-              />
-              <button
-                type="button"
-                disabled={!(modelDrafts[ep.id] ?? '').trim()}
-                onClick={() => void handleAddModel(index)}
-                className="rounded-lg bg-ds-userbubble px-3 py-1.5 text-[12px] font-medium text-ds-userbubbleFg disabled:opacity-50"
-              >
-                {t('testAndAddModelBtn')}
-              </button>
+                    {test && !test.testing ? (
+                      <div
+                        className={`mt-1.5 text-[11px] leading-5 ${
+                          test.ok
+                            ? 'text-emerald-700 dark:text-emerald-400'
+                            : 'text-red-700 dark:text-red-400'
+                        }`}
+                      >
+                        {test.message}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+              <div className="flex gap-2 pt-0.5">
+                <input
+                  className="min-w-0 flex-1 rounded-[12px] border border-ds-border/80 bg-ds-main/35 px-3.5 py-2.5 font-mono text-[12.5px] tracking-[-0.01em] text-ds-ink outline-none transition focus:border-accent/45 focus:ring-[3px] focus:ring-accent/20"
+                  placeholder={t('endpointModelPlaceholder')}
+                  value={modelDrafts[ep.id] ?? ''}
+                  onChange={(event) =>
+                    setModelDrafts((prev) => ({ ...prev, [ep.id]: event.target.value }))
+                  }
+                />
+                <button
+                  type="button"
+                  disabled={!(modelDrafts[ep.id] ?? '').trim()}
+                  onClick={() => void handleAddModel(index)}
+                  className={endpointPrimaryBtnClass}
+                >
+                  {t('testAndAddModelBtn')}
+                </button>
+              </div>
             </div>
           </div>
-          ) : null}
-        </div>
-        )
-      })}
+        ))}
+      </div>
 
-      {showAdd ? (
-        <div className="mt-3 rounded-xl border border-accent/30 bg-ds-card p-4 shadow-sm">
-          <h4 className="mb-3 text-[14px] font-semibold text-ds-ink">
-            {t('addEndpointTitle')}
-          </h4>
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                placeholder={t('endpointNamePlaceholder')}
-                value={addName}
-                onChange={(e) => setAddName(e.target.value)}
-              />
-              <select
-                className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                value={addProtocol}
-                onChange={(e) => setAddProtocol(e.target.value as EndpointProtocol)}
-              >
-                <option value="openai">OpenAI compatible</option>
-                <option value="anthropic">Anthropic compatible</option>
-              </select>
+      <button
+        type="button"
+        onClick={() => {
+          cancelEndpointEdit()
+          setShowAdd(true)
+        }}
+        className="ds-endpoint-press mt-4 flex w-full items-center justify-center gap-2 rounded-[16px] border border-dashed border-ds-border/80 bg-ds-hover/20 px-4 py-3.5 text-[13.5px] font-semibold tracking-[-0.015em] text-ds-muted transition hover:border-accent/35 hover:bg-ds-hover/45 hover:text-ds-ink"
+      >
+        <Plus className="h-4 w-4" strokeWidth={2.25} />
+        {t('addEndpointBtn')}
+      </button>
+
+      <EndpointConfigSheet
+        open={showAdd}
+        title={t('addEndpointTitle')}
+        onClose={resetAddForm}
+        footer={
+          <>
+            <button type="button" onClick={resetAddForm} className={endpointGhostBtnClass}>
+              {t('cancelBtn')}
+            </button>
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={!addName.trim() || !addUrl.trim() || !addKey.trim()}
+              className={endpointPrimaryBtnClass}
+            >
+              {t('addBtn')}
+            </button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1.5">
+            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+              {t('endpointNameLabel')}
+            </span>
+            <input
+              className={endpointFieldClass}
+              placeholder={t('endpointNamePlaceholder')}
+              value={addName}
+              onChange={(e) => setAddName(e.target.value)}
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+              {t('endpointProtocolLabel')}
+            </span>
+            <select
+              className={endpointFieldClass}
+              value={addProtocol}
+              onChange={(e) => setAddProtocol(e.target.value as EndpointProtocol)}
+            >
+              <option value="openai">OpenAI compatible</option>
+              <option value="anthropic">Anthropic compatible</option>
+            </select>
+          </label>
+        </div>
+        <label className="block space-y-1.5">
+          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+            {t('endpointUrlLabel')}
+          </span>
+          <input
+            className={endpointFieldClass}
+            placeholder={t('endpointUrlPlaceholder')}
+            value={addUrl}
+            onChange={(e) => setAddUrl(e.target.value)}
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+            {t('endpointKeyLabel')}
+          </span>
+          <SecretInput
+            value={addKey}
+            onChange={setAddKey}
+            visible={showAddKey}
+            onToggleVisibility={() => setShowAddKey((value) => !value)}
+            placeholder={t('endpointKeyPlaceholder')}
+            autoComplete="off"
+            showLabel={t('showSecret')}
+            hideLabel={t('hideSecret')}
+            className="h-11"
+          />
+        </label>
+      </EndpointConfigSheet>
+
+      <EndpointConfigSheet
+        open={Boolean(editingEndpoint)}
+        title={t('editEndpointTitle')}
+        onClose={cancelEndpointEdit}
+        footer={
+          <>
+            <button type="button" onClick={cancelEndpointEdit} className={endpointGhostBtnClass}>
+              {t('cancelBtn')}
+            </button>
+            <button
+              type="button"
+              onClick={saveEndpointEdit}
+              disabled={!editName.trim() || !editUrl.trim() || !editKey.trim()}
+              className={endpointPrimaryBtnClass}
+            >
+              {t('saveEndpointBtn')}
+            </button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1.5">
+            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+              {t('endpointNameLabel')}
+            </span>
+            <input
+              className={endpointFieldClass}
+              placeholder={t('endpointNamePlaceholder')}
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+              {t('endpointProtocolLabel')}
+            </span>
+            <select
+              className={endpointFieldClass}
+              value={editProtocol}
+              onChange={(e) => setEditProtocol(e.target.value as EndpointProtocol)}
+            >
+              <option value="openai">OpenAI compatible</option>
+              <option value="anthropic">Anthropic compatible</option>
+            </select>
+          </label>
+        </div>
+        <label className="block space-y-1.5">
+          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+            {t('endpointUrlLabel')}
+          </span>
+          <input
+            className={endpointFieldClass}
+            placeholder={t('endpointUrlPlaceholder')}
+            value={editUrl}
+            onChange={(e) => setEditUrl(e.target.value)}
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
+            {t('endpointKeyLabel')}
+          </span>
+          <SecretInput
+            value={editKey}
+            onChange={setEditKey}
+            visible={showEditKey}
+            onToggleVisibility={() => setShowEditKey((value) => !value)}
+            placeholder={t('endpointKeyPlaceholder')}
+            autoComplete="off"
+            showLabel={t('showSecret')}
+            hideLabel={t('hideSecret')}
+            className="h-11"
+          />
+        </label>
+        {editingEndpoint && editingEndpoint.models.length > 0 && editingIndex >= 0 ? (
+          <div className="space-y-1.5">
+            <div
+              className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted"
+              title={t('modelContextWindowHint')}
+            >
+              {t('models')}
             </div>
-            <input
-              className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-              placeholder={t('endpointUrlPlaceholder')}
-              value={addUrl}
-              onChange={(e) => setAddUrl(e.target.value)}
-            />
-            <input
-              type="password"
-              className="rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-              placeholder={t('endpointKeyPlaceholder')}
-              value={addKey}
-              onChange={(e) => setAddKey(e.target.value)}
-            />
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  cancelEndpointEdit()
-                  setShowAdd(false)
-                  setAddName('')
-                  setAddUrl('')
-                  setAddKey('')
-                  setAddProtocol('openai')
-                }}
-                className="rounded-xl border border-ds-border px-3 py-1.5 text-[13px] font-medium text-ds-muted hover:bg-ds-hover"
-              >
-                {t('cancelBtn')}
-              </button>
-              <button
-                type="button"
-                onClick={handleAdd}
-                disabled={!addName.trim() || !addUrl.trim() || !addKey.trim()}
-                className="rounded-xl bg-ds-userbubble px-3 py-1.5 text-[13px] font-medium text-ds-userbubbleFg disabled:opacity-50"
-              >
-                {t('addBtn')}
-              </button>
+            <div className="divide-y divide-ds-border-muted/80 overflow-hidden rounded-[14px] border border-ds-border/70 bg-ds-hover/20">
+              {editingEndpoint.models.map((model) => {
+                const ctxKey = `${editingEndpoint.id}::${model.id}`
+                return (
+                  <div key={model.id} className="flex items-center gap-3 px-3.5 py-2.5">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">
+                      {model.id}
+                    </span>
+                    <label
+                      className="flex shrink-0 items-center gap-2 text-[11px] text-ds-muted"
+                      title={t('modelContextWindowHint')}
+                    >
+                      <span>{t('modelContextWindowLabel')}</span>
+                      <input
+                        type="number"
+                        min={CUSTOM_MODEL_CONTEXT_WINDOW_MIN}
+                        max={CUSTOM_MODEL_CONTEXT_WINDOW_MAX}
+                        step={1000}
+                        className="w-[96px] rounded-[10px] border border-ds-border/80 bg-ds-card px-2 py-1.5 text-right font-mono text-[12px] tabular-nums text-ds-ink outline-none transition focus:border-accent/45 focus:ring-[3px] focus:ring-accent/20"
+                        value={contextWindowDrafts[ctxKey] ?? String(model.contextWindow)}
+                        onChange={(event) =>
+                          setContextWindowDrafts((prev) => ({
+                            ...prev,
+                            [ctxKey]: event.target.value
+                          }))
+                        }
+                        onBlur={() => commitModelContextWindow(editingIndex, model.id)}
+                      />
+                    </label>
+                  </div>
+                )
+              })}
             </div>
           </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => {
-            cancelEndpointEdit()
-            setShowAdd(true)
-          }}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-dashed border-ds-border px-3 py-2 text-[13px] font-medium text-ds-muted transition hover:border-accent/40 hover:bg-ds-hover hover:text-ds-ink"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2} />
-          {t('addEndpointBtn')}
-        </button>
-      )}
+        ) : null}
+      </EndpointConfigSheet>
     </div>
   )
 }
