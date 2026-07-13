@@ -14,7 +14,7 @@ from deepseek_tui.plugins.model import (
     DiagnosticSeverity,
     SourceProvenance,
 )
-from deepseek_tui.plugins.source import LocalArtifact, PluginSourceError, locate_packages
+from deepseek_tui.plugins.source import LocalArtifact, locate_packages
 
 _ADAPTERS = (
     PiPackageAdapter(),
@@ -89,9 +89,16 @@ def inspect_local_source(
             continue
         if len(winners) > 1:
             names = ", ".join(adapter.adapter_id for adapter in winners)
-            raise PluginSourceError(
-                f"ambiguous plugin format at {candidate.relative_root}: {names}"
+            diagnostics.append(
+                Diagnostic(
+                    "AMBIGUOUS_PLUGIN_ADAPTER",
+                    DiagnosticSeverity.ERROR,
+                    f"ambiguous plugin format at {candidate.relative_root}: {names}",
+                    source_path=candidate.relative_root,
+                    remediation="disambiguate the package layout or select an adapter explicitly",
+                )
             )
+            continue
         packages.append(winners[0].derive(artifact, candidate))
 
     by_id: dict[str, list[DerivedPlugin]] = {}

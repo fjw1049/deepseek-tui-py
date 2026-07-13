@@ -1738,7 +1738,7 @@ async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
         assert engine._active_plugin is not None
         assert not engine._active_plugin.trusted  # sanity: untrusted
 
-        # Bypass collect_contributions's own trust gating: return a server
+        # Bypass collect_light_contributions's own trust gating: return a server
         # anyway, and stub _server_tool_names, to prove the explicit gate in
         # _active_plugin_whitelist is what blocks the name (not the absence of
         # contributed servers).
@@ -1746,7 +1746,7 @@ async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
             mcp_servers=[McpServerConfig(name="mcp-plugin-srv", command="cat")]
         )
         monkeypatch.setattr(
-            plugin_mod, "collect_contributions", lambda *a, **k: fake_contribs
+            plugin_mod, "collect_light_contributions", lambda *a, **k: fake_contribs
         )
         engine._server_tool_names = lambda server: frozenset(  # type: ignore[assignment]
             {"mcp_mcp-plugin-srv__do"}
@@ -2057,8 +2057,8 @@ async def test_restore_active_plugin_from_persisted_items(
         await engine.shutdown_session()
 
 
-def test_discover_backfills_contribution_index(tmp_path) -> None:
-    """Pre-index installs get a contribution_index written on discover."""
+def test_discover_does_not_backfill_contribution_index(tmp_path) -> None:
+    """Discovery is pure-read: missing indexes are not written to disk."""
     from deepseek_tui.integrations.plugins import LOCKFILE_NAME
 
     plugins = tmp_path / "plugins"
@@ -2082,11 +2082,9 @@ def test_discover_backfills_contribution_index(tmp_path) -> None:
     assert "contribution_index" not in read_lockfile(plugins)["legacy"]
     found = discover_plugins(plugins_dir=plugins, include_claude=False)
     assert len(found) == 1
-    assert found[0].contribution_index is not None
-    assert found[0].contribution_index["commands"]
-    assert found[0].contribution_index["agents"]
+    assert found[0].contribution_index is None
     lock = read_lockfile(plugins)["legacy"]
-    assert isinstance(lock.get("contribution_index"), dict)
+    assert "contribution_index" not in lock
 
 
 def test_reindex_contribution_indexes(tmp_path) -> None:

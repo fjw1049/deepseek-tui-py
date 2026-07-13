@@ -169,9 +169,17 @@ def test_pi_adapter_recognizes_provider_without_executing_postinstall(
 
     package = packages[0]
     assert package.compatibility.adapter_id == "pi-package"
-    assert package.compatibility.status is CompatibilityStatus.BLOCKED
-    assert package.compatibility.can_install is False
-    assert package.compatibility.can_activate is False
+    assert package.compatibility.can_install is True
+    codes = {item.code for item in package.compatibility.diagnostics}
+    assert "PI_INSTALL_SCRIPT_REQUIRES_GRANT" in codes
+    # TS entry is either strip-types (degraded/activatable) or blocked on old Node.
+    if "PI_TYPESCRIPT_STRIP_TYPES" in codes:
+        assert package.compatibility.status is CompatibilityStatus.DEGRADED
+        assert package.compatibility.can_activate is True
+    else:
+        assert "PI_TYPESCRIPT_ENTRYPOINT" in codes
+        assert package.compatibility.status is CompatibilityStatus.BLOCKED
+        assert package.compatibility.can_activate is False
     assert [item.kind for item in package.contributions] == ["runtime.tool-provider"]
     assert {item.capability for item in package.permission_claims} >= {
         "process.spawn",
@@ -180,6 +188,9 @@ def test_pi_adapter_recognizes_provider_without_executing_postinstall(
     assert any(
         item.code == "PI_INSTALL_SCRIPT_REQUIRES_GRANT"
         for item in package.compatibility.diagnostics
+    )
+    assert (
+        "PI_TYPESCRIPT_STRIP_TYPES" in codes or "PI_TYPESCRIPT_ENTRYPOINT" in codes
     )
 
 

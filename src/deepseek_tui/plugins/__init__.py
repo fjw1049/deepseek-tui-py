@@ -7,22 +7,30 @@ legacy discovery/collector functions directly.
 
 from deepseek_tui.plugins.host import (
     EnablePlugin,
+    GcPlugins,
+    GrantPlugin,
     InstallPlugin,
     PluginHost,
     PluginInspection,
     PluginSession,
     RemovePlugin,
+    RevokePlugin,
+    RollbackPlugin,
     TrustPlugin,
     UpdatePlugin,
 )
 
 __all__ = [
     "EnablePlugin",
+    "GcPlugins",
+    "GrantPlugin",
     "InstallPlugin",
     "PluginHost",
     "PluginInspection",
     "PluginSession",
     "RemovePlugin",
+    "RevokePlugin",
+    "RollbackPlugin",
     "TrustPlugin",
     "UpdatePlugin",
 ]

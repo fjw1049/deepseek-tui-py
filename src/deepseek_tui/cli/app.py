@@ -1370,7 +1370,7 @@ def plugin_list_cmd() -> None:
 def plugin_install_cmd(
     spec: str = typer.Argument(
         ...,
-        help="Source: github:owner/repo, a local path, or <plugin>@<marketplace>.",
+        help="Source: github:owner/repo, local path, npm:pkg[@ver], or <plugin>@<marketplace>.",
     ),
     trust: bool = typer.Option(
         False, "--trust", help="Trust immediately (activates hooks/MCP servers)."
@@ -1387,7 +1387,7 @@ def plugin_install_cmd(
     ),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
-    """Install a plugin from GitHub, a local directory, or a marketplace."""
+    """Install a plugin from GitHub, local path, marketplace, or npm:<pkg>."""
     from deepseek_tui.plugins import InstallPlugin, PluginHost
 
     result = PluginHost().apply(
@@ -1588,6 +1588,87 @@ def plugin_untrust_cmd(
     from deepseek_tui.integrations.plugins import set_plugin_trusted
 
     typer.echo(set_plugin_trusted(name, False, _plugins_dir(project)))
+
+
+@plugin_app.command("grant")
+def plugin_grant_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    digest: str = typer.Option(
+        "",
+        "--digest",
+        help="Content digest to bind (default: fingerprint the installed copy).",
+    ),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Grant digest-bound execution capabilities (hooks/MCP/sidecar)."""
+    from deepseek_tui.integrations.plugins import resolve_plugin_dir, user_plugins_dir
+    from deepseek_tui.plugins import GrantPlugin, PluginHost
+    from deepseek_tui.plugins.identity import content_fingerprint
+
+    plugins_dir = _plugins_dir(project)
+    bound = digest.strip()
+    if not bound:
+        resolved = resolve_plugin_dir(name, plugins_dir or user_plugins_dir())
+        if resolved is None:
+            typer.echo(f"Plugin not found: {name}")
+            raise typer.Exit(1)
+        bound = content_fingerprint(resolved)
+    result = PluginHost().apply(GrantPlugin(name, bound, plugins_dir))
+    typer.echo(result.message)
+
+
+@plugin_app.command("revoke")
+def plugin_revoke_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    digest: str = typer.Option(
+        "",
+        "--digest",
+        help="Digest to revoke (default: all grants for the plugin).",
+    ),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Revoke digest-bound execution grants."""
+    from deepseek_tui.plugins import PluginHost, RevokePlugin
+
+    result = PluginHost().apply(
+        RevokePlugin(name, digest.strip() or None, _plugins_dir(project))
+    )
+    typer.echo(result.message)
+
+
+@plugin_app.command("gc")
+def plugin_gc_cmd(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="List unreferenced digests without deleting them.",
+    ),
+) -> None:
+    """Remove content-addressed source trees that no lockfile/symlink references."""
+    from deepseek_tui.plugins import GcPlugins, PluginHost
+
+    result = PluginHost().apply(GcPlugins(dry_run=dry_run))
+    typer.echo(result.message)
+
+
+@plugin_app.command("rollback")
+def plugin_rollback_cmd(
+    name: str = typer.Argument(..., help="Plugin name."),
+    digest: str = typer.Argument(
+        ...,
+        help="Store digest (sha256 hex, or sha256:/fp: prefixed).",
+    ),
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Point an installed plugin back at a previously published store digest."""
+    from deepseek_tui.plugins import PluginHost, RollbackPlugin
+
+    result = PluginHost().apply(
+        RollbackPlugin(name, digest, _plugins_dir(project))
+    )
+    typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("reindex")

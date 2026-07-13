@@ -218,6 +218,8 @@ class LifecycleHookEntry(BaseModel):
     background: bool = False
     continue_on_error: bool = True
     name: str | None = None
+    # Explicit plugin owner. Prefer this over parsing ``name="plugin:…"``.
+    owner_plugin_id: str | None = None
 
 
 class HooksConfig(BaseModel):

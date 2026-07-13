@@ -916,6 +916,31 @@ async def plugin_action_route(request: Request, name: str) -> dict[str, Any]:
             host.apply,
             TrustPlugin(name, action == "trust", plugins_dir),
         )
+    elif action in ("grant", "revoke"):
+        from deepseek_tui.integrations.plugins import (
+            resolve_plugin_dir,
+            user_plugins_dir,
+        )
+        from deepseek_tui.plugins import GrantPlugin, RevokePlugin
+        from deepseek_tui.plugins.identity import content_fingerprint
+
+        digest = str(payload.get("digest") or "").strip()
+        scope = plugins_dir or user_plugins_dir()
+        if not digest and action == "grant":
+            resolved = resolve_plugin_dir(name, scope)
+            if resolved is None:
+                raise api_error(404, f"Plugin not found: {name}", error="plugin_not_found")
+            digest = content_fingerprint(resolved)
+        if action == "grant":
+            result = await asyncio.to_thread(
+                host.apply,
+                GrantPlugin(name, digest, plugins_dir),
+            )
+        else:
+            result = await asyncio.to_thread(
+                host.apply,
+                RevokePlugin(name, digest or None, plugins_dir),
+            )
     elif action == "update":
         result = await asyncio.to_thread(
             host.apply,

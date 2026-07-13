@@ -126,15 +126,15 @@ def test_normalize_installed_plugin_rewrites_copy(tmp_path: Path) -> None:
     assert normalize_installed_plugin(plugin) == []
 
 
-def test_install_normalizes_copy_not_source(tmp_path: Path) -> None:
+def test_install_preserves_vendor_layout(tmp_path: Path) -> None:
     source = _make_codebuddy_plugin_with_hooks(tmp_path / "src")
     plugins_dir = tmp_path / "installed"
     outcome, _ = install_plugin(str(source), plugins_dir, trust=True)
     assert outcome.name == "INSTALLED"
     dest = plugins_dir / "ppt"
-    # Installed copy is canonical.
-    assert (dest / ".claude-plugin" / "plugin.json").is_file()
-    assert not (dest / ".codebuddy-plugin").exists()
+    # Installed copy keeps the vendor layout; runtime adapters map at read time.
+    assert (dest / ".codebuddy-plugin" / "plugin.json").is_file()
+    assert not (dest / ".claude-plugin").exists()
     # Original source is untouched.
     assert (source / ".codebuddy-plugin" / "plugin.json").is_file()
     assert not (source / ".claude-plugin").exists()

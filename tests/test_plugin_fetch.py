@@ -229,3 +229,88 @@ def test_host_rejects_remote_package_id_mismatch(tmp_path: Path, monkeypatch) ->
     assert result.outcome == "failed"
     assert "id mismatch" in result.message
     assert not installed.exists() or not (installed / "different-plugin").exists()
+
+
+def test_npm_source_parse_and_install(tmp_path: Path, monkeypatch) -> None:
+    from deepseek_tui.plugins.fetch import NpmPackageSource
+
+    source = NpmPackageSource.parse("npm:@scope/demo@1.2.3")
+    assert source.name == "@scope/demo"
+    assert source.version == "1.2.3"
+
+    plugin_root = tmp_path / "extracted" / "package"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / ".claude-plugin").mkdir()
+    (plugin_root / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "npm-demo", "version": "1.2.3", "skills": "./skills"}),
+        encoding="utf-8",
+    )
+    skill = plugin_root / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: npm-demo\ndescription: d\n---\nBody\n", encoding="utf-8"
+    )
+
+    class _Resolved:
+        path = plugin_root
+        ref = "1.2.3"
+        archive_url = "https://registry.npmjs.org/npm-demo/-/npm-demo-1.2.3.tgz"
+        digest = "sha256:" + ("ab" * 32)
+
+    class _Ctx:
+        def __enter__(self):
+            return _Resolved()
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "deepseek_tui.plugins.fetch.materialize_npm_package",
+        lambda *a, **k: _Ctx(),
+    )
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    installed = tmp_path / "installed"
+    result = PluginHost().apply(
+        InstallPlugin(source="npm:npm-demo@1.2.3", plugins_dir=installed)
+    )
+    assert result.outcome == "installed"
+    assert (installed / "npm-demo").exists()
+
+
+def test_plugin_cli_gc_and_rollback(tmp_path: Path, monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    from deepseek_tui.cli.app import app
+    from deepseek_tui.plugins.store import publish_source_tree, source_path
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    orphan = tmp_path / "orphan"
+    orphan.mkdir()
+    (orphan / "x.txt").write_text("x", encoding="utf-8")
+    digest, path = publish_source_tree(orphan)
+    assert path.is_dir()
+
+    runner = CliRunner()
+    dry = runner.invoke(app, ["plugin", "gc", "--dry-run"])
+    assert dry.exit_code == 0
+    assert "Would remove" in dry.stdout
+    assert source_path(digest).is_dir()
+
+    gone = runner.invoke(app, ["plugin", "gc"])
+    assert gone.exit_code == 0
+    assert "Removed" in gone.stdout
+    assert not source_path(digest).exists()
+
+    # Re-publish and exercise rollback via host (CLI needs a plugins dir entry).
+    digest2, store = publish_source_tree(orphan)
+    plugins = tmp_path / "home" / "plugins"
+    plugins.mkdir(parents=True)
+    from deepseek_tui.plugins.store import link_or_copy_from_store
+
+    link_or_copy_from_store(store, plugins / "orphan-pkg")
+    rolled = runner.invoke(
+        app,
+        ["plugin", "rollback", "orphan-pkg", digest2],
+    )
+    assert rolled.exit_code == 0
+    assert "Rolled back" in rolled.stdout

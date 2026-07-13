@@ -182,8 +182,15 @@ def test_plugin_host_rejects_unknown_or_traversing_candidate_root(
     assert not target.exists()
 
 
-def test_plugin_host_rejects_blocked_pi_candidate(tmp_path: Path) -> None:
-    (tmp_path / "package.json").write_text(
+def test_plugin_host_rejects_blocked_pi_candidate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(
+        "deepseek_tui.plugins.pi_runtime.node_supports_strip_types",
+        lambda node_bin=None: False,
+    )
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "package.json").write_text(
         json.dumps(
             {
                 "name": "pi-demo",
@@ -193,12 +200,48 @@ def test_plugin_host_rejects_blocked_pi_candidate(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (tmp_path / "index.ts").write_text("export default {};", encoding="utf-8")
+    (source / "index.ts").write_text("export default {};", encoding="utf-8")
 
-    result = PluginHost().apply(InstallPlugin(source=str(tmp_path)))
+    result = PluginHost().apply(
+        InstallPlugin(source=str(source), plugins_dir=tmp_path / "installed")
+    )
 
     assert result.outcome == "failed"
     assert "activation is blocked" in result.message
+
+
+def test_plugin_host_installs_typescript_pi_when_strip_types_available(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(
+        "deepseek_tui.plugins.pi_runtime.node_supports_strip_types",
+        lambda node_bin=None: True,
+    )
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "pi-demo-ts",
+                "version": "1.0.0",
+                "pi": {"extensions": ["./index.ts"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source / "index.ts").write_text(
+        "export default function (pi) { pi.registerTool({ name: 't', "
+        "async execute() { return { content: [] }; } }); }\n",
+        encoding="utf-8",
+    )
+
+    result = PluginHost().apply(
+        InstallPlugin(source=str(source), plugins_dir=tmp_path / "installed")
+    )
+
+    assert result.outcome == "installed"
+    assert (tmp_path / "installed" / "pi-demo-ts").exists()
 
 
 def test_selected_collection_candidate_can_update_from_recorded_source(

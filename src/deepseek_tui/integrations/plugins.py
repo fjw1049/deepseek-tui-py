@@ -76,7 +76,6 @@ from deepseek_tui.config.models import LifecycleHookEntry
 from deepseek_tui.integrations.hooks import LIFECYCLE_EVENTS
 from deepseek_tui.integrations.plugin_compat import (
     matcher_to_condition,
-    normalize_installed_plugin,
 )
 from deepseek_tui.integrations.skills import (
     GITHUB_ALLOWED_HOSTS,
@@ -129,6 +128,7 @@ __all__ = [
     "reindex_contribution_indexes",
     "remove_marketplace",
     "resolve_marketplace_plugin",
+    "resolve_plugin_dir",
     "scaffold_plugin",
     "set_plugin_enabled",
     "set_plugin_trusted",
@@ -398,6 +398,35 @@ def _synthesize_layout_manifest(plugin_dir: Path) -> PluginManifest | None:
     )
 
 
+def _synthesize_pi_manifest(plugin_dir: Path) -> PluginManifest | None:
+    """Treat a ``package.json#pi.extensions`` package as an installable plugin."""
+    package_json = plugin_dir / "package.json"
+    if not package_json.is_file():
+        return None
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    pi = data.get("pi")
+    if not isinstance(pi, dict) or not pi.get("extensions"):
+        return None
+    raw_name = str(data.get("name") or plugin_dir.name)
+    if raw_name.startswith("@"):
+        raw_name = raw_name[1:].replace("/", "-")
+    name = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in raw_name)
+    name = name.strip("-._") or plugin_dir.name
+    return PluginManifest(
+        name=name,
+        version=str(data.get("version") or "0.0.0"),
+        description=str(data.get("description") or "")
+        if isinstance(data.get("description"), str)
+        else "",
+        permissions=("process.spawn", "runtime.tool-provider"),
+    )
+
+
 def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
     """Load and parse the plugin manifest, or ``None`` when absent/invalid."""
     manifest_path: Path | None = None
@@ -410,7 +439,10 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
         single = _synthesize_single_skill_manifest(plugin_dir)
         if single is not None:
             return single
-        return _synthesize_layout_manifest(plugin_dir)
+        layout = _synthesize_layout_manifest(plugin_dir)
+        if layout is not None:
+            return layout
+        return _synthesize_pi_manifest(plugin_dir)
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -547,40 +579,60 @@ def _scope_for(plugins_dir: Path, workspace: Path | None, override: Path | None)
     return "user"
 
 
+INDEX_SCHEMA_VERSION = 2
+
+
 def _ensure_contribution_index(
     manifest: PluginManifest,
     path: Path,
     entry: dict[str, Any],
     lock_dir: Path,
 ) -> dict[str, Any] | None:
-    """Return a contribution index, backfilling the lockfile when missing.
+    """Return a valid cached contribution index, or ``None``.
 
-    Older installs predate ``contribution_index``. Building + writing once
-    lets subsequent Engine.create sessions use deferred assembly instead of
-    eager heavy scans. Failures degrade to ``None`` (eager fallback).
+    Discovery is pure-read: missing or stale indexes are *not* written back
+    here. Call :func:`reindex_contribution_indexes` or reinstall to refresh.
     """
+    del manifest, lock_dir  # retained for call-site compatibility
     raw_index = entry.get("contribution_index")
-    if isinstance(raw_index, dict):
-        return raw_index
-    try:
-        index = build_contribution_index(path, manifest)
-    except Exception:  # noqa: BLE001 — index failure must not block discover
-        _LOG.warning(
-            "contribution index backfill failed for %s", manifest.name, exc_info=True
-        )
+    if not isinstance(raw_index, dict):
         return None
+    if not _contribution_index_is_valid(path, entry, raw_index):
+        return None
+    return raw_index
+
+
+def _contribution_index_is_valid(
+    path: Path,
+    entry: dict[str, Any],
+    index: dict[str, Any],
+) -> bool:
+    if int(index.get("schema_version") or 0) < INDEX_SCHEMA_VERSION:
+        return False
     try:
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        _update_lockfile_entry(
-            lock_dir, manifest.name, contribution_index=index
-        )
-    except Exception:  # noqa: BLE001 — still return in-memory index
-        _LOG.warning(
-            "contribution index lockfile write failed for %s",
-            manifest.name,
-            exc_info=True,
-        )
-    return index
+        from deepseek_tui.plugins.identity import content_fingerprint
+
+        fingerprint = content_fingerprint(path)
+    except Exception:  # noqa: BLE001 — degrade to eager path
+        return False
+    if index.get("content_fingerprint") != fingerprint:
+        return False
+    provenance = entry.get("derived_provenance")
+    if isinstance(provenance, dict):
+        adapter_id = provenance.get("adapter_id")
+        adapter_version = provenance.get("adapter_version")
+        if adapter_id and index.get("adapter_id") != adapter_id:
+            return False
+        if (
+            adapter_version is not None
+            and index.get("adapter_version") != adapter_version
+        ):
+            return False
+        source = provenance.get("source")
+        if isinstance(source, dict) and source.get("digest"):
+            if index.get("source_digest") != source["digest"]:
+                return False
+    return True
 
 
 def discover_plugins(
@@ -596,9 +648,8 @@ def discover_plugins(
     override Claude Code installs). Disabled plugins are skipped unless
     ``include_disabled`` is set.
 
-    When a lockfile entry lacks ``contribution_index`` (pre-index installs),
-    the index is built and written back so the next session can defer heavy
-    assembly.
+    Discovery is pure-read: a missing or stale ``contribution_index`` is
+    returned as ``None`` and Engine falls back to on-demand assembly.
     """
     found: list[LoadedPlugin] = []
     seen_names: set[str] = set()
@@ -1148,6 +1199,7 @@ def _append_native_hook(
             background=bool(raw_entry.get("background", False)),
             continue_on_error=bool(raw_entry.get("continue_on_error", True)),
             name=f"{plugin.name}:{raw_entry.get('name') or event}",
+            owner_plugin_id=plugin.name,
         )
     )
 
@@ -1210,6 +1262,7 @@ def _append_foreign_hooks(
                         background=False,
                         continue_on_error=True,
                         name=f"{plugin.name}:{event_name}",
+                        owner_plugin_id=plugin.name,
                     )
                 )
 
@@ -1329,22 +1382,21 @@ def _valid_plugin_name(name: str) -> bool:
 
 
 def _plugin_child_path(target_dir: Path, name: str) -> Path | None:
-    """Resolve a safe, non-symlink direct child of *target_dir*.
+    """Resolve a safe direct child of *target_dir*.
 
     Plugin names come from both manifests and CLI selectors.  Keep either
     source from escaping the scope directory before callers copy or delete.
+
+    Symlinks into the content-addressed store are allowed: the *entry* must
+    still be a direct child of the scope directory.
     """
     if not _valid_plugin_name(name):
         return None
     candidate = target_dir / name
-    if candidate.is_symlink():
-        return None
     try:
-        target = target_dir.resolve()
-        resolved = candidate.resolve(strict=False)
+        if candidate.parent.resolve() != target_dir.resolve():
+            return None
     except OSError:
-        return None
-    if resolved.parent != target:
         return None
     return candidate
 
@@ -1419,7 +1471,95 @@ def install_plugin(
             provenance=provenance,
         )
 
+    if spec.strip().startswith("npm:"):
+        return _install_from_npm(
+            spec.strip(),
+            target_dir,
+            trust=trust,
+            max_size_bytes=max_size_bytes,
+            provenance=provenance,
+        )
+
     return (InstallOutcome.FAILED, f"Invalid plugin source: {spec}")
+
+
+def _install_from_npm(
+    spec: str,
+    target_dir: Path,
+    *,
+    trust: bool,
+    max_size_bytes: int,
+    provenance: dict[str, Any] | None,
+) -> tuple[InstallOutcome, str]:
+    """Fetch an npm package tarball and install it without running scripts."""
+    from deepseek_tui.plugins.adapters import inspect_local_source
+    from deepseek_tui.plugins.fetch import (
+        NpmPackageSource,
+        RemoteFetchError,
+        materialize_npm_package,
+    )
+    from deepseek_tui.plugins.model import CompatibilityStatus
+
+    try:
+        remote = NpmPackageSource.parse(spec)
+        with materialize_npm_package(remote, max_bytes=max_size_bytes) as resolved:
+            packages, diagnostics = inspect_local_source(resolved.path)
+            installable = [
+                package
+                for package in packages
+                if package.compatibility.can_install
+                and package.compatibility.status
+                not in {CompatibilityStatus.UNSUPPORTED}
+            ]
+            if not installable:
+                detail = "; ".join(
+                    f"{item.code}: {item.message}" for item in diagnostics[:3]
+                )
+                return (
+                    InstallOutcome.FAILED,
+                    "npm package did not yield an installable plugin"
+                    + (f" ({detail})" if detail else ""),
+                )
+            if len(installable) > 1:
+                names = ", ".join(item.plugin_id for item in installable)
+                return (
+                    InstallOutcome.FAILED,
+                    f"npm package contains multiple plugins; install locally and "
+                    f"select one: {names}",
+                )
+            package = installable[0]
+            if (
+                package.compatibility.status is CompatibilityStatus.BLOCKED
+                or not package.compatibility.can_activate
+            ):
+                # Still allow install for blocked-at-activate packages (e.g. TS
+                # Pi entry) so users can stage them; activation stays gated.
+                pass
+            merged = {
+                **(provenance or {}),
+                "plugin_id": package.plugin_id,
+                "adapter_id": package.compatibility.adapter_id,
+                "adapter_version": package.compatibility.adapter_version,
+                "source": {
+                    "kind": "npm",
+                    "locator": spec,
+                    "digest": resolved.digest,
+                    "version": resolved.ref,
+                    "tarball": resolved.archive_url,
+                },
+                "compatibility": package.compatibility.to_dict(),
+            }
+            return _install_from_local(
+                resolved.path,
+                target_dir,
+                spec,
+                trust=trust,
+                provenance=merged,
+            )
+    except RemoteFetchError as exc:
+        return (InstallOutcome.FAILED, f"npm fetch failed: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        return (InstallOutcome.FAILED, f"npm install failed: {exc}")
 
 
 def _install_from_local(
@@ -1430,7 +1570,9 @@ def _install_from_local(
     trust: bool,
     provenance: dict[str, Any] | None = None,
 ) -> tuple[InstallOutcome, str]:
-    """Copy a local plugin dir into the scope dir and record the install."""
+    """Publish *src* into the content-addressed store and link into the scope."""
+    from deepseek_tui.plugins.store import link_or_copy_from_store, publish_source_tree
+
     manifest = load_plugin_manifest(src)
     if manifest is None:
         return (InstallOutcome.FAILED, f"No plugin manifest found in {src}")
@@ -1445,7 +1587,23 @@ def _install_from_local(
             InstallOutcome.ALREADY_EXISTS,
             f"Plugin {manifest.name} already exists at {dest}",
         )
-    shutil.copytree(src, dest)
+    try:
+        digest, store_path = publish_source_tree(src)
+        materialization = link_or_copy_from_store(store_path, dest)
+    except Exception as exc:  # noqa: BLE001
+        return (InstallOutcome.FAILED, f"Failed to publish plugin source: {exc}")
+    merged_provenance = dict(provenance or {})
+    merged_provenance.setdefault("source", {})
+    if isinstance(merged_provenance["source"], dict):
+        merged_provenance["source"] = {
+            **merged_provenance["source"],
+            "digest": digest,
+            "store_path": str(store_path),
+            "materialization": materialization,
+        }
+    else:
+        merged_provenance["content_digest"] = digest
+        merged_provenance["store_path"] = str(store_path)
     _finalize_installed_plugin(dest)
     _record_install(
         target_dir,
@@ -1453,7 +1611,7 @@ def _install_from_local(
         source_spec,
         trust,
         plugin_path=dest,
-        provenance=provenance,
+        provenance=merged_provenance,
     )
     return (
         InstallOutcome.INSTALLED,
@@ -1575,9 +1733,14 @@ def _install_from_github_subdir(
     from deepseek_tui.plugins.model import CompatibilityStatus
 
     try:
+        subdir = source.subdir
+        ref = None
+        if "@" in subdir:
+            subdir, _, ref = subdir.rpartition("@")
         remote = GitSubdirSource.parse(
-            f"https://github.com/{source.owner}/{source.repo}.git",
-            source.subdir,
+            f"https://github.com/{source.owner}/{source.repo}",
+            subdir,
+            ref=ref or None,
         )
         with materialize_git_subdir(remote, max_bytes=max_size_bytes) as resolved:
             packages, _ = inspect_local_source(resolved.path)
@@ -1636,7 +1799,10 @@ def _install_from_github_subdir(
 
 
 def build_contribution_index(
-    plugin_path: Path, manifest: PluginManifest
+    plugin_path: Path,
+    manifest: PluginManifest,
+    *,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pre-scan a plugin's declarative components into a serializable index.
 
@@ -1654,7 +1820,25 @@ def build_contribution_index(
         trusted=True,
     )
     contribs = collect_contributions([fake])
+    from deepseek_tui.plugins.identity import content_fingerprint
+
+    fingerprint = content_fingerprint(plugin_path)
+    adapter_id = "legacy-loader"
+    adapter_version = 1
+    source_digest = fingerprint
+    if isinstance(provenance, dict):
+        adapter_id = str(provenance.get("adapter_id") or adapter_id)
+        if provenance.get("adapter_version") is not None:
+            adapter_version = int(provenance["adapter_version"])
+        source = provenance.get("source")
+        if isinstance(source, dict) and source.get("digest"):
+            source_digest = str(source["digest"])
     return {
+        "schema_version": INDEX_SCHEMA_VERSION,
+        "content_fingerprint": fingerprint,
+        "adapter_id": adapter_id,
+        "adapter_version": adapter_version,
+        "source_digest": source_digest,
         "skills": [
             {"name": s.name, "description": s.description}
             for s in contribs.skills
@@ -1752,7 +1936,9 @@ def _record_install(
     index: dict[str, Any] | None = None
     if plugin_path is not None:
         try:
-            index = build_contribution_index(plugin_path, manifest)
+            index = build_contribution_index(
+                plugin_path, manifest, provenance=provenance
+            )
         except Exception:  # noqa: BLE001 - index failure must not block install
             _LOG.warning(
                 "contribution index failed for %s", manifest.name, exc_info=True
@@ -1768,20 +1954,34 @@ def _record_install(
     if provenance is not None:
         fields["derived_provenance"] = provenance
     _update_lockfile_entry(plugins_dir, manifest.name, **fields)
+    if trust and plugin_path is not None:
+        try:
+            from deepseek_tui.plugins.grants import grant_execution
+            from deepseek_tui.plugins.identity import content_fingerprint
+
+            digest = content_fingerprint(plugin_path)
+            if isinstance(provenance, dict):
+                source = provenance.get("source")
+                if isinstance(source, dict) and source.get("digest"):
+                    digest = str(source["digest"])
+            grant_execution(manifest.name, digest)
+        except Exception:  # noqa: BLE001 — grants are additive; trust still holds
+            _LOG.warning(
+                "failed to write execution grant for %s",
+                manifest.name,
+                exc_info=True,
+            )
 
 
 def _finalize_installed_plugin(dest: Path) -> None:
-    """Normalize the installed copy into canonical form (best-effort).
+    """Post-install hook kept for call-site compatibility.
 
-    Never raises: a normalization failure must not break the install — the
-    runtime loader's tolerance shims still load the un-normalized copy.
+    Vendor copies are no longer rewritten in place. Format adapters and the
+    runtime loader map foreign layouts at read time; compatibility losses
+    belong in CompatReport / derived provenance instead of mutating files.
     """
-    try:
-        notes = normalize_installed_plugin(dest)
-        if notes:
-            _LOG.info("normalized plugin %s: %s", dest.name, "; ".join(notes))
-    except Exception as exc:  # noqa: BLE001 — normalization is best-effort
-        _LOG.warning("plugin normalization skipped for %s: %s", dest, exc)
+    del dest
+    return None
 
 
 _HOOKS_MCP_NEXT_SESSION = (
@@ -1880,7 +2080,10 @@ def uninstall_plugin(name: str, plugins_dir: Path | None = None) -> str:
         return f"Plugin not found: {name}"
     manifest = load_plugin_manifest(plugin_path)
     lock_name = manifest.name if manifest is not None else name
-    shutil.rmtree(plugin_path)
+    if plugin_path.is_symlink() or plugin_path.is_file():
+        plugin_path.unlink()
+    else:
+        shutil.rmtree(plugin_path)
     plugins = read_lockfile(target_dir)
     # Drop both the manifest-name key and any legacy key matching the
     # caller-supplied name (folder renames / older lockfiles).
@@ -1892,6 +2095,16 @@ def uninstall_plugin(name: str, plugins_dir: Path | None = None) -> str:
     if changed:
         _write_lockfile(target_dir, plugins)
     return f"Uninstalled plugin {lock_name}"
+
+
+def _remove_path(path: Path) -> None:
+    """Remove a file, symlink, or directory tree."""
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+        return
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def update_plugin(
@@ -1944,10 +2157,8 @@ def update_plugin(
 
     staging = target_dir / f".update-staging-{lock_name}"
     backup = target_dir / f".update-backup-{lock_name}"
-    if staging.exists():
-        shutil.rmtree(staging)
-    if backup.exists():
-        shutil.rmtree(backup)
+    _remove_path(staging)
+    _remove_path(backup)
     staging.mkdir(parents=True, exist_ok=True)
     staged_manifest: PluginManifest | None = None
     staged_provenance: dict[str, Any] | None = None
@@ -1987,26 +2198,28 @@ def update_plugin(
         # restore backup so the user never loses the previous install.
         # Prefer swapping onto the canonical manifest-named path.
         live_dest = target_dir / lock_name
-        if plugin_path.is_dir():
+        if plugin_path.exists() or plugin_path.is_symlink():
             os.replace(plugin_path, backup)
         try:
             os.replace(staged_plugin, live_dest)
             plugin_path = live_dest
         except BaseException:
-            if backup.is_dir() and not plugin_path.exists():
+            if (backup.exists() or backup.is_symlink()) and not (
+                plugin_path.exists() or plugin_path.is_symlink()
+            ):
                 try:
                     os.replace(backup, plugin_path)
                 except OSError:
                     pass
             raise
-        if backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
+        _remove_path(backup)
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        _remove_path(staging)
         # Orphan backup from a previous crashed update — keep live intact.
-        if backup.exists() and plugin_path.is_dir():
-            shutil.rmtree(backup, ignore_errors=True)
+        if (backup.exists() or backup.is_symlink()) and (
+            plugin_path.exists() or plugin_path.is_symlink()
+        ):
+            _remove_path(backup)
 
     # Refresh live lockfile (staging's lockfile was discarded with staging).
     # Preserve enabled/trusted; update source/version/installed_at.
@@ -2020,29 +2233,48 @@ def update_plugin(
         fields["version"] = staged_manifest.version
     if staged_provenance is not None:
         previous_provenance = entry.get("derived_provenance")
-        if (
-            "catalog" not in staged_provenance
-            and isinstance(previous_provenance, dict)
-            and isinstance(previous_provenance.get("catalog"), dict)
-        ):
-            staged_provenance = {
-                **staged_provenance,
-                "catalog": previous_provenance["catalog"],
-            }
+        if isinstance(previous_provenance, dict):
+            staged_provenance = {**previous_provenance, **staged_provenance}
+            if (
+                "catalog" not in staged_provenance
+                and isinstance(previous_provenance.get("catalog"), dict)
+            ):
+                staged_provenance["catalog"] = previous_provenance["catalog"]
         fields["derived_provenance"] = staged_provenance
+    elif isinstance(entry.get("derived_provenance"), dict):
+        fields["derived_provenance"] = entry["derived_provenance"]
     # Rebuild contribution index from the freshly swapped live dir so the
     # deferred-assembly catalog stays current after an update.
     if staged_manifest is not None:
         try:
             fields["contribution_index"] = build_contribution_index(
-                plugin_path, staged_manifest
+                plugin_path,
+                staged_manifest,
+                provenance=staged_provenance,
             )
-        except Exception:  # noqa: BLE001 - index failure must not block update
+        except Exception:  # noqa: BLE001
             _LOG.warning(
-                "contribution index failed for %s on update", lock_name, exc_info=True
+                "contribution index rebuild failed for %s",
+                lock_name,
+                exc_info=True,
             )
+    # Digest-bound grants do not carry across updates.
+    try:
+        from deepseek_tui.plugins.grants import grant_execution, revoke_grant
+        from deepseek_tui.plugins.identity import content_fingerprint
+
+        revoke_grant(lock_name)
+        if was_trusted:
+            grant_execution(lock_name, content_fingerprint(plugin_path))
+    except Exception:  # noqa: BLE001
+        _LOG.warning("grant rotation failed for %s", lock_name, exc_info=True)
     _update_lockfile_entry(target_dir, lock_name, **fields)
     return (InstallOutcome.UPDATED, f"Updated {lock_name} from {spec}")
+
+
+def resolve_plugin_dir(name: str, target_dir: Path) -> Path | None:
+    """Public alias for locating an installed plugin directory."""
+    return _resolve_plugin_dir(name, target_dir)
 
 
 def _resolve_plugin_dir(name: str, target_dir: Path) -> Path | None:
@@ -2122,15 +2354,34 @@ def set_plugin_trusted(
     target_dir.mkdir(parents=True, exist_ok=True)
     resolved = _resolve_plugin_dir(name, target_dir)
     lock_name = name
+    digest = ""
     if resolved is not None:
         manifest = load_plugin_manifest(resolved)
         if manifest is not None:
             lock_name = manifest.name
+        try:
+            from deepseek_tui.plugins.identity import content_fingerprint
+
+            digest = content_fingerprint(resolved)
+        except Exception:  # noqa: BLE001
+            digest = ""
     _update_lockfile_entry(target_dir, lock_name, trusted=trusted)
     if trusted:
+        if digest:
+            from deepseek_tui.plugins.grants import grant_execution
+
+            grant_execution(lock_name, digest)
         return (
             f"Trusted plugin {lock_name}. {_HOOKS_MCP_NEXT_SESSION}"
         )
+    if digest:
+        from deepseek_tui.plugins.grants import revoke_grant
+
+        revoke_grant(lock_name, digest)
+    else:
+        from deepseek_tui.plugins.grants import revoke_grant
+
+        revoke_grant(lock_name)
     return f"Untrusted plugin {lock_name}"
 
 

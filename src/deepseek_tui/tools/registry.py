@@ -220,6 +220,18 @@ class ToolRegistry:
         self._tools[name] = tool
         self._invalidate_api_cache()
 
+    def register_exclusive(self, tool: ToolSpec) -> None:
+        """Register a tool, failing when the name is already taken.
+
+        Plugin session overlays must use this so one package cannot silently
+        replace another package's tool.
+        """
+        name = tool.name()
+        if name in self._tools:
+            raise ValueError(f"tool already registered: {name}")
+        self._tools[name] = tool
+        self._invalidate_api_cache()
+
     def register_all(self, tools: list[ToolSpec]) -> None:
         """Register every tool in ``tools``."""
         for tool in tools:

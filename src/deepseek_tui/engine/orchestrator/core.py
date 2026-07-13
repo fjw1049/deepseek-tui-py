@@ -493,19 +493,27 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if self.hook_executor is not None:
                 self.hook_executor.scenario_plugin = None
             return "已退出场景，恢复全量工具与技能。"
-        from deepseek_tui.integrations.plugins import discover_plugins
-
-        ws = self.tool_context.working_directory
-        try:
-            plugins = discover_plugins(workspace=ws)
-        except Exception:  # noqa: BLE001 — 发现失败不该炸会话
-            logger.warning("plugin discovery failed for mount", exc_info=True)
-            plugins = []
-        match = next(
-            (p for p in plugins if p.manifest.name.lower() == name.lower()), None
-        )
+        match = None
+        if self.plugin_session is not None:
+            match = self.plugin_session.plugin(name)
+        if match is None and self._loaded_plugins:
+            match = next(
+                (
+                    p
+                    for p in self._loaded_plugins
+                    if p.manifest.name.lower() == name.lower()
+                ),
+                None,
+            )
         if match is None:
             return f"未找到插件：{name}（用 plugin list 查看已安装）。"
+        # Refresh enable/trust from the lockfile so an in-session trust toggle
+        # is visible on remount, without reloading package formats or bodies.
+        if self.plugin_session is not None:
+            self.plugin_session.invalidate_light(match.name)
+            refreshed = self.plugin_session.plugin(match.name)
+            if refreshed is not None:
+                match = refreshed
         self._active_plugin = match
         if self.hook_executor is not None:
             self.hook_executor.scenario_plugin = match.manifest.name
@@ -681,25 +689,28 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         plugin = self._active_plugin
         if plugin is None:
             return None
-        from deepseek_tui.integrations.plugins import (
-            capability_values_from_permissions,
-            collect_light_contributions,
-        )
 
         allowed: set[str] = set(FOCUS_READ_BASE)
-        caps = capability_values_from_permissions(plugin.manifest.permissions)
-        if "writes_files" in caps:
-            allowed |= set(FOCUS_WRITE_BASE)
+        # Permission claims never expand the writable toolset by themselves.
+        # Only an explicitly trusted plugin may opt into the write base; the
+        # claim is still advisory for UI / documentation.
+        if self.plugin_session is not None and getattr(plugin, "trusted", False):
+            caps = self.plugin_session.declared_write_capabilities(plugin.name)
+            if "writes_files" in caps:
+                allowed |= set(FOCUS_WRITE_BASE)
         server_names: set[str] = set()
         for skill in self._active_plugin_skills():
             declared = getattr(skill, "allowed_tools", None)
             if declared:
                 allowed |= set(declared)
-        try:
-            contribs = collect_light_contributions([plugin])
-        except Exception:  # noqa: BLE001
-            logger.warning("collect plugin light contributions failed", exc_info=True)
-            contribs = None
+        contribs = None
+        if self.plugin_session is not None:
+            try:
+                contribs = self.plugin_session.light_contributions(plugin.name)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "plugin session light contributions failed", exc_info=True
+                )
         if contribs is not None and plugin.trusted:
             for server in contribs.mcp_servers:
                 allowed |= self._server_tool_names(server.name)
@@ -981,9 +992,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
         if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
-            from deepseek_tui.integrations.plugins import merge_plugin_skills
+            from deepseek_tui.plugins.host import merge_session_skills
 
-            merge_plugin_skills(skill_reg, plugin_skill_contribs)
+            merge_session_skills(skill_reg, plugin_skill_contribs)
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()
@@ -1129,6 +1140,25 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 engine.tool_context.metadata["plugin_agent_index"] = (
                     _agent_index_from_plugin_index(engine.plugin_index)
                 )
+            # Start trusted Pi sidecars once per Engine session.
+            if plugin_session is not None:
+                registry = getattr(runtime, "registry", None)
+                for plugin in loaded_plugins:
+                    if not plugin.trusted:
+                        continue
+                    if not (Path(plugin.path) / "package.json").is_file():
+                        continue
+                    try:
+                        await plugin_session.activate_pi_provider(
+                            plugin.name,
+                            tool_registry=registry,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "pi provider activation failed for %s",
+                            plugin.name,
+                            exc_info=True,
+                        )
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
@@ -1195,6 +1225,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             await self._owned_plugin_mcp_manager.stop_all()
             self._owned_plugin_mcp_manager = None
             self._session_mcp_manager = None
+        if self.plugin_session is not None:
+            try:
+                await self.plugin_session.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("plugin session close failed", exc_info=True)
+            self.plugin_session = None
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
 

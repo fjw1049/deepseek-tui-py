@@ -522,6 +522,9 @@ class HookExecutor:
     @staticmethod
     def _is_foreign_plugin_hook(hook: LifecycleHookEntry, active: str) -> bool:
         """True when ``hook`` belongs to a different plugin than ``active``."""
+        owner = getattr(hook, "owner_plugin_id", None)
+        if owner:
+            return owner.lower() != active.lower()
         name = hook.name or ""
         if ":" not in name:
             return False  # user / config hooks have no plugin prefix

@@ -49,6 +49,9 @@ deepseek-tui = "deepseek_tui.__main__:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/deepseek_tui"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/deepseek_tui/plugins/pi_bridge/bridge.cjs" = "deepseek_tui/plugins/pi_bridge/bridge.cjs"
+
 # Default to the Tsinghua TUNA mirror for package downloads.
 # `default = true` makes it the primary index; uv still falls back to
 # upstream PyPI if a package is missing here (rarely happens — TUNA

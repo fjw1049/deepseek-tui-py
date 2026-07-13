@@ -68,10 +68,42 @@ class GitSubdirSource:
 
     @property
     def install_spec(self) -> str:
-        return f"github:{self.owner}/{self.repo}#{self.subdir}"
+        base = f"github:{self.owner}/{self.repo}#{self.subdir}"
+        if self.ref:
+            return f"{base}@{self.ref}"
+        return base
 
     def archive_candidates(self) -> tuple[tuple[str, str], ...]:
-        refs = (self.ref,) if self.ref else ("main", "master")
+        if self.ref:
+            refs: tuple[str, ...] = (self.ref,)
+            # Explicit refs may be branch names or commit SHAs.
+            urls = []
+            for ref in refs:
+                if _looks_like_commit(ref):
+                    urls.append(
+                        (
+                            ref,
+                            f"https://codeload.github.com/{self.owner}/{self.repo}/tar.gz/"
+                            f"{quote(ref, safe='')}",
+                        )
+                    )
+                else:
+                    urls.append(
+                        (
+                            ref,
+                            f"https://codeload.github.com/{self.owner}/{self.repo}/tar.gz/"
+                            f"refs/heads/{quote(ref, safe='/')}",
+                        )
+                    )
+                    urls.append(
+                        (
+                            ref,
+                            f"https://codeload.github.com/{self.owner}/{self.repo}/tar.gz/"
+                            f"refs/tags/{quote(ref, safe='/')}",
+                        )
+                    )
+            return tuple(urls)
+        refs = ("main", "master")
         return tuple(
             (
                 ref,
@@ -80,6 +112,96 @@ class GitSubdirSource:
             )
             for ref in refs
         )
+
+
+def _looks_like_commit(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-f]{7,40}", value))
+
+
+@dataclass(frozen=True, slots=True)
+class NpmPackageSource:
+    """Fetch a public npm package tarball (scripts disabled at install time)."""
+
+    name: str
+    version: str = "latest"
+
+    @classmethod
+    def parse(cls, spec: str) -> NpmPackageSource:
+        raw = spec.strip()
+        if raw.startswith("npm:"):
+            raw = raw[4:]
+        if not raw:
+            raise RemoteFetchError("npm package name is required")
+        if raw.startswith("@"):
+            # @scope/name@version
+            if raw.count("@") >= 2:
+                name, version = raw.rsplit("@", 1)
+            else:
+                name, version = raw, "latest"
+        elif "@" in raw:
+            name, version = raw.rsplit("@", 1)
+        else:
+            name, version = raw, "latest"
+        if ".." in name or "\\" in name or "\x00" in name:
+            raise RemoteFetchError("invalid npm package name")
+        if not re.fullmatch(r"(@[A-Za-z0-9~._-]+/)?[A-Za-z0-9~._-]+", name):
+            raise RemoteFetchError("invalid npm package name")
+        if not re.fullmatch(r"[A-Za-z0-9._+-]+", version):
+            raise RemoteFetchError("invalid npm package version")
+        return cls(name, version)
+
+    @property
+    def registry_url(self) -> str:
+        return f"https://registry.npmjs.org/{quote(self.name, safe='@/')}"
+
+
+@contextmanager
+def materialize_npm_package(
+    source: NpmPackageSource,
+    *,
+    max_files: int = 20_000,
+    max_bytes: int = 20 * 1024 * 1024,
+    temp_parent: Path | None = None,
+) -> Iterator[ResolvedGitSubdir]:
+    """Download one npm package tarball into a temporary artifact."""
+    meta_url = source.registry_url
+    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        response = client.get(meta_url)
+        if response.status_code == 404:
+            raise RemoteFetchError(f"npm package not found: {source.name}")
+        response.raise_for_status()
+        document = response.json()
+        if source.version == "latest":
+            version = str(document.get("dist-tags", {}).get("latest") or "")
+        else:
+            version = source.version
+        versions = document.get("versions") or {}
+        if version not in versions:
+            raise RemoteFetchError(f"npm version not found: {source.name}@{version}")
+        dist = versions[version].get("dist") or {}
+        tarball = dist.get("tarball")
+        if not isinstance(tarball, str) or not tarball.startswith("https://"):
+            raise RemoteFetchError("npm package is missing a https tarball URL")
+        parsed = urlparse(tarball)
+        if parsed.hostname not in {"registry.npmjs.org", "registry.npmmirror.com"}:
+            raise RemoteFetchError("npm tarball host is not allowed")
+        archive = client.get(tarball)
+        archive.raise_for_status()
+        data = archive.content
+        if len(data) > max_bytes:
+            raise RemoteFetchError(f"npm tarball exceeds {max_bytes} bytes")
+
+    parent = str(temp_parent) if temp_parent is not None else None
+    with tempfile.TemporaryDirectory(prefix="deepseek-npm-", dir=parent) as temp:
+        extracted = Path(temp) / "pkg"
+        _extract_archive(data, extracted, max_files=max_files, max_bytes=max_bytes)
+        # npm tarballs usually contain a single top-level "package/" dir.
+        package = extracted
+        children = [p for p in extracted.iterdir() if p.is_dir()]
+        if len(children) == 1 and (children[0] / "package.json").is_file():
+            package = children[0]
+        digest = LocalArtifact(package, max_files=max_files, max_bytes=max_bytes).digest
+        yield ResolvedGitSubdir(package, version, tarball, digest)
 
 
 @dataclass(frozen=True, slots=True)
