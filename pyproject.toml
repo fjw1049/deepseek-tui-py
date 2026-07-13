@@ -23,6 +23,7 @@ dependencies = [
   "anyio>=4.2.0",
   "rich>=13.7.0",
   "jsonschema>=4.20.0",
+  "PyYAML>=6.0",
   "tiktoken>=0.7.0",
   "aiofiles>=23.2.1",
   "fastapi>=0.110.0",
@@ -39,6 +40,7 @@ dev = [
   "mypy>=1.8.0",
   "ruff>=0.1.0",
   "pre-commit>=3.6.0",
+  "types-PyYAML>=6.0",
 ]
 
 [project.scripts]

@@ -1375,15 +1375,32 @@ def plugin_install_cmd(
     trust: bool = typer.Option(
         False, "--trust", help="Trust immediately (activates hooks/MCP servers)."
     ),
+    plugin_id: str | None = typer.Option(
+        None,
+        "--plugin",
+        help="Plugin id to select when the source contains multiple plugins.",
+    ),
+    candidate_root: str | None = typer.Option(
+        None,
+        "--candidate",
+        help="Exact relative package root used to disambiguate duplicate plugin ids.",
+    ),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
     """Install a plugin from GitHub, a local directory, or a marketplace."""
-    from deepseek_tui.integrations.plugins import install_plugin
-    from deepseek_tui.integrations.skills import InstallOutcome
+    from deepseek_tui.plugins import InstallPlugin, PluginHost
 
-    outcome, message = install_plugin(spec, _plugins_dir(project), trust=trust)
-    typer.echo(message)
-    if outcome == InstallOutcome.FAILED:
+    result = PluginHost().apply(
+        InstallPlugin(
+            source=spec,
+            plugins_dir=_plugins_dir(project),
+            trust=trust,
+            plugin_id=plugin_id,
+            candidate_root=candidate_root,
+        )
+    )
+    typer.echo(result.message)
+    if result.outcome == "failed":
         raise typer.Exit(1)
 
 
@@ -1631,32 +1648,6 @@ def plugin_search_cmd(
         typer.echo(f"  install: deepseek-tui plugin install {e.source}")
 
 
-def _doctor_report_one(name: str, path: Path) -> tuple[dict[str, int], list[str]]:
-    """Run the real loader against one plugin dir; return (counts, warnings)."""
-    from deepseek_tui.integrations.plugins import (
-        LoadedPlugin,
-        collect_contributions,
-        load_plugin_manifest,
-    )
-
-    manifest = load_plugin_manifest(path)
-    if manifest is None:
-        return ({}, [f"{name}: no plugin manifest"])
-    loaded = LoadedPlugin(
-        manifest=manifest, path=path, scope="override", enabled=True, trusted=True
-    )
-    contribs = collect_contributions([loaded])
-    counts = {
-        "skills": len(contribs.skills),
-        "commands": len(contribs.commands),
-        "agents": len(contribs.agents),
-        "rules": len(contribs.rules),
-        "hooks": len(contribs.hook_entries),
-        "mcp": len(contribs.mcp_servers),
-    }
-    return (counts, list(contribs.warnings))
-
-
 @plugin_app.command("doctor")
 def plugin_doctor_cmd(
     target: str = typer.Argument(
@@ -1664,68 +1655,55 @@ def plugin_doctor_cmd(
         help="Path to a plugin dir, or a repo/marketplace.json to scan all plugins.",
     ),
 ) -> None:
-    """Analyze plugin compatibility using the real loader.
+    """Inspect a plugin or collection without installing or executing it."""
+    from collections import Counter
 
-    Reports, per plugin, which components load (skills / commands / agents /
-    hooks / mcp) and which are dropped — a coverage matrix for vetting
-    mainstream (Claude Code) plugins before installing them.
-    """
-    from deepseek_tui.integrations.plugins import load_marketplace, load_plugin_manifest
+    from deepseek_tui.plugins import PluginHost
+    from deepseek_tui.plugins.source import PluginSourceError
 
     root = Path(target).expanduser()
-    if not root.exists():
-        typer.echo(f"Path not found: {root}")
-        raise typer.Exit(1)
+    try:
+        inspection = PluginHost().inspect(source=root)
+    except PluginSourceError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
 
-    # Build the plugin set: a single plugin dir, or every local plugin in a
-    # marketplace repo, or every child dir under a plain directory.
-    targets: list[tuple[str, Path]] = []
-    if load_plugin_manifest(root) is not None:
-        targets.append((root.name, root))
-    else:
-        try:
-            for entry in load_marketplace(root):
-                targets.append((entry.name, entry.path))
-        except FileNotFoundError:
-            if root.is_dir():
-                for child in sorted(root.iterdir()):
-                    if child.is_dir() and load_plugin_manifest(child) is not None:
-                        targets.append((child.name, child))
-    if not targets:
+    if not inspection.candidates:
         typer.echo("No plugins found to analyze.")
         raise typer.Exit(1)
 
-    totals = {"skills": 0, "commands": 0, "agents": 0, "rules": 0, "hooks": 0, "mcp": 0}
-    usable = 0
-    empty = 0
-    for name, path in targets:
-        counts, warnings = _doctor_report_one(name, path)
-        if not counts:
-            typer.echo(f"✗ {name}: {warnings[0] if warnings else 'unreadable'}")
-            empty += 1
-            continue
-        for k in totals:
-            totals[k] += counts[k]
-        loaded = sum(counts.values())
-        if loaded == 0:
-            empty += 1
-        else:
-            usable += 1
-        summary = " ".join(f"{k}={v}" for k, v in counts.items() if v)
-        mark = "✓" if loaded else "·"
-        typer.echo(f"{mark} {name}: {summary or 'no loadable components'}")
-        for w in warnings:
-            typer.echo(f"    ! {w}")
+    totals: Counter[str] = Counter()
+    statuses: Counter[str] = Counter()
+    for package in inspection.candidates:
+        counts = Counter(item.kind for item in package.contributions)
+        totals.update(counts)
+        status = package.compatibility.status.value
+        statuses[status] += 1
+        summary = " ".join(f"{kind}={count}" for kind, count in sorted(counts.items()))
+        mark = "×" if status in {"blocked", "unsupported"} else "✓"
+        typer.echo(
+            f"{mark} {package.plugin_id} "
+            f"[{status}/{package.compatibility.adapter_id}]: "
+            f"{summary or 'no contributions'}"
+        )
+        for diagnostic in package.compatibility.diagnostics:
+            typer.echo(
+                f"    {diagnostic.severity.value}: "
+                f"{diagnostic.code} — {diagnostic.message}"
+            )
+
+    for diagnostic in inspection.diagnostics:
+        typer.echo(
+            f"! {diagnostic.severity.value}: "
+            f"{diagnostic.code} — {diagnostic.message}"
+        )
 
     typer.echo("")
     typer.echo(
-        f"Analyzed {len(targets)} plugin(s): {usable} with loadable components, "
-        f"{empty} empty."
+        f"Analyzed {len(inspection.candidates)} plugin(s): "
+        + ", ".join(f"{name}={count}" for name, count in sorted(statuses.items()))
     )
-    typer.echo(
-        "Totals — "
-        + ", ".join(f"{k}: {v}" for k, v in totals.items())
-    )
+    typer.echo("Totals — " + ", ".join(f"{k}: {v}" for k, v in sorted(totals.items())))
 
 
 @plugin_app.command("install-all")

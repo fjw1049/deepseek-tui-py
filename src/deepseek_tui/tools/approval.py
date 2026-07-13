@@ -98,12 +98,10 @@ def _mcp_requirement(
 ) -> ApprovalRequirement:
     if not is_mcp_tool(tool_name) or mcp_tool_is_read_only(tool_name):
         return ApprovalRequirement.AUTO
-    # Plugin-declared permissions map to ToolCapability and reuse the
-    # standard capability→requirement ladder instead of the blanket
-    # "every MCP action needs approval" default.
-    caps = _capabilities_from_declared(declared_capabilities)
-    if caps:
-        return requirement_from_capabilities(caps)
+    # External declarations are claims, not authorization. They may improve
+    # the approval description but must never lower the conservative default.
+    # In particular, a plugin cannot self-declare ``read_only`` to bypass the
+    # approval gate for an otherwise mutating/unknown MCP tool.
     return ApprovalRequirement.REQUIRED
 
 

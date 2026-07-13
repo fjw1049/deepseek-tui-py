@@ -21,7 +21,7 @@ scanning subdirectories of the configured skills directory.
 import logging
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import io
 import json
 import shutil
@@ -560,6 +560,7 @@ DEFAULT_MAX_SIZE_BYTES = 5 * 1024 * 1024
 # Only these hosts are accepted for ``github:`` archive URLs. Anything
 # else fails ``_resolve_archive_urls``.
 GITHUB_ALLOWED_HOSTS = frozenset({"github.com", "www.github.com"})
+_GITHUB_SOURCE_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 # Hosts we accept for the public skill registry index. Matches
 # DEFAULT_REGISTRY_URL host; can be overridden by the caller passing an
@@ -584,18 +585,34 @@ class InstallSource:
     owner: str = ""
     repo: str = ""
     local_path: str = ""
+    subdir: str = ""
 
     @classmethod
     def parse(cls, spec: str) -> InstallSource:
         spec = spec.strip()
         if spec.startswith("github:"):
-            parts = spec[len("github:"):].split("/", 1)
-            if len(parts) == 2:
-                return cls(kind="github", owner=parts[0], repo=parts[1])
+            repository, separator, subdir = spec[len("github:") :].partition("#")
+            parts = repository.split("/", 1)
+            if len(parts) == 2 and (
+                not separator or _safe_install_subdir(subdir)
+            ) and all(_GITHUB_SOURCE_PART.fullmatch(part) for part in parts):
+                return cls(
+                    kind="github",
+                    owner=parts[0],
+                    repo=parts[1],
+                    subdir=subdir if separator else "",
+                )
             return cls(kind="invalid")
         if Path(spec).is_dir():
             return cls(kind="local", local_path=spec)
         return cls(kind="invalid")
+
+
+def _safe_install_subdir(value: str) -> bool:
+    if not value or "\\" in value or "\x00" in value:
+        return False
+    path = PurePosixPath(value)
+    return not path.is_absolute() and ".." not in path.parts
 
 
 @dataclass(frozen=True, slots=True)

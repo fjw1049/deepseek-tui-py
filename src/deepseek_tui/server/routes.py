@@ -752,21 +752,14 @@ async def list_skills(request: Request) -> dict[str, Any]:
 def _plugin_to_dict(p: Any) -> dict[str, Any]:
     return {
         "name": p.name,
-        "version": p.manifest.version,
-        "description": p.manifest.description,
+        "version": p.version,
+        "description": p.description,
         "path": str(p.path),
         "scope": p.scope,
         "enabled": p.enabled,
         "trusted": p.trusted,
-        "permissions": list(p.manifest.permissions),
-        "components": {
-            "skills": bool(p.manifest.skills),
-            "hooks": bool(p.manifest.hooks),
-            "mcp_servers": bool(p.manifest.mcp_servers),
-            "commands": bool(p.manifest.commands),
-            "agents": bool(p.manifest.agents),
-            "rules": bool(p.manifest.rules),
-        },
+        "permissions": list(p.permissions),
+        "components": dict(p.components),
     }
 
 
@@ -799,7 +792,7 @@ def _plugins_scope_dir(request: Request, payload: dict[str, Any]) -> Path:
 
 @router_skills.get("/plugins")
 async def list_plugins(request: Request) -> dict[str, Any]:
-    from deepseek_tui.integrations.plugins import discover_plugins
+    from deepseek_tui.plugins import PluginHost
 
     runtime = runtime_from_request(request)
     workspace = request.query_params.get("workspace")
@@ -809,14 +802,39 @@ async def list_plugins(request: Request) -> dict[str, Any]:
         else runtime.working_directory
     )
     try:
-        plugins = await asyncio.to_thread(
-            discover_plugins, workspace=wd, include_disabled=True
+        inspection = await asyncio.to_thread(
+            PluginHost().inspect,
+            workspace=wd,
+            include_disabled=True,
         )
     except OSError as exc:
         raise api_error(
             503, f"plugin discovery failed: {exc}", error="plugins_unavailable"
         ) from exc
-    return {"plugins": [_plugin_to_dict(p) for p in plugins]}
+    return {"plugins": [_plugin_to_dict(p) for p in inspection.plugins]}
+
+
+@router_skills.post("/plugins/inspect")
+async def inspect_plugin_source(request: Request) -> dict[str, Any]:
+    """Inspect a local plugin or collection without installing or executing it."""
+    from deepseek_tui.plugins import PluginHost
+    from deepseek_tui.plugins.source import PluginSourceError
+
+    payload = await body(request)
+    source = str(payload.get("source") or "").strip()
+    if not source:
+        raise api_error(400, "source is required", error="validation_error")
+    try:
+        inspection = await asyncio.to_thread(
+            PluginHost().inspect,
+            source=source,
+        )
+    except PluginSourceError as exc:
+        raise api_error(400, str(exc), error="plugin_inspect_failed") from exc
+    return {
+        "packages": [package.to_dict() for package in inspection.candidates],
+        "diagnostics": [item.to_dict() for item in inspection.diagnostics],
+    }
 
 
 @router_skills.get("/plugins/registry")
@@ -848,66 +866,85 @@ async def plugin_registry_route(request: Request) -> dict[str, Any]:
 @router_skills.post("/plugins/install")
 async def install_plugin_route(request: Request) -> dict[str, Any]:
     """Install from ``github:owner/repo`` or a local directory path."""
-    from deepseek_tui.integrations.plugins import install_plugin
+    from deepseek_tui.plugins import InstallPlugin, PluginHost
 
     payload = await body(request)
     spec = str(payload.get("spec") or "").strip()
     if not spec:
         raise api_error(400, "spec is required", error="validation_error")
     trust = bool(payload.get("trust", False))
+    plugin_id = str(payload.get("plugin_id") or "").strip() or None
+    candidate_root = str(payload.get("candidate_root") or "").strip() or None
     plugins_dir = _plugins_scope_dir(request, payload)
-    outcome, message = await asyncio.to_thread(
-        install_plugin, spec, plugins_dir, trust=trust
+    result = await asyncio.to_thread(
+        PluginHost().apply,
+        InstallPlugin(
+            source=spec,
+            plugins_dir=plugins_dir,
+            trust=trust,
+            plugin_id=plugin_id,
+            candidate_root=candidate_root,
+        ),
     )
-    if outcome.value == "failed":
-        raise api_error(400, message, error="plugin_install_failed")
-    return {"outcome": outcome.value, "message": message}
+    if result.outcome == "failed":
+        raise api_error(400, result.message, error="plugin_install_failed")
+    return {"outcome": result.outcome, "message": result.message}
 
 
 @router_skills.post("/plugins/{name}/action")
 async def plugin_action_route(request: Request, name: str) -> dict[str, Any]:
     """Lifecycle mutation: enable / disable / trust / untrust / update."""
-    from deepseek_tui.integrations.plugins import (
-        set_plugin_enabled,
-        set_plugin_trusted,
-        update_plugin,
+    from deepseek_tui.plugins import (
+        EnablePlugin,
+        PluginHost,
+        TrustPlugin,
+        UpdatePlugin,
     )
 
     payload = await body(request)
     action = str(payload.get("action") or "").strip()
     plugins_dir = _plugins_scope_dir(request, payload)
+    host = PluginHost()
 
     if action in ("enable", "disable"):
-        message = await asyncio.to_thread(
-            set_plugin_enabled, name, action == "enable", plugins_dir
+        result = await asyncio.to_thread(
+            host.apply,
+            EnablePlugin(name, action == "enable", plugins_dir),
         )
     elif action in ("trust", "untrust"):
-        message = await asyncio.to_thread(
-            set_plugin_trusted, name, action == "trust", plugins_dir
+        result = await asyncio.to_thread(
+            host.apply,
+            TrustPlugin(name, action == "trust", plugins_dir),
         )
     elif action == "update":
-        outcome, message = await asyncio.to_thread(update_plugin, name, plugins_dir)
-        if outcome.value == "failed":
-            raise api_error(400, message, error="plugin_update_failed")
-        return {"outcome": outcome.value, "message": message}
+        result = await asyncio.to_thread(
+            host.apply,
+            UpdatePlugin(name, plugins_dir),
+        )
+        if result.outcome == "failed":
+            raise api_error(400, result.message, error="plugin_update_failed")
+        return {"outcome": result.outcome, "message": result.message}
     else:
         raise api_error(400, f"unknown action: {action}", error="validation_error")
 
-    if message.startswith("Plugin not found"):
-        raise api_error(404, message, error="plugin_not_found")
-    return {"message": message}
+    if result.message.startswith("Plugin not found"):
+        raise api_error(404, result.message, error="plugin_not_found")
+    return {"message": result.message}
 
 
 @router_skills.delete("/plugins/{name}")
 async def remove_plugin_route(request: Request, name: str) -> dict[str, Any]:
-    from deepseek_tui.integrations.plugins import uninstall_plugin
+    from deepseek_tui.plugins import PluginHost, RemovePlugin
 
     payload = await body(request)
     plugins_dir = _plugins_scope_dir(request, payload)
-    message = await asyncio.to_thread(uninstall_plugin, name, plugins_dir)
-    if message.startswith("Plugin not found"):
-        raise api_error(404, message, error="plugin_not_found")
-    return {"message": message}
+    result = await asyncio.to_thread(
+        PluginHost().apply,
+        RemovePlugin(name, plugins_dir),
+    )
+    if result.message.startswith("Plugin not found"):
+        raise api_error(404, result.message, error="plugin_not_found")
+    return {"message": result.message}
 
 
 # /v1/plugins/marketplaces — registered marketplaces (two-level install:

@@ -60,6 +60,9 @@ async def test_plugins_install_lifecycle(
         "skills": True,
         "hooks": True,
         "mcp_servers": False,
+        "commands": False,
+        "agents": False,
+        "rules": False,
     }
 
     resp = await client.post(
@@ -85,6 +88,71 @@ async def test_plugins_install_lifecycle(
 async def test_plugins_install_requires_spec(client: AsyncClient) -> None:
     resp = await client.post("/v1/plugins/install", json={})
     assert resp.status_code == 400
+
+
+async def test_plugins_install_selects_candidate_from_collection(
+    client: AsyncClient, runtime_data_dir: Path
+) -> None:
+    source = runtime_data_dir / "collection"
+    _make_plugin_source(source, "alpha")
+    _make_plugin_source(source, "beta")
+
+    resp = await client.post(
+        "/v1/plugins/install",
+        json={"spec": str(source), "plugin_id": "beta"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "installed"
+    listed = await client.get("/v1/plugins")
+    assert [item["name"] for item in listed.json()["plugins"]] == ["beta"]
+
+
+async def test_plugins_install_collection_requires_selector(
+    client: AsyncClient, runtime_data_dir: Path
+) -> None:
+    source = runtime_data_dir / "collection"
+    _make_plugin_source(source, "alpha")
+    _make_plugin_source(source, "beta")
+
+    resp = await client.post("/v1/plugins/install", json={"spec": str(source)})
+
+    assert resp.status_code == 400
+    assert "multiple plugin candidates" in resp.json()["detail"]["message"]
+
+
+async def test_plugins_inspect_local_source_without_installing(
+    client: AsyncClient, runtime_data_dir: Path
+) -> None:
+    source = _make_plugin_source(runtime_data_dir / "inspect-src", "inspect-me")
+
+    resp = await client.post("/v1/plugins/inspect", json={"source": str(source)})
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert [item["plugin_id"] for item in payload["packages"]] == ["inspect-me"]
+    package = payload["packages"][0]
+    assert package["compatibility"]["adapter_id"] == "claude"
+    assert package["compatibility"]["status"] == "adapted"
+    assert {item["kind"] for item in package["contributions"]} >= {
+        "prompt.skill",
+        "lifecycle.hook",
+    }
+    listed = await client.get("/v1/plugins")
+    assert listed.json() == {"plugins": []}
+
+
+async def test_plugins_inspect_requires_source(client: AsyncClient) -> None:
+    resp = await client.post("/v1/plugins/inspect", json={})
+    assert resp.status_code == 400
+
+
+async def test_plugins_inspect_rejects_missing_path(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/plugins/inspect", json={"source": "/missing/plugin/path"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["error"] == "plugin_inspect_failed"
 
 
 async def test_plugins_install_invalid_source(client: AsyncClient) -> None:

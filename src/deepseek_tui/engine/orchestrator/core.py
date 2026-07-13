@@ -328,6 +328,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 看到「只读底座 + 按插件 permissions 的写工具 + 该插件的 skill/MCP
         # 工具」。用户显式打 `/skill` 或 `@mcp` 时该轮让位（前缀优先）。
         self._active_plugin: object | None = None
+        # Frozen plugin view for this Engine.  Source discovery, contribution
+        # assembly, and future format adapters live behind this seam.
+        self.plugin_session: Any | None = None
+        self._session_mcp_manager: Any | None = None
+        self._owned_plugin_mcp_manager: Any | None = None
         # Plugin-contributed prompt commands and agent personas, populated in
         # ``Engine.create`` from plugin contributions. Commands map their
         # ``<plugin>:<stem>`` invocation (lowercased) → PluginCommand and are
@@ -435,6 +440,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     @property
     def mcp_manager(self):
         """Access the McpManager from the tool runtime (if configured)."""
+        if self._session_mcp_manager is not None:
+            return self._session_mcp_manager
         if self.tool_runtime is not None:
             return self.tool_runtime.mcp_manager
         from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
@@ -541,47 +548,26 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         name_lower = name.lower()
         if name_lower in self._activated_plugins:
             return True
-        loaded = plugin
-        if loaded is None:
-            loaded = next(
-                (p for p in self._loaded_plugins if p.name.lower() == name_lower),
-                None,
-            )
-        if loaded is None:
-            # Plugin might have been installed after Engine.create.
-            from deepseek_tui.integrations.plugins import discover_plugins
-
-            try:
-                plugins = discover_plugins(
-                    workspace=self.tool_context.working_directory
-                )
-            except Exception:  # noqa: BLE001
-                plugins = []
-            loaded = next(
-                (p for p in plugins if p.name.lower() == name_lower), None
-            )
-            if loaded is not None:
-                self._loaded_plugins = plugins
-        if loaded is None:
+        session = self.plugin_session
+        if session is None:
             return False
-        from deepseek_tui.integrations.plugins import (
-            collect_heavy_contributions,
-        )
 
         try:
-            contribs = collect_heavy_contributions([loaded])
+            activation = session.activate(name)
         except Exception:  # noqa: BLE001 - a malformed plugin must not crash
             logger.warning(
                 "plugin heavy assembly failed for %s", name, exc_info=True
             )
             return False
-        for c in contribs.commands:
+        if activation is None:
+            return False
+        for c in activation.commands:
             self.plugin_commands[c.qualified.lower()] = c
-        for a in contribs.agents:
+        for a in activation.agents:
             _register_plugin_agent(self.plugin_agents, a)
         if self.plugin_agents:
             self.tool_context.metadata["plugin_agents"] = self.plugin_agents
-        for r in contribs.rules:
+        for r in activation.rules:
             if r not in self.plugin_rules:
                 self.plugin_rules.append(r)
         self._activated_plugins.add(name_lower)
@@ -589,7 +575,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # double-list them (real objects are now in the live dicts). Skills
         # are preserved -- ``_active_plugin_skills`` reads them from the
         # index to filter the SkillRegistry when a plugin is mounted.
-        entry = self.plugin_index.get(loaded.name)
+        loaded = session.plugin(name)
+        entry = self.plugin_index.get(loaded.name) if loaded is not None else None
         if isinstance(entry, dict):
             entry["commands"] = []
             entry["agents"] = []
@@ -931,23 +918,21 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if handle.hooks is None:
             handle.attach_hooks(build_hook_dispatcher(cfg))
         ws = working_directory or Path.cwd()
-        # Discover installed plugins and fan their components out to the
-        # existing subsystems: skills → SkillRegistry, hooks →
-        # HookExecutor, MCP servers → McpManager (via create_tool_runtime).
+        # Open one frozen plugin session and fan its startup contributions out
+        # to the existing host subsystems. Engine does not discover package
+        # formats or know how the plugin host assembled these contributions.
+        plugin_session = None
         plugin_contribs = None
         plugin_skill_contribs = None
         loaded_plugins: list[Any] = []
         if cfg.features.plugins:
-            from deepseek_tui.integrations.plugins import (
-                collect_light_contributions,
-                collect_skill_contributions,
-                discover_plugins,
-            )
+            from deepseek_tui.plugins import PluginHost
 
             try:
-                loaded_plugins = discover_plugins(workspace=ws)
-                plugin_contribs = collect_light_contributions(loaded_plugins)
-                plugin_skill_contribs = collect_skill_contributions(loaded_plugins)
+                plugin_session = PluginHost().open_session(workspace=ws)
+                loaded_plugins = list(plugin_session.loaded_plugins)
+                plugin_contribs = plugin_session.startup
+                plugin_skill_contribs = plugin_session.startup
             except Exception:  # noqa: BLE001 — a malformed plugin must not
                 # crash engine construction; degrade to no plugin contributions.
                 logger.warning("plugin discovery failed", exc_info=True)
@@ -1023,6 +1008,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         per_engine_context: ToolContext | None = None
         per_engine_subagent_manager = None
+        session_mcp_manager = None
+        owned_plugin_mcp_manager = None
         if isinstance(tool_runtime, ToolRuntime):
             from deepseek_tui.tools.runtime import build_subagent_manager
 
@@ -1033,6 +1020,31 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 subagent_manager=per_engine_subagent_manager,
                 metadata=dict(runtime.context.metadata),
             )
+            if (
+                cfg.features.mcp
+                and plugin_contribs is not None
+                and plugin_contribs.mcp_servers
+            ):
+                from deepseek_tui.mcp.manager import McpManager
+                from deepseek_tui.plugins.runtime import CompositeMcpManager
+                from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+
+                base_mcp = runtime.mcp_manager
+                base_names = set(base_mcp.server_names if base_mcp else ())
+                plugin_servers = [
+                    server
+                    for server in plugin_contribs.mcp_servers
+                    if server.name not in base_names
+                ]
+                if plugin_servers:
+                    owned_plugin_mcp_manager = McpManager(plugin_servers)
+                    session_mcp_manager = CompositeMcpManager(
+                        base_mcp,
+                        owned_plugin_mcp_manager,
+                    )
+                    per_engine_context.metadata[MCP_MANAGER_KEY] = (
+                        session_mcp_manager
+                    )
         engine = cls(
             handle=handle,
             client=client,
@@ -1049,6 +1061,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             default_extra_body=dict(provider_cfg.extra_body or {}),
             hook_executor=hook_executor,
         )
+        engine.plugin_session = plugin_session
+        engine._session_mcp_manager = session_mcp_manager
+        engine._owned_plugin_mcp_manager = owned_plugin_mcp_manager
         from deepseek_tui.client.base import MeteredLLMClient
 
         if isinstance(client, MeteredLLMClient):
@@ -1086,23 +1101,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # Backward-compatible eager assembly for plugins without an index.
             unindexed = [p for p in loaded_plugins if p.contribution_index is None]
             if unindexed:
-                from deepseek_tui.integrations.plugins import (
-                    collect_heavy_contributions,
-                )
-                heavy = collect_heavy_contributions(unindexed)
-                for c in heavy.commands:
-                    engine.plugin_commands[c.qualified.lower()] = c
-                for a in heavy.agents:
-                    _register_plugin_agent(engine.plugin_agents, a)
-                if engine.plugin_agents:
-                    engine.tool_context.metadata["plugin_agents"] = (
-                        engine.plugin_agents
-                    )
-                for r in heavy.rules:
-                    if r not in engine.plugin_rules:
-                        engine.plugin_rules.append(r)
-                for p in unindexed:
-                    engine._activated_plugins.add(p.name.lower())
+                for plugin in unindexed:
+                    engine.ensure_plugin_activated(plugin.name, plugin=plugin)
             # Summary counts: skills from eager collection, commands/agents/rules
             # from the index + eager fallback, hooks/mcp from light contributions.
             idx = engine.plugin_index
@@ -1191,6 +1191,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if manager.mailbox is not None:
                     manager.mailbox.close()
                 await manager.shutdown()
+        if self._owned_plugin_mcp_manager is not None:
+            await self._owned_plugin_mcp_manager.stop_all()
+            self._owned_plugin_mcp_manager = None
+            self._session_mcp_manager = None
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
 

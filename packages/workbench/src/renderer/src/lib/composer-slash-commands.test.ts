@@ -19,4 +19,9 @@ describe('composer slash commands', () => {
     expect(parseComposerActionCommand('/plan')).toBeNull()
     expect(isUnknownComposerSlashCommand('/not-real')).toBe(true)
   })
+
+  it('does not classify Claude-style plugin commands as unknown', () => {
+    expect(isUnknownComposerSlashCommand('/demo:hello')).toBe(false)
+    expect(isUnknownComposerSlashCommand('/demo:hello world')).toBe(false)
+  })
 })

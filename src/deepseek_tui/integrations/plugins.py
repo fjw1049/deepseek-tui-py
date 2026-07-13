@@ -70,6 +70,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from deepseek_tui.config.models import LifecycleHookEntry
 from deepseek_tui.integrations.hooks import LIFECYCLE_EVENTS
 from deepseek_tui.integrations.plugin_compat import (
@@ -344,8 +346,8 @@ def _synthesize_single_skill_manifest(plugin_dir: Path) -> PluginManifest | None
     description = ""
     try:
         meta, _ = _parse_md_frontmatter(leaf)
-        name = (meta.get("name") or "").strip() or plugin_dir.name
-        description = meta.get("description", "")
+        name = _frontmatter_text(meta, "name").strip() or plugin_dir.name
+        description = _frontmatter_text(meta, "description")
     except OSError:
         pass
     return PluginManifest(name=name, description=description, skills=(".",))
@@ -811,27 +813,41 @@ def _substitute(value: str, plugin_dir: Path) -> str:
 _MD_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
-def _parse_md_frontmatter(path: Path) -> tuple[dict[str, str], str]:
-    """Parse a Markdown file's YAML-ish frontmatter into ``(meta, body)``.
+def _parse_md_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+    """Parse a Markdown file's YAML frontmatter into ``(meta, body)``.
 
     Tolerant of files without frontmatter (mainstream plugins ship some
     commands with a bare body): returns ``({}, full_text)`` in that case.
-    Only simple ``key: value`` scalar lines are read — enough for the
-    ``name`` / ``description`` / ``model`` / ``argument-hint`` / ``tools``
-    keys these components use.
     """
     content = path.read_text(encoding="utf-8")
-    meta: dict[str, str] = {}
+    meta: dict[str, Any] = {}
     body = content
     match = _MD_FRONTMATTER_RE.match(content)
     if match:
-        for line in match.group(1).splitlines():
-            if ":" not in line:
-                continue
-            key, _, value = line.partition(":")
-            meta[key.strip().lower()] = value.strip()
-        body = content[match.end():]
+        try:
+            document = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            document = None
+        if isinstance(document, dict):
+            meta = {str(key).strip().lower(): value for key, value in document.items()}
+        body = content[match.end() :]
     return meta, body.strip()
+
+
+def _frontmatter_text(meta: dict[str, Any], key: str, default: str = "") -> str:
+    value = meta.get(key, default)
+    if value is None:
+        return default
+    return value if isinstance(value, str) else str(value)
+
+
+def _frontmatter_bool(meta: dict[str, Any], key: str, default: bool) -> bool:
+    value = meta.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "no", "off", "0"}
+    return bool(value)
 
 
 def _plugin_child_dir(plugin: LoadedPlugin, rel: str) -> Path | None:
@@ -881,10 +897,10 @@ def _collect_commands(plugin: LoadedPlugin, out: PluginContributions) -> None:
             command = PluginCommand(
                 name=md.stem,
                 plugin=plugin.name,
-                description=meta.get("description", ""),
+                description=_frontmatter_text(meta, "description"),
                 body=body,
                 path=md,
-                argument_hint=meta.get("argument-hint", ""),
+                argument_hint=_frontmatter_text(meta, "argument-hint"),
             )
             if command.qualified in seen:
                 continue
@@ -903,23 +919,28 @@ def _collect_agents(plugin: LoadedPlugin, out: PluginContributions) -> None:
                     f"plugin {plugin.name}: failed to read agent {md.name}: {exc}"
                 )
                 continue
-            name = meta.get("name") or md.stem
+            name = _frontmatter_text(meta, "name").strip() or md.stem
             if name.lower() in seen:
                 continue
-            tools_raw = meta.get("tools", "")
-            tools = tuple(
-                t.strip().strip("[]'\"")
-                for t in tools_raw.split(",")
-                if t.strip().strip("[]'\"")
-            )
+            tools_value = meta.get("tools", "")
+            if isinstance(tools_value, list):
+                tools = tuple(
+                    str(tool).strip() for tool in tools_value if str(tool).strip()
+                )
+            else:
+                tools = tuple(
+                    tool.strip().strip("[]'\"")
+                    for tool in str(tools_value).split(",")
+                    if tool.strip().strip("[]'\"")
+                )
             out.agents.append(
                 PluginAgent(
                     name=name,
                     plugin=plugin.name,
-                    description=meta.get("description", ""),
+                    description=_frontmatter_text(meta, "description"),
                     body=body,
                     path=md,
-                    model=meta.get("model", ""),
+                    model=_frontmatter_text(meta, "model"),
                     tools=tools,
                 )
             )
@@ -937,17 +958,17 @@ def _collect_rules(plugin: LoadedPlugin, out: PluginContributions) -> None:
                     f"plugin {plugin.name}: failed to read rule {md.name}: {exc}"
                 )
                 continue
-            if meta.get("enabled", "true").strip().lower() == "false":
+            if not _frontmatter_bool(meta, "enabled", True):
                 continue
             key = (plugin.name, md.stem)
             if key in seen:
                 continue
-            always = meta.get("alwaysapply", "true").strip().lower() != "false"
+            always = _frontmatter_bool(meta, "alwaysapply", True)
             out.rules.append(
                 PluginRule(
                     name=md.stem,
                     plugin=plugin.name,
-                    description=meta.get("description", ""),
+                    description=_frontmatter_text(meta, "description"),
                     body=body,
                     path=md,
                     always_apply=always,
@@ -1261,9 +1282,11 @@ def _collect_mcp(plugin: LoadedPlugin, out: PluginContributions) -> None:
         )
         server.name = name
         if server.command:
-            server.command = _substitute(server.command, plugin.path)
-        server.args = [_substitute(a, plugin.path) for a in server.args]
-        server.env = {k: _substitute(v, plugin.path) for k, v in server.env.items()}
+            server.command = _substitute_hook_command(server.command, plugin.path)
+        server.args = [_substitute_hook_command(arg, plugin.path) for arg in server.args]
+        server.env = {
+            key: _substitute_hook_command(value, plugin.path) for key, value in server.env.items()
+        }
         # Defer loading by default: plugin servers don't spawn at app
         # launch (start_all skips lazy servers); they connect on first
         # tool call / discovery. A manifest can opt out with lazy=false.
@@ -1293,6 +1316,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _valid_plugin_name(name: str) -> bool:
+    """Return whether *name* is safe to use as one directory component."""
+    return bool(
+        name
+        and name not in {".", ".."}
+        and not Path(name).is_absolute()
+        and "/" not in name
+        and "\\" not in name
+        and "\x00" not in name
+    )
+
+
+def _plugin_child_path(target_dir: Path, name: str) -> Path | None:
+    """Resolve a safe, non-symlink direct child of *target_dir*.
+
+    Plugin names come from both manifests and CLI selectors.  Keep either
+    source from escaping the scope directory before callers copy or delete.
+    """
+    if not _valid_plugin_name(name):
+        return None
+    candidate = target_dir / name
+    if candidate.is_symlink():
+        return None
+    try:
+        target = target_dir.resolve()
+        resolved = candidate.resolve(strict=False)
+    except OSError:
+        return None
+    if resolved.parent != target:
+        return None
+    return candidate
+
+
 def _find_manifest_root(staging: Path) -> Path | None:
     """Manifest at staging root, or exactly one level down."""
     if load_plugin_manifest(staging) is not None:
@@ -1309,6 +1365,7 @@ def install_plugin(
     *,
     trust: bool = False,
     max_size_bytes: int = PLUGIN_MAX_SIZE_BYTES,
+    provenance: dict[str, Any] | None = None,
 ) -> tuple[InstallOutcome, str]:
     """Install a plugin from ``github:owner/repo``, a local directory, or
     ``<plugin>@<marketplace>`` (a marketplace registered via
@@ -1345,24 +1402,44 @@ def install_plugin(
         # ``update_plugin`` to re-resolve it, and that parser recognizes a
         # bare existing dir, not a ``local:`` prefix. Absolute so a later
         # update from a different cwd still resolves.
-        return _install_from_local(src, target_dir, str(src.resolve()), trust=trust)
+        return _install_from_local(
+            src,
+            target_dir,
+            str(src.resolve()),
+            trust=trust,
+            provenance=provenance,
+        )
 
     if source.kind == "github":
         return _install_from_github(
-            source, target_dir, trust=trust, max_size_bytes=max_size_bytes
+            source,
+            target_dir,
+            trust=trust,
+            max_size_bytes=max_size_bytes,
+            provenance=provenance,
         )
 
     return (InstallOutcome.FAILED, f"Invalid plugin source: {spec}")
 
 
 def _install_from_local(
-    src: Path, target_dir: Path, source_spec: str, *, trust: bool
+    src: Path,
+    target_dir: Path,
+    source_spec: str,
+    *,
+    trust: bool,
+    provenance: dict[str, Any] | None = None,
 ) -> tuple[InstallOutcome, str]:
     """Copy a local plugin dir into the scope dir and record the install."""
     manifest = load_plugin_manifest(src)
     if manifest is None:
         return (InstallOutcome.FAILED, f"No plugin manifest found in {src}")
-    dest = target_dir / manifest.name
+    dest = _plugin_child_path(target_dir, manifest.name)
+    if dest is None:
+        return (
+            InstallOutcome.FAILED,
+            f"Invalid plugin name in manifest: {manifest.name!r}",
+        )
     if dest.exists():
         return (
             InstallOutcome.ALREADY_EXISTS,
@@ -1370,7 +1447,14 @@ def _install_from_local(
         )
     shutil.copytree(src, dest)
     _finalize_installed_plugin(dest)
-    _record_install(target_dir, manifest, source_spec, trust, plugin_path=dest)
+    _record_install(
+        target_dir,
+        manifest,
+        source_spec,
+        trust,
+        plugin_path=dest,
+        provenance=provenance,
+    )
     return (
         InstallOutcome.INSTALLED,
         _install_message(manifest, dest, trust),
@@ -1383,9 +1467,18 @@ def _install_from_github(
     *,
     trust: bool,
     max_size_bytes: int,
+    provenance: dict[str, Any] | None = None,
 ) -> tuple[InstallOutcome, str]:
     """Download + extract a plugin repo. Reuses the hardened skill
     download/extract path (size caps, traversal guard, symlink reject)."""
+    if source.subdir:
+        return _install_from_github_subdir(
+            source,
+            target_dir,
+            trust=trust,
+            max_size_bytes=max_size_bytes,
+            provenance=provenance,
+        )
     urls = [
         u
         for u in _github_archive_urls(source)
@@ -1432,7 +1525,13 @@ def _install_from_github(
         )
     manifest = load_plugin_manifest(root)
     assert manifest is not None
-    dest = target_dir / manifest.name
+    dest = _plugin_child_path(target_dir, manifest.name)
+    if dest is None:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (
+            InstallOutcome.FAILED,
+            f"Invalid plugin name in manifest: {manifest.name!r}",
+        )
     if dest.exists():
         shutil.rmtree(staging, ignore_errors=True)
         return (
@@ -1456,6 +1555,84 @@ def _install_from_github(
         plugin_path=dest,
     )
     return (InstallOutcome.INSTALLED, _install_message(manifest, dest, trust))
+
+
+def _install_from_github_subdir(
+    source: InstallSource,
+    target_dir: Path,
+    *,
+    trust: bool,
+    max_size_bytes: int,
+    provenance: dict[str, Any] | None,
+) -> tuple[InstallOutcome, str]:
+    """Materialize and install one explicit GitHub repository subdirectory."""
+    from deepseek_tui.plugins.adapters import inspect_local_source
+    from deepseek_tui.plugins.fetch import (
+        GitSubdirSource,
+        RemoteFetchError,
+        materialize_git_subdir,
+    )
+    from deepseek_tui.plugins.model import CompatibilityStatus
+
+    try:
+        remote = GitSubdirSource.parse(
+            f"https://github.com/{source.owner}/{source.repo}.git",
+            source.subdir,
+        )
+        with materialize_git_subdir(remote, max_bytes=max_size_bytes) as resolved:
+            packages, _ = inspect_local_source(resolved.path)
+            if len(packages) != 1:
+                return (
+                    InstallOutcome.FAILED,
+                    "Remote git-subdir must resolve to exactly one plugin candidate",
+                )
+            package = packages[0]
+            if (
+                package.compatibility.status
+                in {CompatibilityStatus.BLOCKED, CompatibilityStatus.UNSUPPORTED}
+                or not package.compatibility.can_install
+                or not package.compatibility.can_activate
+            ):
+                return (
+                    InstallOutcome.FAILED,
+                    f"Remote plugin {package.plugin_id} cannot be activated by "
+                    f"adapter {package.compatibility.adapter_id}",
+                )
+            advertised_id = str((provenance or {}).get("advertised_plugin_id") or "")
+            if advertised_id and package.plugin_id.casefold() != advertised_id.casefold():
+                return (
+                    InstallOutcome.FAILED,
+                    f"Remote plugin id mismatch: expected {advertised_id!r}, "
+                    f"found {package.plugin_id!r}",
+                )
+            resolved_provenance: dict[str, Any] = {
+                "schema_version": package.schema_version,
+                "plugin_id": package.plugin_id,
+                "source": {
+                    "kind": "git-subdir",
+                    "locator": f"https://github.com/{source.owner}/{source.repo}.git",
+                    "digest": resolved.digest,
+                    "relative_root": source.subdir,
+                },
+                "adapter_id": package.compatibility.adapter_id,
+                "adapter_version": package.compatibility.adapter_version,
+                "resolved": {
+                    "ref": resolved.ref,
+                    "archive_url": resolved.archive_url,
+                },
+            }
+            catalog = (provenance or {}).get("catalog")
+            if isinstance(catalog, dict):
+                resolved_provenance["catalog"] = catalog
+            return _install_from_local(
+                resolved.path,
+                target_dir,
+                remote.install_spec,
+                trust=trust,
+                provenance=resolved_provenance,
+            )
+    except RemoteFetchError as exc:
+        return (InstallOutcome.FAILED, f"Remote git-subdir fetch failed: {exc}")
 
 
 def build_contribution_index(
@@ -1563,6 +1740,7 @@ def _record_install(
     source_spec: str,
     trust: bool,
     plugin_path: Path | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> None:
     """Record install in the scope's lockfile.
 
@@ -1579,16 +1757,17 @@ def _record_install(
             _LOG.warning(
                 "contribution index failed for %s", manifest.name, exc_info=True
             )
-    _update_lockfile_entry(
-        plugins_dir,
-        manifest.name,
-        source=source_spec,
-        version=manifest.version,
-        installed_at=_now_iso(),
-        enabled=True,
-        trusted=trust,
-        contribution_index=index,
-    )
+    fields: dict[str, Any] = {
+        "source": source_spec,
+        "version": manifest.version,
+        "installed_at": _now_iso(),
+        "enabled": True,
+        "trusted": trust,
+        "contribution_index": index,
+    }
+    if provenance is not None:
+        fields["derived_provenance"] = provenance
+    _update_lockfile_entry(plugins_dir, manifest.name, **fields)
 
 
 def _finalize_installed_plugin(dest: Path) -> None:
@@ -1694,6 +1873,8 @@ def scaffold_plugin(name: str, parent_dir: Path) -> tuple[InstallOutcome, str]:
 def uninstall_plugin(name: str, plugins_dir: Path | None = None) -> str:
     """Remove a plugin directory and its lockfile entry."""
     target_dir = plugins_dir or user_plugins_dir()
+    if not _valid_plugin_name(name):
+        return f"Invalid plugin name: {name}"
     plugin_path = _resolve_plugin_dir(name, target_dir)
     if plugin_path is None:
         return f"Plugin not found: {name}"
@@ -1724,6 +1905,8 @@ def update_plugin(
     plugin. Claude Code interop plugins (files owned by ``~/.claude``, no
     reinstallable source of ours) are refused.
     """
+    if not _valid_plugin_name(name):
+        return (InstallOutcome.FAILED, f"Invalid plugin name: {name}")
     target_dir = plugins_dir or user_plugins_dir()
     plugin_path = _resolve_plugin_dir(name, target_dir)
     # Lockfile is keyed by manifest name; resolve before lookup when the
@@ -1732,6 +1915,11 @@ def update_plugin(
     if plugin_path is not None:
         live_manifest = load_plugin_manifest(plugin_path)
         if live_manifest is not None:
+            if not _valid_plugin_name(live_manifest.name):
+                return (
+                    InstallOutcome.FAILED,
+                    f"Invalid plugin name in manifest: {live_manifest.name!r}",
+                )
             lock_name = live_manifest.name
     entry = read_lockfile(target_dir).get(lock_name) or read_lockfile(
         target_dir
@@ -1762,10 +1950,16 @@ def update_plugin(
         shutil.rmtree(backup)
     staging.mkdir(parents=True, exist_ok=True)
     staged_manifest: PluginManifest | None = None
+    staged_provenance: dict[str, Any] | None = None
     try:
         outcome, message = install_plugin(spec, staging, trust=was_trusted)
         if outcome != InstallOutcome.INSTALLED:
             return (outcome, message)
+        staged_entry = read_lockfile(staging).get(lock_name)
+        if staged_entry is not None and isinstance(
+            staged_entry.get("derived_provenance"), dict
+        ):
+            staged_provenance = staged_entry["derived_provenance"]
         staged_plugin = staging / lock_name
         if not staged_plugin.is_dir():
             # install uses manifest.name as the folder; pick whatever landed.
@@ -1824,6 +2018,18 @@ def update_plugin(
     }
     if staged_manifest is not None and staged_manifest.version:
         fields["version"] = staged_manifest.version
+    if staged_provenance is not None:
+        previous_provenance = entry.get("derived_provenance")
+        if (
+            "catalog" not in staged_provenance
+            and isinstance(previous_provenance, dict)
+            and isinstance(previous_provenance.get("catalog"), dict)
+        ):
+            staged_provenance = {
+                **staged_provenance,
+                "catalog": previous_provenance["catalog"],
+            }
+        fields["derived_provenance"] = staged_provenance
     # Rebuild contribution index from the freshly swapped live dir so the
     # deferred-assembly catalog stays current after an update.
     if staged_manifest is not None:
@@ -1846,7 +2052,9 @@ def _resolve_plugin_dir(name: str, target_dir: Path) -> Path | None:
     checkouts may use a different folder name. Returns the first matching
     directory, or ``None``.
     """
-    direct = target_dir / name
+    direct = _plugin_child_path(target_dir, name)
+    if direct is None:
+        return None
     if direct.is_dir():
         return direct
     name_lower = name.lower()
@@ -1854,9 +2062,12 @@ def _resolve_plugin_dir(name: str, target_dir: Path) -> Path | None:
         for child in sorted(target_dir.iterdir()):
             if not child.is_dir() or child.name.startswith("."):
                 continue
-            manifest = load_plugin_manifest(child)
+            safe_child = _plugin_child_path(target_dir, child.name)
+            if safe_child is None:
+                continue
+            manifest = load_plugin_manifest(safe_child)
             if manifest is not None and manifest.name.lower() == name_lower:
-                return child
+                return safe_child
     except OSError:
         return None
     return None

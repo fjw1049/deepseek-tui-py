@@ -7,6 +7,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from deepseek_tui.integrations.plugins import (
     PluginRegistryDocument,
     capability_values_from_permissions,
@@ -733,6 +735,43 @@ def test_collect_command_no_frontmatter_falls_back_to_body(tmp_path: Path) -> No
     assert "bare command body" in contribs.commands[0].body
 
 
+def test_frontmatter_uses_yaml_types_and_folded_text(tmp_path: Path) -> None:
+    plugin = tmp_path / "yaml-plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / "commands").mkdir()
+    (plugin / "agents").mkdir()
+    (plugin / "rules").mkdir()
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "yaml-plugin", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+    (plugin / "commands" / "explain.md").write_text(
+        "---\ndescription: >-\n  Explain the result\n  in plain language.\n---\nDo it.\n",
+        encoding="utf-8",
+    )
+    (plugin / "agents" / "reader.md").write_text(
+        "---\nname: reader\ntools:\n  - Read\n  - Grep\n---\nRead carefully.\n",
+        encoding="utf-8",
+    )
+    (plugin / "rules" / "disabled.md").write_text(
+        "---\nenabled: false\n---\nNever loaded.\n",
+        encoding="utf-8",
+    )
+    (plugin / "rules" / "opt-in.md").write_text(
+        "---\nalwaysApply: false\n---\nOnly when selected.\n",
+        encoding="utf-8",
+    )
+
+    contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
+
+    assert contribs.commands[0].description == (
+        "Explain the result in plain language."
+    )
+    assert contribs.agents[0].tools == ("Read", "Grep")
+    assert [rule.name for rule in contribs.rules] == ["opt-in"]
+    assert contribs.rules[0].always_apply is False
+
+
 def test_commands_and_agents_load_even_when_untrusted(tmp_path: Path) -> None:
     # Declarative text (like skills) must load regardless of trust; only
     # hooks/MCP are trust-gated.
@@ -805,6 +844,29 @@ def test_trusted_plugin_contributes_hooks_and_mcp(tmp_path: Path) -> None:
     srv = contribs.mcp_servers[0]
     assert srv.name == "demo-srv"
     assert srv.command == f"{plugin}/bin/server"
+
+
+def test_claude_plugin_root_expands_in_mcp_config(tmp_path: Path) -> None:
+    plugin = make_plugin(
+        tmp_path,
+        with_hook=False,
+        extra_manifest={
+            "mcpServers": {
+                "srv": {
+                    "command": "${CLAUDE_PLUGIN_ROOT}/bin/server",
+                    "args": ["${CLAUDE_PLUGIN_ROOT}/config.json"],
+                    "env": {"PLUGIN_HOME": "${CLAUDE_PLUGIN_ROOT}"},
+                }
+            }
+        },
+    )
+    set_plugin_trusted("demo", True, tmp_path)
+
+    server = collect_contributions(discover_plugins(plugins_dir=tmp_path)).mcp_servers[0]
+
+    assert server.command == f"{plugin}/bin/server"
+    assert server.args == [f"{plugin}/config.json"]
+    assert server.env["PLUGIN_HOME"] == str(plugin)
 
 
 def test_invalid_hook_event_skipped_with_warning(tmp_path: Path) -> None:
@@ -922,6 +984,22 @@ def test_install_rejects_dir_without_manifest(tmp_path: Path) -> None:
     assert "manifest" in message
 
 
+@pytest.mark.parametrize(
+    "unsafe_name",
+    ["../escape", "/tmp/escape", "nested/plugin", r"nested\plugin"],
+)
+def test_install_rejects_unsafe_manifest_name(tmp_path: Path, unsafe_name: str) -> None:
+    src = make_plugin(tmp_path / "src", "source", extra_manifest={"name": unsafe_name})
+    target = tmp_path / "installed"
+
+    outcome, message = install_plugin(str(src), target)
+
+    assert outcome == InstallOutcome.FAILED
+    assert "Invalid plugin name" in message
+    assert not (tmp_path / "escape").exists()
+    assert not (target / "nested" / "plugin").exists()
+
+
 def test_uninstall_removes_dir_and_lock_entry(tmp_path: Path) -> None:
     src = make_plugin(tmp_path / "src")
     target = tmp_path / "installed"
@@ -931,6 +1009,33 @@ def test_uninstall_removes_dir_and_lock_entry(tmp_path: Path) -> None:
     assert not (target / "demo").exists()
     assert "demo" not in read_lockfile(target)
     assert uninstall_plugin("demo", target) == "Plugin not found: demo"
+
+
+@pytest.mark.parametrize("selector", ["../victim", "nested/plugin"])
+def test_uninstall_rejects_unsafe_selector(tmp_path: Path, selector: str) -> None:
+    target = tmp_path / "installed"
+    target.mkdir()
+    victim = (
+        make_plugin(tmp_path, "victim")
+        if selector.startswith("..")
+        else make_plugin(target / "nested", "plugin")
+    )
+
+    message = uninstall_plugin(selector, target)
+
+    assert message.startswith("Invalid plugin name:")
+    assert victim.is_dir()
+
+
+def test_uninstall_rejects_absolute_selector(tmp_path: Path) -> None:
+    target = tmp_path / "installed"
+    target.mkdir()
+    victim = make_plugin(tmp_path, "victim")
+
+    message = uninstall_plugin(str(victim), target)
+
+    assert message.startswith("Invalid plugin name:")
+    assert victim.is_dir()
 
 
 # ── Permissions → capabilities ───────────────────────────────────────────
@@ -951,7 +1056,7 @@ def test_capability_mapping_and_unknown_dropped() -> None:
     assert capability_values_from_permissions(()) == []
 
 
-def test_mcp_approval_relaxed_by_declared_read_only() -> None:
+def test_manifest_permissions_do_not_authorize_mcp_calls() -> None:
     from deepseek_tui.tools.approval import (
         needs_mcp_approval_prompt,
         plan_requires_mcp_approval,
@@ -960,9 +1065,9 @@ def test_mcp_approval_relaxed_by_declared_read_only() -> None:
     name = "mcp_demo-srv__do_thing"
     # Default: non-read-only MCP tool always requires approval.
     assert plan_requires_mcp_approval(name, "on-request") is True
-    # Declared read-only plugin permission maps to AUTO.
-    assert plan_requires_mcp_approval(name, "on-request", ["read_only"]) is False
-    assert needs_mcp_approval_prompt(name, "on-request", ["read_only"]) is False
+    # A plugin declaration is only a claim; it cannot bypass approval.
+    assert plan_requires_mcp_approval(name, "on-request", ["read_only"]) is True
+    assert needs_mcp_approval_prompt(name, "on-request", ["read_only"]) is True
     # Declared executes_code stays REQUIRED.
     assert plan_requires_mcp_approval(name, "on-request", ["executes_code"]) is True
     # Unknown declared strings fall back to the conservative default.
@@ -1317,7 +1422,6 @@ def test_plugin_rules_inactive_hides_non_always_apply() -> None:
     """Unmounted catalog lists only always_apply rules; mount injects all."""
     from deepseek_tui.engine.prompts import render_plugin_rules_context
     from types import SimpleNamespace
-
     rules = [
         SimpleNamespace(
             plugin="alpha",
@@ -1449,7 +1553,6 @@ async def test_load_skill_resolves_plugin_skill_via_engine_registry(
     load_skill prefers it.
     """
     from unittest.mock import AsyncMock
-    import pytest
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     plugins_dir = tmp_path / "home" / "plugins"

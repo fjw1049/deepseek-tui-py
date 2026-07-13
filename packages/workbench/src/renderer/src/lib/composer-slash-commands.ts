@@ -28,8 +28,8 @@ export function parseComposerActionCommand(input: string): ParsedComposerCommand
 export function isUnknownComposerSlashCommand(input: string): boolean {
   const trimmed = input.trim()
   if (!trimmed.startsWith('/') || trimmed.length <= 1) return false
-  // Plugin commands use /plugin:<name> syntax - not unknown.
+  // Claude-style plugin commands use /<plugin>:<command> syntax.
   const token = trimmed.slice(1).split(/\s+/)[0]?.toLowerCase() ?? ''
-  if (token.startsWith('plugin:')) return false
+  if (/^[^:\s]+:[^:\s]+$/.test(token)) return false
   return parseComposerActionCommand(trimmed) === null
 }
