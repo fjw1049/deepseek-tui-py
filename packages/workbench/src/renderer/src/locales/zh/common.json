@@ -1107,7 +1107,7 @@
   "editorPickerTitle": "选择外部打开时使用的应用",
   "editorPickerTitleWithEditor": "外部打开使用：{{editor}}（可在侧边栏点「用 {{editor}} 打开」）",
   "editorPickerMenuTitle": "打开文件使用",
-  "editorPickerMenuHint": "侧边栏预览与聊天里的文件链接会用此应用打开。",
+  "editorPickerMenuHint": "侧边栏预览「用所选应用打开」，以及聊天里双击文件链接时生效。",
   "editorLineBadge": "行号",
   "noThread": "请选择或新建会话",
   "placeholder": "向智能体提问…",

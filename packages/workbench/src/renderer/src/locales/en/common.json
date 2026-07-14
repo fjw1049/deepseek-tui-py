@@ -1107,7 +1107,7 @@
   "editorPickerTitle": "App used when opening files externally",
   "editorPickerTitleWithEditor": "External open: {{editor}} (use “Open with {{editor}}” in the sidebar)",
   "editorPickerMenuTitle": "Open files with",
-  "editorPickerMenuHint": "Used for files opened from the sidebar preview or chat.",
+  "editorPickerMenuHint": "Applies when opening from the sidebar preview, or by double-clicking a file link in chat.",
   "editorLineBadge": "Line",
   "noThread": "Select or create a thread",
   "placeholder": "Ask the agent…",
