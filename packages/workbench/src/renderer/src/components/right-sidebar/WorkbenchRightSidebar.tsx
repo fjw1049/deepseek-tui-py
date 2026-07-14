@@ -1,11 +1,11 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, ReactNode } from 'react'
 import { lazy, Suspense } from 'react'
 import {
-  ChevronsLeft,
-  ChevronsRight,
   Code2,
   FileEdit,
   Globe2,
+  Maximize2,
+  Minimize2,
   PanelRight,
   PanelRightClose,
   Terminal
@@ -203,7 +203,11 @@ export function WorkbenchRightSidebar({
             aria-pressed={maximized}
             title={maximized ? t('rightSidebarRestoreHalf') : t('rightSidebarMaximize')}
           >
-            <ChevronsLeft className="h-4 w-4" strokeWidth={1.85} />
+            {maximized ? (
+              <Minimize2 className="h-4 w-4" strokeWidth={1.85} />
+            ) : (
+              <Maximize2 className="h-4 w-4" strokeWidth={1.85} />
+            )}
           </button>
           <button
             type="button"
@@ -212,7 +216,7 @@ export function WorkbenchRightSidebar({
             aria-label={t('rightSidebarCollapse')}
             title={t('rightSidebarCollapse')}
           >
-            <ChevronsRight className="h-4 w-4" strokeWidth={1.85} />
+            <PanelRightClose className="h-4 w-4" strokeWidth={1.85} />
           </button>
         </div>
 

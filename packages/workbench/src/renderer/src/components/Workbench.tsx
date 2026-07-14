@@ -346,10 +346,13 @@ export function Workbench(): ReactElement {
     threadFilesystemRoot.trim().length > 0
   const showOperationColumn =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !stageCentered
-  const showRightSidebarToggle =
-    route === 'chat' && activeWorkspaceRoot.trim().length > 0
   const showDefaultEditorPicker =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0
+  // Panel header already owns close/maximize when the sidebar is fully open —
+  // keep the topbar control only for closed / collapsed-strip (open) entry.
+  const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
+  const showRightSidebarToggle =
+    route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !rightPanelVisible
   const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
   const topbarRightPaddingClass = showTopbarRightActions
     ? showDefaultEditorPicker && showRightSidebarToggle
@@ -359,7 +362,6 @@ export function Workbench(): ReactElement {
         : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
-  const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
   const terminalSidebarOpen =
     rightSidebarOpen && rightSidebarTab === 'terminal' && !rightSidebarCollapsed
   const chatColumnInsetClass = useMemo(() => {
@@ -1125,7 +1127,7 @@ export function Workbench(): ReactElement {
                   {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
                   {showRightSidebarToggle ? (
                     <RightSidebarToggleButton
-                      open={rightSidebarOpen}
+                      open={false}
                       onClick={toggleRightSidebar}
                     />
                   ) : null}
