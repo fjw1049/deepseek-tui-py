@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
+import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
   filterComposerModelOptions,
   formatComposerModelLabel
@@ -1853,6 +1854,16 @@ export function FloatingComposer({
                 </div>
               ) : null}
             </div>
+
+            <ComposerApprovalPolicySelector
+              disabled={!canCompose}
+              onOpenChange={(nextOpen) => {
+                if (nextOpen) {
+                  setPlusMenuOpen(false)
+                  setPlusSubmenu(null)
+                }
+              }}
+            />
 
             {mode !== 'agent' ? (
               <div
