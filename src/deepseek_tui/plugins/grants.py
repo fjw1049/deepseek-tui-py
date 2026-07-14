@@ -33,6 +33,12 @@ HIGH_RISK_CAPABILITIES = frozenset(
     }
 )
 
+# Capabilities that a plain ``plugin trust`` grants. High-risk capabilities
+# (arbitrary native code / process spawn / Pi sidecar) require a separate,
+# deliberate ``plugin grant`` step and are intentionally excluded here so the
+# HIGH_RISK_CAPABILITIES gate in :func:`execution_authorized` stays live.
+LOW_RISK_CAPABILITIES = EXECUTION_CAPABILITIES - HIGH_RISK_CAPABILITIES
+
 
 @dataclass(frozen=True, slots=True)
 class PluginGrant:
@@ -147,6 +153,26 @@ def grant_execution(
     return grant
 
 
+def grant_trust(
+    plugin_id: str,
+    digest: str,
+    *,
+    home: Path | None = None,
+) -> PluginGrant:
+    """Grant only the low-risk capabilities implied by ``plugin trust``.
+
+    High-risk capabilities (native code / process spawn / Pi sidecar) require
+    a deliberate :func:`grant_execution` — usually via ``plugin grant`` — so
+    trusting a plugin never silently authorizes arbitrary code execution.
+    """
+    return grant_execution(
+        plugin_id,
+        digest,
+        capabilities=LOW_RISK_CAPABILITIES,
+        home=home,
+    )
+
+
 def has_execution_grant(
     plugin_id: str,
     digest: str,
@@ -192,7 +218,7 @@ def migrate_legacy_fingerprint_grants(
     if not all(path.stem.startswith("fp_") for path in files):
         return False
     revoke_grant(plugin_id, home=home)
-    grant_execution(plugin_id, digest, home=home)
+    grant_trust(plugin_id, digest, home=home)
     return True
 
 

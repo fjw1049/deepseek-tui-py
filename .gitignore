@@ -45,3 +45,4 @@ session_*.json
 docs/DeepSeek-TUI-main/.idea/
 docs/DeepSeek-TUI-main/.claude/
 .claude/
+.ai-tracks/

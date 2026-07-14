@@ -1028,13 +1028,38 @@ def _collect_rules(plugin: LoadedPlugin, out: PluginContributions) -> None:
             seen.add(key)
 
 
+def _is_store_backed(path: Path) -> bool:
+    """True when ``path`` is a symlink into the immutable content store.
+
+    Store-backed installs (``sources/sha256/<digest>``) cannot change under a
+    live grant, so their cached digest is authoritative. Mutable real
+    directories (dev checkouts, ``~/.claude`` interop) can be edited after a
+    grant is written, so their digest must be recomputed from disk.
+    """
+    try:
+        if not path.is_symlink():
+            return False
+        parts = path.resolve().parts
+    except OSError:
+        return False
+    return "sources" in parts and "sha256" in parts
+
+
 def _execution_digest_for_plugin(plugin: LoadedPlugin) -> str:
-    """Resolve the store ``sha256:`` digest used for grant checks."""
+    """Resolve the store ``sha256:`` digest used for grant checks.
+
+    For store-backed installs the lockfile-cached digest is trusted (the
+    content is immutable). For mutable directories the digest is always
+    recomputed from the current bytes on disk so a post-grant edit is
+    detected — the "digest-bound" grant must bind to live content, not a
+    stale cache.
+    """
     from deepseek_tui.plugins.identity import source_content_digest
 
     provenance: dict[str, Any] | None = None
     index = plugin.contribution_index
-    if isinstance(index, dict):
+    store_backed = _is_store_backed(plugin.path)
+    if store_backed and isinstance(index, dict):
         source_digest = index.get("source_digest")
         if isinstance(source_digest, str) and source_digest.startswith("sha256:"):
             return source_digest
@@ -1047,7 +1072,12 @@ def _execution_digest_for_plugin(plugin: LoadedPlugin) -> str:
         if isinstance(raw, dict):
             provenance = raw
     try:
-        return source_content_digest(plugin.path, provenance=provenance)
+        # Mutable installs must ignore the provenance/cache shortcut and hash
+        # the live tree; store-backed installs may reuse the recorded digest.
+        return source_content_digest(
+            plugin.path,
+            provenance=provenance if store_backed else None,
+        )
     except Exception:  # noqa: BLE001
         return ""
 
@@ -2020,11 +2050,11 @@ def _record_install(
     _update_lockfile_entry(plugins_dir, manifest.name, **fields)
     if trust and plugin_path is not None:
         try:
-            from deepseek_tui.plugins.grants import grant_execution
+            from deepseek_tui.plugins.grants import grant_trust
             from deepseek_tui.plugins.identity import source_content_digest
 
             digest = source_content_digest(plugin_path, provenance=provenance)
-            grant_execution(manifest.name, digest)
+            grant_trust(manifest.name, digest)
         except Exception:  # noqa: BLE001 — grants are additive; trust still holds
             _LOG.warning(
                 "failed to write execution grant for %s",
@@ -2046,7 +2076,9 @@ def _finalize_installed_plugin(dest: Path) -> None:
 
 _HOOKS_MCP_NEXT_SESSION = (
     "Hooks/MCP take effect on the next session "
-    "(restart the engine / start a new chat)."
+    "(restart the engine / start a new chat). "
+    "High-risk capabilities (Pi sidecar / process spawn / install scripts) "
+    "need a separate `deepseek-tui plugin grant`."
 )
 
 
@@ -2318,14 +2350,16 @@ def update_plugin(
                 lock_name,
                 exc_info=True,
             )
-    # Digest-bound grants do not carry across updates.
+    # Digest-bound grants do not carry across updates. A trusted plugin keeps
+    # its low-risk grant on the new digest; high-risk capabilities must be
+    # re-granted deliberately after reviewing the updated content.
     try:
-        from deepseek_tui.plugins.grants import grant_execution, revoke_grant
+        from deepseek_tui.plugins.grants import grant_trust, revoke_grant
         from deepseek_tui.plugins.identity import source_content_digest
 
         revoke_grant(lock_name)
         if was_trusted:
-            grant_execution(
+            grant_trust(
                 lock_name,
                 source_content_digest(plugin_path, provenance=staged_provenance),
             )
@@ -2436,11 +2470,11 @@ def set_plugin_trusted(
     _update_lockfile_entry(target_dir, lock_name, trusted=trusted)
     if trusted:
         if digest:
-            from deepseek_tui.plugins.grants import grant_execution, revoke_grant
+            from deepseek_tui.plugins.grants import grant_trust, revoke_grant
 
             # Drop stale digest grants so enforcement cannot see an old match.
             revoke_grant(lock_name)
-            grant_execution(lock_name, digest)
+            grant_trust(lock_name, digest)
         return (
             f"Trusted plugin {lock_name}. {_HOOKS_MCP_NEXT_SESSION}"
         )

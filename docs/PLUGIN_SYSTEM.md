@@ -64,14 +64,24 @@ Engine 通过 `plugin_session` 激活命令/agent/rule，挂载场景时刷新 t
 |---|---|
 | PermissionClaim | 插件声明需要什么（不可信） |
 | AuthorizationGrant | 用户按 `plugin_id + sha256 digest` 实际允许什么 |
-| trusted（lockfile） | 兼容开关；trust 时写入 digest-bound grant |
+| trusted（lockfile） | 兼容开关；trust 时写入**低危** digest-bound grant |
+
+能力分两级：
+- **低危**（`hooks.execute` / `mcp.connect`）：`plugin trust` 自动授予。
+- **高危**（`process.spawn` / `package.install-scripts` / `runtime.tool-provider`（Pi
+  sidecar））：**不随 trust 授予**，必须显式 `deepseek-tui plugin grant <name>`。
 
 运行时 hooks / MCP / Pi 在 `trusted` 之外还检查 digest-bound grant：
 当前内容 digest 无匹配 grant、且该插件已有其它 digest 的 grant 时，跳过可执行贡献。
-无任何 grant 文件的旧安装仍可凭 `trusted=true` 过渡。
-仅含历史 `fp:` grant 的安装会在首次装配时自动迁移为当前 `sha256:` grant。
+高危能力即便 trusted 也需显式 grant（`HIGH_RISK_CAPABILITIES` 无 trust 旁路）。
+无任何 grant 文件的旧安装仍可凭 `trusted=true` 过渡（仅低危）。
+仅含历史 `fp:` grant 的安装会在首次装配时自动迁移为当前 `sha256:` **低危** grant。
 
-更新插件会撤销旧 grant；若仍 trusted，会为新 digest 重新签发。
+运行时授权 digest：store symlink 安装信任 lockfile 缓存 digest（内容不可变）；
+**可变目录**（dev checkout / `~/.claude` interop）在装配时从磁盘**重算** digest，
+授权后被改动的字节会导致 grant 失配、可执行贡献被拒（防 TOCTOU）。
+
+更新插件会撤销旧 grant；若仍 trusted，会为新 digest 重新签发**低危** grant（高危需重新 `plugin grant`）。
 `content_fingerprint`（`fp:`）只用于 index 失效，不用于授权绑定。
 
 ## 4. Discovery

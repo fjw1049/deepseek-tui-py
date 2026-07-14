@@ -131,6 +131,33 @@ async def test_pi_host_activation_registers_tools(tmp_path: Path, monkeypatch) -
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     _write_pi_fixture(tmp_path / "home" / "plugins" / "pi-echo")
     from deepseek_tui.integrations.plugins import set_plugin_trusted
+    from deepseek_tui.plugins import GrantPlugin, PluginHost
+    from deepseek_tui.plugins.identity import source_content_digest
+    from deepseek_tui.tools.registry import ToolRegistry
+
+    plugins_dir = tmp_path / "home" / "plugins"
+    set_plugin_trusted("pi-echo", True, plugins_dir)
+    # Pi is a high-risk runtime.tool-provider: trust alone is not enough, the
+    # user must deliberately grant execution for the current content digest.
+    digest = source_content_digest(plugins_dir / "pi-echo")
+    PluginHost().apply(GrantPlugin("pi-echo", digest, plugins_dir))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    session = PluginHost().open_session(workspace=workspace)
+    registry = ToolRegistry()
+    tools = await session.activate_pi_provider("pi-echo", tool_registry=registry)
+    assert len(tools) == 1
+    assert any(name.startswith("pi_") for name in registry.names())
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_pi_trust_alone_does_not_activate(tmp_path: Path, monkeypatch) -> None:
+    """Trust grants only low-risk caps; the Pi sidecar stays inert until a
+    deliberate ``plugin grant`` authorizes ``runtime.tool-provider``."""
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    _write_pi_fixture(tmp_path / "home" / "plugins" / "pi-echo")
+    from deepseek_tui.integrations.plugins import set_plugin_trusted
     from deepseek_tui.plugins import PluginHost
     from deepseek_tui.tools.registry import ToolRegistry
 
@@ -140,8 +167,8 @@ async def test_pi_host_activation_registers_tools(tmp_path: Path, monkeypatch) -
     session = PluginHost().open_session(workspace=workspace)
     registry = ToolRegistry()
     tools = await session.activate_pi_provider("pi-echo", tool_registry=registry)
-    assert len(tools) == 1
-    assert any(name.startswith("pi_") for name in registry.names())
+    assert tools == []
+    assert not any(name.startswith("pi_") for name in registry.names())
     await session.close()
 
 
