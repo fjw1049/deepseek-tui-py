@@ -618,8 +618,9 @@ samp {
   }
 }
 
-/* Project import menu — Apple menu chrome + system type for CJK legibility. */
-.ds-project-context-menu {
+/* Apple menu chrome — shared by project picker + editor picker. */
+.ds-project-context-menu,
+.ds-editor-picker-menu {
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI',
     'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -634,7 +635,8 @@ samp {
   -webkit-backdrop-filter: blur(28px) saturate(1.35);
 }
 
-[data-theme='dark'] .ds-project-context-menu {
+[data-theme='dark'] .ds-project-context-menu,
+[data-theme='dark'] .ds-editor-picker-menu {
   border-color: rgba(255, 255, 255, 0.1);
   background: rgba(28, 28, 30, 0.88);
   box-shadow:
@@ -642,16 +644,19 @@ samp {
     0 1px 0 rgba(255, 255, 255, 0.06) inset;
 }
 
-.ds-project-context-menu__header {
+.ds-project-context-menu__header,
+.ds-editor-picker-menu__header {
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   padding: 12px 14px 10px;
 }
 
-[data-theme='dark'] .ds-project-context-menu__header {
+[data-theme='dark'] .ds-project-context-menu__header,
+[data-theme='dark'] .ds-editor-picker-menu__header {
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-.ds-project-context-menu__title {
+.ds-project-context-menu__title,
+.ds-editor-picker-menu__title {
   font-size: 12px;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -659,7 +664,8 @@ samp {
   color: var(--ds-text);
 }
 
-.ds-project-context-menu__hint {
+.ds-project-context-menu__hint,
+.ds-editor-picker-menu__hint {
   margin-top: 3px;
   font-size: 11px;
   font-weight: 400;
@@ -704,7 +710,8 @@ samp {
   font-weight: 400;
 }
 
-.ds-project-context-menu__list {
+.ds-project-context-menu__list,
+.ds-editor-picker-menu__list {
   max-height: 260px;
   overflow-y: auto;
   padding: 6px;
@@ -727,7 +734,8 @@ samp {
   color: var(--ds-text-faint);
 }
 
-.ds-project-context-menu__row {
+.ds-project-context-menu__row,
+.ds-editor-picker-menu__row {
   display: flex;
   width: 100%;
   align-items: center;
@@ -742,34 +750,41 @@ samp {
     transform 100ms ease-out;
 }
 
-.ds-project-context-menu__row:hover:not(:disabled) {
+.ds-project-context-menu__row:hover:not(:disabled),
+.ds-editor-picker-menu__row:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.04);
   color: var(--ds-text);
 }
 
-[data-theme='dark'] .ds-project-context-menu__row:hover:not(:disabled) {
+[data-theme='dark'] .ds-project-context-menu__row:hover:not(:disabled),
+[data-theme='dark'] .ds-editor-picker-menu__row:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.ds-project-context-menu__row:active:not(:disabled) {
+.ds-project-context-menu__row:active:not(:disabled),
+.ds-editor-picker-menu__row:active:not(:disabled) {
   transform: scale(0.985);
 }
 
-.ds-project-context-menu__row:disabled {
+.ds-project-context-menu__row:disabled,
+.ds-editor-picker-menu__row:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 
-.ds-project-context-menu__row--active {
+.ds-project-context-menu__row--active,
+.ds-editor-picker-menu__row--active {
   background: color-mix(in srgb, var(--ds-accent, #0088ff) 12%, transparent);
   color: var(--ds-text);
 }
 
-[data-theme='dark'] .ds-project-context-menu__row--active {
+[data-theme='dark'] .ds-project-context-menu__row--active,
+[data-theme='dark'] .ds-editor-picker-menu__row--active {
   background: color-mix(in srgb, var(--ds-accent, #339cff) 20%, transparent);
 }
 
-.ds-project-context-menu__icon {
+.ds-project-context-menu__icon,
+.ds-editor-picker-menu__icon {
   display: inline-flex;
   height: 28px;
   width: 28px;
@@ -780,14 +795,23 @@ samp {
   background: rgba(0, 0, 0, 0.04);
   color: var(--ds-text-muted);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
 }
 
-[data-theme='dark'] .ds-project-context-menu__icon {
+[data-theme='dark'] .ds-project-context-menu__icon,
+[data-theme='dark'] .ds-editor-picker-menu__icon {
   background: rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.ds-project-context-menu__row-title {
+.ds-editor-picker-menu__icon img {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+}
+
+.ds-project-context-menu__row-title,
+.ds-editor-picker-menu__row-title {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -813,24 +837,136 @@ samp {
   font-variant-numeric: tabular-nums;
 }
 
+.ds-editor-picker-menu {
+  width: 268px;
+  overflow: hidden;
+  transform-origin: top right;
+  animation: ds-apple-menu-materialize 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ds-editor-picker-menu__list {
+  max-height: 320px;
+}
+
+.ds-editor-picker-menu__check {
+  display: inline-flex;
+  height: 18px;
+  width: 18px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--ds-accent, #0088ff);
+}
+
+.ds-editor-picker-trigger {
+  display: inline-flex;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--ds-surface-elevated, #fff) 55%, transparent);
+  padding: 0 8px;
+  color: var(--ds-text-faint);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out,
+    transform 100ms ease-out;
+}
+
+[data-theme='dark'] .ds-editor-picker-trigger {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.ds-editor-picker-trigger:hover:not(:disabled) {
+  border-color: var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-surface-elevated, #fff) 80%, transparent);
+  color: var(--ds-text);
+}
+
+[data-theme='dark'] .ds-editor-picker-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ds-editor-picker-trigger:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.ds-editor-picker-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.ds-editor-picker-trigger[aria-expanded='true'] {
+  border-color: var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-surface-elevated, #fff) 88%, transparent);
+  color: var(--ds-text);
+}
+
+[data-theme='dark'] .ds-editor-picker-trigger[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.ds-editor-picker-trigger__chevron {
+  opacity: 0.55;
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ds-editor-picker-trigger[aria-expanded='true'] .ds-editor-picker-trigger__chevron {
+  transform: rotate(180deg);
+  opacity: 0.75;
+}
+
+@keyframes ds-apple-menu-materialize {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-6px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .ds-project-context-menu__row {
-    transition: background-color 100ms ease, color 100ms ease;
+  .ds-project-context-menu__row,
+  .ds-editor-picker-menu__row,
+  .ds-editor-picker-trigger {
+    transition: background-color 100ms ease, color 100ms ease, border-color 100ms ease;
   }
 
-  .ds-project-context-menu__row:active:not(:disabled) {
+  .ds-project-context-menu__row:active:not(:disabled),
+  .ds-editor-picker-menu__row:active:not(:disabled),
+  .ds-editor-picker-trigger:active:not(:disabled) {
     transform: none;
+  }
+
+  .ds-editor-picker-menu {
+    animation: none;
+  }
+
+  .ds-editor-picker-trigger__chevron {
+    transition: none;
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .ds-project-context-menu {
+  .ds-project-context-menu,
+  .ds-editor-picker-menu {
     background: var(--ds-surface-elevated, #fff);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
 
-  [data-theme='dark'] .ds-project-context-menu {
+  [data-theme='dark'] .ds-project-context-menu,
+  [data-theme='dark'] .ds-editor-picker-menu {
     background: #1c1c1e;
   }
 }
@@ -1489,6 +1625,8 @@ samp {
 .ds-workbench-shell.is-scrolling .ds-sidebar-shell,
 .ds-workbench-shell.is-scrolling .ds-sidebar-expand-droplet,
 .ds-workbench-shell.is-scrolling .ds-composer-command-popover,
+.ds-workbench-shell.is-scrolling .ds-project-context-menu,
+.ds-workbench-shell.is-scrolling .ds-editor-picker-menu,
 .ds-workbench-shell.is-scrolling .ds-workbench-right-panel,
 .ds-workbench-shell.is-scrolling .ds-feature-page,
 .ds-workbench-shell.is-scrolling .ds-settings-page > .ds-page-scroll,
