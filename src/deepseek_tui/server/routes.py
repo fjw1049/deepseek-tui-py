@@ -922,7 +922,6 @@ async def plugin_action_route(request: Request, name: str) -> dict[str, Any]:
             user_plugins_dir,
         )
         from deepseek_tui.plugins import GrantPlugin, RevokePlugin
-        from deepseek_tui.plugins.identity import content_fingerprint
 
         digest = str(payload.get("digest") or "").strip()
         scope = plugins_dir or user_plugins_dir()
@@ -930,7 +929,9 @@ async def plugin_action_route(request: Request, name: str) -> dict[str, Any]:
             resolved = resolve_plugin_dir(name, scope)
             if resolved is None:
                 raise api_error(404, f"Plugin not found: {name}", error="plugin_not_found")
-            digest = content_fingerprint(resolved)
+            from deepseek_tui.plugins.identity import source_content_digest
+
+            digest = source_content_digest(resolved)
         if action == "grant":
             result = await asyncio.to_thread(
                 host.apply,

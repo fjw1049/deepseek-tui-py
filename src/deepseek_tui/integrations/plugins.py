@@ -811,10 +811,10 @@ class PluginAgent:
     """A persona contributed by a plugin (``agents/<stem>.md``).
 
     Spawnable as a sub-agent whose system prompt is ``body``. ``model`` and
-    ``tools`` mirror the Claude Code agent frontmatter; they are advisory
-    (recorded for display / doctor) — foreign model IDs and cross-ecosystem
-    tool names are not forced onto the DeepSeek runtime so the persona always
-    runs. When ``tools`` is empty the sub-agent gets the full registry.
+    ``tools`` mirror the Claude Code agent frontmatter. When the owning plugin
+    is trusted, ``tools`` map onto DeepSeek ids; when empty the sub-agent may
+    inherit the full registry. Untrusted plugins are confined to the focus
+    read-tool base unless the caller passes an explicit ``allowed_tools`` list.
     """
 
     name: str  # frontmatter name, e.g. "unit-testing-test-automator"
@@ -1028,14 +1028,41 @@ def _collect_rules(plugin: LoadedPlugin, out: PluginContributions) -> None:
             seen.add(key)
 
 
+def _execution_digest_for_plugin(plugin: LoadedPlugin) -> str:
+    """Resolve the store ``sha256:`` digest used for grant checks."""
+    from deepseek_tui.plugins.identity import source_content_digest
+
+    provenance: dict[str, Any] | None = None
+    index = plugin.contribution_index
+    if isinstance(index, dict):
+        source_digest = index.get("source_digest")
+        if isinstance(source_digest, str) and source_digest.startswith("sha256:"):
+            return source_digest
+    try:
+        entry = read_lockfile(plugin.path.parent).get(plugin.name, {})
+    except OSError:
+        entry = {}
+    if isinstance(entry, dict):
+        raw = entry.get("derived_provenance")
+        if isinstance(raw, dict):
+            provenance = raw
+    try:
+        return source_content_digest(plugin.path, provenance=provenance)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def collect_light_contributions(
     plugins: list[LoadedPlugin],
+    *,
+    enforce_grants: bool = True,
 ) -> PluginContributions:
     """Collect hooks + MCP servers only (manifest-level, no .md disk scan).
 
     Lightweight assembly for Engine.create startup: reads only the
-    already-parsed manifest. Hooks/MCP require ``trusted``; the declarative
-    text components (skills/commands/agents/rules) are NOT collected here.
+    already-parsed manifest. Hooks/MCP require ``trusted`` plus a matching
+    digest-bound grant when ``enforce_grants`` is set; the declarative text
+    components (skills/commands/agents/rules) are NOT collected here.
     Use :func:`collect_skill_contributions` for skills (eager at startup)
     and :func:`collect_heavy_contributions` for commands/agents/rules
     (deferred until activation).
@@ -1055,6 +1082,32 @@ def collect_light_contributions(
             )
             continue
         if plugin.trusted:
+            if enforce_grants:
+                from deepseek_tui.plugins.grants import (
+                    execution_authorized,
+                    migrate_legacy_fingerprint_grants,
+                )
+
+                digest = _execution_digest_for_plugin(plugin)
+                if digest:
+                    migrate_legacy_fingerprint_grants(plugin.name, digest)
+                if not execution_authorized(
+                    trusted=True,
+                    plugin_id=plugin.name,
+                    digest=digest,
+                    capability="hooks.execute",
+                ) and not execution_authorized(
+                    trusted=True,
+                    plugin_id=plugin.name,
+                    digest=digest,
+                    capability="mcp.connect",
+                ):
+                    out.warnings.append(
+                        f"plugin {plugin.name}: hooks/MCP skipped "
+                        f"(no execution grant for current content digest; "
+                        f"re-run `deepseek-tui plugin trust {plugin.name}`)"
+                    )
+                    continue
             _collect_hooks(plugin, out)
             _collect_mcp(plugin, out)
     return out
@@ -1095,7 +1148,11 @@ def collect_heavy_contributions(
     return out
 
 
-def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
+def collect_contributions(
+    plugins: list[LoadedPlugin],
+    *,
+    enforce_grants: bool = True,
+) -> PluginContributions:
     """Full assembly: light (hooks + MCP) + skills + heavy (commands/agents/rules).
 
     Backwards-compatible entry point. Callers that want the split (e.g.
@@ -1103,7 +1160,7 @@ def collect_contributions(plugins: list[LoadedPlugin]) -> PluginContributions:
     :func:`collect_light_contributions` + :func:`collect_skill_contributions`
     at startup and :func:`collect_heavy_contributions` per-plugin on activation.
     """
-    out = collect_light_contributions(plugins)
+    out = collect_light_contributions(plugins, enforce_grants=enforce_grants)
     skills = collect_skill_contributions(plugins)
     heavy = collect_heavy_contributions(plugins)
     out.skills = skills.skills
@@ -1819,20 +1876,24 @@ def build_contribution_index(
         enabled=True,
         trusted=True,
     )
-    contribs = collect_contributions([fake])
-    from deepseek_tui.plugins.identity import content_fingerprint
+    # Catalog only — do not require grants while indexing declarative names.
+    contribs = collect_contributions([fake], enforce_grants=False)
+    from deepseek_tui.plugins.identity import (
+        content_fingerprint,
+        source_content_digest,
+    )
 
     fingerprint = content_fingerprint(plugin_path)
     adapter_id = "legacy-loader"
     adapter_version = 1
-    source_digest = fingerprint
+    try:
+        source_digest = source_content_digest(plugin_path, provenance=provenance)
+    except Exception:  # noqa: BLE001
+        source_digest = fingerprint
     if isinstance(provenance, dict):
         adapter_id = str(provenance.get("adapter_id") or adapter_id)
         if provenance.get("adapter_version") is not None:
             adapter_version = int(provenance["adapter_version"])
-        source = provenance.get("source")
-        if isinstance(source, dict) and source.get("digest"):
-            source_digest = str(source["digest"])
     return {
         "schema_version": INDEX_SCHEMA_VERSION,
         "content_fingerprint": fingerprint,
@@ -1957,13 +2018,9 @@ def _record_install(
     if trust and plugin_path is not None:
         try:
             from deepseek_tui.plugins.grants import grant_execution
-            from deepseek_tui.plugins.identity import content_fingerprint
+            from deepseek_tui.plugins.identity import source_content_digest
 
-            digest = content_fingerprint(plugin_path)
-            if isinstance(provenance, dict):
-                source = provenance.get("source")
-                if isinstance(source, dict) and source.get("digest"):
-                    digest = str(source["digest"])
+            digest = source_content_digest(plugin_path, provenance=provenance)
             grant_execution(manifest.name, digest)
         except Exception:  # noqa: BLE001 — grants are additive; trust still holds
             _LOG.warning(
@@ -2261,11 +2318,14 @@ def update_plugin(
     # Digest-bound grants do not carry across updates.
     try:
         from deepseek_tui.plugins.grants import grant_execution, revoke_grant
-        from deepseek_tui.plugins.identity import content_fingerprint
+        from deepseek_tui.plugins.identity import source_content_digest
 
         revoke_grant(lock_name)
         if was_trusted:
-            grant_execution(lock_name, content_fingerprint(plugin_path))
+            grant_execution(
+                lock_name,
+                source_content_digest(plugin_path, provenance=staged_provenance),
+            )
     except Exception:  # noqa: BLE001
         _LOG.warning("grant rotation failed for %s", lock_name, exc_info=True)
     _update_lockfile_entry(target_dir, lock_name, **fields)
@@ -2355,33 +2415,35 @@ def set_plugin_trusted(
     resolved = _resolve_plugin_dir(name, target_dir)
     lock_name = name
     digest = ""
+    provenance: dict[str, Any] | None = None
     if resolved is not None:
         manifest = load_plugin_manifest(resolved)
         if manifest is not None:
             lock_name = manifest.name
+        entry = read_lockfile(target_dir).get(lock_name, {})
+        raw = entry.get("derived_provenance") if isinstance(entry, dict) else None
+        if isinstance(raw, dict):
+            provenance = raw
         try:
-            from deepseek_tui.plugins.identity import content_fingerprint
+            from deepseek_tui.plugins.identity import source_content_digest
 
-            digest = content_fingerprint(resolved)
+            digest = source_content_digest(resolved, provenance=provenance)
         except Exception:  # noqa: BLE001
             digest = ""
     _update_lockfile_entry(target_dir, lock_name, trusted=trusted)
     if trusted:
         if digest:
-            from deepseek_tui.plugins.grants import grant_execution
+            from deepseek_tui.plugins.grants import grant_execution, revoke_grant
 
+            # Drop stale digest grants so enforcement cannot see an old match.
+            revoke_grant(lock_name)
             grant_execution(lock_name, digest)
         return (
             f"Trusted plugin {lock_name}. {_HOOKS_MCP_NEXT_SESSION}"
         )
-    if digest:
-        from deepseek_tui.plugins.grants import revoke_grant
+    from deepseek_tui.plugins.grants import revoke_grant
 
-        revoke_grant(lock_name, digest)
-    else:
-        from deepseek_tui.plugins.grants import revoke_grant
-
-        revoke_grant(lock_name)
+    revoke_grant(lock_name)
     return f"Untrusted plugin {lock_name}"
 
 

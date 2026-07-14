@@ -517,6 +517,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self._active_plugin = match
         if self.hook_executor is not None:
             self.hook_executor.scenario_plugin = match.manifest.name
+        if self.tool_context is not None:
+            trust_map = self.tool_context.metadata.setdefault("plugin_trust", {})
+            if isinstance(trust_map, dict):
+                trust_map[match.manifest.name.lower()] = bool(
+                    getattr(match, "trusted", False)
+                )
         m = match.manifest
         note = f"已进入场景 {m.name}，本会话仅用其工具 + 基础工具。"
         # trusted 才收 MCP（collect_contributions 语义）；未信任时提示。
@@ -699,10 +705,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if "writes_files" in caps:
                 allowed |= set(FOCUS_WRITE_BASE)
         server_names: set[str] = set()
-        for skill in self._active_plugin_skills():
-            declared = getattr(skill, "allowed_tools", None)
-            if declared:
-                allowed |= set(declared)
+        # Skill allowed-tools may expand beyond the read base — only when trusted.
+        # Untrusted mounts stay on FOCUS_READ_BASE (+ MCP still gated below).
+        if getattr(plugin, "trusted", False):
+            for skill in self._active_plugin_skills():
+                declared = getattr(skill, "allowed_tools", None)
+                if declared:
+                    allowed |= set(declared)
         contribs = None
         if self.plugin_session is not None:
             try:
@@ -1140,6 +1149,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 engine.tool_context.metadata["plugin_agent_index"] = (
                     _agent_index_from_plugin_index(engine.plugin_index)
                 )
+                engine.tool_context.metadata["plugin_trust"] = {
+                    p.name.lower(): bool(p.trusted) for p in loaded_plugins
+                }
             # Start trusted Pi sidecars once per Engine session.
             if plugin_session is not None:
                 registry = getattr(runtime, "registry", None)

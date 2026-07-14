@@ -62,3 +62,35 @@ def content_fingerprint(root: Path, *, max_files: int = 20_000) -> str:
         digest.update(str(stat.st_mtime_ns).encode("ascii"))
         digest.update(str(stat.st_size).encode("ascii"))
     return f"fp:{digest.hexdigest()}"
+
+
+def source_content_digest(
+    root: Path,
+    *,
+    provenance: dict | None = None,
+    max_files: int = 20_000,
+    max_bytes: int = 50 * 1024 * 1024,
+) -> str:
+    """Return the store content digest (``sha256:...``) for a plugin tree.
+
+    Prefers ``provenance.source.digest`` / ``content_digest`` when already a
+    ``sha256:`` value (install/update lockfile). Otherwise hashes file bodies
+    via :class:`~deepseek_tui.plugins.source.LocalArtifact` — the same key
+    used by the content-addressed store. Do **not** use
+    :func:`content_fingerprint` for authorization binding.
+    """
+    if isinstance(provenance, dict):
+        source = provenance.get("source")
+        if isinstance(source, dict):
+            digest = source.get("digest")
+            if isinstance(digest, str) and digest.startswith("sha256:"):
+                return digest
+        content_digest = provenance.get("content_digest")
+        if isinstance(content_digest, str) and content_digest.startswith("sha256:"):
+            return content_digest
+    from deepseek_tui.plugins.source import LocalArtifact, PluginSourceError
+
+    try:
+        return LocalArtifact(root, max_files=max_files, max_bytes=max_bytes).digest
+    except PluginSourceError as exc:
+        raise PluginIdentityError(str(exc)) from exc

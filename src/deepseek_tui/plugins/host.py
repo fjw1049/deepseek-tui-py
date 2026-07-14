@@ -312,6 +312,22 @@ class PluginSession:
         plugin = self._by_name.get(key)
         if plugin is None or not getattr(plugin, "trusted", False):
             return []
+        from deepseek_tui.integrations.plugins import _execution_digest_for_plugin
+        from deepseek_tui.plugins.grants import (
+            execution_authorized,
+            migrate_legacy_fingerprint_grants,
+        )
+
+        digest = _execution_digest_for_plugin(plugin)
+        if digest:
+            migrate_legacy_fingerprint_grants(plugin.name, digest)
+        if not execution_authorized(
+            trusted=True,
+            plugin_id=plugin.name,
+            digest=digest,
+            capability="runtime.tool-provider",
+        ):
+            return []
         package_json = Path(plugin.path) / "package.json"
         if not package_json.is_file():
             return []

@@ -1596,14 +1596,14 @@ def plugin_grant_cmd(
     digest: str = typer.Option(
         "",
         "--digest",
-        help="Content digest to bind (default: fingerprint the installed copy).",
+        help="Store content digest to bind (default: sha256 of the installed copy).",
     ),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
     """Grant digest-bound execution capabilities (hooks/MCP/sidecar)."""
     from deepseek_tui.integrations.plugins import resolve_plugin_dir, user_plugins_dir
     from deepseek_tui.plugins import GrantPlugin, PluginHost
-    from deepseek_tui.plugins.identity import content_fingerprint
+    from deepseek_tui.plugins.identity import source_content_digest
 
     plugins_dir = _plugins_dir(project)
     bound = digest.strip()
@@ -1612,7 +1612,7 @@ def plugin_grant_cmd(
         if resolved is None:
             typer.echo(f"Plugin not found: {name}")
             raise typer.Exit(1)
-        bound = content_fingerprint(resolved)
+        bound = source_content_digest(resolved)
     result = PluginHost().apply(GrantPlugin(name, bound, plugins_dir))
     typer.echo(result.message)
 

@@ -192,9 +192,12 @@ def test_manifestless_dir_without_components_is_not_a_plugin(tmp_path: Path) -> 
     assert load_plugin_manifest(plugin) is None
 
 
-def test_manifest_omitting_hooks_key_discovers_hooks_json(tmp_path: Path) -> None:
+def test_manifest_omitting_hooks_key_discovers_hooks_json(
+    tmp_path: Path, monkeypatch
+) -> None:
     # financial-analysis (WorkBuddy) case: hooks/hooks.json on disk but no
     # ``hooks`` key in the manifest. Claude Code loads it by convention.
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     plugin = make_plugin(tmp_path, with_hook=False, with_mcp=False)
     _write_foreign_hooks_json(plugin / "hooks" / "hooks.json")
     manifest = load_plugin_manifest(plugin)
@@ -208,7 +211,10 @@ def test_manifest_omitting_hooks_key_discovers_hooks_json(tmp_path: Path) -> Non
     assert [h.event for h in contribs.hook_entries] == ["session_start"]
 
 
-def test_manifest_omitting_mcp_key_discovers_mcp_json(tmp_path: Path) -> None:
+def test_manifest_omitting_mcp_key_discovers_mcp_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     plugin = make_plugin(tmp_path, with_hook=False, with_mcp=False)
     (plugin / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"srv": {"command": "${PLUGIN_DIR}/bin/x"}}}),
@@ -2219,3 +2225,84 @@ async def test_set_active_plugin_scenario_copy_and_hook_filter(
         assert "新开会话" in tip
     finally:
         await engine.shutdown_session()
+
+
+async def test_untrusted_plugin_skill_allowed_tools_ignored_in_whitelist(
+    tmp_path, monkeypatch
+) -> None:
+    """Untrusted mounts must not expand the whitelist via skill allowed-tools."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    plugins_dir = tmp_path / "home" / "plugins"
+    plugin = make_plugin(
+        plugins_dir,
+        "expand",
+        with_hook=False,
+        with_mcp=False,
+        with_skill=True,
+    )
+    skill = plugin / "skills" / "demo-skill" / "SKILL.md"
+    skill.write_text(
+        "---\nname: demo-skill\ndescription: d\n"
+        "allowed-tools: write_file, exec_shell\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+    from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(features={"tasks": False, "subagents": False, "mcp": False})
+    engine = await Engine.create(
+        EngineHandle(), AsyncMock(), config=cfg, working_directory=workspace
+    )
+    try:
+        assert not engine._loaded_plugins[0].trusted
+        engine.set_active_plugin("expand")
+        wl, _servers = engine._active_plugin_whitelist()
+        assert wl is not None
+        assert wl <= FOCUS_READ_BASE or wl == FOCUS_READ_BASE
+        assert "write_file" not in wl
+        assert "bash" not in wl and "exec_shell" not in wl
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_agent_spawn_untrusted_plugin_confined_to_read_base(
+    tmp_path,
+) -> None:
+    from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
+    from deepseek_tui.integrations.plugins import PluginAgent
+    from deepseek_tui.tools.registry import ToolContext
+    from deepseek_tui.tools.subagent.manager import SubAgentManager
+    from deepseek_tui.tools.subagent.tools import AgentSpawnTool
+
+    persona = PluginAgent(
+        name="demo-specialist",
+        plugin="demo",
+        description="A specialist.",
+        body="You are a focused specialist persona.",
+        path=tmp_path / "a.md",
+        tools=("Read", "Bash"),
+    )
+    manager = SubAgentManager(workspace=tmp_path)
+    context = ToolContext(
+        working_directory=tmp_path,
+        subagent_manager=manager,
+        metadata={
+            "plugin_agents": {"demo-specialist": persona},
+            "plugin_trust": {"demo": False},
+        },
+    )
+    result = await AgentSpawnTool().execute(
+        {"prompt": "do the thing", "type": "demo-specialist"}, context
+    )
+    assert result.success
+    spawned = manager._agents[result.metadata["agent_id"]]
+    assert spawned.allowed_tools is not None
+    assert set(spawned.allowed_tools) == set(FOCUS_READ_BASE)
+    await manager.shutdown()

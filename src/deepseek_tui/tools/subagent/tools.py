@@ -287,10 +287,21 @@ class AgentSpawnTool(ToolSpec):
         allowed_tools: list[str] | None = None
         if isinstance(allowed_raw, list):
             allowed_tools = [s for s in allowed_raw if isinstance(s, str)]
+        # Untrusted plugin personas cannot expand tools via frontmatter or by
+        # inheriting the full GENERAL registry. Explicit caller allowed_tools
+        # still win (parent agent opted in). When plugin_trust is absent
+        # (standalone unit tests), treat as trusted for backward compatibility.
+        plugin_trusted = True
+        if plugin_persona is not None:
+            trust_map = context.metadata.get("plugin_trust")
+            if isinstance(trust_map, dict):
+                owner = (getattr(plugin_persona, "plugin", None) or "").lower()
+                plugin_trusted = bool(trust_map.get(owner, False))
         # Plugin persona frontmatter ``tools`` is advisory until applied here.
         # Map Claude/CodeBuddy names (Read/Grep/…) onto DeepSeek tool ids.
         if (
-            not allowed_tools
+            plugin_trusted
+            and not allowed_tools
             and plugin_persona is not None
             and getattr(plugin_persona, "tools", None)
         ):
@@ -305,6 +316,14 @@ class AgentSpawnTool(ToolSpec):
                         mapped.append(name)
             if mapped:
                 allowed_tools = mapped
+        if (
+            plugin_persona is not None
+            and not plugin_trusted
+            and not allowed_tools
+        ):
+            from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
+
+            allowed_tools = sorted(FOCUS_READ_BASE)
         if agent_type is SubAgentType.CUSTOM and not allowed_tools:
             raise ToolError("Custom sub-agents require a non-empty allowed_tools list")
         fork_context = _pick_bool(input_data, "fork_context")

@@ -235,10 +235,19 @@ def rollback_plugin_link(
     home: Path | None = None,
 ) -> Path:
     """Point ``plugins_dir/plugin_name`` at an existing store digest."""
+    from deepseek_tui.plugins.identity import is_safe_plugin_id
+
+    if not is_safe_plugin_id(plugin_name):
+        raise ValueError(f"invalid plugin name: {plugin_name!r}")
     store = source_path(digest, home=home)
     if not store.is_dir():
         raise FileNotFoundError(f"store digest not found: {digest}")
     dest = plugins_dir / plugin_name
+    try:
+        if dest.parent.resolve() != plugins_dir.expanduser().resolve():
+            raise ValueError(f"plugin name escapes plugins dir: {plugin_name!r}")
+    except OSError as exc:
+        raise ValueError(f"invalid plugin path: {plugin_name!r}") from exc
     if dest.exists() or dest.is_symlink():
         if dest.is_symlink() or dest.is_file():
             dest.unlink()

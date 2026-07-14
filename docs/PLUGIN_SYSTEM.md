@@ -63,10 +63,16 @@ Engine 通过 `plugin_session` 激活命令/agent/rule，挂载场景时刷新 t
 | 概念 | 含义 |
 |---|---|
 | PermissionClaim | 插件声明需要什么（不可信） |
-| AuthorizationGrant | 用户按 `plugin_id + digest` 实际允许什么 |
+| AuthorizationGrant | 用户按 `plugin_id + sha256 digest` 实际允许什么 |
 | trusted（lockfile） | 兼容开关；trust 时写入 digest-bound grant |
 
+运行时 hooks / MCP / Pi 在 `trusted` 之外还检查 digest-bound grant：
+当前内容 digest 无匹配 grant、且该插件已有其它 digest 的 grant 时，跳过可执行贡献。
+无任何 grant 文件的旧安装仍可凭 `trusted=true` 过渡。
+仅含历史 `fp:` grant 的安装会在首次装配时自动迁移为当前 `sha256:` grant。
+
 更新插件会撤销旧 grant；若仍 trusted，会为新 digest 重新签发。
+`content_fingerprint`（`fp:`）只用于 index 失效，不用于授权绑定。
 
 ## 4. Discovery
 

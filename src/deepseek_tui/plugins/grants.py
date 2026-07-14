@@ -149,6 +149,66 @@ def has_execution_grant(
     return capability in grant.capabilities
 
 
+def _any_grants(plugin_id: str, *, home: Path | None = None) -> bool:
+    if not is_safe_plugin_id(plugin_id):
+        return False
+    root = grants_root(home) / plugin_id
+    return root.is_dir() and any(root.glob("*.json"))
+
+
+def migrate_legacy_fingerprint_grants(
+    plugin_id: str,
+    digest: str,
+    *,
+    home: Path | None = None,
+) -> bool:
+    """Replace fingerprint-only grants with a store ``sha256:`` grant.
+
+    Pre-hardening trusts wrote ``fp:…`` grants. Runtime now binds
+    ``sha256:…`` digests, so those installs would otherwise be denied until
+    the user re-runs ``plugin trust``. When *every* on-disk grant for the
+    plugin is a legacy fingerprint file, rewrite to *digest* and return True.
+    """
+    if not digest.startswith("sha256:") or not is_safe_plugin_id(plugin_id):
+        return False
+    root = grants_root(home) / plugin_id
+    if not root.is_dir():
+        return False
+    files = [path for path in root.glob("*.json") if path.is_file()]
+    if not files:
+        return False
+    # Grant filenames use digest with ``:``/``/`` → ``_`` (see ``_grant_path``).
+    if not all(path.stem.startswith("fp_") for path in files):
+        return False
+    revoke_grant(plugin_id, home=home)
+    grant_execution(plugin_id, digest, home=home)
+    return True
+
+
+def execution_authorized(
+    *,
+    trusted: bool,
+    plugin_id: str,
+    digest: str,
+    capability: str,
+    home: Path | None = None,
+) -> bool:
+    """Return whether *plugin_id*@*digest* may exercise *capability*.
+
+    Rules:
+    1. Must be lockfile-trusted and have a non-empty digest.
+    2. Matching digest-bound grant wins.
+    3. If grants exist for other digests, this tree is denied (content rotated).
+    4. Legacy: trusted with zero grant files still allows (pre-grant installs).
+    """
+    if not trusted or not digest or not is_safe_plugin_id(plugin_id):
+        return False
+    if has_execution_grant(plugin_id, digest, capability, home=home):
+        return True
+    if _any_grants(plugin_id, home=home):
+        return False
+    return True
+
 def legacy_trust_implies_grant(
     *,
     trusted: bool,
@@ -156,14 +216,11 @@ def legacy_trust_implies_grant(
     digest: str,
     home: Path | None = None,
 ) -> bool:
-    """Bridge lockfile ``trusted`` until callers migrate fully to grants.
-
-    If a digest-bound grant exists it wins. Otherwise a legacy trusted flag
-    still authorizes execution for that digest so existing installs keep
-    working; new trusts should write an explicit grant.
-    """
-    if has_execution_grant(plugin_id, digest, "hooks.execute", home=home):
-        return True
-    if has_execution_grant(plugin_id, digest, "mcp.connect", home=home):
-        return True
-    return bool(trusted and digest)
+    """Compatibility wrapper; prefer :func:`execution_authorized`."""
+    return execution_authorized(
+        trusted=trusted,
+        plugin_id=plugin_id,
+        digest=digest,
+        capability="hooks.execute",
+        home=home,
+    )
