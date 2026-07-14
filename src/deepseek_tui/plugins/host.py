@@ -343,7 +343,15 @@ class PluginSession:
         entries = pi.get("extensions")
         if isinstance(entries, str):
             entries = [entries]
-        entrypoints = tuple(str(item) for item in entries if isinstance(item, str))
+        from deepseek_tui.plugins.identity import is_safe_relative_posix
+
+        entrypoints = tuple(
+            str(item)
+            for item in entries
+            if isinstance(item, str) and is_safe_relative_posix(str(item))
+        )
+        if not entrypoints:
+            return []
         from deepseek_tui.plugins.pi_runtime import PiNodeRuntime, PiProviderSpec
         from deepseek_tui.plugins.pi_tools import PiBridgeTool
         from deepseek_tui.plugins.runtime_ports import ToolRegistrationLease

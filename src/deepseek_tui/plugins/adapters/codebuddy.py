@@ -105,14 +105,26 @@ class CodeBuddyPluginAdapter:
                 )
             )
         status = CompatibilityStatus.DEGRADED if diagnostics else CompatibilityStatus.ADAPTED
+        permission_claims = []
+        for raw in manifest.get("permissions", []) or []:
+            if isinstance(raw, str):
+                permission_claims.append(PermissionClaim(raw))
+            elif isinstance(raw, dict) and raw.get("capability"):
+                permission_claims.append(
+                    PermissionClaim(
+                        str(raw["capability"]),
+                        str(raw.get("reason") or ""),
+                        required=bool(raw.get("required", True)),
+                    )
+                )
         return DerivedPlugin(
             1,
-            str(manifest.get("name") or candidate.root.name),
+            str(manifest.get("name") or candidate.declared_name or candidate.root.name),
             str(manifest.get("version") or "0.0.0"),
             scalar_description(manifest.get("description")),
             SourceProvenance("local", str(artifact.root), artifact.digest, candidate.relative_root),
             tuple(contributions),
-            (),
+            tuple(permission_claims),
             CompatibilityReport(
                 status,
                 self.adapter_id,

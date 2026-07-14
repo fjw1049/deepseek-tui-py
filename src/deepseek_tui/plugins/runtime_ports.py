@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 
-class RegistrationLease(Protocol):
+class RegistrationLease:
     async def close(self) -> None:
         """Remove this registration. Must be idempotent."""
 
@@ -39,11 +39,3 @@ class LeaseBag:
         while self.leases:
             lease = self.leases.pop()
             await lease.close()
-
-
-class RuntimePorts(Protocol):
-    """Engine-facing ports a PluginSession may attach providers to."""
-
-    def register_tool(self, tool: Any, *, owner_plugin_id: str) -> RegistrationLease: ...
-
-    def register_hook(self, hook: Any, *, owner_plugin_id: str) -> RegistrationLease: ...

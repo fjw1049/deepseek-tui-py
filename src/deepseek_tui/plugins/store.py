@@ -177,9 +177,15 @@ def referenced_source_digests(
             if isinstance(provenance, dict):
                 source = provenance.get("source")
                 if isinstance(source, dict) and source.get("digest"):
-                    digests.add(_normalize_digest(str(source["digest"])))
+                    try:
+                        digests.add(_normalize_digest(str(source["digest"])))
+                    except ValueError:
+                        continue
             if entry.get("content_digest"):
-                digests.add(_normalize_digest(str(entry["content_digest"])))
+                try:
+                    digests.add(_normalize_digest(str(entry["content_digest"])))
+                except ValueError:
+                    continue
         for child in resolved.iterdir():
             if not child.is_symlink():
                 continue
@@ -261,12 +267,10 @@ def _normalize_digest(digest: str) -> str:
     value = digest.strip()
     if value.startswith("sha256:"):
         value = value[7:]
-    if value.startswith("fp:"):
+    elif value.startswith("fp:"):
         value = value[3:]
     if not _HEX.fullmatch(value):
-        import hashlib
-
-        value = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+        raise ValueError(f"invalid content digest: {digest!r}")
     return value
 
 

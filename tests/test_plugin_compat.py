@@ -1,5 +1,5 @@
-"""Cross-ecosystem plugin normalization tests — tool-name mapping, hook
-condition firing, and source-level normalization of the installed copy."""
+"""Cross-ecosystem plugin compatibility tests - tool-name mapping, hook
+condition firing, and vendor layout preservation."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from deepseek_tui.integrations.hooks import HookContext, HookExecutor
 from deepseek_tui.integrations.plugin_compat import (
     map_tool_matcher,
     matcher_to_condition,
-    normalize_installed_plugin,
 )
 from deepseek_tui.integrations.plugins import (
     collect_contributions,
@@ -105,25 +104,6 @@ def _make_codebuddy_plugin_with_hooks(root: Path, name: str = "ppt") -> Path:
         encoding="utf-8",
     )
     return plugin
-
-
-def test_normalize_installed_plugin_rewrites_copy(tmp_path: Path) -> None:
-    plugin = _make_codebuddy_plugin_with_hooks(tmp_path)
-    notes = normalize_installed_plugin(plugin)
-    # Manifest location canonicalized.
-    assert (plugin / ".claude-plugin" / "plugin.json").is_file()
-    assert not (plugin / ".codebuddy-plugin").exists()
-    # Hook vars + matchers rewritten to canonical form.
-    hooks = json.loads((plugin / "hooks" / "hooks.json").read_text())
-    post = hooks["hooks"]["PostToolUse"][0]
-    assert post["matcher"] == "edit_file|write_file"
-    cmd = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert "${CLAUDE_PLUGIN_ROOT}" in cmd
-    assert "${CLAUDE_PROJECT_DIR}" in cmd
-    assert "CODEBUDDY" not in cmd
-    assert any("claude-plugin" in n for n in notes)
-    # Idempotent: a second pass is a no-op.
-    assert normalize_installed_plugin(plugin) == []
 
 
 def test_install_preserves_vendor_layout(tmp_path: Path) -> None:

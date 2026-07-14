@@ -1556,6 +1556,7 @@ def _install_from_npm(
         materialize_npm_package,
     )
     from deepseek_tui.plugins.model import CompatibilityStatus
+    from deepseek_tui.plugins.source import PluginSourceError
 
     try:
         remote = NpmPackageSource.parse(spec)
@@ -1615,6 +1616,8 @@ def _install_from_npm(
             )
     except RemoteFetchError as exc:
         return (InstallOutcome.FAILED, f"npm fetch failed: {exc}")
+    except PluginSourceError as exc:
+        return (InstallOutcome.FAILED, f"npm plugin validation failed: {exc}")
     except Exception as exc:  # noqa: BLE001
         return (InstallOutcome.FAILED, f"npm install failed: {exc}")
 

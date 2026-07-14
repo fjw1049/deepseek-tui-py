@@ -10,7 +10,7 @@ import yaml
 from deepseek_tui.plugins.model import ResourceRef
 from deepseek_tui.plugins.source import LocalArtifact, PackageCandidate, PluginSourceError
 
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*", re.DOTALL)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -74,7 +74,10 @@ def markdown_files(paths: list[Path], *, skill: bool = False) -> list[Path]:
         elif path.is_dir() and skill and (path / "SKILL.md").is_file():
             files.append(path / "SKILL.md")
         elif path.is_dir():
-            files.extend(path.rglob("SKILL.md" if skill else "*.md"))
+            for found in path.rglob("SKILL.md" if skill else "*.md"):
+                if ".git" in found.relative_to(path).parts:
+                    continue
+                files.append(found)
     return sorted(set(files))
 
 

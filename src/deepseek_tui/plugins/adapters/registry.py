@@ -54,7 +54,7 @@ def inspect_local_source(
                         1,
                         (
                             Diagnostic(
-                                "REMOTE_SOURCE_NOT_FETCHED",
+                                "REMOTE_MARKETPLACE_SOURCE_NOT_FETCHED",
                                 DiagnosticSeverity.INFO,
                                 "remote package must be fetched before format inspection",
                             ),
@@ -99,7 +99,19 @@ def inspect_local_source(
                 )
             )
             continue
-        packages.append(winners[0].derive(artifact, candidate))
+        try:
+            packages.append(winners[0].derive(artifact, candidate))
+        except Exception as exc:  # noqa: BLE001 - one bad plugin must not abort discovery
+            diagnostics.append(
+                Diagnostic(
+                    "PLUGIN_DERIVE_FAILED",
+                    DiagnosticSeverity.ERROR,
+                    f"adapter {winners[0].adapter_id} could not derive "
+                    f"{candidate.relative_root}: {exc}",
+                    source_path=candidate.relative_root,
+                    remediation="inspect the plugin manifest or frontmatter syntax",
+                )
+            )
 
     by_id: dict[str, list[DerivedPlugin]] = {}
     for package in packages:

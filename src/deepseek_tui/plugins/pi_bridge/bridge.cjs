@@ -23,6 +23,19 @@ const state = {
   started: false,
 };
 
+// 25 s leaves a margin under the Python 30 s per-RPC timeout.
+const TOOL_CALL_TIMEOUT_MS = 25_000;
+// 8 MiB hard cap on a single NDJSON response line.
+const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
+
+function unsupportedApi(name) {
+  return function () {
+    throw new Error(
+      `pi.${name} is not supported by the tracer-bullet Pi host`
+    );
+  };
+}
+
 function createApi() {
   const api = {
     registerTool(def) {
@@ -51,11 +64,21 @@ function createApi() {
         typeof handler === "function" ? list.filter((fn) => fn !== handler) : []
       );
     },
-    sendUserMessage() {},
-    sendSystemMessage() {},
-    appendEntry() {},
+    sendUserMessage() {
+      process.stderr.write("pi.sendUserMessage is unsupported (tracer-bullet)\n");
+    },
+    sendSystemMessage() {
+      process.stderr.write("pi.sendSystemMessage is unsupported (tracer-bullet)\n");
+    },
+    appendEntry() {
+      process.stderr.write("pi.appendEntry is unsupported (tracer-bullet)\n");
+    },
     setStatus() {},
-    notify() {},
+    notify(msg) {
+      process.stderr.write(
+        `pi.ui.notify (unsupported): ${String(msg ?? "")}\n`
+      );
+    },
     getActiveTools() {
       return [...state.tools.keys()];
     },
@@ -70,10 +93,14 @@ function createApi() {
       return state.cwd;
     },
     ui: {
-      notify() {},
-      select: async () => null,
-      confirm: async () => false,
-      input: async () => "",
+      notify(msg) {
+        process.stderr.write(
+          `pi.ui.notify (unsupported): ${String(msg ?? "")}\n`
+        );
+      },
+      select: unsupportedApi("ui.select"),
+      confirm: unsupportedApi("ui.confirm"),
+      input: unsupportedApi("ui.input"),
     },
   };
   return api;
@@ -102,14 +129,41 @@ async function emit(event, payload) {
     try {
       const maybe = handler(payload);
       if (maybe && typeof maybe.then === "function") await maybe;
-    } catch {
-      // Extension handlers must not crash the bridge.
+    } catch (err) {
+      // Surface the failure so the Python host can see it via stderr.
+      process.stderr.write(
+        `pi lifecycle handler "${event}" threw: ${String(err && err.message || err)}\n`
+      );
     }
   }
 }
 
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`tool execution timed out after ${ms}ms`)),
+      ms
+    );
+    Promise.resolve(promise).then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 async function loadEntrypoint(entry) {
   const absolute = path.resolve(state.packageRoot, entry);
+  // Reject entrypoints that escape the declared package root.
+  const root = path.resolve(state.packageRoot);
+  if (absolute !== root && !absolute.startsWith(root + path.sep)) {
+    throw new Error(`entrypoint escapes package root: ${entry}`);
+  }
   let target = absolute;
   const stat = fs.existsSync(absolute) ? fs.statSync(absolute) : null;
   if (stat && stat.isDirectory()) {
@@ -177,12 +231,15 @@ async function handle(method, params) {
       const tool = state.tools.get(name);
       if (!tool) throw new Error(`unknown tool: ${name}`);
       const args = params.arguments || {};
-      const result = await tool.execute(
-        params.callId || "call",
-        args,
-        undefined,
-        undefined,
-        { cwd: state.cwd, ui: createApi().ui }
+      const result = await withTimeout(
+        tool.execute(
+          params.callId || "call",
+          args,
+          undefined,
+          undefined,
+          { cwd: state.cwd, ui: createApi().ui }
+        ),
+        TOOL_CALL_TIMEOUT_MS
       );
       return normalizeResult(result);
     }
@@ -241,7 +298,24 @@ function respond(id, result, error) {
   const message = error
     ? { jsonrpc: "2.0", id, error: { code: -32000, message: String(error.message || error) } }
     : { jsonrpc: "2.0", id, result };
-  process.stdout.write(JSON.stringify(message) + "\n");
+  const serialized = JSON.stringify(message);
+  if (serialized.length > MAX_MESSAGE_BYTES) {
+    process.stderr.write(
+      `pi bridge response truncated: ${serialized.length} bytes > ${MAX_MESSAGE_BYTES}\n`
+    );
+    process.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32001,
+          message: `response payload exceeds ${MAX_MESSAGE_BYTES} byte limit`,
+        },
+      }) + "\n"
+    );
+    return;
+  }
+  process.stdout.write(serialized + "\n");
 }
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });

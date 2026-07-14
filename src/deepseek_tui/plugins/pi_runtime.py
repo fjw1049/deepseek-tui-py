@@ -12,6 +12,9 @@ import json
 import logging
 import os
 import shutil
+import signal
+import sys
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,7 +23,47 @@ _LOG = logging.getLogger(__name__)
 
 BRIDGE_PATH = Path(__file__).resolve().parent / "pi_bridge" / "bridge.cjs"
 
-_STRIP_TYPES_CACHE: bool | None = None
+# Cap a Pi sidecar: 256 MB V8 heap, 120 s total CPU, 16 MiB max NDJSON line.
+_PI_NODE_MAX_OLD_SPACE = 256
+_PI_CPU_LIMIT_SECONDS = 120
+_PI_MAX_LINE_BYTES = 16 * 1024 * 1024
+
+_STRIP_TYPES_CACHE: dict[str | None, bool] = {}
+
+
+def _configure_pi_subprocess() -> None:
+    """Set resource limits on the Pi sidecar process (preexec_fn callback).
+
+    Called in the child after fork, before exec. Best-effort: silently skips
+    limits the platform does not support.
+    """
+    import resource
+
+    try:
+        resource.setrlimit(
+            resource.RLIMIT_CPU,
+            (_PI_CPU_LIMIT_SECONDS, _PI_CPU_LIMIT_SECONDS),
+        )
+    except (ValueError, OSError):
+        pass
+    try:
+        # Address space cap (512 MB) - catches runaway allocation even when
+        # V8's own heap tracker misses native buffers.
+        resource.setrlimit(
+            resource.RLIMIT_AS,
+            (512 * 1024 * 1024, 512 * 1024 * 1024),
+        )
+    except (ValueError, OSError):
+        pass
+
+
+def _hard_kill_by_pid(pid: int) -> None:
+    """Best-effort SIGKILL by PID; used by weakref.finalize when GC reaps a
+    runtime whose shutdown() was never called."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 def node_supports_strip_types(node_bin: str | None = None) -> bool:
@@ -28,8 +71,9 @@ def node_supports_strip_types(node_bin: str | None = None) -> bool:
     import subprocess
 
     global _STRIP_TYPES_CACHE
-    if _STRIP_TYPES_CACHE is not None and node_bin is None:
-        return _STRIP_TYPES_CACHE
+    cached = _STRIP_TYPES_CACHE.get(node_bin)
+    if cached is not None:
+        return cached
     binary = node_bin or shutil.which("node") or "node"
     try:
         completed = subprocess.run(
@@ -41,8 +85,7 @@ def node_supports_strip_types(node_bin: str | None = None) -> bool:
         ok = completed.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         ok = False
-    if node_bin is None:
-        _STRIP_TYPES_CACHE = ok
+    _STRIP_TYPES_CACHE[node_bin] = ok
     return ok
 
 
@@ -69,6 +112,10 @@ def _needs_strip_types(entrypoints: tuple[str, ...], package_root: str) -> bool:
 
 class PiRuntimeUnavailable(RuntimeError):
     """Raised when the Pi sidecar cannot start or serve a request."""
+
+    def __init__(self, message: str, *, code: int = -32000) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +147,7 @@ class PiNodeRuntime:
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._reader_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        self._finalizer: weakref.finalize | None = None
 
     @property
     def running(self) -> bool:
@@ -113,7 +161,7 @@ class PiNodeRuntime:
         if shutil.which(self.node_bin) is None and self.node_bin == "node":
             raise PiRuntimeUnavailable("Node.js executable not found on PATH")
         env = {**os.environ, "DEEPSEEK_PI_BRIDGE": "1"}
-        args = [self.node_bin]
+        args = [self.node_bin, f"--max-old-space-size={_PI_NODE_MAX_OLD_SPACE}"]
         if _needs_strip_types(self.spec.entrypoints, self.spec.package_root):
             if not node_supports_strip_types(self.node_bin):
                 raise PiRuntimeUnavailable(
@@ -122,13 +170,26 @@ class PiNodeRuntime:
                 )
             args.append("--experimental-strip-types")
         args.append(str(BRIDGE_PATH))
+        subprocess_kwargs: dict[str, Any] = {
+            "stdin": asyncio.subprocess.PIPE,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": self.spec.cwd or self.spec.package_root,
+            "env": env,
+            "start_new_session": True,
+        }
+        # preexec_fn (resource limits via RLIMIT_CPU/RLIMIT_AS) is POSIX-only;
+        # passing it on Windows raises NotImplementedError.
+        if sys.platform != "win32":
+            subprocess_kwargs["preexec_fn"] = _configure_pi_subprocess
         self._process = await asyncio.create_subprocess_exec(
             *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.spec.cwd or self.spec.package_root,
-            env=env,
+            **subprocess_kwargs,
+        )
+        # Reap the sidecar if Python GC collects this runtime without an
+        # explicit shutdown() (Engine crash, OOM, dropped reference).
+        self._finalizer = weakref.finalize(
+            self, _hard_kill_by_pid, self._process.pid
         )
         self._stderr_task = asyncio.create_task(self._drain_stderr())
         self._reader_task = asyncio.create_task(self._read_loop())
@@ -204,6 +265,11 @@ class PiNodeRuntime:
 
     async def shutdown(self) -> None:
         if not self.running:
+            # Even when not running, clear the finalizer so GC does not
+            # SIGKILL a process that already exited.
+            if self._finalizer is not None:
+                self._finalizer.detach()
+                self._finalizer = None
             return
         try:
             await asyncio.wait_for(self.request("shutdown", {}), timeout=2.0)
@@ -211,6 +277,9 @@ class PiNodeRuntime:
             _LOG.debug("pi shutdown rpc failed", exc_info=True)
         process = self._process
         self._process = None
+        if self._finalizer is not None:
+            self._finalizer.detach()
+            self._finalizer = None
         if process is not None:
             if process.returncode is None:
                 process.terminate()
@@ -261,6 +330,13 @@ class PiNodeRuntime:
             line = await process.stdout.readline()
             if not line:
                 break
+            if len(line) > _PI_MAX_LINE_BYTES:
+                _LOG.warning(
+                    "pi bridge sent oversized line: %d bytes (limit %d)",
+                    len(line),
+                    _PI_MAX_LINE_BYTES,
+                )
+                continue
             try:
                 message = json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -277,11 +353,20 @@ class PiNodeRuntime:
             if "error" in message:
                 err = message.get("error") or {}
                 fut.set_exception(
-                    PiRuntimeUnavailable(str(err.get("message") or "Pi RPC error"))
+                    PiRuntimeUnavailable(
+                        str(err.get("message") or "Pi RPC error"),
+                        code=int(err.get("code") or -32000),
+                    )
                 )
             else:
                 result = message.get("result")
                 fut.set_result(result if isinstance(result, dict) else {})
+        # stdout closed: fail any still-pending requests so callers do not
+        # wait the full 30 s RPC timeout before learning the sidecar is gone.
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(PiRuntimeUnavailable("Pi sidecar stdout closed"))
+        self._pending.clear()
 
     async def _drain_stderr(self) -> None:
         process = self._process

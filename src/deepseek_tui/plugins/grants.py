@@ -22,6 +22,17 @@ EXECUTION_CAPABILITIES = frozenset(
     }
 )
 
+# Capabilities that execute arbitrary native code or spawn processes.
+# These never qualify for the legacy trusted-without-grant bypass: an
+# explicit digest-bound grant is required.
+HIGH_RISK_CAPABILITIES = frozenset(
+    {
+        "process.spawn",
+        "package.install-scripts",
+        "runtime.tool-provider",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class PluginGrant:
@@ -199,13 +210,17 @@ def execution_authorized(
     1. Must be lockfile-trusted and have a non-empty digest.
     2. Matching digest-bound grant wins.
     3. If grants exist for other digests, this tree is denied (content rotated).
-    4. Legacy: trusted with zero grant files still allows (pre-grant installs).
+    4. Legacy: trusted with zero grant files still allows (pre-grant installs)
+       for low-risk capabilities. High-risk capabilities (arbitrary code
+       execution / process spawn) require an explicit grant - no bypass.
     """
     if not trusted or not digest or not is_safe_plugin_id(plugin_id):
         return False
     if has_execution_grant(plugin_id, digest, capability, home=home):
         return True
     if _any_grants(plugin_id, home=home):
+        return False
+    if capability in HIGH_RISK_CAPABILITIES:
         return False
     return True
 

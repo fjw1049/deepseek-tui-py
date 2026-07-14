@@ -46,4 +46,5 @@ class BareSkillAdapter:
                 self.adapter_id,
                 self.adapter_version,
             ),
+            metadata={"kind": "bare-skill", "skill_file": "SKILL.md"},
         )
