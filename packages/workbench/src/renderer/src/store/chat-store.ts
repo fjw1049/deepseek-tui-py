@@ -380,7 +380,7 @@ async function syncRuntimePendingApprovals(
       const pending = await provider.fetchPendingApprovals(threadId)
       const merged = mergePendingApprovalBlocks(nextBlocks, pending)
       nextBlocks = merged.blocks
-      scrollToBlockId = merged.firstAddedBlockId
+      // Approvals live in the composer dock — do not scroll the timeline to them.
     } catch {
       /* ignore */
     }
@@ -740,7 +740,6 @@ function buildThreadEventSink(
               status: 'pending' as const
             }
           ],
-          scrollToBlockId: `approval-${req.approvalId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       })

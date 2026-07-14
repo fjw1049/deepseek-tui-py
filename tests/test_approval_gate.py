@@ -24,7 +24,7 @@ from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
         ("on-request", ReadFileTool(), False),  # G-02
         ("on-request", WriteFileTool(), True),  # G-03
         ("on-request", ExecShellTool(), True),  # G-04
-        ("on-request", FetchUrlTool(), True),  # G-05
+        ("on-request", FetchUrlTool(), False),  # G-05
         ("on-request", WebSearchTool(), False),  # G-06
         ("on-request", AgentSpawnTool(), True),  # G-07
         ("never", WriteFileTool(), False),  # G-08 prompt

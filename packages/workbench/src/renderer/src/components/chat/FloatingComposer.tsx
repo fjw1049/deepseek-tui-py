@@ -25,7 +25,6 @@ import {
   Search,
   Send,
   Settings2,
-  ShieldAlert,
   Shrink,
   Sparkles,
   Square,
@@ -39,7 +38,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
-import { countPendingApprovals } from '../../store/chat-store-runtime-helpers'
+import { ApprovalBubble } from './ApprovalBubble'
 import {
   filterComposerModelOptions,
   formatComposerModelLabel
@@ -221,7 +220,6 @@ export function FloatingComposer({
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
   const blocks = useChatStore((s) => s.blocks)
-  const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
   const composerReasoningEffort = useChatStore((s) => s.composerReasoningEffort)
   const setComposerReasoningEffort = useChatStore((s) => s.setComposerReasoningEffort)
@@ -282,10 +280,10 @@ export function FloatingComposer({
   } | null>(null)
   const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
 
-  const pendingApprovalCount = countPendingApprovals(blocks)
-  const firstPendingApprovalId = blocks.find(
-    (block) => block.kind === 'approval' && block.status === 'pending'
-  )?.id
+  const pendingApprovals = useMemo(
+    () => blocks.filter((block) => block.kind === 'approval' && block.status === 'pending'),
+    [blocks]
+  )
 
   const canCompose = runtimeReady && (hasActiveThread || !!effectiveWorkspaceRoot)
   const canChangeModel = canCompose && !busy
@@ -1086,27 +1084,11 @@ export function FloatingComposer({
         useChatStageWidth ? 'ds-chat-stage px-3 pb-2 pt-0 sm:px-4' : 'max-w-none px-0 pb-2 pt-0'
       } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-0 pt-1'}`}
     >
-      {pendingApprovalCount > 0 ? (
-        <div className="mb-2 rounded-[14px] border border-accent/30 bg-[linear-gradient(180deg,rgba(79,124,255,0.08),rgba(79,124,255,0.14))] px-4 py-3 shadow-sm backdrop-blur-xl">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex min-w-0 items-center gap-2 text-[13px] font-medium text-ds-ink">
-              <ShieldAlert className="h-4 w-4 shrink-0 text-accent" strokeWidth={1.9} />
-              <span>
-                {pendingApprovalCount === 1
-                  ? t('approvalBannerSingle')
-                  : t('approvalBannerMultiple', { count: pendingApprovalCount })}
-              </span>
-            </div>
-            {firstPendingApprovalId ? (
-              <button
-                type="button"
-                onClick={() => scrollToBlock(firstPendingApprovalId)}
-                className="rounded-full border border-accent/25 bg-ds-elevated/80 px-3 py-1 text-[12px] font-semibold text-accent transition hover:bg-ds-card dark:bg-ds-elevated/80"
-              >
-                {t('approvalBannerJump')}
-              </button>
-            ) : null}
-          </div>
+      {pendingApprovals.length > 0 ? (
+        <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(240px,32vh)] space-y-2 overflow-y-auto overscroll-contain">
+          {pendingApprovals.map((block) => (
+            <ApprovalBubble key={block.id} block={block} />
+          ))}
         </div>
       ) : null}
       {(() => {

@@ -48,9 +48,10 @@ def test_unified_write_file_gate_prompt_and_sse() -> None:
     assert payload["input_summary"]
 
 
-def test_unified_fetch_url_gated_on_request() -> None:
+def test_unified_fetch_url_auto_on_request() -> None:
     tool = FetchUrlTool()
-    assert needs_tool_approval_prompt(tool, "on-request")
+    assert not needs_tool_approval_prompt(tool, "on-request")
+    assert approval_request_for_tool(tool, "on-request") is None
     assert approval_request_for_tool(tool, "auto") is None
 
 

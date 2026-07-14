@@ -338,7 +338,7 @@ def classify_presentation_risk(
     if category in ("safe", "mcp_read"):
         return "benign"
     if category == "network":
-        return "benign" if tool_name == "web_search" else "destructive"
+        return "benign"
     if category == "shell":
         cmd = _param_preview(args, ("command", "cmd"), 96)
         if cmd and analyze_command(cmd).level == SafetyLevel.DANGEROUS:

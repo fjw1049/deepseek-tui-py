@@ -57,7 +57,6 @@ import { getTimestampFormat, subscribeAppearance } from '../../lib/apply-appeara
 import { useChatStore } from '../../store/chat-store'
 import { getProvider } from '../../agent/registry'
 import { DiffView } from '../DiffView'
-import { ApprovalBubble } from './ApprovalBubble'
 import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
@@ -1965,7 +1964,8 @@ function SubagentDetailDialog({
  *  - reasoning       → narration line if present (model's own承上启下),
  *                      else collapsed raw reasoning
  *  - assistant       → mid-turn preface shown inline as narration
- *  - approval/elev/etc→ existing Bubble/Block components, never hidden
+ *  - approval         → null (pending cards live in the composer dock)
+ *  - elev/evol/etc    → existing Bubble/Block components, never hidden
  *
  * The 4 `shouldHide*` patches are gone: todo/subagent were never wrong-blocked
  * because we no longer group reasoning+tools into phases that misplace them.
@@ -2116,8 +2116,8 @@ function ProcessStreamEntry({
       </div>
     )
   }
-  // Data events: route to their dedicated components, never hidden.
-  if (block.kind === 'approval') return <ApprovalBubble block={block} />
+  // Approvals render in the composer dock above the input, not in the timeline.
+  if (block.kind === 'approval') return null
   if (block.kind === 'elevation') return <ElevationBubble block={block} />
   if (block.kind === 'evolution') return <EvolutionBubble block={block} />
   if (block.kind === 'user_input') return <UserInputBubble block={block} />
@@ -2872,7 +2872,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
     )
   }
   if (block.kind === 'approval') {
-    return <ApprovalBubble block={block} />
+    return null
   }
   if (block.kind === 'evolution') {
     return <EvolutionBubble block={block} />

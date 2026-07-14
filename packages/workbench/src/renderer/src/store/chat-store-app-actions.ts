@@ -52,6 +52,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     get,
     i18n,
     persistComposerModel,
+    persistComposerEffort,
     readStoredComposerModel,
     mergeComposerPickList,
     getComposerModelLoadPromise,

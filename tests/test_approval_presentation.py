@@ -76,7 +76,7 @@ def test_pr04_fetch_url_shows_url() -> None:
     assert "example.com" in " ".join(req.impacts) or "example.com" in req.primary_preview
     assert classify_presentation_risk(
         "fetch_url", "network", {"url": "https://example.com"}
-    ) == "destructive"
+    ) == "benign"
 
 
 def test_pr05_agent_spawn_prompt() -> None:

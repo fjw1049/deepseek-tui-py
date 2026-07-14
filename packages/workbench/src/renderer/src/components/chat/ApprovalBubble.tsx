@@ -1,11 +1,9 @@
-import { useCallback, useState, type ReactElement } from 'react'
+import { useCallback, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
 
 type ApprovalBlock = Extract<ChatBlock, { kind: 'approval' }>
-
-type StagedAction = 'allow' | 'allowRemember'
 
 function isDestructiveApproval(block: ApprovalBlock): boolean {
   return block.presentationRisk === 'destructive' || block.riskLevel === 'high'
@@ -15,7 +13,6 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
   const { t } = useTranslation('common')
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const openSettings = useChatStore((s) => s.openSettings)
-  const [stagedAction, setStagedAction] = useState<StagedAction | null>(null)
 
   const done = block.status !== 'pending'
   const destructive = isDestructiveApproval(block)
@@ -40,26 +37,9 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
   const submitAllow = useCallback(
     (remember: boolean) => {
       void resolveApproval(block.id, 'allow', remember)
-      setStagedAction(null)
     },
     [block.id, resolveApproval]
   )
-
-  const tryAllow = useCallback(
-    (remember: boolean) => {
-      const action: StagedAction = remember ? 'allowRemember' : 'allow'
-      if (destructive && stagedAction !== action) {
-        setStagedAction(action)
-        return
-      }
-      submitAllow(remember)
-    },
-    [destructive, stagedAction, submitAllow]
-  )
-
-  const cancelStaged = useCallback(() => {
-    setStagedAction(null)
-  }, [])
 
   return (
     <div
@@ -103,12 +83,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
         <p className="mt-2 whitespace-pre-wrap text-[14px] text-ds-ink">{block.summary}</p>
       )}
       {reasonText ? <p className="mt-2 text-[12px] text-ds-muted">{reasonText}</p> : null}
-      {stagedAction && !done ? (
-        <p className="mt-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-900 dark:text-amber-100">
-          {t('approvalConfirmAgain')}
-        </p>
-      ) : null}
-      {block.status === 'pending' && !stagedAction ? (
+      {block.status === 'pending' ? (
         <p className="mt-2 text-[12px] text-ds-muted">{t('approvalPolicyHint')}</p>
       ) : null}
       {block.errorMessage ? (
@@ -118,55 +93,34 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            className={`rounded-lg px-3 py-1.5 text-[13px] font-medium text-white ${
-              stagedAction === 'allow'
-                ? 'bg-emerald-800 ring-2 ring-emerald-400/60'
-                : 'bg-emerald-600 hover:bg-emerald-700'
-            }`}
-            onClick={() => tryAllow(false)}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-emerald-700"
+            onClick={() => submitAllow(false)}
           >
-            {stagedAction === 'allow' ? t('approvalAllowConfirm') : t('approvalAllow')}
+            {t('approvalAllow')}
           </button>
           <button
             type="button"
-            className={`rounded-lg px-3 py-1.5 text-[13px] font-medium text-white ${
-              stagedAction === 'allowRemember'
-                ? 'bg-emerald-900 ring-2 ring-emerald-400/60'
-                : 'bg-emerald-700/90 hover:bg-emerald-800'
-            }`}
-            onClick={() => tryAllow(true)}
+            className="rounded-lg bg-emerald-700/90 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-emerald-800"
+            onClick={() => submitAllow(true)}
           >
-            {stagedAction === 'allowRemember'
-              ? t('approvalAllowRememberConfirm')
-              : t('approvalAllowRemember')}
+            {t('approvalAllowRemember')}
           </button>
           <button
             type="button"
             className="rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover"
             onClick={() => {
-              cancelStaged()
               void resolveApproval(block.id, 'deny')
             }}
           >
             {t('approvalDeny')}
           </button>
-          {stagedAction ? (
-            <button
-              type="button"
-              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-              onClick={cancelStaged}
-            >
-              {t('approvalCancelStaged')}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-              onClick={() => openSettings('permissions')}
-            >
-              {t('approvalOpenSettings')}
-            </button>
-          )}
+          <button
+            type="button"
+            className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+            onClick={() => openSettings('permissions')}
+          >
+            {t('approvalOpenSettings')}
+          </button>
         </div>
       ) : (
         <p className="mt-2 text-[12px] font-medium text-ds-muted">{statusLabel}</p>

@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 import httpx
 
 from deepseek_tui.tools.registry import (
-    ApprovalRequirement,
     ToolCapability,
     ToolContext,
     ToolError,
@@ -72,10 +71,6 @@ class FetchUrlTool(ToolSpec):
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY, ToolCapability.NETWORK]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        # READ_ONLY+NETWORK default is AUTO; fetching arbitrary URLs needs review.
-        return ApprovalRequirement.SUGGEST
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")
