@@ -1237,6 +1237,7 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
             "snapshot": snapshot_payload,
             "completed": event.completed,
             "status": event.status,
+            **({"run_id": event.run_id} if event.run_id else {}),
         }
     if isinstance(event, AgentRoundCompleteEvent):
         return {

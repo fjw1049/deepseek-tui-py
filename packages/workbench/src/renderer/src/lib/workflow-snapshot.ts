@@ -29,6 +29,7 @@ export type WorkflowProgressPayload = {
   snapshot: WorkflowSnapshotPayload
   completed: boolean
   status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
+  runId?: string
 }
 
 function asAgentRun(raw: unknown): WorkflowAgentRun | null {
@@ -115,7 +116,13 @@ export function parseWorkflowProgressPayload(
       payload.status === 'cancelled' ||
       payload.status === 'timed_out'
         ? payload.status
-        : undefined
+        : undefined,
+    runId:
+      typeof payload.run_id === 'string'
+        ? payload.run_id
+        : typeof payload.runId === 'string'
+          ? payload.runId
+          : undefined
   }
 }
 
@@ -127,4 +134,14 @@ export function workflowSnapshotFromToolMeta(
   if (!workflow || typeof workflow !== 'object') return null
   const w = workflow as Record<string, unknown>
   return parseWorkflowSnapshot(w.snapshot)
+}
+
+export function workflowRunIdFromToolMeta(
+  meta: Record<string, unknown> | undefined
+): string | undefined {
+  if (!meta) return undefined
+  const workflow = meta.workflow
+  if (!workflow || typeof workflow !== 'object') return undefined
+  const w = workflow as Record<string, unknown>
+  return typeof w.run_id === 'string' && w.run_id.trim() ? w.run_id.trim() : undefined
 }

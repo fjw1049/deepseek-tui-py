@@ -446,9 +446,59 @@ async def _run_task_engine_turn(
     engine.tool_context.active_task_id = task.id
     engine.tool_context.metadata["task_id"] = task.id
 
+    from deepseek_tui.tools.durable_transcript import (
+        CONTINUE_NUDGE,
+        DurableTranscript,
+        clear_transcript,
+        dicts_to_messages,
+        load_transcript,
+        messages_to_dicts,
+        save_transcript,
+        task_transcript_path,
+    )
+
+    data_dir = None
+    manager = getattr(task, "task_manager", None)
+    if manager is not None:
+        cfg = getattr(manager, "_cfg", None)
+        if cfg is not None:
+            data_dir = getattr(cfg, "data_dir", None)
+    transcript_path = (
+        task_transcript_path(Path(data_dir), task.id)
+        if data_dir is not None
+        else None
+    )
+    existing = load_transcript(transcript_path) if transcript_path else None
+    resuming = bool(
+        existing
+        and existing.messages
+        and existing.round_complete
+        and existing.owner_id == task.id
+    )
+    if resuming and existing is not None:
+        engine.session_messages = dicts_to_messages(existing.messages)
+
+    def _on_turn_checkpoint(messages: list[Any], steps: int) -> None:
+        if transcript_path is None:
+            return
+        save_transcript(
+            transcript_path,
+            DurableTranscript(
+                owner_kind="task",
+                owner_id=task.id,
+                messages=messages_to_dicts(messages),
+                steps_taken=int(steps),
+                force_summary=False,
+                round_complete=True,
+                checkpoint_reason="round",
+            ),
+        )
+
+    engine.tool_context.metadata["on_turn_checkpoint"] = _on_turn_checkpoint
+
     async def _record_tool_event(kind: str, summary: str) -> None:
-        manager = getattr(task, "task_manager", None)
-        recorder = getattr(manager, "record_tool_timeline", None)
+        mgr = getattr(task, "task_manager", None)
+        recorder = getattr(mgr, "record_tool_timeline", None)
         if recorder is None:
             return
         try:
@@ -468,9 +518,11 @@ async def _run_task_engine_turn(
         handle._cancel_reason = "executor_cancelled"
         handle.cancel_event.set()
 
+    turn_prompt = CONTINUE_NUDGE if resuming else task.prompt
+
     async def _run_turn_bridged() -> None:
         turn_task = asyncio.create_task(
-            engine.run_single_turn(task.prompt, model=task.model)
+            engine.run_single_turn(turn_prompt, model=task.model)
         )
         try:
             while not handle.is_turn_active() and not turn_task.done():
@@ -527,6 +579,8 @@ async def _run_task_engine_turn(
             )
         if cancel.is_set():
             return TaskExecutionResult(summary=result_text, error="canceled")
+        if transcript_path is not None:
+            clear_transcript(transcript_path)
         return TaskExecutionResult(summary=result_text, detail=None, error=None)
     finally:
         bridge_task.cancel()
@@ -565,6 +619,8 @@ async def real_task_executor(
             timeout=wall_clock,
         )
     except asyncio.TimeoutError:
+        # Stop the in-flight turn, but do NOT treat timeout as user cancel.
+        # Finalize path keys off ``timed_out=True`` → TaskStatus.TIMED_OUT.
         cancel.set()
         logger.warning(
             "[task_executor] wall-clock timeout task_id=%s after=%ds cron=%s",
@@ -575,6 +631,7 @@ async def real_task_executor(
         return TaskExecutionResult(
             summary="",
             error=f"Task timed out after {wall_clock}s",
+            timed_out=True,
         )
 
 

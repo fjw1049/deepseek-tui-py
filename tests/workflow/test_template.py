@@ -16,6 +16,13 @@ def test_item_and_previous_substitution() -> None:
     assert "prev=" in out
 
 
+def test_task_substitution() -> None:
+    out = render_template("task={{task}}", task="review the engine")
+    assert out == "task=review the engine"
+    empty = render_template("task={{task}}")
+    assert empty == "task="
+
+
 def test_outputs_preview_and_full() -> None:
     outputs = {
         "s1": make_step_output("x" * 5000, structured={"ok": True}),

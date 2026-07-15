@@ -2361,15 +2361,41 @@ class RuntimeThreadManager:
                     item.ended_at = now
                     if event.success:
                         item.status = TurnItemLifecycleStatus.COMPLETED
-                        item.summary = summarize_text(
-                            f"{event.tool_name}: {event.content}", SUMMARY_LIMIT
-                        )
+                        if event.tool_name == "workflow":
+                            wf_meta = (
+                                event.metadata.get("workflow")
+                                if isinstance(event.metadata, dict)
+                                else None
+                            )
+                            wf_name = (
+                                wf_meta.get("name")
+                                if isinstance(wf_meta, dict)
+                                else None
+                            )
+                            label = (
+                                str(wf_name).strip()
+                                if isinstance(wf_name, str) and wf_name.strip()
+                                else "workflow"
+                            )
+                            item.summary = summarize_text(
+                                f"workflow: {label} completed", SUMMARY_LIMIT
+                            )
+                        else:
+                            item.summary = summarize_text(
+                                f"{event.tool_name}: {event.content}", SUMMARY_LIMIT
+                            )
                     else:
                         recent_tool_had_error = True
                         item.status = TurnItemLifecycleStatus.FAILED
-                        item.summary = summarize_text(
-                            f"{event.tool_name} failed: {event.content}", SUMMARY_LIMIT
-                        )
+                        if event.tool_name == "workflow":
+                            item.summary = summarize_text(
+                                f"workflow failed: {event.content}", SUMMARY_LIMIT
+                            )
+                        else:
+                            item.summary = summarize_text(
+                                f"{event.tool_name} failed: {event.content}",
+                                SUMMARY_LIMIT,
+                            )
                     if item.kind == TurnItemKind.FILE_CHANGE:
                         item.detail = file_change_completion_detail(
                             event.tool_name,
@@ -2461,6 +2487,8 @@ class RuntimeThreadManager:
                     "completed": event.completed,
                     "status": event.status,
                 }
+                if event.run_id:
+                    payload["run_id"] = event.run_id
                 item_id = workflow_items.get(event.tool_call_id)
                 now = datetime.now(timezone.utc)
                 if item_id is None:

@@ -146,7 +146,8 @@ def _require_manager(context: ToolContext) -> TaskManager:
 def _task_result(action: str, task: TaskRecord) -> ToolResult:
     summary = task.result_summary or task.error or ""
     return ToolResult(
-        success=task.status is not TaskStatus.FAILED,
+        success=task.status is not TaskStatus.FAILED
+        and task.status is not TaskStatus.TIMED_OUT,
         content=f"{action}: {task.id} [{task.status.value}]",
         metadata={
             "task_id": task.id,

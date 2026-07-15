@@ -164,8 +164,9 @@ export type ChatBlock =
       toolCallId: string
       createdAt?: string
       workflowName: string
-      status: 'running' | 'completed' | 'failed' | 'cancelled'
+      status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
       snapshot: WorkflowSnapshotPayload
+      runId?: string
     }
 
 export type WorkflowProgressPayload = {
@@ -174,6 +175,7 @@ export type WorkflowProgressPayload = {
   snapshot: WorkflowSnapshotPayload
   completed: boolean
   status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
+  runId?: string
 }
 
 export type EvolutionProposalPayload = {

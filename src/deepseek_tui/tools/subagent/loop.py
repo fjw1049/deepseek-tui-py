@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.tools.subagent.agent import SubAgent
@@ -124,10 +125,25 @@ async def run_subagent_loop(
     runtime: SubAgentRuntime,
     cancel: asyncio.Event,
 ) -> AgentRunOutput:
-    """Drive one sub-agent to completion without nesting a full Engine."""
+    """Drive one sub-agent to completion without nesting a full Engine.
+
+    True resume: when a durable transcript exists for ``agent.id``, hydrate
+    messages and continue from the next LLM round instead of rebuilding from
+    the original prompt.
+    """
     from deepseek_tui.engine.turn import TurnLoop
     from deepseek_tui.protocol.messages import Message
     from deepseek_tui.protocol.messages import MessageRequest
+    from deepseek_tui.tools.durable_transcript import (
+        CONTINUE_NUDGE,
+        DurableTranscript,
+        clear_transcript,
+        dicts_to_messages,
+        load_transcript,
+        messages_to_dicts,
+        save_transcript,
+        subagent_transcript_path,
+    )
     from deepseek_tui.tools.registry import build_subagent_registry
     from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.tools.validation import (
@@ -157,6 +173,7 @@ async def run_subagent_loop(
         task_manager=runtime.task_manager,
         subagent_manager=runtime.manager,
         metadata={
+            "subagent_id": agent.id,
             "subagent_depth": agent.spawn_depth,
             "subagent_runtime": runtime,
             "auto_approve": runtime.auto_approve,
@@ -171,137 +188,205 @@ async def run_subagent_loop(
     registry.set_context(context)
     api_tools = registry.to_api_tools()
 
+    transcript_path = subagent_transcript_path(Path(agent.workspace), agent.id)
+    existing = load_transcript(transcript_path)
+
     messages: list[Message] = []
-    if agent.fork_messages:
-        messages.extend(_messages_from_fork_dicts(agent.fork_messages))
-    messages.append(Message.user(agent.prompt))
+    force_summary = False
+    steps = 0
+    resuming = bool(
+        existing
+        and existing.messages
+        and existing.round_complete
+        and existing.owner_id == agent.id
+    )
+    if resuming and existing is not None:
+        messages.extend(dicts_to_messages(existing.messages))
+        force_summary = existing.force_summary
+        steps = max(0, int(existing.steps_taken))
+        messages.append(Message.user(CONTINUE_NUDGE))
+    else:
+        if agent.fork_messages:
+            messages.extend(_messages_from_fork_dicts(agent.fork_messages))
+        messages.append(Message.user(agent.prompt))
+
+    while True:
+        try:
+            text, _interrupt = agent.input_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        text = (text or "").strip()
+        if text:
+            messages.append(Message.user(text))
 
     turn_loop = TurnLoop(runtime.client)
     final_text = ""
     last_thinking = ""
     structured_value: Any | None = None
-    steps = 0
     last_usage: object | None = None
-    force_summary = False
+    # Only persist completed rounds. Mid-tool cancel keeps the previous snapshot.
+    last_complete_messages: list[Message] = list(messages)
+    last_complete_steps = steps
+    last_complete_force_summary = force_summary
+    has_complete_checkpoint = resuming
 
     async def _noop_emit(_event: object) -> None:
         return None
 
-    for _ in range(DEFAULT_MAX_STEPS):
-        if _subagent_cancelled(cancel, agent):
-            raise asyncio.CancelledError
-
-        steps += 1
-        agent.steps_taken = steps
-
-        # On a forced-summary round we strip tools so the model has no choice
-        # but to emit its final report as text.
-        round_tools = [] if force_summary else api_tools
-        request = MessageRequest(
-            model=agent.model,
-            messages=messages,
-            system_prompt=system_prompt,
-            tools=round_tools,
-            tool_choice={"type": "auto"} if round_tools else None,
-            max_tokens=4096,
-            stream=True,
+    def _save_complete_checkpoint(reason: str) -> None:
+        nonlocal last_complete_steps, last_complete_force_summary, has_complete_checkpoint
+        last_complete_messages[:] = list(messages)
+        last_complete_steps = steps
+        last_complete_force_summary = force_summary
+        has_complete_checkpoint = True
+        save_transcript(
+            transcript_path,
+            DurableTranscript(
+                owner_kind="subagent",
+                owner_id=agent.id,
+                messages=messages_to_dicts(last_complete_messages),
+                steps_taken=last_complete_steps,
+                force_summary=last_complete_force_summary,
+                round_complete=True,
+                checkpoint_reason=reason,
+            ),
         )
-        llm_gate = getattr(runtime.manager, "llm_semaphore", None)
-        if llm_gate is not None:
-            async with llm_gate:
+
+    def _save_cancel_checkpoint() -> None:
+        if not has_complete_checkpoint:
+            return
+        save_transcript(
+            transcript_path,
+            DurableTranscript(
+                owner_kind="subagent",
+                owner_id=agent.id,
+                messages=messages_to_dicts(last_complete_messages),
+                steps_taken=last_complete_steps,
+                force_summary=last_complete_force_summary,
+                round_complete=True,
+                checkpoint_reason="cancel",
+            ),
+        )
+
+    try:
+        while steps < DEFAULT_MAX_STEPS:
+            if _subagent_cancelled(cancel, agent):
+                _save_cancel_checkpoint()
+                raise asyncio.CancelledError
+
+            steps += 1
+            agent.steps_taken = steps
+
+            round_tools = [] if force_summary else api_tools
+            request = MessageRequest(
+                model=agent.model,
+                messages=messages,
+                system_prompt=system_prompt,
+                tools=round_tools,
+                tool_choice={"type": "auto"} if round_tools else None,
+                max_tokens=4096,
+                stream=True,
+            )
+            llm_gate = getattr(runtime.manager, "llm_semaphore", None)
+            if llm_gate is not None:
+                async with llm_gate:
+                    result = await turn_loop.run(
+                        request,
+                        _noop_emit,
+                        cancel,
+                        tools=round_tools,
+                    )
+            else:
                 result = await turn_loop.run(
                     request,
                     _noop_emit,
                     cancel,
                     tools=round_tools,
                 )
-        else:
-            result = await turn_loop.run(
-                request,
-                _noop_emit,
-                cancel,
-                tools=round_tools,
+
+            if result.usage is not None:
+                last_usage = result.usage
+
+            if result.cancelled:
+                _save_cancel_checkpoint()
+                raise asyncio.CancelledError
+
+            if result.assistant_message is not None:
+                messages.append(result.assistant_message)
+
+            round_text, round_thinking = _assistant_text_and_thinking(
+                result.assistant_message
             )
-
-        if result.usage is not None:
-            last_usage = result.usage
-
-        if result.cancelled:
-            raise asyncio.CancelledError
-
-        if result.assistant_message is not None:
-            messages.append(result.assistant_message)
-
-        round_text, round_thinking = _assistant_text_and_thinking(
-            result.assistant_message
-        )
-        if round_text:
-            final_text = round_text
-        if round_thinking:
-            last_thinking = round_thinking
-
-        if not result.tool_calls:
             if round_text:
-                # Genuine prose final answer.
-                break
-            # No text and no tool calls: the model stalled on a reasoning-only
-            # round (e.g. "let me also look at ..." with nothing actionable).
-            # Nudge it once, tools off, to produce a real report before we fall
-            # back to surfacing raw reasoning as the deliverable.
-            if not force_summary and structured_value is None:
-                force_summary = True
-                messages.append(Message.user(_SUBAGENT_FINAL_REPORT_NUDGE))
-                continue
+                final_text = round_text
             if round_thinking:
-                final_text = round_thinking
-            break
+                last_thinking = round_thinking
 
-        from deepseek_tui.protocol.messages import ToolUseBlock
+            if not result.tool_calls:
+                if round_text:
+                    break
+                if not force_summary and structured_value is None:
+                    force_summary = True
+                    messages.append(Message.user(_SUBAGENT_FINAL_REPORT_NUDGE))
+                    _save_complete_checkpoint("round")
+                    continue
+                if round_thinking:
+                    final_text = round_thinking
+                break
 
-        messages.append(
-            Message.assistant_with_tools(
-                [
-                    ToolUseBlock(id=tc.id, name=tc.name, input=tc.arguments)
-                    for tc in result.tool_calls
-                ]
+            from deepseek_tui.protocol.messages import ToolUseBlock
+
+            messages.append(
+                Message.assistant_with_tools(
+                    [
+                        ToolUseBlock(id=tc.id, name=tc.name, input=tc.arguments)
+                        for tc in result.tool_calls
+                    ]
+                )
             )
-        )
 
-        for tc in result.tool_calls:
-            if runtime.mailbox is not None:
-                runtime.mailbox.send(
-                    MailboxMessage.tool_call_started(agent.id, tc.name, steps)
-                )
-            if tc.name == STRUCTURED_OUTPUT_TOOL_NAME:
-                tool_result = await registry.execute(tc.name, tc.arguments, context)
-                output = (
-                    tool_result.content
-                    if tool_result.success
-                    else f"Error: {tool_result.content}"
-                )
-                ok = tool_result.success
-                if ok and tool_result.metadata.get("terminate_subagent"):
-                    structured_value = tool_result.metadata.get("value")
-            else:
-                output = await _execute_subagent_tool(
-                    registry,
-                    context,
-                    tool_name=tc.name,
-                    tool_input=tc.arguments,
-                    auto_approve=runtime.auto_approve,
-                )
-                ok = not output.startswith("Error:")
-            if runtime.mailbox is not None:
-                runtime.mailbox.send(
-                    MailboxMessage.tool_call_completed(
-                        agent.id, tc.name, steps, ok
+            for tc in result.tool_calls:
+                if _subagent_cancelled(cancel, agent):
+                    _save_cancel_checkpoint()
+                    raise asyncio.CancelledError
+                if runtime.mailbox is not None:
+                    runtime.mailbox.send(
+                        MailboxMessage.tool_call_started(agent.id, tc.name, steps)
                     )
-                )
-            messages.append(Message.tool_result(tc.id, output, is_error=not ok))
+                if tc.name == STRUCTURED_OUTPUT_TOOL_NAME:
+                    tool_result = await registry.execute(tc.name, tc.arguments, context)
+                    output = (
+                        tool_result.content
+                        if tool_result.success
+                        else f"Error: {tool_result.content}"
+                    )
+                    ok = tool_result.success
+                    if ok and tool_result.metadata.get("terminate_subagent"):
+                        structured_value = tool_result.metadata.get("value")
+                else:
+                    output = await _execute_subagent_tool(
+                        registry,
+                        context,
+                        tool_name=tc.name,
+                        tool_input=tc.arguments,
+                        auto_approve=runtime.auto_approve,
+                    )
+                    ok = not output.startswith("Error:")
+                if runtime.mailbox is not None:
+                    runtime.mailbox.send(
+                        MailboxMessage.tool_call_completed(
+                            agent.id, tc.name, steps, ok
+                        )
+                    )
+                messages.append(Message.tool_result(tc.id, output, is_error=not ok))
+                if structured_value is not None:
+                    break
+            _save_complete_checkpoint("round")
             if structured_value is not None:
                 break
-        if structured_value is not None:
-            break
+    except asyncio.CancelledError:
+        _save_cancel_checkpoint()
+        raise
 
     if runtime.mailbox is not None and last_usage is not None:
         runtime.mailbox.send(
@@ -319,10 +404,9 @@ async def run_subagent_loop(
     agent.steps_taken = steps
     if agent.output_schema and structured_value is None:
         raise RuntimeError("sub-agent did not return structured_output")
-    # Last-resort fallback: a sub-agent that ran out of steps (or whose terminal
-    # text was empty) still owes the parent *something* to read back.
     if not final_text and last_thinking:
         final_text = last_thinking
+    clear_transcript(transcript_path)
     return AgentRunOutput(text=final_text, structured=structured_value)
 
 

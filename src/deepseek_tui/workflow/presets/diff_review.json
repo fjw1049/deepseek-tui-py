@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "diff_review",
+    "description": "Plan review lenses for the current diff, fan out checks, synthesize findings."
+  },
+  "policy": {
+    "approval_mode": "trusted_workflow",
+    "on_error": "continue",
+    "max_agents": 10,
+    "concurrency": 4,
+    "wall_clock_seconds": 600
+  },
+  "phases": [
+    {
+      "id": "plan",
+      "title": "Plan",
+      "steps": [
+        {
+          "id": "plan",
+          "type": "agent",
+          "label": "triage",
+          "agent_type": "explore",
+          "prompt": "Task:\n{{task}}\n\nInspect the current git diff (or stated change set). Return structured JSON with a \"lenses\" array of 2-5 short review focus areas (e.g. concurrency, tests, API compatibility).",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "lenses": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              }
+            },
+            "required": ["lenses"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "title": "Review",
+      "steps": [
+        {
+          "id": "review",
+          "type": "fanout",
+          "items_from": { "step": "plan", "path": "$.lenses" },
+          "agent": {
+            "label_template": "lens {{item}}",
+            "agent_type": "review",
+            "prompt_template": "Task:\n{{task}}\n\nReview the change set through this lens: {{item}}\nList concrete findings only."
+          }
+        }
+      ]
+    },
+    {
+      "id": "synthesis",
+      "title": "Synthesis",
+      "steps": [
+        {
+          "id": "final",
+          "type": "synthesis",
+          "label": "merge",
+          "agent_type": "review",
+          "prompt_template": "Task:\n{{task}}\n\nPlan:\n{{outputs.plan}}\n\nLens reviews:\n{{outputs.review}}\n\nReturn JSON with ok, verdict, and findings[].",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "ok": { "type": "boolean" },
+              "verdict": { "type": "string" },
+              "findings": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "required": ["ok", "verdict"]
+          }
+        }
+      ]
+    }
+  ]
+}

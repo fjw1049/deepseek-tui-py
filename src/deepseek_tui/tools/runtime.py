@@ -388,14 +388,22 @@ def _has_api_key() -> bool:
 
 
 def _safe_task_executor() -> Any:
-    """Return real executor if API key available, else stub."""
+    """Return real executor if API key available, else stub.
+
+    Workflow detach jobs are always intercepted (even with the stub inner
+    executor) so background resumes do not depend on an API key being present
+    for the routing decision — the detach path builds its own client.
+    """
+    from deepseek_tui.workflow.detach import wrap_task_executor_for_workflow_detach
+
     if _has_api_key():
         from deepseek_tui.tools.task import get_real_task_executor
 
+        # Already wrapped inside get_real_task_executor.
         return get_real_task_executor()
     from deepseek_tui.tools.task import _stub_executor
 
-    return _stub_executor
+    return wrap_task_executor_for_workflow_detach(_stub_executor)
 
 
 def _safe_subagent_executor() -> Any:

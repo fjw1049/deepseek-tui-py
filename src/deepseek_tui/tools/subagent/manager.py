@@ -191,7 +191,7 @@ class SubAgentManager:
                 or whale_nickname_for_index(len(self._agents)),
                 allowed_tools=request.allowed_tools,
                 session_boot_id=self._session_boot_id,
-                workspace=self.workspace,
+                workspace=request.workspace or self.workspace,
                 spawn_depth=child_depth,
                 fork_messages=request.fork_messages if request.fork_context else None,
                 parent_cancel=self._parent_cancel,
@@ -268,17 +268,23 @@ class SubAgentManager:
         return snapshot
 
     async def resume(self, agent_id: str) -> SubAgentResult:
-        """Re-open a terminated agent for a new prompt.
+        """True-resume a terminated agent from its durable transcript.
 
-        Resurrects the status
-        back to Running and re-spawns the driver task.
+        Reopens status to Running and re-spawns the driver. The loop hydrates
+        any checkpoint under ``.deepseek/subagent-runs/<id>/``; without a
+        transcript it restarts from the original prompt (legacy behavior).
         """
         async with self._lock:
             agent = self._require_agent(agent_id)
             if agent.status.kind is SubAgentStatusKind.RUNNING:
                 raise RuntimeError(f"Agent {agent_id} is already running")
+            if agent.status.kind is SubAgentStatusKind.COMPLETED:
+                raise RuntimeError(
+                    f"Agent {agent_id} already completed; spawn a new agent instead"
+                )
             agent.status = SubAgentStatus.running()
             agent.result = None
+            agent.structured_result = None
             agent.cancel_token = asyncio.Event()
             agent.started_at_ms = _epoch_ms()
             self._persist_best_effort()

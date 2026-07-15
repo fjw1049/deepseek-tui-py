@@ -24,7 +24,6 @@ from deepseek_tui.engine.events import (
     ApprovalResolvedEvent,
     ElevationRequiredEvent,
     SandboxDeniedEvent,
-    StatusEvent,
     ToolResultEvent,
     UserInputRequiredEvent,
     WorkflowProgressEvent,
@@ -582,11 +581,6 @@ class ToolExecutionMixin:
                         )
 
             self.tool_context.metadata["workflow_emit"] = _workflow_emit
-
-            def _workflow_status(message: str) -> None:
-                self.handle.try_emit(StatusEvent(message))
-
-            self.tool_context.metadata["workflow_status_cb"] = _workflow_status
         try:
             return await self.tool_registry.execute(
                 tool_name, tool_call.arguments, self.tool_context
@@ -598,7 +592,6 @@ class ToolExecutionMixin:
                 self.tool_context.metadata.pop("engine_cancel_event", None)
                 self.tool_context.metadata.pop("workflow_tool_call_id", None)
                 self.tool_context.metadata.pop("workflow_emit", None)
-                self.tool_context.metadata.pop("workflow_status_cb", None)
 
     async def _handle_approval_flow(
         self,

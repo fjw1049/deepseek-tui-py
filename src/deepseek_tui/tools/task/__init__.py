@@ -60,6 +60,7 @@ from deepseek_tui.tools.task.tools import (
     TaskGateRunTool,
     TaskListTool,
     TaskReadTool,
+    TaskResumeTool,
     TaskShellStartTool,
     TaskShellWaitTool,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "TaskManager",
     "TaskManagerConfig",
     "TaskReadTool",
+    "TaskResumeTool",
     "TaskRecord",
     "TaskShellStartTool",
     "TaskShellWaitTool",

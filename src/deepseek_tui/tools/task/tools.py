@@ -205,6 +205,47 @@ class TaskCancelTool(ToolSpec):
         return _task_result("task_cancel", task)
 
 
+class TaskResumeTool(ToolSpec):
+    def name(self) -> str:
+        return "task_resume"
+
+    def description(self) -> str:
+        return (
+            "Resume a cancelled, timed_out, or failed durable task from its "
+            "transcript checkpoint (or Workflow checkpoint for detach jobs). "
+            "Re-queues the same task id — do not task_create a duplicate."
+        )
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task id (alias: id)"},
+                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+            },
+            "additionalProperties": False,
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        manager = _require_manager(context)
+        task_id = _task_id_from_input(input_data, context)
+        try:
+            task = await manager.resume_task(task_id)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
+        except RuntimeError as exc:
+            raise ToolError(str(exc)) from exc
+        return _task_result("task_resume", task)
+
+
 class TaskGateRunTool(ToolSpec):
     """Execute a verification gate command and record the result.
 

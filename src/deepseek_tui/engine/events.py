@@ -120,6 +120,7 @@ class WorkflowProgressEvent:
     snapshot: object
     completed: bool = False
     status: str = "running"
+    run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

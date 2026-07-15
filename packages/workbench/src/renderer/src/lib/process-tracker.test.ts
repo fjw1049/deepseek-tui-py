@@ -81,6 +81,46 @@ describe('buildTrackedProcesses', () => {
     expect(processes).toEqual([])
   })
 
+  it('collapses cancelled + running for the same runId into one running card', () => {
+    const snap = {
+      name: 'repo_review',
+      description: '',
+      phases: ['plan', 'inspect'],
+      current_phase: 'Inspect',
+      logs: [],
+      agents: [],
+      agent_count: 2,
+      running_count: 1,
+      done_count: 1,
+      error_count: 0
+    }
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'workflow',
+        id: 'old',
+        toolCallId: 'tool_old',
+        workflowName: 'repo_review',
+        status: 'cancelled',
+        runId: 'wf_abc',
+        snapshot: { ...snap, running_count: 0, done_count: 1 }
+      },
+      {
+        kind: 'workflow',
+        id: 'new',
+        toolCallId: 'tool_new',
+        workflowName: 'repo_review',
+        status: 'running',
+        runId: 'wf_abc',
+        snapshot: snap
+      }
+    ]
+
+    const processes = buildTrackedProcesses({ blocks })
+    expect(processes).toHaveLength(1)
+    expect(processes[0]?.status).toBe('running')
+    expect(processes[0]?.id).toBe('workflow:tool_new')
+  })
+
   it('ignores ordinary tool calls', () => {
     const blocks: ChatBlock[] = [
       {

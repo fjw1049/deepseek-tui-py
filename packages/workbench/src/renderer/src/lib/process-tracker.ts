@@ -26,7 +26,7 @@ export type BuildTrackedProcessesInput = {
 
 function workflowStatusToProcessStatus(status: WorkflowBlock['status']): TrackedProcessStatus {
   if (status === 'completed') return 'completed'
-  if (status === 'failed') return 'failed'
+  if (status === 'failed' || status === 'timed_out') return 'failed'
   if (status === 'cancelled') return 'cancelled'
   return 'running'
 }
@@ -45,17 +45,37 @@ function workflowSubtitle(block: WorkflowBlock): string {
   return progress
 }
 
-function latestWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
-  const byToolCall = new Map<string, WorkflowBlock>()
+function workflowCollapseKey(block: WorkflowBlock): string {
+  const runId = block.runId?.trim()
+  return runId ? `run:${runId}` : `tc:${block.toolCallId}`
+}
+
+/** One card per run_id (or tool_call_id); prefer running over terminal. */
+export function collapseWorkflowBlocks(blocks: WorkflowBlock[]): WorkflowBlock[] {
+  const byKey = new Map<string, WorkflowBlock>()
   for (const block of blocks) {
-    if (block.kind === 'workflow') {
-      byToolCall.set(block.toolCallId, block)
+    const key = workflowCollapseKey(block)
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, block)
+      continue
+    }
+    if (block.status === 'running') {
+      byKey.set(key, block)
+    } else if (existing.status === 'running') {
+      continue
+    } else {
+      byKey.set(key, block)
     }
   }
+  return [...byKey.values()]
+}
 
-  const workflows = [...byToolCall.values()]
-  const running = workflows.filter((block) => block.status === 'running')
-  const completedTail = workflows.filter((block) => block.status !== 'running').slice(-2)
+function latestWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
+  const workflows = blocks.filter((block): block is WorkflowBlock => block.kind === 'workflow')
+  const collapsed = collapseWorkflowBlocks(workflows)
+  const running = collapsed.filter((block) => block.status === 'running')
+  const completedTail = collapsed.filter((block) => block.status !== 'running').slice(-2)
   const selected = [...completedTail, ...running].filter(
     (block, index, list) => list.findIndex((candidate) => candidate.id === block.id) === index
   )

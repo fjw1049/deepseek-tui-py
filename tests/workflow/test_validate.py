@@ -155,3 +155,175 @@ def test_duplicate_step_id_rejected() -> None:
     )
     with pytest.raises(WorkflowValidationError, match="duplicate"):
         parse_workflow_spec(raw)
+
+
+def test_fanout_items_from_ok() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "plan",
+            "type": "agent",
+            "label": "planner",
+            "prompt": "plan {{task}}",
+            "output_schema": {"type": "object"},
+        },
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items_from": {"step": "plan", "path": "$.targets"},
+            "agent": {"prompt_template": "inspect {{item}}"},
+        },
+    ]
+    spec = parse_workflow_spec(raw)
+    step = spec.phases[0].steps[1]
+    assert step.type == "fanout"
+    assert step.items is None
+    assert step.items_from is not None
+    assert step.items_from.step == "plan"
+    assert step.items_from.path == "$.targets"
+
+
+def test_fanout_items_and_items_from_mutually_exclusive() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items": ["a"],
+            "items_from": {"step": "plan", "path": "$.targets"},
+            "agent": {"prompt_template": "x {{item}}"},
+        }
+    ]
+    with pytest.raises(WorkflowValidationError, match="mutually exclusive"):
+        parse_workflow_spec(raw)
+
+
+def test_fanout_items_from_unknown_step() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items_from": {"step": "missing", "path": "$.targets"},
+            "agent": {"prompt_template": "x {{item}}"},
+        }
+    ]
+    with pytest.raises(WorkflowValidationError, match="unknown step"):
+        parse_workflow_spec(raw)
+
+
+def test_fanout_items_from_before_source() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items_from": {"step": "plan", "path": "$.targets"},
+            "agent": {"prompt_template": "x {{item}}"},
+        },
+        {
+            "id": "plan",
+            "type": "agent",
+            "label": "planner",
+            "prompt": "plan",
+        },
+    ]
+    with pytest.raises(WorkflowValidationError, match="before it runs"):
+        parse_workflow_spec(raw)
+
+
+def test_fanout_items_from_invalid_path() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "plan",
+            "type": "agent",
+            "label": "planner",
+            "prompt": "plan",
+        },
+        {
+            "id": "fan",
+            "type": "fanout",
+            "items_from": {"step": "plan", "path": "targets"},
+            "agent": {"prompt_template": "x {{item}}"},
+        },
+    ]
+    with pytest.raises(WorkflowValidationError, match="items_from.path"):
+        parse_workflow_spec(raw)
+
+
+def test_loop_step_parses() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "lp",
+            "type": "loop",
+            "max_rounds": 3,
+            "until": {"path": "$.done", "equals": True},
+            "steps": [
+                {
+                    "id": "chk",
+                    "type": "agent",
+                    "label": "check",
+                    "prompt": "round {{round}}",
+                    "output_schema": {"type": "object"},
+                }
+            ],
+        }
+    ]
+    spec = parse_workflow_spec(raw)
+    step = spec.phases[0].steps[0]
+    assert step.type == "loop"
+    assert step.max_rounds == 3
+    assert step.until is not None
+    assert step.until.path == "$.done"
+    assert len(step.steps) == 1
+
+
+def test_nested_loop_rejected() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"] = [
+        {
+            "id": "lp",
+            "type": "loop",
+            "max_rounds": 2,
+            "steps": [
+                {
+                    "id": "inner",
+                    "type": "loop",
+                    "max_rounds": 2,
+                    "steps": [
+                        {
+                            "id": "a",
+                            "type": "agent",
+                            "label": "x",
+                            "prompt": "y",
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    with pytest.raises(WorkflowValidationError, match="nested loop"):
+        parse_workflow_spec(raw)
+
+
+def test_agent_step_timeout_seconds_parsed() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"][0]["timeout_seconds"] = 30
+    spec = parse_workflow_spec(raw)
+    step = spec.phases[0].steps[0]
+    assert step.type == "agent"
+    assert step.timeout_seconds == 30
+
+
+def test_agent_step_timeout_seconds_out_of_range() -> None:
+    raw = _minimal_spec()
+    raw["phases"][0]["steps"][0]["timeout_seconds"] = 0
+    with pytest.raises(WorkflowValidationError, match="timeout_seconds"):
+        parse_workflow_spec(raw)
+
+    raw2 = _minimal_spec()
+    raw2["phases"][0]["steps"][0]["timeout_seconds"] = 3601
+    with pytest.raises(WorkflowValidationError, match="timeout_seconds"):
+        parse_workflow_spec(raw2)

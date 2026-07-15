@@ -8,6 +8,7 @@ from deepseek_tui.workflow.models import (
     WorkflowSpec,
 )
 from deepseek_tui.workflow.adapters import workflow_guidelines_snippet
+from deepseek_tui.workflow.catalog import list_workflows, resolve_workflow
 from deepseek_tui.workflow.runtime import run_workflow
 
 __all__ = [
@@ -16,6 +17,8 @@ __all__ = [
     "WorkflowRunResult",
     "WorkflowSnapshot",
     "WorkflowSpec",
+    "list_workflows",
+    "resolve_workflow",
     "run_workflow",
     "workflow_guidelines_snippet",
 ]

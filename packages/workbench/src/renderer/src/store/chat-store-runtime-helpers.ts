@@ -159,15 +159,19 @@ export function upsertWorkflowBlock(
   blocks: ChatBlock[],
   ev: WorkflowProgressPayload
 ): ChatBlock[] {
-  const status: 'running' | 'completed' | 'failed' | 'cancelled' = ev.completed
-    ? ev.status === 'cancelled' || ev.status === 'timed_out'
-      ? 'cancelled'
-      : ev.status === 'failed'
-      ? 'failed'
-      : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
-      ? 'failed'
-      : 'completed'
-    : 'running'
+  const status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' =
+    ev.completed
+      ? ev.status === 'timed_out'
+        ? 'timed_out'
+        : ev.status === 'cancelled'
+          ? 'cancelled'
+          : ev.status === 'failed'
+            ? 'failed'
+            : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
+              ? 'failed'
+              : 'completed'
+      : 'running'
+  const runId = ev.runId?.trim() || undefined
   const nextBlock: ChatBlock = {
     kind: 'workflow',
     id: ev.toolCallId,
@@ -175,23 +179,42 @@ export function upsertWorkflowBlock(
     workflowName: ev.workflowName,
     status,
     snapshot: ev.snapshot,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...(runId ? { runId } : {})
   }
   const idx = blocks.findIndex(
     (b) => b.kind === 'workflow' && b.toolCallId === ev.toolCallId
   )
-  if (idx < 0) return [...blocks, nextBlock]
-  const current = blocks[idx]
-  const merged: ChatBlock =
-    current.kind === 'workflow'
-      ? {
-          ...current,
-          ...nextBlock,
-          createdAt: current.createdAt ?? nextBlock.createdAt
-        }
-      : nextBlock
-  const next = [...blocks]
-  next[idx] = merged
+  let next: ChatBlock[]
+  if (idx < 0) {
+    next = [...blocks, nextBlock]
+  } else {
+    const current = blocks[idx]
+    const merged: ChatBlock =
+      current.kind === 'workflow'
+        ? {
+            ...current,
+            ...nextBlock,
+            createdAt: current.createdAt ?? nextBlock.createdAt,
+            runId: runId || current.runId
+          }
+        : nextBlock
+    next = [...blocks]
+    next[idx] = merged
+  }
+  // Same run_id resumed under a new tool_call_id: drop older terminal cards so
+  // ProcessTray does not show cancelled + running side by side.
+  if (runId && status === 'running') {
+    next = next.filter(
+      (b) =>
+        !(
+          b.kind === 'workflow' &&
+          b.runId === runId &&
+          b.toolCallId !== ev.toolCallId &&
+          b.status !== 'running'
+        )
+    )
+  }
   return next
 }
 

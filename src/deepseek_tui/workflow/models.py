@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
@@ -16,10 +17,21 @@ class WorkflowFailedError(Exception):
     pass
 
 
-StepType = Literal["agent", "fanout", "pipeline", "synthesis"]
+StepType = Literal["agent", "fanout", "pipeline", "synthesis", "loop"]
 ApprovalMode = Literal["analysis_only", "trusted_workflow", "strict"]
 OnErrorMode = Literal["continue", "fail_fast"]
+WorktreeMode = Literal["off", "on"]
 AgentRunStatus = Literal["queued", "running", "done", "error", "skipped"]
+
+MAX_FANOUT_ITEMS = 16
+MAX_LOOP_ROUNDS = 8
+WAIT_TIMEOUT_MS = 3_600_000
+DEFAULT_WALL_CLOCK_SECONDS = 600
+DEFAULT_CONCURRENCY = 4
+DEFAULT_MAX_AGENTS = 10
+PREVIEW_MAX_PER_STEP = 2000
+PREVIEW_MAX_FANOUT_ITEM = 800
+FULL_TEXT_MAX = 32_768
 
 
 @dataclass(slots=True)
@@ -35,7 +47,10 @@ class WorkflowPolicy:
     max_agents: int = 10
     concurrency: int = 4
     wall_clock_seconds: int = 600
+    # NOTE: declared but not yet enforced; no cost cap is applied at runtime.
+    # Setting token_budget currently only emits a startup warning.
     token_budget: int | None = None
+    worktree: WorktreeMode = "off"
 
 
 @dataclass(slots=True)
@@ -48,6 +63,7 @@ class AgentStepConfig:
     prompt: str | None = None
     prompt_template: str | None = None
     output_schema: dict[str, Any] | None = None
+    timeout_seconds: int | None = None
 
 
 @dataclass(slots=True)
@@ -60,14 +76,24 @@ class AgentStep:
     allowed_tools: list[str] | None = None
     prompt: str = ""
     output_schema: dict[str, Any] | None = None
+    timeout_seconds: int | None = None
+
+
+@dataclass(slots=True)
+class ItemsFrom:
+    """Dynamic fanout source: resolve an array from a prior step's structured output."""
+
+    step: str
+    path: str = "$"
 
 
 @dataclass(slots=True)
 class FanoutStep:
     id: str
     type: Literal["fanout"]
-    items: list[str]
     agent: AgentStepConfig
+    items: list[str] | None = None
+    items_from: ItemsFrom | None = None
     concurrency: int | None = None
 
 
@@ -97,9 +123,28 @@ class SynthesisStep:
     allowed_tools: list[str] | None = None
     prompt_template: str = ""
     output_schema: dict[str, Any] | None = None
+    timeout_seconds: int | None = None
 
 
-WorkflowStep = AgentStep | FanoutStep | PipelineStep | SynthesisStep
+@dataclass(slots=True)
+class LoopUntil:
+    """Stop a loop when a body step's structured output matches ``equals``."""
+
+    path: str
+    equals: Any = True
+    step: str | None = None  # default: last body step
+
+
+@dataclass(slots=True)
+class LoopStep:
+    id: str
+    type: Literal["loop"]
+    max_rounds: int
+    steps: list[WorkflowStep]
+    until: LoopUntil | None = None
+
+
+WorkflowStep = AgentStep | FanoutStep | PipelineStep | SynthesisStep | LoopStep
 
 
 @dataclass(slots=True)
@@ -172,6 +217,9 @@ class WorkflowRunContext:
     outputs: dict[str, StepOutput] = field(default_factory=dict)
     spawned_agent_ids: list[str] = field(default_factory=list)
     synthesis_step_ids: list[str] = field(default_factory=list)
+    task: str = ""
+    round: int | None = None
+    completed_step_ids: list[str] = field(default_factory=list)
 
 
 # Parse and validate Workflow IR JSON.
@@ -226,10 +274,11 @@ def parse_workflow_spec(raw: Any) -> WorkflowSpec:
         steps: list[WorkflowStep] = []
         for step_idx, step_raw in enumerate(steps_raw):
             step = _parse_step(step_raw, phase_id, step_idx)
-            if step.id in step_ids:
-                raise WorkflowValidationError(f"duplicate step id: {step.id}")
-            step_ids.add(step.id)
-            if step.type in ("agent", "synthesis", "fanout"):
+            for sid in _collect_step_ids(step):
+                if sid in step_ids:
+                    raise WorkflowValidationError(f"duplicate step id: {sid}")
+                step_ids.add(sid)
+            if step.type in ("agent", "synthesis", "fanout", "loop"):
                 agent_step_count += 1
             elif step.type == "pipeline":
                 agent_step_count += len(step.stages) * max(1, len(step.items))
@@ -258,6 +307,9 @@ def _parse_policy(raw: dict[str, Any]) -> WorkflowPolicy:
         raw.get("wall_clock_seconds", 600), "policy.wall_clock_seconds"
     )
     budget = raw.get("token_budget")
+    worktree = raw.get("worktree", "off")
+    if worktree not in ("off", "on"):
+        raise WorkflowValidationError('policy.worktree must be "off" or "on"')
     if max_agents < 1 or max_agents > 32:
         raise WorkflowValidationError("policy.max_agents must be 1..32")
     if concurrency < 1 or concurrency > max_agents:
@@ -271,6 +323,7 @@ def _parse_policy(raw: dict[str, Any]) -> WorkflowPolicy:
         token_budget=(
             _parse_int(budget, "policy.token_budget") if budget is not None else None
         ),
+        worktree=worktree,
     )
 
 
@@ -298,15 +351,37 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
             allowed_tools=_parse_allowed(raw.get("allowed_tools")),
             prompt=prompt.strip(),
             output_schema=_parse_schema(raw.get("output_schema")),
+            timeout_seconds=_parse_int_opt(
+                raw.get("timeout_seconds"),
+                f"step {step_id}: timeout_seconds",
+                min_val=1,
+                max_val=3600,
+            ),
         )
     if step_type == "fanout":
         items = raw.get("items")
-        if not isinstance(items, list) or not items:
-            raise WorkflowValidationError(f"step {step_id}: fanout.items required")
-        if len(items) > MAX_FANOUT_ITEMS:
+        items_from_raw = raw.get("items_from")
+        has_items = isinstance(items, list) and bool(items)
+        has_items_from = items_from_raw is not None
+        if has_items and has_items_from:
             raise WorkflowValidationError(
-                f"step {step_id}: fanout.items exceeds max {MAX_FANOUT_ITEMS}"
+                f"step {step_id}: fanout.items and fanout.items_from are mutually exclusive"
             )
+        if not has_items and not has_items_from:
+            raise WorkflowValidationError(
+                f"step {step_id}: fanout requires items or items_from"
+            )
+        parsed_items: list[str] | None = None
+        parsed_items_from: ItemsFrom | None = None
+        if has_items:
+            assert isinstance(items, list)
+            if len(items) > MAX_FANOUT_ITEMS:
+                raise WorkflowValidationError(
+                    f"step {step_id}: fanout.items exceeds max {MAX_FANOUT_ITEMS}"
+                )
+            parsed_items = [str(x) for x in items]
+        else:
+            parsed_items_from = _parse_items_from(items_from_raw, step_id)
         agent_raw = raw.get("agent")
         if agent_raw is None:
             agent_raw = _fanout_agent_from_flat_step(raw)
@@ -328,7 +403,8 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
         return FanoutStep(
             id=step_id.strip(),
             type="fanout",
-            items=[str(x) for x in items],
+            items=parsed_items,
+            items_from=parsed_items_from,
             agent=_parse_agent_config(agent_raw),
             concurrency=concurrency,
         )
@@ -377,8 +453,182 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
             allowed_tools=_parse_allowed(raw.get("allowed_tools")),
             prompt_template=tmpl.strip(),
             output_schema=_parse_schema(raw.get("output_schema")),
+            timeout_seconds=_parse_int_opt(
+                raw.get("timeout_seconds"),
+                f"step {step_id}: timeout_seconds",
+                min_val=1,
+                max_val=3600,
+            ),
+        )
+    if step_type == "loop":
+        max_rounds = _parse_int(raw.get("max_rounds", 3), f"step {step_id}: max_rounds")
+        if max_rounds < 1 or max_rounds > MAX_LOOP_ROUNDS:
+            raise WorkflowValidationError(
+                f"step {step_id}: max_rounds must be 1..{MAX_LOOP_ROUNDS}"
+            )
+        body_raw = raw.get("steps")
+        if not isinstance(body_raw, list) or not body_raw:
+            raise WorkflowValidationError(f"step {step_id}: loop.steps required")
+        body: list[WorkflowStep] = []
+        for idx, child_raw in enumerate(body_raw):
+            child = _parse_step(child_raw, f"{phase_id}/{step_id}", idx)
+            if child.type == "loop":
+                raise WorkflowValidationError(
+                    f"step {step_id}: nested loop is not supported"
+                )
+            body.append(child)
+        until = _parse_loop_until(raw.get("until"), step_id, body)
+        return LoopStep(
+            id=step_id.strip(),
+            type="loop",
+            max_rounds=max_rounds,
+            steps=body,
+            until=until,
         )
     raise WorkflowValidationError(f"step {step_id}: unknown type {step_type!r}")
+
+
+def _parse_loop_until(
+    raw: Any, step_id: str, body: list[WorkflowStep]
+) -> LoopUntil | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise WorkflowValidationError(f"step {step_id}: until must be an object")
+    path = raw.get("path", "$")
+    if not isinstance(path, str) or not path.strip():
+        raise WorkflowValidationError(f"step {step_id}: until.path must be a string")
+    path = path.strip()
+    try:
+        _validate_simple_json_path(path)
+    except WorkflowValidationError as exc:
+        raise WorkflowValidationError(f"step {step_id}: {exc}") from exc
+    until_step = raw.get("step")
+    body_ids = {s.id for s in body}
+    if until_step is not None:
+        if not isinstance(until_step, str) or not until_step.strip():
+            raise WorkflowValidationError(f"step {step_id}: until.step must be a string")
+        until_step = until_step.strip()
+        if until_step not in body_ids:
+            raise WorkflowValidationError(
+                f"step {step_id}: until.step {until_step!r} is not in loop body"
+            )
+    return LoopUntil(
+        path=path,
+        equals=raw.get("equals", True),
+        step=until_step,
+    )
+
+def _parse_items_from(raw: Any, step_id: str) -> ItemsFrom:
+    if not isinstance(raw, dict):
+        raise WorkflowValidationError(f"step {step_id}: items_from must be an object")
+    source = raw.get("step")
+    if not isinstance(source, str) or not source.strip():
+        raise WorkflowValidationError(f"step {step_id}: items_from.step required")
+    path = raw.get("path", "$")
+    if not isinstance(path, str) or not path.strip():
+        raise WorkflowValidationError(f"step {step_id}: items_from.path must be a string")
+    path = path.strip()
+    try:
+        _validate_simple_json_path(path)
+    except WorkflowValidationError as exc:
+        raise WorkflowValidationError(f"step {step_id}: {exc}") from exc
+    return ItemsFrom(step=source.strip(), path=path)
+
+
+_PATH_SEGMENT_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[(\d+)\])?$")
+
+
+def _validate_simple_json_path(path: str) -> None:
+    """Accept ``$``, ``$.a.b``, ``$.a[0].b`` only."""
+    if path == "$":
+        return
+    if not path.startswith("$."):
+        raise WorkflowValidationError(
+            "items_from.path must be '$' or start with '$.' (e.g. $.targets)"
+        )
+    rest = path[2:]
+    if not rest:
+        raise WorkflowValidationError("items_from.path is incomplete after $.")
+    for segment in rest.split("."):
+        if not segment or not _PATH_SEGMENT_RE.match(segment):
+            raise WorkflowValidationError(
+                f"items_from.path has invalid segment {segment!r}"
+            )
+
+
+def resolve_simple_json_path(root: Any, path: str) -> Any:
+    """Resolve a minimal JSONPath against ``root``."""
+    _validate_simple_json_path(path)
+    if path == "$":
+        return root
+    current = root
+    for segment in path[2:].split("."):
+        match = _PATH_SEGMENT_RE.match(segment)
+        assert match is not None
+        key, index_s = match.group(1), match.group(2)
+        if not isinstance(current, dict) or key not in current:
+            raise WorkflowValidationError(
+                f"path {path!r}: missing key {key!r}"
+            )
+        current = current[key]
+        if index_s is not None:
+            index = int(index_s)
+            if not isinstance(current, list):
+                raise WorkflowValidationError(
+                    f"path {path!r}: {key} is not an array"
+                )
+            if index < 0 or index >= len(current):
+                raise WorkflowValidationError(
+                    f"path {path!r}: index {index} out of range"
+                )
+            current = current[index]
+    return current
+
+
+def coerce_fanout_items(value: Any) -> list[str]:
+    """Normalize a JSON value into fanout item strings."""
+    if not isinstance(value, list):
+        raise WorkflowValidationError("items_from path must resolve to an array")
+    if not value:
+        raise WorkflowValidationError("items_from resolved to an empty array")
+    if len(value) > MAX_FANOUT_ITEMS:
+        raise WorkflowValidationError(
+            f"items_from resolved to {len(value)} items; max is {MAX_FANOUT_ITEMS}"
+        )
+    items: list[str] = []
+    for entry in value:
+        if isinstance(entry, str):
+            items.append(entry)
+        elif isinstance(entry, (dict, list)):
+            items.append(json.dumps(entry, ensure_ascii=False))
+        elif entry is None:
+            items.append("null")
+        else:
+            items.append(str(entry))
+    return items
+
+
+def resolve_fanout_items_from_output(
+    output: StepOutput,
+    items_from: ItemsFrom,
+) -> list[str]:
+    """Resolve dynamic fanout items from a prior step output."""
+    root = output.structured
+    if root is None:
+        text = (output.text or "").strip()
+        if not text:
+            raise WorkflowValidationError(
+                f"items_from step {items_from.step!r} has no structured output"
+            )
+        try:
+            root = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise WorkflowValidationError(
+                f"items_from step {items_from.step!r}: text is not valid JSON"
+            ) from exc
+    resolved = resolve_simple_json_path(root, items_from.path)
+    return coerce_fanout_items(resolved)
 
 
 def _fanout_agent_from_flat_step(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -419,6 +669,12 @@ def _parse_agent_config(raw: dict[str, Any]) -> AgentStepConfig:
         prompt=raw.get("prompt"),
         prompt_template=raw.get("prompt_template"),
         output_schema=_parse_schema(raw.get("output_schema")),
+        timeout_seconds=_parse_int_opt(
+            raw.get("timeout_seconds"),
+            "agent.timeout_seconds",
+            min_val=1,
+            max_val=3600,
+        ),
     )
 
 
@@ -447,21 +703,63 @@ def _parse_int(value: Any, field: str) -> int:
         raise WorkflowValidationError(f"{field} must be an integer") from exc
 
 
+def _parse_int_opt(
+    value: Any, field: str, *, min_val: int, max_val: int
+) -> int | None:
+    """Parse an optional int with an inclusive range; None stays None."""
+    if value is None:
+        return None
+    parsed = _parse_int(value, field)
+    if parsed < min_val or parsed > max_val:
+        raise WorkflowValidationError(
+            f"{field} must be between {min_val} and {max_val}"
+        )
+    return parsed
+
+
+def _collect_step_ids(step: WorkflowStep) -> list[str]:
+    if step.type == "loop":
+        return [step.id, *[s.id for s in step.steps]]
+    return [step.id]
+
+
 def _validate_output_refs(phases: list[WorkflowPhase], step_ids: set[str]) -> None:
-    ordered: list[WorkflowStep] = [s for p in phases for s in p.steps]
     prior: set[str] = set()
-    for step in ordered:
+
+    def _check_templates(step: WorkflowStep, visible: set[str]) -> None:
         for template in _step_templates(step):
             for ref in _extract_output_refs(template):
                 if ref not in step_ids:
                     raise WorkflowValidationError(
                         f"step {step.id} references unknown output {ref}"
                     )
-                if ref not in prior:
+                if ref not in visible:
                     raise WorkflowValidationError(
                         f"step {step.id} references {ref} before it runs"
                     )
-        prior.add(step.id)
+        if step.type == "fanout" and step.items_from is not None:
+            source = step.items_from.step
+            if source not in step_ids:
+                raise WorkflowValidationError(
+                    f"step {step.id} items_from references unknown step {source}"
+                )
+            if source not in visible:
+                raise WorkflowValidationError(
+                    f"step {step.id} items_from references {source} before it runs"
+                )
+
+    for phase in phases:
+        for step in phase.steps:
+            if step.type == "loop":
+                visible = set(prior)
+                for body_step in step.steps:
+                    _check_templates(body_step, visible)
+                    visible.add(body_step.id)
+                    prior.add(body_step.id)
+                prior.add(step.id)
+            else:
+                _check_templates(step, prior)
+                prior.add(step.id)
 
 
 def _step_templates(step: WorkflowStep) -> list[str]:
@@ -512,14 +810,6 @@ def truncate_text(text: str, limit: int) -> str:
     return text[: limit - 1] + "…"
 
 
-PREVIEW_MAX_PER_STEP = 2000
-PREVIEW_MAX_FANOUT_ITEM = 800
-FULL_TEXT_MAX = 32_768
-DEFAULT_WALL_CLOCK_SECONDS = 600
-DEFAULT_CONCURRENCY = 4
-DEFAULT_MAX_AGENTS = 10
-
-
 def make_preview(text: str, *, limit: int = PREVIEW_MAX_PER_STEP) -> str:
     line = text.replace("\n", " ").strip()
     return truncate_text(line, limit)
@@ -530,14 +820,69 @@ def make_step_output(text: str, structured: Any | None = None) -> StepOutput:
     return StepOutput(text=text, structured=structured, preview=preview)
 
 
+def step_output_to_dict(out: StepOutput) -> dict[str, Any]:
+    return {
+        "text": out.text,
+        "structured": out.structured,
+        "preview": out.preview,
+    }
+
+
+def step_output_from_dict(raw: dict[str, Any]) -> StepOutput:
+    return StepOutput(
+        text=str(raw.get("text") or ""),
+        structured=raw.get("structured"),
+        preview=str(raw.get("preview") or make_preview(str(raw.get("text") or ""))),
+    )
+
+
+def evaluate_loop_until(
+    until: LoopUntil,
+    *,
+    outputs: dict[str, StepOutput],
+    body: list[WorkflowStep],
+) -> bool:
+    """Return True when the until condition is satisfied."""
+    step_id = until.step or (body[-1].id if body else "")
+    if not step_id:
+        return False
+    out = outputs.get(step_id)
+    if out is None:
+        return False
+    root = out.structured
+    if root is None:
+        text = (out.text or "").strip()
+        if not text:
+            return False
+        try:
+            root = json.loads(text)
+        except json.JSONDecodeError:
+            return False
+    try:
+        value = resolve_simple_json_path(root, until.path)
+    except WorkflowValidationError:
+        return False
+    return value == until.equals
+
+
 def render_template(
     template: str,
     *,
     item: str | None = None,
     previous: StepOutput | None = None,
     outputs: dict[str, StepOutput] | None = None,
+    task: str | None = None,
+    round: int | None = None,
 ) -> str:
     text = template
+    if task is not None:
+        text = text.replace("{{task}}", task)
+    else:
+        text = text.replace("{{task}}", "")
+    if round is not None:
+        text = text.replace("{{round}}", str(round))
+    else:
+        text = text.replace("{{round}}", "")
     if item is not None:
         text = text.replace("{{item}}", item)
     if previous is not None:
@@ -567,10 +912,6 @@ def render_template(
             text = _OUTPUTS_INDEX_RE.sub("\n".join(lines) if lines else "(no outputs)", text)
     return text
 
-
-# (constants moved above make_preview)
-MAX_FANOUT_ITEMS = 16
-WAIT_TIMEOUT_MS = 3_600_000
 
 # analysis_only — forced read-only tool allowlist
 ANALYSIS_ONLY_TOOLS: frozenset[str] = frozenset(

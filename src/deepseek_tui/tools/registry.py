@@ -542,6 +542,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         TaskGateRunTool,
         TaskListTool,
         TaskReadTool,
+        TaskResumeTool,
         TaskShellStartTool,
         TaskShellWaitTool,
     )
@@ -630,6 +631,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             TaskListTool(),
             TaskReadTool(),
             TaskCancelTool(),
+            TaskResumeTool(),
             TaskGateRunTool(),
             TaskShellStartTool(),
             TaskShellWaitTool(),
@@ -641,9 +643,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             registry.register(tool)
 
     if cfg.features.subagents:
-        from deepseek_tui.tools.workflow import WorkflowTool
+        from deepseek_tui.tools.workflow import WorkflowListTool, WorkflowTool
 
         registry.register(WorkflowTool())
+        registry.register(WorkflowListTool())
         spawn = AgentSpawnTool()
         send = AgentSendInputTool()
         assign = AgentAssignTool()

@@ -2336,6 +2336,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 self.capacity_controller, self.turn_counter, model, messages,
             )
 
+            # Optional durable transcript hook (Task true-resume).
+            on_ckpt = self.tool_context.metadata.get("on_turn_checkpoint")
+            if callable(on_ckpt):
+                try:
+                    maybe = on_ckpt(list(messages), tool_round_count)
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+                except Exception:  # noqa: BLE001 — never break the turn
+                    logger.debug("on_turn_checkpoint_failed", exc_info=True)
+
             # Capacity error escalation
             if tool_errors > 0:
                 step_error_count += tool_errors

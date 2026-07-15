@@ -143,19 +143,48 @@ function WorkflowDetail({
   process: Extract<TrackedProcess, { type: 'workflow' }>
 }): ReactElement {
   const { t } = useTranslation('common')
+  const sendMessage = useChatStore((s) => s.sendMessage)
+  const busy = useChatStore((s) => s.busy)
   const { workflow } = process
   const snap = workflow.snapshot
   const visibleAgents = snap.agents.slice(-4)
   const pct = process.progressPct
+  const runId = workflow.runId?.trim()
+  const canResume =
+    Boolean(runId) &&
+    (workflow.status === 'cancelled' ||
+      workflow.status === 'failed' ||
+      workflow.status === 'timed_out') &&
+    !busy
 
   return (
     <div className="rounded-[12px] border border-ds-border-muted bg-ds-card/70 px-4 py-3 text-[13px] leading-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="font-semibold text-ds-ink">{workflow.workflowName || snap.name}</div>
-        <span className="font-mono text-[11px] text-ds-faint">{workflow.toolCallId}</span>
+        <span className="font-mono text-[11px] text-ds-faint">
+          {runId || workflow.toolCallId}
+        </span>
       </div>
       {snap.description ? (
         <p className="mt-1 text-ds-muted">{snap.description}</p>
+      ) : null}
+      {canResume && runId ? (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => {
+              const prompt = t('workflowResumePrompt', {
+                defaultValue:
+                  '请用 workflow 工具【只传 run_id】续跑被中断的工作流 {{runId}}。不要重新用 name+task 开新跑；从 checkpoint 跳过已完成步骤继续。',
+                runId
+              })
+              void sendMessage(prompt, 'workflow')
+            }}
+            className="rounded-md border border-sky-400/50 bg-sky-500/10 px-2.5 py-1 text-[12px] font-medium text-sky-800 transition hover:bg-sky-500/15 dark:text-sky-200"
+          >
+            {t('workflowResume', { defaultValue: '续跑此 workflow' })}
+          </button>
+        </div>
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2 text-[11.5px] text-ds-faint">
         <span className="rounded-full bg-ds-hover px-2 py-0.5">

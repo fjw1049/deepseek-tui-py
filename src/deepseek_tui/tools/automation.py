@@ -1405,6 +1405,14 @@ class AutomationManager:
                         getattr(task, "ended_at", None) or _utc_now_iso()
                     )
                     changed = True
+                elif task.status is TaskStatus.TIMED_OUT:
+                    run.status = AutomationRunStatus.FAILED
+                    run.started_at = run.started_at or getattr(task, "started_at", None)
+                    run.ended_at = (
+                        getattr(task, "ended_at", None) or _utc_now_iso()
+                    )
+                    run.error = getattr(task, "error", None) or "Task timed out"
+                    changed = True
 
                 if changed:
                     self.save_run(run)

@@ -1,6 +1,6 @@
 import type { ChatBlock } from '../agent/types'
 
-export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
+export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled' | 'timed_out'
 
 export type TaskItemView = {
   id: string
@@ -12,16 +12,21 @@ export type TaskItemView = {
 // membership. `task_list` is intentionally excluded: it returns the
 // process-global task history (often dozens of stale records), which would
 // flood the panel with tasks this conversation never created.
-const TASK_TOOL_NAMES = new Set(['task_create', 'task_read', 'task_cancel'])
+const TASK_TOOL_NAMES = new Set(['task_create', 'task_read', 'task_cancel', 'task_resume'])
 
 export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
   'completed',
   'failed',
-  'canceled'
+  'canceled',
+  'timed_out'
 ])
 
 export function isActiveTaskStatus(status: TaskStatus): boolean {
   return !TERMINAL_TASK_STATUSES.has(status)
+}
+
+export function isResumableTaskStatus(status: TaskStatus): boolean {
+  return status === 'canceled' || status === 'timed_out' || status === 'failed'
 }
 
 export function normalizeTaskStatus(raw: unknown): TaskStatus {
@@ -33,6 +38,7 @@ export function normalizeTaskStatus(raw: unknown): TaskStatus {
   if (s === 'completed' || s === 'done') return 'completed'
   if (s === 'failed' || s === 'error') return 'failed'
   if (s === 'canceled' || s === 'cancelled') return 'canceled'
+  if (s === 'timed_out' || s === 'timeout' || s === 'timedout') return 'timed_out'
   return 'queued'
 }
 

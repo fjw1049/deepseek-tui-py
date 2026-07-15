@@ -3,6 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { realpath } from 'node:fs/promises'
 import { isHtmlPreviewPath } from '../../shared/html-preview'
+import { isImagePreviewPath } from '../../shared/image-preview'
 
 type PreviewServerEntry = {
   root: string
@@ -137,8 +138,8 @@ export async function getWorkspacePreviewUrl(options: {
   const workspaceRoot = options.workspaceRoot?.trim() ?? ''
   const rawPath = options.path?.trim()
   if (!rawPath) return { ok: false, message: 'File path is required.' }
-  if (!isHtmlPreviewPath(rawPath)) {
-    return { ok: false, message: 'Only HTML files can be opened in Preview.' }
+  if (!isHtmlPreviewPath(rawPath) && !isImagePreviewPath(rawPath)) {
+    return { ok: false, message: 'Only HTML or image files can be opened in Preview.' }
   }
 
   try {

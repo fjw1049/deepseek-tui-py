@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 
@@ -305,3 +306,5 @@ class SpawnRequest:
     # Persona system prompt for a plugin agent (overrides the built-in
     # ``agent_type`` prompt). ``None`` keeps the standard type prompt.
     system_prompt: str | None = None
+    # Optional per-spawn workspace override (e.g. workflow worktree).
+    workspace: Path | None = None

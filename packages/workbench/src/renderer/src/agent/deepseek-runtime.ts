@@ -31,7 +31,8 @@ import {
 import {
   parseWorkflowProgressPayload,
   parseWorkflowSnapshot,
-  workflowSnapshotFromToolMeta
+  workflowSnapshotFromToolMeta,
+  workflowRunIdFromToolMeta
 } from '../lib/workflow-snapshot'
 import { upsertWorkflowBlock } from '../store/chat-store-runtime-helpers'
 
@@ -562,6 +563,14 @@ function isWorkflowProgressItem(it: TurnItemJson): boolean {
   return it.kind === 'status' && meta?.workflow_progress === true
 }
 
+/** Plain-text StatusEvent dumps of workflow progress (duplicate of WorkflowBlock). */
+function isWorkflowStatusTextItem(it: TurnItemJson): boolean {
+  if (it.kind !== 'status') return false
+  if (isWorkflowProgressItem(it)) return false
+  const text = (it.detail ?? it.summary ?? '').trim()
+  return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(text)
+}
+
 function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload | null {
   const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
   if (!detail) return null
@@ -578,7 +587,8 @@ function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload
       workflow_name: parsed.workflow_name,
       snapshot: parsed.snapshot,
       completed: parsed.completed === true || it.status === 'completed',
-      status: parsed.status
+      status: parsed.status,
+      run_id: parsed.run_id
     }
     const progress = parseWorkflowProgressPayload(payload)
     if (progress) return progress
@@ -597,7 +607,8 @@ function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload
         parsed.status === 'cancelled' ||
         parsed.status === 'timed_out'
           ? parsed.status
-          : undefined
+          : undefined,
+      runId: typeof parsed.run_id === 'string' ? parsed.run_id : undefined
     }
   } catch {
     return null
@@ -1007,7 +1018,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             toolCallId: it.id,
             workflowName: snap.name,
             snapshot: snap,
-            completed: statusFromString(it.status) !== 'running'
+            completed: statusFromString(it.status) !== 'running',
+            runId: workflowRunIdFromToolMeta(toolBlock.meta)
           })
         }
       } else if (it.kind === 'error') {
@@ -1027,6 +1039,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         if (isPhaseBridgeItem(it)) continue
         // Mount/unmount notes are session chrome (footer badge), not chat lines.
         if (it.kind === 'status' && isPluginMountStatusItem(it)) continue
+        // Workflow progress text StatusEvents duplicate the WorkflowBlock card.
+        if (it.kind === 'status' && isWorkflowStatusTextItem(it)) continue
         const text = it.summary || it.kind
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
       }
@@ -1404,6 +1418,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   if (ap !== undefined) sink.onActivePluginChange(ap)
                 }
                 if (it && it.kind === 'status' && isPluginMountStatusItem(it)) {
+                  return
+                }
+                if (it && it.kind === 'status' && isWorkflowStatusTextItem(it)) {
                   return
                 }
                 if (

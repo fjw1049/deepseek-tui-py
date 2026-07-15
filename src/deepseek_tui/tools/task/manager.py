@@ -66,8 +66,9 @@ async def _stub_executor(
 def get_real_task_executor() -> ExecutorFunc:
     """Return the real task executor that drives Engine turn loops."""
     from deepseek_tui.engine.dispatch import real_task_executor
+    from deepseek_tui.workflow.detach import wrap_task_executor_for_workflow_detach
 
-    return real_task_executor
+    return wrap_task_executor_for_workflow_detach(real_task_executor)
 
 
 class TaskManager:
@@ -247,6 +248,44 @@ class TaskManager:
                 except (OSError, json.JSONDecodeError, KeyError):
                     continue
         return None
+
+    async def resume_task(self, id_or_prefix: str) -> TaskRecord:
+        """Re-queue a resumable terminal task for transcript (or detach) resume.
+
+        Clears sticky error and appends a timeline entry. Detach jobs keep
+        relying on Workflow checkpoints; plain tasks hydrate transcripts in
+        the executor.
+        """
+        now = _utc_now_iso()
+        async with self._lock:
+            task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            task = self._tasks[task_id]
+            if task.status is TaskStatus.RUNNING or task.status is TaskStatus.QUEUED:
+                raise RuntimeError(
+                    f"Task {task_id} is already {task.status.value}"
+                )
+            if not task.status.is_resumable():
+                raise RuntimeError(
+                    f"Task {task_id} status={task.status.value} cannot be resumed"
+                )
+            task.status = TaskStatus.QUEUED
+            task.error = None
+            task.ended_at = None
+            task.duration_ms = None
+            task.result_summary = None
+            if task_id not in self._queue:
+                self._queue.append(task_id)
+            task.timeline.append(
+                TaskTimelineEntry(
+                    timestamp=now,
+                    kind="resumed",
+                    summary="Task re-queued for resume from checkpoint",
+                )
+            )
+            self._persist_all_locked()
+            result = task
+        self._notify.set()
+        return result
 
     async def cancel_task(self, id_or_prefix: str) -> TaskRecord:
         now = _utc_now_iso()
@@ -515,6 +554,8 @@ class TaskManager:
                     counts.failed += 1
                 elif task.status is TaskStatus.CANCELED:
                     counts.canceled += 1
+                elif task.status is TaskStatus.TIMED_OUT:
+                    counts.timed_out += 1
             return counts
 
     def _count_running_cron_tasks_locked(self) -> int:
@@ -601,7 +642,19 @@ class TaskManager:
             task.ended_at = now
             if task.started_at is not None:
                 task.duration_ms = _duration_ms(task.started_at, now)
-            if cancel.is_set() and task.status is not TaskStatus.CANCELED:
+            if result.timed_out:
+                task.status = TaskStatus.TIMED_OUT
+                task.error = result.error or "Task timed out"
+                task.timeline.append(
+                    TaskTimelineEntry(
+                        timestamp=now,
+                        kind="timed_out",
+                        summary=_summarize_text(
+                            task.error or "Task timed out", TIMELINE_SUMMARY_LIMIT
+                        ),
+                    )
+                )
+            elif cancel.is_set() and task.status is not TaskStatus.CANCELED:
                 task.status = TaskStatus.CANCELED
                 task.timeline.append(
                     TaskTimelineEntry(

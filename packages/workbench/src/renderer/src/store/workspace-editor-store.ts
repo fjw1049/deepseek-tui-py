@@ -1,8 +1,12 @@
 import { create } from 'zustand'
+import { isImagePreviewPath } from '@shared/image-preview'
+
+export type EditorTabKind = 'text' | 'image'
 
 export type EditorTab = {
   id: string
   path: string
+  kind: EditorTabKind
   content: string
   savedContent: string
   loading: boolean
@@ -79,9 +83,11 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       return
     }
 
+    const kind: EditorTabKind = isImagePreviewPath(normalizedPath) ? 'image' : 'text'
     const placeholder: EditorTab = {
       id,
       path: normalizedPath,
+      kind,
       content: '',
       savedContent: '',
       loading: true,
@@ -90,6 +96,16 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       column
     }
     set((state) => upsertTab(state.tabs, placeholder))
+
+    if (kind === 'image') {
+      set((state) =>
+        upsertTab(state.tabs, {
+          ...placeholder,
+          loading: false
+        })
+      )
+      return
+    }
 
     if (typeof window.dsGui?.readWorkspaceFile !== 'function') {
       set((state) =>
@@ -122,6 +138,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
         : {
             id,
             path: normalizedPath,
+            kind: 'text',
             content: result.content,
             savedContent: result.content,
             loading: false,
@@ -160,7 +177,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     const { activeTabId, tabs } = get()
     if (!activeTabId || !root) return false
     const tab = tabs.find((entry) => entry.id === activeTabId)
-    if (!tab || tab.loading || !isDirty(tab)) return true
+    if (!tab || tab.loading || tab.kind === 'image' || !isDirty(tab)) return true
     if (typeof window.dsGui?.writeWorkspaceFile !== 'function') return false
 
     const result = await window.dsGui.writeWorkspaceFile({

@@ -17,6 +17,7 @@ import {
   lookupPatchForPath
 } from '../../lib/workspace-change-patches'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
+import { ImageDocumentPreview } from './ImageDocumentPreview'
 import { MarkdownDocumentPreview } from './MarkdownDocumentPreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 
@@ -142,7 +143,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const activePatch = activeTab ? lookupPatchForPath(patchMap, activeTab.path) : undefined
-  const isEditing = Boolean(activeTab && editingTabId === activeTab.id)
+  const isImageTab = activeTab?.kind === 'image'
+  const isEditing = Boolean(activeTab && !isImageTab && editingTabId === activeTab.id)
 
   const openActiveInExternalEditor = useCallback(async (): Promise<void> => {
     if (!activeTab || activeTab.loading) return
@@ -322,36 +324,38 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                       ? t('workspaceEditorOpenExternal', { editor: preferredEditor.label })
                       : t('editorPickerTitle')}
                   </button>
-                  {isEditing ? (
-                    <>
+                  {!isImageTab ? (
+                    isEditing ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTabId(null)}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
+                        >
+                          {t('workspaceEditorCancelEdit')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void saveActiveTab(trimmedRoot)}
+                          disabled={activeTab.loading || activeTab.content === activeTab.savedContent}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+                        >
+                          <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
+                          {t('workspaceEditorSave')}
+                        </button>
+                      </>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => setEditingTabId(null)}
-                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-                      >
-                        {t('workspaceEditorCancelEdit')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void saveActiveTab(trimmedRoot)}
-                        disabled={activeTab.loading || activeTab.content === activeTab.savedContent}
+                        onClick={() => setEditingTabId(activeTab.id)}
+                        disabled={activeTab.loading}
                         className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
                       >
-                        <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
-                        {t('workspaceEditorSave')}
+                        <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
+                        {t('workspaceEditorEdit')}
                       </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setEditingTabId(activeTab.id)}
-                      disabled={activeTab.loading}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
-                    >
-                      <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
-                      {t('workspaceEditorEdit')}
-                    </button>
-                  )}
+                    )
+                  ) : null}
                 </div>
               </div>
               {externalOpenError ? (
@@ -366,6 +370,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
               ) : null}
               {activeTab.loading ? (
                 <EditorSurfaceFallback />
+              ) : isImageTab ? (
+                <ImageDocumentPreview path={activeTab.path} workspaceRoot={trimmedRoot} />
               ) : isMarkdownPath(activeTab.path) && !isEditing ? (
                 <MarkdownDocumentPreview content={activeTab.content} />
               ) : (

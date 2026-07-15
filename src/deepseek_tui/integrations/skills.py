@@ -428,7 +428,7 @@ __all__ = ["install_system_skills", "uninstall_system_skills"]
 
 _LOG = logging.getLogger(__name__)
 
-SYSTEM_SKILL_VERSION = "0.1.0"
+SYSTEM_SKILL_VERSION = "0.2.4"
 
 SKILL_CREATOR_BODY = """\
 ---
@@ -456,6 +456,94 @@ file that follows the standard format:
 - Avoid duplicating capabilities already in the base system prompt.
 """
 
+EXECUTION_ROUTER_BODY = """\
+---
+name: execution-router
+description: Decide whether a task should use a single agent, an existing named workflow, a targeted subagent, or a new workflow. Use before large reviews or when the user asks if workflow/multi-agent is appropriate.
+---
+
+# Execution Router
+
+Start with the simplest architecture that meets the quality bar. Escalate only when structure, evidence needs, context pressure, or verification justify coordination cost.
+
+## When to use
+
+- "Is workflow the right approach?"
+- "Single agent vs multi-agent?"
+- Before large repo reviews or research tasks
+
+Skip for trivial one-step edits when the user already chose a mode.
+
+## Scope first
+
+Identify: target (repo/diff/files), final artifact, success metric, side effects, exclusions, constraints.
+
+## Routing
+
+Prefer in order:
+
+1. **single-agent** — small scope, one domain, low evidence breadth
+2. **named workflow** — `repo_review`, `diff_review`, `spec_check`, or project `workflows/*.json`
+3. **targeted subagent** — one focused verifier alongside the main agent
+4. **new/extend workflow** — only when no existing name fits
+
+Call `workflow` with `name` + `task` when recommending a named workflow. Use `items_from` fanout when upstream structured arrays drive parallel work. Use `loop` only for bounded refine/verify cycles.
+
+## Output
+
+Return: Recommendation, Concrete action, Confidence, Scope assumptions, Why, Minimum viable approach.
+"""
+
+WORKFLOW_GUIDE_BODY = """\
+---
+name: workflow-guide
+description: Create, modify, or explain DeepSeek Workflow IR specs (phases/steps). Use when authoring named workflows under workflows/ or .deepseek/workflows/, or explaining agent/fanout/pipeline/loop/synthesis.
+---
+
+# Workflow Guide
+
+DeepSeek workflows use JSON Workflow IR v1 executed by the `workflow` tool (not Pi artifact-graph).
+
+## Discovery
+
+Higher priority wins:
+
+1. `<cwd>/workflows/<name>.json` or `<name>/spec.json`
+2. `<cwd>/.deepseek/workflows/`
+3. `~/.deepseek/workflows/`
+4. Bundled presets: `repo_review`, `diff_review`, `spec_check`
+
+## Step types
+
+- `agent` — one spawn (`label` + `prompt`, optional `output_schema`)
+- `fanout` — parallel items: static `items` **or** `items_from: {step, path}` (e.g. `$.targets`)
+- `pipeline` — per-item serial stages
+- `loop` — `max_rounds` + optional `until: {path, equals, step?}` over body `steps`
+- `synthesis` — merge via `{{outputs.<id>}}`
+
+Templates: `{{task}}`, `{{item}}`, `{{previous}}`, `{{round}}`, `{{outputs.*}}`.
+
+## Authoring rules
+
+- Prefer adapting a bundled preset before inventing topology.
+- Upstream of `items_from` should use `output_schema` so structured JSON is reliable.
+- Keep review/research workflows `analysis_only` or read-heavy unless writes are required.
+- For mutating parallel work, set `policy.worktree` to `"on"` (git-only; fail-closed otherwise).
+- Validate by running `workflow` with a small task; interrupted runs resume via `run_id`.
+- Per-step `timeout_seconds` (1..3600) on `agent`/`fanout`/`synthesis` caps one agent call; on timeout the step yields no output (subject to `on_error`).
+- `policy.token_budget` is declared but not enforced - bound cost with `max_agents`, `concurrency`, `wall_clock_seconds`, `timeout_seconds`.
+- Long runs the user will not wait for: pass `detach: true` (TaskManager drives the same `run_id`; cancel with `task_cancel`).
+- Save reusable specs under `workflows/<name>.json` (shared) or `.deepseek/workflows/` (private).
+
+## Runs
+
+Checkpoints live in `.deepseek/workflow-runs/<run_id>/run.json`. Resume with `workflow({ "run_id": "..." })`. Call `workflow_list` to enumerate available workflows and recent runs.
+With `policy.worktree: "on"`, edits land under `.deepseek/workflow-runs/<run_id>/tree` on branch `deepseek-wf/<run_id>`; resume reuses that tree.
+Fanout also checkpoints each finished item as `{step}:{item}` so mid-fanout resume skips completed branches.
+
+**Loop resume caveat:** `loop` round index is not persisted. If a run is interrupted inside a loop, resume restarts that loop from round 1 (body steps re-run). Prefer idempotent / read-mostly loop bodies, or keep mutating work outside the loop.
+"""
+
 
 def install_system_skills(skills_dir: Path | None = None) -> None:
     """Install bundled system skills if not already present.
@@ -466,11 +554,17 @@ def install_system_skills(skills_dir: Path | None = None) -> None:
     target.mkdir(parents=True, exist_ok=True)
 
     _install_skill_creator(target)
+    _install_bundled_skill(target, "execution-router", EXECUTION_ROUTER_BODY)
+    _install_bundled_skill(target, "workflow-guide", WORKFLOW_GUIDE_BODY)
 
 
 def _install_skill_creator(skills_dir: Path) -> None:
     """Install the skill-creator skill."""
-    dest = skills_dir / "skill-creator"
+    _install_bundled_skill(skills_dir, "skill-creator", SKILL_CREATOR_BODY)
+
+
+def _install_bundled_skill(skills_dir: Path, name: str, body: str) -> None:
+    dest = skills_dir / name
     version_marker = dest / SYSTEM_VERSION_MARKER
 
     if version_marker.is_file():
@@ -479,9 +573,9 @@ def _install_skill_creator(skills_dir: Path) -> None:
             return
 
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / SKILL_FILENAME).write_text(SKILL_CREATOR_BODY, encoding="utf-8")
+    (dest / SKILL_FILENAME).write_text(body, encoding="utf-8")
     version_marker.write_text(SYSTEM_SKILL_VERSION, encoding="utf-8")
-    _LOG.info("Installed system skill: skill-creator v%s", SYSTEM_SKILL_VERSION)
+    _LOG.info("Installed system skill: %s v%s", name, SYSTEM_SKILL_VERSION)
 
 
 def uninstall_system_skills(skills_dir: Path | None = None) -> None:
@@ -492,10 +586,11 @@ def uninstall_system_skills(skills_dir: Path | None = None) -> None:
     import shutil
 
     target = skills_dir or default_skills_dir()
-    dest = target / "skill-creator"
-    if dest.is_dir():
-        shutil.rmtree(dest)
-        _LOG.info("Uninstalled system skill: skill-creator")
+    for name in ("skill-creator", "execution-router", "workflow-guide"):
+        dest = target / name
+        if dest.is_dir():
+            shutil.rmtree(dest)
+            _LOG.info("Uninstalled system skill: %s", name)
 
 
 # ======================================================================

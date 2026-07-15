@@ -41,9 +41,23 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
+    TIMED_OUT = "timed_out"
 
     def is_terminal(self) -> bool:
-        return self in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED)
+        return self in (
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELED,
+            TaskStatus.TIMED_OUT,
+        )
+
+    def is_resumable(self) -> bool:
+        """Terminal states that may re-queue for transcript resume."""
+        return self in (
+            TaskStatus.CANCELED,
+            TaskStatus.TIMED_OUT,
+            TaskStatus.FAILED,
+        )
 
 
 class TaskToolStatus(str, Enum):
@@ -212,6 +226,7 @@ class TaskCounts:
     completed: int = 0
     failed: int = 0
     canceled: int = 0
+    timed_out: int = 0
 
 
 @dataclass(slots=True)
@@ -262,6 +277,7 @@ class TaskExecutionResult:
     summary: str
     detail: str | None = None
     error: str | None = None
+    timed_out: bool = False
 
 
 ExecutorFunc = Callable[[ExecutionTask, asyncio.Event], Awaitable[TaskExecutionResult]]

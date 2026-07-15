@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "spec_check",
+    "description": "Extract requirements from a spec, map coverage, and report gaps."
+  },
+  "policy": {
+    "approval_mode": "analysis_only",
+    "on_error": "continue",
+    "max_agents": 8,
+    "concurrency": 3,
+    "wall_clock_seconds": 600
+  },
+  "phases": [
+    {
+      "id": "extract",
+      "title": "Extract",
+      "steps": [
+        {
+          "id": "extract",
+          "type": "agent",
+          "label": "extractor",
+          "agent_type": "explore",
+          "prompt": "Task:\n{{task}}\n\nExtract testable requirements. Return JSON with \"requirements\" as an array of short requirement strings.",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "requirements": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              }
+            },
+            "required": ["requirements"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "map",
+      "title": "Map",
+      "steps": [
+        {
+          "id": "map",
+          "type": "fanout",
+          "items_from": { "step": "extract", "path": "$.requirements" },
+          "agent": {
+            "label_template": "req {{item}}",
+            "agent_type": "explore",
+            "prompt_template": "Task:\n{{task}}\n\nRequirement: {{item}}\nFind implementation/tests evidence. Note covered, partial, or missing."
+          }
+        }
+      ]
+    },
+    {
+      "id": "report",
+      "title": "Report",
+      "steps": [
+        {
+          "id": "final",
+          "type": "synthesis",
+          "label": "gap report",
+          "agent_type": "review",
+          "prompt_template": "Task:\n{{task}}\n\nRequirements:\n{{outputs.extract}}\n\nMappings:\n{{outputs.map}}\n\nReturn JSON with ok, verdict, and findings[] (gaps and ambiguities).",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "ok": { "type": "boolean" },
+              "verdict": { "type": "string" },
+              "findings": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "required": ["ok", "verdict"]
+          }
+        }
+      ]
+    }
+  ]
+}

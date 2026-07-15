@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "repo_review",
+    "description": "Plan review targets, fan out inspections, and synthesize findings."
+  },
+  "policy": {
+    "approval_mode": "trusted_workflow",
+    "on_error": "continue",
+    "max_agents": 10,
+    "concurrency": 4,
+    "wall_clock_seconds": 600
+  },
+  "phases": [
+    {
+      "id": "plan",
+      "title": "Plan",
+      "steps": [
+        {
+          "id": "plan",
+          "type": "agent",
+          "label": "planner",
+          "agent_type": "explore",
+          "prompt": "Given this review task:\n{{task}}\n\nIdentify 2-6 concrete targets to inspect (modules, packages, or areas). Return structured JSON with a \"targets\" array of short strings. Prefer repository-relative paths or clear component names.",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "targets": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              },
+              "notes": { "type": "string" }
+            },
+            "required": ["targets"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "inspect",
+      "title": "Inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "type": "fanout",
+          "items_from": { "step": "plan", "path": "$.targets" },
+          "concurrency": 4,
+          "agent": {
+            "label_template": "inspect {{item}}",
+            "agent_type": "explore",
+            "prompt_template": "Runtime task:\n{{task}}\n\nInspect target: {{item}}\nReport integration risks, missing tests, and concrete findings. Be concise."
+          }
+        }
+      ]
+    },
+    {
+      "id": "synthesis",
+      "title": "Synthesis",
+      "steps": [
+        {
+          "id": "final",
+          "type": "synthesis",
+          "label": "final summary",
+          "agent_type": "review",
+          "prompt_template": "Runtime task:\n{{task}}\n\nPlan:\n{{outputs.plan}}\n\nInspections:\n{{outputs.inspect}}\n\nSynthesize a clear recommendation. Return structured JSON with ok (boolean), verdict (string), and findings (array of strings).",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "ok": { "type": "boolean" },
+              "verdict": { "type": "string" },
+              "findings": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "required": ["ok", "verdict"]
+          }
+        }
+      ]
+    }
+  ]
+}

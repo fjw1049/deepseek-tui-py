@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepSeek Workflow · 实现逻辑导读</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0e1412;
+    --bg2: #152019;
+    --panel: #1a2620;
+    --line: #2a3d34;
+    --text: #e8f0ea;
+    --muted: #8fa396;
+    --accent: #3dcea0;
+    --accent-dim: rgba(61, 206, 160, 0.14);
+    --amber: #e6b35a;
+    --rose: #e07a7a;
+    --blue: #6db3e8;
+    --radius: 10px;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #1c3328 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #1a2a38 0%, transparent 50%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    font-size: 16px;
+  }
+
+  .grain {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    opacity: 0.045;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem 5rem;
+  }
+
+  header.hero {
+    padding: 2rem 0 2.5rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 2rem;
+    animation: rise 0.7s ease both;
+  }
+  header.hero .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+  }
+  header.hero h1 {
+    font-family: Newsreader, Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(2rem, 5vw, 3rem);
+    line-height: 1.15;
+    margin: 0 0 0.85rem;
+    letter-spacing: -0.02em;
+  }
+  header.hero p.lead {
+    max-width: 38rem;
+    color: var(--muted);
+    font-size: 1.05rem;
+    margin: 0;
+  }
+
+  nav.toc {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.55rem;
+    margin: 1.75rem 0 0;
+  }
+  nav.toc a {
+    display: block;
+    padding: 0.65rem 0.8rem;
+    background: var(--accent-dim);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  nav.toc a:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+  nav.toc a span {
+    display: block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    margin-bottom: 0.15rem;
+  }
+
+  section {
+    margin: 2.75rem 0;
+    padding: 1.6rem 1.4rem 1.7rem;
+    background: linear-gradient(180deg, var(--panel) 0%, var(--bg2) 100%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    animation: rise 0.6s ease both;
+  }
+  section:nth-of-type(2) { animation-delay: 0.05s; }
+  section:nth-of-type(3) { animation-delay: 0.08s; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .sec-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.75rem;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+  }
+  h2 {
+    font-family: Newsreader, Georgia, serif;
+    font-size: 1.55rem;
+    font-weight: 600;
+    margin: 0.25rem 0 0.65rem;
+    letter-spacing: -0.015em;
+  }
+  h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 1.35rem 0 0.5rem;
+    color: var(--amber);
+  }
+  p { margin: 0.55rem 0; color: #d5e2d9; }
+  .muted { color: var(--muted); }
+  ul, ol { margin: 0.5rem 0 0.5rem 1.2rem; padding: 0; color: #d5e2d9; }
+  li { margin: 0.3rem 0; }
+
+  .callout {
+    margin: 1rem 0;
+    padding: 0.85rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-dim);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.95rem;
+  }
+  .callout.warn {
+    border-left-color: var(--amber);
+    background: rgba(230, 179, 90, 0.1);
+  }
+  .callout.danger {
+    border-left-color: var(--rose);
+    background: rgba(224, 122, 122, 0.1);
+  }
+
+  .diagram {
+    margin: 1.1rem 0 0.4rem;
+    padding: 1rem;
+    background: #0b110f;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .mermaid { display: flex; justify-content: center; }
+
+  pre.ex {
+    margin: 0.7rem 0;
+    padding: 0.95rem 1rem;
+    background: #0b110f;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: #c8ddd0;
+  }
+  pre.ex .c { color: #6f8a7a; }
+  pre.ex .k { color: var(--blue); }
+  pre.ex .s { color: #9fd6b5; }
+  pre.ex .n { color: var(--amber); }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+    margin: 0.9rem 0;
+  }
+  @media (max-width: 720px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+  .card {
+    padding: 0.9rem 1rem;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .card h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.92rem;
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--accent);
+  }
+  .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+  table.compare {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.9rem 0;
+    font-size: 0.9rem;
+  }
+  table.compare th, table.compare td {
+    border: 1px solid var(--line);
+    padding: 0.55rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.compare th {
+    background: rgba(61, 206, 160, 0.1);
+    color: var(--accent);
+    font-weight: 560;
+  }
+  table.compare td { color: #d0ddd4; }
+
+  .tag {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(61, 206, 160, 0.35);
+    margin-right: 0.25rem;
+  }
+
+  footer {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  footer code {
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">DeepSeek TUI · Workflow IR</div>
+  <h1>Workflow 实现逻辑导读</h1>
+  <p class="lead">
+    用「用户说一句话 → 系统怎么跑」的视角，把命名运行、动态扇出、落盘续跑、worktree 隔离、detach 后台跑一遍。每节都有小例子。
+  </p>
+  <nav class="toc" aria-label="目录">
+    <a href="#s0"><span>00</span>一句话总览</a>
+    <a href="#s1"><span>01</span>工具怎么被调用</a>
+    <a href="#s2"><span>02</span>命名运行 + 发现</a>
+    <a href="#s3"><span>03</span>动态扇出 items_from</a>
+    <a href="#s4"><span>04</span>模板与预置</a>
+    <a href="#s5"><span>05</span>loop 直到 done</a>
+    <a href="#s6"><span>06</span>落盘与 resume</a>
+    <a href="#s7"><span>07</span>worktree 隔离</a>
+    <a href="#s8"><span>08</span>detach 后台</a>
+    <a href="#s9"><span>09</span>端到端一张图</a>
+  </nav>
+</header>
+
+<!-- 00 -->
+<section id="s0">
+  <div class="sec-num">00 · 总览</div>
+  <h2>先把整条链路装进脑子</h2>
+  <p>
+    Workflow 不是「再开一个聊天窗口」，而是：你交给它一张<strong>流程图说明书</strong>（JSON IR），
+    运行时按图 spawn 子 agent，每步可落盘，还能隔离改代码、后台长跑。
+  </p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  U["用户任务"] --> T{"workflow 工具"}
+  T -->|name+task| C["找 JSON 说明书"]
+  T -->|spec| C2["直接用你给的 IR"]
+  T -->|run_id| R["从断点续跑"]
+  T -->|detach:true| D["丢进 TaskManager"]
+  C --> E["run_workflow 引擎"]
+  C2 --> E
+  R --> E
+  D --> E
+  E --> A["子 agent / fanout / loop"]
+  A --> OUT["结果 + run_id"]
+    </pre>
+  </div>
+  <div class="callout">
+    <strong>记忆口诀：</strong>说明书（IR）→ 引擎按步跑 → 每步可存档 → 可选隔离工作区 / 可选后台。
+  </div>
+</section>
+
+<!-- 01 -->
+<section id="s1">
+  <div class="sec-num">01 · 入口</div>
+  <h2>模型（或你）怎么调用</h2>
+  <p>工具名是 <span class="tag">workflow</span>。四种入口<strong>互斥</strong>（detach 可叠加在前三种上）：</p>
+  <table class="compare">
+    <tr>
+      <th>你传什么</th>
+      <th>系统做什么</th>
+      <th>生活化例子</th>
+    </tr>
+    <tr>
+      <td><code>name</code> + <code>task</code></td>
+      <td>去目录里找现成 JSON，把 task 填进提示词</td>
+      <td>点外卖选「套餐 A」，备注写「少辣」</td>
+    </tr>
+    <tr>
+      <td><code>spec</code></td>
+      <td>用你现场写的完整流程图</td>
+      <td>自己画菜谱现做</td>
+    </tr>
+    <tr>
+      <td><code>run_id</code></td>
+      <td>读上次存档，跳过已完成步骤</td>
+      <td>游戏读档继续打 Boss</td>
+    </tr>
+    <tr>
+      <td>再加 <code>detach: true</code></td>
+      <td>立刻返回任务号，后台继续跑</td>
+      <td>外卖下单后不用盯厨房</td>
+    </tr>
+  </table>
+  <h3>例子：最常见调用</h3>
+  <pre class="ex"><span class="c">// 用户说：「审查 engine / tools / workbench 集成风险」</span>
+{
+  <span class="k">"name"</span>: <span class="s">"repo_review"</span>,
+  <span class="k">"task"</span>: <span class="s">"审查 engine/tools/workbench 集成风险"</span>
+}</pre>
+</section>
+
+<!-- 02 -->
+<section id="s2">
+  <div class="sec-num">02 · 命名运行</div>
+  <h2>四级发现：谁的说明书优先</h2>
+  <p>写了 <code>name: "repo_review"</code> 之后，系统按优先级找同名 JSON（<strong>越靠前越优先</strong>）：</p>
+  <ol>
+    <li><code>&lt;当前项目&gt;/workflows/</code> — 团队共享</li>
+    <li><code>&lt;当前项目&gt;/.deepseek/workflows/</code> — 本机项目私有</li>
+    <li><code>~/.deepseek/workflows/</code> — 你的全局私有</li>
+    <li>包内 presets — 自带的 <code>repo_review</code> / <code>diff_review</code> / <code>spec_check</code></li>
+  </ol>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  N["name = repo_review"] --> A{"项目 workflows/ ?"}
+  A -->|有| W["用团队那份"]
+  A -->|没有| B{".deepseek/workflows/ ?"}
+  B -->|有| P["用项目私有"]
+  B -->|没有| C{"~/.deepseek/workflows/ ?"}
+  C -->|有| G["用用户全局"]
+  C -->|没有| D["用内置 preset"]
+    </pre>
+  </div>
+  <div class="callout">
+    <strong>为什么这样设计：</strong>模型不用每次现场编完整 IR（容易漏字段）；团队把稳定流程落成 JSON 共享。
+  </div>
+  <h3>对比：没有命名时的痛苦写法</h3>
+  <pre class="ex"><span class="c">// 以前：模型必须手写完整图，items 还得猜死</span>
+{
+  <span class="k">"spec"</span>: {
+    <span class="k">"phases"</span>: [{
+      <span class="k">"steps"</span>: [
+        { <span class="k">"type"</span>: <span class="s">"fanout"</span>, <span class="k">"items"</span>: [<span class="s">"engine"</span>, <span class="s">"tools"</span>, <span class="s">"workbench"</span>], ... },
+        { <span class="k">"type"</span>: <span class="s">"synthesis"</span>, ... }
+      ]
+    }]
+  }
+}</pre>
+</section>
+
+<!-- 03 -->
+<section id="s3">
+  <div class="sec-num">03 · 动态扇出</div>
+  <h2>先看仓库，再决定开几路</h2>
+  <p>
+    Fanout 有两种填法，<strong>只能二选一</strong>：
+  </p>
+  <div class="grid-2">
+    <div class="card">
+      <h4>items（静态）</h4>
+      <p>写死名单：["engine","tools"]。适合你已经知道目标。</p>
+    </div>
+    <div class="card">
+      <h4>items_from（动态）</h4>
+      <p>从上一步 structured 输出里抠数组。适合「先规划再并行」。</p>
+    </div>
+  </div>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  P["plan 子 agent"] -->|"返回 JSON"| J["{ targets: [engine, tools] }"]
+  J --> F["fanout items_from path=$.targets"]
+  F --> A1["子 agent: Inspect engine"]
+  F --> A2["子 agent: Inspect tools"]
+  A1 --> S["synthesis 汇总"]
+  A2 --> S
+    </pre>
+  </div>
+  <h3>例子：plan 返回 2 个 → 只开 2 路</h3>
+  <pre class="ex"><span class="c">// IR 片段（preset repo_review 里已有）</span>
+{ <span class="k">"id"</span>: <span class="s">"plan"</span>, <span class="k">"type"</span>: <span class="s">"agent"</span>, <span class="k">"prompt"</span>: <span class="s">"{{task}} → 产出 targets[]"</span> }
+
+{
+  <span class="k">"id"</span>: <span class="s">"inspect"</span>,
+  <span class="k">"type"</span>: <span class="s">"fanout"</span>,
+  <span class="k">"items_from"</span>: { <span class="k">"step"</span>: <span class="s">"plan"</span>, <span class="k">"path"</span>: <span class="s">"$.targets"</span> },
+  <span class="k">"agent"</span>: { <span class="k">"prompt_template"</span>: <span class="s">"Inspect {{item}} for {{task}}"</span> }
+}
+
+<span class="c">// 若 plan 返回 5 个 targets → 开 5 路（上限 16）</span></pre>
+  <div class="callout">
+    <strong>核心收益：</strong>「声明式编排」比手写多次 <code>agent_spawn</code> 更稳——扇出数量跟仓库实际情况走，不是猜。
+  </div>
+</section>
+
+<!-- 04 -->
+<section id="s4">
+  <div class="sec-num">04 · 模板与预置</div>
+  <h2>同一份 JSON，换任务就能重跑</h2>
+  <p>提示词里的占位符，运行时才填：</p>
+  <table class="compare">
+    <tr><th>占位符</th><th>含义</th><th>例子</th></tr>
+    <tr><td><code>{{task}}</code></td><td>本次用户任务</td><td>「审查集成风险」</td></tr>
+    <tr><td><code>{{item}}</code></td><td>fanout 当前项</td><td><code>engine</code></td></tr>
+    <tr><td><code>{{round}}</code></td><td>loop 第几轮</td><td><code>2</code></td></tr>
+    <tr><td><code>{{outputs.plan}}</code></td><td>某步文本输出</td><td>synthesis 引用上游</td></tr>
+  </table>
+  <h3>三个内置套餐</h3>
+  <div class="grid-2">
+    <div class="card">
+      <h4>repo_review</h4>
+      <p>plan → items_from fanout → synthesis。多模块集成风险。</p>
+    </div>
+    <div class="card">
+      <h4>diff_review</h4>
+      <p>plan lenses → fanout → synthesis。审当前 diff。</p>
+    </div>
+    <div class="card">
+      <h4>spec_check</h4>
+      <p>抽需求 → fanout 对照实现 → report。偏只读。</p>
+    </div>
+    <div class="card">
+      <h4>policy 小抄</h4>
+      <p><code>analysis_only</code> 限制写工具；<code>worktree: on</code> 隔离改码；墙钟超时等。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 05 -->
+<section id="s5">
+  <div class="sec-num">05 · Loop</div>
+  <h2>有界重试：修到 done 或到上限</h2>
+  <p>不必上「动态 JS 控制器」。用 <code>loop</code> + <code>until</code> 就够做「再验证一轮」。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  S["进入 loop refine"] --> R1["round=1 子 agent"]
+  R1 --> C1{"structured.done == true ?"}
+  C1 -->|是| STOP["提前结束"]
+  C1 -->|否| R2["round=2"]
+  R2 --> C2{"done ?"}
+  C2 -->|是| STOP
+  C2 -->|否| R3["round=3 = max"]
+  R3 --> END["强制结束"]
+    </pre>
+  </div>
+  <h3>例子</h3>
+  <pre class="ex">{
+  <span class="k">"type"</span>: <span class="s">"loop"</span>,
+  <span class="k">"id"</span>: <span class="s">"refine"</span>,
+  <span class="k">"max_rounds"</span>: <span class="n">3</span>,
+  <span class="k">"until"</span>: { <span class="k">"path"</span>: <span class="s">"$.done"</span>, <span class="k">"equals"</span>: <span class="n">true</span> },
+  <span class="k">"steps"</span>: [{
+    <span class="k">"type"</span>: <span class="s">"agent"</span>,
+    <span class="k">"prompt"</span>: <span class="s">"Round {{round}}. Fix remaining. Return {done, notes}."</span>
+  }]
+}
+<span class="c">// 第 2 轮返回 {"done": true} → 不再跑第 3 轮</span></pre>
+</section>
+
+<!-- 06 -->
+<section id="s6">
+  <div class="sec-num">06 · 存档</div>
+  <h2>跑到一半断了：靠 run_id 续</h2>
+  <p>
+    每次运行会在项目下写：
+    <code>.deepseek/workflow-runs/&lt;run_id&gt;/run.json</code>
+  </p>
+  <p>里面记着：说明书快照、已完成 step id、各步 outputs、状态、可选 worktree 路径。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+  participant U as 用户/模型
+  participant W as workflow 工具
+  participant Disk as run.json
+  U->>W: name+task 开始跑
+  W->>Disk: 每完成一步 checkpoint
+  Note over U,W: Esc / 超时 / 崩溃
+  U->>W: { run_id: "wf_a1b2..." }
+  W->>Disk: 读已完成 steps
+  W->>W: 跳过完成项，从下一 step 继续
+    </pre>
+  </div>
+  <div class="callout warn">
+    <strong>注意：</strong>这是「停了再启」，不是后台不停跑。要后台 → 看下一节的 detach。
+  </div>
+  <h3>例子</h3>
+  <pre class="ex">{ <span class="k">"run_id"</span>: <span class="s">"wf_a1b2c3d4e5f6"</span> }</pre>
+</section>
+
+<!-- 07 -->
+<section id="s7">
+  <div class="sec-num">07 · Worktree</div>
+  <h2>并行改代码时，别踩烂主目录</h2>
+  <p>
+    默认 <code>policy.worktree: "off"</code>。打开后，整次 run 的子 agent 都在独立 git worktree 里干活。
+  </p>
+  <div class="grid-2">
+    <div class="card">
+      <h4>没有 worktree</h4>
+      <p>3 个 fanout 同时改同一工作区 → 冲突、难回滚。</p>
+    </div>
+    <div class="card">
+      <h4>有 worktree</h4>
+      <p>改动落在隔离分支；主目录 <code>git status</code> 干净；结束给人看 diff/PR。</p>
+    </div>
+  </div>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+  subgraph Main["主工作区（保持干净）"]
+    M["你的日常代码"]
+  end
+  subgraph WT[".deepseek/workflow-runs/wf_xxx/tree"]
+    B["分支 deepseek-wf/wf_xxx"]
+    A1["agent A 改测试"]
+    A2["agent B 改实现"]
+  end
+  Main -.->|git worktree add| WT
+  B --> A1
+  B --> A2
+    </pre>
+  </div>
+  <h3>规则（MVP）</h3>
+  <ul>
+    <li>路径：<code>.deepseek/workflow-runs/&lt;run_id&gt;/tree</code></li>
+    <li>分支：<code>deepseek-wf/&lt;run_id&gt;</code></li>
+    <li>该 run 所有 spawn 的 workspace = 这个 tree</li>
+    <li>跑完<strong>不自动删</strong>；结果里带回 <code>worktree_path</code> + <code>branch</code></li>
+    <li>不是 git 仓库却开了 on → <strong>直接报错</strong>（fail-closed）</li>
+    <li><code>run_id</code> 续跑 → 复用同一 tree</li>
+  </ul>
+  <pre class="ex"><span class="c">// 在 spec.policy 里打开</span>
+<span class="k">"policy"</span>: { <span class="k">"worktree"</span>: <span class="s">"on"</span>, <span class="k">"approval_mode"</span>: <span class="s">"trusted_workflow"</span> }</pre>
+</section>
+
+<!-- 08 -->
+<section id="s8">
+  <div class="sec-num">08 · Detach</div>
+  <h2>关电脑前也能丢给后台（进程还在时）</h2>
+  <p>
+    现在：tool call 断了 → 要人手动 <code>run_id</code> resume。<br />
+    Detach：立刻返回，由 <strong>TaskManager</strong> 工人继续推同一 <code>run_id</code> 到终态。
+  </p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+  participant U as 主会话
+  participant W as workflow 工具
+  participant TM as TaskManager
+  participant Disk as run.json
+  U->>W: name+task, detach:true
+  W->>Disk: create_run (+ 可选 worktree)
+  W->>TM: 入队 [workflow-detach] run_id=...
+  W-->>U: 立刻返回 run_id + task_id
+  Note over U: 主回合可结束 / Esc 只停等待
+  TM->>Disk: worker 驱动 run_workflow
+  TM->>Disk: 直到 completed / failed / cancelled
+    </pre>
+  </div>
+  <h3>例子</h3>
+  <pre class="ex">{
+  <span class="k">"name"</span>: <span class="s">"repo_review"</span>,
+  <span class="k">"task"</span>: <span class="s">"跑 deep 审查，我要去开会"</span>,
+  <span class="k">"detach"</span>: <span class="n">true</span>
+}
+<span class="c">// 立即返回：</span>
+<span class="c">// run_id=wf_...  task_id=task_...</span>
+<span class="c">// 取消：用 task_cancel，不是 Esc</span></pre>
+  <div class="callout danger">
+    <strong>边界：</strong>MVP 复用现有 TaskManager，不是独立 OS 守护进程。
+    TUI/server 进程退出后，工人也就停了。真正「关机还在跑」需要以后另做 daemon。
+  </div>
+</section>
+
+<!-- 09 -->
+<section id="s9">
+  <div class="sec-num">09 · 拼起来</div>
+  <h2>一次「审查 + 隔离 + 可续跑」长什么样</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  U["用户：审查并自动修测试"] --> R{execution-router skill}
+  R -->|简单| S["单 agent 搞定"]
+  R -->|适合套餐| N["workflow name=repo_review"]
+  N --> WT{"policy.worktree=on?"}
+  WT -->|是| TREE["建 git worktree"]
+  WT -->|否| MAIN["用主目录 cwd"]
+  TREE --> PLAN["plan → targets[]"]
+  MAIN --> PLAN
+  PLAN --> FAN["fanout items_from"]
+  FAN --> SYN["synthesis"]
+  SYN --> LOOP{"要 refine?"}
+  LOOP -->|loop until| FIX["最多 3 轮修"]
+  LOOP -->|不用| DONE["ToolResult + run_id"]
+  FIX --> DONE
+  DONE -->|中断| RES["run_id 续跑同 tree"]
+  DONE -->|detach| BG["TaskManager 推到终态"]
+    </pre>
+  </div>
+
+  <h3>技能怎么掺一脚</h3>
+  <ul>
+    <li><span class="tag">execution-router</span>：先判断「单 agent / 用哪个 named workflow / 要不要新建 IR」，避免无脑 fan-out。</li>
+    <li><span class="tag">workflow-guide</span>：教模型写 DeepSeek IR（不是 Pi 那套 artifact-graph）。</li>
+  </ul>
+
+  <h3>文件落在哪（方便你对照源码）</h3>
+  <table class="compare">
+    <tr><th>模块</th><th>路径</th><th>干什么</th></tr>
+    <tr><td>工具入口</td><td><code>tools/workflow.py</code></td><td>解析参数、worktree、detach 入队、同步跑</td></tr>
+    <tr><td>引擎</td><td><code>workflow/runtime.py</code></td><td>按 phase/step 调度，spawn 子 agent</td></tr>
+    <tr><td>模型/校验</td><td><code>workflow/models.py</code></td><td>IR 解析、模板、policy.worktree</td></tr>
+    <tr><td>发现</td><td><code>workflow/catalog.py</code></td><td>四级找命名 workflow</td></tr>
+    <tr><td>存档</td><td><code>workflow/store.py</code></td><td>run.json checkpoint</td></tr>
+    <tr><td>隔离</td><td><code>workflow/worktree.py</code></td><td>git worktree add / 复用</td></tr>
+    <tr><td>后台</td><td><code>workflow/detach.py</code></td><td>TaskManager 拦截并驱动 resume</td></tr>
+  </table>
+</section>
+
+<footer>
+  <p>
+    打开本文件即可本地浏览：<code>docs/workflow-logic-guide.html</code>。
+    更偏架构细图的旧页：<code>docs/workflow.html</code>。
+    SubAgent / Task 真续跑契约：<a href="./resume-model-guide.html" style="color:var(--accent)">resume-model-guide.html</a>。
+  </p>
+  <p>图用 Mermaid 渲染；若某图空白，检查网络能否加载 jsDelivr CDN。</p>
+</footer>
+
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    themeVariables: {
+      primaryColor: "#1a2620",
+      primaryTextColor: "#e8f0ea",
+      primaryBorderColor: "#3dcea0",
+      lineColor: "#6f8a7a",
+      secondaryColor: "#152019",
+      tertiaryColor: "#0e1412",
+      fontFamily: "IBM Plex Sans, sans-serif",
+      fontSize: "14px",
+    },
+    flowchart: { curve: "basis", padding: 14, htmlLabels: true },
+    sequence: { actorMargin: 48, boxMargin: 8 },
+  });
+</script>
+</body>
+</html>

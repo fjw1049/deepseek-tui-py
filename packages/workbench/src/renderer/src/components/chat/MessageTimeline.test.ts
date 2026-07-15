@@ -4,6 +4,7 @@ import type { ChatBlock } from '../../agent/types'
 import {
   groupProcessRows,
   isSubagentOrchestrationToolName,
+  isWorkflowStatusSystemText,
   placeAssistantContentBlock,
   reasoningDetailTextFromBlocks,
   reasoningNarrationFromBlocks,
@@ -75,6 +76,20 @@ describe('isSubagentOrchestrationToolName', () => {
     expect(isSubagentOrchestrationToolName('read_file')).toBe(false)
     expect(isSubagentOrchestrationToolName('exec_shell')).toBe(false)
     expect(isSubagentOrchestrationToolName(undefined)).toBe(false)
+  })
+})
+
+describe('isWorkflowStatusSystemText', () => {
+  it('detects workflow progress status dumps', () => {
+    expect(
+      isWorkflowStatusSystemText(
+        'Workflow running ◆ Workflow: repo_review (0/1 done, 1 running)'
+      )
+    ).toBe(true)
+    expect(isWorkflowStatusSystemText('Workflow completed ◆ Workflow: repo_review')).toBe(
+      true
+    )
+    expect(isWorkflowStatusSystemText('Waiting on 1 sub-agent')).toBe(false)
   })
 })
 

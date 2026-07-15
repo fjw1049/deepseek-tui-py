@@ -844,6 +844,12 @@ export function isSubagentOrchestrationToolName(name: string | undefined): boole
   return !!name && SUBAGENT_ORCHESTRATION_TOOL_RE.test(name.trim())
 }
 
+/** Status bubbles that dump render_workflow_text — duplicate of WorkflowBlock. */
+export function isWorkflowStatusSystemText(text: string | undefined): boolean {
+  const trimmed = text?.trim() ?? ''
+  return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(trimmed)
+}
+
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
 
 /**
@@ -969,7 +975,9 @@ function MessageTurn({
         continue
       }
       if (block.kind === 'system') {
-        nextSystemBlocks.push(block)
+        if (!isWorkflowStatusSystemText(block.text)) {
+          nextSystemBlocks.push(block)
+        }
         continue
       }
       if (isProcessBlock(block)) {
@@ -2128,6 +2136,7 @@ function ProcessStreamEntry({
         workflowName={block.workflowName}
         status={block.status}
         snapshot={block.snapshot}
+        runId={block.runId}
       />
     )
   }
@@ -2868,6 +2877,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
         workflowName={block.workflowName}
         status={block.status}
         snapshot={block.snapshot}
+        runId={block.runId}
       />
     )
   }

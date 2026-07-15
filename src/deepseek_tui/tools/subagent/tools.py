@@ -511,7 +511,11 @@ class AgentResumeTool(ToolSpec):
         return "resume_agent"
 
     def description(self) -> str:
-        return "Resume a terminated sub-agent."
+        return (
+            "Resume a cancelled/interrupted/failed sub-agent from its durable "
+            "transcript checkpoint (skips completed tool rounds). Pass agent id. "
+            "Do not spawn a new agent for the same work."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {

@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepSeek · 真续跑模型（Workflow / SubAgent / Task）</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0e1412;
+    --bg2: #152019;
+    --panel: #1a2620;
+    --line: #2a3d34;
+    --text: #e8f0ea;
+    --muted: #8fa396;
+    --accent: #3dcea0;
+    --accent-dim: rgba(61, 206, 160, 0.14);
+    --amber: #e6b35a;
+    --rose: #e07a7a;
+    --blue: #6db3e8;
+    --radius: 10px;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #1c3328 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #1a2a38 0%, transparent 50%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  .grain {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    opacity: 0.045;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    z-index: 0;
+  }
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem 5rem;
+  }
+  header.hero {
+    padding: 2rem 0 2.5rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 2rem;
+  }
+  header.hero .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+  }
+  header.hero h1 {
+    font-family: Newsreader, Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(2rem, 5vw, 3rem);
+    line-height: 1.15;
+    margin: 0 0 0.85rem;
+    letter-spacing: -0.02em;
+  }
+  header.hero p.lead {
+    max-width: 40rem;
+    color: var(--muted);
+    font-size: 1.05rem;
+    margin: 0;
+  }
+  nav.toc {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.55rem;
+    margin: 1.75rem 0 0;
+  }
+  nav.toc a {
+    display: block;
+    padding: 0.65rem 0.8rem;
+    background: var(--accent-dim);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  nav.toc a:hover { border-color: var(--accent); }
+  nav.toc a span {
+    display: block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    margin-bottom: 0.15rem;
+  }
+  section {
+    margin: 2.75rem 0;
+    padding: 1.6rem 1.4rem 1.7rem;
+    background: linear-gradient(180deg, var(--panel) 0%, var(--bg2) 100%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .sec-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.75rem;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+  }
+  h2 {
+    font-family: Newsreader, Georgia, serif;
+    font-size: 1.55rem;
+    font-weight: 600;
+    margin: 0.25rem 0 0.65rem;
+  }
+  h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 1.35rem 0 0.5rem;
+    color: var(--amber);
+  }
+  p { margin: 0.55rem 0; color: #d5e2d9; }
+  .muted { color: var(--muted); }
+  ul, ol { margin: 0.5rem 0 0.5rem 1.2rem; padding: 0; color: #d5e2d9; }
+  li { margin: 0.3rem 0; }
+  .callout {
+    margin: 1rem 0;
+    padding: 0.85rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-dim);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.95rem;
+  }
+  .callout.warn {
+    border-left-color: var(--amber);
+    background: rgba(230, 179, 90, 0.1);
+  }
+  .callout.danger {
+    border-left-color: var(--rose);
+    background: rgba(224, 122, 122, 0.1);
+  }
+  .diagram {
+    margin: 1.1rem 0 0.4rem;
+    padding: 1rem;
+    background: #0b110f;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .mermaid { display: flex; justify-content: center; }
+  pre.ex {
+    margin: 0.7rem 0;
+    padding: 0.95rem 1rem;
+    background: #0b110f;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: #c8ddd0;
+  }
+  pre.ex .c { color: #6f8a7a; }
+  pre.ex .k { color: var(--blue); }
+  pre.ex .s { color: #9fd6b5; }
+  pre.ex .n { color: var(--amber); }
+  table.compare {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.8rem 0;
+    font-size: 0.92rem;
+  }
+  table.compare th, table.compare td {
+    border: 1px solid var(--line);
+    padding: 0.55rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.compare th {
+    background: rgba(61, 206, 160, 0.08);
+    color: var(--accent);
+    font-weight: 500;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+  }
+  code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.86em;
+    color: #b8e0c8;
+  }
+  .tag {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+  footer {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  footer a { color: var(--accent); }
+  .status { font-weight: 600; }
+  .status.ok { color: var(--accent); }
+  .status.gap { color: var(--amber); }
+  .status.bug { color: var(--rose); }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Design · Resume Model · draft</div>
+  <h1>真续跑模型</h1>
+  <p class="lead">
+    Workflow / SubAgent / Task 三类执行体如何「从断点接着干」。
+    本文是实现前的契约：状态机、落盘边界、字段 schema、分工与分期。
+    打开即可看图；实现时以此为准，避免再做成「同 ID 重开」。
+  </p>
+  <nav class="toc">
+    <a href="#s1"><span>01</span>三者分工</a>
+    <a href="#s2"><span>02</span>统一定义</a>
+    <a href="#s3"><span>03</span>可恢复边界</a>
+    <a href="#s4"><span>04</span>统一状态机</a>
+    <a href="#s5"><span>05</span>SubAgent</a>
+    <a href="#s6"><span>06</span>Task</a>
+    <a href="#s7"><span>07</span>Schema</a>
+    <a href="#s8"><span>08</span>UI 契约</a>
+    <a href="#s9"><span>09</span>分期落地</a>
+    <a href="#s10"><span>10</span>现状对照</a>
+  </nav>
+</header>
+
+<!-- 01 -->
+<section id="s1">
+  <div class="sec-num">01 · 分工</div>
+  <h2>三类执行体各续什么</h2>
+  <p>不要三者抢同一套 cursor。续跑对象由执行原语决定：</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  subgraph pick ["怎么选"]
+    Q["长任务 / 多步目标"]
+  end
+  Q --> R{类型}
+  R -->|"声明式多步+扇出"| WF["Workflow<br/>续：step / item"]
+  R -->|"对话式探索"| SA["SubAgent<br/>续：transcript 轮次"]
+  R -->|"后台队列 turn"| TK["Task<br/>续：transcript 轮次"]
+  TK -.->|"prompt 含 workflow-detach"| WF
+    </pre>
+  </div>
+  <table class="compare">
+    <tr><th>层</th><th>执行原语</th><th>真续跑含义</th><th>不是真续跑</th></tr>
+    <tr>
+      <td>Workflow</td>
+      <td>IR step / fanout item</td>
+      <td>skip 已完成 step 与 <code>{step}:{item}</code></td>
+      <td>只恢复 plan、重跑全部 inspect</td>
+    </tr>
+    <tr>
+      <td>SubAgent</td>
+      <td>自研 turn loop</td>
+      <td>hydrate 已落盘 messages，从下一轮 LLM 继续</td>
+      <td><code>resume_agent</code> 同 prompt 从 step 0 重开</td>
+    </tr>
+    <tr>
+      <td>Task（普通）</td>
+      <td>Engine <code>run_single_turn</code></td>
+      <td>hydrate transcript，接着跑同一 turn</td>
+      <td>重启后重入队整段 prompt</td>
+    </tr>
+    <tr>
+      <td>Task（detach）</td>
+      <td>Task 只当工人</td>
+      <td>断点只认 Workflow store</td>
+      <td>Task 再造第二套 step cursor</td>
+    </tr>
+  </table>
+  <div class="callout">
+    <strong>一句话：</strong>Workflow 续的是计划图；SubAgent / Task 续的是同一条 transcript 的下一轮。
+    Detach 任务不双轨。
+  </div>
+</section>
+
+<!-- 02 -->
+<section id="s2">
+  <div class="sec-num">02 · 定义</div>
+  <h2>什么叫「真续跑」</h2>
+  <ol>
+    <li><strong>身份稳定</strong>：同一 <code>run_id</code> / <code>agent_id</code> / <code>task_id</code>，不是新建一条冒充继续。</li>
+    <li><strong>跳过已完成工作</strong>：已 checkpoint 的 step/item 或已写入 transcript 的 tool 轮次不再重做。</li>
+    <li><strong>状态干净</strong>：进入 <code>running</code> 时清掉旧的 <code>error</code> / sticky 取消文案。</li>
+    <li><strong>入口明确</strong>：UI / 工具只走 <code>resume(id)</code>，禁止自由文本「继续」碰运气。</li>
+  </ol>
+  <div class="callout warn">
+    <strong>不保证：</strong>外部副作用事务回滚。半截 tool 的文件/网络改动不会自动撤销。
+    产品话术是「从上次完整工具轮之后继续」，不是「回滚后重放」。
+  </div>
+</section>
+
+<!-- 03 -->
+<section id="s3">
+  <div class="sec-num">03 · 边界</div>
+  <h2>可恢复边界：完整 tool-round</h2>
+  <p>SubAgent 与普通 Task 共用同一检查点粒度（Workflow 仍用 step/item）。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  A["LLM 请求"] --> B["assistant 消息"]
+  B --> C{"有 tool_calls?"}
+  C -->|否| D["本轮结束 · 可终态"]
+  C -->|是| E["逐个执行 tool"]
+  E --> F["全部 tool_result 写入 messages"]
+  F --> G["CHECKPOINT<br/>落盘 transcript + cursor"]
+  G --> A
+  E -.->|中途 cancel/kill| X["本轮作废<br/>保留上一完整 checkpoint"]
+    </pre>
+  </div>
+  <ul>
+    <li>只有「assistant + 全部 tool_result」齐了才写可恢复 checkpoint。</li>
+    <li>工具执行到一半被杀 → 该轮不入档；续跑从上一完整轮之后的 LLM 请求开始。</li>
+    <li><strong>绝不在 tool 内部续跑。</strong></li>
+  </ul>
+</section>
+
+<!-- 04 -->
+<section id="s4">
+  <div class="sec-num">04 · 状态机</div>
+  <h2>统一终态与 resume 入口</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+stateDiagram-v2
+  [*] --> running: spawn / create / resume
+  running --> completed: 正常结束
+  running --> failed: 执行错误
+  running --> cancelled: 用户取消
+  running --> timed_out: 墙钟超时
+  running --> interrupted: 进程崩溃后加载
+  cancelled --> running: resume(id)
+  timed_out --> running: resume(id)
+  interrupted --> running: resume(id)
+  failed --> running: resume(id) 可选
+  completed --> [*]
+    </pre>
+  </div>
+  <table class="compare">
+    <tr><th>规则</th><th>说明</th></tr>
+    <tr><td>timeout ≠ cancel</td><td>墙钟超时必须独立终态（或 <code>failed</code> + 明确 error），禁止 <code>cancel.set()</code> 冒充取消。</td></tr>
+    <tr><td>resume 清 error</td><td><code>status=running</code> 时 <code>error=null</code>，不残留 cancelled/timed_out 文案。</td></tr>
+    <tr><td>resume 接受</td><td>默认：<code>cancelled | timed_out | interrupted</code>；<code>failed</code> 可配置；<code>completed</code> 用 restart 另开。</td></tr>
+    <tr><td>API 命名</td><td><code>resume_*</code> = 真续跑；<code>restart_*</code> = 清 transcript 同 id 重来（可选，后做）。</td></tr>
+  </table>
+</section>
+
+<!-- 05 -->
+<section id="s5">
+  <div class="sec-num">05 · SubAgent</div>
+  <h2>Transcript 续跑</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+  participant API as resume_agent
+  participant M as SubAgentManager
+  participant Disk as subagents + transcript
+  participant L as run_subagent_loop
+  API->>M: resume(agent_id)
+  M->>Disk: load status + messages
+  M->>M: status=running, clear result/error
+  M->>L: drive with hydrated messages
+  loop 每一完整 tool-round
+    L->>Disk: checkpoint messages + steps
+  end
+  L-->>M: completed / cancelled / failed
+  M->>Disk: 终态落盘
+    </pre>
+  </div>
+  <h3>Loop 行为变更（相对现状）</h3>
+  <ul>
+    <li><strong>首次 spawn：</strong><code>messages = fork_messages? + user(prompt)</code>（与今相同）。</li>
+    <li><strong>resume：</strong><code>messages = 已落盘 transcript</code>；<strong>不再</strong>重新 append 原始 user prompt。</li>
+    <li><strong>input_queue：</strong>resume 开始前 drain，作为新 user message 注入（顺带修空壳）。</li>
+    <li><strong>嵌套子 agent：</strong>父 resume 不自动 resume 子；子各自有 id 与终态。</li>
+  </ul>
+  <h3>落盘位置（建议）</h3>
+  <pre class="ex"><span class="c"># 元数据（已有，扩展字段）</span>
+.deepseek/subagents.v1.json
+
+<span class="c"># 每个 agent 的 transcript（新增，避免主索引膨胀）</span>
+.deepseek/subagent-runs/&lt;agent_id&gt;/transcript.json
+.deepseek/subagent-runs/&lt;agent_id&gt;/meta.json   <span class="c"># cursor / reason / updated_at</span></pre>
+</section>
+
+<!-- 06 -->
+<section id="s6">
+  <div class="sec-num">06 · Task</div>
+  <h2>普通 Task vs Detach 双轨</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  T["task 出队 running"] --> D{"prompt 是 workflow-detach?"}
+  D -->|是| WF["execute_detached_workflow<br/>skip_step_ids + outputs"]
+  D -->|否| E["Engine turn<br/>hydrate transcript?"]
+  E --> R["每轮 tool-round 刷盘"]
+  R --> F["终态: completed / failed / cancelled / timed_out"]
+  WF --> F
+  F -->|可 resume| RES["task_resume(id)"]
+  RES --> D
+    </pre>
+  </div>
+  <h3>普通 Task</h3>
+  <ul>
+    <li>新增 <code>task_resume(id)</code>；进程恢复时：有 transcript → 续跑，无 → 兼容旧行为或标记不可续。</li>
+    <li>Checklist / timeline = UI 与模型旁路，<strong>不是</strong>执行 cursor；续跑首轮可把 checklist 摘要注入 nudge。</li>
+    <li>Engine 今日每次新建：resume 时 hydrate session messages 再继续，而不是再喂原始 prompt 开新 turn。</li>
+  </ul>
+  <h3>Detach Task</h3>
+  <ul>
+    <li>断点只在 <code>.deepseek/workflow-runs/&lt;run_id&gt;/run.json</code>。</li>
+    <li>Task 层负责队列、cancel token、把 timeout/cancel <strong>正确映射</strong>到 workflow 终态。</li>
+    <li>禁止给 detach 任务再挂一份 Engine transcript 当第二真相。</li>
+  </ul>
+  <div class="callout danger">
+    <strong>现状债（落地前必清）：</strong>墙钟超时里 <code>cancel.set()</code>，finalize 走 <code>canceled</code> 并丢掉
+    <code>Task timed out after …</code>。不先拆开 timeout，续跑入口会脏。
+  </div>
+</section>
+
+<!-- 07 -->
+<section id="s7">
+  <div class="sec-num">07 · Schema</div>
+  <h2>建议字段（实现时可直接对照）</h2>
+
+  <h3>共用 cursor（DurableTurnSession 概念）</h3>
+  <pre class="ex">{
+  <span class="k">"schema_version"</span>: <span class="n">1</span>,
+  <span class="k">"owner_kind"</span>: <span class="s">"subagent"</span> | <span class="s">"task"</span>,
+  <span class="k">"owner_id"</span>: <span class="s">"agent_…"</span> | <span class="s">"task_…"</span>,
+  <span class="k">"messages"</span>: [ <span class="c">/* Message.model_dump */</span> ],
+  <span class="k">"cursor"</span>: {
+    <span class="k">"steps_taken"</span>: <span class="n">0</span>,
+    <span class="k">"force_summary"</span>: <span class="n">false</span>,
+    <span class="k">"round_complete"</span>: <span class="n">true</span>
+  },
+  <span class="k">"checkpoint_reason"</span>: <span class="s">"round"</span> | <span class="s">"cancel"</span> | <span class="s">"timeout"</span> | <span class="s">"interrupt"</span>,
+  <span class="k">"updated_at"</span>: <span class="s">"ISO-8601"</span>
+}</pre>
+
+  <h3>Workflow（已有，对照）</h3>
+  <pre class="ex">{
+  <span class="k">"run_id"</span>: <span class="s">"wf_…"</span>,
+  <span class="k">"status"</span>: <span class="s">"running|completed|failed|cancelled|timed_out"</span>,
+  <span class="k">"completed_step_ids"</span>: [<span class="s">"plan"</span>, <span class="s">"inspect:src/a.py"</span>, …],
+  <span class="k">"outputs"</span>: { <span class="c">/* step → StepOutput */</span> },
+  <span class="k">"error"</span>: <span class="n">null</span>
+}</pre>
+
+  <h3>与 Workflow 的概念映射（可视化对照用）</h3>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  subgraph wf ["Workflow"]
+    W1["completed_step_ids"]
+    W2["outputs"]
+    W3["run_id"]
+  end
+  subgraph turn ["SubAgent / Task"]
+    T1["transcript.length / steps"]
+    T2["tool_result 内容"]
+    T3["agent_id / task_id"]
+  end
+  W1 -.类比.-> T1
+  W2 -.类比.-> T2
+  W3 -.类比.-> T3
+    </pre>
+  </div>
+</section>
+
+<!-- 08 -->
+<section id="s8">
+  <div class="sec-num">08 · UI</div>
+  <h2>可视化与操作契约</h2>
+  <p>后续做面板时按此契约，避免再出现 Workflow 那种「聊天继续 ≠ 续跑」。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+  subgraph tray ["ProcessTray / Dock"]
+    C["终态卡 cancelled / timed_out"]
+    B["续跑按钮"]
+  end
+  B --> P{"kind"}
+  P -->|workflow| W["sendMessage: workflow run_id only"]
+  P -->|subagent| S["resume_agent agent_id"]
+  P -->|task 普通| T["task_resume task_id"]
+  P -->|task detach| D["workflow run_id 续跑<br/>或 task_resume 走 detach 分支"]
+  C --> ID["同一 id 只保留一张卡<br/>running 优先折叠旧终态"]
+    </pre>
+  </div>
+  <ul>
+    <li>按钮文案区分：<span class="tag">续跑</span> vs <span class="tag">重新开始</span>（后者清 transcript / 新 run）。</li>
+    <li>进度可视化：Workflow 显示 phase/item；SubAgent/Task 显示 steps + 最近 tool；checklist 仅 Task 旁路。</li>
+    <li>双徽章规则：同 id 出现新 running 时折叠旧终态（Workflow 已做，另两类对齐）。</li>
+  </ul>
+</section>
+
+<!-- 09 -->
+<section id="s9">
+  <div class="sec-num">09 · 分期</div>
+  <h2>落地顺序（实现清单）</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  P0["Phase 0<br/>语义洗净"] --> P1["Phase 1<br/>SubAgent transcript"]
+  P1 --> P2["Phase 2<br/>Task transcript + API"]
+  P2 --> P3["Phase 3<br/>UI 一键续跑"]
+  P3 --> P4["Phase 4<br/>体验增强"]
+    </pre>
+  </div>
+  <table class="compare">
+    <tr><th>Phase</th><th>做什么</th><th>验收</th></tr>
+    <tr>
+      <td>0</td>
+      <td>Task 超时≠取消；文档/命名区分 resume vs restart</td>
+      <td>超时任务 status/error 可见 timed out；不进 canceled</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>SubAgent 落盘/恢复 transcript；loop hydrate</td>
+      <td>取消后 resume 不重跑已完成 tool 轮；单测覆盖</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>普通 Task transcript + <code>task_resume</code>；detach 仍只走 Workflow</td>
+      <td>中断后台 turn 可续；detach 仍 skip step/item</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>UI 按钮只发 resume(id)；Dock/Tray 折叠规则对齐</td>
+      <td>点续跑 ≠ 自由文本继续；无双徽章</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>checklist nudge、input_queue、可选 restart API</td>
+      <td>体验项，不阻塞真续跑</td>
+    </tr>
+  </table>
+  <div class="callout warn">
+    <strong>明确不做（除非另开设计）：</strong>按 checklist item 当执行 cursor 跳工具；
+    在 tool 内部续跑；给 detach Task 再挂 Engine transcript。
+  </div>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <div class="sec-num">10 · 现状</div>
+  <h2>对照表（审核快照）</h2>
+  <table class="compare">
+    <tr><th>议题</th><th>Workflow</th><th>SubAgent</th><th>Task</th></tr>
+    <tr>
+      <td>真续跑能力</td>
+      <td><span class="status ok">有</span> step/item</td>
+      <td><span class="status ok">transcript hydrate</span></td>
+      <td><span class="status ok">transcript + task_resume</span>（detach→Workflow）</td>
+    </tr>
+    <tr>
+      <td>UI 一键续跑</td>
+      <td><span class="status ok">有</span></td>
+      <td><span class="status gap">工具 resume_agent（卡按钮后置）</span></td>
+      <td><span class="status ok">TaskRunDialog 续跑</span></td>
+    </tr>
+    <tr>
+      <td>双徽章</td>
+      <td><span class="status ok">已折叠</span></td>
+      <td><span class="status ok">N/A / 同 id upsert</span></td>
+      <td><span class="status ok">N/A / Dock 按 id</span></td>
+    </tr>
+    <tr>
+      <td>sticky error</td>
+      <td><span class="status ok">已清</span></td>
+      <td><span class="status ok">resume 清 result</span></td>
+      <td><span class="status ok">resume 清 error</span></td>
+    </tr>
+    <tr>
+      <td>超时语义</td>
+      <td><span class="status ok">timed_out</span></td>
+      <td><span class="status gap">wait 超时不标 agent</span></td>
+      <td><span class="status ok">TaskStatus.TIMED_OUT</span></td>
+    </tr>
+    <tr>
+      <td>重跑已完成</td>
+      <td><span class="status ok">可 skip</span></td>
+      <td><span class="status ok">跳过已 checkpoint 轮次</span></td>
+      <td><span class="status ok">hydrate 后 CONTINUE_NUDGE</span></td>
+    </tr>
+  </table>
+  <div class="callout">
+    <strong>实现状态（2026-07）：</strong>Phase 0–3 已落地。Phase 4（checklist nudge、独立 restart API、SubAgent 卡按钮）可后置。
+  </div>
+  <h3>关键源码锚点</h3>
+  <table class="compare">
+    <tr><th>主题</th><th>路径</th></tr>
+    <tr><td>Workflow checkpoint</td><td><code>workflow/store.py</code> · <code>workflow/runtime.py</code> · <code>workflow/detach.py</code></td></tr>
+    <tr><td>SubAgent resume / persist</td><td><code>tools/subagent/manager.py</code> · <code>tools/subagent/loop.py</code></td></tr>
+    <tr><td>Task 执行 / 超时</td><td><code>tools/task/manager.py</code> · <code>engine/dispatch.py</code> (<code>real_task_executor</code>)</td></tr>
+    <tr><td>Workbench 续跑 UI</td><td><code>ProcessTray.tsx</code> · <code>WorkflowBlock.tsx</code> · <code>process-tracker.ts</code></td></tr>
+  </table>
+</section>
+
+<footer>
+  <p>
+    本地打开：<code>docs/resume-model-guide.html</code>。
+    Workflow 实现导读：<a href="./workflow-logic-guide.html">workflow-logic-guide.html</a>。
+  </p>
+  <p>图用 Mermaid（jsDelivr）；实现前以此为契约，改语义先改本文再改代码。</p>
+</footer>
+
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    themeVariables: {
+      primaryColor: "#1a2620",
+      primaryTextColor: "#e8f0ea",
+      primaryBorderColor: "#3dcea0",
+      lineColor: "#6f8a7a",
+      secondaryColor: "#152019",
+      tertiaryColor: "#0e1412",
+      fontFamily: "IBM Plex Sans, sans-serif",
+      fontSize: "14px",
+    },
+    flowchart: { curve: "basis", padding: 14, htmlLabels: true },
+    sequence: { actorMargin: 48, boxMargin: 8 },
+    stateDiagram: {  },
+  });
+</script>
+</body>
+</html>

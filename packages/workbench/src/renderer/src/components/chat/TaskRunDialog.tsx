@@ -18,8 +18,9 @@ import {
   type TaskDetail,
   type TaskTimelineEntry
 } from '../../hooks/use-thread-tasks'
-import { isActiveTaskStatus, type TaskStatus } from '../../lib/extract-tasks-from-blocks'
+import { isActiveTaskStatus, isResumableTaskStatus, type TaskStatus } from '../../lib/extract-tasks-from-blocks'
 import { formatTaskDuration, TaskStatusGlyph, taskStatusLabelKey } from './task-status'
+import { useChatStore } from '../../store/chat-store'
 
 type Props = {
   taskId: string
@@ -39,13 +40,18 @@ const NOISE_KINDS = new Set([
   'cancel_requested',
   'completed',
   'failed',
-  'canceled'
+  'canceled',
+  'timed_out',
+  'resumed'
 ])
 
 export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): ReactElement | null {
   const { t } = useTranslation('common')
+  const sendMessage = useChatStore((s) => s.sendMessage)
+  const busy = useChatStore((s) => s.busy)
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  const [resuming, setResuming] = useState(false)
 
   useEffect(() => {
     if (!open) {
@@ -92,10 +98,26 @@ export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): 
 
   const status = detail?.status ?? initialStatus
   const active = isActiveTaskStatus(status)
+  const canResume = isResumableTaskStatus(status) && !busy && !resuming
   const timeline = detail?.timeline ?? []
   const visibleTimeline = timeline.filter((entry) => !NOISE_KINDS.has(entry.kind))
   const prompt = detail?.prompt ?? ''
   const durationLabel = formatTaskDuration(detail?.durationMs ?? null)
+
+  const onResume = async (): Promise<void> => {
+    if (!canResume) return
+    setResuming(true)
+    try {
+      const resumePrompt = t('taskResumePrompt', {
+        defaultValue:
+          '请用 task_resume 工具【只传 task_id={{taskId}}】从断点续跑该后台任务。不要重新 task_create。',
+        taskId
+      })
+      await sendMessage(resumePrompt, 'task')
+    } finally {
+      setResuming(false)
+    }
+  }
 
   return createPortal(
     <div
@@ -125,6 +147,21 @@ export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): 
             <X className="h-4 w-4" />
           </button>
         </header>
+
+        {canResume ? (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-ds-border px-6 py-2.5">
+            <button
+              type="button"
+              disabled={!canResume}
+              onClick={() => void onResume()}
+              className="rounded-md border border-sky-400/50 bg-sky-500/10 px-2.5 py-1 text-[12px] font-medium text-sky-800 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-45 dark:text-sky-200"
+            >
+              {resuming
+                ? t('taskResuming', { defaultValue: '续跑中…' })
+                : t('taskResume', { defaultValue: '续跑此任务' })}
+            </button>
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">

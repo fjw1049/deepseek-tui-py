@@ -21,6 +21,8 @@ export function taskStatusLabelKey(status: TaskStatus): string {
       return 'contextRailTaskStatusFailed'
     case 'canceled':
       return 'contextRailTaskStatusCanceled'
+    case 'timed_out':
+      return 'contextRailTaskStatusTimedOut'
     default:
       return 'contextRailTaskStatusQueued'
   }
@@ -34,7 +36,7 @@ export function TaskStatusGlyph({ status }: { status: TaskStatus }): ReactElemen
           className="h-4 w-4 text-emerald-600/85 dark:text-emerald-400/85"
           strokeWidth={1.9}
         />
-      ) : status === 'failed' ? (
+      ) : status === 'failed' || status === 'timed_out' ? (
         <XCircle className="h-4 w-4 text-rose-500/85 dark:text-rose-400/85" strokeWidth={1.9} />
       ) : status === 'canceled' ? (
         <CircleSlash className="h-4 w-4 text-ds-faint/80" strokeWidth={1.85} />
