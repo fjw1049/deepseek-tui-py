@@ -1881,6 +1881,11 @@ function SubagentSummaryRow({
   )
 }
 
+/** Terminal statuses `resume_agent` accepts (manager rejects running/completed). */
+function isResumableSubagentStatus(status: SubagentBlock['status']): boolean {
+  return status === 'failed' || status === 'cancelled'
+}
+
 function SubagentDetailDialog({
   block,
   onClose
@@ -1889,6 +1894,9 @@ function SubagentDetailDialog({
   onClose: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
+  const sendMessage = useChatStore((s) => s.sendMessage)
+  const busy = useChatStore((s) => s.busy)
+  const [resuming, setResuming] = useState(false)
   const title =
     block.cardKind === 'fanout'
       ? t('subagentFanoutTitle', { kind: block.agentType })
@@ -1903,6 +1911,32 @@ function SubagentDetailDialog({
     (block.status === 'running' || block.status === 'pending'
       ? t('subagentDetailNoResultRunning')
       : t('subagentDetailNoResult'))
+
+  // Delegate cards resume as a single agent; fanout cards resume every
+  // failed/cancelled worker in one prompt (no per-worker UI exists yet).
+  const resumableWorkerIds =
+    block.cardKind === 'fanout'
+      ? (block.workers ?? [])
+          .filter((worker) => isResumableSubagentStatus(worker.status))
+          .map((worker) => worker.id)
+      : []
+  const canResumeDelegate =
+    block.cardKind === 'delegate' && isResumableSubagentStatus(block.status)
+  const canResume = (canResumeDelegate || resumableWorkerIds.length > 0) && !busy && !resuming
+
+  const onResume = async (): Promise<void> => {
+    if (!canResume) return
+    setResuming(true)
+    try {
+      const prompt =
+        block.cardKind === 'fanout'
+          ? t('subagentResumePromptMulti', { agentIds: resumableWorkerIds.join(', ') })
+          : t('subagentResumePrompt', { agentId: block.agentId })
+      await sendMessage(prompt, 'subagent')
+    } finally {
+      setResuming(false)
+    }
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -1947,6 +1981,23 @@ function SubagentDetailDialog({
             <X className="h-4 w-4" strokeWidth={1.8} />
           </button>
         </div>
+
+        {canResumeDelegate || resumableWorkerIds.length > 0 ? (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-ds-border-muted/70 px-5 py-2.5">
+            <button
+              type="button"
+              disabled={!canResume}
+              onClick={() => void onResume()}
+              className="rounded-md border border-sky-400/50 bg-sky-500/10 px-2.5 py-1 text-[12px] font-medium text-sky-800 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-45 dark:text-sky-200"
+            >
+              {resuming
+                ? t('subagentResuming')
+                : block.cardKind === 'fanout'
+                  ? t('subagentResumeMulti', { count: resumableWorkerIds.length })
+                  : t('subagentResume')}
+            </button>
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 overflow-auto bg-ds-elevated px-5 py-4">
           <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ds-faint">
