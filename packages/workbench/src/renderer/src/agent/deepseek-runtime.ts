@@ -571,6 +571,13 @@ function isWorkflowStatusTextItem(it: TurnItemJson): boolean {
   return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(text)
 }
 
+/** Internal orchestrator handoff status — TUI keeps it in the status bar only. */
+function isInternalSubagentHandoffStatusItem(it: TurnItemJson): boolean {
+  if (it.kind !== 'status') return false
+  const text = (it.detail ?? it.summary ?? '').trim()
+  return /^(?:Resuming turn with \d+ sub-agent|Waiting on \d+ sub-agent)/i.test(text)
+}
+
 function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload | null {
   const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
   if (!detail) return null
@@ -1421,6 +1428,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   return
                 }
                 if (it && it.kind === 'status' && isWorkflowStatusTextItem(it)) {
+                  return
+                }
+                if (it && it.kind === 'status' && isInternalSubagentHandoffStatusItem(it)) {
                   return
                 }
                 if (

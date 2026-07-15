@@ -186,6 +186,35 @@ async def test_turn_handoff_skips_agent_wait_consumed_completion(
 
 
 @pytest.mark.asyncio
+async def test_turn_handoff_skips_workflow_spawned_completions(
+    engine_ctx: tuple,
+) -> None:
+    """Workflow tool result already synthesizes children — no second handoff."""
+    engine, _handle = engine_ctx
+    engine._mark_subagent_tool_result_consumed(
+        "workflow",
+        {"workflow": {"spawned_agent_ids": ["agent_wf_a", "agent_wf_b"]}},
+    )
+    for agent_id in ("agent_wf_a", "agent_wf_b"):
+        engine._enqueue_subagent_completion(
+            SubAgentCompletion(
+                agent_id=agent_id,
+                payload=(
+                    f"summary {agent_id}\n"
+                    f'<deepseek:subagent.done>{{"agent_id":"{agent_id}"}}'
+                    "</deepseek:subagent.done>"
+                ),
+            )
+        )
+
+    messages = []
+    injected = await engine._handle_subagent_turn_handoff(messages)
+
+    assert injected is False
+    assert messages == []
+
+
+@pytest.mark.asyncio
 async def test_task_running_count_in_session_activity(engine_ctx: tuple) -> None:
     engine, handle = engine_ctx
     mgr = engine.tool_context.task_manager

@@ -223,6 +223,11 @@ export function threadSnapshotLooksRunning(blocks: ChatBlock[], threadStatus?: s
   return blocks.some(hasPendingRuntimeWork)
 }
 
+/** True when the thread/runtime status itself claims an active turn. */
+export function threadStatusLooksActive(threadStatus?: string): boolean {
+  return runtimeStatusLooksRunning(threadStatus)
+}
+
 export function findLatestUserBlockId(blocks: ChatBlock[]): string | null {
   for (let idx = blocks.length - 1; idx >= 0; idx -= 1) {
     const block = blocks[idx]

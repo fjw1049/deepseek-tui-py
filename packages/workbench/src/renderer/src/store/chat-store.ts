@@ -11,6 +11,7 @@ import type {
 } from '../agent/types'
 import {
   applyMailboxMessage,
+  finalizeOrphanSubagentBlocks,
   subagentBlockFromCard,
   subagentCardsFromBlocks,
   type MailboxMessageJson
@@ -67,6 +68,7 @@ import {
   reconcileOptimisticUserBlock,
   threadBelongsToWorkspace,
   threadSnapshotLooksRunning,
+  threadStatusLooksActive,
   upsertFinalAnswerBlock,
   upsertUserBlock,
   upsertWorkflowBlock
@@ -311,9 +313,13 @@ async function reloadActiveThreadBlocks(
   if (!threadId || state.runtimeConnection !== 'ready') return
   try {
     const provider = getProvider(state.providerId)
-    const { blocks: rawBlocks, latestSeq } = await provider.getThreadDetail(threadId)
+    const { blocks: rawBlocks, latestSeq, threadStatus } = await provider.getThreadDetail(threadId)
+    const hydrated = hydrateBlockModelLabels(threadId, rawBlocks)
+    const blocks = threadStatusLooksActive(threadStatus)
+      ? hydrated
+      : finalizeOrphanSubagentBlocks(hydrated)
     set({
-      blocks: hydrateBlockModelLabels(threadId, rawBlocks),
+      blocks,
       lastSeq: latestSeq
     })
   } catch {
@@ -346,7 +352,8 @@ async function reconcileStaleBusy(
         ...finalizeTurnTiming(snap),
         busy: false,
         currentTurnId: null,
-        error: null
+        error: null,
+        blocks: finalizeOrphanSubagentBlocks(snap.blocks)
       })
     )
   } catch {
@@ -936,8 +943,16 @@ function buildThreadEventSink(
       set((s) => {
         const flushed = flushLiveBlocks(s)
         const baseBlocks = flushed.blocks ?? s.blocks
-        const nextBlocks = upsertWorkflowBlock(baseBlocks, ev)
-        if (!s.currentTurnId && !s.busy) {
+        let nextBlocks = upsertWorkflowBlock(baseBlocks, ev)
+        // Terminal workflow: clear orphan sub-agent cards that never received a
+        // cancelled mailbox (interrupt race). Only keep busy if the turn itself
+        // is still active — a late completed event must not re-stick the UI.
+        if (ev.completed) {
+          nextBlocks = finalizeOrphanSubagentBlocks(nextBlocks)
+          if (!s.currentTurnId) {
+            return { ...flushed, blocks: nextBlocks }
+          }
+        } else if (!s.currentTurnId && !s.busy) {
           return { ...flushed, blocks: nextBlocks }
         }
         resetBusyRecoveryAttempts()
@@ -1044,6 +1059,9 @@ function buildThreadEventSink(
           currentTurnId: null
         })
         if (s.busy) base.busy = false
+        // Interrupt can finish before a cancelled mailbox is persisted; clear
+        // stale running cards so the queue/composer are not blocked.
+        base.blocks = finalizeOrphanSubagentBlocks(base.blocks ?? s.blocks)
         const id = s.activeThreadId
         if (id) {
           const w = { ...s.watchTurnCompletion }
@@ -1608,7 +1626,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         latestUserMessageId,
         activePlugin: loadedPlugin
       } = await p.getThreadDetail(activeThreadId)
-      const blocks = hydrateBlockModelLabels(activeThreadId, rawBlocks)
+      // History can leave sub-agent cards stuck at "running" when interrupt
+      // skipped the terminal mailbox flush — clear them when the thread itself
+      // is idle so busy/queue detection is honest.
+      const hydrated = hydrateBlockModelLabels(activeThreadId, rawBlocks)
+      const blocks = threadStatusLooksActive(threadStatus)
+        ? hydrated
+        : finalizeOrphanSubagentBlocks(hydrated)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
       const synced = await syncRuntimePendingApprovals(p, activeThreadId, blocks, busy)
       const currentTurnUserId = busy
@@ -1727,7 +1751,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         latestUserMessageId,
         activePlugin: loadedPlugin
       } = await p.getThreadDetail(id)
-      const blocks = hydrateBlockModelLabels(id, rawBlocks)
+      const hydrated = hydrateBlockModelLabels(id, rawBlocks)
+      const blocks = threadStatusLooksActive(threadStatus)
+        ? hydrated
+        : finalizeOrphanSubagentBlocks(hydrated)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
       const synced = await syncRuntimePendingApprovals(p, id, blocks, busy)
       const currentTurnUserId = busy

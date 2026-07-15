@@ -2680,6 +2680,22 @@ class RuntimeThreadManager:
                     turn_error = first_response_timeout_message(trace)
                 else:
                     turn_status = RuntimeTurnStatus.INTERRUPTED
+                # Same closeout as TurnCompleteEvent: interrupt used to `break`
+                # here without flush/reconcile, so cancelled sub-agents never
+                # got a terminal mailbox envelope and the UI card stayed
+                # "running" forever (and blocked the composer as busy).
+                async with self._active_lock:
+                    engine = self._active.get(thread_id)
+                    active_engine = engine.engine if engine is not None else None
+                await self._cancel_orphan_subagents(
+                    thread_id, turn_id, active_engine, seen_subagent_ids
+                )
+                await self._flush_pending_subagent_mailbox(
+                    thread_id, turn_id, active_engine, skip_ids=foreign_subagent_ids
+                )
+                await self._reconcile_subagent_cards(
+                    thread_id, turn_id, active_engine, seen_subagent_ids
+                )
                 break
 
             elif isinstance(event, AgentRoundCompleteEvent):

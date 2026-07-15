@@ -2032,6 +2032,22 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 self._consumed_subagent_completions.discard(agent_id)
             return
 
+        if tool_name == "workflow":
+            # Workflow already synthesizes its children into the tool result.
+            # Their parent-completion envelopes must not trigger another
+            # handoff round (which layered a second final answer in the UI).
+            wf = metadata.get("workflow")
+            ids = (
+                wf.get("spawned_agent_ids")
+                if isinstance(wf, dict)
+                else metadata.get("spawned_agent_ids")
+            )
+            if isinstance(ids, list):
+                self._consumed_subagent_completions.update(
+                    aid for aid in ids if isinstance(aid, str) and aid
+                )
+            return
+
         if tool_name not in {
             "agent_wait",
             "agent_result",

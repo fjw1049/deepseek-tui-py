@@ -453,10 +453,16 @@ class WorkflowTool(ToolSpec):
             )
 
         def _result_meta(extra: dict[str, Any]) -> dict[str, Any]:
+            # Always attach spawned ids so the orchestrator can mark their
+            # parent-completion handoff as already consumed (workflow result
+            # already carries the synthesis). Otherwise a successful workflow
+            # injects ``Resuming turn with N sub-agent completion(s)`` and
+            # forces a second, layered final answer.
             return {
                 "workflow": {
                     **extra,
                     **_worktree_meta(run_record),
+                    "spawned_agent_ids": list(spawned_ids),
                 }
             }
 

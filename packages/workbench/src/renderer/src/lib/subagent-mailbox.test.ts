@@ -4,8 +4,10 @@ import {
   applyMailboxMessage,
   createDelegateCard,
   fanoutAggregateStatus,
+  finalizeOrphanSubagentBlocks,
   type MailboxMessageJson
 } from './subagent-mailbox'
+import type { ChatBlock } from '../agent/types'
 
 describe('subagent-mailbox', () => {
   it('creates delegate card on started and tracks actions', () => {
@@ -114,5 +116,40 @@ describe('subagent-mailbox', () => {
     if (card?.cardKind === 'fanout') {
       expect(fanoutAggregateStatus(card)).toBe('running')
     }
+  })
+
+  it('finalizes orphan running sub-agents when the turn is idle', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'subagent',
+        id: 'subagent-fanout_1',
+        cardKind: 'fanout',
+        agentId: 'fanout_1',
+        agentType: 'rlm',
+        status: 'running',
+        workers: [
+          { id: 'w1', status: 'completed' },
+          { id: 'w2', status: 'running' }
+        ]
+      },
+      {
+        kind: 'subagent',
+        id: 'subagent-agent_1',
+        cardKind: 'delegate',
+        agentId: 'agent_1',
+        agentType: 'general',
+        status: 'running'
+      }
+    ]
+    const next = finalizeOrphanSubagentBlocks(blocks)
+    expect(next[0]).toMatchObject({
+      kind: 'subagent',
+      status: 'cancelled',
+      workers: [
+        { id: 'w1', status: 'completed' },
+        { id: 'w2', status: 'cancelled' }
+      ]
+    })
+    expect(next[1]).toMatchObject({ kind: 'subagent', status: 'cancelled' })
   })
 })

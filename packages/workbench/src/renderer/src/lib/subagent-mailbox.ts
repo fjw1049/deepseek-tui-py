@@ -254,10 +254,14 @@ export function applyMailboxMessage(
 export function fanoutAggregateStatus(card: FanoutCardState): SubagentLifecycle {
   if (card.workers.length === 0) return 'pending'
   if (card.workers.some((w) => w.status === 'failed')) return 'failed'
-  if (card.workers.some((w) => w.status === 'running')) return 'running'
+  if (card.workers.some((w) => w.status === 'running' || w.status === 'pending')) {
+    return 'running'
+  }
   if (card.workers.every((w) => w.status === 'completed')) return 'completed'
   if (card.workers.every((w) => w.status === 'cancelled')) return 'cancelled'
-  return 'running'
+  // Mixed terminal (e.g. 4 completed + 1 cancelled after workflow timeout):
+  // never report "running" — that stuck the composer behind a fake busy turn.
+  return 'cancelled'
 }
 
 export function cardLifecycle(card: SubagentCardState): SubagentLifecycle {
@@ -329,4 +333,44 @@ export function cardLabel(card: SubagentCardState): string {
   const running = card.workers.filter((w) => w.status === 'running').length
   const failed = card.workers.filter((w) => w.status === 'failed').length
   return `${card.dispatchKind} · ${done} done · ${running} running · ${failed} failed`
+}
+
+/**
+ * When the owning turn is no longer active, any sub-agent still showing
+ * pending/running is a stale UI card (terminal mailbox never persisted).
+ * Force them to cancelled so the composer is not stuck "busy" forever.
+ */
+export function finalizeOrphanSubagentBlocks(blocks: ChatBlock[]): ChatBlock[] {
+  let changed = false
+  const next = blocks.map((block) => {
+    if (block.kind !== 'subagent') return block
+    if (block.cardKind === 'delegate') {
+      if (block.status !== 'pending' && block.status !== 'running') return block
+      changed = true
+      return { ...block, status: 'cancelled' as const }
+    }
+    const workers = block.workers ?? []
+    let workersChanged = false
+    const nextWorkers = workers.map((worker) => {
+      if (worker.status !== 'pending' && worker.status !== 'running') return worker
+      workersChanged = true
+      return { ...worker, status: 'cancelled' as const }
+    })
+    if (!workersChanged && block.status !== 'pending' && block.status !== 'running') {
+      return block
+    }
+    changed = true
+    const nextBlock = {
+      ...block,
+      workers: nextWorkers,
+      status: cardLifecycle({
+        cardKind: 'fanout',
+        agentId: block.agentId,
+        dispatchKind: block.agentType,
+        workers: nextWorkers
+      })
+    }
+    return nextBlock
+  })
+  return changed ? next : blocks
 }

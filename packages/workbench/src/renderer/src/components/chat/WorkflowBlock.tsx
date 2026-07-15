@@ -26,11 +26,14 @@ export function WorkflowBlock({
   const { t } = useTranslation('common')
   const sendMessage = useChatStore((s) => s.sendMessage)
   const busy = useChatStore((s) => s.busy)
-  // Live progress lives in ProcessTray + the 处理中 tag; keep the timeline calm.
-  if (status === 'running') return null
-
+  // Hooks must run unconditionally — early-return on `running` used to skip
+  // these useState calls, then crash with "Rendered more hooks" when status
+  // flipped to failed/timed_out (white screen).
   const [expanded, setExpanded] = useState(false)
   const [resuming, setResuming] = useState(false)
+
+  // Live progress lives in ProcessTray + the 处理中 tag; keep the timeline calm.
+  if (status === 'running') return null
 
   const header =
     status === 'completed'

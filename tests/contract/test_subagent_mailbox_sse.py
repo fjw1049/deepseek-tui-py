@@ -256,3 +256,79 @@ async def test_monitor_turn_reconciles_dropped_terminal(runtime_app: object) -> 
     )
     assert completed.payload["message"]["agent_id"] == "agent_drop"
     assert "649" in completed.payload["message"]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_turn_reconciles_on_cancel(runtime_app: object) -> None:
+    """Interrupt must flush/reconcile terminal mailbox — same as TurnComplete.
+
+    Regression: TurnCancelledEvent used to break out of ``_monitor_turn`` without
+    calling ``_reconcile_subagent_cards``, leaving cancelled workers stuck at
+    ``running`` in the UI (and blocking the composer via busy detection).
+    """
+    from deepseek_tui.engine.events import TurnCancelledEvent
+    from deepseek_tui.tools.subagent import SubAgentStatusKind
+
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(
+        TurnRecord(
+            id=turn_id,
+            thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test",
+            created_at=now,
+            started_at=now,
+        )
+    )
+
+    snap = SimpleNamespace(
+        status=SimpleNamespace(kind=SubAgentStatusKind.CANCELLED, message=None),
+        result=None,
+    )
+
+    async def _get_result(agent_id: str) -> object:
+        return snap
+
+    fake_manager = SimpleNamespace(mailbox=None, get_result=_get_result)
+    stub_engine = SimpleNamespace(
+        tool_context=ToolContext(
+            working_directory=manager.workspace,
+            subagent_manager=fake_manager,
+        )
+    )
+    engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    async def pump() -> None:
+        await handle.emit(
+            SubAgentMailboxEvent(
+                seq=1, message=MailboxMessage.started("agent_stuck", "general")
+            )
+        )
+        await handle.emit(TurnCancelledEvent(reason="user_cancelled"))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+    finally:
+        await pump_task
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+
+    events = manager.events_since(thread.id, 0)
+    mailbox_events = [e for e in events if e.event == "subagent.mailbox"]
+    kinds = [e.payload["message"]["kind"] for e in mailbox_events]
+    assert "started" in kinds
+    assert "cancelled" in kinds
+    cancelled = next(
+        e for e in mailbox_events if e.payload["message"]["kind"] == "cancelled"
+    )
+    assert cancelled.payload["message"]["agent_id"] == "agent_stuck"
