@@ -61,6 +61,8 @@ def _read_json(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise WorkflowCatalogError(f"cannot read workflow {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise WorkflowCatalogError(f"workflow {path} is not valid UTF-8: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise WorkflowCatalogError(f"invalid JSON in {path}: {exc}") from exc
     if not isinstance(raw, dict):

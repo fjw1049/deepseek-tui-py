@@ -109,6 +109,13 @@ async def run_workflow(
     )
     logs: list[str] = []
     skip = set(skip_step_ids or ())
+    # Reserved-but-not-yet-registered spawn slots. ``ctx.spawned_agent_ids`` only
+    # grows once ``runner.run()`` has actually spawned the agent (after an
+    # ``await``), so concurrent fanout branches could otherwise all pass the
+    # ``max_agents`` check below before any of them registers — oversubscribing
+    # the cap. Incrementing this synchronously, right next to the check, closes
+    # that race because asyncio only switches tasks at ``await`` points.
+    reserved_agents = 0
 
     def log(msg: str) -> None:
         logs.append(msg)
@@ -251,63 +258,79 @@ async def run_workflow(
         phase_id: str,
         step_id: str,
     ) -> StepOutput | None:
-        if len(ctx.spawned_agent_ids) >= spec.policy.max_agents:
+        nonlocal reserved_agents
+        if len(ctx.spawned_agent_ids) + reserved_agents >= spec.policy.max_agents:
             raise WorkflowFailedError(
                 f"max_agents limit ({spec.policy.max_agents}) reached at step {step_id}"
             )
-        label = cfg.label or (
-            render_template(
-                cfg.label_template or "agent",
-                item=item,
-                task=ctx.task,
-                round=ctx.round,
+        reserved_agents += 1
+        slot_transferred = False
+        try:
+            label = cfg.label or (
+                render_template(
+                    cfg.label_template or "agent",
+                    item=item,
+                    task=ctx.task,
+                    round=ctx.round,
+                )
+                if cfg.label_template
+                else step_id
             )
-            if cfg.label_template
-            else step_id
-        )
-        if cfg.prompt:
-            prompt = render_template(
-                cfg.prompt,
-                item=item,
-                previous=previous,
-                outputs=ctx.outputs,
-                task=ctx.task,
-                round=ctx.round,
-            )
-        else:
-            prompt = render_template(
-                cfg.prompt_template or "",
-                item=item,
-                previous=previous,
-                outputs=ctx.outputs,
-                task=ctx.task,
-                round=ctx.round,
-            )
-        if not prompt.strip():
-            return None
+            if cfg.prompt:
+                prompt = render_template(
+                    cfg.prompt,
+                    item=item,
+                    previous=previous,
+                    outputs=ctx.outputs,
+                    task=ctx.task,
+                    round=ctx.round,
+                )
+            else:
+                prompt = render_template(
+                    cfg.prompt_template or "",
+                    item=item,
+                    previous=previous,
+                    outputs=ctx.outputs,
+                    task=ctx.task,
+                    round=ctx.round,
+                )
+            if not prompt.strip():
+                return None
 
-        def _on_agent_id(aid: str) -> None:
-            ctx.spawned_agent_ids.append(aid)
-            for run in reversed(snapshot.agents):
-                if run.step_id == step_id and run.agent_id is None:
-                    run.agent_id = aid
-                    break
+            def _on_agent_id(aid: str) -> None:
+                nonlocal reserved_agents, slot_transferred
+                ctx.spawned_agent_ids.append(aid)
+                # The agent now counts itself via spawned_agent_ids; release the
+                # placeholder here instead of waiting for runner.run() to return
+                # (which polls get_result for the whole turn, potentially tens
+                # of seconds) — otherwise every in-flight agent is double
+                # counted (reserved_agents + spawned_agent_ids) and max_agents
+                # bites at roughly half its configured value under fanout.
+                reserved_agents -= 1
+                slot_transferred = True
+                for run in reversed(snapshot.agents):
+                    if run.step_id == step_id and run.agent_id is None:
+                        run.agent_id = aid
+                        break
 
-        out = await runner.run(
-            prompt=prompt,
-            label=label,
-            agent_type=cfg.agent_type,
-            model=cfg.model,
-            allowed_tools=cfg.allowed_tools,
-            output_schema=cfg.output_schema,
-            policy=spec.policy,
-            cancel_event=cancel_event,
-            on_agent_id=_on_agent_id,
-            timeout_seconds=cfg.timeout_seconds,
-        )
-        if cancel_event is not None and cancel_event.is_set():
-            raise WorkflowAbortedError("workflow cancelled")
-        return out
+            out = await runner.run(
+                prompt=prompt,
+                label=label,
+                agent_type=cfg.agent_type,
+                model=cfg.model,
+                allowed_tools=cfg.allowed_tools,
+                output_schema=cfg.output_schema,
+                policy=spec.policy,
+                cancel_event=cancel_event,
+                on_agent_id=_on_agent_id,
+                timeout_seconds=cfg.timeout_seconds,
+            )
+            if cancel_event is not None and cancel_event.is_set():
+                raise WorkflowAbortedError("workflow cancelled")
+            return out
+        finally:
+            if not slot_transferred:
+                reserved_agents -= 1
 
     async def dispatch_step(step: WorkflowStep, phase_id: str) -> None:
         if step.id in skip and step.id in ctx.outputs:
@@ -510,6 +533,12 @@ async def run_workflow(
                 s: LoopStep = step,
                 pid: str = phase_id,
             ) -> StepOutput | None:
+                # Checkpoint granularity note: this whole step is only added to
+                # ``ctx.completed_step_ids`` once every round below has run (see
+                # the bottom of ``dispatch_step``). There is no per-round
+                # checkpoint, so resuming a run that was interrupted mid-loop
+                # re-executes rounds 1..N from scratch — see WorkflowTool's
+                # description() for the user-facing callout.
                 last: StepOutput | None = None
                 for round_idx in range(1, s.max_rounds + 1):
                     check_cancel()

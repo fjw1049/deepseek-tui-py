@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +13,7 @@ from typing import Any, Literal
 _LOG = logging.getLogger(__name__)
 
 from deepseek_tui.config.paths import project_deepseek_dir
+from deepseek_tui.utils import write_json_atomic
 from deepseek_tui.workflow.models import (
     StepOutput,
     WorkflowSnapshot,
@@ -37,6 +37,18 @@ WorkflowRunStatus = Literal[
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def new_run_id() -> str:
@@ -81,6 +93,33 @@ class WorkflowRunStoreError(WorkflowValidationError):
     pass
 
 
+# A ``running`` run whose last checkpoint is newer than this is assumed to have
+# a live driver right now (this process or another — e.g. a detached
+# TaskManager job). Resuming it concurrently would duplicate agent spawns and
+# race on ``run.json``. Mirrors ``task/store.py``'s ``STALE_RUNNING_TASK_SECONDS``
+# reasoning, but keys off checkpoint freshness (``updated_at``) instead of task
+# age, since a workflow run checkpoints continuously while it is genuinely
+# alive (after every step / fanout item).
+#
+# This is probabilistic, not a strict mutex: two concurrent callers can both
+# load a record older than ACTIVE_RUN_STALE_SECONDS, both pass this check, and
+# both then save_run(status="running") — there is no file lock. A true lock
+# file would close the gap; this is deliberately the cheaper first version
+# and is expected to catch the common case (resuming an already-detached run).
+ACTIVE_RUN_STALE_SECONDS = 300
+
+
+def is_run_actively_running(record: WorkflowRunRecord) -> bool:
+    """True if *record* looks like it still has a live driver right now."""
+    if record.status != "running":
+        return False
+    updated = _parse_iso_utc(record.updated_at)
+    if updated is None:
+        return False
+    age = (datetime.now(timezone.utc) - updated).total_seconds()
+    return age < ACTIVE_RUN_STALE_SECONDS
+
+
 def run_path(run_id: str, workspace: Path | None = None) -> Path:
     return workflow_runs_dir(workspace) / run_id / "run.json"
 
@@ -107,24 +146,10 @@ def create_run(
 
 
 def save_run(record: WorkflowRunRecord, *, workspace: Path | None = None) -> Path:
-    """Persist ``run.json`` via temp file + ``os.replace`` (crash-safe)."""
+    """Persist ``run.json`` atomically (crash-safe write-tmp + rename)."""
     record.updated_at = _utc_now()
     path = run_path(record.run_id, workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = asdict(record)
-    data = json.dumps(payload, indent=2, default=str)
-    # Unique tmp avoids colliding writers briefly stomping the same name.
-    tmp = path.parent / f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
-    try:
-        tmp.write_text(data, encoding="utf-8")
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            if tmp.is_file():
-                tmp.unlink()
-        except OSError:
-            pass
-        raise
+    write_json_atomic(path, asdict(record))
     return path
 
 
@@ -282,6 +307,7 @@ def _spec_to_dict(spec: WorkflowSpec) -> dict[str, Any]:
                 "allowed_tools": step.allowed_tools,
                 "prompt": step.prompt,
                 "output_schema": step.output_schema,
+                "timeout_seconds": step.timeout_seconds,
             }
         if step.type == "fanout":
             assert isinstance(step, FanoutStep)
@@ -298,6 +324,7 @@ def _spec_to_dict(spec: WorkflowSpec) -> dict[str, Any]:
                     "prompt": step.agent.prompt,
                     "prompt_template": step.agent.prompt_template,
                     "output_schema": step.agent.output_schema,
+                    "timeout_seconds": step.agent.timeout_seconds,
                 },
             }
             if step.items is not None:
@@ -334,6 +361,7 @@ def _spec_to_dict(spec: WorkflowSpec) -> dict[str, Any]:
                 "allowed_tools": step.allowed_tools,
                 "prompt_template": step.prompt_template,
                 "output_schema": step.output_schema,
+                "timeout_seconds": step.timeout_seconds,
             }
         if step.type == "loop":
             assert isinstance(step, LoopStep)

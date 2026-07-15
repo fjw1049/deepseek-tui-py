@@ -10,6 +10,7 @@ import pytest
 from deepseek_tui.tools.durable_transcript import (
     DurableTranscript,
     clear_transcript,
+    dicts_to_messages,
     load_transcript,
     save_transcript,
     subagent_transcript_path,
@@ -45,6 +46,23 @@ def test_transcript_roundtrip(tmp_path: Path) -> None:
     assert len(loaded.messages) == 1
     clear_transcript(path)
     assert load_transcript(path) is None
+
+
+def test_dicts_to_messages_warns_on_invalid_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Dropping an unparsable message must be logged, not silent (could desync
+
+    tool_use/tool_result pairing in the rest of the hydrated history).
+    """
+    raw = [
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+        {"role": "not-a-real-role", "content": "not-a-list"},
+    ]
+    with caplog.at_level("WARNING", logger="deepseek_tui.tools.durable_transcript"):
+        messages = dicts_to_messages(raw)
+    assert len(messages) == 1
+    assert any("dropping invalid transcript message" in r.message for r in caplog.records)
 
 
 def test_task_status_timed_out_is_terminal_and_resumable() -> None:

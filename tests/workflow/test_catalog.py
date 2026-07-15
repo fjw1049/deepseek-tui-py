@@ -92,3 +92,19 @@ def test_bundled_presets_resolve() -> None:
     for name in ("repo_review", "diff_review", "spec_check"):
         spec = resolve_workflow(name)
         assert spec.meta.name == name
+
+
+def test_list_workflows_skips_non_utf8_file_instead_of_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single non-UTF-8 *.json in a workflows dir must not sink list_workflows()."""
+    monkeypatch.chdir(tmp_path)
+    _write_spec(tmp_path / "workflows" / "good.json", "good")
+    bad_path = tmp_path / "workflows" / "bad.json"
+    bad_path.parent.mkdir(parents=True, exist_ok=True)
+    bad_path.write_bytes(b"\xff\xfe\x00\x01not-utf8")
+
+    records = list_workflows(cwd=tmp_path)
+    names = {r.name for r in records}
+    assert "good" in names
+    assert "bad" not in names

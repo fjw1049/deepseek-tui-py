@@ -34,6 +34,7 @@ from deepseek_tui.workflow.store import (
     WorkflowRunRecord,
     WorkflowRunStoreError,
     create_run,
+    is_run_actively_running,
     list_runs,
     load_run,
     safe_checkpoint_run,
@@ -63,7 +64,7 @@ def _worktree_meta(record: WorkflowRunRecord) -> dict[str, str]:
     return out
 
 
-def _prepare_worktree(
+async def _prepare_worktree(
     run_record: WorkflowRunRecord,
     *,
     spec: Any,
@@ -74,7 +75,11 @@ def _prepare_worktree(
     if not wants:
         return None
     try:
-        info = ensure_run_worktree(
+        # ``ensure_run_worktree`` shells out to git synchronously (up to ~120s);
+        # push it off the event loop so a slow worktree add doesn't stall every
+        # other concurrent agent/task in this process.
+        info = await asyncio.to_thread(
+            ensure_run_worktree,
             run_record.run_id,
             workspace=cwd,
             existing_path=run_record.worktree_path,
@@ -111,7 +116,11 @@ class WorkflowTool(ToolSpec):
             "Optional: `policy.worktree: \"on\"` isolates edits in a git "
             "worktree; `detach: true` enqueues via TaskManager and returns "
             "`run_id` + `task_id` immediately.\n\n"
-            "Runs are checkpointed under `.deepseek/workflow-runs/<run_id>/`."
+            "Runs are checkpointed under `.deepseek/workflow-runs/<run_id>/` "
+            "after every completed step (and every finished fanout/pipeline "
+            "item). Caveat: a `loop` step only checkpoints once ALL of its "
+            "rounds finish, so resuming a run interrupted mid-loop re-runs "
+            "that loop from round 1."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -264,7 +273,7 @@ class WorkflowTool(ToolSpec):
             )
         from deepseek_tui.tools.task.models import NewTaskRequest
 
-        _prepare_worktree(run_record, spec=spec, cwd=cwd)
+        await _prepare_worktree(run_record, spec=spec, cwd=cwd)
         prompt = encode_detach_prompt(run_id=run_record.run_id, workspace=cwd)
         task = await task_manager.add_task(
             NewTaskRequest(
@@ -323,6 +332,12 @@ class WorkflowTool(ToolSpec):
                     raise WorkflowValidationError(
                         f"run {resume_record.run_id} already completed"
                     )
+                if is_run_actively_running(resume_record):
+                    raise WorkflowValidationError(
+                        f"run {resume_record.run_id} appears to still be running "
+                        "(checkpointed recently); wait for it to finish or "
+                        "cancel it before resuming"
+                    )
                 spec = resume_record.parsed_spec()
                 runtime_task = resume_record.task
                 skip_step_ids = set(resume_record.completed_step_ids)
@@ -355,7 +370,7 @@ class WorkflowTool(ToolSpec):
                 spec=spec,
             )
 
-        agent_workspace = _prepare_worktree(run_record, spec=spec, cwd=cwd)
+        agent_workspace = await _prepare_worktree(run_record, spec=spec, cwd=cwd)
 
         manager = context.subagent_manager
         if manager is None:
@@ -609,8 +624,16 @@ class WorkflowTool(ToolSpec):
                         await timeout_task
                     except (asyncio.CancelledError, Exception):
                         pass
-                # Prefer orderly shutdown result, but always mark the run timed_out
-                # (cancel_event makes the inner path look like "cancelled").
+                if grace_result is not None and grace_result.success:
+                    # _run() already reached its own "completed" checkpoint
+                    # (with the real result) inside the grace window — do not
+                    # clobber it with a "timed_out" overwrite below, which
+                    # would also wipe the persisted result (checkpoint_run's
+                    # result defaults to None) and make a finished run look
+                    # resumable/re-runnable.
+                    return grace_result
+                # Cancelled but never reached its own terminal checkpoint —
+                # mark it timed_out so resume can pick up where it left off.
                 safe_checkpoint_run(
                     run_record,
                     completed_step_ids=list(run_record.completed_step_ids),
@@ -627,8 +650,6 @@ class WorkflowTool(ToolSpec):
                     f"(run_id={run_record.run_id}). "
                     "Resume with workflow({run_id: ...})."
                 )
-                if grace_result is not None and grace_result.success:
-                    return grace_result
                 meta = _result_meta(
                     {
                         "timed_out": True,

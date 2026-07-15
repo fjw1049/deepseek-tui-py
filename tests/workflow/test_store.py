@@ -9,6 +9,9 @@ import pytest
 
 from deepseek_tui.workflow.models import (
     AgentStep,
+    AgentStepConfig,
+    FanoutStep,
+    SynthesisStep,
     WorkflowMeta,
     WorkflowPhase,
     WorkflowPolicy,
@@ -65,6 +68,43 @@ def test_create_load_checkpoint(tmp_path: Path) -> None:
     assert any(r.run_id == record.run_id for r in runs)
 
 
+def test_timeout_seconds_survives_create_load_roundtrip(tmp_path: Path) -> None:
+    """_spec_to_dict must not silently drop per-step timeout_seconds on resume."""
+    spec = WorkflowSpec(
+        version=1,
+        meta=WorkflowMeta(name="t", description="d"),
+        policy=WorkflowPolicy(),
+        phases=[
+            WorkflowPhase(
+                id="p",
+                title="P",
+                steps=[
+                    AgentStep(
+                        id="a1", type="agent", label="one", prompt="1",
+                        timeout_seconds=30,
+                    ),
+                    FanoutStep(
+                        id="f1", type="fanout",
+                        agent=AgentStepConfig(prompt="x", timeout_seconds=45),
+                        items=["a"],
+                    ),
+                    SynthesisStep(
+                        id="s1", type="synthesis", label="s",
+                        prompt_template="p", timeout_seconds=60,
+                    ),
+                ],
+            )
+        ],
+    )
+    record = create_run(spec, task="t", workspace=tmp_path)
+    loaded = load_run(record.run_id, workspace=tmp_path)
+    parsed = loaded.parsed_spec()
+    steps = {s.id: s for s in parsed.phases[0].steps}
+    assert steps["a1"].timeout_seconds == 30
+    assert steps["f1"].agent.timeout_seconds == 45
+    assert steps["s1"].timeout_seconds == 60
+
+
 def test_save_run_atomic_replace(tmp_path: Path) -> None:
     record = create_run(_spec(), task="t", workspace=tmp_path)
     path = run_path(record.run_id, workspace=tmp_path)
@@ -86,7 +126,7 @@ def test_save_run_leaves_prior_file_if_replace_fails(tmp_path: Path) -> None:
     def boom(_src: object, _dst: object) -> None:
         raise OSError("simulated replace failure")
 
-    with patch("deepseek_tui.workflow.store.os.replace", side_effect=boom):
+    with patch("deepseek_tui.utils.os.replace", side_effect=boom):
         with pytest.raises(OSError, match="simulated"):
             save_run(record, workspace=tmp_path)
     assert path.read_text(encoding="utf-8") == original

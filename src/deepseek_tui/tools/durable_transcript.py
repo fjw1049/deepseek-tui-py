@@ -7,10 +7,14 @@ Never resume mid-tool.
 from __future__ import annotations
 
 import json
-import os
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from deepseek_tui.utils import write_json_atomic
+
+_LOG = logging.getLogger(__name__)
 
 TRANSCRIPT_SCHEMA_VERSION = 1
 CONTINUE_NUDGE = (
@@ -76,26 +80,9 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _write_json_atomic(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
-    try:
-        tmp.write_text(
-            json.dumps(value, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-
-
 def save_transcript(path: Path, transcript: DurableTranscript) -> None:
     transcript.updated_at = _utc_now_iso()
-    _write_json_atomic(path, transcript.to_dict())
+    write_json_atomic(path, transcript.to_dict())
 
 
 def load_transcript(path: Path) -> DurableTranscript | None:
@@ -133,9 +120,17 @@ def dicts_to_messages(raw_messages: list[dict[str, Any]]) -> list[Any]:
     from deepseek_tui.protocol.messages import Message
 
     out: list[Any] = []
-    for item in raw_messages:
+    for index, item in enumerate(raw_messages):
         try:
             out.append(Message.model_validate(item))
         except Exception:  # noqa: BLE001
+            # Dropping a message can desync tool_use/tool_result pairing for
+            # the rest of the hydrated history — this must never be silent.
+            role = item.get("role") if isinstance(item, dict) else None
+            _LOG.warning(
+                "dropping invalid transcript message at index %d (role=%r)",
+                index,
+                role,
+            )
             continue
     return out

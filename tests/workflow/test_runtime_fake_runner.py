@@ -499,6 +499,65 @@ async def test_timeout_seconds_default_none_threaded() -> None:
     assert runner.timeout_seconds_seen == [None]
 
 
+@pytest.mark.asyncio
+async def test_max_agents_not_double_counted_under_concurrent_fanout() -> None:
+    """A fanout with concurrency == max_agents must let every item spawn.
+
+    Regression test: reserved_agents used to stay incremented until
+    runner.run() fully returned, while spawned_agent_ids already counted the
+    same in-flight agent as soon as on_agent_id fired — double counting each
+    live agent and tripping "max_agents reached" at roughly half the
+    configured limit.
+    """
+
+    class SlotTrackingRunner(FakeRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_flight = 0
+            self.max_in_flight = 0
+
+        async def run(
+            self, *, label: str, on_agent_id: Any = None, **kwargs: object
+        ) -> StepOutput | None:
+            self.calls.append(label)
+            if on_agent_id is not None:
+                on_agent_id(label)
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            await asyncio.sleep(0.02)
+            self.in_flight -= 1
+            return make_step_output(f"done:{label}")
+
+    runner = SlotTrackingRunner()
+    spec = WorkflowSpec(
+        version=1,
+        meta=WorkflowMeta(name="t", description="d"),
+        policy=WorkflowPolicy(concurrency=4, max_agents=4),
+        phases=[
+            WorkflowPhase(
+                id="p1",
+                title="P",
+                steps=[
+                    FanoutStep(
+                        id="fan",
+                        type="fanout",
+                        items=["a", "b", "c", "d"],
+                        agent=AgentStepConfig(
+                            label_template="{{item}}",
+                            prompt_template="work {{item}}",
+                        ),
+                    ),
+                ],
+            )
+        ],
+    )
+
+    result = await run_workflow(spec, runner=runner)
+    assert runner.max_in_flight == 4
+    assert set(runner.calls) == {"a", "b", "c", "d"}
+    assert isinstance(result.result, dict)
+
+
 class _NeverCompletesManager:
     """Fake SubAgentManager whose get_result always reports RUNNING."""
 

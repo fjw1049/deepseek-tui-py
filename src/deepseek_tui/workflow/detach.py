@@ -81,6 +81,7 @@ async def execute_detached_workflow(
     from deepseek_tui.workflow.runtime import DeepSeekAgentRunner, run_workflow
     from deepseek_tui.workflow.store import (
         WorkflowRunStoreError,
+        is_run_actively_running,
         load_run,
         safe_checkpoint_run,
         save_run,
@@ -103,63 +104,119 @@ async def execute_detached_workflow(
             detail=json.dumps({"run_id": record.run_id, "status": "completed"}),
         )
 
-    spec = record.parsed_spec()
-    agent_cwd = project_cwd
-    if spec.policy.worktree == "on" or record.worktree_path:
-        try:
-            info = ensure_run_worktree(
-                record.run_id,
-                workspace=project_cwd,
-                existing_path=record.worktree_path,
-                existing_branch=record.worktree_branch,
-            )
-        except WorkflowWorktreeError as exc:
-            return TaskExecutionResult(summary="", error=str(exc))
-        record.worktree_path = str(info.path)
-        record.worktree_branch = info.branch
-        save_run(record, workspace=project_cwd)
-        agent_cwd = info.path
-
-    record.status = "running"
-    record.error = None
-    if record.task_id is None:
-        record.task_id = task.id
-    save_run(record, workspace=project_cwd)
-
-    cfg = ConfigLoader().load()
-    manager, mailbox = build_subagent_manager(cfg, agent_cwd)
-    if manager is None:
+    # Defense in depth: WorkflowTool.execute() already gates resume through
+    # is_run_actively_running(), but that only covers the caller path that
+    # created *this* task. If some other task_id is (or was, recently) driving
+    # this same run_id — e.g. a stale detach task requeued by
+    # TaskManager.resume_task() racing a still-live one — don't drive it too.
+    # record.task_id is set to *this* task's id before it is ever queued (see
+    # _enqueue_detach), so a mismatch here means a different task owns it.
+    if (
+        record.task_id is not None
+        and record.task_id != task.id
+        and is_run_actively_running(record)
+    ):
         return TaskExecutionResult(
             summary="",
-            error="workflow detach requires features.subagents=True",
+            error=(
+                f"workflow run {record.run_id} is already being driven by "
+                f"task {record.task_id}"
+            ),
         )
 
-    client = build_llm_client(cfg)
-    loop_runtime = SubAgentRuntime(
-        manager=manager,
-        client=client,
-        model=task.model or cfg.default_text_model or "deepseek-chat",
-        config=cfg,
-        workspace=agent_cwd,
-        allow_shell=task.allow_shell,
-        auto_approve=True,
-        task_manager=task.task_manager,
-        cancel_token=cancel,
-        mailbox=mailbox,
-    )
-    manager.attach_loop_runtime(loop_runtime)
-    manager.attach_parent_cancel(cancel)
-
-    runner = DeepSeekAgentRunner(
-        manager,
-        loop_runtime,
-        parent_depth=0,
-        workspace=agent_cwd,
-    )
+    spec = record.parsed_spec()
+    agent_cwd = project_cwd
     last_snapshot = WorkflowSnapshot(
         name=spec.meta.name,
         description=spec.meta.description,
     )
+
+    # Everything below (worktree setup, manager/client construction) can raise.
+    # It used to sit outside any try/finally: a failure here left the record
+    # stuck at status="running" forever and leaked any manager/mailbox already
+    # constructed. Route all setup failures through the same "interrupted"
+    # checkpoint + cleanup path as run_workflow() failures below.
+    manager = None
+    mailbox = None
+    try:
+        if spec.policy.worktree == "on" or record.worktree_path:
+            try:
+                # Offload the synchronous git shell-out so a slow worktree add
+                # doesn't stall this process's event loop for other tasks/agents.
+                info = await asyncio.to_thread(
+                    ensure_run_worktree,
+                    record.run_id,
+                    workspace=project_cwd,
+                    existing_path=record.worktree_path,
+                    existing_branch=record.worktree_branch,
+                )
+            except WorkflowWorktreeError as exc:
+                return TaskExecutionResult(summary="", error=str(exc))
+            record.worktree_path = str(info.path)
+            record.worktree_branch = info.branch
+            save_run(record, workspace=project_cwd)
+            agent_cwd = info.path
+
+        record.status = "running"
+        record.error = None
+        if record.task_id is None:
+            record.task_id = task.id
+        save_run(record, workspace=project_cwd)
+
+        cfg = ConfigLoader().load()
+        manager, mailbox = build_subagent_manager(cfg, agent_cwd)
+        if manager is None:
+            raise RuntimeError("workflow detach requires features.subagents=True")
+
+        client = build_llm_client(cfg)
+        loop_runtime = SubAgentRuntime(
+            manager=manager,
+            client=client,
+            model=task.model or cfg.default_text_model or "deepseek-chat",
+            config=cfg,
+            workspace=agent_cwd,
+            allow_shell=task.allow_shell,
+            auto_approve=True,
+            task_manager=task.task_manager,
+            cancel_token=cancel,
+            mailbox=mailbox,
+        )
+        manager.attach_loop_runtime(loop_runtime)
+        manager.attach_parent_cancel(cancel)
+
+        runner = DeepSeekAgentRunner(
+            manager,
+            loop_runtime,
+            parent_depth=0,
+            workspace=agent_cwd,
+        )
+    except Exception as exc:  # noqa: BLE001 — setup failures must not leave the record stuck "running"
+        safe_checkpoint_run(
+            record,
+            completed_step_ids=list(record.completed_step_ids),
+            outputs=record.restored_outputs(),
+            snapshot=last_snapshot,
+            logs=list(record.logs),
+            status="interrupted",
+            error=str(exc),
+            workspace=project_cwd,
+        )
+        if manager is not None:
+            try:
+                await manager.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+        if mailbox is not None:
+            try:
+                mailbox.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return TaskExecutionResult(
+            summary="",
+            error=str(exc),
+            detail=json.dumps({"run_id": record.run_id, "status": "interrupted"}),
+        )
+
     skip_step_ids = set(record.completed_step_ids)
     initial_outputs = record.restored_outputs()
 

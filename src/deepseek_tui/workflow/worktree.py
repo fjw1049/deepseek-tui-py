@@ -56,14 +56,19 @@ def _git(
     cwd: Path,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WorkflowWorktreeError(
+            f"git {' '.join(args)} timed out after {exc.timeout}s"
+        ) from exc
     if check and proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise WorkflowWorktreeError(f"git {' '.join(args)} failed: {err}")
@@ -116,6 +121,12 @@ def ensure_run_worktree(
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Clean up stale worktree registrations first: if `path` was deleted
+    # out-of-band (e.g. by the user, or a crash before the checkout finished),
+    # git still remembers it as checked out and `worktree add` below would
+    # fail with "already checked out" even though nothing is actually there.
+    _git(["worktree", "prune"], cwd=git_root, check=False)
 
     # If the branch already exists (resume after partial failure), attach it.
     show = _git(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=git_root, check=False)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,8 @@ from deepseek_tui.tools.subagent.types import (
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
     from deepseek_tui.tools.subagent.manager import SubAgentRuntime
+
+_LOG = logging.getLogger(__name__)
 
 
 def _subagent_cancelled(
@@ -204,12 +207,13 @@ async def run_subagent_loop(
         messages.extend(dicts_to_messages(existing.messages))
         force_summary = existing.force_summary
         steps = max(0, int(existing.steps_taken))
-        messages.append(Message.user(CONTINUE_NUDGE))
     else:
         if agent.fork_messages:
             messages.extend(_messages_from_fork_dicts(agent.fork_messages))
         messages.append(Message.user(agent.prompt))
 
+    # Queued input is real user data — fold it in before any snapshot so a
+    # cancel on this round can't silently drop it (queue is drained either way).
     while True:
         try:
             text, _interrupt = agent.input_queue.get_nowait()
@@ -225,13 +229,41 @@ async def run_subagent_loop(
     structured_value: Any | None = None
     last_usage: object | None = None
     # Only persist completed rounds. Mid-tool cancel keeps the previous snapshot.
+    # Snapshot *before* the ephemeral resume nudge appended below — it's purely
+    # a live prompt hint (resume regenerates it), never something we want baked
+    # into the persisted transcript.
     last_complete_messages: list[Message] = list(messages)
     last_complete_steps = steps
     last_complete_force_summary = force_summary
     has_complete_checkpoint = resuming
 
+    nudge_message = Message.user(CONTINUE_NUDGE) if resuming else None
+    if nudge_message is not None:
+        messages.append(nudge_message)
+
     async def _noop_emit(_event: object) -> None:
         return None
+
+    def _persist_messages(msgs: list[Message]) -> list[Message]:
+        # Strip the nudge even from a completed-round snapshot: once a round
+        # completes it becomes part of `messages` (the model saw and acted on
+        # it), so without this a checkpoint saved after resume would bake it
+        # in permanently and the *next* resume would stack a fresh one on top.
+        if nudge_message is None:
+            return msgs
+        return [m for m in msgs if m != nudge_message]
+
+    def _save_transcript_safe(transcript: DurableTranscript) -> None:
+        # Checkpoint I/O (disk full, permissions) must never mask the actual
+        # control-flow signal (e.g. asyncio.CancelledError from a cancel) by
+        # raising OSError out of an except-block caller.
+        try:
+            save_transcript(transcript_path, transcript)
+        except OSError:
+            _LOG.warning(
+                "subagent transcript checkpoint failed agent_id=%s", agent.id,
+                exc_info=True,
+            )
 
     def _save_complete_checkpoint(reason: str) -> None:
         nonlocal last_complete_steps, last_complete_force_summary, has_complete_checkpoint
@@ -239,33 +271,31 @@ async def run_subagent_loop(
         last_complete_steps = steps
         last_complete_force_summary = force_summary
         has_complete_checkpoint = True
-        save_transcript(
-            transcript_path,
+        _save_transcript_safe(
             DurableTranscript(
                 owner_kind="subagent",
                 owner_id=agent.id,
-                messages=messages_to_dicts(last_complete_messages),
+                messages=messages_to_dicts(_persist_messages(last_complete_messages)),
                 steps_taken=last_complete_steps,
                 force_summary=last_complete_force_summary,
                 round_complete=True,
                 checkpoint_reason=reason,
-            ),
+            )
         )
 
     def _save_cancel_checkpoint() -> None:
         if not has_complete_checkpoint:
             return
-        save_transcript(
-            transcript_path,
+        _save_transcript_safe(
             DurableTranscript(
                 owner_kind="subagent",
                 owner_id=agent.id,
-                messages=messages_to_dicts(last_complete_messages),
+                messages=messages_to_dicts(_persist_messages(last_complete_messages)),
                 steps_taken=last_complete_steps,
                 force_summary=last_complete_force_summary,
                 round_complete=True,
                 checkpoint_reason="cancel",
-            ),
+            )
         )
 
     try:

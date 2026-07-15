@@ -457,12 +457,11 @@ async def _run_task_engine_turn(
         task_transcript_path,
     )
 
-    data_dir = None
     manager = getattr(task, "task_manager", None)
-    if manager is not None:
-        cfg = getattr(manager, "_cfg", None)
-        if cfg is not None:
-            data_dir = getattr(cfg, "data_dir", None)
+    # Go through TaskManager's public accessor rather than reaching into its
+    # private ``_cfg`` — keeps this decoupled from TaskManager's internals.
+    data_dir_fn = getattr(manager, "data_dir", None)
+    data_dir = data_dir_fn() if callable(data_dir_fn) else None
     transcript_path = (
         task_transcript_path(Path(data_dir), task.id)
         if data_dir is not None
@@ -478,10 +477,15 @@ async def _run_task_engine_turn(
     if resuming and existing is not None:
         engine.session_messages = dicts_to_messages(existing.messages)
 
-    def _on_turn_checkpoint(messages: list[Any], steps: int) -> None:
+    async def _on_turn_checkpoint(messages: list[Any], steps: int) -> None:
         if transcript_path is None:
             return
-        save_transcript(
+        # Offload the blocking write-tmp+rename so a checkpoint on every tool
+        # round doesn't stall the event loop for other tasks/agents. The
+        # caller (orchestrator/core.py) already awaits this when it returns a
+        # coroutine.
+        await asyncio.to_thread(
+            save_transcript,
             transcript_path,
             DurableTranscript(
                 owner_kind="task",
