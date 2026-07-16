@@ -202,6 +202,20 @@ class TaskCancelTool(ToolSpec):
             task = await manager.cancel_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
+        # Persist durable stop for workflow-detach jobs so a crash mid-cancel
+        # still prevents the next driver from continuing the run.
+        try:
+            from deepseek_tui.workflow.detach import parse_detach_prompt
+            from deepseek_tui.workflow.store import write_stop_intent
+
+            parsed = parse_detach_prompt(task.prompt)
+            if parsed is not None:
+                write_stop_intent(
+                    parsed["run_id"],
+                    workspace=Path(parsed["workspace"]),
+                )
+        except Exception:  # noqa: BLE001 — cancel already succeeded
+            pass
         return _task_result("task_cancel", task)
 
 

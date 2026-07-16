@@ -249,7 +249,7 @@ def test_trust_grants_low_risk_only_not_high_risk(
             trusted=True, plugin_id="demo", digest=digest, capability=cap
         )
     # High-risk capabilities are NOT — they need a deliberate `plugin grant`.
-    for cap in ("runtime.tool-provider", "process.spawn", "package.install-scripts"):
+    for cap in ("process.spawn", "package.install-scripts"):
         assert not execution_authorized(
             trusted=True, plugin_id="demo", digest=digest, capability=cap
         )
@@ -261,7 +261,7 @@ def test_trust_grants_low_risk_only_not_high_risk(
         trusted=True,
         plugin_id="demo",
         digest=digest,
-        capability="runtime.tool-provider",
+        capability="process.spawn",
     )
 
 

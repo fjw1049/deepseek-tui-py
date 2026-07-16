@@ -81,10 +81,13 @@ async def execute_detached_workflow(
     from deepseek_tui.workflow.runtime import DeepSeekAgentRunner, run_workflow
     from deepseek_tui.workflow.store import (
         WorkflowRunStoreError,
+        clear_stop_intent,
+        has_stop_intent,
         is_run_actively_running,
         load_run,
         safe_checkpoint_run,
         save_run,
+        write_stop_intent,
     )
     from deepseek_tui.workflow.worktree import (
         WorkflowWorktreeError,
@@ -104,6 +107,45 @@ async def execute_detached_workflow(
             detail=json.dumps({"run_id": record.run_id, "status": "completed"}),
         )
 
+    # Durable stop left by a previous cancel/crash: finish as cancelled
+    # instead of continuing work. Deliberate resume of a non-running run
+    # clears stop-intent first (see branch below).
+    if has_stop_intent(run_id, workspace=project_cwd) and record.status == "running":
+        snap_meta = record.parsed_spec().meta
+        safe_checkpoint_run(
+            record,
+            completed_step_ids=list(record.completed_step_ids),
+            outputs=record.restored_outputs(),
+            snapshot=WorkflowSnapshot(
+                name=snap_meta.name,
+                description=snap_meta.description,
+            ),
+            logs=list(record.logs),
+            status="cancelled",
+            error="cancelled",
+            workspace=project_cwd,
+        )
+        clear_stop_intent(run_id, workspace=project_cwd)
+        return TaskExecutionResult(
+            summary=f"Workflow {record.run_id} cancelled",
+            error="cancelled",
+            detail=json.dumps(
+                {
+                    "run_id": record.run_id,
+                    "status": "cancelled",
+                    "stop_intent": True,
+                }
+            ),
+        )
+
+    if record.status != "running":
+        clear_stop_intent(run_id, workspace=project_cwd)
+
+    # If TaskManager already requested cancel before we started driving,
+    # persist that intent before any agent work.
+    if cancel.is_set():
+        write_stop_intent(run_id, workspace=project_cwd)
+
     # Defense in depth: WorkflowTool.execute() already gates resume through
     # is_run_actively_running(), but that only covers the caller path that
     # created *this* task. If some other task_id is (or was, recently) driving
@@ -114,7 +156,7 @@ async def execute_detached_workflow(
     if (
         record.task_id is not None
         and record.task_id != task.id
-        and is_run_actively_running(record)
+        and is_run_actively_running(record, workspace=project_cwd)
     ):
         return TaskExecutionResult(
             summary="",
@@ -243,8 +285,11 @@ async def execute_detached_workflow(
             task=record.task,
             initial_outputs=initial_outputs,
             skip_step_ids=skip_step_ids,
+            cwd=project_cwd,
+            run_id=record.run_id,
         )
     except WorkflowAbortedError:
+        write_stop_intent(record.run_id, workspace=project_cwd)
         safe_checkpoint_run(
             record,
             completed_step_ids=list(record.completed_step_ids),
@@ -255,6 +300,7 @@ async def execute_detached_workflow(
             error="cancelled",
             workspace=project_cwd,
         )
+        clear_stop_intent(record.run_id, workspace=project_cwd)
         return TaskExecutionResult(
             summary=f"Workflow {record.run_id} cancelled",
             error="cancelled",
@@ -320,6 +366,7 @@ async def execute_detached_workflow(
         result=result.result,
         workspace=project_cwd,
     )
+    clear_stop_intent(record.run_id, workspace=project_cwd)
 
     payload = {
         "run_id": record.run_id,

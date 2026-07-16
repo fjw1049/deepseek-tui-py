@@ -8,6 +8,15 @@ export type WorkflowAgentRun = {
   error?: string | null
 }
 
+export type WorkflowNodeSnapshot = {
+  id: string
+  type: string
+  status: 'queued' | 'running' | 'done' | 'error' | 'skipped'
+  generated?: boolean
+  predecessors?: string[]
+  label?: string | null
+}
+
 export type WorkflowSnapshotPayload = {
   name: string
   description: string
@@ -21,6 +30,9 @@ export type WorkflowSnapshotPayload = {
   error_count: number
   duration_ms?: number | null
   result?: unknown
+  nodes?: WorkflowNodeSnapshot[]
+  edges?: Array<{ from: string; to: string }>
+  dynamic_rounds?: Record<string, number>
 }
 
 export type WorkflowProgressPayload = {
@@ -59,6 +71,34 @@ function asAgentRun(raw: unknown): WorkflowAgentRun | null {
   }
 }
 
+function asNodeSnapshot(raw: unknown): WorkflowNodeSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null
+  const n = raw as Record<string, unknown>
+  const id = typeof n.id === 'string' ? n.id : ''
+  const type = typeof n.type === 'string' ? n.type : ''
+  const status = n.status
+  if (
+    !id ||
+    (status !== 'queued' &&
+      status !== 'running' &&
+      status !== 'done' &&
+      status !== 'error' &&
+      status !== 'skipped')
+  ) {
+    return null
+  }
+  return {
+    id,
+    type: type || 'agent',
+    status,
+    generated: n.generated === true,
+    predecessors: Array.isArray(n.predecessors)
+      ? n.predecessors.filter((p): p is string => typeof p === 'string')
+      : [],
+    label: typeof n.label === 'string' ? n.label : null
+  }
+}
+
 export function parseWorkflowSnapshot(raw: unknown): WorkflowSnapshotPayload | null {
   if (!raw || typeof raw !== 'object') return null
   const s = raw as Record<string, unknown>
@@ -71,6 +111,28 @@ export function parseWorkflowSnapshot(raw: unknown): WorkflowSnapshotPayload | n
   const agents = Array.isArray(s.agents)
     ? s.agents.map(asAgentRun).filter((a): a is WorkflowAgentRun => a != null)
     : []
+  const nodes = Array.isArray(s.nodes)
+    ? s.nodes.map(asNodeSnapshot).filter((n): n is WorkflowNodeSnapshot => n != null)
+    : undefined
+  const edges = Array.isArray(s.edges)
+    ? s.edges
+        .map((e) => {
+          if (!e || typeof e !== 'object') return null
+          const row = e as Record<string, unknown>
+          const from = typeof row.from === 'string' ? row.from : ''
+          const to = typeof row.to === 'string' ? row.to : ''
+          return from && to ? { from, to } : null
+        })
+        .filter((e): e is { from: string; to: string } => e != null)
+    : undefined
+  const dynamicRounds =
+    s.dynamic_rounds && typeof s.dynamic_rounds === 'object'
+      ? Object.fromEntries(
+          Object.entries(s.dynamic_rounds as Record<string, unknown>).filter(
+            (entry): entry is [string, number] => typeof entry[1] === 'number'
+          )
+        )
+      : undefined
   return {
     name,
     description,
@@ -83,7 +145,10 @@ export function parseWorkflowSnapshot(raw: unknown): WorkflowSnapshotPayload | n
     done_count: typeof s.done_count === 'number' ? s.done_count : 0,
     error_count: typeof s.error_count === 'number' ? s.error_count : 0,
     duration_ms: typeof s.duration_ms === 'number' ? s.duration_ms : null,
-    result: s.result
+    result: s.result,
+    nodes,
+    edges,
+    dynamic_rounds: dynamicRounds
   }
 }
 

@@ -148,9 +148,8 @@ def test_marketplace_locator_uses_local_entries_and_reports_remote(tmp_path: Pat
     assert any(item.code == "REMOTE_MARKETPLACE_SOURCE_NOT_FETCHED" for item in diagnostics)
 
 
-def test_pi_adapter_recognizes_provider_without_executing_postinstall(
-    tmp_path: Path,
-) -> None:
+def test_pi_package_is_not_recognized(tmp_path: Path) -> None:
+    """``package.json#pi.extensions`` alone is not a supported plugin format."""
     _write(
         tmp_path / "package.json",
         json.dumps(
@@ -165,33 +164,14 @@ def test_pi_adapter_recognizes_provider_without_executing_postinstall(
     )
     _write(tmp_path / "extensions" / "computer-use.ts", "export default {}\n")
 
-    packages, _ = inspect_local_source(tmp_path)
+    packages, diagnostics = inspect_local_source(tmp_path)
 
-    package = packages[0]
-    assert package.compatibility.adapter_id == "pi-package"
-    assert package.compatibility.can_install is True
-    codes = {item.code for item in package.compatibility.diagnostics}
-    assert "PI_INSTALL_SCRIPT_REQUIRES_GRANT" in codes
-    # TS entry is either strip-types (degraded/activatable) or blocked on old Node.
-    if "PI_TYPESCRIPT_STRIP_TYPES" in codes:
-        assert package.compatibility.status is CompatibilityStatus.DEGRADED
-        assert package.compatibility.can_activate is True
-    else:
-        assert "PI_TYPESCRIPT_ENTRYPOINT" in codes
-        assert package.compatibility.status is CompatibilityStatus.BLOCKED
-        assert package.compatibility.can_activate is False
-    assert [item.kind for item in package.contributions] == ["runtime.tool-provider"]
-    assert {item.capability for item in package.permission_claims} >= {
-        "process.spawn",
-        "package.install-scripts",
-    }
-    assert any(
-        item.code == "PI_INSTALL_SCRIPT_REQUIRES_GRANT"
-        for item in package.compatibility.diagnostics
+    assert packages == ()
+    assert not any(
+        getattr(item, "adapter_id", None) == "pi-package" for item in packages
     )
-    assert (
-        "PI_TYPESCRIPT_STRIP_TYPES" in codes or "PI_TYPESCRIPT_ENTRYPOINT" in codes
-    )
+    # No candidate roots → no adapter probe; may be empty diagnostics.
+    assert all(item.code != "AMBIGUOUS_PLUGIN_ADAPTER" for item in diagnostics)
 
 
 @pytest.mark.parametrize("path", ["../escape", "/absolute", r"nested\escape"])

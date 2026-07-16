@@ -1152,25 +1152,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 engine.tool_context.metadata["plugin_trust"] = {
                     p.name.lower(): bool(p.trusted) for p in loaded_plugins
                 }
-            # Start trusted Pi sidecars once per Engine session.
-            if plugin_session is not None:
-                registry = getattr(runtime, "registry", None)
-                for plugin in loaded_plugins:
-                    if not plugin.trusted:
-                        continue
-                    if not (Path(plugin.path) / "package.json").is_file():
-                        continue
-                    try:
-                        await plugin_session.activate_pi_provider(
-                            plugin.name,
-                            tool_registry=registry,
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.warning(
-                            "pi provider activation failed for %s",
-                            plugin.name,
-                            exc_info=True,
-                        )
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )

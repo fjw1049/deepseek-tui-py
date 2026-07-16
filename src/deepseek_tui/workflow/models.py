@@ -17,10 +17,21 @@ class WorkflowFailedError(Exception):
     pass
 
 
-StepType = Literal["agent", "fanout", "pipeline", "synthesis", "loop"]
+StepType = Literal[
+    "agent",
+    "fanout",
+    "pipeline",
+    "synthesis",
+    "reduce",
+    "loop",
+    "dag",
+    "dynamic",
+    "support",
+]
 ApprovalMode = Literal["analysis_only", "trusted_workflow", "strict"]
 OnErrorMode = Literal["continue", "fail_fast"]
 WorktreeMode = Literal["off", "on"]
+SourcePolicy = Literal["success", "partial"]
 AgentRunStatus = Literal["queued", "running", "done", "error", "skipped"]
 
 MAX_FANOUT_ITEMS = 16
@@ -32,6 +43,20 @@ DEFAULT_MAX_AGENTS = 10
 PREVIEW_MAX_PER_STEP = 2000
 PREVIEW_MAX_FANOUT_ITEM = 800
 FULL_TEXT_MAX = 32_768
+
+DYNAMIC_ACTIONS = frozenset(
+    {
+        "spawn",
+        "fanout",
+        "reduce",
+        "support",
+        "splice_dag",
+        "nested_workflow",
+        "synthesize",
+        "replan",
+        "stop",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -47,8 +72,7 @@ class WorkflowPolicy:
     max_agents: int = 10
     concurrency: int = 4
     wall_clock_seconds: int = 600
-    # NOTE: declared but not yet enforced; no cost cap is applied at runtime.
-    # Setting token_budget currently only emits a startup warning.
+    # NOTE: enforced at runtime via character/4 estimate in the DAG scheduler.
     token_budget: int | None = None
     worktree: WorktreeMode = "off"
 
@@ -127,6 +151,23 @@ class SynthesisStep:
 
 
 @dataclass(slots=True)
+class ReduceStep:
+    """Fan-in: wait for ``from_steps``, then run one synthesis-style agent."""
+
+    id: str
+    type: Literal["reduce"]
+    label: str
+    from_steps: list[str]
+    agent_type: str = "general"
+    model: str | None = None
+    allowed_tools: list[str] | None = None
+    prompt_template: str = ""
+    output_schema: dict[str, Any] | None = None
+    timeout_seconds: int | None = None
+    source_policy: SourcePolicy = "partial"
+
+
+@dataclass(slots=True)
 class LoopUntil:
     """Stop a loop when a body step's structured output matches ``equals``."""
 
@@ -144,7 +185,78 @@ class LoopStep:
     until: LoopUntil | None = None
 
 
-WorkflowStep = AgentStep | FanoutStep | PipelineStep | SynthesisStep | LoopStep
+@dataclass(slots=True)
+class DagStep:
+    """Nested subgraph container; exposes ``output_from`` node output upstream."""
+
+    id: str
+    type: Literal["dag"]
+    nodes: list[WorkflowStep]
+    edges: list[tuple[str, str]]  # (from, to)
+    output_from: str | None = None
+
+
+@dataclass(slots=True)
+class DynamicBudget:
+    max_decision_rounds: int = 12
+    max_agents: int = 32
+    max_mutations: int = 80
+    max_fanout_items: int = 16
+    max_nested_dynamic_depth: int = 2
+    wall_clock_seconds: int = 1200
+
+
+@dataclass(slots=True)
+class DynamicPermissions:
+    actions: list[str] = field(
+        default_factory=lambda: [
+            "spawn",
+            "fanout",
+            "reduce",
+            "support",
+            "splice_dag",
+            "synthesize",
+            "replan",
+            "stop",
+        ]
+    )
+    allow_nested_workflow: bool = True
+    allow_write_tools: bool = False
+
+
+@dataclass(slots=True)
+class DynamicStep:
+    id: str
+    type: Literal["dynamic"]
+    controller_agent_type: str = "review"
+    controller_model: str | None = None
+    controller_allowed_tools: list[str] | None = None
+    budget: DynamicBudget = field(default_factory=DynamicBudget)
+    permissions: DynamicPermissions = field(default_factory=DynamicPermissions)
+    context_include_outputs: list[str] = field(default_factory=lambda: ["*"])
+    max_context_chars: int = 48_000
+
+
+@dataclass(slots=True)
+class SupportStep:
+    id: str
+    type: Literal["support"]
+    uses: str
+    from_steps: list[str] = field(default_factory=list)
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+WorkflowStep = (
+    AgentStep
+    | FanoutStep
+    | PipelineStep
+    | SynthesisStep
+    | ReduceStep
+    | LoopStep
+    | DagStep
+    | DynamicStep
+    | SupportStep
+)
 
 
 @dataclass(slots=True)
@@ -159,7 +271,9 @@ class WorkflowSpec:
     version: int
     meta: WorkflowMeta
     policy: WorkflowPolicy
-    phases: list[WorkflowPhase]
+    phases: list[WorkflowPhase] = field(default_factory=list)
+    # Populated after parse (v1 compile or v2 native). Not part of authoring JSON.
+    compiled_graph: Any | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -181,6 +295,16 @@ class WorkflowAgentRun:
 
 
 @dataclass(slots=True)
+class WorkflowNodeSnapshot:
+    id: str
+    type: str
+    status: AgentRunStatus
+    generated: bool = False
+    predecessors: list[str] = field(default_factory=list)
+    label: str | None = None
+
+
+@dataclass(slots=True)
 class WorkflowSnapshot:
     name: str
     description: str
@@ -194,6 +318,9 @@ class WorkflowSnapshot:
     error_count: int = 0
     duration_ms: int | None = None
     result: Any | None = None
+    nodes: list[WorkflowNodeSnapshot] = field(default_factory=list)
+    edges: list[dict[str, str]] = field(default_factory=list)
+    dynamic_rounds: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -220,6 +347,15 @@ class WorkflowRunContext:
     task: str = ""
     round: int | None = None
     completed_step_ids: list[str] = field(default_factory=list)
+    skipped_step_ids: list[str] = field(default_factory=list)
+    failed_step_ids: list[str] = field(default_factory=list)
+    dynamic_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    budgets_used: dict[str, int] = field(default_factory=dict)
+    generated_node_ids: list[str] = field(default_factory=list)
+    nested_dynamic_depth: int = 0
+    estimated_tokens_used: int = 0
+    # Serialized CompiledGraph (incl. dynamic mutations) for checkpoint/resume.
+    runtime_graph: dict[str, Any] | None = None
 
 
 # Parse and validate Workflow IR JSON.
@@ -231,13 +367,13 @@ class WorkflowValidationError(ValueError):
 
 
 def parse_workflow_spec(raw: Any) -> WorkflowSpec:
-    """Parse tool input into a validated WorkflowSpec."""
+    """Parse tool input into a validated WorkflowSpec (v1 phases or v2 graph)."""
     if not isinstance(raw, dict):
         raise WorkflowValidationError("workflow spec must be a JSON object")
     if raw.get("spec") is not None and isinstance(raw.get("spec"), dict):
         raw = raw["spec"]
     version = raw.get("version", 1)
-    if version != 1:
+    if version not in (1, 2):
         raise WorkflowValidationError(f"unsupported workflow version: {version}")
     meta_raw = raw.get("meta")
     if not isinstance(meta_raw, dict):
@@ -249,12 +385,113 @@ def parse_workflow_spec(raw: Any) -> WorkflowSpec:
     if not isinstance(description, str) or not description.strip():
         raise WorkflowValidationError("meta.description must be a non-empty string")
     meta = WorkflowMeta(name=name.strip(), description=description.strip())
-
     policy = _parse_policy(raw.get("policy") or {})
-    phases_raw = raw.get("phases")
-    if not isinstance(phases_raw, list) or not phases_raw:
-        raise WorkflowValidationError("phases must be a non-empty array")
 
+    from deepseek_tui.workflow.dag import (
+        CompiledGraph,
+        GraphEdge,
+        assert_acyclic,
+        build_adjacency,
+        compile_phases_to_graph,
+    )
+
+    if version == 1 or (version == 2 and raw.get("phases") and not raw.get("graph")):
+        phases_raw = raw.get("phases")
+        if not isinstance(phases_raw, list) or not phases_raw:
+            raise WorkflowValidationError("phases must be a non-empty array")
+        phases, step_ids, agent_step_count = _parse_phases(phases_raw)
+        if agent_step_count == 0:
+            raise WorkflowValidationError("workflow must include at least one agent step")
+        _validate_output_refs(phases, step_ids)
+        spec = WorkflowSpec(version=1 if version == 1 else 2, meta=meta, policy=policy, phases=phases)
+        spec.compiled_graph = compile_phases_to_graph(phases)
+        return spec
+
+    # version 2 native graph
+    graph_raw = raw.get("graph")
+    if not isinstance(graph_raw, dict):
+        raise WorkflowValidationError("graph must be an object for version 2")
+    nodes_raw = graph_raw.get("nodes")
+    if not isinstance(nodes_raw, list) or not nodes_raw:
+        raise WorkflowValidationError("graph.nodes must be a non-empty array")
+    edges_raw = graph_raw.get("edges") or []
+    if not isinstance(edges_raw, list):
+        raise WorkflowValidationError("graph.edges must be an array")
+
+    nodes: dict[str, WorkflowStep] = {}
+    step_ids: set[str] = set()
+    agent_step_count = 0
+    after_hints: dict[str, list[str]] = {}
+    for idx, node_raw in enumerate(nodes_raw):
+        if not isinstance(node_raw, dict):
+            raise WorkflowValidationError("each graph node must be an object")
+        after = node_raw.get("after")
+        step = _parse_step(node_raw, "graph", idx)
+        if step.id in nodes:
+            raise WorkflowValidationError(f"duplicate step id: {step.id}")
+        nodes[step.id] = step
+        for sid in _collect_step_ids(step):
+            step_ids.add(sid)
+        agent_step_count += _agent_weight(step)
+        if after is not None:
+            after_hints[step.id] = _parse_after(after, step.id)
+
+    edges: list[GraphEdge] = []
+    for eraw in edges_raw:
+        if not isinstance(eraw, dict):
+            raise WorkflowValidationError("each edge must be an object")
+        fr, to = eraw.get("from"), eraw.get("to")
+        if not isinstance(fr, str) or not isinstance(to, str):
+            raise WorkflowValidationError("edge.from and edge.to must be strings")
+        edges.append(GraphEdge(from_id=fr.strip(), to_id=to.strip()))
+
+    for nid, preds in after_hints.items():
+        for pred in preds:
+            edges.append(GraphEdge(from_id=pred, to_id=nid))
+            # reduce/support from_steps also imply edges
+            pass
+
+    # Auto-wire reduce/support from_steps as edges when missing
+    for nid, step in nodes.items():
+        if step.type == "reduce":
+            for pred in step.from_steps:
+                edges.append(GraphEdge(from_id=pred, to_id=nid))
+        elif step.type == "support":
+            for pred in step.from_steps:
+                edges.append(GraphEdge(from_id=pred, to_id=nid))
+
+    # Dedupe edges
+    seen_e: set[tuple[str, str]] = set()
+    uniq_edges: list[GraphEdge] = []
+    for e in edges:
+        key = (e.from_id, e.to_id)
+        if key in seen_e:
+            continue
+        seen_e.add(key)
+        uniq_edges.append(e)
+
+    if agent_step_count == 0 and not any(s.type == "dynamic" for s in nodes.values()):
+        raise WorkflowValidationError("workflow must include at least one agent or dynamic step")
+
+    graph = build_adjacency(nodes, uniq_edges)
+    assert_acyclic(graph)
+    # Fake single phase for UI
+    graph.phase_of = {nid: "graph" for nid in nodes}
+    graph.phase_titles = {"graph": meta.name}
+    _validate_graph_output_refs(graph)
+
+    # Also expose a linear phases view for tools that still expect phases
+    phases = [
+        WorkflowPhase(id="graph", title=meta.name, steps=list(nodes.values()))
+    ]
+    spec = WorkflowSpec(version=2, meta=meta, policy=policy, phases=phases)
+    spec.compiled_graph = graph
+    return spec
+
+
+def _parse_phases(
+    phases_raw: list[Any],
+) -> tuple[list[WorkflowPhase], set[str], int]:
     phases: list[WorkflowPhase] = []
     step_ids: set[str] = set()
     agent_step_count = 0
@@ -278,18 +515,82 @@ def parse_workflow_spec(raw: Any) -> WorkflowSpec:
                 if sid in step_ids:
                     raise WorkflowValidationError(f"duplicate step id: {sid}")
                 step_ids.add(sid)
-            if step.type in ("agent", "synthesis", "fanout", "loop"):
-                agent_step_count += 1
-            elif step.type == "pipeline":
-                agent_step_count += len(step.stages) * max(1, len(step.items))
+            agent_step_count += _agent_weight(step)
             steps.append(step)
         phases.append(WorkflowPhase(id=phase_id.strip(), title=title.strip(), steps=steps))
+    return phases, step_ids, agent_step_count
 
-    if agent_step_count == 0:
-        raise WorkflowValidationError("workflow must include at least one agent step")
 
-    _validate_output_refs(phases, step_ids)
-    return WorkflowSpec(version=1, meta=meta, policy=policy, phases=phases)
+def _agent_weight(step: WorkflowStep) -> int:
+    if step.type in ("agent", "synthesis", "reduce", "fanout", "loop", "dynamic"):
+        return 1
+    if step.type == "pipeline":
+        return len(step.stages) * max(1, len(step.items))
+    if step.type == "dag":
+        return sum(_agent_weight(s) for s in step.nodes) or 1
+    if step.type == "support":
+        return 0
+    return 0
+
+
+def _parse_after(raw: Any, step_id: str) -> list[str]:
+    if isinstance(raw, str):
+        return [raw.strip()] if raw.strip() else []
+    if isinstance(raw, list):
+        out = [str(x).strip() for x in raw if str(x).strip()]
+        return out
+    raise WorkflowValidationError(f"step {step_id}: after must be a string or array")
+
+
+def adaptive_workflow_spec(*, task_description: str = "adaptive orchestration") -> dict[str, Any]:
+    """Builtin v2 spec: single dynamic root (product entry for mode=dynamic)."""
+    return {
+        "version": 2,
+        "meta": {
+            "name": "adaptive",
+            "description": task_description,
+        },
+        "policy": {
+            "approval_mode": "trusted_workflow",
+            "on_error": "continue",
+            "max_agents": 16,
+            "concurrency": 4,
+            "wall_clock_seconds": 1200,
+        },
+        "graph": {
+            "nodes": [
+                {
+                    "id": "orchestrate",
+                    "type": "dynamic",
+                    "controller": {"agent_type": "review"},
+                    "budget": {
+                        "max_decision_rounds": 12,
+                        "max_agents": 32,
+                        "max_mutations": 80,
+                        "max_fanout_items": 16,
+                        "max_nested_dynamic_depth": 2,
+                        "wall_clock_seconds": 1200,
+                    },
+                    "permissions": {
+                        "actions": [
+                            "spawn",
+                            "fanout",
+                            "reduce",
+                            "support",
+                            "splice_dag",
+                            "nested_workflow",
+                            "synthesize",
+                            "replan",
+                            "stop",
+                        ],
+                        "allow_nested_workflow": True,
+                        "allow_write_tools": False,
+                    },
+                }
+            ],
+            "edges": [],
+        },
+    }
 
 
 def _parse_policy(raw: dict[str, Any]) -> WorkflowPolicy:
@@ -460,6 +761,45 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
                 max_val=3600,
             ),
         )
+    if step_type == "reduce":
+        label = raw.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise WorkflowValidationError(f"step {step_id}: label required")
+        tmpl = raw.get("prompt_template")
+        if not isinstance(tmpl, str) or not tmpl.strip():
+            raise WorkflowValidationError(f"step {step_id}: prompt_template required")
+        from_raw = raw.get("from") or raw.get("from_steps") or []
+        if isinstance(from_raw, str):
+            from_steps = [from_raw.strip()] if from_raw.strip() else []
+        elif isinstance(from_raw, list):
+            from_steps = [str(x).strip() for x in from_raw if str(x).strip()]
+        else:
+            raise WorkflowValidationError(f"step {step_id}: reduce.from must be string or array")
+        if not from_steps:
+            raise WorkflowValidationError(f"step {step_id}: reduce.from required")
+        source_policy = raw.get("source_policy", "partial")
+        if source_policy not in ("success", "partial"):
+            raise WorkflowValidationError(
+                f"step {step_id}: source_policy must be success or partial"
+            )
+        return ReduceStep(
+            id=step_id.strip(),
+            type="reduce",
+            label=label.strip(),
+            from_steps=from_steps,
+            agent_type=str(raw.get("agent_type", "general")),
+            model=raw.get("model"),
+            allowed_tools=_parse_allowed(raw.get("allowed_tools")),
+            prompt_template=tmpl.strip(),
+            output_schema=_parse_schema(raw.get("output_schema")),
+            timeout_seconds=_parse_int_opt(
+                raw.get("timeout_seconds"),
+                f"step {step_id}: timeout_seconds",
+                min_val=1,
+                max_val=3600,
+            ),
+            source_policy=source_policy,  # type: ignore[arg-type]
+        )
     if step_type == "loop":
         max_rounds = _parse_int(raw.get("max_rounds", 3), f"step {step_id}: max_rounds")
         if max_rounds < 1 or max_rounds > MAX_LOOP_ROUNDS:
@@ -485,7 +825,143 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
             steps=body,
             until=until,
         )
+    if step_type == "dag":
+        child_nodes_raw = raw.get("nodes")
+        if not isinstance(child_nodes_raw, list) or not child_nodes_raw:
+            raise WorkflowValidationError(f"step {step_id}: dag.nodes required")
+        child_nodes: list[WorkflowStep] = []
+        for idx, child_raw in enumerate(child_nodes_raw):
+            child = _parse_step(child_raw, f"{phase_id}/{step_id}", idx)
+            if child.type in ("dag", "dynamic"):
+                raise WorkflowValidationError(
+                    f"step {step_id}: nested dag/dynamic inside dag is not supported"
+                )
+            child_nodes.append(child)
+        child_edges: list[tuple[str, str]] = []
+        for eraw in raw.get("edges") or []:
+            if not isinstance(eraw, dict):
+                continue
+            fr, to = eraw.get("from"), eraw.get("to")
+            if isinstance(fr, str) and isinstance(to, str):
+                child_edges.append((fr.strip(), to.strip()))
+        # Sequential default if no edges
+        if not child_edges and len(child_nodes) > 1:
+            for i in range(len(child_nodes) - 1):
+                child_edges.append((child_nodes[i].id, child_nodes[i + 1].id))
+        output_from = raw.get("output_from")
+        if output_from is not None and not isinstance(output_from, str):
+            raise WorkflowValidationError(f"step {step_id}: output_from must be a string")
+        if output_from is None and child_nodes:
+            output_from = child_nodes[-1].id
+        return DagStep(
+            id=step_id.strip(),
+            type="dag",
+            nodes=child_nodes,
+            edges=child_edges,
+            output_from=output_from.strip() if isinstance(output_from, str) else None,
+        )
+    if step_type == "dynamic":
+        ctrl = raw.get("controller") or {}
+        if not isinstance(ctrl, dict):
+            raise WorkflowValidationError(f"step {step_id}: controller must be an object")
+        budget_raw = raw.get("budget") or {}
+        if not isinstance(budget_raw, dict):
+            raise WorkflowValidationError(f"step {step_id}: budget must be an object")
+        perm_raw = raw.get("permissions") or {}
+        if not isinstance(perm_raw, dict):
+            raise WorkflowValidationError(f"step {step_id}: permissions must be an object")
+        actions = perm_raw.get("actions")
+        if actions is None:
+            action_list = list(DYNAMIC_ACTIONS - {"nested_workflow"})
+        elif isinstance(actions, list):
+            action_list = [str(a) for a in actions]
+            bad = [a for a in action_list if a not in DYNAMIC_ACTIONS]
+            if bad:
+                raise WorkflowValidationError(
+                    f"step {step_id}: unknown dynamic actions {bad}"
+                )
+        else:
+            raise WorkflowValidationError(f"step {step_id}: permissions.actions must be array")
+        ctx_raw = raw.get("context") or {}
+        if not isinstance(ctx_raw, dict):
+            raise WorkflowValidationError(f"step {step_id}: context must be an object")
+        include = ctx_raw.get("include_outputs", ["*"])
+        if not isinstance(include, list):
+            raise WorkflowValidationError(
+                f"step {step_id}: context.include_outputs must be array"
+            )
+        return DynamicStep(
+            id=step_id.strip(),
+            type="dynamic",
+            controller_agent_type=str(ctrl.get("agent_type", "review")),
+            controller_model=ctrl.get("model"),
+            controller_allowed_tools=_parse_allowed(ctrl.get("allowed_tools")),
+            budget=DynamicBudget(
+                max_decision_rounds=_parse_int(
+                    budget_raw.get("max_decision_rounds", 12),
+                    f"step {step_id}: budget.max_decision_rounds",
+                ),
+                max_agents=_parse_int(
+                    budget_raw.get("max_agents", 32),
+                    f"step {step_id}: budget.max_agents",
+                ),
+                max_mutations=_parse_int(
+                    budget_raw.get("max_mutations", 80),
+                    f"step {step_id}: budget.max_mutations",
+                ),
+                max_fanout_items=_parse_int(
+                    budget_raw.get("max_fanout_items", 16),
+                    f"step {step_id}: budget.max_fanout_items",
+                ),
+                max_nested_dynamic_depth=_parse_int(
+                    budget_raw.get("max_nested_dynamic_depth", 2),
+                    f"step {step_id}: budget.max_nested_dynamic_depth",
+                ),
+                wall_clock_seconds=_parse_int(
+                    budget_raw.get("wall_clock_seconds", 1200),
+                    f"step {step_id}: budget.wall_clock_seconds",
+                ),
+            ),
+            permissions=DynamicPermissions(
+                actions=action_list,
+                allow_nested_workflow=bool(perm_raw.get("allow_nested_workflow", True)),
+                allow_write_tools=bool(perm_raw.get("allow_write_tools", False)),
+            ),
+            context_include_outputs=[str(x) for x in include],
+            max_context_chars=_parse_int(
+                ctx_raw.get("max_context_chars", 48000),
+                f"step {step_id}: context.max_context_chars",
+            ),
+        )
+    if step_type == "support":
+        uses = raw.get("uses")
+        if not isinstance(uses, str) or not uses.strip():
+            raise WorkflowValidationError(f"step {step_id}: support.uses required")
+        from_raw = raw.get("from") or raw.get("from_steps") or []
+        if isinstance(from_raw, str):
+            from_steps = [from_raw.strip()] if from_raw.strip() else []
+        elif isinstance(from_raw, list):
+            from_steps = [str(x).strip() for x in from_raw if str(x).strip()]
+        else:
+            raise WorkflowValidationError(f"step {step_id}: support.from must be string or array")
+        options = raw.get("options") or {}
+        if not isinstance(options, dict):
+            raise WorkflowValidationError(f"step {step_id}: support.options must be object")
+        return SupportStep(
+            id=step_id.strip(),
+            type="support",
+            uses=uses.strip(),
+            from_steps=from_steps,
+            options=dict(options),
+        )
     raise WorkflowValidationError(f"step {step_id}: unknown type {step_type!r}")
+
+
+def step_from_dict(raw: dict[str, Any], *, fallback_id: str = "step") -> WorkflowStep:
+    """Rehydrate a step from checkpoint / graph serialization."""
+    if "id" not in raw:
+        raw = {**raw, "id": fallback_id}
+    return _parse_step(raw, "restore", 0)
 
 
 def _parse_loop_until(
@@ -719,40 +1195,92 @@ def _parse_int_opt(
 
 def _collect_step_ids(step: WorkflowStep) -> list[str]:
     if step.type == "loop":
-        return [step.id, *[s.id for s in step.steps]]
+        return [step.id, *[sid for s in step.steps for sid in _collect_step_ids(s)]]
+    if step.type == "dag":
+        return [step.id, *[sid for s in step.nodes for sid in _collect_step_ids(s)]]
     return [step.id]
+
+
+def _validate_graph_output_refs(graph: Any) -> None:
+    """Topo-order template / items_from validation for a CompiledGraph."""
+    from deepseek_tui.workflow.dag import CompiledGraph
+
+    assert isinstance(graph, CompiledGraph)
+    # Kahn order
+    indeg = {nid: len(preds) for nid, preds in graph.predecessors.items()}
+    queue = [nid for nid, d in indeg.items() if d == 0]
+    prior: set[str] = set()
+    while queue:
+        nid = queue.pop()
+        step = graph.nodes[nid]
+        if step.type == "loop":
+            visible = set(prior)
+            for body_step in step.steps:
+                _check_step_templates(body_step, visible, graph.nodes.keys())
+                visible.add(body_step.id)
+                prior.add(body_step.id)
+        else:
+            _check_step_templates(step, prior, graph.nodes.keys())
+        prior.add(nid)
+        for succ in graph.successors.get(nid, ()):
+            indeg[succ] -= 1
+            if indeg[succ] == 0:
+                queue.append(succ)
+
+
+def _check_step_templates(
+    step: WorkflowStep, visible: set[str], all_ids: Any
+) -> None:
+    step_ids = set(all_ids)
+    for template in _step_templates(step):
+        for ref in _extract_output_refs(template):
+            if ref not in step_ids and ref not in visible:
+                # Allow refs to known graph ids even if not yet visible when
+                # reduce wires from explicitly — still enforce topo when possible.
+                if ref not in step_ids:
+                    raise WorkflowValidationError(
+                        f"step {step.id} references unknown output {ref}"
+                    )
+            if ref in step_ids and ref not in visible and step.type not in ("dynamic",):
+                raise WorkflowValidationError(
+                    f"step {step.id} references {ref} before it runs"
+                )
+    if step.type == "fanout" and step.items_from is not None:
+        source = step.items_from.step
+        if source not in step_ids:
+            raise WorkflowValidationError(
+                f"step {step.id} items_from references unknown step {source}"
+            )
+        if source not in visible:
+            raise WorkflowValidationError(
+                f"step {step.id} items_from references {source} before it runs"
+            )
+    if step.type == "reduce":
+        for source in step.from_steps:
+            if source not in step_ids:
+                raise WorkflowValidationError(
+                    f"step {step.id} from references unknown step {source}"
+                )
 
 
 def _validate_output_refs(phases: list[WorkflowPhase], step_ids: set[str]) -> None:
     prior: set[str] = set()
 
     def _check_templates(step: WorkflowStep, visible: set[str]) -> None:
-        for template in _step_templates(step):
-            for ref in _extract_output_refs(template):
-                if ref not in step_ids:
-                    raise WorkflowValidationError(
-                        f"step {step.id} references unknown output {ref}"
-                    )
-                if ref not in visible:
-                    raise WorkflowValidationError(
-                        f"step {step.id} references {ref} before it runs"
-                    )
-        if step.type == "fanout" and step.items_from is not None:
-            source = step.items_from.step
-            if source not in step_ids:
-                raise WorkflowValidationError(
-                    f"step {step.id} items_from references unknown step {source}"
-                )
-            if source not in visible:
-                raise WorkflowValidationError(
-                    f"step {step.id} items_from references {source} before it runs"
-                )
+        _check_step_templates(step, visible, step_ids)
 
     for phase in phases:
         for step in phase.steps:
             if step.type == "loop":
                 visible = set(prior)
                 for body_step in step.steps:
+                    _check_templates(body_step, visible)
+                    visible.add(body_step.id)
+                    prior.add(body_step.id)
+                prior.add(step.id)
+            elif step.type == "dag":
+                visible = set(prior)
+                for body_step in step.nodes:
                     _check_templates(body_step, visible)
                     visible.add(body_step.id)
                     prior.add(body_step.id)
@@ -773,7 +1301,7 @@ def _step_templates(step: WorkflowStep) -> list[str]:
         ]
     if step.type == "pipeline":
         return [stage.prompt_template for stage in step.stages]
-    if step.type == "synthesis":
+    if step.type in ("synthesis", "reduce"):
         return [step.prompt_template]
     return []
 

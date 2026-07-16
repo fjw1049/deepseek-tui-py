@@ -81,15 +81,18 @@ def test_resolve_missing_raises() -> None:
 
 def test_preset_parses_via_parse_workflow_spec() -> None:
     from deepseek_tui.workflow.catalog import resolve_workflow_path
+    from deepseek_tui.workflow.dag import compile_workflow_graph
 
     path = resolve_workflow_path("repo_review")
     raw = json.loads(path.read_text(encoding="utf-8"))
     spec = parse_workflow_spec(raw)
-    assert len(spec.phases) == 3
+    assert spec.version == 2
+    g = compile_workflow_graph(spec)
+    assert set(g.nodes) >= {"plan", "inspect", "final"}
 
 
 def test_bundled_presets_resolve() -> None:
-    for name in ("repo_review", "diff_review", "spec_check"):
+    for name in ("repo_review", "diff_review", "spec_check", "adaptive"):
         spec = resolve_workflow(name)
         assert spec.meta.name == name
 

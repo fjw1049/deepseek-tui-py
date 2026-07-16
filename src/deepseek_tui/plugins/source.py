@@ -185,15 +185,6 @@ def locate_packages(
     )
     if conventional_root:
         roots.add(artifact.root)
-    for package_json in artifact.root.rglob("package.json"):
-        if ".git" in package_json.relative_to(artifact.root).parts:
-            continue
-        try:
-            data = json.loads(package_json.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data.get("pi"), dict) and data["pi"].get("extensions"):
-            roots.add(package_json.parent.resolve())
 
     for skill_file in artifact.root.rglob("SKILL.md"):
         parent = skill_file.parent.resolve()

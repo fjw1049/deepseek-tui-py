@@ -151,32 +151,74 @@ export function WorkflowBlock({
             </p>
           ) : null}
           <div className="mt-2 space-y-2">
-            {phaseOrder.map((phaseId) => {
-              const agents = agentsByPhase.get(phaseId) ?? []
-              if (!agents.length) return null
-              const done = agents.filter((a) => a.status === 'done').length
-              return (
-                <div key={phaseId}>
-                  <div className="text-[11.5px] font-medium text-ds-muted">
-                    ✓ {phaseId} {done}/{agents.length}
-                  </div>
-                  <ul className="mt-1 space-y-0.5 pl-2">
-                    {agents.map((agent) => (
-                      <li
-                        key={`${agent.step_id}-${agent.label}`}
-                        className="truncate text-[11px] text-ds-ink"
-                        title={agent.result_preview ?? agent.error ?? undefined}
-                      >
-                        {STATUS_ICON[agent.status] ?? '○'} {agent.label}
-                        {agent.error ? (
-                          <span className="text-red-600 dark:text-red-400"> — {agent.error}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
+            {snapshot.nodes && snapshot.nodes.length > 0 ? (
+              <div>
+                <div className="text-[11.5px] font-medium text-ds-muted">
+                  {t('workflowDagProgress', { defaultValue: 'DAG nodes' })}
+                  {snapshot.dynamic_rounds && Object.keys(snapshot.dynamic_rounds).length > 0
+                    ? ` · dyn ${Object.entries(snapshot.dynamic_rounds)
+                        .map(([id, r]) => `${id}@${r}`)
+                        .join(', ')}`
+                    : ''}
                 </div>
-              )
-            })}
+                <ul className="mt-1 space-y-0.5 pl-2">
+                  {snapshot.nodes.map((node) => (
+                    <li
+                      key={node.id}
+                      className="truncate text-[11px] text-ds-ink"
+                      title={
+                        node.predecessors && node.predecessors.length
+                          ? `after: ${node.predecessors.join(', ')}`
+                          : undefined
+                      }
+                    >
+                      {STATUS_ICON[node.status] ?? '○'} {node.label || node.id}
+                      <span className="text-ds-faint"> ({node.type})</span>
+                      {node.generated ? (
+                        <span className="text-ds-faint"> *</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                {snapshot.edges && snapshot.edges.length > 0 ? (
+                  <p className="mt-1 truncate font-mono text-[10px] text-ds-faint">
+                    edges:{' '}
+                    {snapshot.edges
+                      .slice(0, 12)
+                      .map((e) => `${e.from}→${e.to}`)
+                      .join(' ')}
+                    {snapshot.edges.length > 12 ? ' …' : ''}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              phaseOrder.map((phaseId) => {
+                const agents = agentsByPhase.get(phaseId) ?? []
+                if (!agents.length) return null
+                const done = agents.filter((a) => a.status === 'done').length
+                return (
+                  <div key={phaseId}>
+                    <div className="text-[11.5px] font-medium text-ds-muted">
+                      ✓ {phaseId} {done}/{agents.length}
+                    </div>
+                    <ul className="mt-1 space-y-0.5 pl-2">
+                      {agents.map((agent) => (
+                        <li
+                          key={`${agent.step_id}-${agent.label}`}
+                          className="truncate text-[11px] text-ds-ink"
+                          title={agent.result_preview ?? agent.error ?? undefined}
+                        >
+                          {STATUS_ICON[agent.status] ?? '○'} {agent.label}
+                          {agent.error ? (
+                            <span className="text-red-600 dark:text-red-400"> — {agent.error}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })
+            )}
           </div>
           {snapshot.logs.length > 0 ? (
             <div className="mt-2 border-t border-ds-border/60 pt-2">

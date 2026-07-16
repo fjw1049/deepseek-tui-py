@@ -147,9 +147,16 @@ function WorkflowDetail({
   const busy = useChatStore((s) => s.busy)
   const { workflow } = process
   const snap = workflow.snapshot
+  const visibleNodes = (snap.nodes ?? []).slice(-6)
   const visibleAgents = snap.agents.slice(-4)
+  const showNodes = visibleNodes.length > 0
   const pct = process.progressPct
   const runId = workflow.runId?.trim()
+  const dynRounds = snap.dynamic_rounds
+    ? Object.entries(snap.dynamic_rounds)
+        .map(([id, r]) => `${id}@${r}`)
+        .join(', ')
+    : ''
   const canResume =
     Boolean(runId) &&
     (workflow.status === 'cancelled' ||
@@ -198,6 +205,9 @@ function WorkflowDetail({
         <span className="rounded-full bg-ds-hover px-2 py-0.5">
           {snap.done_count}/{snap.agent_count} {t('processTrayAgentsDone')}
         </span>
+        {dynRounds ? (
+          <span className="rounded-full bg-ds-hover px-2 py-0.5">dyn {dynRounds}</span>
+        ) : null}
         {snap.error_count > 0 ? (
           <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-red-700 dark:text-red-300">
             {snap.error_count} {t('processTrayErrors')}
@@ -215,7 +225,42 @@ function WorkflowDetail({
           </div>
         </div>
       ) : null}
-      {visibleAgents.length > 0 ? (
+      {showNodes ? (
+        <div className="mt-3 flex flex-col gap-1">
+          {visibleNodes.map((node) => (
+            <div
+              key={node.id}
+              className="flex items-center gap-2 rounded-xl bg-ds-hover/50 px-2.5 py-1.5 text-[12.5px]"
+              title={
+                node.predecessors && node.predecessors.length
+                  ? `after: ${node.predecessors.join(', ')}`
+                  : undefined
+              }
+            >
+              <span
+                className={[
+                  'h-1.5 w-1.5 shrink-0 rounded-full',
+                  node.status === 'done'
+                    ? 'bg-emerald-500'
+                    : node.status === 'error'
+                      ? 'bg-red-500'
+                      : node.status === 'running'
+                        ? 'bg-sky-500'
+                        : node.status === 'skipped'
+                          ? 'bg-ds-faint'
+                          : 'bg-ds-faint'
+                ].join(' ')}
+              />
+              <span className="min-w-0 flex-1 truncate text-ds-muted">
+                {node.label || node.id}
+                <span className="text-ds-faint"> ({node.type})</span>
+                {node.generated ? <span className="text-ds-faint"> *</span> : null}
+              </span>
+              <span className="shrink-0 text-[11px] text-ds-faint">{node.status}</span>
+            </div>
+          ))}
+        </div>
+      ) : visibleAgents.length > 0 ? (
         <div className="mt-3 flex flex-col gap-1">
           {visibleAgents.map((agent) => (
             <div

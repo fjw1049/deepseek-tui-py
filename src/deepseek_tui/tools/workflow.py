@@ -33,12 +33,18 @@ from deepseek_tui.workflow.models import WorkflowValidationError, parse_workflow
 from deepseek_tui.workflow.store import (
     WorkflowRunRecord,
     WorkflowRunStoreError,
+    acquire_run_lease,
+    clear_stop_intent,
     create_run,
+    has_stop_intent,
+    heartbeat_run_lease,
     is_run_actively_running,
     list_runs,
     load_run,
+    release_run_lease,
     safe_checkpoint_run,
     save_run,
+    write_stop_intent,
 )
 from deepseek_tui.workflow.worktree import (
     WorkflowWorktreeError,
@@ -101,26 +107,25 @@ class WorkflowTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Execute a structured multi-agent workflow. Prefer a named workflow "
-            "with `name` + `task` when one fits (bundled: `repo_review`, "
-            "`diff_review`, `spec_check`). Discovery roots (higher wins): "
-            "`<cwd>/workflows/`, `<cwd>/.deepseek/workflows/`, "
+            "Execute a structured multi-agent workflow (DAG ready-set scheduler). "
+            "Prefer a named workflow with `name` + `task` when one fits (bundled: "
+            "`repo_review`, `diff_review`, `spec_check`, `adaptive`). Discovery "
+            "roots (higher wins): `<cwd>/workflows/`, `<cwd>/.deepseek/workflows/`, "
             "`~/.deepseek/workflows/`, then built-in presets. Pass `spec` for "
-            "ad-hoc IR. Resume an interrupted run with `run_id` alone. "
-            "Do not combine `run_id` with `name`/`spec`. Call `workflow_list` "
-            "to enumerate available workflows and recent runs.\n\n"
+            "ad-hoc IR (v1 phases or v2 graph). Pass `mode: \"dynamic\"` for the "
+            "builtin adaptive dynamic-controller root. Resume an interrupted run "
+            "with `run_id` alone. Do not combine `run_id` with `name`/`spec`. "
+            "Call `workflow_list` to enumerate available workflows and recent runs.\n\n"
             "IR step types: `agent`, `fanout` (`items` or `items_from`), "
-            "`pipeline`, `loop` (`max_rounds` + optional `until`), "
-            "`synthesis`. Templates: `{{task}}`, `{{item}}`, `{{round}}`, "
-            "`{{outputs.<id>}}`.\n\n"
+            "`pipeline`, `loop` (`max_rounds` + optional `until`), `reduce`, "
+            "`synthesis`, `dag`, `dynamic`, `support`. Templates: `{{task}}`, "
+            "`{{item}}`, `{{round}}`, `{{outputs.<id>}}`.\n\n"
             "Optional: `policy.worktree: \"on\"` isolates edits in a git "
             "worktree; `detach: true` enqueues via TaskManager and returns "
             "`run_id` + `task_id` immediately.\n\n"
             "Runs are checkpointed under `.deepseek/workflow-runs/<run_id>/` "
             "after every completed step (and every finished fanout/pipeline "
-            "item). Caveat: a `loop` step only checkpoints once ALL of its "
-            "rounds finish, so resuming a run interrupted mid-loop re-runs "
-            "that loop from round 1."
+            "item), including runtime graph mutations from `dynamic` nodes."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -130,15 +135,24 @@ class WorkflowTool(ToolSpec):
                 "name": {
                     "type": "string",
                     "description": (
-                        "Named workflow id (e.g. repo_review). Mutually "
-                        "exclusive with spec/run_id. Pair with task."
+                        "Named workflow id (e.g. repo_review, adaptive). Mutually "
+                        "exclusive with spec/run_id/mode. Pair with task."
                     ),
                 },
                 "task": {
                     "type": "string",
                     "description": (
                         "Runtime task text injected as {{task}} in prompts. "
-                        "Required when using name; optional with spec."
+                        "Required when using name or mode=dynamic; optional with spec."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["dynamic"],
+                    "description": (
+                        "Sugar for the builtin adaptive dynamic workflow "
+                        "(single dynamic root). Pair with task. Mutually exclusive "
+                        "with name/spec/run_id."
                     ),
                 },
                 "run_id": {
@@ -146,13 +160,14 @@ class WorkflowTool(ToolSpec):
                     "description": (
                         "Resume a previously interrupted/failed workflow run "
                         "from `.deepseek/workflow-runs/`. Mutually exclusive "
-                        "with name/spec."
+                        "with name/spec/mode."
                     ),
                 },
                 "spec": {
                     "type": "object",
                     "description": (
-                        "Workflow IR v1. Mutually exclusive with name/run_id."
+                        "Workflow IR v1 (phases) or v2 (graph). Mutually exclusive "
+                        "with name/run_id/mode."
                     ),
                 },
                 "script": {
@@ -175,6 +190,7 @@ class WorkflowTool(ToolSpec):
                 {"required": ["spec"]},
                 {"required": ["script", "spec"]},
                 {"required": ["run_id"]},
+                {"required": ["mode", "task"]},
             ],
             "additionalProperties": False,
         }
@@ -192,6 +208,7 @@ class WorkflowTool(ToolSpec):
         name = input_data.get("name")
         script = input_data.get("script")
         raw_spec = input_data.get("spec")
+        mode = input_data.get("mode")
 
         if run_id is not None and not isinstance(run_id, str):
             raise WorkflowValidationError("run_id must be a string")
@@ -199,10 +216,12 @@ class WorkflowTool(ToolSpec):
             raise WorkflowValidationError("name must be a string")
         if script is not None and not isinstance(script, str):
             raise WorkflowValidationError("script must be a string")
+        if mode is not None and mode != "dynamic":
+            raise WorkflowValidationError('mode must be "dynamic" when set')
 
-        if run_id and (name or raw_spec is not None or script):
+        if run_id and (name or raw_spec is not None or script or mode):
             raise WorkflowValidationError(
-                "run_id is mutually exclusive with name/spec/script"
+                "run_id is mutually exclusive with name/spec/script/mode"
             )
         if name and raw_spec is not None:
             raise WorkflowValidationError(
@@ -212,10 +231,26 @@ class WorkflowTool(ToolSpec):
             raise WorkflowValidationError(
                 "name and script are mutually exclusive; pass one"
             )
+        if mode and (name or raw_spec is not None or script):
+            raise WorkflowValidationError(
+                "mode is mutually exclusive with name/spec/script"
+            )
 
         if run_id:
             # Spec loaded from the run record in execute().
             return None
+
+        if mode == "dynamic":
+            task = input_data.get("task")
+            if not isinstance(task, str) or not task.strip():
+                raise WorkflowValidationError(
+                    "task is required when using mode=dynamic"
+                )
+            from deepseek_tui.workflow.models import adaptive_workflow_spec
+
+            return parse_workflow_spec(
+                adaptive_workflow_spec(task_description=task.strip())
+            )
 
         if name:
             name = name.strip()
@@ -233,7 +268,7 @@ class WorkflowTool(ToolSpec):
 
         if raw_spec is None and script is None:
             raise WorkflowValidationError(
-                "workflow requires name+task, spec, script+spec, or run_id"
+                "workflow requires name+task, mode+task, spec, script+spec, or run_id"
             )
         if script:
             from deepseek_tui.workflow.adapters import (
@@ -320,6 +355,7 @@ class WorkflowTool(ToolSpec):
         resume_record: WorkflowRunRecord | None = None
         skip_step_ids: set[str] | None = None
         initial_outputs = None
+        initial_graph = None
 
         try:
             detach = _optional_bool(input_data, "detach") or False
@@ -332,16 +368,27 @@ class WorkflowTool(ToolSpec):
                     raise WorkflowValidationError(
                         f"run {resume_record.run_id} already completed"
                     )
-                if is_run_actively_running(resume_record):
+                if is_run_actively_running(resume_record, workspace=cwd):
                     raise WorkflowValidationError(
                         f"run {resume_record.run_id} appears to still be running "
-                        "(checkpointed recently); wait for it to finish or "
+                        "(active lease or recent checkpoint); wait for it to finish or "
                         "cancel it before resuming"
                     )
+                # Deliberate resume of a non-live run: drop any leftover stop
+                # intent so the driver can continue. A live run that still has
+                # stop-intent is honored below after lease acquire.
+                if resume_record.status != "running":
+                    clear_stop_intent(resume_record.run_id, workspace=cwd)
                 spec = resume_record.parsed_spec()
                 runtime_task = resume_record.task
                 skip_step_ids = set(resume_record.completed_step_ids)
                 initial_outputs = resume_record.restored_outputs()
+                # Attach resume bags for scheduler (dynamic mutations / skips).
+                setattr(spec, "_resume_ctx", resume_record.resume_ctx_bag())
+                if isinstance(resume_record.runtime_graph, dict):
+                    from deepseek_tui.workflow.dag import CompiledGraph
+
+                    initial_graph = CompiledGraph.from_dict(resume_record.runtime_graph)
             else:
                 spec = self._resolve_spec(input_data, cwd=cwd)
                 runtime_task = input_data.get("task")
@@ -370,13 +417,54 @@ class WorkflowTool(ToolSpec):
                 spec=spec,
             )
 
+        try:
+            lease_token = acquire_run_lease(run_record.run_id, workspace=cwd)
+        except WorkflowRunStoreError as exc:
+            raise ToolError(f"workflow: {exc}") from exc
+
+        # Crash mid-cancel left stop-intent while status stayed "running".
+        # Honor it immediately so we don't continue work after a stop request.
+        if has_stop_intent(run_record.run_id, workspace=cwd):
+            safe_checkpoint_run(
+                run_record,
+                completed_step_ids=list(run_record.completed_step_ids),
+                outputs=run_record.restored_outputs(),
+                snapshot=WorkflowSnapshot(
+                    name=spec.meta.name,
+                    description=spec.meta.description,
+                ),
+                logs=list(run_record.logs),
+                status="cancelled",
+                error="cancelled",
+                workspace=cwd,
+            )
+            clear_stop_intent(run_record.run_id, workspace=cwd)
+            release_run_lease(run_record.run_id, lease_token, workspace=cwd)
+            return ToolResult(
+                success=False,
+                content=(
+                    f"Workflow cancelled via durable stop-intent "
+                    f"(run_id={run_record.run_id}). "
+                    "Resume with workflow({run_id: ...}) to continue."
+                ),
+                metadata={
+                    "workflow": {
+                        "cancelled": True,
+                        "run_id": run_record.run_id,
+                        "stop_intent": True,
+                    }
+                },
+            )
+
         agent_workspace = await _prepare_worktree(run_record, spec=spec, cwd=cwd)
 
         manager = context.subagent_manager
         if manager is None:
+            release_run_lease(run_record.run_id, lease_token, workspace=cwd)
             raise ToolError("workflow: SubAgentManager is not attached")
         loop_runtime = manager.loop_runtime
         if loop_runtime is None:
+            release_run_lease(run_record.run_id, lease_token, workspace=cwd)
             raise ToolError("workflow: sub-agent loop runtime is not configured")
 
         cancel_event = context.metadata.get("engine_cancel_event")
@@ -442,6 +530,7 @@ class WorkflowTool(ToolSpec):
         def on_checkpoint(ctx_obj: Any, snap: WorkflowSnapshot, logs: list[str]) -> None:
             nonlocal last_snapshot
             last_snapshot = snap
+            heartbeat_run_lease(run_record.run_id, lease_token, workspace=cwd)
             safe_checkpoint_run(
                 run_record,
                 completed_step_ids=list(ctx_obj.completed_step_ids),
@@ -450,6 +539,17 @@ class WorkflowTool(ToolSpec):
                 logs=logs,
                 status="running",
                 workspace=cwd,
+                runtime_graph=getattr(ctx_obj, "runtime_graph", None),
+                dynamic_states=dict(getattr(ctx_obj, "dynamic_states", {}) or {}),
+                budgets_used=dict(getattr(ctx_obj, "budgets_used", {}) or {}),
+                generated_node_ids=list(
+                    getattr(ctx_obj, "generated_node_ids", []) or []
+                ),
+                skipped_step_ids=list(getattr(ctx_obj, "skipped_step_ids", []) or []),
+                failed_step_ids=list(getattr(ctx_obj, "failed_step_ids", []) or []),
+                estimated_tokens_used=int(
+                    getattr(ctx_obj, "estimated_tokens_used", 0) or 0
+                ),
             )
 
         def _result_meta(extra: dict[str, Any]) -> dict[str, Any]:
@@ -479,8 +579,12 @@ class WorkflowTool(ToolSpec):
                     task=runtime_task,
                     initial_outputs=initial_outputs,
                     skip_step_ids=skip_step_ids,
+                    initial_graph=initial_graph,
+                    cwd=cwd,
+                    run_id=run_record.run_id,
                 )
             except WorkflowAbortedError:
+                write_stop_intent(run_record.run_id, workspace=cwd)
                 safe_checkpoint_run(
                     run_record,
                     completed_step_ids=list(run_record.completed_step_ids),
@@ -491,6 +595,7 @@ class WorkflowTool(ToolSpec):
                     error="cancelled",
                     workspace=cwd,
                 )
+                clear_stop_intent(run_record.run_id, workspace=cwd)
                 emit_progress(last_snapshot, completed=True, status="cancelled")
                 return ToolResult(
                     success=False,
@@ -533,6 +638,7 @@ class WorkflowTool(ToolSpec):
                     ),
                 )
             except asyncio.CancelledError:
+                write_stop_intent(run_record.run_id, workspace=cwd)
                 safe_checkpoint_run(
                     run_record,
                     completed_step_ids=list(run_record.completed_step_ids),
@@ -569,6 +675,7 @@ class WorkflowTool(ToolSpec):
                 result=result.result,
                 workspace=cwd,
             )
+            clear_stop_intent(run_record.run_id, workspace=cwd)
 
             text = render_workflow_text(result.snapshot, completed=True)
             if result.result is not None:
@@ -608,74 +715,78 @@ class WorkflowTool(ToolSpec):
             )
 
         timeout = spec.policy.wall_clock_seconds
-        if timeout > 0:
-            timeout_task = asyncio.create_task(_run())
-            try:
-                return await asyncio.wait_for(
-                    asyncio.shield(timeout_task), timeout=timeout
-                )
-            except TimeoutError:
-                cancel_event.set()
-                for agent_id in list(spawned_ids):
-                    try:
-                        await manager.cancel(agent_id)
-                    except KeyError:
-                        pass
-                grace_result: ToolResult | None = None
+        try:
+            if timeout > 0:
+                timeout_task = asyncio.create_task(_run())
                 try:
-                    grace_result = await asyncio.wait_for(timeout_task, timeout=5.0)
-                except (TimeoutError, asyncio.CancelledError, Exception):
-                    timeout_task.cancel()
+                    return await asyncio.wait_for(
+                        asyncio.shield(timeout_task), timeout=timeout
+                    )
+                except TimeoutError:
+                    cancel_event.set()
+                    write_stop_intent(run_record.run_id, workspace=cwd)
+                    for agent_id in list(spawned_ids):
+                        try:
+                            await manager.cancel(agent_id)
+                        except KeyError:
+                            pass
+                    grace_result: ToolResult | None = None
                     try:
-                        await timeout_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                if grace_result is not None and grace_result.success:
-                    # _run() already reached its own "completed" checkpoint
-                    # (with the real result) inside the grace window — do not
-                    # clobber it with a "timed_out" overwrite below, which
-                    # would also wipe the persisted result (checkpoint_run's
-                    # result defaults to None) and make a finished run look
-                    # resumable/re-runnable.
-                    return grace_result
-                # Cancelled but never reached its own terminal checkpoint —
-                # mark it timed_out so resume can pick up where it left off.
-                safe_checkpoint_run(
-                    run_record,
-                    completed_step_ids=list(run_record.completed_step_ids),
-                    outputs=run_record.restored_outputs(),
-                    snapshot=last_snapshot,
-                    logs=list(run_record.logs),
-                    status="timed_out",
-                    error="timed_out",
-                    workspace=cwd,
-                )
-                emit_progress(last_snapshot, completed=True, status="timed_out")
-                timed_out_content = (
-                    f"Workflow timed out after {timeout}s "
-                    f"(run_id={run_record.run_id}). "
-                    "Resume with workflow({run_id: ...})."
-                )
-                meta = _result_meta(
-                    {
-                        "timed_out": True,
-                        "run_id": run_record.run_id,
-                        "snapshot": snapshot_to_dict(last_snapshot),
-                    }
-                )
-                if grace_result is not None and isinstance(grace_result.metadata, dict):
-                    # Keep any richer metadata from the cancelled path, override flags.
-                    merged = dict(grace_result.metadata)
-                    wf = dict(merged.get("workflow") or {})
-                    wf.update(meta["workflow"])
-                    merged["workflow"] = wf
-                    meta = merged
-                return ToolResult(
-                    success=False,
-                    content=timed_out_content,
-                    metadata=meta,
-                )
-        return await _run()
+                        grace_result = await asyncio.wait_for(timeout_task, timeout=5.0)
+                    except (TimeoutError, asyncio.CancelledError, Exception):
+                        timeout_task.cancel()
+                        try:
+                            await timeout_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    if grace_result is not None and grace_result.success:
+                        # _run() already reached its own "completed" checkpoint
+                        # (with the real result) inside the grace window — do not
+                        # clobber it with a "timed_out" overwrite below, which
+                        # would also wipe the persisted result (checkpoint_run's
+                        # result defaults to None) and make a finished run look
+                        # resumable/re-runnable.
+                        return grace_result
+                    # Cancelled but never reached its own terminal checkpoint —
+                    # mark it timed_out so resume can pick up where it left off.
+                    safe_checkpoint_run(
+                        run_record,
+                        completed_step_ids=list(run_record.completed_step_ids),
+                        outputs=run_record.restored_outputs(),
+                        snapshot=last_snapshot,
+                        logs=list(run_record.logs),
+                        status="timed_out",
+                        error="timed_out",
+                        workspace=cwd,
+                    )
+                    emit_progress(last_snapshot, completed=True, status="timed_out")
+                    timed_out_content = (
+                        f"Workflow timed out after {timeout}s "
+                        f"(run_id={run_record.run_id}). "
+                        "Resume with workflow({run_id: ...})."
+                    )
+                    meta = _result_meta(
+                        {
+                            "timed_out": True,
+                            "run_id": run_record.run_id,
+                            "snapshot": snapshot_to_dict(last_snapshot),
+                        }
+                    )
+                    if grace_result is not None and isinstance(grace_result.metadata, dict):
+                        # Keep any richer metadata from the cancelled path, override flags.
+                        merged = dict(grace_result.metadata)
+                        wf = dict(merged.get("workflow") or {})
+                        wf.update(meta["workflow"])
+                        merged["workflow"] = wf
+                        meta = merged
+                    return ToolResult(
+                        success=False,
+                        content=timed_out_content,
+                        metadata=meta,
+                    )
+            return await _run()
+        finally:
+            release_run_lease(run_record.run_id, lease_token, workspace=cwd)
 
 
 class WorkflowListTool(ToolSpec):

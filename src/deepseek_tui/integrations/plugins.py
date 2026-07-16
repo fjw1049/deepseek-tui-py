@@ -398,35 +398,6 @@ def _synthesize_layout_manifest(plugin_dir: Path) -> PluginManifest | None:
     )
 
 
-def _synthesize_pi_manifest(plugin_dir: Path) -> PluginManifest | None:
-    """Treat a ``package.json#pi.extensions`` package as an installable plugin."""
-    package_json = plugin_dir / "package.json"
-    if not package_json.is_file():
-        return None
-    try:
-        data = json.loads(package_json.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    pi = data.get("pi")
-    if not isinstance(pi, dict) or not pi.get("extensions"):
-        return None
-    raw_name = str(data.get("name") or plugin_dir.name)
-    if raw_name.startswith("@"):
-        raw_name = raw_name[1:].replace("/", "-")
-    name = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in raw_name)
-    name = name.strip("-._") or plugin_dir.name
-    return PluginManifest(
-        name=name,
-        version=str(data.get("version") or "0.0.0"),
-        description=str(data.get("description") or "")
-        if isinstance(data.get("description"), str)
-        else "",
-        permissions=("process.spawn", "runtime.tool-provider"),
-    )
-
-
 def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
     """Load and parse the plugin manifest, or ``None`` when absent/invalid."""
     manifest_path: Path | None = None
@@ -442,7 +413,7 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
         layout = _synthesize_layout_manifest(plugin_dir)
         if layout is not None:
             return layout
-        return _synthesize_pi_manifest(plugin_dir)
+        return None
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1620,8 +1591,8 @@ def _install_from_npm(
                 package.compatibility.status is CompatibilityStatus.BLOCKED
                 or not package.compatibility.can_activate
             ):
-                # Still allow install for blocked-at-activate packages (e.g. TS
-                # Pi entry) so users can stage them; activation stays gated.
+                # Still allow install for blocked-at-activate packages so users
+                # can stage them; activation stays gated.
                 pass
             merged = {
                 **(provenance or {}),
@@ -2077,7 +2048,7 @@ def _finalize_installed_plugin(dest: Path) -> None:
 _HOOKS_MCP_NEXT_SESSION = (
     "Hooks/MCP take effect on the next session "
     "(restart the engine / start a new chat). "
-    "High-risk capabilities (Pi sidecar / process spawn / install scripts) "
+    "High-risk capabilities (process spawn / install scripts) "
     "need a separate `deepseek-tui plugin grant`."
 )
 

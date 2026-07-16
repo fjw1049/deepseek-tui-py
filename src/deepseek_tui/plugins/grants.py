@@ -18,7 +18,6 @@ EXECUTION_CAPABILITIES = frozenset(
         "mcp.connect",
         "process.spawn",
         "package.install-scripts",
-        "runtime.tool-provider",
     }
 )
 
@@ -29,13 +28,12 @@ HIGH_RISK_CAPABILITIES = frozenset(
     {
         "process.spawn",
         "package.install-scripts",
-        "runtime.tool-provider",
     }
 )
 
 # Capabilities that a plain ``plugin trust`` grants. High-risk capabilities
-# (arbitrary native code / process spawn / Pi sidecar) require a separate,
-# deliberate ``plugin grant`` step and are intentionally excluded here so the
+# (process spawn / install scripts) require a separate, deliberate
+# ``plugin grant`` step and are intentionally excluded here so the
 # HIGH_RISK_CAPABILITIES gate in :func:`execution_authorized` stays live.
 LOW_RISK_CAPABILITIES = EXECUTION_CAPABILITIES - HIGH_RISK_CAPABILITIES
 
@@ -161,8 +159,8 @@ def grant_trust(
 ) -> PluginGrant:
     """Grant only the low-risk capabilities implied by ``plugin trust``.
 
-    High-risk capabilities (native code / process spawn / Pi sidecar) require
-    a deliberate :func:`grant_execution` — usually via ``plugin grant`` — so
+    High-risk capabilities (process spawn / install scripts) require a
+    deliberate :func:`grant_execution` — usually via ``plugin grant`` — so
     trusting a plugin never silently authorizes arbitrary code execution.
     """
     return grant_execution(

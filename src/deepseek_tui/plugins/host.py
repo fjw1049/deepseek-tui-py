@@ -17,7 +17,6 @@ from deepseek_tui.plugins.model import (
     DerivedPlugin,
     Diagnostic,
 )
-from deepseek_tui.plugins.runtime_ports import LeaseBag
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,11 +163,8 @@ class PluginSession:
         }
         self._by_name = {plugin.name.lower(): plugin for plugin in loaded_plugins}
         self._activations: dict[str, PluginActivation] = {}
-        self._leases = LeaseBag()
         self._closed = False
         self._light_by_name: dict[str, Any] = {}
-        self._pi_runtimes: dict[str, Any] = {}
-        self.pi_tools: list[Any] = []
         if snapshot_id is None:
             material = "|".join(
                 f"{plugin.name}:{plugin.path}:{plugin.enabled}:{plugin.trusted}"
@@ -297,105 +293,10 @@ class PluginSession:
         self._activations[key] = activation
         return activation
 
-    async def activate_pi_provider(
-        self,
-        name: str,
-        *,
-        tool_registry: Any | None = None,
-    ) -> list[Any]:
-        """Start the Pi Node sidecar for one trusted plugin and register tools."""
-        if self._closed:
-            return []
-        key = name.lower()
-        if key in self._pi_runtimes:
-            return [tool for tool in self.pi_tools if tool.name().startswith("pi_")]
-        plugin = self._by_name.get(key)
-        if plugin is None or not getattr(plugin, "trusted", False):
-            return []
-        from deepseek_tui.integrations.plugins import _execution_digest_for_plugin
-        from deepseek_tui.plugins.grants import (
-            execution_authorized,
-            migrate_legacy_fingerprint_grants,
-        )
-
-        digest = _execution_digest_for_plugin(plugin)
-        if digest:
-            migrate_legacy_fingerprint_grants(plugin.name, digest)
-        if not execution_authorized(
-            trusted=True,
-            plugin_id=plugin.name,
-            digest=digest,
-            capability="runtime.tool-provider",
-        ):
-            return []
-        package_json = Path(plugin.path) / "package.json"
-        if not package_json.is_file():
-            return []
-        try:
-            import json
-
-            document = json.loads(package_json.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError):
-            return []
-        pi = document.get("pi") if isinstance(document, dict) else None
-        if not isinstance(pi, dict) or not pi.get("extensions"):
-            return []
-        entries = pi.get("extensions")
-        if isinstance(entries, str):
-            entries = [entries]
-        from deepseek_tui.plugins.identity import is_safe_relative_posix
-
-        entrypoints = tuple(
-            str(item)
-            for item in entries
-            if isinstance(item, str) and is_safe_relative_posix(str(item))
-        )
-        if not entrypoints:
-            return []
-        from deepseek_tui.plugins.pi_runtime import PiNodeRuntime, PiProviderSpec
-        from deepseek_tui.plugins.pi_tools import PiBridgeTool
-        from deepseek_tui.plugins.runtime_ports import ToolRegistrationLease
-
-        runtime = PiNodeRuntime(
-            PiProviderSpec(
-                plugin_id=plugin.name,
-                package_root=str(Path(plugin.path).resolve()),
-                entrypoints=entrypoints,
-                cwd=str(self.workspace.resolve()),
-            )
-        )
-        await runtime.start()
-        await runtime.session_start()
-        self._pi_runtimes[key] = runtime
-        tools = []
-        for info in await runtime.list_tools():
-            tool = PiBridgeTool(
-                runtime=runtime,
-                info=info,
-                owner_plugin_id=plugin.name,
-            )
-            if tool_registry is not None:
-                tool_registry.register_exclusive(tool)
-                self._leases.add(ToolRegistrationLease(tool_registry, tool.name()))
-            tools.append(tool)
-            self.pi_tools.append(tool)
-        return tools
-
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        for runtime in list(self._pi_runtimes.values()):
-            try:
-                await runtime.session_shutdown()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                await runtime.shutdown()
-            except Exception:  # noqa: BLE001
-                pass
-        self._pi_runtimes.clear()
-        await self._leases.close()
 
 
 class PluginHost:

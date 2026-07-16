@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "meta": {
+    "name": "adaptive",
+    "description": "General-purpose dynamic controller: spawn/fanout/reduce as needed, then synthesize or stop."
+  },
+  "policy": {
+    "approval_mode": "trusted_workflow",
+    "on_error": "continue",
+    "max_agents": 16,
+    "concurrency": 4,
+    "wall_clock_seconds": 1200
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "orchestrate",
+        "type": "dynamic",
+        "controller": { "agent_type": "review" },
+        "budget": {
+          "max_decision_rounds": 12,
+          "max_agents": 32,
+          "max_mutations": 80,
+          "max_fanout_items": 16,
+          "max_nested_dynamic_depth": 2,
+          "wall_clock_seconds": 1200
+        },
+        "permissions": {
+          "actions": [
+            "spawn",
+            "fanout",
+            "reduce",
+            "support",
+            "splice_dag",
+            "nested_workflow",
+            "synthesize",
+            "replan",
+            "stop"
+          ],
+          "allow_nested_workflow": true,
+          "allow_write_tools": false
+        }
+      }
+    ],
+    "edges": []
+  }
+}

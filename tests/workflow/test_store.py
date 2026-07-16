@@ -149,3 +149,84 @@ def test_safe_checkpoint_run_swallows_errors(tmp_path: Path) -> None:
             workspace=tmp_path,
         )
     assert ok is False
+
+
+def test_run_lease_exclusive(tmp_path: Path) -> None:
+    from deepseek_tui.workflow.store import (
+        WorkflowRunStoreError,
+        acquire_run_lease,
+        heartbeat_run_lease,
+        is_run_actively_running,
+        release_run_lease,
+    )
+
+    record = create_run(_spec(), task="t", workspace=tmp_path)
+    token = acquire_run_lease(record.run_id, workspace=tmp_path)
+    assert is_run_actively_running(record, workspace=tmp_path)
+    with pytest.raises(WorkflowRunStoreError, match="lease"):
+        acquire_run_lease(record.run_id, workspace=tmp_path)
+    heartbeat_run_lease(record.run_id, token, workspace=tmp_path)
+    release_run_lease(record.run_id, token, workspace=tmp_path)
+    token2 = acquire_run_lease(record.run_id, workspace=tmp_path)
+    release_run_lease(record.run_id, token2, workspace=tmp_path)
+
+
+def test_stop_intent_roundtrip(tmp_path: Path) -> None:
+    from deepseek_tui.workflow.store import (
+        clear_stop_intent,
+        has_stop_intent,
+        read_stop_intent,
+        write_stop_intent,
+    )
+
+    record = create_run(_spec(), task="t", workspace=tmp_path)
+    assert not has_stop_intent(record.run_id, workspace=tmp_path)
+    write_stop_intent(record.run_id, reason="user", workspace=tmp_path)
+    assert has_stop_intent(record.run_id, workspace=tmp_path)
+    raw = read_stop_intent(record.run_id, workspace=tmp_path)
+    assert raw is not None
+    assert raw["reason"] == "user"
+    clear_stop_intent(record.run_id, workspace=tmp_path)
+    assert not has_stop_intent(record.run_id, workspace=tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_stop_intent_aborts_scheduler(tmp_path: Path) -> None:
+    """Durable stop-intent is honored even without cancel_event.set()."""
+    import asyncio
+
+    from deepseek_tui.workflow.models import WorkflowAbortedError
+    from deepseek_tui.workflow.runtime import run_workflow
+    from deepseek_tui.workflow.store import write_stop_intent
+
+    class SlowRunner:
+        async def run(self, **kwargs: object) -> object:
+            await asyncio.sleep(10)
+            return make_step_output("late")
+
+    record = create_run(_spec(), task="t", workspace=tmp_path)
+    write_stop_intent(record.run_id, workspace=tmp_path)
+    with pytest.raises(WorkflowAbortedError, match="cancelled"):
+        await run_workflow(
+            _spec(),
+            runner=SlowRunner(),  # type: ignore[arg-type]
+            cwd=tmp_path,
+            run_id=record.run_id,
+        )
+
+
+def test_lease_blocks_second_holder_while_first_alive(tmp_path: Path) -> None:
+    """Regression: two concurrent drivers cannot both hold the lease."""
+    from deepseek_tui.workflow.store import (
+        WorkflowRunStoreError,
+        acquire_run_lease,
+        release_run_lease,
+    )
+
+    record = create_run(_spec(), task="t", workspace=tmp_path)
+    token_a = acquire_run_lease(record.run_id, workspace=tmp_path)
+    with pytest.raises(WorkflowRunStoreError, match="lease"):
+        acquire_run_lease(record.run_id, workspace=tmp_path)
+    release_run_lease(record.run_id, token_a, workspace=tmp_path)
+    token_b = acquire_run_lease(record.run_id, workspace=tmp_path)
+    release_run_lease(record.run_id, token_b, workspace=tmp_path)

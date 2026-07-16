@@ -132,7 +132,7 @@ async def test_token_budget_warning_emitted() -> None:
     logs: list[str] = []
     runner = FakeRunner({"worker": "done"})
     await run_workflow(spec, runner=runner, on_log=logs.append)
-    assert any("not yet enforced" in msg for msg in logs)
+    assert any("token_budget" in msg and "enforced" in msg for msg in logs)
 
 
 @pytest.mark.asyncio

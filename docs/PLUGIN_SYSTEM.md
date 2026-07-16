@@ -1,18 +1,18 @@
 # 插件系统（Plugin System）
 
 > 实现位置：
-> - 公共接口：`src/deepseek_tui/plugins/`（`PluginHost` / adapters / grants / store / Pi sidecar）
+> - 公共接口：`src/deepseek_tui/plugins/`（`PluginHost` / adapters / grants / store）
 > - 迁移期后端：`src/deepseek_tui/integrations/plugins.py`
 >
-> 状态（2026-07-14）：
+> 状态（2026-07-16）：
 > - Phase 0 安全与正确性：已完成
 > - Phase 1 PluginHost façade + Engine 会话依赖：已完成（Engine 经 `PluginSession` / `merge_session_skills`，不直接 import collectors）
 > - Phase 2 IR / pure-read discovery / index digest 绑定：已完成
 > - Phase 3 Marketplace git-subdir + explicit ref + `npm:` install：已支持
-> - Phase 4 Runtime overlay / lease：session MCP + Pi tool lease
+> - Phase 4 Runtime overlay：session MCP
 > - Phase 5 CodeBuddy 不改写源码：已完成
-> - Phase 6 Pi sidecar tracer bullet：JS/MJS + 可选 TS（Node `--experimental-strip-types`）
-> - Phase 7 内容寻址 store：新安装写入 `plugin-host/sources/sha256/<digest>/`，scope 目录优先 symlink；`plugin gc` / `plugin rollback`
+> - Phase 6 内容寻址 store：新安装写入 `plugin-host/sources/sha256/<digest>/`，scope 目录优先 symlink；`plugin gc` / `plugin rollback`
+> - Pi sidecar / `package.json#pi.extensions` 运行时：**已移除**（只兼容 Claude 布局；外部包请先改写成 Claude 插件）
 
 ## Store v2
 
@@ -28,14 +28,6 @@
 卸载：删除 scope 入口（symlink/目录），不自动 GC store。
 GC：`deepseek-tui plugin gc [--dry-run]` 删除无 lockfile/symlink 引用的 digest。
 回滚：`deepseek-tui plugin rollback <name> <digest>` 将 scope 入口重新指向已有 store digest。
-
-## Pi sidecar
-
-`node [ --experimental-strip-types ] plugins/pi_bridge/bridge.cjs` 经 NDJSON JSON-RPC 加载 `package.json#pi.extensions`。
-支持 `initialize` / `tools/*` / `commands/*` / lifecycle / `shutdown`。
-ExtensionAPI shim：`registerTool` / `registerCommand` / `on`/`off` / context / ui stubs。
-信任插件在 `Engine.create` 时自动 `activate_pi_provider`。
-TypeScript entry：Node 22.6+ 经 strip-types 加载（adapter 报告 `PI_TYPESCRIPT_STRIP_TYPES`）；旧 Node 仍 blocked。
 
 ## 1. 目标架构
 
@@ -68,10 +60,9 @@ Engine 通过 `plugin_session` 激活命令/agent/rule，挂载场景时刷新 t
 
 能力分两级：
 - **低危**（`hooks.execute` / `mcp.connect`）：`plugin trust` 自动授予。
-- **高危**（`process.spawn` / `package.install-scripts` / `runtime.tool-provider`（Pi
-  sidecar））：**不随 trust 授予**，必须显式 `deepseek-tui plugin grant <name>`。
+- **高危**（`process.spawn` / `package.install-scripts`）：**不随 trust 授予**，必须显式 `deepseek-tui plugin grant <name>`。
 
-运行时 hooks / MCP / Pi 在 `trusted` 之外还检查 digest-bound grant：
+运行时 hooks / MCP 在 `trusted` 之外还检查 digest-bound grant：
 当前内容 digest 无匹配 grant、且该插件已有其它 digest 的 grant 时，跳过可执行贡献。
 高危能力即便 trusted 也需显式 grant（`HIGH_RISK_CAPABILITIES` 无 trust 旁路）。
 无任何 grant 文件的旧安装仍可凭 `trusted=true` 过渡（仅低危）。
@@ -94,10 +85,10 @@ Index 绑定：`schema_version` + `content_fingerprint` + `adapter_id/version` +
 
 ## 5. 兼容性
 
-- Claude / CodeBuddy / bare skill / Pi package：adapter probe + CompatReport
+- Claude / CodeBuddy / bare skill：adapter probe + CompatReport
 - 安装**不再** `normalize_installed_plugin` 改写 vendor 副本
 - 加载期继续映射 `${CLAUDE_PLUGIN_ROOT}` / CodeBuddy matcher
-- Pi：可安装；激活依赖 Node sidecar + trust/grant
+- Pi 包（`package.json#pi.extensions`）不再识别或激活
 
 ## 6. CLI
 
@@ -114,7 +105,5 @@ deepseek-tui plugin reindex
 
 ## 7. 明确未完成 / 边界
 
-- **TODO(pi-computer-use):** 专用跟进项——让 `@injaneity/pi-computer-use`（或同类包）在 deepseek-tui 里真 e2e 可用：原生 macOS helper / postinstall、AX 工具面、命令 `/computer-use`。当前 Pi sidecar 仅为 tracer-bullet（JS/MJS + 可选 TS strip-types），**不足以宣称 computer-use 已可用**。有时间再开任务做，不阻塞通用 Claude 插件路径。
-- 完整 Pi ExtensionAPI（widgets / keybindings / custom renderers）— 仅当需要更多 Pi 扩展时再扩
 - Marketplace object sources 的全量 provenance 产品化
 - 旧安装副本的全量迁移进 content store（新安装已走 store；旧副本照常可用）
