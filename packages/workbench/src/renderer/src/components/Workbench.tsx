@@ -1219,7 +1219,7 @@ export function Workbench(): ReactElement {
                         />
                       </div>
                     ) : null}
-                    <div className="mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
+                    <div className="ds-chat-stage mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
                       <ComposerStage
                         input={input}
                         setInput={setInput}

@@ -581,7 +581,7 @@ function CodeComponent({ node, className, children, ...props }: CodeProps) {
   const language = match?.[1] ?? ''
   const code = extractText(children)
 
-  if (language === 'mermaid') {
+  if (language.trim().toLowerCase() === 'mermaid') {
     return <StreamdownMermaidBlock chart={code} />
   }
 

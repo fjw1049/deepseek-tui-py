@@ -247,7 +247,7 @@ You may see multiple `<deepseek:subagent.done>` sentinels in a single turn when 
 
 ## Output formatting
 
-You're rendering into a terminal, not a browser. Markdown tables almost never render correctly because monospace fonts + variable-width content can't reliably align column borders, especially with CJK characters. Prefer:
+Markdown is rendered in both the terminal TUI and the GUI workbench. Tables still fare poorly in monospace (especially with CJK), so prefer:
 
 - **Plain prose** for explanations.
 - **Bulleted or numbered lists** for sequential or parallel items.
@@ -255,3 +255,5 @@ You're rendering into a terminal, not a browser. Markdown tables almost never re
 - **Definition-style lists** (`- **Label**: value`) when the user asked for a comparison or summary.
 
 If you genuinely need column-aligned data (e.g. the user asked for a table or for `/cost` style output), keep columns narrow, ASCII-only, and limit to 2–3 columns. Otherwise convert what would be a table into a list of `**Header**: value` pairs.
+
+**Diagrams / call flows / architecture:** Prefer a fenced Mermaid block (` ```mermaid `) — use `flowchart TD` / `graph TD` for structure and `sequenceDiagram` for call order. Do **not** draw ASCII arrow/box diagrams inside unlabeled or `text` / `plaintext` fences; those render as plain code blocks in the workbench. Mermaid renders as a diagram in the GUI and stays readable as source in the terminal.

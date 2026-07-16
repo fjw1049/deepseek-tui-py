@@ -795,7 +795,7 @@ export function ThreadRow({
           </span>
         )}
       </button>
-      <div className="flex shrink-0 items-center pr-1">
+      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
         <button
           type="button"
           onClick={(event) => {
@@ -815,8 +815,6 @@ export function ThreadRow({
             <Pin className="h-3.5 w-3.5" strokeWidth={1.9} />
           )}
         </button>
-      </div>
-      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
         {canCompact ? (
           <button
             type="button"
