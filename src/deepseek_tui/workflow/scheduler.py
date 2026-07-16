@@ -706,8 +706,28 @@ async def schedule_workflow(
                     ready = child_graph.ready_ids(child_done, child_failed, child_skipped)
                     if not ready:
                         break
-                    for cid in ready[: spec.policy.concurrency]:
-                        cout = await execute_node(child_nodes[cid], phase_id)
+                    batch = ready[: spec.policy.concurrency]
+                    # Run the ready batch concurrently (not a sequential
+                    # for-await loop, which ignored concurrency and ran
+                    # children one at a time).
+                    batch_tasks = [
+                        asyncio.create_task(execute_node(child_nodes[cid], phase_id))
+                        for cid in batch
+                    ]
+                    try:
+                        results = await asyncio.gather(*batch_tasks)
+                    except BaseException:
+                        # Cancel and drain siblings before propagating, so a
+                        # fail_fast/abort child doesn't leave orphans running.
+                        await cancel_pending(set(batch_tasks))
+                        for _t in batch_tasks:
+                            if _t.done() and not _t.cancelled():
+                                try:
+                                    _t.exception()
+                                except (asyncio.CancelledError, BaseException):
+                                    pass
+                        raise
+                    for cid, cout in zip(batch, results):
                         if cout is not None:
                             ctx.outputs[cid] = cout
                             child_done.add(cid)
@@ -948,7 +968,24 @@ async def schedule_workflow(
                 checkpoint()
                 progress()
 
-            await asyncio.gather(*[_run_one(nid) for nid in batch])
+            batch_tasks = [asyncio.create_task(_run_one(nid)) for nid in batch]
+            try:
+                await asyncio.gather(*batch_tasks)
+            except BaseException:
+                # A sibling raised (fail_fast / abort / unexpected). Plain
+                # ``asyncio.gather`` propagates the first exception but leaves
+                # the other batch tasks running as orphans: they keep mutating
+                # ctx/snapshot, checkpointing, and spawning agents while the
+                # outer error handler runs ``_cancel_spawned``. Cancel and
+                # drain them first so the error handler sees a quiescent run.
+                await cancel_pending(set(batch_tasks))
+                for _t in batch_tasks:
+                    if _t.done() and not _t.cancelled():
+                        try:
+                            _t.exception()
+                        except (asyncio.CancelledError, BaseException):
+                            pass
+                raise
 
     def _mark_successors_skipped(nid: str) -> None:
         stack = list(graph.successors.get(nid, ()))

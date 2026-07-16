@@ -81,10 +81,13 @@ async def execute_detached_workflow(
     from deepseek_tui.workflow.runtime import DeepSeekAgentRunner, run_workflow
     from deepseek_tui.workflow.store import (
         WorkflowRunStoreError,
+        acquire_run_lease,
         clear_stop_intent,
         has_stop_intent,
+        heartbeat_run_lease,
         is_run_actively_running,
         load_run,
+        release_run_lease,
         safe_checkpoint_run,
         save_run,
         write_stop_intent,
@@ -166,6 +169,20 @@ async def execute_detached_workflow(
             ),
         )
 
+    # Acquire the exclusive run lease so a concurrent caller (a sync
+    # WorkflowTool resume, or a second requeued detach task) cannot
+    # double-drive this run while we hold it. The sync path acquires the
+    # same lease; detach previously skipped it, which left the
+    # >ACTIVE_RUN_STALE_SECONDS window open to double-drive (two drivers
+    # racing on run.json and duplicating agent spawns).
+    try:
+        lease_token = acquire_run_lease(run_id, workspace=project_cwd)
+    except WorkflowRunStoreError as exc:
+        return TaskExecutionResult(
+            summary="",
+            error=f"workflow run {run_id} already has a live driver: {exc}",
+        )
+
     spec = record.parsed_spec()
     agent_cwd = project_cwd
     last_snapshot = WorkflowSnapshot(
@@ -193,6 +210,7 @@ async def execute_detached_workflow(
                     existing_branch=record.worktree_branch,
                 )
             except WorkflowWorktreeError as exc:
+                release_run_lease(run_id, lease_token, workspace=project_cwd)
                 return TaskExecutionResult(summary="", error=str(exc))
             record.worktree_path = str(info.path)
             record.worktree_branch = info.branch
@@ -253,6 +271,7 @@ async def execute_detached_workflow(
                 mailbox.close()
             except Exception:  # noqa: BLE001
                 pass
+        release_run_lease(run_id, lease_token, workspace=project_cwd)
         return TaskExecutionResult(
             summary="",
             error=str(exc),
@@ -265,6 +284,7 @@ async def execute_detached_workflow(
     def on_checkpoint(ctx_obj: Any, snap: WorkflowSnapshot, logs: list[str]) -> None:
         nonlocal last_snapshot
         last_snapshot = snap
+        heartbeat_run_lease(run_id, lease_token, workspace=project_cwd)
         safe_checkpoint_run(
             record,
             completed_step_ids=list(ctx_obj.completed_step_ids),
@@ -355,6 +375,9 @@ async def execute_detached_workflow(
                 mailbox.close()
             except Exception:  # noqa: BLE001
                 pass
+        # Release last so agent shutdown completes before another driver can
+        # acquire: no new spawns can race our teardown.
+        release_run_lease(run_id, lease_token, workspace=project_cwd)
 
     safe_checkpoint_run(
         record,

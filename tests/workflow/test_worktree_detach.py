@@ -342,3 +342,86 @@ async def test_execute_detached_workflow_cancel(tmp_path: Path, monkeypatch: pyt
     assert out.error == "cancelled"
     reloaded = load_run(record.run_id, workspace=tmp_path)
     assert reloaded.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_execute_detached_workflow_holds_and_releases_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: the detach path used to skip acquire_run_lease entirely,
+    leaving the >ACTIVE_RUN_STALE_SECONDS window open to double-drive (a sync
+    resume or a second requeued detach task could race on run.json). It must
+    now hold the run lease while driving and release it on completion."""
+    import os
+
+    from deepseek_tui.workflow.models import WorkflowRunResult, WorkflowSnapshot
+    from deepseek_tui.workflow.store import lease_path
+
+    _git_init(tmp_path)
+    spec = parse_workflow_spec(_minimal_spec())
+    record = create_run(spec, task="t", workspace=tmp_path)
+
+    lease_observed: dict[str, Any] = {}
+
+    async def probing_run_workflow(*_a: Any, **_k: Any) -> Any:
+        # While detach is driving, lease.json must exist and name this pid.
+        raw = json.loads(lease_path(record.run_id, workspace=tmp_path).read_text())
+        lease_observed["owner_pid"] = raw.get("owner_pid")
+        lease_observed["has_heartbeat"] = "heartbeat_at" in raw
+        return WorkflowRunResult(
+            meta=spec.meta,
+            result={"ok": True},
+            snapshot=WorkflowSnapshot(
+                name=spec.meta.name, description=spec.meta.description
+            ),
+            logs=[],
+            duration_ms=10,
+            errors=[],
+        )
+
+    class _Mgr:
+        async def shutdown(self) -> None:
+            return None
+
+        def attach_loop_runtime(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+        def attach_parent_cancel(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.workflow.runtime.run_workflow",
+        probing_run_workflow,
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.tools.runtime.build_subagent_manager",
+        lambda *_a, **_k: (_Mgr(), None),
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.client.factory.build_llm_client",
+        lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.config.loader.ConfigLoader.load",
+        lambda self: __import__(
+            "deepseek_tui.config.models", fromlist=["Config"]
+        ).Config(),
+    )
+
+    task = ExecutionTask(
+        id="task_lease",
+        prompt=encode_detach_prompt(run_id=record.run_id, workspace=tmp_path),
+        model="deepseek-chat",
+        workspace=str(tmp_path),
+        mode_label="agent",
+        allow_shell=False,
+        trust_mode=False,
+        auto_approve=True,
+    )
+    cancel = asyncio.Event()
+    out = await execute_detached_workflow(task, cancel)
+    assert out.error is None, out.error
+    assert lease_observed.get("owner_pid") == os.getpid()
+    assert lease_observed.get("has_heartbeat") is True
+    # After completion the lease must be released.
+    assert not lease_path(record.run_id, workspace=tmp_path).is_file()

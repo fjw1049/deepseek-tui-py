@@ -658,3 +658,98 @@ async def test_fail_fast_cancels_spawned_agents() -> None:
             manager=FakeManager(),  # type: ignore[arg-type]
         )
     assert cancelled, "fail_fast should cancel spawned agent ids via manager"
+
+
+@pytest.mark.asyncio
+async def test_nested_dag_runs_independent_children_concurrently() -> None:
+    """Regression: nested DagStep ran its ready batch with a sequential
+    for-await loop, so ``policy.concurrency`` was ignored and independent
+    children ran one at a time. They must now gather concurrently."""
+    in_flight = 0
+    max_in_flight = 0
+    counter_lock = asyncio.Lock()
+
+    class ConcurrencyRunner:
+        async def run(self, *, prompt: str, label: str, **kwargs: Any) -> Any:
+            nonlocal in_flight, max_in_flight
+            async with counter_lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            try:
+                await asyncio.sleep(0.05)
+            finally:
+                async with counter_lock:
+                    in_flight -= 1
+            return make_step_output(f"{label}-out")
+
+    # Diamond: a and b are independent (both feed c). With concurrency=2 the
+    # dag must run a and b in the same batch. (A 2-node dag with no edges
+    # would default to a sequential chain, so it can't express parallelism.)
+    spec = parse_workflow_spec(
+        {
+            "version": 2,
+            "meta": {"name": "dag", "description": "nested concurrent"},
+            "policy": {"concurrency": 2},
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "root",
+                        "type": "dag",
+                        "nodes": [
+                            {"id": "a", "type": "agent", "label": "a", "prompt": "A"},
+                            {"id": "b", "type": "agent", "label": "b", "prompt": "B"},
+                            {"id": "c", "type": "agent", "label": "c", "prompt": "C"},
+                        ],
+                        "edges": [
+                            {"from": "a", "to": "c"},
+                            {"from": "b", "to": "c"},
+                        ],
+                    }
+                ],
+                "edges": [],
+            },
+        }
+    )
+    await run_workflow(spec, runner=ConcurrencyRunner())  # type: ignore[arg-type]
+    assert max_in_flight >= 2, "nested dag children a and b should run concurrently"
+
+
+@pytest.mark.asyncio
+async def test_drain_ready_cancels_sibling_batch_on_fail_fast() -> None:
+    """Regression: ``_drain_ready`` used ``asyncio.gather`` without cancelling
+    siblings on failure, so a fail_fast node left the other batch task running
+    as an orphan that kept mutating ctx/snapshot while the error handler ran.
+    Siblings must now be cancelled."""
+    from deepseek_tui.workflow.models import WorkflowFailedError
+
+    b_completed = False
+
+    class FailRunner:
+        async def run(self, *, prompt: str, label: str, **kwargs: Any) -> Any:
+            nonlocal b_completed
+            if label == "worker-a":
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.2)
+            b_completed = True
+            return make_step_output("b-out")
+
+    spec = parse_workflow_spec(
+        {
+            "version": 2,
+            "meta": {"name": "fail", "description": "fail_fast orphan"},
+            "policy": {"concurrency": 2, "on_error": "fail_fast"},
+            "graph": {
+                "nodes": [
+                    {"id": "a", "type": "agent", "label": "worker-a", "prompt": "A"},
+                    {"id": "b", "type": "agent", "label": "worker-b", "prompt": "B"},
+                ],
+                "edges": [],
+            },
+        }
+    )
+    with pytest.raises(WorkflowFailedError):
+        await run_workflow(spec, runner=FailRunner())  # type: ignore[arg-type]
+    # Give any orphan that escaped cancellation a chance to finish. With the
+    # fix worker-b is cancelled before its sleep completes.
+    await asyncio.sleep(0.4)
+    assert not b_completed, "sibling worker-b should have been cancelled, not completed"
