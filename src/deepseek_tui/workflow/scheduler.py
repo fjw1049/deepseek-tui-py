@@ -337,40 +337,54 @@ async def schedule_workflow(
         label: str,
         phase_id: str,
         coro: Awaitable[StepOutput | None],
+        *,
+        track_agent: bool = True,
     ) -> StepOutput | None:
+        """Track a step's lifecycle on the live snapshot.
+
+        ``track_agent=False`` is for composite wrappers (fanout / pipeline)
+        whose workers record their own ``WorkflowAgentRun`` rows — avoids a
+        shell parent row that steals ``agent_id`` attach.
+        """
         check_cancel()
-        run = WorkflowAgentRun(
-            step_id=step_id,
-            label=label,
-            phase_id=phase_id,
-            status="running",
-        )
-        snapshot.agents.append(run)
-        progress()
+        run: WorkflowAgentRun | None = None
+        if track_agent:
+            run = WorkflowAgentRun(
+                step_id=step_id,
+                label=label,
+                phase_id=phase_id,
+                status="running",
+            )
+            snapshot.agents.append(run)
+            progress()
         try:
             out = await coro
         except WorkflowAbortedError:
-            run.status = "skipped"
-            run.error = "aborted"
-            progress()
+            if run is not None:
+                run.status = "skipped"
+                run.error = "aborted"
+                progress()
             raise
         except Exception as exc:  # noqa: BLE001
-            run.status = "error"
-            run.error = str(exc)
+            if run is not None:
+                run.status = "error"
+                run.error = str(exc)
             log(f"step {step_id} failed: {exc}")
             progress()
             if spec.policy.on_error == "fail_fast":
                 raise WorkflowFailedError(str(exc)) from exc
             return None
         if out is None:
-            run.status = "error"
-            run.error = "agent failed"
-            progress()
+            if run is not None:
+                run.status = "error"
+                run.error = "agent failed"
+                progress()
             if spec.policy.on_error == "fail_fast":
                 raise WorkflowFailedError(f"step {step_id} failed")
             return None
-        run.status = "done"
-        run.result_preview = out.preview
+        if run is not None:
+            run.status = "done"
+            run.result_preview = out.preview
         check_token_budget(out.text)
         progress()
         return out
@@ -382,7 +396,14 @@ async def schedule_workflow(
         previous: StepOutput | None = None,
         phase_id: str,
         step_id: str,
+        record_worker: bool = False,
     ) -> StepOutput | None:
+        """Spawn one agent.
+
+        ``record_worker=True`` creates a dedicated snapshot row under
+        ``step_id`` (the DAG node id) so fanout/pipeline workers get live
+        ``agent_id`` join keys for the ProcessTray tool-step UI.
+        """
         nonlocal reserved_agents
         if len(ctx.spawned_agent_ids) + reserved_agents >= spec.policy.max_agents:
             raise WorkflowFailedError(
@@ -390,6 +411,7 @@ async def schedule_workflow(
             )
         reserved_agents += 1
         slot_transferred = False
+        worker_run: WorkflowAgentRun | None = None
         try:
             label = cfg.label or (
                 render_template(
@@ -423,30 +445,71 @@ async def schedule_workflow(
                 return None
             check_token_budget(prompt)
 
+            if record_worker:
+                worker_run = WorkflowAgentRun(
+                    step_id=step_id,
+                    label=label,
+                    phase_id=phase_id,
+                    status="running",
+                )
+                snapshot.agents.append(worker_run)
+                progress()
+
             def _on_agent_id(aid: str) -> None:
                 nonlocal reserved_agents, slot_transferred
                 ctx.spawned_agent_ids.append(aid)
                 reserved_agents -= 1
                 slot_transferred = True
-                for run in reversed(snapshot.agents):
-                    if run.step_id == step_id and run.agent_id is None:
-                        run.agent_id = aid
-                        break
+                if worker_run is not None:
+                    worker_run.agent_id = aid
+                else:
+                    for run in reversed(snapshot.agents):
+                        if run.step_id == step_id and run.agent_id is None:
+                            run.agent_id = aid
+                            break
+                # Emit immediately so the UI can join mailbox tool steps
+                # while the agent is still running (not only at completion).
+                progress()
 
-            out = await runner.run(
-                prompt=prompt,
-                label=label,
-                agent_type=cfg.agent_type,
-                model=cfg.model,
-                allowed_tools=cfg.allowed_tools,
-                output_schema=cfg.output_schema,
-                policy=spec.policy,
-                cancel_event=cancel_event,
-                on_agent_id=_on_agent_id,
-                timeout_seconds=cfg.timeout_seconds,
-            )
+            try:
+                out = await runner.run(
+                    prompt=prompt,
+                    label=label,
+                    agent_type=cfg.agent_type,
+                    model=cfg.model,
+                    allowed_tools=cfg.allowed_tools,
+                    output_schema=cfg.output_schema,
+                    policy=spec.policy,
+                    cancel_event=cancel_event,
+                    on_agent_id=_on_agent_id,
+                    timeout_seconds=cfg.timeout_seconds,
+                )
+            except WorkflowAbortedError:
+                if worker_run is not None:
+                    worker_run.status = "skipped"
+                    worker_run.error = "aborted"
+                    progress()
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if worker_run is not None:
+                    worker_run.status = "error"
+                    worker_run.error = str(exc)
+                    progress()
+                raise
             if cancel_event is not None and cancel_event.is_set():
+                if worker_run is not None:
+                    worker_run.status = "skipped"
+                    worker_run.error = "aborted"
+                    progress()
                 raise WorkflowAbortedError("workflow cancelled")
+            if worker_run is not None:
+                if out is None:
+                    worker_run.status = "error"
+                    worker_run.error = "agent failed"
+                else:
+                    worker_run.status = "done"
+                    worker_run.result_preview = out.preview
+                progress()
             return out
         finally:
             if not slot_transferred:
@@ -514,11 +577,14 @@ async def schedule_workflow(
                 async def _fanout_item(item: str) -> StepOutput | None:
                     async with sem:
                         check_cancel()
+                        # Record each worker under the fanout node id so the
+                        # ProcessTray can join mailbox steps by agent_id.
                         return await run_agent_cfg(
                             step.agent,
                             item=item,
                             phase_id=phase_id,
-                            step_id=_item_key(item),
+                            step_id=step.id,
+                            record_worker=True,
                         )
 
                 def _on_fanout_item_done(item: str, res: StepOutput) -> None:
@@ -545,6 +611,8 @@ async def schedule_workflow(
                     return None
                 return make_step_output("\n".join(previews))
 
+            # Parent row keeps the node "running" while workers each record
+            # their own agent_id-bearing rows under the same step id.
             return await run_step_record(step.id, step.id, phase_id, _fanout_coro())
 
         if step.type == "pipeline":
@@ -568,7 +636,8 @@ async def schedule_workflow(
                                 item=item,
                                 previous=prev,
                                 phase_id=phase_id,
-                                step_id=f"{step.id}:{item}",
+                                step_id=step.id,
+                                record_worker=True,
                             )
                             if stage_out is None:
                                 return None
@@ -635,6 +704,7 @@ async def schedule_workflow(
                         if run.step_id == step.id and run.agent_id is None:
                             run.agent_id = aid
                             break
+                    progress()
 
                 return await runner.run(
                     prompt=prompt,

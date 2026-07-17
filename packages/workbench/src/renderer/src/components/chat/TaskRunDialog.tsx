@@ -1,26 +1,13 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  Check,
-  FileEdit,
-  FileText,
-  Globe,
-  Loader2,
-  Search,
-  Terminal,
-  Wrench,
-  X,
-  type LucideIcon
-} from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import {
-  fetchTaskDetail,
-  type TaskDetail,
-  type TaskTimelineEntry
-} from '../../hooks/use-thread-tasks'
+import { fetchTaskDetail, type TaskDetail } from '../../hooks/use-thread-tasks'
 import { isActiveTaskStatus, isResumableTaskStatus, type TaskStatus } from '../../lib/extract-tasks-from-blocks'
+import { timelineToFlowItems } from '../../lib/task-step-flow'
 import { formatTaskDuration, TaskStatusGlyph, taskStatusLabelKey } from './task-status'
 import { useChatStore } from '../../store/chat-store'
+import { StepFlow } from './StepFlow'
 
 type Props = {
   taskId: string
@@ -31,31 +18,24 @@ type Props = {
 
 const POLL_MS = 1500
 
-// Pure status churn — the header badge already conveys these, so they would
-// only add noise to the run-process narrative.
-const NOISE_KINDS = new Set([
-  'queued',
-  'running',
-  'recovered',
-  'cancel_requested',
-  'completed',
-  'failed',
-  'canceled',
-  'timed_out',
-  'resumed'
-])
-
-export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): ReactElement | null {
+export function TaskRunDialog({
+  taskId,
+  initialStatus,
+  open,
+  onClose
+}: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const sendMessage = useChatStore((s) => s.sendMessage)
   const busy = useChatStore((s) => s.busy)
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [resuming, setResuming] = useState(false)
+  const [promptOpen, setPromptOpen] = useState(false)
 
   useEffect(() => {
     if (!open) {
       setDetail(null)
+      setPromptOpen(false)
       return
     }
     let cancelled = false
@@ -94,15 +74,19 @@ export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): 
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open, onClose])
 
+  const flowItems = useMemo(
+    () => timelineToFlowItems(detail?.timeline ?? []),
+    [detail?.timeline]
+  )
+
   if (!open || typeof document === 'undefined') return null
 
   const status = detail?.status ?? initialStatus
   const active = isActiveTaskStatus(status)
   const canResume = isResumableTaskStatus(status) && !busy && !resuming
-  const timeline = detail?.timeline ?? []
-  const visibleTimeline = timeline.filter((entry) => !NOISE_KINDS.has(entry.kind))
   const prompt = detail?.prompt ?? ''
   const durationLabel = formatTaskDuration(detail?.durationMs ?? null)
+  const statusLabel = t(taskStatusLabelKey(status))
 
   const onResume = async (): Promise<void> => {
     if (!canResume) return
@@ -126,98 +110,116 @@ export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): 
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div className="ds-modal-surface ds-modal-surface--solid flex h-full max-h-[54rem] w-full max-w-[56rem] flex-col overflow-hidden rounded-[12px]">
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-ds-border px-6 py-4">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <TaskStatusGlyph status={status} />
-            <h2 className="truncate font-mono text-[15px] font-semibold text-ds-ink">{taskId}</h2>
-            <span className="shrink-0 rounded-md bg-ds-hover/60 px-1.5 py-0.5 text-[11px] text-ds-muted">
-              {t(taskStatusLabelKey(status))}
+      <div
+        className="ds-modal-surface ds-modal-surface--solid flex max-h-[min(88vh,52rem)] w-full max-w-[40rem] flex-col overflow-hidden rounded-[22px] animate-[ds-sheet-in_280ms_cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('contextRailTaskLog', { defaultValue: 'Task' })}
+      >
+        <header className="relative shrink-0 px-6 pb-4 pt-5">
+          <div className="flex items-start gap-3 pr-10">
+            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-sky-500/12 text-sky-700 dark:text-sky-300">
+              <TaskStatusGlyph status={status} />
             </span>
-            {durationLabel ? (
-              <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">{durationLabel}</span>
-            ) : null}
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[20px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
+                {t('taskRunSheetTitle', { defaultValue: 'Background task' })}
+              </h2>
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
+                <span className="font-mono tabular-nums text-ds-faint">{taskId}</span>
+                <StatusPill tone={statusTone(status)}>{statusLabel}</StatusPill>
+                {durationLabel ? (
+                  <span className="tabular-nums text-ds-faint">{durationLabel}</span>
+                ) : null}
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-            aria-label={t('close')}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="absolute right-4 top-4 flex items-center gap-1.5">
+            {canResume ? (
+              <button
+                type="button"
+                disabled={!canResume}
+                onClick={() => void onResume()}
+                className="rounded-full bg-sky-500/12 px-3 py-1.5 text-[12.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
+              >
+                {resuming
+                  ? t('taskResuming', { defaultValue: '续跑中…' })
+                  : t('taskResume', { defaultValue: '续跑' })}
+              </button>
+            ) : null}
+            <CloseButton onClick={onClose} label={t('close')} />
+          </div>
         </header>
 
-        {canResume ? (
-          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-ds-border px-6 py-2.5">
-            <button
-              type="button"
-              disabled={!canResume}
-              onClick={() => void onResume()}
-              className="rounded-md border border-sky-400/50 bg-sky-500/10 px-2.5 py-1 text-[12px] font-medium text-sky-800 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-45 dark:text-sky-200"
-            >
-              {resuming
-                ? t('taskResuming', { defaultValue: '续跑中…' })
-                : t('taskResume', { defaultValue: '续跑此任务' })}
-            </button>
-          </div>
-        ) : null}
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+          <div className="flex flex-col gap-5">
             {prompt ? (
-              <section>
-                <SectionLabel>{t('contextRailTaskPrompt')}</SectionLabel>
-                <div className="rounded-[14px] border border-ds-border bg-ds-card/50 px-4 py-3">
-                  <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-ds-ink">
-                    {prompt}
-                  </p>
-                </div>
-              </section>
+              <GroupedSection
+                title={t('contextRailTaskPrompt')}
+                trailing={
+                  <button
+                    type="button"
+                    onClick={() => setPromptOpen((v) => !v)}
+                    className="text-[12px] font-medium text-sky-700 transition hover:opacity-80 dark:text-sky-300"
+                  >
+                    {promptOpen
+                      ? t('collapse', { defaultValue: '收起' })
+                      : t('expand', { defaultValue: '展开' })}
+                  </button>
+                }
+              >
+                <p
+                  className={[
+                    'whitespace-pre-wrap break-words px-4 py-3 text-[13.5px] leading-6 tracking-[-0.01em] text-ds-ink',
+                    promptOpen ? '' : 'line-clamp-3'
+                  ].join(' ')}
+                >
+                  {prompt}
+                </p>
+              </GroupedSection>
             ) : null}
 
-            {visibleTimeline.length > 0 ? (
-              <section>
-                <SectionLabel>{t('contextRailTaskLog')}</SectionLabel>
-                <ol className="space-y-2.5">
-                  {visibleTimeline.map((entry, idx) => (
-                    <TaskLogEntry key={`${idx}-${entry.timestamp ?? ''}`} entry={entry} />
-                  ))}
-                </ol>
-                {active ? (
-                  <div className="mt-3 flex items-center gap-2 text-[12px] text-ds-faint">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <GroupedSection
+              title={t('contextRailTaskLog', { defaultValue: 'Activity' })}
+              trailing={
+                active ? (
+                  <span className="inline-flex items-center gap-1.5 text-[11.5px] text-ds-faint">
+                    <Loader2 className="h-3 w-3 animate-spin" />
                     {t('contextRailTaskRunning')}
+                  </span>
+                ) : null
+              }
+            >
+              <div className="px-2 py-1.5">
+                {flowItems.length > 0 ? (
+                  <StepFlow items={flowItems} />
+                ) : loading && !detail ? (
+                  <div className="flex items-center gap-2 px-2 py-4 text-[13px] text-ds-muted">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t('contextRailTaskLoading')}
                   </div>
-                ) : null}
-              </section>
-            ) : null}
-
-            {loading && !detail ? (
-              <div className="flex items-center gap-2 text-[13px] text-ds-muted">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t('contextRailTaskLoading')}
+                ) : (
+                  <p className="px-2 py-4 text-[13px] leading-5 text-ds-faint">
+                    {active
+                      ? t('contextRailTaskRunning')
+                      : t('stepFlowEmpty', { defaultValue: 'No steps yet.' })}
+                  </p>
+                )}
               </div>
-            ) : detail?.resultSummary ? (
-              <section>
-                <SectionLabel tone="result">{t('contextRailTaskResult')}</SectionLabel>
-                <div className="rounded-[14px] border border-emerald-300/50 bg-emerald-500/[0.06] px-4 py-3 dark:border-emerald-700/40 dark:bg-emerald-500/[0.08]">
-                  <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-ds-ink">
-                    {detail.resultSummary}
-                  </p>
-                </div>
-              </section>
+            </GroupedSection>
+
+            {detail?.resultSummary ? (
+              <GroupedSection title={t('contextRailTaskResult')} tone="result">
+                <p className="whitespace-pre-wrap break-words px-4 py-3 text-[13.5px] leading-6 text-ds-ink">
+                  {detail.resultSummary}
+                </p>
+              </GroupedSection>
             ) : detail?.error ? (
-              <section>
-                <SectionLabel tone="error">{t('contextRailTaskResult')}</SectionLabel>
-                <div className="rounded-[14px] border border-red-200/80 bg-red-50/80 px-4 py-3 dark:border-red-800/40 dark:bg-red-500/10">
-                  <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-red-700 dark:text-red-300">
-                    {detail.error}
-                  </p>
-                </div>
-              </section>
-            ) : !loading && active && visibleTimeline.length === 0 ? (
-              <p className="text-[13px] leading-5 text-ds-faint">{t('contextRailTaskRunning')}</p>
+              <GroupedSection title={t('contextRailTaskResult')} tone="error">
+                <p className="whitespace-pre-wrap break-words px-4 py-3 text-[13.5px] leading-6 text-rose-700 dark:text-rose-300">
+                  {detail.error}
+                </p>
+              </GroupedSection>
             ) : null}
           </div>
         </div>
@@ -227,113 +229,88 @@ export function TaskRunDialog({ taskId, initialStatus, open, onClose }: Props): 
   )
 }
 
-function SectionLabel({
+function statusTone(
+  status: TaskStatus
+): 'neutral' | 'running' | 'ok' | 'danger' {
+  if (status === 'running' || status === 'queued') return 'running'
+  if (status === 'completed') return 'ok'
+  if (status === 'failed' || status === 'timed_out') return 'danger'
+  return 'neutral'
+}
+
+function StatusPill({
   children,
-  tone = 'default'
+  tone
 }: {
   children: ReactNode
-  tone?: 'default' | 'result' | 'error'
+  tone: 'neutral' | 'running' | 'ok' | 'danger'
 }): ReactElement {
   const toneClass =
-    tone === 'result'
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : tone === 'error'
-        ? 'text-red-600 dark:text-red-400'
-        : 'text-ds-faint'
+    tone === 'running'
+      ? 'bg-violet-500/12 text-violet-800 dark:text-violet-200'
+      : tone === 'ok'
+        ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
+        : tone === 'danger'
+          ? 'bg-rose-500/12 text-rose-800 dark:text-rose-200'
+          : 'bg-ds-hover/70 text-ds-muted'
   return (
-    <p className={`mb-2 text-[11px] font-semibold uppercase tracking-wider ${toneClass}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-[0.01em] ${toneClass}`}
+    >
       {children}
-    </p>
+    </span>
   )
 }
 
-const TOOL_ICONS: Record<string, LucideIcon> = {
-  exec_shell: Terminal,
-  exec_shell_wait: Terminal,
-  exec_shell_interact: Terminal,
-  run_terminal_cmd: Terminal,
-  task_shell_start: Terminal,
-  write_file: FileEdit,
-  edit_file: FileEdit,
-  apply_patch: FileEdit,
-  read_file: FileText,
-  list_dir: FileText,
-  grep_files: Search,
-  file_search: Search,
-  web_search: Globe,
-  fetch_url: Globe
-}
-
-/** Split a backend run-log line `name · arg — reason` into its parts. */
-function parseToolSummary(
-  summary: string,
-  failed: boolean
-): { name: string; arg: string; reason: string } {
-  let main = summary
-  let reason = ''
-  if (failed) {
-    const dash = summary.indexOf(' — ')
-    if (dash >= 0) {
-      main = summary.slice(0, dash)
-      reason = summary.slice(dash + 3)
-    }
-  }
-  const dot = main.indexOf(' · ')
-  const name = dot >= 0 ? main.slice(0, dot) : main
-  const arg = dot >= 0 ? main.slice(dot + 3) : ''
-  return { name: name.trim(), arg: arg.trim(), reason: reason.trim() }
-}
-
-/**
- * One run-log line, rendered like a turn in a mini conversation:
- * `text` entries are the model's narration, `tool`/`tool_error` entries get a
- * tool icon + name + argument + success/failure (mirroring the main chat tool
- * rows), everything else is a muted milestone line.
- */
-function TaskLogEntry({ entry }: { entry: TaskTimelineEntry }): ReactElement {
-  if (entry.kind === 'text') {
-    return (
-      <li className="whitespace-pre-wrap break-words border-l-2 border-ds-border/70 pl-3 text-[13px] leading-6 text-ds-ink">
-        {entry.summary}
-      </li>
-    )
-  }
-
-  if (entry.kind === 'tool' || entry.kind === 'tool_error') {
-    const failed = entry.kind === 'tool_error'
-    const { name, arg, reason } = parseToolSummary(entry.summary, failed)
-    const Icon = TOOL_ICONS[name] ?? Wrench
-    return (
-      <li className="rounded-lg px-2 py-1">
-        <div className="flex items-center gap-2">
-          <Icon className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} aria-hidden />
-          <span className="shrink-0 font-mono text-[11px] font-medium text-ds-muted">{name}</span>
-          {arg ? (
-            <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-faint" title={arg}>
-              {arg}
-            </span>
-          ) : (
-            <span className="flex-1" />
-          )}
-          {failed ? (
-            <X className="h-3.5 w-3.5 shrink-0 text-rose-500/90 dark:text-rose-400/90" />
-          ) : (
-            <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500/90 dark:text-emerald-400/90" />
-          )}
-        </div>
-        {reason ? (
-          <p className="mt-1 break-words pl-[1.375rem] text-[12px] leading-5 text-rose-500/90 dark:text-rose-400/90">
-            {reason}
-          </p>
-        ) : null}
-      </li>
-    )
-  }
-
+function CloseButton({
+  onClick,
+  label
+}: {
+  onClick: () => void
+  label: string
+}): ReactElement {
   return (
-    <li className="flex items-start gap-2 text-[12px] leading-5 text-ds-faint">
-      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ds-faint/60" aria-hidden />
-      <span className="min-w-0 break-words">{entry.summary || entry.kind}</span>
-    </li>
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-ds-muted transition active:scale-95 hover:bg-black/[0.1] hover:text-ds-ink dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
+      aria-label={label}
+    >
+      <X className="h-3.5 w-3.5" strokeWidth={2} />
+    </button>
+  )
+}
+
+function GroupedSection({
+  title,
+  trailing,
+  children,
+  tone = 'default'
+}: {
+  title: string
+  trailing?: ReactNode
+  children: ReactNode
+  tone?: 'default' | 'result' | 'error'
+}): ReactElement {
+  const shell =
+    tone === 'result'
+      ? 'border-emerald-300/40 bg-emerald-500/[0.05] dark:border-emerald-800/40 dark:bg-emerald-500/[0.07]'
+      : tone === 'error'
+        ? 'border-rose-300/45 bg-rose-500/[0.05] dark:border-rose-800/40 dark:bg-rose-500/[0.08]'
+        : 'border-ds-border/70 bg-ds-card/55'
+  const titleTone =
+    tone === 'result'
+      ? 'text-emerald-700 dark:text-emerald-300'
+      : tone === 'error'
+        ? 'text-rose-700 dark:text-rose-300'
+        : 'text-ds-muted'
+  return (
+    <section>
+      <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+        <h3 className={`text-[12px] font-semibold tracking-[0.02em] ${titleTone}`}>{title}</h3>
+        {trailing}
+      </div>
+      <div className={`overflow-hidden rounded-[16px] border ${shell}`}>{children}</div>
+    </section>
   )
 }

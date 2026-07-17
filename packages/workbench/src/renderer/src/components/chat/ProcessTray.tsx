@@ -1,29 +1,30 @@
 import type { ReactElement } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Loader2,
   Pause,
-  Target,
   Workflow,
   X
 } from 'lucide-react'
+import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
 import {
   buildTrackedProcesses,
   type TrackedProcess,
   type TrackedProcessStatus
 } from '../../lib/process-tracker'
-
-function formatSeconds(s: number): string {
-  if (s < 60) return `${Math.round(s)}s`
-  const m = Math.floor(s / 60)
-  const sec = Math.round(s % 60)
-  return sec > 0 ? `${m}m ${sec}s` : `${m}m`
-}
+import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
+import type { StepFlowItem } from './StepFlow'
+import {
+  WorkflowDagView,
+  workflowFocusLabel,
+  workflowProgressPct
+} from './WorkflowDagView'
 
 function statusLabel(status: TrackedProcessStatus, t: (key: string) => string): string {
   if (status === 'running') return t('processTrayStatusRunning')
@@ -33,130 +34,78 @@ function statusLabel(status: TrackedProcessStatus, t: (key: string) => string): 
   return t('processTrayStatusCancelled')
 }
 
-function toneFor(process: TrackedProcess): {
-  ring: string
-  icon: string
-  dot: string
-} {
-  if (process.status === 'failed') {
-    return {
-      ring: 'border-red-300/65 bg-red-500/10 dark:border-red-800/55',
-      icon: 'bg-red-500/15 text-red-700 dark:text-red-300',
-      dot: 'bg-red-500'
+function collectSubagentStepsByAgentId(
+  blocks: ChatBlock[]
+): Record<string, StepFlowItem[]> {
+  const out: Record<string, StepFlowItem[]> = {}
+  for (const block of blocks) {
+    if (block.kind !== 'subagent') continue
+    if (block.cardKind === 'delegate') {
+      const items = subagentStepsToFlowItems(block.steps)
+      if (items.length > 0) out[block.agentId] = items
+      continue
+    }
+    for (const [workerId, steps] of Object.entries(block.workerSteps ?? {})) {
+      const items = subagentStepsToFlowItems(steps)
+      if (items.length > 0) out[workerId] = items
     }
   }
-  if (process.status === 'cancelled' || process.status === 'waiting') {
-    return {
-      ring: 'border-amber-300/60 bg-amber-500/10 dark:border-amber-800/50',
-      icon: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-      dot: 'bg-amber-500'
-    }
-  }
-  if (process.status === 'completed') {
-    return {
-      ring: 'border-emerald-300/60 bg-emerald-500/10 dark:border-emerald-800/50',
-      icon: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-      dot: 'bg-emerald-500'
-    }
-  }
-  if (process.type === 'workflow') {
-    return {
-      ring: 'border-sky-300/65 bg-sky-500/10 dark:border-sky-800/55',
-      icon: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
-      dot: 'bg-sky-500'
-    }
-  }
-  return {
-    ring: 'border-violet-300/60 bg-violet-500/10 dark:border-violet-800/50',
-    icon: 'bg-violet-500/15 text-violet-700 dark:text-violet-300',
-    dot: 'bg-violet-500'
-  }
+  return out
 }
 
-function ProcessIcon({ process }: { process: TrackedProcess }): ReactElement {
-  if (process.status === 'running') {
-    return <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+function StatusIcon({ status }: { status: TrackedProcessStatus }): ReactElement {
+  if (status === 'running') {
+    return <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
   }
-  if (process.status === 'completed') {
-    return <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />
+  if (status === 'completed') {
+    return <CheckCircle2 className="h-4 w-4" strokeWidth={1.9} />
   }
-  if (process.status === 'failed') {
-    return <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} />
+  if (status === 'failed') {
+    return <AlertTriangle className="h-4 w-4" strokeWidth={1.9} />
   }
-  if (process.status === 'cancelled' || process.status === 'waiting') {
-    return <Pause className="h-3.5 w-3.5" strokeWidth={2} />
-  }
-  if (process.type === 'workflow') return <Workflow className="h-3.5 w-3.5" strokeWidth={2} />
-  return <Target className="h-3.5 w-3.5" strokeWidth={2} />
+  return <Pause className="h-4 w-4" strokeWidth={1.9} />
 }
 
-function processKindLabel(_process: TrackedProcess, t: (key: string) => string): string {
-  return t('processTrayWorkflow')
+function toneFor(status: TrackedProcessStatus): string {
+  if (status === 'failed') {
+    return 'border-rose-300/55 bg-rose-500/[0.05] dark:border-rose-800/50'
+  }
+  if (status === 'completed') {
+    return 'border-emerald-300/45 bg-emerald-500/[0.04] dark:border-emerald-800/45'
+  }
+  if (status === 'cancelled' || status === 'waiting') {
+    return 'border-amber-300/50 bg-amber-500/[0.05] dark:border-amber-800/45'
+  }
+  return 'border-sky-300/55 bg-sky-500/[0.05] dark:border-sky-800/50'
 }
 
-function ProcessChip({
+/**
+ * Inline workflow panel above the composer — not a modal. Shows the full DAG
+ * (nodes / waves / agent steps) so users can watch orchestration without
+ * opening a dialog or hunting the timeline.
+ */
+function WorkflowComposerPanel({
   process,
-  onOpen
-}: {
-  process: TrackedProcess
-  onOpen: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const tone = toneFor(process)
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={`${process.title} · ${statusLabel(process.status, t)}`}
-      className={[
-        'group inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2 text-left transition hover:-translate-y-px',
-        tone.ring
-      ].join(' ')}
-    >
-      <span
-        className={[
-          'flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
-          tone.icon
-        ].join(' ')}
-      >
-        <ProcessIcon process={process} />
-      </span>
-      <span className="shrink-0 text-[12px] font-medium text-ds-ink">
-        {processKindLabel(process, t)}
-      </span>
-      <span
-        className={[
-          'shrink-0 text-[11px] font-medium',
-          process.status === 'running' ? 'ds-shiny-text text-ds-muted' : 'text-ds-faint'
-        ].join(' ')}
-      >
-        {statusLabel(process.status, t)}
-      </span>
-    </button>
-  )
-}
-
-function WorkflowDetail({
-  process
+  subagentStepsByAgentId,
+  onDismiss
 }: {
   process: Extract<TrackedProcess, { type: 'workflow' }>
+  subagentStepsByAgentId: Record<string, StepFlowItem[]>
+  onDismiss: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const sendMessage = useChatStore((s) => s.sendMessage)
   const busy = useChatStore((s) => s.busy)
   const { workflow } = process
   const snap = workflow.snapshot
-  const visibleNodes = (snap.nodes ?? []).slice(-6)
-  const visibleAgents = snap.agents.slice(-4)
-  const showNodes = visibleNodes.length > 0
-  const pct = process.progressPct
+  const running = process.status === 'running'
+  // Open by default so the full wave / agent / tool-step DAG is visible
+  // above the input without an extra click. User can collapse; dismiss (X)
+  // removes terminal panels.
+  const [open, setOpen] = useState(true)
+  const pct = process.progressPct ?? workflowProgressPct(snap)
+  const focus = workflowFocusLabel(snap)
   const runId = workflow.runId?.trim()
-  const dynRounds = snap.dynamic_rounds
-    ? Object.entries(snap.dynamic_rounds)
-        .map(([id, r]) => `${id}@${r}`)
-        .join(', ')
-    : ''
   const canResume =
     Boolean(runId) &&
     (workflow.status === 'cancelled' ||
@@ -165,217 +114,155 @@ function WorkflowDetail({
     !busy
 
   return (
-    <div className="rounded-[12px] border border-ds-border-muted bg-ds-card/70 px-4 py-3 text-[13px] leading-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="font-semibold text-ds-ink">{workflow.workflowName || snap.name}</div>
-        <span className="font-mono text-[11px] text-ds-faint">
-          {runId || workflow.toolCallId}
-        </span>
-      </div>
-      {snap.description ? (
-        <p className="mt-1 text-ds-muted">{snap.description}</p>
-      ) : null}
-      {canResume && runId ? (
-        <div className="mt-3">
-          <button
-            type="button"
-            onClick={() => {
-              const prompt = t('workflowResumePrompt', {
-                defaultValue:
-                  '请用 workflow 工具【只传 run_id】续跑被中断的工作流 {{runId}}。不要重新用 name+task 开新跑；从 checkpoint 跳过已完成步骤继续。',
-                runId
-              })
-              void sendMessage(prompt, 'workflow')
-            }}
-            className="rounded-md border border-sky-400/50 bg-sky-500/10 px-2.5 py-1 text-[12px] font-medium text-sky-800 transition hover:bg-sky-500/15 dark:text-sky-200"
-          >
-            {t('workflowResume', { defaultValue: '续跑此 workflow' })}
-          </button>
-        </div>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2 text-[11.5px] text-ds-faint">
-        <span className="rounded-full bg-ds-hover px-2 py-0.5">
-          {t('processTrayStatusLabel')}: {workflow.status}
-        </span>
-        {snap.current_phase ? (
-          <span className="rounded-full bg-ds-hover px-2 py-0.5">
-            {t('processTrayPhase')}: {snap.current_phase}
-          </span>
-        ) : null}
-        <span className="rounded-full bg-ds-hover px-2 py-0.5">
-          {snap.done_count}/{snap.agent_count} {t('processTrayAgentsDone')}
-        </span>
-        {dynRounds ? (
-          <span className="rounded-full bg-ds-hover px-2 py-0.5">dyn {dynRounds}</span>
-        ) : null}
-        {snap.error_count > 0 ? (
-          <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-red-700 dark:text-red-300">
-            {snap.error_count} {t('processTrayErrors')}
-          </span>
-        ) : null}
-      </div>
-      {pct !== null ? (
-        <div className="mt-3">
-          <div className="mb-1 flex justify-between text-[11px] text-ds-faint">
-            <span>{t('processTrayProgress')}</span>
-            <span>{pct}%</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-ds-border">
-            <div className="h-full rounded-full bg-sky-500" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-      ) : null}
-      {showNodes ? (
-        <div className="mt-3 flex flex-col gap-1">
-          {visibleNodes.map((node) => (
-            <div
-              key={node.id}
-              className="flex items-center gap-2 rounded-xl bg-ds-hover/50 px-2.5 py-1.5 text-[12.5px]"
-              title={
-                node.predecessors && node.predecessors.length
-                  ? `after: ${node.predecessors.join(', ')}`
-                  : undefined
-              }
-            >
-              <span
-                className={[
-                  'h-1.5 w-1.5 shrink-0 rounded-full',
-                  node.status === 'done'
-                    ? 'bg-emerald-500'
-                    : node.status === 'error'
-                      ? 'bg-red-500'
-                      : node.status === 'running'
-                        ? 'bg-sky-500'
-                        : node.status === 'skipped'
-                          ? 'bg-ds-faint'
-                          : 'bg-ds-faint'
-                ].join(' ')}
-              />
-              <span className="min-w-0 flex-1 truncate text-ds-muted">
-                {node.label || node.id}
-                <span className="text-ds-faint"> ({node.type})</span>
-                {node.generated ? <span className="text-ds-faint"> *</span> : null}
-              </span>
-              <span className="shrink-0 text-[11px] text-ds-faint">{node.status}</span>
-            </div>
-          ))}
-        </div>
-      ) : visibleAgents.length > 0 ? (
-        <div className="mt-3 flex flex-col gap-1">
-          {visibleAgents.map((agent) => (
-            <div
-              key={`${agent.step_id}-${agent.label}`}
-              className="flex items-center gap-2 rounded-xl bg-ds-hover/50 px-2.5 py-1.5 text-[12.5px]"
-            >
-              <span
-                className={[
-                  'h-1.5 w-1.5 shrink-0 rounded-full',
-                  agent.status === 'done'
-                    ? 'bg-emerald-500'
-                    : agent.status === 'error'
-                      ? 'bg-red-500'
-                      : agent.status === 'running'
-                        ? 'bg-sky-500'
-                        : 'bg-ds-faint'
-                ].join(' ')}
-              />
-              <span className="min-w-0 flex-1 truncate text-ds-muted">{agent.label}</span>
-              <span className="shrink-0 text-[11px] text-ds-faint">{agent.status}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function ProcessDetail({ process }: { process: TrackedProcess }): ReactElement {
-  return <WorkflowDetail process={process} />
-}
-
-function ProcessDetailModal({
-  process,
-  onClose
-}: {
-  process: TrackedProcess
-  onClose: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="ds-no-drag fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <section
+      className={[
+        'mb-2 w-full overflow-hidden rounded-[16px] border shadow-[0_10px_28px_rgba(15,23,42,0.06)]',
+        toneFor(process.status)
+      ].join(' ')}
+      data-process-tray="workflow"
     >
-      <div className="absolute inset-0 bg-black/35 backdrop-blur-sm" />
-      <div
-        className="relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-elevated shadow-[0_28px_70px_rgba(0,0,0,0.22)] dark:border-white/[0.08] dark:bg-[#171a1f]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-ds-border-muted/70 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ds-faint">
-              {processKindLabel(process, t)}
+      <div className="flex items-start gap-2 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+        >
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-sky-500/14 text-sky-700 dark:text-sky-300">
+            {running ? (
+              <StatusIcon status={process.status} />
+            ) : (
+              <Workflow className="h-4 w-4" strokeWidth={1.8} />
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="truncate text-[14px] font-semibold tracking-[-0.02em] text-ds-ink">
+                {workflow.workflowName || snap.name}
+              </span>
+              <span className="shrink-0 rounded-full bg-black/[0.05] px-1.5 py-0.5 text-[10.5px] font-semibold text-ds-muted dark:bg-white/[0.08]">
+                {statusLabel(process.status, t)}
+              </span>
+              {pct != null ? (
+                <span className="shrink-0 tabular-nums text-[11px] text-ds-faint">{pct}%</span>
+              ) : null}
             </span>
-            <span className="truncate text-[13.5px] font-semibold text-ds-ink">
-              {process.title}
+            <span className="mt-0.5 block truncate text-[12px] text-ds-muted">
+              {focus
+                ? running
+                  ? t('workflowFocusRunning', {
+                      defaultValue: 'now {{label}}',
+                      label: focus
+                    })
+                  : focus
+                : snap.description ||
+                  `${snap.done_count}/${Math.max(snap.agent_count, snap.nodes?.length ?? 0)}`}
             </span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('processTrayClose')}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-          >
-            <X className="h-4 w-4" strokeWidth={1.9} />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <ProcessDetail process={process} />
+            {pct != null ? (
+              <span className="mt-2 block h-1 overflow-hidden rounded-full bg-ds-border/80">
+                <span
+                  className={[
+                    'block h-full rounded-full transition-[width] duration-300',
+                    process.status === 'failed'
+                      ? 'bg-rose-500'
+                      : process.status === 'completed'
+                        ? 'bg-emerald-500'
+                        : 'bg-sky-500'
+                  ].join(' ')}
+                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                />
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown
+            className={[
+              'mt-1.5 h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200',
+              open ? 'rotate-180' : 'rotate-0'
+            ].join(' ')}
+            strokeWidth={1.8}
+          />
+        </button>
+
+        <div className="flex shrink-0 items-center gap-1">
+          {canResume && runId ? (
+            <button
+              type="button"
+              onClick={() => {
+                const prompt = t('workflowResumePrompt', {
+                  defaultValue:
+                    '请用 workflow 工具【只传 run_id】续跑被中断的工作流 {{runId}}。不要重新用 name+task 开新跑；从 checkpoint 跳过已完成步骤继续。',
+                  runId
+                })
+                void sendMessage(prompt, 'workflow')
+              }}
+              className="rounded-full bg-sky-500/12 px-2.5 py-1 text-[11.5px] font-semibold text-sky-800 transition hover:bg-sky-500/18 dark:text-sky-200"
+            >
+              {t('workflowResume', { defaultValue: '续跑' })}
+            </button>
+          ) : null}
+          {!running ? (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label={t('close')}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={1.9} />
+            </button>
+          ) : null}
         </div>
       </div>
-    </div>
+
+      {open ? (
+        <div className="max-h-[min(55vh,32rem)] overflow-y-auto border-t border-ds-border/45 px-2.5 py-2">
+          {runId ? (
+            <p className="mb-1.5 truncate px-1 font-mono text-[10px] text-ds-faint">{runId}</p>
+          ) : null}
+          {snap.description ? (
+            <p className="mb-2 px-1 text-[12px] leading-5 text-ds-muted">{snap.description}</p>
+          ) : null}
+          <WorkflowDagView
+            snapshot={snap}
+            subagentStepsByAgentId={subagentStepsByAgentId}
+          />
+        </div>
+      ) : null}
+    </section>
   )
 }
 
 export function ProcessTray(): ReactElement | null {
-  const blocks = useChatStore(
-    useShallow((s) => s.blocks)
-  )
-  const processes = useMemo(
-    () => buildTrackedProcesses({ blocks }),
+  const blocks = useChatStore(useShallow((s) => s.blocks))
+  const processes = useMemo(() => buildTrackedProcesses({ blocks }), [blocks])
+  const subagentStepsByAgentId = useMemo(
+    () => collectSubagentStepsByAgentId(blocks),
     [blocks]
   )
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set())
 
-  useEffect(() => {
-    setOpenId((current) =>
-      current && processes.some((process) => process.id === current) ? current : null
-    )
-  }, [processes])
+  const visible = processes.filter((process) => {
+    if (process.status === 'running') return true
+    return !dismissedIds.has(process.id)
+  })
 
-  if (processes.length === 0) return null
-
-  const opened = openId ? processes.find((process) => process.id === openId) ?? null : null
+  if (visible.length === 0) return null
 
   return (
-    <div className="w-full">
-      <div className="ds-no-drag flex w-full flex-wrap items-center gap-1.5">
-        {processes.map((process) => (
-          <ProcessChip key={process.id} process={process} onOpen={() => setOpenId(process.id)} />
-        ))}
-      </div>
-      {opened ? <ProcessDetailModal process={opened} onClose={() => setOpenId(null)} /> : null}
+    <div className="ds-no-drag flex w-full flex-col gap-1.5">
+      {visible.map((process) => (
+        <WorkflowComposerPanel
+          key={process.id}
+          process={process}
+          subagentStepsByAgentId={subagentStepsByAgentId}
+          onDismiss={() =>
+            setDismissedIds((prev) => {
+              const next = new Set(prev)
+              next.add(process.id)
+              return next
+            })
+          }
+        />
+      ))}
     </div>
   )
 }

@@ -73,6 +73,8 @@ class TaskTimelineEntry:
     kind: str
     summary: str
     detail_path: str | None = None
+    # Optional longer body for Workbench step-flow expand (tool output, etc.).
+    detail: str | None = None
 
 
 @dataclass(slots=True)

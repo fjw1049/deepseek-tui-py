@@ -326,26 +326,39 @@ def _describe_tool_call(
 async def _collect_turn_events(
     handle: EngineHandle,
     cancel: asyncio.Event,
-    on_tool_event: Callable[[str, str], Awaitable[None]] | None = None,
+    on_tool_event: Callable[..., Awaitable[None]] | None = None,
 ) -> tuple[str, str | None]:
     """Drain events until turn end. Returns (final_assistant_text, error_message).
 
     When ``on_tool_event`` is provided, the task's "run log" is streamed as
-    ``(kind, summary)`` pairs that read like a mini conversation:
+    ``(kind, summary[, detail])`` triples that read like a mini conversation:
 
     * ``("text", ...)`` — the model's own narration for a round (what it is
       about to do / reasoning), taken from the round's preface text.
     * ``("tool", ...)`` / ``("tool_error", ...)`` — a single readable line per
       tool call, e.g. ``read_file · src/x.py`` or ``exec_shell · pytest -q``,
-      with the failure reason appended on error.
+      with the failure reason appended on error. Optional ``detail`` carries a
+      truncated tool output for the Workbench step-flow expand panel.
     """
     from deepseek_tui.automation.delivery import assistant_message_text
+    from deepseek_tui.utils import summarize_text
 
     final_text = ""
     error_msg: str | None = None
     # tool_call_id -> arguments, captured at round-complete so the result
     # event (which omits arguments) can be rendered with its key parameter.
     pending_args: dict[str, dict[str, Any]] = {}
+
+    async def _emit_tool_event(
+        kind: str, summary: str, detail: str | None = None
+    ) -> None:
+        if on_tool_event is None:
+            return
+        try:
+            await on_tool_event(kind, summary, detail)
+        except TypeError:
+            # Older/test callbacks that only accept (kind, summary).
+            await on_tool_event(kind, summary)
 
     async for event in handle.events():
         if cancel.is_set():
@@ -360,7 +373,7 @@ async def _collect_turn_events(
             if on_tool_event is not None:
                 narration = (event.preface_text or "").strip()
                 if narration:
-                    await on_tool_event("text", narration)
+                    await _emit_tool_event("text", narration, narration)
         elif isinstance(event, ToolResultEvent):
             if on_tool_event is not None:
                 args = pending_args.pop(event.tool_call_id, {})
@@ -368,7 +381,8 @@ async def _collect_turn_events(
                 summary = _describe_tool_call(
                     event.tool_name, args, event.success, event.content
                 )
-                await on_tool_event(kind, summary)
+                detail = summarize_text(event.content or "", 4_000) or None
+                await _emit_tool_event(kind, summary, detail)
         elif isinstance(event, UserInputRequiredEvent):
             future = handle.pending_user_inputs.get(event.tool_call_id)
             if future and not future.done():
@@ -500,13 +514,22 @@ async def _run_task_engine_turn(
 
     engine.tool_context.metadata["on_turn_checkpoint"] = _on_turn_checkpoint
 
-    async def _record_tool_event(kind: str, summary: str) -> None:
+    async def _record_tool_event(
+        kind: str, summary: str, detail: str | None = None
+    ) -> None:
         mgr = getattr(task, "task_manager", None)
         recorder = getattr(mgr, "record_tool_timeline", None)
         if recorder is None:
             return
         try:
-            await recorder(task.id, kind, summary)
+            await recorder(task.id, kind, summary, detail)
+        except TypeError:
+            try:
+                await recorder(task.id, kind, summary)
+            except Exception:  # noqa: BLE001 -- progress logging must never break the task
+                logger.debug(
+                    "task_tool_timeline_record_failed id=%s", task.id, exc_info=True
+                )
         except Exception:  # noqa: BLE001 -- progress logging must never break the task
             logger.debug("task_tool_timeline_record_failed id=%s", task.id, exc_info=True)
 

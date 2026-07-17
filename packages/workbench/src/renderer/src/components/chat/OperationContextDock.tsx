@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useEffect, useState, type ReactElement } from 'react'
 import {
   Check,
+  ChevronDown,
   ChevronRight,
   Code2,
   FileEdit,
   Globe2,
+  Loader2,
   Terminal
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -12,15 +14,18 @@ import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../../agent/types'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
-import { useLiveTasks } from '../../hooks/use-thread-tasks'
+import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { sumDiffStats } from '../../lib/diff-stats'
 import {
   extractTasksFromBlocks,
   isActiveTaskStatus,
+  taskListTitle,
   type TaskItemView
 } from '../../lib/extract-tasks-from-blocks'
+import { timelineToFlowItems } from '../../lib/task-step-flow'
 import { TaskRunDialog } from './TaskRunDialog'
+import { StepFlow } from './StepFlow'
 import { TaskStatusGlyph, taskStatusLabelKey } from './task-status'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import {
@@ -109,32 +114,103 @@ function SectionHeader({
 function TaskRow({ task }: { task: TaskItemView }): ReactElement {
   const { t } = useTranslation()
   const { status } = task
-  const running = status === 'running'
-  const [open, setOpen] = useState(false)
+  const running = isActiveTaskStatus(status)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  // Collapsed by default — expand only when the user wants the step rail.
+  const [stepsOpen, setStepsOpen] = useState(false)
+  const [timeline, setTimeline] = useState<ReturnType<typeof timelineToFlowItems>>([])
+  const [loadingSteps, setLoadingSteps] = useState(false)
+  const title = taskListTitle(task)
+
+  useEffect(() => {
+    if (!stepsOpen) return
+    let cancelled = false
+    let interval: number | undefined
+    const load = (): void => {
+      void fetchTaskDetail(task.id).then((detail) => {
+        if (cancelled || !detail) return
+        setTimeline(timelineToFlowItems(detail.timeline))
+        setLoadingSteps(false)
+        if (!isActiveTaskStatus(detail.status) && interval !== undefined) {
+          window.clearInterval(interval)
+          interval = undefined
+        }
+      })
+    }
+    setLoadingSteps(true)
+    load()
+    if (running) {
+      interval = window.setInterval(load, 1500)
+    }
+    return () => {
+      cancelled = true
+      if (interval !== undefined) window.clearInterval(interval)
+    }
+  }, [stepsOpen, task.id, running])
 
   return (
-    <li>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
-      >
-        <TaskStatusGlyph status={status} />
-        <span
-          className={[
-            'min-w-0 flex-1 truncate font-mono text-[12px] leading-5',
-            running ? 'ds-shiny-text font-medium text-ds-ink' : 'text-ds-muted'
-          ].join(' ')}
+    <li className="rounded-[10px] px-0.5 py-0.5">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setStepsOpen((v) => !v)}
+          title={task.prompt.trim() || task.id}
+          aria-expanded={stepsOpen}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
         >
-          {task.id}
-        </span>
-        <span className="shrink-0 text-[11px] text-ds-faint">{t(taskStatusLabelKey(status))}</span>
-      </button>
+          <ChevronDown
+            className={[
+              'h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200',
+              stepsOpen ? 'rotate-0' : '-rotate-90'
+            ].join(' ')}
+            strokeWidth={1.8}
+          />
+          <TaskStatusGlyph status={status} />
+          <span
+            className={[
+              'min-w-0 flex-1 truncate text-[12.5px] leading-5 tracking-[-0.01em]',
+              running ? 'ds-shiny-text font-medium text-ds-ink' : 'font-medium text-ds-ink/85'
+            ].join(' ')}
+          >
+            {title}
+          </span>
+          <span className="shrink-0 text-[11px] text-ds-faint">
+            {t(taskStatusLabelKey(status))}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDialogOpen(true)}
+          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-sky-700 transition hover:bg-sky-500/10 dark:text-sky-300"
+        >
+          {t('subagentDetails', { defaultValue: '详情' })}
+        </button>
+      </div>
+
+      {stepsOpen ? (
+        <div className="mt-1 border-t border-ds-border-muted/40 px-1 pt-1">
+          {timeline.length > 0 ? (
+            <StepFlow items={timeline} compact />
+          ) : loadingSteps ? (
+            <div className="flex items-center gap-1.5 px-1 py-1.5 text-[11.5px] text-ds-faint">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('contextRailTaskLoading', { defaultValue: '加载中…' })}
+            </div>
+          ) : (
+            <p className="px-1 py-1.5 text-[11.5px] text-ds-faint">
+              {running
+                ? t('subagentStepFlowWaiting', { defaultValue: '等待工具步骤…' })
+                : t('stepFlowEmpty', { defaultValue: 'No steps yet.' })}
+            </p>
+          )}
+        </div>
+      ) : null}
+
       <TaskRunDialog
         taskId={task.id}
         initialStatus={status}
-        open={open}
-        onClose={() => setOpen(false)}
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
       />
     </li>
   )

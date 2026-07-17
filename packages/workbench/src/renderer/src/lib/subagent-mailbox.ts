@@ -5,14 +5,39 @@ export type SubagentLifecycle = 'pending' | 'running' | 'completed' | 'failed' |
 export type MailboxMessageJson = {
   kind: string
   agent_id: string
+  /** Monotonic mailbox envelope seq (0/absent for synthesized reconcile events). */
+  seq?: number | null
   agent_type?: string | null
   status?: string | null
   tool_name?: string | null
   step?: number | null
+  tool_call_id?: string | null
   ok?: boolean | null
   parent_id?: string | null
   summary?: string | null
   error?: string | null
+  input_summary?: string | null
+  output_summary?: string | null
+}
+
+export type SubagentStepKind =
+  | 'started'
+  | 'progress'
+  | 'tool'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type SubagentStepState = {
+  id: string
+  kind: SubagentStepKind
+  step?: number | null
+  toolName?: string | null
+  /** For tool steps: null while running, then true/false when completed. */
+  ok?: boolean | null
+  label: string
+  input?: string | null
+  output?: string | null
 }
 
 export type DelegateCardState = {
@@ -21,8 +46,12 @@ export type DelegateCardState = {
   agentType: string
   status: SubagentLifecycle
   summary?: string
+  /** Short preview lines for compact surfaces (last N step labels). */
   actions: string[]
   truncated: boolean
+  steps: SubagentStepState[]
+  parentId?: string | null
+  childIds: string[]
 }
 
 export type FanoutWorkerState = {
@@ -35,11 +64,17 @@ export type FanoutCardState = {
   agentId: string
   dispatchKind: string
   workers: FanoutWorkerState[]
+  /** Per-worker step history (fanout workers are not separate blocks). */
+  workerSteps: Record<string, SubagentStepState[]>
+  parentId?: string | null
+  childIds: string[]
 }
 
 export type SubagentCardState = DelegateCardState | FanoutCardState
 
+/** Compact action preview only — full history lives in ``steps``. */
 const DELEGATE_MAX_ACTIONS = 3
+const DELEGATE_MAX_STEPS = 200
 
 const FANOUT_AGENT_TYPES = new Set(['rlm', 'fanout', 'swarm', 'agent_swarm'])
 
@@ -49,23 +84,6 @@ export function isFanoutAgentType(agentType: string | null | undefined): boolean
   return FANOUT_AGENT_TYPES.has(normalized) || normalized.includes('fanout')
 }
 
-function lifecycleFromKind(kind: string): SubagentLifecycle | null {
-  switch (kind) {
-    case 'started':
-    case 'progress':
-    case 'tool_call_started':
-      return 'running'
-    case 'completed':
-      return 'completed'
-    case 'failed':
-      return 'failed'
-    case 'cancelled':
-      return 'cancelled'
-    default:
-      return null
-  }
-}
-
 export function createDelegateCard(agentId: string, agentType: string): DelegateCardState {
   return {
     cardKind: 'delegate',
@@ -73,7 +91,10 @@ export function createDelegateCard(agentId: string, agentType: string): Delegate
     agentType,
     status: 'pending',
     actions: [],
-    truncated: false
+    truncated: false,
+    steps: [],
+    parentId: null,
+    childIds: []
   }
 }
 
@@ -82,64 +103,221 @@ export function createFanoutCard(agentId: string, dispatchKind: string): FanoutC
     cardKind: 'fanout',
     agentId,
     dispatchKind,
-    workers: []
+    workers: [],
+    workerSteps: {},
+    parentId: null,
+    childIds: []
   }
+}
+
+function pushUniqueChild(childIds: string[], childId: string): string[] {
+  if (childIds.includes(childId)) return childIds
+  return [...childIds, childId]
+}
+
+function syncActionPreview(steps: SubagentStepState[]): {
+  actions: string[]
+  truncated: boolean
+} {
+  const labels = steps.map((s) => s.label)
+  if (labels.length <= DELEGATE_MAX_ACTIONS) {
+    return { actions: labels, truncated: false }
+  }
+  return {
+    actions: labels.slice(-DELEGATE_MAX_ACTIONS),
+    truncated: true
+  }
+}
+
+function capSteps(steps: SubagentStepState[]): SubagentStepState[] {
+  if (steps.length <= DELEGATE_MAX_STEPS) return steps
+  return steps.slice(-DELEGATE_MAX_STEPS)
+}
+
+function toolStepId(msg: MailboxMessageJson): string {
+  // Prefer the provider tool-call id: parallel same-name calls in one round
+  // share the same `step` number, so `tool-${step}-${name}` collides and one
+  // call would silently overwrite the other.
+  if (msg.tool_call_id) return `tool-${msg.tool_call_id}`
+  return `tool-${msg.step ?? '?'}-${msg.tool_name ?? 'tool'}`
+}
+
+/**
+ * Lifecycle/progress step ids must stay unique within a card even after
+ * `capSteps` truncation (steps.length stops growing at the cap, so indexing
+ * off it repeats ids and breaks React keys). Prefer the monotonic mailbox
+ * seq; fall back to max existing numeric suffix + 1 when seq is absent
+ * (synthesized reconcile envelopes carry seq=0).
+ */
+function nextStepId(
+  kind: string,
+  steps: SubagentStepState[],
+  seq?: number | null
+): string {
+  if (seq != null && seq > 0) return `${kind}-${seq}`
+  let max = 0
+  for (const s of steps) {
+    const match = /-(\d+)$/.exec(s.id)
+    if (match) max = Math.max(max, Number(match[1]))
+  }
+  return `${kind}-${max + 1}`
+}
+
+function appendOrUpdateToolStep(
+  steps: SubagentStepState[],
+  msg: MailboxMessageJson,
+  phase: 'started' | 'completed'
+): SubagentStepState[] {
+  const toolName = msg.tool_name ?? 'tool'
+  const stepNum = msg.step ?? null
+  const id = toolStepId(msg)
+  const next = [...steps]
+  const idx = next.findIndex((s) => s.id === id && s.kind === 'tool')
+  if (phase === 'started') {
+    const row: SubagentStepState = {
+      id,
+      kind: 'tool',
+      step: stepNum,
+      toolName,
+      ok: null,
+      label: `step ${stepNum ?? '?'} · ${toolName}`,
+      input: msg.input_summary ?? null,
+      output: null
+    }
+    if (idx >= 0) {
+      next[idx] = {
+        ...next[idx]!,
+        ...row,
+        input: msg.input_summary ?? next[idx]!.input ?? null
+      }
+    } else {
+      next.push(row)
+    }
+    return capSteps(next)
+  }
+  const outcome = msg.ok ? 'ok' : 'failed'
+  const row: SubagentStepState = {
+    id,
+    kind: 'tool',
+    step: stepNum,
+    toolName,
+    ok: msg.ok ?? false,
+    label: `step ${stepNum ?? '?'} · ${toolName} · ${outcome}`,
+    input: msg.input_summary ?? null,
+    output: msg.output_summary ?? null
+  }
+  if (idx >= 0) {
+    next[idx] = {
+      ...next[idx]!,
+      ...row,
+      input: msg.input_summary ?? next[idx]!.input ?? null,
+      output: msg.output_summary ?? next[idx]!.output ?? null
+    }
+  } else {
+    next.push(row)
+  }
+  return capSteps(next)
+}
+
+function appendLifecycleStep(
+  steps: SubagentStepState[],
+  kind: Exclude<SubagentStepKind, 'tool' | 'progress'>,
+  label: string,
+  output?: string | null,
+  seq?: number | null
+): SubagentStepState[] {
+  // Avoid duplicate terminal/start markers of the same kind at the tail.
+  const last = steps[steps.length - 1]
+  if (last && last.kind === kind && last.label === label) return steps
+  return capSteps([
+    ...steps,
+    {
+      id: nextStepId(kind, steps, seq),
+      kind,
+      label,
+      output: output ?? null
+    }
+  ])
 }
 
 export function applyMailboxToDelegate(
   card: DelegateCardState,
   msg: MailboxMessageJson
 ): DelegateCardState | null {
-  if (msg.agent_id !== card.agentId) return null
-  const next = { ...card, actions: [...card.actions] }
+  if (msg.agent_id !== card.agentId && msg.kind !== 'child_spawned') return null
+  if (msg.kind === 'child_spawned') {
+    if (msg.parent_id !== card.agentId) return null
+    return {
+      ...card,
+      childIds: pushUniqueChild(card.childIds, msg.agent_id)
+    }
+  }
+
+  let steps = [...card.steps]
+  let status = card.status
+  let summary = card.summary
+
   switch (msg.kind) {
     case 'started':
-      next.status = 'running'
+      status = 'running'
+      steps = appendLifecycleStep(steps, 'started', '● running', undefined, msg.seq)
       break
     case 'progress':
-      next.status = 'running'
+      status = 'running'
       if (msg.status) {
-        next.actions.push(msg.status)
-        if (next.actions.length > DELEGATE_MAX_ACTIONS) {
-          next.actions.shift()
-          next.truncated = true
-        }
+        steps = capSteps([
+          ...steps,
+          {
+            id: nextStepId('progress', steps, msg.seq),
+            kind: 'progress',
+            label: msg.status,
+            output: msg.status
+          }
+        ])
       }
       break
     case 'tool_call_started':
-      next.actions.push(`[${msg.step ?? '?'}] ${msg.tool_name ?? 'tool'} started`)
-      if (next.actions.length > DELEGATE_MAX_ACTIONS) {
-        next.actions.shift()
-        next.truncated = true
-      }
+      status = 'running'
+      steps = appendOrUpdateToolStep(steps, msg, 'started')
       break
-    case 'tool_call_completed': {
-      const outcome = msg.ok ? 'ok' : 'failed'
-      next.actions.push(`[${msg.step ?? '?'}] ${msg.tool_name ?? 'tool'} ${outcome}`)
-      if (next.actions.length > DELEGATE_MAX_ACTIONS) {
-        next.actions.shift()
-        next.truncated = true
-      }
+    case 'tool_call_completed':
+      status = 'running'
+      steps = appendOrUpdateToolStep(steps, msg, 'completed')
       break
-    }
     case 'completed':
-      next.status = 'completed'
-      next.summary = msg.summary ?? undefined
+      status = 'completed'
+      summary = msg.summary ?? undefined
+      steps = appendLifecycleStep(steps, 'completed', '✓ completed', msg.summary, msg.seq)
       break
     case 'failed':
-      next.status = 'failed'
-      next.summary = msg.error ?? undefined
+      status = 'failed'
+      summary = msg.error ?? undefined
+      steps = appendLifecycleStep(steps, 'failed', '✗ failed', msg.error, msg.seq)
       break
     case 'cancelled':
-      next.status = 'cancelled'
+      status = 'cancelled'
+      steps = appendLifecycleStep(steps, 'cancelled', '− cancelled', undefined, msg.seq)
       break
     default:
       return null
   }
-  return next
+
+  const preview = syncActionPreview(steps)
+  return {
+    ...card,
+    status,
+    summary,
+    steps,
+    actions: preview.actions,
+    truncated: preview.truncated
+  }
 }
 
-function upsertWorker(workers: FanoutWorkerState[], id: string, status: SubagentLifecycle): FanoutWorkerState[] {
+function upsertWorker(
+  workers: FanoutWorkerState[],
+  id: string,
+  status: SubagentLifecycle
+): FanoutWorkerState[] {
   const idx = workers.findIndex((w) => w.id === id)
   if (idx >= 0) {
     const copy = [...workers]
@@ -149,33 +327,83 @@ function upsertWorker(workers: FanoutWorkerState[], id: string, status: Subagent
   return [...workers, { id, status }]
 }
 
+function applyStepsToWorker(
+  workerSteps: Record<string, SubagentStepState[]>,
+  workerId: string,
+  mutate: (steps: SubagentStepState[]) => SubagentStepState[]
+): Record<string, SubagentStepState[]> {
+  const prev = workerSteps[workerId] ?? []
+  return { ...workerSteps, [workerId]: mutate(prev) }
+}
+
 export function applyMailboxToFanout(
   card: FanoutCardState,
   msg: MailboxMessageJson
 ): FanoutCardState | null {
-  const next = { ...card, workers: [...card.workers] }
+  const next: FanoutCardState = {
+    ...card,
+    workers: [...card.workers],
+    workerSteps: { ...card.workerSteps },
+    childIds: [...card.childIds]
+  }
   const agentId = msg.agent_id
+
   switch (msg.kind) {
     case 'started':
       next.workers = upsertWorker(next.workers, agentId, 'running')
+      next.childIds = pushUniqueChild(next.childIds, agentId)
+      next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+        appendLifecycleStep(steps, 'started', '● running', undefined, msg.seq)
+      )
       break
     case 'progress':
+      next.workers = upsertWorker(next.workers, agentId, 'running')
+      if (msg.status) {
+        next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+          capSteps([
+            ...steps,
+            {
+              id: nextStepId('progress', steps, msg.seq),
+              kind: 'progress',
+              label: msg.status!,
+              output: msg.status
+            }
+          ])
+        )
+      }
+      break
     case 'tool_call_started':
       next.workers = upsertWorker(next.workers, agentId, 'running')
+      next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+        appendOrUpdateToolStep(steps, msg, 'started')
+      )
       break
     case 'tool_call_completed':
-      return next
+      next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+        appendOrUpdateToolStep(steps, msg, 'completed')
+      )
+      break
     case 'completed':
       next.workers = upsertWorker(next.workers, agentId, 'completed')
+      next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+        appendLifecycleStep(steps, 'completed', '✓ completed', msg.summary, msg.seq)
+      )
       break
     case 'failed':
       next.workers = upsertWorker(next.workers, agentId, 'failed')
+      next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+        appendLifecycleStep(steps, 'failed', '✗ failed', msg.error, msg.seq)
+      )
       break
     case 'cancelled':
       next.workers = upsertWorker(next.workers, agentId, 'cancelled')
+      next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
+        appendLifecycleStep(steps, 'cancelled', '− cancelled', undefined, msg.seq)
+      )
       break
     case 'child_spawned':
       next.workers = upsertWorker(next.workers, agentId, 'pending')
+      next.childIds = pushUniqueChild(next.childIds, agentId)
       break
     default:
       return null
@@ -209,19 +437,73 @@ function findOwningFanoutId(
   return null
 }
 
+function linkChildToParent(
+  cards: Record<string, SubagentCardState>,
+  parentId: string,
+  childId: string
+): Record<string, SubagentCardState> {
+  const parent = cards[parentId]
+  if (!parent) return cards
+  if (parent.cardKind === 'fanout') {
+    const updated = applyMailboxToFanout(parent, {
+      kind: 'child_spawned',
+      agent_id: childId,
+      parent_id: parentId
+    })
+    return updated ? { ...cards, [parentId]: updated } : cards
+  }
+  const updated = applyMailboxToDelegate(parent, {
+    kind: 'child_spawned',
+    agent_id: childId,
+    parent_id: parentId
+  })
+  return updated ? { ...cards, [parentId]: updated } : cards
+}
+
 export function applyMailboxMessage(
   cards: Record<string, SubagentCardState>,
   msg: MailboxMessageJson
 ): Record<string, SubagentCardState> {
+  let nextCards = cards
   const agentId = msg.agent_id
-  let card = cards[agentId]
+
+  // Parent→child edge: always wire the parent. Fanout parents keep children as
+  // workers only (no extra timeline cards). Delegate parents get a child card
+  // so the detail dialog can show a nested step rail.
+  if (msg.kind === 'child_spawned' && msg.parent_id) {
+    nextCards = linkChildToParent(nextCards, msg.parent_id, agentId)
+    const parent = nextCards[msg.parent_id]
+    if (parent?.cardKind === 'fanout') {
+      return nextCards
+    }
+    const existing = nextCards[agentId]
+    if (!existing) {
+      const child = createDelegateCard(agentId, msg.agent_type ?? 'general')
+      child.parentId = msg.parent_id
+      child.status = 'pending'
+      nextCards = { ...nextCards, [agentId]: child }
+    } else if (existing.cardKind === 'delegate' && !existing.parentId) {
+      nextCards = {
+        ...nextCards,
+        [agentId]: { ...existing, parentId: msg.parent_id }
+      }
+    } else if (existing.cardKind === 'fanout' && !existing.parentId) {
+      nextCards = {
+        ...nextCards,
+        [agentId]: { ...existing, parentId: msg.parent_id }
+      }
+    }
+    return nextCards
+  }
+
+  let card = nextCards[agentId]
   // Route worker-level messages to the fanout that already owns them so they
   // update the parent card instead of spawning a stray standalone delegate.
   if (!card) {
-    const ownerId = findOwningFanoutId(cards, agentId)
+    const ownerId = findOwningFanoutId(nextCards, agentId)
     if (ownerId) {
-      const updated = applyMailboxToFanout(cards[ownerId] as FanoutCardState, msg)
-      return updated ? { ...cards, [ownerId]: updated } : cards
+      const updated = applyMailboxToFanout(nextCards[ownerId] as FanoutCardState, msg)
+      return updated ? { ...nextCards, [ownerId]: updated } : nextCards
     }
   }
   if (!card && CARD_BOOTSTRAP_KINDS.has(msg.kind)) {
@@ -233,22 +515,38 @@ export function applyMailboxMessage(
       card = { ...createDelegateCard(agentId, msg.agent_type ?? 'general'), status: 'running' }
     }
   }
-  if (!card) {
-    if (msg.kind === 'child_spawned' && msg.parent_id) {
-      const parent = cards[msg.parent_id]
-      if (parent?.cardKind === 'fanout') {
-        const updated = applyMailboxToFanout(parent, msg)
-        if (updated) return { ...cards, [msg.parent_id]: updated }
-      }
-    }
-    return cards
-  }
+  if (!card) return nextCards
+
   const updated =
     card.cardKind === 'fanout'
       ? applyMailboxToFanout(card, msg)
       : applyMailboxToDelegate(card, msg)
-  if (!updated) return cards
-  return { ...cards, [agentId]: updated }
+  if (!updated) return nextCards
+  return { ...nextCards, [agentId]: updated }
+}
+
+export type MailboxApplyResult = {
+  cards: Record<string, SubagentCardState>
+  /**
+   * Agent ids whose card object actually changed. Writers that rebuild the
+   * card map from blocks on every event (chat-store live path) must upsert
+   * the blocks for ALL of these — e.g. `child_spawned` also rewrites the
+   * parent card's childIds, worker events rewrite the owning fanout — or the
+   * change is silently dropped on the next event's rebuild.
+   */
+  touched: string[]
+}
+
+export function applyMailboxMessageTouched(
+  cards: Record<string, SubagentCardState>,
+  msg: MailboxMessageJson
+): MailboxApplyResult {
+  const next = applyMailboxMessage(cards, msg)
+  const touched: string[] = []
+  for (const [id, card] of Object.entries(next)) {
+    if (cards[id] !== card) touched.push(id)
+  }
+  return { cards: next, touched }
 }
 
 export function fanoutAggregateStatus(card: FanoutCardState): SubagentLifecycle {
@@ -269,7 +567,35 @@ export function cardLifecycle(card: SubagentCardState): SubagentLifecycle {
   return fanoutAggregateStatus(card)
 }
 
-import type { ChatBlock } from '../agent/types'
+import type { ChatBlock, SubagentStepBlock } from '../agent/types'
+
+function stepsToBlock(steps: SubagentStepState[] | undefined): SubagentStepBlock[] | undefined {
+  if (!steps || steps.length === 0) return undefined
+  return steps.map((s) => ({
+    id: s.id,
+    kind: s.kind,
+    step: s.step ?? null,
+    toolName: s.toolName ?? null,
+    ok: s.ok ?? null,
+    label: s.label,
+    input: s.input ?? null,
+    output: s.output ?? null
+  }))
+}
+
+function stepsFromBlock(steps: SubagentStepBlock[] | undefined): SubagentStepState[] {
+  if (!steps) return []
+  return steps.map((s) => ({
+    id: s.id,
+    kind: s.kind,
+    step: s.step,
+    toolName: s.toolName,
+    ok: s.ok,
+    label: s.label,
+    input: s.input,
+    output: s.output
+  }))
+}
 
 export function subagentCardsFromBlocks(blocks: ChatBlock[]): Record<string, SubagentCardState> {
   const out: Record<string, SubagentCardState> = {}
@@ -283,14 +609,24 @@ export function subagentCardsFromBlocks(blocks: ChatBlock[]): Record<string, Sub
         status: block.status,
         summary: block.summary,
         actions: block.actions ?? [],
-        truncated: block.truncated ?? false
+        truncated: block.truncated ?? false,
+        steps: stepsFromBlock(block.steps),
+        parentId: block.parentId ?? null,
+        childIds: block.childIds ?? []
       }
     } else {
+      const workerSteps: Record<string, SubagentStepState[]> = {}
+      for (const [id, steps] of Object.entries(block.workerSteps ?? {})) {
+        workerSteps[id] = stepsFromBlock(steps)
+      }
       out[block.agentId] = {
         cardKind: 'fanout',
         agentId: block.agentId,
         dispatchKind: block.agentType,
-        workers: block.workers ?? []
+        workers: block.workers ?? [],
+        workerSteps,
+        parentId: block.parentId ?? null,
+        childIds: block.childIds ?? (block.workers ?? []).map((w) => w.id)
       }
     }
   }
@@ -310,8 +646,16 @@ export function subagentBlockFromCard(card: SubagentCardState, createdAt?: strin
       status,
       summary: card.summary,
       actions: card.actions,
-      truncated: card.truncated
+      truncated: card.truncated,
+      steps: stepsToBlock(card.steps),
+      parentId: card.parentId ?? null,
+      childIds: card.childIds
     }
+  }
+  const workerSteps: Record<string, SubagentStepBlock[]> = {}
+  for (const [id, steps] of Object.entries(card.workerSteps)) {
+    const mapped = stepsToBlock(steps)
+    if (mapped) workerSteps[id] = mapped
   }
   return {
     kind: 'subagent',
@@ -321,7 +665,10 @@ export function subagentBlockFromCard(card: SubagentCardState, createdAt?: strin
     agentId: card.agentId,
     agentType: card.dispatchKind,
     status,
-    workers: card.workers
+    workers: card.workers,
+    workerSteps: Object.keys(workerSteps).length > 0 ? workerSteps : undefined,
+    parentId: card.parentId ?? null,
+    childIds: card.childIds
   }
 }
 
@@ -367,10 +714,66 @@ export function finalizeOrphanSubagentBlocks(blocks: ChatBlock[]): ChatBlock[] {
         cardKind: 'fanout',
         agentId: block.agentId,
         dispatchKind: block.agentType,
-        workers: nextWorkers
+        workers: nextWorkers,
+        workerSteps: {},
+        childIds: []
       })
     }
     return nextBlock
   })
   return changed ? next : blocks
+}
+
+/**
+ * Residual 'running' rows in a terminal card are stale, not live: map them to
+ * a settled status so the UI stops pulsing. `completed` cards degrade to
+ * 'info' (a properly finished tool call carries an ok value; an ok:null row
+ * is just unfinished history), failure-ish terminals degrade to 'cancelled'.
+ */
+function terminalResidualStatus(cardStatus: string): 'info' | 'cancelled' | null {
+  if (cardStatus === 'completed') return 'info'
+  if (
+    cardStatus === 'failed' ||
+    cardStatus === 'cancelled' ||
+    cardStatus === 'interrupted'
+  ) {
+    return 'cancelled'
+  }
+  return null
+}
+
+/** Convert stored steps into StepFlow rows (shared UI). */
+export function subagentStepsToFlowItems(
+  steps: SubagentStepState[] | SubagentStepBlock[] | undefined,
+  depth = 0,
+  /** Card lifecycle status; when terminal, residual 'running' rows degrade. */
+  cardStatus?: string | null
+): import('../components/chat/StepFlow').StepFlowItem[] {
+  if (!steps || steps.length === 0) return []
+  const residual = cardStatus ? terminalResidualStatus(cardStatus) : null
+  return steps.map((s) => {
+    let status: import('../components/chat/StepFlow').StepFlowStatus = 'info'
+    if (s.kind === 'tool') {
+      if (s.ok === true) status = 'ok'
+      else if (s.ok === false) status = 'failed'
+      else status = 'running'
+    } else if (s.kind === 'started' || s.kind === 'progress') {
+      status = 'running'
+    } else if (s.kind === 'completed') {
+      status = 'completed'
+    } else if (s.kind === 'failed') {
+      status = 'failed'
+    } else if (s.kind === 'cancelled') {
+      status = 'cancelled'
+    }
+    if (status === 'running' && residual) status = residual
+    return {
+      id: s.id,
+      status,
+      label: s.label,
+      input: s.input,
+      output: s.output,
+      depth
+    }
+  })
 }

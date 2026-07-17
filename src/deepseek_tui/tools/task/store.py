@@ -106,7 +106,19 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
         if isinstance(status_val, str):
             item = {**item, "status": TaskToolStatus(status_val)}
         tool_calls.append(TaskToolCallSummary(**item))
-    timeline = [TaskTimelineEntry(**entry) for entry in data.get("timeline", [])]
+    timeline = []
+    for entry in data.get("timeline", []):
+        if not isinstance(entry, dict):
+            continue
+        timeline.append(
+            TaskTimelineEntry(
+                timestamp=str(entry.get("timestamp") or ""),
+                kind=str(entry.get("kind") or ""),
+                summary=str(entry.get("summary") or ""),
+                detail_path=entry.get("detail_path"),
+                detail=entry.get("detail"),
+            )
+        )
 
     return TaskRecord(
         schema_version=data.get("schema_version", CURRENT_TASK_SCHEMA_VERSION),

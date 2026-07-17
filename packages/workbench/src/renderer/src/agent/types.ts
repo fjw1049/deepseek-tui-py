@@ -145,6 +145,12 @@ export type ChatBlock =
       actions?: string[]
       truncated?: boolean
       workers?: { id: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' }[]
+      /** Full step history for StepFlow (delegate cards). */
+      steps?: SubagentStepBlock[]
+      /** Fanout: per-worker step history. */
+      workerSteps?: Record<string, SubagentStepBlock[]>
+      parentId?: string | null
+      childIds?: string[]
     }
 
   | {
@@ -227,6 +233,17 @@ export type UserInputStatusPayload = {
   errorMessage?: string
 }
 
+export type SubagentStepBlock = {
+  id: string
+  kind: 'started' | 'progress' | 'tool' | 'completed' | 'failed' | 'cancelled'
+  step?: number | null
+  toolName?: string | null
+  ok?: boolean | null
+  label: string
+  input?: string | null
+  output?: string | null
+}
+
 export type SubagentMailboxPayload = {
   seq: number
   message: {
@@ -236,10 +253,14 @@ export type SubagentMailboxPayload = {
     status?: string | null
     tool_name?: string | null
     step?: number | null
+    /** Provider tool-call id — disambiguates parallel same-name calls in one round. */
+    tool_call_id?: string | null
     ok?: boolean | null
     parent_id?: string | null
     summary?: string | null
     error?: string | null
+    input_summary?: string | null
+    output_summary?: string | null
   }
 }
 

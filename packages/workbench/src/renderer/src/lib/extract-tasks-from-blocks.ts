@@ -8,6 +8,18 @@ export type TaskItemView = {
   prompt: string
 }
 
+/** One-line title for task lists — prefer human prompt over opaque `task_*` ids. */
+export function taskListTitle(task: Pick<TaskItemView, 'id' | 'prompt'>, maxChars = 56): string {
+  const prompt = task.prompt.replace(/\s+/g, ' ').trim()
+  if (prompt) {
+    if (prompt.length <= maxChars) return prompt
+    return `${prompt.slice(0, Math.max(maxChars - 1, 1)).trimEnd()}…`
+  }
+  // Fallback only when create-time meta omitted the prompt.
+  const short = task.id.replace(/^task_/, '')
+  return short.length > 0 && short.length < task.id.length ? `Task ${short.slice(0, 8)}` : task.id
+}
+
 // Only tools that reference a single, conversation-scoped task define
 // membership. `task_list` is intentionally excluded: it returns the
 // process-global task history (often dozens of stale records), which would

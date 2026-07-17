@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 import platform
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1089,7 +1089,24 @@ def _task_record_to_dict(record: Any) -> dict[str, Any]:
     timeline: list[Any] = []
     for ev in getattr(record, "timeline", []) or []:
         dump = getattr(ev, "model_dump", None)
-        timeline.append(dump() if callable(dump) else ev)
+        if callable(dump):
+            timeline.append(dump())
+            continue
+        if is_dataclass(ev) and not isinstance(ev, type):
+            timeline.append(asdict(ev))
+            continue
+        if isinstance(ev, dict):
+            timeline.append(ev)
+            continue
+        timeline.append(
+            {
+                "timestamp": getattr(ev, "timestamp", None),
+                "kind": getattr(ev, "kind", None),
+                "summary": getattr(ev, "summary", None),
+                "detail_path": getattr(ev, "detail_path", None),
+                "detail": getattr(ev, "detail", None),
+            }
+        )
     base["timeline"] = timeline
     artifacts: list[Any] = []
     for art in getattr(record, "artifacts", []) or []:

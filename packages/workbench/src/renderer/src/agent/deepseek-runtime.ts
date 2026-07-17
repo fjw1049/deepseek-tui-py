@@ -23,7 +23,7 @@ import type { AppSettingsV1 } from '@shared/app-settings'
 import { unwrapClawRuntimePromptForDisplay, unwrapClawUserPromptForDisplay } from '@shared/app-settings'
 import { extractDiffFilePath } from '../lib/diff-stats'
 import {
-  applyMailboxMessage,
+  applyMailboxMessageTouched,
   subagentBlockFromCard,
   type MailboxMessageJson,
   type SubagentCardState
@@ -634,14 +634,18 @@ function readSubagentMailboxFromItem(it: TurnItemJson): MailboxMessageJson | nul
     return {
       kind: typeof msg.kind === 'string' ? msg.kind : '',
       agent_id: msg.agent_id,
+      seq: typeof parsed.seq === 'number' ? parsed.seq : null,
       agent_type: typeof msg.agent_type === 'string' ? msg.agent_type : null,
       status: typeof msg.status === 'string' ? msg.status : null,
       tool_name: typeof msg.tool_name === 'string' ? msg.tool_name : null,
       step: typeof msg.step === 'number' ? msg.step : null,
+      tool_call_id: typeof msg.tool_call_id === 'string' ? msg.tool_call_id : null,
       ok: typeof msg.ok === 'boolean' ? msg.ok : null,
       parent_id: typeof msg.parent_id === 'string' ? msg.parent_id : null,
       summary: typeof msg.summary === 'string' ? msg.summary : null,
-      error: typeof msg.error === 'string' ? msg.error : null
+      error: typeof msg.error === 'string' ? msg.error : null,
+      input_summary: typeof msg.input_summary === 'string' ? msg.input_summary : null,
+      output_summary: typeof msg.output_summary === 'string' ? msg.output_summary : null
     }
   } catch {
     return null
@@ -1034,8 +1038,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       } else if (isSubagentMailboxItem(it)) {
         const mailbox = readSubagentMailboxFromItem(it)
         if (mailbox) {
-          subagentCards = applyMailboxMessage(subagentCards, mailbox)
-          blocks = upsertSubagentBlock(blocks, subagentCards, mailbox.agent_id, itemCreatedAt(it))
+          const applied = applyMailboxMessageTouched(subagentCards, mailbox)
+          subagentCards = applied.cards
+          // Upsert every touched card: child_spawned rewrites the parent's
+          // childIds and worker events rewrite the owning fanout, neither of
+          // which is addressed by mailbox.agent_id alone.
+          for (const agentId of applied.touched) {
+            blocks = upsertSubagentBlock(blocks, subagentCards, agentId, itemCreatedAt(it))
+          }
         }
       } else if (isWorkflowProgressItem(it)) {
         const progress = readWorkflowProgressFromItem(it)

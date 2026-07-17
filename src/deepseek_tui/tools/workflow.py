@@ -511,14 +511,14 @@ class WorkflowTool(ToolSpec):
                 )
             )
 
-        def on_log(msg: str) -> None:
-            emit_progress(
-                WorkflowSnapshot(
-                    name=spec.meta.name,
-                    description=spec.meta.description,
-                    logs=[msg],
-                )
-            )
+        def on_log(_msg: str) -> None:
+            # Scheduler already appends onto the shared snapshot.logs list
+            # before calling on_log. Re-emit that full snapshot — never a
+            # sparse skeleton (which wiped nodes/agents in ProcessTray).
+            # Skip pre-progress policy logs (empty last_snapshot).
+            if not last_snapshot.agents and not last_snapshot.nodes:
+                return
+            emit_progress(last_snapshot)
 
         def on_progress(snapshot: WorkflowSnapshot) -> None:
             nonlocal last_snapshot

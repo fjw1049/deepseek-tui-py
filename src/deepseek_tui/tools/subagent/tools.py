@@ -341,6 +341,12 @@ class AgentSpawnTool(ToolSpec):
         chosen_model = user_model
         if not chosen_model and persona_model.lower().startswith("deepseek"):
             chosen_model = persona_model
+        parent_raw = context.metadata.get("subagent_id")
+        parent_agent_id = (
+            parent_raw.strip()
+            if isinstance(parent_raw, str) and parent_raw.strip()
+            else None
+        )
         request = SpawnRequest(
             prompt=prompt,
             agent_type=agent_type,
@@ -350,6 +356,7 @@ class AgentSpawnTool(ToolSpec):
             nickname=_pick_str(input_data, "nickname")
             or (plugin_persona.name if plugin_persona else None),
             parent_depth=int(context.metadata.get("subagent_depth", 0) or 0),
+            parent_agent_id=parent_agent_id,
             fork_context=fork_context,
             fork_messages=fork_messages,
             system_prompt=persona_prompt,

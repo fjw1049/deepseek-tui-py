@@ -316,8 +316,12 @@ async def test_fanout_items_from_structured_targets() -> None:
     assert runner.calls.index("inspect engine") < runner.calls.index("inspect tools")
     assert "review repo" in runner.prompts[0]
     assert any("engine" in p and "review repo" in p for p in runner.prompts)
-    # Fanout records one aggregate step plus the plan step in snapshot.agents.
-    assert result.snapshot.done_count == 2
+    # plan + fanout parent shell + one row per fanout worker.
+    assert result.snapshot.done_count == 4
+    inspect_workers = [
+        a for a in result.snapshot.agents if a.step_id == "inspect" and a.label.startswith("inspect ")
+    ]
+    assert {a.label for a in inspect_workers} == {"inspect engine", "inspect tools"}
     assert isinstance(result.result, dict)
     assert "inspect" in result.result
     assert "plan" in result.result
@@ -602,3 +606,110 @@ async def test_runner_deadline_uses_step_timeout() -> None:
     assert out is None
     assert elapsed < 5  # deadline honored (~1s), not the 1h default
     assert manager.cancelled  # agent was cancelled on timeout
+
+
+class _IdEmittingRunner(FakeRunner):
+    """Calls on_agent_id before returning so progress can carry live join keys."""
+
+    async def run(
+        self,
+        *,
+        prompt: str,
+        label: str,
+        agent_type: str = "general",
+        model: str | None = None,
+        allowed_tools: list[str] | None = None,
+        output_schema: dict | None = None,
+        policy: object = None,
+        cancel_event: asyncio.Event | None = None,
+        on_agent_id: object = None,
+        timeout_seconds: float | None = None,
+    ) -> StepOutput | None:
+        self.calls.append(label)
+        self.prompts.append(prompt)
+        self.timeout_seconds_seen.append(timeout_seconds)
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        if callable(on_agent_id):
+            on_agent_id(f"aid-{label}")
+            await asyncio.sleep(0)
+        text = self._responses.get(label, f"done:{label}")
+        structured = (
+            self._structured_by_label[label]
+            if label in self._structured_by_label
+            else ({"verdict": "ok"} if output_schema else None)
+        )
+        return make_step_output(text, structured)
+
+
+@pytest.mark.asyncio
+async def test_agent_id_emitted_on_progress_while_running() -> None:
+    """UI join needs agent_id on a progress tick before the step finishes."""
+    spec = WorkflowSpec(
+        version=1,
+        meta=WorkflowMeta(name="t", description="d"),
+        policy=WorkflowPolicy(),
+        phases=[
+            WorkflowPhase(
+                id="p1",
+                title="P",
+                steps=[
+                    AgentStep(
+                        id="a1",
+                        type="agent",
+                        label="worker",
+                        prompt="work",
+                    ),
+                ],
+            )
+        ],
+    )
+    mid_running_with_id: list[str] = []
+
+    def on_progress(snap: WorkflowSnapshot) -> None:
+        for agent in snap.agents:
+            if (
+                agent.step_id == "a1"
+                and agent.status == "running"
+                and agent.agent_id
+            ):
+                mid_running_with_id.append(agent.agent_id)
+
+    await run_workflow(spec, runner=_IdEmittingRunner(), on_progress=on_progress)
+    assert mid_running_with_id == ["aid-worker"]
+
+
+@pytest.mark.asyncio
+async def test_fanout_workers_record_agent_ids_under_node() -> None:
+    """Each fanout worker gets a snapshot row under the fanout node id."""
+    spec = WorkflowSpec(
+        version=1,
+        meta=WorkflowMeta(name="t", description="d"),
+        policy=WorkflowPolicy(),
+        phases=[
+            WorkflowPhase(
+                id="p1",
+                title="P",
+                steps=[
+                    FanoutStep(
+                        id="fan",
+                        type="fanout",
+                        items=["alpha", "beta"],
+                        agent=AgentStepConfig(
+                            label_template="{{item}}",
+                            prompt_template="work {{item}}",
+                        ),
+                    ),
+                ],
+            )
+        ],
+    )
+    result = await run_workflow(spec, runner=_IdEmittingRunner())
+    workers = [
+        a
+        for a in result.snapshot.agents
+        if a.step_id == "fan" and a.agent_id
+    ]
+    assert {a.label for a in workers} == {"alpha", "beta"}
+    assert {a.agent_id for a in workers} == {"aid-alpha", "aid-beta"}
+    assert all(a.status == "done" for a in workers)

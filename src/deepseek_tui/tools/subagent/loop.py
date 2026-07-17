@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,12 +15,34 @@ from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_STEPS,
     build_subagent_system_prompt,
 )
+from deepseek_tui.utils import summarize_text
 
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
     from deepseek_tui.tools.subagent.manager import SubAgentRuntime
 
 _LOG = logging.getLogger(__name__)
+
+# Bound mailbox I/O previews so SSE/STATUS items stay light while still
+# giving the Workbench step-flow something useful to expand.
+_MAILBOX_INPUT_CHARS = 2_000
+_MAILBOX_OUTPUT_CHARS = 4_000
+
+
+def _mailbox_input_summary(arguments: Any) -> str | None:
+    if arguments is None:
+        return None
+    try:
+        raw = json.dumps(arguments, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        raw = str(arguments)
+    text = summarize_text(raw, _MAILBOX_INPUT_CHARS).strip()
+    return text or None
+
+
+def _mailbox_output_summary(output: str | None) -> str | None:
+    text = summarize_text(output or "", _MAILBOX_OUTPUT_CHARS).strip()
+    return text or None
 
 
 def _subagent_cancelled(
@@ -379,9 +402,16 @@ async def run_subagent_loop(
                 if _subagent_cancelled(cancel, agent):
                     _save_cancel_checkpoint()
                     raise asyncio.CancelledError
+                input_preview = _mailbox_input_summary(tc.arguments)
                 if runtime.mailbox is not None:
                     runtime.mailbox.send(
-                        MailboxMessage.tool_call_started(agent.id, tc.name, steps)
+                        MailboxMessage.tool_call_started(
+                            agent.id,
+                            tc.name,
+                            steps,
+                            tool_call_id=tc.id,
+                            input_summary=input_preview,
+                        )
                     )
                 if tc.name == STRUCTURED_OUTPUT_TOOL_NAME:
                     tool_result = await registry.execute(tc.name, tc.arguments, context)
@@ -405,7 +435,13 @@ async def run_subagent_loop(
                 if runtime.mailbox is not None:
                     runtime.mailbox.send(
                         MailboxMessage.tool_call_completed(
-                            agent.id, tc.name, steps, ok
+                            agent.id,
+                            tc.name,
+                            steps,
+                            ok,
+                            tool_call_id=tc.id,
+                            input_summary=input_preview,
+                            output_summary=_mailbox_output_summary(output),
                         )
                     )
                 messages.append(Message.tool_result(tc.id, output, is_error=not ok))

@@ -299,6 +299,8 @@ class SpawnRequest:
     model: str | None = None
     nickname: str | None = None
     parent_depth: int = 0
+    # When set (nested spawn), mailbox emits child_spawned(parent, child).
+    parent_agent_id: str | None = None
     fork_context: bool = False
     fork_messages: list[dict[str, Any]] | None = None
     output_schema: dict[str, Any] | None = None

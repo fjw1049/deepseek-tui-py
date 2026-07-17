@@ -12,6 +12,7 @@ export type TaskTimelineEntry = {
   timestamp: string | null
   kind: string
   summary: string
+  detail?: string | null
 }
 
 export type TaskDetail = {
@@ -36,7 +37,8 @@ function parseTimeline(raw: unknown): TaskTimelineEntry[] {
     out.push({
       timestamp: typeof row.timestamp === 'string' ? row.timestamp : null,
       kind,
-      summary
+      summary,
+      detail: typeof row.detail === 'string' ? row.detail : null
     })
   }
   return out

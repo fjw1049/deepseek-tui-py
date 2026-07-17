@@ -1,16 +1,13 @@
 import { useState, type ReactElement } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, Loader2, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkflowSnapshotPayload } from '../../lib/workflow-snapshot'
 import { useChatStore } from '../../store/chat-store'
-
-const STATUS_ICON: Record<string, string> = {
-  running: '●',
-  done: '✓',
-  error: '✗',
-  skipped: '−',
-  queued: '○'
-}
+import {
+  WorkflowDagView,
+  workflowFocusLabel,
+  workflowProgressPct
+} from './WorkflowDagView'
 
 export function WorkflowBlock({
   workflowName,
@@ -22,18 +19,19 @@ export function WorkflowBlock({
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
   snapshot: WorkflowSnapshotPayload
   runId?: string
-}): ReactElement | null {
+}): ReactElement {
   const { t } = useTranslation('common')
   const sendMessage = useChatStore((s) => s.sendMessage)
   const busy = useChatStore((s) => s.busy)
-  // Hooks must run unconditionally — early-return on `running` used to skip
-  // these useState calls, then crash with "Rendered more hooks" when status
-  // flipped to failed/timed_out (white screen).
+  // Collapsed by default — expand for the DAG; keeps the timeline calm when
+  // many workflows / large graphs are in play.
   const [expanded, setExpanded] = useState(false)
   const [resuming, setResuming] = useState(false)
 
-  // Live progress lives in ProcessTray + the 处理中 tag; keep the timeline calm.
-  if (status === 'running') return null
+  const name = workflowName || snapshot.name
+  const running = status === 'running'
+  const pct = workflowProgressPct(snapshot)
+  const focus = workflowFocusLabel(snapshot)
 
   const header =
     status === 'completed'
@@ -42,38 +40,32 @@ export function WorkflowBlock({
         ? t('workflowCancelled', { defaultValue: 'Workflow cancelled' })
         : status === 'timed_out'
           ? t('workflowTimedOut', { defaultValue: 'Workflow timed out' })
-          : t('workflowFailed', { defaultValue: 'Workflow failed' })
+          : status === 'running'
+            ? t('workflowRunning', { defaultValue: 'Workflow running' })
+            : t('workflowFailed', { defaultValue: 'Workflow failed' })
 
   const stateLine =
     snapshot.error_count > 0
       ? t('workflowErrors', {
           defaultValue: '{{done}}/{{total}} done, {{errors}} errors',
           done: snapshot.done_count,
-          total: snapshot.agent_count,
+          total: Math.max(snapshot.agent_count, snapshot.nodes?.length ?? 0),
           errors: snapshot.error_count
         })
       : t('workflowProgress', {
           defaultValue: '{{done}}/{{total}} done',
           done: snapshot.done_count,
-          total: snapshot.agent_count
+          total: Math.max(snapshot.agent_count, snapshot.nodes?.length ?? 0)
         })
-
-  const agentsByPhase = new Map<string, typeof snapshot.agents>()
-  for (const agent of snapshot.agents) {
-    const list = agentsByPhase.get(agent.phase_id) ?? []
-    list.push(agent)
-    agentsByPhase.set(agent.phase_id, list)
-  }
-
-  const phaseOrder =
-    snapshot.phases.length > 0 ? snapshot.phases : [...agentsByPhase.keys()]
 
   const tone =
     status === 'failed' || status === 'timed_out'
-      ? 'border-red-300/50 text-red-800 dark:border-red-800/50 dark:text-red-200'
+      ? 'border-rose-300/55 bg-rose-500/[0.04] dark:border-rose-800/50'
       : status === 'cancelled'
-        ? 'border-ds-border-muted text-ds-muted'
-        : 'border-sky-300/40 text-sky-800 dark:border-sky-800/40 dark:text-sky-200'
+        ? 'border-ds-border-muted bg-ds-card/50'
+        : status === 'completed'
+          ? 'border-emerald-300/45 bg-emerald-500/[0.04] dark:border-emerald-800/45'
+          : 'border-sky-300/50 bg-sky-500/[0.05] dark:border-sky-800/50'
 
   const canResume =
     Boolean(runId) &&
@@ -81,7 +73,7 @@ export function WorkflowBlock({
     !busy &&
     !resuming
 
-  const onResume = async () => {
+  const onResume = async (): Promise<void> => {
     if (!runId || !canResume) return
     setResuming(true)
     try {
@@ -97,145 +89,105 @@ export function WorkflowBlock({
   }
 
   return (
-    <div className={`rounded-[10px] border bg-ds-card/50 text-[12.5px] leading-5 ${tone}`}>
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left transition hover:bg-ds-hover/40"
-      >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-        )}
-        <span className="min-w-0 flex-1 truncate font-medium">{header}</span>
-        <span className="shrink-0 text-[11px] text-ds-faint">{workflowName || snapshot.name}</span>
-        <span className="shrink-0 tabular-nums text-[11px] text-ds-faint">{stateLine}</span>
-      </button>
-
-      {runId ? (
-        <div className="flex items-center gap-2 border-t border-ds-border/40 px-2.5 py-1.5">
-          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-ds-faint">
-            {runId}
+    <div className={`overflow-hidden rounded-[14px] border text-[12.5px] leading-5 ${tone}`}>
+      <div className="flex items-start gap-1 px-2.5 py-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-start gap-2.5 text-left transition hover:opacity-95"
+        >
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-sky-500/12 text-sky-700 dark:text-sky-300">
+            {running ? (
+              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.9} />
+            ) : (
+              <Workflow className="h-4 w-4" strokeWidth={1.8} />
+            )}
           </span>
-          {status === 'cancelled' || status === 'failed' || status === 'timed_out' ? (
-            <button
-              type="button"
-              disabled={!canResume}
-              onClick={(e) => {
-                e.stopPropagation()
-                void onResume()
-              }}
-              className="shrink-0 rounded-md border border-ds-border bg-ds-card px-2 py-0.5 text-[11px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {resuming
-                ? t('workflowResuming', { defaultValue: '续跑中…' })
-                : t('workflowResume', { defaultValue: '续跑此 workflow' })}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="truncate text-[13.5px] font-semibold tracking-[-0.015em] text-ds-ink">
+                {name}
+              </span>
+              <span
+                className={[
+                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
+                  running
+                    ? 'bg-sky-500/12 text-sky-800 dark:text-sky-200'
+                    : status === 'completed'
+                      ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
+                      : status === 'failed' || status === 'timed_out'
+                        ? 'bg-rose-500/12 text-rose-800 dark:text-rose-200'
+                        : 'bg-ds-hover text-ds-muted'
+                ].join(' ')}
+              >
+                {header}
+              </span>
+            </span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-ds-faint">
+              <span className="tabular-nums">{stateLine}</span>
+              {focus ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="truncate text-ds-muted">
+                    {running
+                      ? t('workflowFocusRunning', {
+                          defaultValue: 'now {{label}}',
+                          label: focus
+                        })
+                      : focus}
+                  </span>
+                </>
+              ) : null}
+            </span>
+            {pct != null ? (
+              <span className="mt-2 block h-1 overflow-hidden rounded-full bg-ds-border/80">
+                <span
+                  className={[
+                    'block h-full rounded-full transition-[width] duration-300',
+                    status === 'failed' || status === 'timed_out'
+                      ? 'bg-rose-500'
+                      : status === 'completed'
+                        ? 'bg-emerald-500'
+                        : 'bg-sky-500'
+                  ].join(' ')}
+                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                />
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown
+            className={[
+              'mt-1.5 h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200',
+              expanded ? 'rotate-180' : 'rotate-0'
+            ].join(' ')}
+            strokeWidth={1.8}
+          />
+        </button>
+
+        {canResume ? (
+          <button
+            type="button"
+            disabled={!canResume}
+            onClick={() => void onResume()}
+            className="mt-0.5 shrink-0 rounded-full bg-sky-500/12 px-2.5 py-1 text-[11.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
+          >
+            {resuming
+              ? t('workflowResuming', { defaultValue: '续跑中…' })
+              : t('workflowResume', { defaultValue: '续跑' })}
+          </button>
+        ) : null}
+      </div>
 
       {expanded ? (
-        <div className="border-t border-ds-border/50 px-3 py-2.5 text-[12px] text-ds-ink">
-          <p className="text-ds-muted">
-            ◆ {snapshot.name} ({stateLine})
-          </p>
-          {snapshot.current_phase ? (
-            <p className="mt-1 text-[11px] text-ds-faint">
-              {t('workflowCurrentPhase', {
-                defaultValue: 'Phase: {{phase}}',
-                phase: snapshot.current_phase
-              })}
-            </p>
+        <div className="border-t border-ds-border/45 px-2.5 py-2.5">
+          {runId ? (
+            <p className="mb-2 truncate px-1 font-mono text-[10px] text-ds-faint">{runId}</p>
           ) : null}
-          <div className="mt-2 space-y-2">
-            {snapshot.nodes && snapshot.nodes.length > 0 ? (
-              <div>
-                <div className="text-[11.5px] font-medium text-ds-muted">
-                  {t('workflowDagProgress', { defaultValue: 'DAG nodes' })}
-                  {snapshot.dynamic_rounds && Object.keys(snapshot.dynamic_rounds).length > 0
-                    ? ` · dyn ${Object.entries(snapshot.dynamic_rounds)
-                        .map(([id, r]) => `${id}@${r}`)
-                        .join(', ')}`
-                    : ''}
-                </div>
-                <ul className="mt-1 space-y-0.5 pl-2">
-                  {snapshot.nodes.map((node) => (
-                    <li
-                      key={node.id}
-                      className="truncate text-[11px] text-ds-ink"
-                      title={
-                        node.predecessors && node.predecessors.length
-                          ? `after: ${node.predecessors.join(', ')}`
-                          : undefined
-                      }
-                    >
-                      {STATUS_ICON[node.status] ?? '○'} {node.label || node.id}
-                      <span className="text-ds-faint"> ({node.type})</span>
-                      {node.generated ? (
-                        <span className="text-ds-faint"> *</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-                {snapshot.edges && snapshot.edges.length > 0 ? (
-                  <p className="mt-1 truncate font-mono text-[10px] text-ds-faint">
-                    edges:{' '}
-                    {snapshot.edges
-                      .slice(0, 12)
-                      .map((e) => `${e.from}→${e.to}`)
-                      .join(' ')}
-                    {snapshot.edges.length > 12 ? ' …' : ''}
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              phaseOrder.map((phaseId) => {
-                const agents = agentsByPhase.get(phaseId) ?? []
-                if (!agents.length) return null
-                const done = agents.filter((a) => a.status === 'done').length
-                return (
-                  <div key={phaseId}>
-                    <div className="text-[11.5px] font-medium text-ds-muted">
-                      ✓ {phaseId} {done}/{agents.length}
-                    </div>
-                    <ul className="mt-1 space-y-0.5 pl-2">
-                      {agents.map((agent) => (
-                        <li
-                          key={`${agent.step_id}-${agent.label}`}
-                          className="truncate text-[11px] text-ds-ink"
-                          title={agent.result_preview ?? agent.error ?? undefined}
-                        >
-                          {STATUS_ICON[agent.status] ?? '○'} {agent.label}
-                          {agent.error ? (
-                            <span className="text-red-600 dark:text-red-400"> — {agent.error}</span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )
-              })
-            )}
-          </div>
-          {snapshot.logs.length > 0 ? (
-            <div className="mt-2 border-t border-ds-border/60 pt-2">
-              {snapshot.logs.slice(-3).map((line, index) => (
-                <p key={`log-${index}`} className="truncate font-mono text-[10px] text-ds-faint">
-                  log: {line}
-                </p>
-              ))}
-            </div>
+          {snapshot.description ? (
+            <p className="mb-2 px-1 text-[12px] leading-5 text-ds-muted">{snapshot.description}</p>
           ) : null}
-          {snapshot.result != null && status === 'completed' ? (
-            <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-ds-hover/80 p-2 font-mono text-[10px] text-ds-muted">
-              {typeof snapshot.result === 'string'
-                ? snapshot.result
-                : JSON.stringify(snapshot.result, null, 2)}
-            </pre>
-          ) : null}
+          <WorkflowDagView snapshot={snapshot} />
         </div>
       ) : null}
     </div>

@@ -205,6 +205,11 @@ class SubAgentManager:
             self._persist_best_effort()
 
         if self._mailbox is not None:
+            parent_id = (request.parent_agent_id or "").strip()
+            if parent_id:
+                self._mailbox.send(
+                    MailboxMessage.child_spawned(parent_id, agent.id)
+                )
             self._mailbox.send(
                 MailboxMessage.started(agent.id, request.agent_type.value)
             )

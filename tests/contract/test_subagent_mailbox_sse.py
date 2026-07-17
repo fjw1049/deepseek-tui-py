@@ -77,6 +77,72 @@ async def test_monitor_turn_emits_subagent_mailbox(runtime_app: object) -> None:
 
 
 @pytest.mark.asyncio
+async def test_monitor_turn_mailbox_payload_includes_tool_call_id(
+    runtime_app: object,
+) -> None:
+    """Parallel same-name calls share a round ``step`` number, so the payload
+    must carry the provider ``tool_call_id`` for the UI to key steps per call."""
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(
+        TurnRecord(
+            id=turn_id,
+            thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test",
+            created_at=now,
+            started_at=now,
+        )
+    )
+
+    stub_engine = SimpleNamespace(
+        tool_context=ToolContext(working_directory=manager.workspace)
+    )
+    engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    async def pump() -> None:
+        await handle.emit(
+            SubAgentMailboxEvent(
+                seq=1,
+                message=MailboxMessage.tool_call_started(
+                    "agent_sub_1", "read_file", 3, tool_call_id="call_a"
+                ),
+            )
+        )
+        await handle.emit(
+            SubAgentMailboxEvent(
+                seq=2,
+                message=MailboxMessage.tool_call_completed(
+                    "agent_sub_1", "read_file", 3, True, tool_call_id="call_a"
+                ),
+            )
+        )
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+    finally:
+        await pump_task
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+
+    events = manager.events_since(thread.id, 0)
+    mailbox_events = [e for e in events if e.event == "subagent.mailbox"]
+    assert [
+        e.payload["message"]["tool_call_id"] for e in mailbox_events
+    ] == ["call_a", "call_a"]
+
+
+@pytest.mark.asyncio
 async def test_monitor_turn_drops_foreign_subagent(runtime_app: object) -> None:
     """Leftover sub-agents from a prior turn must not leak into the next turn.
 

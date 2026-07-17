@@ -61,6 +61,8 @@ import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
 import { WorkflowBlock } from './WorkflowBlock'
+import { StepFlow, lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
+import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
 import {
   ToolCard,
   registerToolRenderers,
@@ -810,10 +812,6 @@ function blockNeedsAttention(block: ChatBlock): boolean {
   return false
 }
 
-function isWorkflowBlock(block: ChatBlock): boolean {
-  return block.kind === 'workflow'
-}
-
 function isProcessBlock(block: ChatBlock): boolean {
   return (
     block.kind === 'reasoning' ||
@@ -1066,7 +1064,6 @@ function MessageTurn({
                 reasoningDurationMs={reasoningDurationMs}
                 expanded={workExpanded}
                 onToggle={() => setWorkExpanded((value) => !value)}
-                activeWorkflowName={processBlocks.find((b): b is ChatBlock & { kind: 'workflow'; workflowName: string } => b.kind === 'workflow' && b.status === 'running')?.workflowName}
                 activeActionLabel={activeRunningActionLabel(processBlocks)}
               />
               {workExpanded ? (
@@ -1399,7 +1396,6 @@ function WorkMetaRow({
   reasoningDurationMs,
   expanded,
   onToggle,
-  activeWorkflowName,
   activeActionLabel
 }: {
   processing: boolean
@@ -1409,7 +1405,6 @@ function WorkMetaRow({
   reasoningDurationMs?: number
   expanded: boolean
   onToggle: () => void
-  activeWorkflowName?: string
   activeActionLabel?: string
 }): ReactElement {
   const { t } = useTranslation('common')
@@ -1429,7 +1424,7 @@ function WorkMetaRow({
 
   const durationText =
     typeof displayDurationMs === 'number' ? formatDuration(displayDurationMs) : undefined
-  const liveActionText = processing && !activeWorkflowName ? activeActionLabel : undefined
+  const liveActionText = processing ? activeActionLabel : undefined
   const mainLabel = processing
     ? liveActionText
       ? liveActionText
@@ -1454,11 +1449,7 @@ function WorkMetaRow({
     >
       {processing ? (
         <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-          {activeWorkflowName ? (
-            <span className="ds-workflow-spinner" />
-          ) : (
-            <Bot className="h-4 w-4 text-ds-faint ds-work-logo-pulse" strokeWidth={1.75} />
-          )}
+          <Bot className="h-4 w-4 text-ds-faint ds-work-logo-pulse" strokeWidth={1.75} />
         </span>
       ) : null}
       <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
@@ -1466,9 +1457,6 @@ function WorkMetaRow({
       </span>
       {liveActionText && durationText ? (
         <span className="shrink-0 text-ds-faint">· {durationText}</span>
-      ) : null}
-      {activeWorkflowName ? (
-        <span className="ds-workflow-tag">⚡ {activeWorkflowName}</span>
       ) : null}
       {showThoughtSuffix ? (
         <span className="text-ds-faint">
@@ -1739,7 +1727,11 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         </div>
       ) : null}
       {detailBlock ? (
-        <SubagentDetailDialog block={detailBlock} onClose={() => setDetailBlock(null)} />
+        <SubagentDetailDialog
+          block={detailBlock}
+          relatedBlocks={summary.blocks}
+          onClose={() => setDetailBlock(null)}
+        />
       ) : null}
     </section>
   )
@@ -1809,6 +1801,53 @@ function ToolBatchPanel({
   )
 }
 
+function flowItemsForSubagentBlock(block: SubagentBlock): StepFlowItem[] {
+  if (block.cardKind === 'delegate') {
+    // Prefer the concrete tool rail; keep lifecycle tails for start/end feel.
+    return subagentStepsToFlowItems(block.steps, 0, block.status)
+  }
+  const items: StepFlowItem[] = []
+  for (const worker of block.workers ?? []) {
+    const workerSteps = subagentStepsToFlowItems(block.workerSteps?.[worker.id], 1, worker.status)
+    if (workerSteps.length === 0) {
+      items.push({
+        id: `${worker.id}-status`,
+        status: lifecycleToStepStatus(worker.status),
+        label: `worker · ${worker.id.slice(0, 8)} · ${worker.status}`,
+        depth: 0
+      })
+      continue
+    }
+    items.push({
+      id: `${worker.id}-head`,
+      status: lifecycleToStepStatus(worker.status),
+      label: `worker · ${worker.id.slice(0, 8)}`,
+      depth: 0
+    })
+    items.push(...workerSteps)
+  }
+  return items
+}
+
+/** Live tool-step rails for workflow DAG agent rows, keyed by agent id. */
+function collectSubagentStepsByAgentId(blocks: ChatBlock[]): Record<string, StepFlowItem[]> {
+  const out: Record<string, StepFlowItem[]> = {}
+  for (const block of blocks) {
+    if (block.kind !== 'subagent') continue
+    if (block.cardKind === 'delegate') {
+      const items = subagentStepsToFlowItems(block.steps, 0, block.status)
+      if (items.length > 0) out[block.agentId] = items
+      continue
+    }
+    for (const [workerId, steps] of Object.entries(block.workerSteps ?? {})) {
+      const workerStatus = block.workers?.find((worker) => worker.id === workerId)?.status
+      const items = subagentStepsToFlowItems(steps, 0, workerStatus)
+      if (items.length > 0) out[workerId] = items
+    }
+  }
+  return out
+}
+
 function SubagentSummaryRow({
   block,
   onOpen
@@ -1819,7 +1858,6 @@ function SubagentSummaryRow({
   const { t } = useTranslation('common')
   const statusLabel = subagentStatusLabel(block.status, t)
   const isActive = block.status === 'running' || block.status === 'pending'
-  const isTerminal = !isActive
   const statusTone =
     block.status === 'completed'
       ? 'text-emerald-700 dark:text-emerald-300'
@@ -1828,36 +1866,55 @@ function SubagentSummaryRow({
         : block.status === 'running'
           ? 'text-amber-800 dark:text-amber-200'
           : 'text-ds-muted'
+  const flowItems = useMemo(() => flowItemsForSubagentBlock(block), [block])
+  // Collapsed by default so many agents don't flood the timeline.
+  const [stepsOpen, setStepsOpen] = useState(false)
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="group w-full rounded-xl border border-ds-border-muted/70 bg-ds-card/65 px-3 py-2 text-left text-[12.5px] leading-5 transition hover:border-violet-300/70 hover:bg-ds-hover/55"
-    >
+    <div className="rounded-xl border border-ds-border-muted/70 bg-ds-card/65 px-3 py-2 text-[12.5px] leading-5 transition hover:border-violet-300/50">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-semibold text-ds-ink">
-          {block.cardKind === 'fanout'
-            ? t('subagentFanoutTitle', { kind: block.agentType })
-            : t('subagentDelegateTitle', { type: block.agentType })}
-        </span>
-        {isActive ? (
-          <Loader2 className="h-3 w-3 animate-spin text-amber-700 dark:text-amber-200" strokeWidth={2} />
-        ) : null}
-        <span className={`font-medium ${statusTone}`}>{statusLabel}</span>
-        <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
-        <span
-          className={`ml-auto text-[11px] transition ${
-            isTerminal
-              ? 'text-violet-600 dark:text-violet-300'
-              : 'text-ds-faint opacity-0 group-hover:opacity-100'
-          }`}
+        <button
+          type="button"
+          onClick={() => setStepsOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          aria-expanded={stepsOpen}
+        >
+          <ChevronDown
+            className={[
+              'h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200',
+              stepsOpen ? 'rotate-0' : '-rotate-90'
+            ].join(' ')}
+            strokeWidth={1.8}
+          />
+          <span className="font-semibold text-ds-ink">
+            {block.cardKind === 'fanout'
+              ? t('subagentFanoutTitle', { kind: block.agentType })
+              : t('subagentDelegateTitle', { type: block.agentType })}
+          </span>
+          {isActive ? (
+            <Loader2 className="h-3 w-3 animate-spin text-amber-700 dark:text-amber-200" strokeWidth={2} />
+          ) : null}
+          <span className={`font-medium ${statusTone}`}>{statusLabel}</span>
+          {flowItems.length > 0 ? (
+            <span className="text-[11px] text-ds-faint">
+              {t('subagentStepCount', {
+                defaultValue: '{{count}} 步',
+                count: flowItems.filter((i) => i.label.startsWith('step ')).length || flowItems.length
+              })}
+            </span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300"
         >
           {t('subagentDetails')}
-        </span>
+        </button>
       </div>
+
       {block.cardKind === 'fanout' && block.workers && block.workers.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5 pl-5">
           {block.workers.map((worker) => (
             <span
               key={worker.id}
@@ -1877,7 +1934,27 @@ function SubagentSummaryRow({
           ))}
         </div>
       ) : null}
-    </button>
+
+      {stepsOpen ? (
+        <div className="mt-1.5 border-t border-ds-border-muted/50 pt-1.5">
+          {flowItems.length > 0 ? (
+            <StepFlow
+              items={flowItems}
+              compact
+              emptyLabel={t('subagentStepFlowEmpty', {
+                defaultValue: '等待步骤…'
+              })}
+            />
+          ) : (
+            <p className="px-1 py-1.5 text-[11.5px] text-ds-faint">
+              {isActive
+                ? t('subagentStepFlowWaiting', { defaultValue: '等待工具步骤…' })
+                : t('subagentStepFlowEmpty', { defaultValue: 'No steps recorded yet.' })}
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1886,17 +1963,192 @@ function isResumableSubagentStatus(status: SubagentBlock['status']): boolean {
   return status === 'failed' || status === 'cancelled'
 }
 
+function subagentStatusDotClass(
+  status: SubagentBlock['status']
+): string {
+  switch (status) {
+    case 'running':
+    case 'pending':
+      return 'text-violet-600 dark:text-violet-300'
+    case 'completed':
+      return 'text-emerald-600 dark:text-emerald-400'
+    case 'failed':
+      return 'text-rose-600 dark:text-rose-400'
+    default:
+      return 'text-ds-faint'
+  }
+}
+
+function subagentStatusGlyph(status: SubagentBlock['status']): string {
+  switch (status) {
+    case 'running':
+      return '●'
+    case 'pending':
+      return '○'
+    case 'completed':
+      return '✓'
+    case 'failed':
+      return '✗'
+    default:
+      return '−'
+  }
+}
+
+type SubagentTreeNode = {
+  id: string
+  label: string
+  status: SubagentBlock['status']
+  depth: number
+}
+
+function buildSubagentTreeNodes(
+  root: SubagentBlock,
+  related: SubagentBlock[]
+): SubagentTreeNode[] {
+  const byId = new Map<string, SubagentBlock>()
+  for (const b of related) byId.set(b.agentId, b)
+  byId.set(root.agentId, root)
+
+  const nodes: SubagentTreeNode[] = []
+  const seen = new Set<string>()
+
+  const visit = (id: string, depth: number): void => {
+    if (seen.has(id)) return
+    seen.add(id)
+    const block = byId.get(id)
+    if (block) {
+      nodes.push({
+        id,
+        label:
+          block.cardKind === 'fanout'
+            ? `${block.agentType} · fanout`
+            : `${block.agentType}`,
+        status: block.status,
+        depth
+      })
+      if (block.cardKind === 'fanout') {
+        for (const worker of block.workers ?? []) {
+          if (byId.has(worker.id)) {
+            visit(worker.id, depth + 1)
+          } else {
+            nodes.push({
+              id: worker.id,
+              label: `worker`,
+              status: worker.status,
+              depth: depth + 1
+            })
+          }
+        }
+      }
+      for (const childId of block.childIds ?? []) {
+        visit(childId, depth + 1)
+      }
+      return
+    }
+    nodes.push({
+      id,
+      label: 'agent',
+      status: 'pending',
+      depth
+    })
+  }
+
+  visit(root.agentId, 0)
+  return nodes
+}
+
+function resolveSubagentFlowItems(
+  root: SubagentBlock,
+  related: SubagentBlock[],
+  selectedId: string
+): StepFlowItem[] {
+  const byId = new Map<string, SubagentBlock>()
+  for (const b of related) byId.set(b.agentId, b)
+  byId.set(root.agentId, root)
+
+  const selected = byId.get(selectedId)
+  if (selected) {
+    if (selected.cardKind === 'fanout' && selectedId === selected.agentId) {
+      // Root fanout: concatenate worker rails with indent.
+      const items: StepFlowItem[] = [
+        {
+          id: `${selected.agentId}-root`,
+          status: lifecycleToStepStatus(selected.status),
+          label: `${selected.agentType} · ${selected.status}`,
+          depth: 0
+        }
+      ]
+      for (const worker of selected.workers ?? []) {
+        items.push({
+          id: `${worker.id}-head`,
+          status: lifecycleToStepStatus(worker.status),
+          label: `worker ${worker.id.slice(0, 8)} · ${worker.status}`,
+          depth: 1
+        })
+        items.push(
+          ...subagentStepsToFlowItems(selected.workerSteps?.[worker.id], 2)
+        )
+      }
+      return items
+    }
+    return subagentStepsToFlowItems(selected.steps)
+  }
+
+  // Fanout worker without its own block — steps live on the root fanout card.
+  if (root.cardKind === 'fanout') {
+    return subagentStepsToFlowItems(root.workerSteps?.[selectedId])
+  }
+  return []
+}
+
 function SubagentDetailDialog({
-  block,
+  block: initialBlock,
+  relatedBlocks,
   onClose
 }: {
   block: SubagentBlock
+  relatedBlocks: SubagentBlock[]
   onClose: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const sendMessage = useChatStore((s) => s.sendMessage)
   const busy = useChatStore((s) => s.busy)
+  // Select the blocks array by reference — never filter inside the Zustand
+  // selector (a new array each call trips useSyncExternalStore into a loop).
+  const allBlocks = useChatStore((s) => s.blocks)
   const [resuming, setResuming] = useState(false)
+  const [selectedId, setSelectedId] = useState(initialBlock.agentId)
+
+  // Prefer live store blocks so the step rail updates while the dialog is open.
+  const related = useMemo(() => {
+    const map = new Map<string, SubagentBlock>()
+    for (const b of relatedBlocks) map.set(b.agentId, b)
+    for (const b of allBlocks) {
+      if (b.kind === 'subagent') map.set(b.agentId, b)
+    }
+    return [...map.values()]
+  }, [relatedBlocks, allBlocks])
+
+  const block =
+    related.find((b) => b.agentId === initialBlock.agentId) ?? initialBlock
+
+  const treeNodes = useMemo(
+    () => buildSubagentTreeNodes(block, related),
+    [block, related]
+  )
+  const flowItems = useMemo(
+    () => resolveSubagentFlowItems(block, related, selectedId),
+    [block, related, selectedId]
+  )
+
+  const selectedBlock = related.find((b) => b.agentId === selectedId) ?? null
+  const selectedStatus =
+    selectedBlock?.status ??
+    (block.cardKind === 'fanout'
+      ? block.workers?.find((w) => w.id === selectedId)?.status
+      : undefined) ??
+    block.status
+
   const title =
     block.cardKind === 'fanout'
       ? t('subagentFanoutTitle', { kind: block.agentType })
@@ -1948,63 +2200,155 @@ function SubagentDetailDialog({
 
   if (typeof document === 'undefined') return <></>
 
+  const selectedTone =
+    selectedStatus === 'running' || selectedStatus === 'pending'
+      ? 'running'
+      : selectedStatus === 'completed'
+        ? 'ok'
+        : selectedStatus === 'failed'
+          ? 'danger'
+          : 'neutral'
+
   return createPortal(
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm"
+      className="ds-modal-backdrop ds-modal-backdrop--soft ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      onClick={onClose}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
     >
       <div
-        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-[14px] border border-ds-border bg-ds-elevated shadow-[0_24px_80px_rgba(15,23,42,0.35)]"
-        onClick={(event) => event.stopPropagation()}
+        className="ds-modal-surface ds-modal-surface--solid flex max-h-[min(88vh,52rem)] w-full max-w-[42rem] flex-col overflow-hidden rounded-[22px] animate-[ds-sheet-in_280ms_cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
+        onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex shrink-0 items-start gap-3 border-b border-ds-border-muted/70 bg-ds-elevated px-5 py-4">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300">
-            <Bot className="h-4 w-4" strokeWidth={1.8} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <h3 className="text-[15px] font-semibold text-ds-ink">{title}</h3>
-              <span className="text-[12px] font-medium text-ds-muted">{statusLabel}</span>
+        <header className="relative shrink-0 px-6 pb-3 pt-5">
+          <div className="flex items-start gap-3 pr-10">
+            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-violet-500/12 text-violet-700 dark:text-violet-300">
+              <Bot className="h-5 w-5" strokeWidth={1.7} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-[20px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
+                {title}
+              </h3>
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
+                <span className="font-mono tabular-nums text-ds-faint">{block.agentId}</span>
+                <span
+                  className={[
+                    'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                    selectedTone === 'running'
+                      ? 'bg-violet-500/12 text-violet-800 dark:text-violet-200'
+                      : selectedTone === 'ok'
+                        ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
+                        : selectedTone === 'danger'
+                          ? 'bg-rose-500/12 text-rose-800 dark:text-rose-200'
+                          : 'bg-ds-hover/70 text-ds-muted'
+                  ].join(' ')}
+                >
+                  {statusLabel}
+                </span>
+              </p>
             </div>
-            <div className="mt-0.5 font-mono text-[11px] text-ds-faint">{block.agentId}</div>
           </div>
-          {hasResult ? <ToolCopyButton text={resultText} className="!opacity-100" /> : null}
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-1 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-            aria-label={t('close')}
-          >
-            <X className="h-4 w-4" strokeWidth={1.8} />
-          </button>
-        </div>
-
-        {canResumeDelegate || resumableWorkerIds.length > 0 ? (
-          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-ds-border-muted/70 px-5 py-2.5">
+          <div className="absolute right-4 top-4 flex items-center gap-1.5">
+            {hasResult ? <ToolCopyButton text={resultText} className="!opacity-100" /> : null}
+            {canResumeDelegate || resumableWorkerIds.length > 0 ? (
+              <button
+                type="button"
+                disabled={!canResume}
+                onClick={() => void onResume()}
+                className="rounded-full bg-sky-500/12 px-3 py-1.5 text-[12.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
+              >
+                {resuming
+                  ? t('subagentResuming')
+                  : block.cardKind === 'fanout'
+                    ? t('subagentResumeMulti', { count: resumableWorkerIds.length })
+                    : t('subagentResume')}
+              </button>
+            ) : null}
             <button
               type="button"
-              disabled={!canResume}
-              onClick={() => void onResume()}
-              className="rounded-md border border-sky-400/50 bg-sky-500/10 px-2.5 py-1 text-[12px] font-medium text-sky-800 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-45 dark:text-sky-200"
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-ds-muted transition active:scale-95 hover:bg-black/[0.1] hover:text-ds-ink dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
+              aria-label={t('close')}
             >
-              {resuming
-                ? t('subagentResuming')
-                : block.cardKind === 'fanout'
-                  ? t('subagentResumeMulti', { count: resumableWorkerIds.length })
-                  : t('subagentResume')}
+              <X className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
           </div>
-        ) : null}
+        </header>
 
-        <div className="min-h-0 flex-1 overflow-auto bg-ds-elevated px-5 py-4">
-          <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ds-faint">
-            {resultTitle}
-          </div>
-          <div className="ds-markdown mt-2 text-[13.5px] leading-6 text-ds-ink">
-            <AssistantMarkdown text={finalText} streaming={false} />
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+          <div className="flex flex-col gap-5">
+            {treeNodes.length > 1 ? (
+              <section>
+                <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+                  {t('subagentTreeTitle', { defaultValue: 'Agents' })}
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {treeNodes.map((node) => {
+                    const active = node.id === selectedId
+                    return (
+                      <button
+                        key={node.id}
+                        type="button"
+                        onClick={() => setSelectedId(node.id)}
+                        className={[
+                          'flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-left transition active:scale-[0.98]',
+                          active
+                            ? 'bg-violet-500/14 text-violet-900 ring-1 ring-violet-400/35 dark:text-violet-100'
+                            : 'bg-ds-card/70 text-ds-ink ring-1 ring-ds-border/60 hover:bg-ds-hover/50'
+                        ].join(' ')}
+                        style={node.depth > 0 ? { marginLeft: node.depth > 1 ? 4 : 0 } : undefined}
+                      >
+                        <span
+                          className={`text-[11px] ${subagentStatusDotClass(node.status)}`}
+                          aria-hidden
+                        >
+                          {subagentStatusGlyph(node.status)}
+                        </span>
+                        <span className="max-w-[9rem] truncate text-[12.5px] font-medium tracking-[-0.01em]">
+                          {node.label}
+                        </span>
+                        <span className="font-mono text-[10px] text-ds-faint">
+                          {node.id.slice(0, 6)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            <section>
+              <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+                <h4 className="text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+                  {t('subagentStepFlowTitle', { defaultValue: 'Activity' })}
+                </h4>
+                <span className="font-mono text-[11px] tabular-nums text-ds-faint">
+                  {selectedId.slice(0, 10)} · {subagentStatusLabel(selectedStatus, t)}
+                </span>
+              </div>
+              <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-1.5 py-1">
+                <StepFlow
+                  items={flowItems}
+                  emptyLabel={t('subagentStepFlowEmpty', {
+                    defaultValue: 'No steps recorded yet.'
+                  })}
+                />
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+                {resultTitle}
+              </div>
+              <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-4 py-3">
+                <div className="ds-markdown text-[13.5px] leading-6 tracking-[-0.01em] text-ds-ink">
+                  <AssistantMarkdown text={finalText} streaming={false} />
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -2181,16 +2525,9 @@ function ProcessStreamEntry({
   if (block.kind === 'evolution') return <EvolutionBubble block={block} />
   if (block.kind === 'user_input') return <UserInputBubble block={block} />
   if (block.kind === 'subagent') return <SubagentBubble block={block} />
-  if (block.kind === 'workflow') {
-    return (
-      <WorkflowBlock
-        workflowName={block.workflowName}
-        status={block.status}
-        snapshot={block.snapshot}
-        runId={block.runId}
-      />
-    )
-  }
+  // Workflow live UI lives above the composer (ProcessTray). Keep the
+  // timeline free of a second, thinner copy of the same DAG.
+  if (block.kind === 'workflow') return null
   if (block.kind === 'system') {
     return <p className="text-[12px] text-ds-faint">{block.text}</p>
   }
@@ -2876,7 +3213,7 @@ function formatMessageDateTime(
   }).format(date)
 }
 
-function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
+function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
   const { t, i18n } = useTranslation('common')
   const timestampFormat = useSyncExternalStore(subscribeAppearance, getTimestampFormat)
   if (block.kind === 'user') {
@@ -2922,16 +3259,9 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement {
   if (block.kind === 'subagent') {
     return <SubagentBubble block={block} />
   }
-  if (block.kind === 'workflow') {
-    return (
-      <WorkflowBlock
-        workflowName={block.workflowName}
-        status={block.status}
-        snapshot={block.snapshot}
-        runId={block.runId}
-      />
-    )
-  }
+  // Workflow live UI lives above the composer (ProcessTray). Keep the
+  // timeline free of a second, thinner copy of the same DAG.
+  if (block.kind === 'workflow') return null
   if (block.kind === 'approval') {
     return null
   }

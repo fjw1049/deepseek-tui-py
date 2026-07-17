@@ -39,12 +39,18 @@ class MailboxMessage:
     status: str | None = None
     tool_name: str | None = None
     step: int | None = None
+    # Provider tool-call id: disambiguates parallel same-name calls that share
+    # one ``step`` round number (Workbench step ids key off this when present).
+    tool_call_id: str | None = None
     ok: bool | None = None
     parent_id: str | None = None
     summary: str | None = None
     error: str | None = None
     model: str | None = None
     usage: dict[str, Any] | None = None
+    # Truncated tool I/O for Workbench step-flow expand (not full payloads).
+    input_summary: str | None = None
+    output_summary: str | None = None
 
     @staticmethod
     def started(agent_id: str, agent_type: str) -> MailboxMessage:
@@ -61,24 +67,43 @@ class MailboxMessage:
         )
 
     @staticmethod
-    def tool_call_started(agent_id: str, tool_name: str, step: int) -> MailboxMessage:
+    def tool_call_started(
+        agent_id: str,
+        tool_name: str,
+        step: int,
+        *,
+        tool_call_id: str | None = None,
+        input_summary: str | None = None,
+    ) -> MailboxMessage:
         return MailboxMessage(
             kind=MailboxMessageKind.TOOL_CALL_STARTED,
             agent_id=agent_id,
             tool_name=tool_name,
             step=step,
+            tool_call_id=tool_call_id,
+            input_summary=input_summary,
         )
 
     @staticmethod
     def tool_call_completed(
-        agent_id: str, tool_name: str, step: int, ok: bool
+        agent_id: str,
+        tool_name: str,
+        step: int,
+        ok: bool,
+        *,
+        tool_call_id: str | None = None,
+        input_summary: str | None = None,
+        output_summary: str | None = None,
     ) -> MailboxMessage:
         return MailboxMessage(
             kind=MailboxMessageKind.TOOL_CALL_COMPLETED,
             agent_id=agent_id,
             tool_name=tool_name,
             step=step,
+            tool_call_id=tool_call_id,
             ok=ok,
+            input_summary=input_summary,
+            output_summary=output_summary,
         )
 
     @staticmethod

@@ -10,7 +10,7 @@ import type {
   ChatBlock
 } from '../agent/types'
 import {
-  applyMailboxMessage,
+  applyMailboxMessageTouched,
   finalizeOrphanSubagentBlocks,
   subagentBlockFromCard,
   subagentCardsFromBlocks,
@@ -923,20 +923,31 @@ function buildThreadEventSink(
         })
       }
       set((s) => {
-        const msg = ev.message as MailboxMessageJson
-        const cards = applyMailboxMessage(subagentCardsFromBlocks(s.blocks), msg)
-        const card = cards[msg.agent_id]
-        if (!card) return {}
-        const blockId = `subagent-${card.agentId}`
-        const existing = s.blocks.find((b) => b.kind === 'subagent' && b.agentId === card.agentId)
-        const nextBlock = subagentBlockFromCard(card, existing?.createdAt)
-        const idx = s.blocks.findIndex((b) => b.id === blockId)
-        if (idx >= 0) {
-          const blocks = [...s.blocks]
-          blocks[idx] = nextBlock
-          return { blocks }
+        const msg = { ...ev.message, seq: ev.seq } as MailboxMessageJson
+        const applied = applyMailboxMessageTouched(subagentCardsFromBlocks(s.blocks), msg)
+        if (applied.touched.length === 0) return {}
+        // Upsert every card the reducer changed — not just msg.agent_id. A
+        // child_spawned also rewrites the parent's childIds, and worker events
+        // rewrite the owning fanout; since the card map is rebuilt from blocks
+        // on each event, skipping those drops the update on the next event.
+        let blocks = s.blocks
+        for (const agentId of applied.touched) {
+          const card = applied.cards[agentId]
+          if (!card) continue
+          const blockId = `subagent-${card.agentId}`
+          const existing = blocks.find(
+            (b) => b.kind === 'subagent' && b.agentId === card.agentId
+          )
+          const nextBlock = subagentBlockFromCard(card, existing?.createdAt)
+          const idx = blocks.findIndex((b) => b.id === blockId)
+          if (blocks === s.blocks) blocks = [...blocks]
+          if (idx >= 0) {
+            blocks[idx] = nextBlock
+          } else {
+            blocks.push(nextBlock)
+          }
         }
-        return { blocks: [...s.blocks, nextBlock] }
+        return { blocks }
       })
     },
     onWorkflowProgress: (ev) => {

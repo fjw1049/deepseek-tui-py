@@ -520,7 +520,11 @@ class TaskManager:
             )
 
     async def record_tool_timeline(
-        self, task_id: str, kind: str, summary: str
+        self,
+        task_id: str,
+        kind: str,
+        summary: str,
+        detail: str | None = None,
     ) -> None:
         """Append a live progress entry for an in-flight task and persist it.
 
@@ -531,11 +535,17 @@ class TaskManager:
             task = self._tasks.get(task_id)
             if task is None:
                 return
+            detail_text = None
+            if isinstance(detail, str) and detail.strip():
+                # Keep expand payloads larger than the one-line summary but
+                # still bounded for JSON task files.
+                detail_text = _summarize_text(detail, 4_000)
             task.timeline.append(
                 TaskTimelineEntry(
                     timestamp=_utc_now_iso(),
                     kind=kind,
                     summary=_summarize_text(summary, TIMELINE_SUMMARY_LIMIT),
+                    detail=detail_text,
                 )
             )
             self._persist_task_locked(task)

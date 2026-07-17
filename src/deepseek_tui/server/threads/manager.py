@@ -131,12 +131,15 @@ def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
         "status": msg.status,
         "tool_name": msg.tool_name,
         "step": msg.step,
+        "tool_call_id": msg.tool_call_id,
         "ok": msg.ok,
         "parent_id": msg.parent_id,
         "summary": msg.summary,
         "error": msg.error,
         "model": msg.model,
         "usage": msg.usage,
+        "input_summary": msg.input_summary,
+        "output_summary": msg.output_summary,
     }
 
 
