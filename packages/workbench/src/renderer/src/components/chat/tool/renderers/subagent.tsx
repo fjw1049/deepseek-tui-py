@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Bot } from 'lucide-react'
+import { humanizeAgentType } from '../../../../lib/agent-type-label'
 import { ToolStatusIndicator } from '../primitives'
 import type { ToolRenderContext } from '../render-context'
 
@@ -14,16 +15,6 @@ import type { ToolRenderContext } from '../render-context'
  * blocks are hidden upstream, so this renderer only shows in the degraded case
  * where no mailbox cards exist (e.g. fast subagents or replayed history).
  */
-
-const AGENT_TYPE_LABELS: Record<string, string> = {
-  custom: '自定义',
-  explore: '探索',
-  general: '通用',
-  implementer: '实现',
-  plan: '规划',
-  review: '审查',
-  verifier: '验证'
-}
 
 const WAIT_MODE_LABELS: Record<string, string> = {
   all: '全部',
@@ -46,10 +37,6 @@ function readString(input: Record<string, unknown>, ...keys: string[]): string |
   return undefined
 }
 
-function localizeAgentType(type: string): string {
-  return AGENT_TYPE_LABELS[type.toLowerCase()] ?? type
-}
-
 function agentDescriptor(context: ToolRenderContext): string {
   const input = readToolInput(context)
   const isWait = context.toolName.includes('wait')
@@ -61,7 +48,7 @@ function agentDescriptor(context: ToolRenderContext): string {
 
   const type = readString(input, 'type', 'agent_type')
   const nickname = readString(input, 'nickname')
-  const parts = [type ? localizeAgentType(type) : undefined, nickname].filter(Boolean)
+  const parts = [type ? humanizeAgentType(type) : undefined, nickname].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : context.description
 }
 

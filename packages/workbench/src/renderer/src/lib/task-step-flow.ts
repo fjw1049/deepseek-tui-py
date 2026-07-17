@@ -3,6 +3,7 @@ import {
   lifecycleToStepStatus,
   type StepFlowItem
 } from '../components/chat/StepFlow'
+import { collapseStepFlowProbes } from './step-flow-collapse'
 import { buildStepIntent } from './step-intent'
 
 /** Split a backend run-log line `name · arg — reason` into its parts. */
@@ -28,14 +29,15 @@ export function parseToolSummary(
 /** Map durable-task timeline → StepFlow rail (intent title + target detail). */
 export function timelineToFlowItems(timeline: TaskTimelineEntry[]): StepFlowItem[] {
   let toolIndex = 0
-  return timeline.map((entry, idx) => {
+  const mapped = timeline.map((entry, idx) => {
     const kind = entry.kind
     if (kind === 'tool' || kind === 'tool_error') {
       toolIndex += 1
       const failed = kind === 'tool_error'
       const { name, arg, reason } = parseToolSummary(entry.summary, failed)
+      const toolName = name || 'tool'
       const intent = buildStepIntent({
-        toolName: name || 'tool',
+        toolName,
         primaryArg: arg || null
       })
       const input = arg || entry.summary
@@ -51,7 +53,8 @@ export function timelineToFlowItems(timeline: TaskTimelineEntry[]): StepFlowItem
             ? `step ${toolIndex}`
             : undefined,
         input,
-        output
+        output,
+        toolName
       } satisfies StepFlowItem
     }
     if (kind === 'text') {
@@ -60,7 +63,8 @@ export function timelineToFlowItems(timeline: TaskTimelineEntry[]): StepFlowItem
         status: 'info',
         label: entry.summary.slice(0, 80) || 'narration',
         meta: entry.timestamp ?? undefined,
-        output: entry.detail?.trim() || entry.summary
+        output: entry.detail?.trim() || entry.summary,
+        variant: 'narration' as const
       } satisfies StepFlowItem
     }
     const status = lifecycleToStepStatus(kind)
@@ -84,4 +88,5 @@ export function timelineToFlowItems(timeline: TaskTimelineEntry[]): StepFlowItem
         (entry.summary && entry.summary !== kind ? entry.summary : null)
     } satisfies StepFlowItem
   })
+  return collapseStepFlowProbes(mapped)
 }

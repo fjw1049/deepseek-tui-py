@@ -1,6 +1,7 @@
 import { useState, type ReactElement, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { humanizeToolName } from './tool/render-context'
 
 export type StepFlowStatus =
   | 'queued'
@@ -26,8 +27,15 @@ export type StepFlowItem = {
   output?: string | null
   /** Left indent level for tree nesting (0 = root). */
   depth?: number
-  /** Round knowledge line (model preface / thinking) — softer Bot-like type. */
-  variant?: 'narration'
+  /**
+   * `narration` — model preface; `batch` — folded consecutive probes
+   * (main-chat toolBatchTitle).
+   */
+  variant?: 'narration' | 'batch'
+  /** Raw tool name for collapse / batch i18n (e.g. read_file). */
+  toolName?: string
+  batchToolName?: string
+  batchCount?: number
 }
 
 const STATUS_STYLE: Record<
@@ -132,11 +140,20 @@ function StepRow({
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
   const isNarration = item.variant === 'narration'
+  const isBatch = item.variant === 'batch'
+  const batchTool = item.batchToolName || item.toolName || ''
+  const title = isBatch
+    ? t('toolBatchTitle', {
+        label: humanizeToolName(batchTool) || item.label || batchTool,
+        count: item.batchCount ?? 0
+      })
+    : item.label
   // Narration already shows its full line on the rail; only expand when the
   // stored body is meaningfully longer than the visible label.
   const body = summaryText(item)
   const hasBody = Boolean(
-    body && (!isNarration || body.trim() !== item.label.trim())
+    body &&
+      (isBatch || !isNarration || body.trim() !== item.label.trim())
   )
   const depth = Math.max(0, item.depth ?? 0)
 
@@ -172,18 +189,25 @@ function StepRow({
                         ? 'text-[12px] leading-5'
                         : 'text-[13.5px] leading-6'
                     ].join(' ')
-                  : [
-                      'truncate text-ds-ink',
-                      compact
-                        ? 'text-[11.5px] leading-4'
-                        : 'text-[12.5px] leading-5'
-                    ].join(' ')
+                  : isBatch
+                    ? [
+                        'truncate text-ds-muted',
+                        compact
+                          ? 'text-[12px] leading-5'
+                          : 'text-[13px] leading-5'
+                      ].join(' ')
+                    : [
+                        'truncate text-ds-ink',
+                        compact
+                          ? 'text-[11.5px] leading-4'
+                          : 'text-[12.5px] leading-5'
+                      ].join(' ')
               ].join(' ')}
-              title={isNarration ? item.label : undefined}
+              title={isNarration || isBatch ? title : undefined}
             >
-              {item.label}
+              {title}
             </span>
-            {item.detail ? (
+            {item.detail && !isBatch ? (
               <span
                 className={[
                   'mt-0.5 block truncate text-ds-muted',
@@ -194,7 +218,7 @@ function StepRow({
                 {item.detail}
               </span>
             ) : null}
-            {item.meta && !compact && !isNarration ? (
+            {item.meta && !compact && !isNarration && !isBatch ? (
               <span className="mt-0.5 block truncate text-[10.5px] tabular-nums text-ds-faint">
                 {formatMeta(item.meta)}
               </span>

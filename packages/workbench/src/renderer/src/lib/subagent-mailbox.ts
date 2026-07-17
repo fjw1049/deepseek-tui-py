@@ -1,5 +1,6 @@
 /** Sub-agent mailbox card state (mirrors TUI DelegateCard / FanoutCard). */
 
+import { collapseStepFlowProbes } from './step-flow-collapse'
 import { buildStepIntent } from './step-intent'
 
 export type SubagentLifecycle = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -794,7 +795,7 @@ export function subagentStepsToFlowItems(
   // Tools that follow a round narration sit one level deeper so the rail reads
   // as knowledge → actions, not a flat tool log.
   let underNarration = false
-  return steps.map((s) => {
+  const mapped = steps.map((s) => {
     let status: import('../components/chat/StepFlow').StepFlowStatus = 'info'
     if (s.kind === 'tool') {
       if (s.ok === true) status = 'ok'
@@ -843,7 +844,8 @@ export function subagentStepsToFlowItems(
         meta: s.step != null ? `step ${s.step}` : undefined,
         input: s.input,
         output: s.output,
-        depth: toolDepth
+        depth: toolDepth,
+        toolName: s.toolName
       }
     }
 
@@ -860,4 +862,5 @@ export function subagentStepsToFlowItems(
       depth
     }
   })
+  return collapseStepFlowProbes(mapped)
 }

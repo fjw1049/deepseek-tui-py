@@ -62,6 +62,7 @@ import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
 import { WorkflowBlock } from './WorkflowBlock'
 import { StepFlow, lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
+import { humanizeAgentType } from '../../lib/agent-type-label'
 import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
 import {
   ToolCard,
@@ -1816,6 +1817,15 @@ function ToolBatchPanel({
   )
 }
 
+/** Count tool / batch rows for the compact “N 步” chrome (skip narration). */
+export function countSubagentRailSteps(items: StepFlowItem[]): number {
+  return items.filter((i) => {
+    if (i.variant === 'narration') return false
+    if (i.variant === 'batch') return true
+    return Boolean(i.toolName)
+  }).length
+}
+
 function flowItemsForSubagentBlock(block: SubagentBlock): StepFlowItem[] {
   if (block.cardKind === 'delegate') {
     // Prefer the concrete tool rail; keep lifecycle tails for start/end feel.
@@ -1896,8 +1906,12 @@ function SubagentSummaryRow({
           />
           <span className="font-semibold tracking-[-0.01em] text-ds-ink">
             {block.cardKind === 'fanout'
-              ? t('subagentFanoutTitle', { kind: block.agentType })
-              : t('subagentDelegateTitle', { type: block.agentType })}
+              ? t('subagentFanoutTitle', {
+                  kind: humanizeAgentType(block.agentType)
+                })
+              : t('subagentDelegateTitle', {
+                  type: humanizeAgentType(block.agentType)
+                })}
           </span>
           {isActive ? (
             <Loader2 className="h-3 w-3 animate-spin text-ds-muted" strokeWidth={2} />
@@ -1906,7 +1920,7 @@ function SubagentSummaryRow({
           {flowItems.length > 0 ? (
             <span className="text-[11px] text-ds-faint">
               {t('subagentStepCount', {
-                count: flowItems.filter((i) => i.label.startsWith('step ')).length || flowItems.length
+                count: countSubagentRailSteps(flowItems)
               })}
             </span>
           ) : null}
@@ -2033,8 +2047,8 @@ function buildSubagentTreeNodes(
         id,
         label:
           block.cardKind === 'fanout'
-            ? `${block.agentType} · fanout`
-            : `${block.agentType}`,
+            ? `${humanizeAgentType(block.agentType)} · fanout`
+            : humanizeAgentType(block.agentType),
         status: block.status,
         depth
       })
@@ -2086,7 +2100,7 @@ function resolveSubagentFlowItems(
         {
           id: `${selected.agentId}-root`,
           status: lifecycleToStepStatus(selected.status),
-          label: `${selected.agentType} · ${selected.status}`,
+          label: `${humanizeAgentType(selected.agentType)} · ${selected.status}`,
           depth: 0
         }
       ]
@@ -2163,8 +2177,8 @@ function SubagentDetailDialog({
 
   const title =
     block.cardKind === 'fanout'
-      ? t('subagentFanoutTitle', { kind: block.agentType })
-      : t('subagentDelegateTitle', { type: block.agentType })
+      ? t('subagentFanoutTitle', { kind: humanizeAgentType(block.agentType) })
+      : t('subagentDelegateTitle', { type: humanizeAgentType(block.agentType) })
   const statusLabel = subagentStatusLabel(block.status, t)
   const resultTitle =
     block.status === 'failed' ? t('subagentFailureReason') : t('subagentFinalResult')
@@ -2975,8 +2989,8 @@ function SubagentBubble({
   const { t } = useTranslation('common')
   const title =
     block.cardKind === 'fanout'
-      ? t('subagentFanoutTitle', { kind: block.agentType })
-      : t('subagentDelegateTitle', { type: block.agentType })
+      ? t('subagentFanoutTitle', { kind: humanizeAgentType(block.agentType) })
+      : t('subagentDelegateTitle', { type: humanizeAgentType(block.agentType) })
   const statusLabel = subagentStatusLabel(block.status, t)
 
   return (
