@@ -1071,6 +1071,7 @@ def _task_summary_to_dict(summary: Any) -> dict[str, Any]:
         "ended_at": getattr(summary, "ended_at", None),
         "duration_ms": getattr(summary, "duration_ms", None),
         "error": getattr(summary, "error", None),
+        "result_summary": getattr(summary, "result_summary", None),
         "thread_id": getattr(summary, "thread_id", None),
         "turn_id": getattr(summary, "turn_id", None),
     }

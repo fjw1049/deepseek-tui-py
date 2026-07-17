@@ -189,6 +189,7 @@ class TaskRecord:
     timeline: list[TaskTimelineEntry] = field(default_factory=list)
 
     def summary(self) -> TaskSummary:
+        result = self.result_summary or self.error
         return TaskSummary(
             id=self.id,
             status=self.status,
@@ -200,6 +201,9 @@ class TaskRecord:
             ended_at=self.ended_at,
             duration_ms=self.duration_ms,
             error=self.error,
+            result_summary=(
+                _summarize_text(result, TIMELINE_SUMMARY_LIMIT) if result else None
+            ),
             thread_id=self.thread_id,
             turn_id=self.turn_id,
         )
@@ -217,6 +221,7 @@ class TaskSummary:
     ended_at: str | None
     duration_ms: int | None
     error: str | None
+    result_summary: str | None
     thread_id: str | None
     turn_id: str | None
 

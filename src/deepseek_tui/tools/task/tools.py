@@ -131,9 +131,21 @@ class TaskListTool(ToolSpec):
         limit = int(limit_val) if isinstance(limit_val, int) else None
         summaries = await manager.list_tasks(limit)
         payload = [asdict(s) | {"status": s.status.value} for s in summaries]
+        lines = [f"{len(payload)} task(s):"]
+        for item in payload:
+            tid = item.get("id", "?")
+            status = item.get("status", "?")
+            prompt = (item.get("prompt_summary") or "").strip()
+            result = (item.get("result_summary") or item.get("error") or "").strip()
+            line = f"- {tid} [{status}]"
+            if prompt:
+                line += f" prompt={prompt}"
+            if result:
+                line += f" result={result}"
+            lines.append(line)
         return ToolResult(
             success=True,
-            content=f"{len(payload)} task(s)",
+            content="\n".join(lines) if payload else "0 task(s)",
             metadata={"tasks": payload},
         )
 

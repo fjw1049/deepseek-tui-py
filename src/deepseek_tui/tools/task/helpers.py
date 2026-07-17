@@ -143,12 +143,43 @@ def _require_manager(context: ToolContext) -> TaskManager:
     return manager
 
 
+def _task_result_content(action: str, task: TaskRecord) -> str:
+    """Build model-visible tool content for task CRUD tools.
+
+    The orchestrator only injects ``ToolResult.content`` into the LLM
+    transcript (metadata is for UI). Status-only stubs left the model
+    unable to present completed task results on follow-up turns.
+    """
+    lines = [f"{action}: {task.id} [{task.status.value}]"]
+    if task.duration_ms is not None:
+        lines.append(f"duration_ms: {task.duration_ms}")
+    if task.error:
+        lines.append(f"error: {_summarize(task.error, _MAX_SUMMARY_CHARS)}")
+    summary = (task.result_summary or "").strip()
+    if summary:
+        lines.append("result:")
+        lines.append(_summarize(summary, _MAX_SUMMARY_CHARS))
+    elif task.timeline:
+        # Prefer the final assistant text; fall back to a short timeline
+        # tail so tool-heavy tasks still expose something readable.
+        tail = task.timeline[-8:]
+        lines.append("timeline_tail:")
+        for entry in tail:
+            kind = getattr(entry, "kind", "") or ""
+            entry_summary = getattr(entry, "summary", "") or ""
+            if entry_summary:
+                lines.append(f"- [{kind}] {_summarize(entry_summary, 240)}")
+    else:
+        lines.append("result: (no result yet)")
+    return "\n".join(lines)
+
+
 def _task_result(action: str, task: TaskRecord) -> ToolResult:
     summary = task.result_summary or task.error or ""
     return ToolResult(
         success=task.status is not TaskStatus.FAILED
         and task.status is not TaskStatus.TIMED_OUT,
-        content=f"{action}: {task.id} [{task.status.value}]",
+        content=_task_result_content(action, task),
         metadata={
             "task_id": task.id,
             "status": task.status.value,
@@ -159,6 +190,7 @@ def _task_result(action: str, task: TaskRecord) -> ToolResult:
             "duration_ms": task.duration_ms,
             "error": task.error,
             "result_summary": summary,
+            "summary": summary,
             "timeline_len": len(task.timeline),
             "gates_len": len(task.gates),
             "attempts_len": len(task.attempts),

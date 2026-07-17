@@ -88,7 +88,13 @@ def _tool_result_is_noisy(tool_name: str) -> bool:
 def _tool_result_metadata_summary(metadata: dict[str, Any] | None) -> str | None:
     if not metadata or not isinstance(metadata, dict):
         return None
-    for key in ("summary", "stdout_summary", "stderr_summary", "message"):
+    for key in (
+        "summary",
+        "result_summary",
+        "stdout_summary",
+        "stderr_summary",
+        "message",
+    ):
         val = metadata.get(key)
         if isinstance(val, str) and val.strip():
             return summarize_text(val.strip(), TOOL_RESULT_METADATA_SUMMARY_CHARS)
