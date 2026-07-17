@@ -1,4 +1,5 @@
 import { resolveProviderIcon, uniquifySvgIds } from './provider-icons.js'
+import { clampEffortIndex } from './clamp-effort-index'
 
 class ChatGPTModelSelector extends HTMLElement {
   static observedAttributes = ['value', 'model', 'disabled'];
@@ -700,7 +701,9 @@ class ChatGPTModelSelector extends HTMLElement {
     }
   }
 
-  #clampIndex(v) { return Math.min(4, Math.max(0, Number.isFinite(v) ? Math.round(v) : 2)); }
+  #clampIndex(v) {
+    return clampEffortIndex(v);
+  }
 
   #inferProvider(id) {
     const trimmed = String(id || '').trim();
