@@ -185,7 +185,7 @@ function StepRow({
             {hasBody && body ? (
               <div className="mx-1 mb-1.5 overflow-hidden rounded-[12px] bg-black/[0.03] dark:bg-white/[0.04]">
                 <div className="px-3 pb-1 pt-2 text-[10.5px] font-semibold tracking-[0.02em] text-ds-muted">
-                  {t('stepFlowSummary', { defaultValue: '摘要' })}
+                  {t('stepFlowSummary')}
                 </div>
                 <pre className="max-h-44 overflow-auto px-3 pb-2.5 font-mono text-[11.5px] leading-[1.45] text-ds-ink/90 whitespace-pre-wrap break-words">
                   {body}
@@ -193,13 +193,13 @@ function StepRow({
                 {item.input?.trim() && item.output?.trim() ? (
                   <details className="border-t border-ds-border/40 px-3 py-2">
                     <summary className="cursor-pointer text-[11px] font-medium text-ds-faint hover:text-ds-muted">
-                      {t('stepFlowMoreDetail', { defaultValue: '输入 / 完整输出' })}
+                      {t('stepFlowMoreDetail')}
                     </summary>
                     <div className="mt-2 space-y-2">
-                      <DetailBlock label={t('stepFlowInput', { defaultValue: 'Input' })}>
+                      <DetailBlock label={t('stepFlowInput')}>
                         {item.input}
                       </DetailBlock>
-                      <DetailBlock label={t('stepFlowOutput', { defaultValue: 'Output' })}>
+                      <DetailBlock label={t('stepFlowOutput')}>
                         {item.output}
                       </DetailBlock>
                     </div>
@@ -263,7 +263,7 @@ export function StepFlow({
   if (items.length === 0) {
     return (
       <p className="px-1 py-2 text-[12.5px] leading-5 text-ds-faint">
-        {emptyLabel ?? t('stepFlowEmpty', { defaultValue: 'No steps yet.' })}
+        {emptyLabel ?? t('stepFlowEmpty')}
       </p>
     )
   }

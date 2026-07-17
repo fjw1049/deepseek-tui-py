@@ -949,6 +949,7 @@ function MessageTurn({
   const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
   const subagentSummary = useMemo(() => buildSubagentSummaryForTurn(turn.blocks), [turn.blocks])
+  const subagentStepsByAgentId = useMemo(() => collectSubagentStepsByAgentId(turn.blocks), [turn.blocks])
 
   const { processBlocks, assistantContentBlocks, turnFileChanges, systemBlocks } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
@@ -1073,6 +1074,7 @@ function MessageTurn({
                   todoSession={todoSession}
                   todoEvents={todoEvents}
                   subagentSummary={subagentSummary}
+                  subagentStepsByAgentId={subagentStepsByAgentId}
                 />
               ) : null}
             </div>
@@ -1898,7 +1900,6 @@ function SubagentSummaryRow({
           {flowItems.length > 0 ? (
             <span className="text-[11px] text-ds-faint">
               {t('subagentStepCount', {
-                defaultValue: '{{count}} 步',
                 count: flowItems.filter((i) => i.label.startsWith('step ')).length || flowItems.length
               })}
             </span>
@@ -1941,15 +1942,13 @@ function SubagentSummaryRow({
             <StepFlow
               items={flowItems}
               compact
-              emptyLabel={t('subagentStepFlowEmpty', {
-                defaultValue: '等待步骤…'
-              })}
+              emptyLabel={t('subagentStepFlowEmpty')}
             />
           ) : (
             <p className="px-1 py-1.5 text-[11.5px] text-ds-faint">
               {isActive
-                ? t('subagentStepFlowWaiting', { defaultValue: '等待工具步骤…' })
-                : t('subagentStepFlowEmpty', { defaultValue: 'No steps recorded yet.' })}
+                ? t('subagentStepFlowWaiting')
+                : t('subagentStepFlowEmpty')}
             </p>
           )}
         </div>
@@ -2086,17 +2085,17 @@ function resolveSubagentFlowItems(
           depth: 1
         })
         items.push(
-          ...subagentStepsToFlowItems(selected.workerSteps?.[worker.id], 2)
+          ...subagentStepsToFlowItems(selected.workerSteps?.[worker.id], 2, worker.status)
         )
       }
       return items
     }
-    return subagentStepsToFlowItems(selected.steps)
+    return subagentStepsToFlowItems(selected.steps, 0, selected.status)
   }
 
   // Fanout worker without its own block — steps live on the root fanout card.
   if (root.cardKind === 'fanout') {
-    return subagentStepsToFlowItems(root.workerSteps?.[selectedId])
+    return subagentStepsToFlowItems(root.workerSteps?.[selectedId], 0, root.status)
   }
   return []
 }
@@ -2283,7 +2282,7 @@ function SubagentDetailDialog({
             {treeNodes.length > 1 ? (
               <section>
                 <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-                  {t('subagentTreeTitle', { defaultValue: 'Agents' })}
+                  {t('subagentTreeTitle')}
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {treeNodes.map((node) => {
@@ -2323,7 +2322,7 @@ function SubagentDetailDialog({
             <section>
               <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
                 <h4 className="text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-                  {t('subagentStepFlowTitle', { defaultValue: 'Activity' })}
+                  {t('subagentStepFlowTitle')}
                 </h4>
                 <span className="font-mono text-[11px] tabular-nums text-ds-faint">
                   {selectedId.slice(0, 10)} · {subagentStatusLabel(selectedStatus, t)}
@@ -2332,9 +2331,7 @@ function SubagentDetailDialog({
               <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-1.5 py-1">
                 <StepFlow
                   items={flowItems}
-                  emptyLabel={t('subagentStepFlowEmpty', {
-                    defaultValue: 'No steps recorded yet.'
-                  })}
+                  emptyLabel={t('subagentStepFlowEmpty')}
                 />
               </div>
             </section>
@@ -2378,13 +2375,15 @@ function ProcessStream({
   processing,
   todoSession = null,
   todoEvents = [],
-  subagentSummary = null
+  subagentSummary = null,
+  subagentStepsByAgentId
 }: {
   blocks: ChatBlock[]
   processing: boolean
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
+  subagentStepsByAgentId?: Record<string, StepFlowItem[]>
 }): ReactElement {
   const visible = visibleExecutionBlocks(blocks, todoSession, subagentSummary)
   const rows = groupProcessRows(visible)
@@ -2412,6 +2411,7 @@ function ProcessStream({
             todoSession={todoSession}
             todoEvents={todoEvents}
             subagentSummary={subagentSummary}
+            subagentStepsByAgentId={subagentStepsByAgentId}
             showLiveReasoningPreview={showLiveReasoningPreview}
           />
         )
@@ -2426,6 +2426,7 @@ function ProcessStreamEntry({
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
+  subagentStepsByAgentId,
   showLiveReasoningPreview = false
 }: {
   block: ChatBlock
@@ -2433,6 +2434,7 @@ function ProcessStreamEntry({
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
+  subagentStepsByAgentId?: Record<string, StepFlowItem[]>
   showLiveReasoningPreview?: boolean
 }): ReactElement | null {
   // Inline todo card at its anchor block.
@@ -2525,9 +2527,17 @@ function ProcessStreamEntry({
   if (block.kind === 'evolution') return <EvolutionBubble block={block} />
   if (block.kind === 'user_input') return <UserInputBubble block={block} />
   if (block.kind === 'subagent') return <SubagentBubble block={block} />
-  // Workflow live UI lives above the composer (ProcessTray). Keep the
-  // timeline free of a second, thinner copy of the same DAG.
-  if (block.kind === 'workflow') return null
+  if (block.kind === 'workflow') {
+    return (
+      <WorkflowBlock
+        workflowName={block.workflowName}
+        status={block.status}
+        snapshot={block.snapshot}
+        runId={block.runId}
+        subagentStepsByAgentId={subagentStepsByAgentId}
+      />
+    )
+  }
   if (block.kind === 'system') {
     return <p className="text-[12px] text-ds-faint">{block.text}</p>
   }
@@ -3259,9 +3269,16 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
   if (block.kind === 'subagent') {
     return <SubagentBubble block={block} />
   }
-  // Workflow live UI lives above the composer (ProcessTray). Keep the
-  // timeline free of a second, thinner copy of the same DAG.
-  if (block.kind === 'workflow') return null
+  if (block.kind === 'workflow') {
+    return (
+      <WorkflowBlock
+        workflowName={block.workflowName}
+        status={block.status}
+        snapshot={block.snapshot}
+        runId={block.runId}
+      />
+    )
+  }
   if (block.kind === 'approval') {
     return null
   }

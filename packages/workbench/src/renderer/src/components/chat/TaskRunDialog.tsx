@@ -92,11 +92,7 @@ export function TaskRunDialog({
     if (!canResume) return
     setResuming(true)
     try {
-      const resumePrompt = t('taskResumePrompt', {
-        defaultValue:
-          '请用 task_resume 工具【只传 task_id={{taskId}}】从断点续跑该后台任务。不要重新 task_create。',
-        taskId
-      })
+      const resumePrompt = t('taskResumePrompt', { taskId })
       await sendMessage(resumePrompt, 'task')
     } finally {
       setResuming(false)
@@ -114,7 +110,7 @@ export function TaskRunDialog({
         className="ds-modal-surface ds-modal-surface--solid flex max-h-[min(88vh,52rem)] w-full max-w-[40rem] flex-col overflow-hidden rounded-[22px] animate-[ds-sheet-in_280ms_cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
         role="dialog"
         aria-modal="true"
-        aria-label={t('contextRailTaskLog', { defaultValue: 'Task' })}
+        aria-label={t('contextRailTaskLog')}
       >
         <header className="relative shrink-0 px-6 pb-4 pt-5">
           <div className="flex items-start gap-3 pr-10">
@@ -123,7 +119,7 @@ export function TaskRunDialog({
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="text-[20px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
-                {t('taskRunSheetTitle', { defaultValue: 'Background task' })}
+                {t('taskRunSheetTitle')}
               </h2>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
                 <span className="font-mono tabular-nums text-ds-faint">{taskId}</span>
@@ -142,9 +138,7 @@ export function TaskRunDialog({
                 onClick={() => void onResume()}
                 className="rounded-full bg-sky-500/12 px-3 py-1.5 text-[12.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
               >
-                {resuming
-                  ? t('taskResuming', { defaultValue: '续跑中…' })
-                  : t('taskResume', { defaultValue: '续跑' })}
+                {resuming ? t('taskResuming') : t('taskResume')}
               </button>
             ) : null}
             <CloseButton onClick={onClose} label={t('close')} />
@@ -162,9 +156,7 @@ export function TaskRunDialog({
                     onClick={() => setPromptOpen((v) => !v)}
                     className="text-[12px] font-medium text-sky-700 transition hover:opacity-80 dark:text-sky-300"
                   >
-                    {promptOpen
-                      ? t('collapse', { defaultValue: '收起' })
-                      : t('expand', { defaultValue: '展开' })}
+                    {promptOpen ? t('collapse') : t('expand')}
                   </button>
                 }
               >
@@ -180,7 +172,7 @@ export function TaskRunDialog({
             ) : null}
 
             <GroupedSection
-              title={t('contextRailTaskLog', { defaultValue: 'Activity' })}
+              title={t('contextRailTaskLog')}
               trailing={
                 active ? (
                   <span className="inline-flex items-center gap-1.5 text-[11.5px] text-ds-faint">
@@ -202,7 +194,7 @@ export function TaskRunDialog({
                   <p className="px-2 py-4 text-[13px] leading-5 text-ds-faint">
                     {active
                       ? t('contextRailTaskRunning')
-                      : t('stepFlowEmpty', { defaultValue: 'No steps yet.' })}
+                      : t('stepFlowEmpty')}
                   </p>
                 )}
               </div>

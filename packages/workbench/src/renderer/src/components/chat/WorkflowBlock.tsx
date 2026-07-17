@@ -3,6 +3,7 @@ import { ChevronDown, Loader2, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkflowSnapshotPayload } from '../../lib/workflow-snapshot'
 import { useChatStore } from '../../store/chat-store'
+import type { StepFlowItem } from './StepFlow'
 import {
   WorkflowDagView,
   workflowFocusLabel,
@@ -13,12 +14,15 @@ export function WorkflowBlock({
   workflowName,
   status,
   snapshot,
-  runId
+  runId,
+  subagentStepsByAgentId
 }: {
   workflowName: string
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
   snapshot: WorkflowSnapshotPayload
   runId?: string
+  /** Live tool-step rails joined into DAG agent rows by agent_id. */
+  subagentStepsByAgentId?: Record<string, StepFlowItem[]>
 }): ReactElement {
   const { t } = useTranslation('common')
   const sendMessage = useChatStore((s) => s.sendMessage)
@@ -35,25 +39,23 @@ export function WorkflowBlock({
 
   const header =
     status === 'completed'
-      ? t('workflowCompleted', { defaultValue: 'Workflow completed' })
+      ? t('workflowCompleted')
       : status === 'cancelled'
-        ? t('workflowCancelled', { defaultValue: 'Workflow cancelled' })
+        ? t('workflowCancelled')
         : status === 'timed_out'
-          ? t('workflowTimedOut', { defaultValue: 'Workflow timed out' })
+          ? t('workflowTimedOut')
           : status === 'running'
-            ? t('workflowRunning', { defaultValue: 'Workflow running' })
-            : t('workflowFailed', { defaultValue: 'Workflow failed' })
+            ? t('workflowRunning')
+            : t('workflowFailed')
 
   const stateLine =
     snapshot.error_count > 0
       ? t('workflowErrors', {
-          defaultValue: '{{done}}/{{total}} done, {{errors}} errors',
           done: snapshot.done_count,
           total: Math.max(snapshot.agent_count, snapshot.nodes?.length ?? 0),
           errors: snapshot.error_count
         })
       : t('workflowProgress', {
-          defaultValue: '{{done}}/{{total}} done',
           done: snapshot.done_count,
           total: Math.max(snapshot.agent_count, snapshot.nodes?.length ?? 0)
         })
@@ -77,11 +79,7 @@ export function WorkflowBlock({
     if (!runId || !canResume) return
     setResuming(true)
     try {
-      const prompt = t('workflowResumePrompt', {
-        defaultValue:
-          '请用 workflow 工具【只传 run_id】续跑被中断的工作流 {{runId}}。不要重新用 name+task 开新跑；从 checkpoint 跳过已完成步骤继续。',
-        runId
-      })
+      const prompt = t('workflowResumePrompt', { runId })
       await sendMessage(prompt, 'workflow')
     } finally {
       setResuming(false)
@@ -130,12 +128,7 @@ export function WorkflowBlock({
                 <>
                   <span aria-hidden>·</span>
                   <span className="truncate text-ds-muted">
-                    {running
-                      ? t('workflowFocusRunning', {
-                          defaultValue: 'now {{label}}',
-                          label: focus
-                        })
-                      : focus}
+                    {running ? t('workflowFocusRunning', { label: focus }) : focus}
                   </span>
                 </>
               ) : null}
@@ -172,9 +165,7 @@ export function WorkflowBlock({
             onClick={() => void onResume()}
             className="mt-0.5 shrink-0 rounded-full bg-sky-500/12 px-2.5 py-1 text-[11.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
           >
-            {resuming
-              ? t('workflowResuming', { defaultValue: '续跑中…' })
-              : t('workflowResume', { defaultValue: '续跑' })}
+            {resuming ? t('workflowResuming') : t('workflowResume')}
           </button>
         ) : null}
       </div>
@@ -187,7 +178,7 @@ export function WorkflowBlock({
           {snapshot.description ? (
             <p className="mb-2 px-1 text-[12px] leading-5 text-ds-muted">{snapshot.description}</p>
           ) : null}
-          <WorkflowDagView snapshot={snapshot} />
+          <WorkflowDagView snapshot={snapshot} subagentStepsByAgentId={subagentStepsByAgentId} />
         </div>
       ) : null}
     </div>

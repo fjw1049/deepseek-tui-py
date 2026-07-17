@@ -127,15 +127,21 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
     let cancelled = false
     let interval: number | undefined
     const load = (): void => {
-      void fetchTaskDetail(task.id).then((detail) => {
-        if (cancelled || !detail) return
-        setTimeline(timelineToFlowItems(detail.timeline))
-        setLoadingSteps(false)
-        if (!isActiveTaskStatus(detail.status) && interval !== undefined) {
-          window.clearInterval(interval)
-          interval = undefined
-        }
-      })
+      void fetchTaskDetail(task.id)
+        .then((detail) => {
+          if (cancelled) return
+          if (detail) {
+            setTimeline(timelineToFlowItems(detail.timeline))
+            if (!isActiveTaskStatus(detail.status) && interval !== undefined) {
+              window.clearInterval(interval)
+              interval = undefined
+            }
+          }
+          setLoadingSteps(false)
+        })
+        .catch(() => {
+          if (!cancelled) setLoadingSteps(false)
+        })
     }
     setLoadingSteps(true)
     load()
@@ -183,7 +189,7 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
           onClick={() => setDialogOpen(true)}
           className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-sky-700 transition hover:bg-sky-500/10 dark:text-sky-300"
         >
-          {t('subagentDetails', { defaultValue: '详情' })}
+          {t('subagentDetails')}
         </button>
       </div>
 
@@ -194,13 +200,13 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
           ) : loadingSteps ? (
             <div className="flex items-center gap-1.5 px-1 py-1.5 text-[11.5px] text-ds-faint">
               <Loader2 className="h-3 w-3 animate-spin" />
-              {t('contextRailTaskLoading', { defaultValue: '加载中…' })}
+              {t('contextRailTaskLoading')}
             </div>
           ) : (
             <p className="px-1 py-1.5 text-[11.5px] text-ds-faint">
               {running
-                ? t('subagentStepFlowWaiting', { defaultValue: '等待工具步骤…' })
-                : t('stepFlowEmpty', { defaultValue: 'No steps yet.' })}
+                ? t('subagentStepFlowWaiting')
+                : t('stepFlowEmpty')}
             </p>
           )}
         </div>

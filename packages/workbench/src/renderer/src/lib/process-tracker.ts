@@ -24,13 +24,6 @@ export type BuildTrackedProcessesInput = {
   blocks: ChatBlock[]
 }
 
-function workflowStatusToProcessStatus(status: WorkflowBlock['status']): TrackedProcessStatus {
-  if (status === 'completed') return 'completed'
-  if (status === 'failed' || status === 'timed_out') return 'failed'
-  if (status === 'cancelled') return 'cancelled'
-  return 'running'
-}
-
 function progressPercent(done: number, total: number): number | null {
   if (total <= 0) return null
   return Math.max(0, Math.min(100, Math.round((done * 100) / total)))
@@ -71,19 +64,17 @@ export function collapseWorkflowBlocks(blocks: WorkflowBlock[]): WorkflowBlock[]
   return [...byKey.values()]
 }
 
-function latestWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
+/** Live runs only — terminal runs render as timeline WorkflowBlock cards. */
+function runningWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
   const workflows = blocks.filter((block): block is WorkflowBlock => block.kind === 'workflow')
-  const collapsed = collapseWorkflowBlocks(workflows)
-  const running = collapsed.filter((block) => block.status === 'running')
-  const completedTail = collapsed.filter((block) => block.status !== 'running').slice(-2)
-  const selected = [...completedTail, ...running].filter(
-    (block, index, list) => list.findIndex((candidate) => candidate.id === block.id) === index
+  const running = collapseWorkflowBlocks(workflows).filter(
+    (block) => block.status === 'running'
   )
 
-  return selected.map((block) => ({
+  return running.map((block) => ({
     id: `workflow:${block.toolCallId}`,
     type: 'workflow' as const,
-    status: workflowStatusToProcessStatus(block.status),
+    status: 'running' as const,
     title: block.workflowName || block.snapshot.name,
     subtitle: workflowSubtitle(block),
     progressPct: progressPercent(block.snapshot.done_count, block.snapshot.agent_count),
@@ -95,5 +86,5 @@ function latestWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
 export function buildTrackedProcesses({
   blocks
 }: BuildTrackedProcessesInput): TrackedProcess[] {
-  return latestWorkflowProcesses(blocks)
+  return runningWorkflowProcesses(blocks)
 }

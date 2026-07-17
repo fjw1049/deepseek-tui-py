@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -166,7 +166,15 @@ function AgentDetail({
   steps?: StepFlowItem[]
 }): ReactElement {
   const { t } = useTranslation('common')
-  const [previewOpen, setPreviewOpen] = useState(Boolean(agent.error))
+  const [previewOpen, setPreviewOpen] = useState(false)
+  // Auto-open the error detail once, when an error first appears — including
+  // on mount. Never re-open after the user folds it away.
+  const autoOpenedRef = useRef(false)
+  useEffect(() => {
+    if (autoOpenedRef.current || !agent.error) return
+    autoOpenedRef.current = true
+    setPreviewOpen(true)
+  }, [agent.error])
   const hasSteps = Boolean(steps && steps.length > 0)
   const hasPreview = Boolean(agent.result_preview?.trim() || agent.error?.trim())
 
@@ -188,7 +196,7 @@ function AgentDetail({
       {hasSteps ? (
         <div className="mt-1.5 border-t border-ds-border/35 pt-1">
           <div className="mb-0.5 px-0.5 text-[10.5px] font-semibold text-ds-faint">
-            {t('workflowAgentSteps', { defaultValue: 'Tool steps' })}
+            {t('workflowAgentSteps')}
           </div>
           <StepFlow items={steps!} compact />
         </div>
@@ -208,9 +216,7 @@ function AgentDetail({
               ].join(' ')}
               strokeWidth={1.8}
             />
-            {agent.error
-              ? t('workflowAgentError', { defaultValue: 'Error' })
-              : t('workflowAgentPreview', { defaultValue: 'Result preview' })}
+            {agent.error ? t('workflowAgentError') : t('workflowAgentPreview')}
           </button>
           {previewOpen ? (
             <pre
@@ -228,10 +234,8 @@ function AgentDetail({
       ) : !hasSteps ? (
         <p className="mt-1 text-[11px] text-ds-faint">
           {agent.status === 'running'
-            ? t('workflowAgentWaitingSteps', {
-                defaultValue: 'Running — waiting for tool steps…'
-              })
-            : t('workflowAgentNoDetail', { defaultValue: 'No step detail yet.' })}
+            ? t('workflowAgentWaitingSteps')
+            : t('workflowAgentNoDetail')}
         </p>
       ) : null}
     </div>
@@ -246,7 +250,17 @@ function NodeRow({
   subagentStepsByAgentId?: Record<string, StepFlowItem[]>
 }): ReactElement {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(node.status === 'running' || node.status === 'error')
+  const [open, setOpen] = useState(false)
+  // Auto-open once when the node transitions into running/error — including
+  // on mount. Never re-open after the user folds it away.
+  const autoOpenedRef = useRef(false)
+  useEffect(() => {
+    if (autoOpenedRef.current) return
+    if (node.status === 'running' || node.status === 'error') {
+      autoOpenedRef.current = true
+      setOpen(true)
+    }
+  }, [node.status])
   const stepCount = node.agents.reduce((n, agent) => {
     const id = agent.agent_id
     if (!id || !subagentStepsByAgentId) return n
@@ -287,23 +301,17 @@ function NodeRow({
             <span className="shrink-0 font-mono text-[10.5px] text-ds-faint">{node.type}</span>
             {node.generated ? (
               <span className="shrink-0 text-[10.5px] text-ds-faint">
-                {t('workflowNodeGenerated', { defaultValue: 'dynamic' })}
+                {t('workflowNodeGenerated')}
               </span>
             ) : null}
           </span>
           <span className="mt-0.5 block text-[11px] text-ds-faint">
-            {t(statusLabelKey(node.status), { defaultValue: node.status })}
+            {t(statusLabelKey(node.status))}
             {node.agents.length > 0
-              ? ` · ${t('workflowNodeWorkers', {
-                  defaultValue: '{{count}} agents',
-                  count: node.agents.length
-                })}`
+              ? ` · ${t('workflowNodeWorkers', { count: node.agents.length })}`
               : null}
             {stepCount > 0
-              ? ` · ${t('workflowNodeStepCount', {
-                  defaultValue: '{{count}} steps',
-                  count: stepCount
-                })}`
+              ? ` · ${t('workflowNodeStepCount', { count: stepCount })}`
               : null}
             {node.predecessors.length > 0
               ? ` · after ${node.predecessors.slice(0, 3).join(', ')}${
@@ -335,12 +343,8 @@ function NodeRow({
           {node.agents.length === 0 ? (
             <p className="text-[11.5px] text-ds-faint">
               {node.status === 'running'
-                ? t('workflowNodeWaitingAgents', {
-                    defaultValue: 'Node running — waiting for agent attachment…'
-                  })
-                : t('workflowNodeNoAgents', {
-                    defaultValue: 'No agent runs on this node yet.'
-                  })}
+                ? t('workflowNodeWaitingAgents')
+                : t('workflowNodeNoAgents')}
             </p>
           ) : (
             node.agents.map((agent) => (
@@ -421,7 +425,7 @@ export function WorkflowDagView({
   if (nodes.length === 0) {
     return (
       <p className="px-1 py-2 text-[12.5px] text-ds-faint">
-        {t('workflowDagEmpty', { defaultValue: 'Waiting for workflow graph…' })}
+        {t('workflowDagEmpty')}
       </p>
     )
   }
@@ -433,15 +437,9 @@ export function WorkflowDagView({
           <li key={`wave-${depth}`} className="min-w-0">
             {waves.length > 1 ? (
               <div className="mb-0.5 mt-1 px-2 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ds-faint">
-                {t('workflowWave', {
-                  defaultValue: 'Wave {{n}}',
-                  n: depth + 1
-                })}
+                {t('workflowWave', { n: depth + 1 })}
                 {waveNodes.length > 1
-                  ? ` · ${t('workflowWaveParallel', {
-                      defaultValue: '{{count}} parallel',
-                      count: waveNodes.length
-                    })}`
+                  ? ` · ${t('workflowWaveParallel', { count: waveNodes.length })}`
                   : ''}
               </div>
             ) : null}
@@ -460,10 +458,7 @@ export function WorkflowDagView({
 
       {snapshot.logs.length > 0 ? (
         <FoldSection
-          title={t('workflowLogs', {
-            defaultValue: 'Logs ({{count}})',
-            count: snapshot.logs.length
-          })}
+          title={t('workflowLogs', { count: snapshot.logs.length })}
         >
           <div className="max-h-36 overflow-auto rounded-[12px] border border-ds-border/50 bg-ds-card/40 px-3 py-2">
             {snapshot.logs.slice(-12).map((line, index) => (
@@ -480,7 +475,7 @@ export function WorkflowDagView({
       ) : null}
 
       {snapshot.result != null ? (
-        <FoldSection title={t('workflowResult', { defaultValue: 'Result' })}>
+        <FoldSection title={t('workflowResult')}>
           <pre className="max-h-48 overflow-auto rounded-[12px] border border-ds-border/50 bg-ds-card/40 p-3 font-mono text-[11px] leading-5 text-ds-muted whitespace-pre-wrap break-words">
             {typeof snapshot.result === 'string'
               ? snapshot.result
