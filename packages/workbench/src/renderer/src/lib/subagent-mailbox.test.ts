@@ -72,7 +72,8 @@ describe('subagent-mailbox', () => {
     if (parent?.cardKind === 'delegate') {
       expect(parent.childIds).toContain('child')
       const tool = parent.steps.find((s) => s.kind === 'tool')
-      expect(tool?.label).toContain('read_file')
+      expect(tool?.label).toContain('读取文件')
+      expect(tool?.label).toContain('a.py')
       expect(tool?.input).toContain('a.py')
       expect(tool?.output).toContain('print(1)')
       expect(tool?.ok).toBe(true)
@@ -98,7 +99,7 @@ describe('subagent-mailbox', () => {
     expect(card?.cardKind).toBe('delegate')
     if (card?.cardKind === 'delegate') {
       expect(card.status).toBe('running')
-      expect(card.actions.some((a) => a.includes('read_file'))).toBe(true)
+      expect(card.actions.some((a) => a.includes('读取文件'))).toBe(true)
     }
 
     const done: MailboxMessageJson = {
@@ -192,6 +193,40 @@ describe('subagent-mailbox', () => {
       ]
     })
     expect(next[1]).toMatchObject({ kind: 'subagent', status: 'cancelled' })
+  })
+
+  it('upserts a provisional tool row when tool_call_id arrives on complete', () => {
+    let cards = applyMailboxMessage(
+      {},
+      { kind: 'started', agent_id: 'agent_1', agent_type: 'general', seq: 1 }
+    )
+    cards = applyMailboxMessage(cards, {
+      kind: 'tool_call_started',
+      agent_id: 'agent_1',
+      tool_name: 'read_file',
+      step: 3,
+      seq: 2,
+      input_summary: '{"path":"packages/workbench/src/foo.ts"}'
+    })
+    cards = applyMailboxMessage(cards, {
+      kind: 'tool_call_completed',
+      agent_id: 'agent_1',
+      tool_name: 'read_file',
+      step: 3,
+      tool_call_id: 'call_late',
+      ok: true,
+      seq: 3,
+      output_summary: 'ok'
+    })
+    const card = cards.agent_1
+    if (card?.cardKind === 'delegate') {
+      const tools = card.steps.filter((s) => s.kind === 'tool')
+      expect(tools).toHaveLength(1)
+      expect(tools[0]?.id).toBe('tool-call_late')
+      expect(tools[0]?.label).toContain('读取文件')
+      expect(tools[0]?.label).toContain('foo.ts')
+      expect(tools[0]?.ok).toBe(true)
+    }
   })
 
   it('keeps parallel same-name tool calls distinct via tool_call_id', () => {
@@ -383,5 +418,51 @@ describe('subagent-mailbox', () => {
     expect(live.find((i) => i.id === 'tool-call_a')?.status).toBe('running')
     const running = subagentStepsToFlowItems(steps, 0, 'running')
     expect(running.find((i) => i.id === 'tool-call_a')?.status).toBe('running')
+  })
+
+  it('maps round progress to narration rows and nests following tools', () => {
+    let cards = applyMailboxMessage(
+      {},
+      { kind: 'started', agent_id: 'agent_1', agent_type: 'explore', seq: 1 }
+    )
+    cards = applyMailboxMessage(cards, {
+      kind: 'progress',
+      agent_id: 'agent_1',
+      status: '先看 chat 组件结构，确认 Workflow 入口',
+      seq: 2
+    })
+    cards = applyMailboxMessage(cards, {
+      kind: 'tool_call_started',
+      agent_id: 'agent_1',
+      tool_name: 'list_dir',
+      step: 1,
+      tool_call_id: 'call_1',
+      seq: 3,
+      input_summary: '{"path":"packages/workbench/src/components/chat"}'
+    })
+    cards = applyMailboxMessage(cards, {
+      kind: 'tool_call_completed',
+      agent_id: 'agent_1',
+      tool_name: 'list_dir',
+      step: 1,
+      tool_call_id: 'call_1',
+      ok: true,
+      seq: 4,
+      output_summary: 'ok'
+    })
+
+    const card = cards.agent_1
+    expect(card?.cardKind).toBe('delegate')
+    if (card?.cardKind !== 'delegate') return
+
+    const items = subagentStepsToFlowItems(card.steps, 0, 'running')
+    const narration = items.find((i) => i.variant === 'narration')
+    expect(narration?.status).toBe('info')
+    expect(narration?.label).toContain('chat 组件')
+    expect(narration?.depth ?? 0).toBe(0)
+
+    const tool = items.find((i) => i.id === 'tool-call_1')
+    expect(tool?.label).toBe('浏览目录')
+    expect(tool?.depth).toBe(1)
   })
 })

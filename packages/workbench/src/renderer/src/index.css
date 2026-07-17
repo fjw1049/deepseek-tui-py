@@ -988,6 +988,9 @@ samp {
   letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
+  /* Match final-answer justify so compose / re-edit don't look ragged-right. */
+  text-align: justify;
+  text-justify: inter-ideograph;
 }
 
 .ds-composer-input::placeholder {
@@ -3160,6 +3163,10 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   font-weight: 400;
   line-height: 1.58;
   box-shadow: none;
+  text-align: justify;
+  text-justify: inter-ideograph;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ds-user-message-edit-bubble {

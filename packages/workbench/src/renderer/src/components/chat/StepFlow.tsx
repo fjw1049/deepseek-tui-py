@@ -16,14 +16,18 @@ export type StepFlowStatus =
 export type StepFlowItem = {
   id: string
   status: StepFlowStatus
-  /** One-line rail label, e.g. `step 3 · read_file · ok`. */
+  /** Primary rail title — humanized intent, e.g. `读取文件`. */
   label: string
-  /** Optional secondary muted text (timestamp, …). */
+  /** Optional target/query under the title, e.g. `…/StepFlow.tsx`. */
+  detail?: string
+  /** Optional tertiary muted text (step N, timestamp, …). */
   meta?: string
   input?: string | null
   output?: string | null
   /** Left indent level for tree nesting (0 = root). */
   depth?: number
+  /** Round knowledge line (model preface / thinking) — softer Bot-like type. */
+  variant?: 'narration'
 }
 
 const STATUS_STYLE: Record<
@@ -127,8 +131,13 @@ function StepRow({
 }): ReactElement {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const isNarration = item.variant === 'narration'
+  // Narration already shows its full line on the rail; only expand when the
+  // stored body is meaningfully longer than the visible label.
   const body = summaryText(item)
-  const hasBody = Boolean(body)
+  const hasBody = Boolean(
+    body && (!isNarration || body.trim() !== item.label.trim())
+  )
   const depth = Math.max(0, item.depth ?? 0)
 
   return (
@@ -153,16 +162,39 @@ function StepRow({
           ].join(' ')}
         >
           <span className="min-w-0 flex-1">
-            {/* Keep the exact rail contract: step N · tool_name · ok/fail */}
             <span
               className={[
-                'block truncate font-mono tracking-[-0.01em] text-ds-ink',
-                compact ? 'text-[11.5px] leading-4' : 'text-[12.5px] leading-5'
+                'block tracking-[-0.01em]',
+                isNarration
+                  ? [
+                      'line-clamp-3 text-ds-faint/90',
+                      compact
+                        ? 'text-[12px] leading-5'
+                        : 'text-[13.5px] leading-6'
+                    ].join(' ')
+                  : [
+                      'truncate text-ds-ink',
+                      compact
+                        ? 'text-[11.5px] leading-4'
+                        : 'text-[12.5px] leading-5'
+                    ].join(' ')
               ].join(' ')}
+              title={isNarration ? item.label : undefined}
             >
               {item.label}
             </span>
-            {item.meta && !compact ? (
+            {item.detail ? (
+              <span
+                className={[
+                  'mt-0.5 block truncate text-ds-muted',
+                  compact ? 'text-[10.5px] leading-4' : 'text-[11px] leading-4'
+                ].join(' ')}
+                title={item.detail}
+              >
+                {item.detail}
+              </span>
+            ) : null}
+            {item.meta && !compact && !isNarration ? (
               <span className="mt-0.5 block truncate text-[10.5px] tabular-nums text-ds-faint">
                 {formatMeta(item.meta)}
               </span>

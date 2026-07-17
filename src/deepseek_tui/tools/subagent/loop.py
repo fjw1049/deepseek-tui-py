@@ -27,6 +27,8 @@ _LOG = logging.getLogger(__name__)
 # giving the Workbench step-flow something useful to expand.
 _MAILBOX_INPUT_CHARS = 2_000
 _MAILBOX_OUTPUT_CHARS = 4_000
+# Round narration on the step rail — short enough to read as one knowledge line.
+_MAILBOX_NARRATION_CHARS = 240
 
 
 def _mailbox_input_summary(arguments: Any) -> str | None:
@@ -43,6 +45,21 @@ def _mailbox_input_summary(arguments: Any) -> str | None:
 def _mailbox_output_summary(output: str | None) -> str | None:
     text = summarize_text(output or "", _MAILBOX_OUTPUT_CHARS).strip()
     return text or None
+
+
+def _mailbox_round_narration(text: str, thinking: str) -> str | None:
+    """One-line step-rail knowledge from the model's own preface / thinking.
+
+    Prefer visible assistant text; fall back to thinking when the model only
+    reasoned. Empty → None so the UI stays honest (tool rows only).
+    """
+    primary = (text or "").strip() or (thinking or "").strip()
+    if not primary:
+        return None
+    # Prefer the first paragraph so a long think dump does not dominate the rail.
+    first = primary.split("\n\n", 1)[0].strip()
+    clipped = summarize_text(first or primary, _MAILBOX_NARRATION_CHARS).strip()
+    return clipped or None
 
 
 def _subagent_cancelled(
@@ -389,6 +406,12 @@ async def run_subagent_loop(
                 final_text = round_text
             if round_thinking:
                 last_thinking = round_thinking
+
+            # Knowledge line for the Workbench step rail (before tools of this
+            # round). Prefer model preface; fall back to thinking. Skip when empty.
+            narration = _mailbox_round_narration(round_text, round_thinking)
+            if narration and runtime.mailbox is not None:
+                runtime.mailbox.send(MailboxMessage.progress(agent.id, narration))
 
             if not result.tool_calls:
                 if round_text:

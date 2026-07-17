@@ -184,13 +184,15 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
             {t(taskStatusLabelKey(status))}
           </span>
         </button>
-        <button
-          type="button"
-          onClick={() => setDialogOpen(true)}
-          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-        >
-          {t('subagentDetails')}
-        </button>
+        {!running ? (
+          <button
+            type="button"
+            onClick={() => setDialogOpen(true)}
+            className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+          >
+            {t('subagentDetails')}
+          </button>
+        ) : null}
       </div>
 
       {stepsOpen ? (

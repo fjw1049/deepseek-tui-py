@@ -1919,13 +1919,15 @@ function SubagentSummaryRow({
             !
           </span>
         ) : null}
-        <button
-          type="button"
-          onClick={onOpen}
-          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-        >
-          {t('subagentDetails')}
-        </button>
+        {!isActive ? (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+          >
+            {t('subagentDetails')}
+          </button>
+        ) : null}
       </div>
 
       {block.cardKind === 'fanout' && block.workers && block.workers.length > 0 ? (
@@ -2805,7 +2807,7 @@ function UserMessageBubble({
       <div className="ds-user-message-bubble min-w-0">
         {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
         {displayBody ? (
-          <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">
+          <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-justify [text-justify:inter-ideograph]">
             {displayBody}
           </div>
         ) : null}

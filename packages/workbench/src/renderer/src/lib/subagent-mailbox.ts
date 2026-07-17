@@ -1,5 +1,7 @@
 /** Sub-agent mailbox card state (mirrors TUI DelegateCard / FanoutCard). */
 
+import { buildStepIntent } from './step-intent'
+
 export type SubagentLifecycle = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type MailboxMessageJson = {
@@ -142,6 +144,34 @@ function toolStepId(msg: MailboxMessageJson): string {
   return `tool-${msg.step ?? '?'}-${msg.tool_name ?? 'tool'}`
 }
 
+function fallbackToolStepId(msg: MailboxMessageJson): string {
+  return `tool-${msg.step ?? '?'}-${msg.tool_name ?? 'tool'}`
+}
+
+/**
+ * Locate an existing tool row to upsert. Prefer exact id (tool_call_id), then
+ * a provisional fallback row for the same step+name still running — so a
+ * started-without-id / completed-with-id pair does not spawn a duplicate rail.
+ */
+function findToolStepIndex(
+  steps: SubagentStepState[],
+  msg: MailboxMessageJson
+): number {
+  const id = toolStepId(msg)
+  const byId = steps.findIndex((s) => s.id === id && s.kind === 'tool')
+  if (byId >= 0) return byId
+
+  if (msg.tool_call_id) {
+    const fallback = fallbackToolStepId(msg)
+    const byFallback = steps.findIndex(
+      (s) => s.id === fallback && s.kind === 'tool' && s.ok === null
+    )
+    if (byFallback >= 0) return byFallback
+  }
+
+  return -1
+}
+
 /**
  * Lifecycle/progress step ids must stay unique within a card even after
  * `capSteps` truncation (steps.length stops growing at the cap, so indexing
@@ -172,7 +202,9 @@ function appendOrUpdateToolStep(
   const stepNum = msg.step ?? null
   const id = toolStepId(msg)
   const next = [...steps]
-  const idx = next.findIndex((s) => s.id === id && s.kind === 'tool')
+  const idx = findToolStepIndex(next, msg)
+  const input = msg.input_summary ?? (idx >= 0 ? next[idx]!.input : null) ?? null
+  const intent = buildStepIntent({ toolName, inputSummary: input })
   if (phase === 'started') {
     const row: SubagentStepState = {
       id,
@@ -180,38 +212,46 @@ function appendOrUpdateToolStep(
       step: stepNum,
       toolName,
       ok: null,
-      label: `step ${stepNum ?? '?'} · ${toolName}`,
-      input: msg.input_summary ?? null,
+      label: intent.label,
+      input,
       output: null
     }
     if (idx >= 0) {
       next[idx] = {
         ...next[idx]!,
         ...row,
-        input: msg.input_summary ?? next[idx]!.input ?? null
+        // Promote provisional fallback ids to tool_call_id when it arrives.
+        id,
+        input: msg.input_summary ?? next[idx]!.input ?? null,
+        label: buildStepIntent({
+          toolName,
+          inputSummary: msg.input_summary ?? next[idx]!.input
+        }).label
       }
     } else {
       next.push(row)
     }
     return capSteps(next)
   }
-  const outcome = msg.ok ? 'ok' : 'failed'
   const row: SubagentStepState = {
     id,
     kind: 'tool',
     step: stepNum,
     toolName,
     ok: msg.ok ?? false,
-    label: `step ${stepNum ?? '?'} · ${toolName} · ${outcome}`,
-    input: msg.input_summary ?? null,
+    label: intent.label,
+    input,
     output: msg.output_summary ?? null
   }
   if (idx >= 0) {
+    const mergedInput = msg.input_summary ?? next[idx]!.input ?? null
     next[idx] = {
       ...next[idx]!,
       ...row,
-      input: msg.input_summary ?? next[idx]!.input ?? null,
-      output: msg.output_summary ?? next[idx]!.output ?? null
+      id,
+      input: mergedInput,
+      output: msg.output_summary ?? next[idx]!.output ?? null,
+      label: buildStepIntent({ toolName, inputSummary: mergedInput }).label
     }
   } else {
     next.push(row)
@@ -751,22 +791,66 @@ export function subagentStepsToFlowItems(
 ): import('../components/chat/StepFlow').StepFlowItem[] {
   if (!steps || steps.length === 0) return []
   const residual = cardStatus ? terminalResidualStatus(cardStatus) : null
+  // Tools that follow a round narration sit one level deeper so the rail reads
+  // as knowledge → actions, not a flat tool log.
+  let underNarration = false
   return steps.map((s) => {
     let status: import('../components/chat/StepFlow').StepFlowStatus = 'info'
     if (s.kind === 'tool') {
       if (s.ok === true) status = 'ok'
       else if (s.ok === false) status = 'failed'
       else status = 'running'
-    } else if (s.kind === 'started' || s.kind === 'progress') {
+    } else if (s.kind === 'started') {
       status = 'running'
+    } else if (s.kind === 'progress') {
+      // Narration is a settled knowledge line, not a pulsing spinner.
+      status = 'info'
+      underNarration = true
     } else if (s.kind === 'completed') {
       status = 'completed'
+      underNarration = false
     } else if (s.kind === 'failed') {
       status = 'failed'
+      underNarration = false
     } else if (s.kind === 'cancelled') {
       status = 'cancelled'
+      underNarration = false
     }
     if (status === 'running' && residual) status = residual
+
+    if (s.kind === 'progress') {
+      return {
+        id: s.id,
+        status,
+        label: s.label,
+        output: s.output,
+        depth,
+        variant: 'narration' as const
+      }
+    }
+
+    if (s.kind === 'tool' && s.toolName) {
+      const intent = buildStepIntent({
+        toolName: s.toolName,
+        inputSummary: s.input
+      })
+      const toolDepth = underNarration ? depth + 1 : depth
+      return {
+        id: s.id,
+        status,
+        label: intent.title,
+        detail: intent.detail || undefined,
+        meta: s.step != null ? `step ${s.step}` : undefined,
+        input: s.input,
+        output: s.output,
+        depth: toolDepth
+      }
+    }
+
+    // Lifecycle chrome (started / completed / …) stays at the base depth and
+    // does not keep tools indented under a prior narration.
+    if (s.kind !== 'tool') underNarration = false
+
     return {
       id: s.id,
       status,

@@ -177,13 +177,28 @@ function compactPath(path: string): string {
   return `…/${segments.slice(-2).join('/')}`
 }
 
-function buildDescription(block: ToolBlock, toolName: string): string {
-  const input = collectToolInput(block)
-  const sourceText = [block.summary?.trim() ?? '', block.detail ?? ''].filter(Boolean).join('\n')
+/**
+ * One-line "what this tool acted on" descriptor from raw call args.
+ * Shared by ToolCard and step-rail intent labels.
+ */
+export function describeToolCallTarget(
+  toolName: string,
+  input: ToolInputRecord = {},
+  extras?: {
+    filePath?: string
+    summary?: string
+    detail?: string
+    meta?: Record<string, unknown>
+    toolKind?: ToolBlock['toolKind']
+  }
+): string {
+  const sourceText = [extras?.summary?.trim() ?? '', extras?.detail ?? '']
+    .filter(Boolean)
+    .join('\n')
 
   const path =
     firstString(input, PATH_KEYS) ||
-    block.filePath ||
+    extras?.filePath ||
     extractQuotedField(sourceText, 'path') ||
     extractQuotedField(sourceText, 'file_path') ||
     extractQuotedField(sourceText, 'file')
@@ -192,12 +207,14 @@ function buildDescription(block: ToolBlock, toolName: string): string {
     firstString(input, PATTERN_KEYS) ||
     extractQuotedField(sourceText, 'pattern') ||
     extractQuotedField(sourceText, 'query') ||
-    readMetaString(block.meta, 'pattern')
+    readMetaString(extras?.meta, 'pattern')
   const glob = firstString(input, GLOB_KEYS)
-  const command = firstString(input, CMD_KEYS) || readMetaString(block.meta, 'command')
+  const command = firstString(input, CMD_KEYS) || readMetaString(extras?.meta, 'command')
   const url = firstString(input, URL_KEYS)
 
-  if (block.toolKind === 'command_execution' && command) return summarizeProcessText(command, 72)
+  if (extras?.toolKind === 'command_execution' && command) {
+    return summarizeProcessText(command, 72)
+  }
   if (toolName === 'list_dir') {
     const target = dir || path
     return target ? compactPath(target) : ''
@@ -224,7 +241,7 @@ function buildDescription(block: ToolBlock, toolName: string): string {
   if (generic) return summarizeProcessText(generic, 72)
 
   // Last resort: whatever follows the "tool_name:" prefix in the summary.
-  const rawSummary = block.summary?.trim() ?? ''
+  const rawSummary = extras?.summary?.trim() ?? ''
   if (rawSummary && rawSummary.toLowerCase() !== toolName) {
     const withoutPrefix = toolName
       ? rawSummary.replace(/^([a-z0-9_-]+)\s*:\s*/i, '')
@@ -232,6 +249,16 @@ function buildDescription(block: ToolBlock, toolName: string): string {
     return summarizeProcessText(stripInlineJsonPayload(withoutPrefix), 72)
   }
   return ''
+}
+
+function buildDescription(block: ToolBlock, toolName: string): string {
+  return describeToolCallTarget(toolName, collectToolInput(block), {
+    filePath: block.filePath,
+    summary: block.summary,
+    detail: block.detail,
+    meta: block.meta,
+    toolKind: block.toolKind
+  })
 }
 
 function extractInput(block: ToolBlock): ToolInput {
