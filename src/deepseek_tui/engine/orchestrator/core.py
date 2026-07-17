@@ -306,6 +306,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 3x every round for the entire turn — pure waste. Set to N rounds
         # on failure, decremented each round, blocks auto-compaction while > 0.
         self._compact_cooldown_rounds: int = 0
+        # mtime of the last handoff reminder injected into messages (not
+        # system). Re-inject only when the file is new or rewritten.
+        self._handoff_injected_mtime: float | None = None
         # Stage 3.next.1 approval cache — fingerprints repeat tool calls
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
@@ -1328,6 +1331,36 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 usage=usage,
             )
 
+    def _take_handoff_reminder_message(self) -> Message | None:
+        """Return a handoff reminder if the on-disk file is new/changed.
+
+        Injected as a user-role ``<system-reminder>`` so the system prompt
+        stays stable for DeepSeek prefix caching. Working-set paths stay out
+        of system entirely (compaction bridge / cycle state only).
+        """
+        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.engine.prompts import handoff_path, load_handoff_reminder
+
+        workspace = self.tool_context.working_directory
+        path = handoff_path(workspace)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+        if (
+            self._handoff_injected_mtime is not None
+            and mtime <= self._handoff_injected_mtime
+        ):
+            return None
+        body = load_handoff_reminder(workspace)
+        if not body:
+            return None
+        self._handoff_injected_mtime = mtime
+        return Message.user(
+            wrap_system_reminder(body),
+            origin=MessageOrigin.SYSTEM_REMINDER,
+        )
+
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
 
@@ -1362,7 +1395,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             model=target_model,
             messages=self.session_messages or None,
             skills_context=self._render_skills_context(),
-            working_set_summary=self.working_set.summary() or None,
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
@@ -1391,7 +1423,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             model=target_model,
             messages=self.session_messages or None,
             skills_context=self._render_skills_context(),
-            working_set_summary=self.working_set.summary() or None,
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
@@ -1766,6 +1797,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
+        # Handoff is volatile — inject as a user reminder before the real
+        # query, never into the system prompt (KV prefix cache).
+        if not op.hidden:
+            handoff_msg = self._take_handoff_reminder_message()
+            if handoff_msg is not None:
+                working_messages.insert(prior_count, handoff_msg)
         self.working_set.observe_user_message(processed.display_text or "")
         self.working_set.observe_references(processed.references)
         preview = (processed.display_text or "")[:200].replace("\n", " ")
@@ -1890,7 +1927,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 ),
                 plugin_components_context=self._render_plugin_components_context(),
                 plugin_rules_context=self._render_plugin_rules_context(),
-                working_set_summary=self.working_set.summary() or None,
                 workspace=self.tool_context.working_directory,
                 locale_tag=_detect_locale(processed.display_text or ""),
                 workflow_guidelines=self.tool_registry.contains("workflow"),
@@ -2304,8 +2340,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._maybe_l0_prune_tool_results(messages, model)
             # Soft seams L1/L2/L3 at 20%/40%/55% of the model window.
             await self._maybe_layered_context_checkpoint(messages, model)
-            hard_cap_hit = len(messages) > 500
-            should_trigger = hard_cap_hit or (
+            should_trigger = (
                 self._compact_cooldown_rounds <= 0
                 and should_compact(
                     messages,
@@ -2316,8 +2351,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             )
             if should_trigger:
                 logger.info(
-                    "compact_triggered before_count=%d hard_cap=%s cooldown=%d",
-                    len(messages), hard_cap_hit, self._compact_cooldown_rounds,
+                    "compact_triggered before_count=%d cooldown=%d",
+                    len(messages), self._compact_cooldown_rounds,
                 )
                 compact_result = await self._run_compaction(messages)
                 messages[:] = compact_result.messages

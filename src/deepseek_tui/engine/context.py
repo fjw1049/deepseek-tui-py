@@ -431,6 +431,9 @@ def estimate_context_breakdown(
     from deepseek_tui.engine.prompts import build_system_prompt
     from deepseek_tui.engine.prompts import AppMode
 
+    # Working-set paths live in messages (compaction bridge / cycle), not system.
+    _ = working_set_summary
+
     target_model = model or ""
     try:
         app_mode = AppMode((mode or "agent").strip().lower())
@@ -446,7 +449,6 @@ def estimate_context_breakdown(
         ws = Path(workspace).expanduser().resolve() if workspace else None
         system_text = build_system_prompt(
             None,
-            working_set_summary=working_set_summary,
             workspace=ws,
             mode=app_mode,
             project_context_enabled=False,

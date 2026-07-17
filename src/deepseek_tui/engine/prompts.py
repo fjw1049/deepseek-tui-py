@@ -364,13 +364,19 @@ def build_system_prompt(
       5. skills context (available skills list)
       6. plugin context (mounted plugin dir + read grant, when mounted)
       7. how to read post-compaction <archived_context> (consumer hint)
-      8. previous-session handoff (volatile)
-      9. working-set summary (volatile)
+
+    Volatile session state does **not** belong here:
+      - previous-session handoff → user-role ``<system-reminder>`` (Engine)
+      - working-set paths → compaction bridge / cycle structured state
+
+    ``working_set_summary`` is accepted for call-site compatibility but ignored.
 
     Setting ``project_context_enabled=False`` skips the project_context
     block - used by tests that don't want disk I/O. The auto-generate
     side effect is suppressed in that case.
     """
+    del working_set_summary  # kept for API compat; never mutate system with it
+
     if override is not None and override.strip():
         return override
 
@@ -438,25 +444,21 @@ def build_system_prompt(
     # summarizer (_create_summary) using COMPACT_TEMPLATE / compact.md.
     full_prompt += "\n\n" + COMPACT_CONSUMER_HINT
 
-    # ── Volatile-content boundary ──
-    # Previous-session handoff
-    if workspace is not None:
-        handoff_block = _load_handoff_block(workspace)
-        if handoff_block:
-            full_prompt += "\n\n" + handoff_block
-
-
-
-    # Working-set summary
-    if working_set_summary and working_set_summary.strip():
-        full_prompt += "\n\n" + working_set_summary
-
     return full_prompt
 
 
-def _load_handoff_block(workspace: Path) -> str | None:
-    """Read workspace-local handoff artifact if present."""
-    path = workspace / HANDOFF_RELATIVE_PATH
+def handoff_path(workspace: Path) -> Path:
+    """Absolute path of the workspace-local handoff artifact."""
+    return workspace / HANDOFF_RELATIVE_PATH
+
+
+def load_handoff_reminder(workspace: Path) -> str | None:
+    """Read workspace-local handoff for injection as a user-role reminder.
+
+    Returns ``None`` when the file is missing or empty. Callers wrap with
+    :func:`deepseek_tui.engine.context_pressure.wrap_system_reminder`.
+    """
+    path = handoff_path(workspace)
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError:
