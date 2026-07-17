@@ -39,6 +39,15 @@ def session_metadata(
 
 def apply_messages_to_engine(engine: Any, messages: list[Message]) -> None:
     engine.session_messages = list(messages)
+    # Bridge lives in messages; seed iterative re-compaction memory if present.
+    try:
+        from deepseek_tui.engine.context_pressure import extract_compaction_bridge_text
+
+        bridge = extract_compaction_bridge_text(messages)
+        if bridge:
+            engine._compaction_summary_prompt = bridge
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, Any]] | None:

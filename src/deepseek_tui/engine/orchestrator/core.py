@@ -265,10 +265,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.compaction_config = compaction_config or CompactionConfig()
         self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
-        # Compaction summary carried across turns. Without this the
-        # <archived_context> summary only lived in _run_conversation's
-        # local system_prompt and was lost on the next turn — compaction
-        # silently became "delete history".
+        # Last rewrite-bridge text (for iterative re-compaction). The live
+        # bridge is a leading user message in session_messages — never the
+        # system prompt (KV prefix cache).
         self._compaction_summary_prompt: str | None = None
         self.turn_loop = TurnLoop(client, compact_fn=self._emergency_compact)
         # Deferred tools activated during the session (tool_search hits or
@@ -1155,15 +1154,35 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
-        # Cycle / Seam wiring (off by default). Honors ``Config.cycle_enabled``
-        # and ``Config.seam_enabled`` once those fields exist; today they
-        # default to False so behavior is unchanged from the pre-batch state.
+        # Cycle / Seam wiring — ratios from ContextConfig; absolute token
+        # cutoffs are derived per request from the live model window.
+        ctx_cfg = getattr(cfg, "context", None)
         engine.cycle_config = CycleConfig(
             enabled=bool(getattr(cfg, "cycle_enabled", False)),
+            cycle_ratio=float(getattr(ctx_cfg, "cycle_ratio", 0.90) or 0.90),
+        )
+        engine.compaction_config.rewrite_ratio = float(
+            getattr(ctx_cfg, "rewrite_ratio", 0.75) or 0.75
+        )
+        engine.compaction_config.l0_prune_ratio = float(
+            getattr(ctx_cfg, "l0_prune_ratio", 0.50) or 0.50
         )
         if bool(getattr(cfg, "seam_enabled", False)):
+            seam_cfg = SeamConfig(
+                enabled=True,
+                verbatim_window_turns=int(
+                    getattr(ctx_cfg, "verbatim_window_turns", 5) or 5
+                ),
+                l1_ratio=float(getattr(ctx_cfg, "seam_l1_ratio", 0.20) or 0.20),
+                l2_ratio=float(getattr(ctx_cfg, "seam_l2_ratio", 0.40) or 0.40),
+                l3_ratio=float(getattr(ctx_cfg, "seam_l3_ratio", 0.55) or 0.55),
+                seam_model=str(
+                    getattr(ctx_cfg, "seam_model", "deepseek-v4-flash")
+                    or "deepseek-v4-flash"
+                ),
+            )
             engine.seam_manager = SeamManager(
-                flash_client=engine.client, config=SeamConfig(enabled=True)
+                flash_client=engine.client, config=seam_cfg
             )
         engine._cycle_session_id = uuid.uuid4().hex
         engine._cycle_started_at = int(time.time())
@@ -1835,11 +1854,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             )
             if mode_hint:
                 sys_prompt += mode_hint
-            if self._compaction_summary_prompt:
-                # Re-inject archived-context summaries from earlier
-                # compactions; build_system_prompt regenerates from scratch
-                # every turn and would otherwise drop them.
-                sys_prompt = f"{sys_prompt}\n\n{self._compaction_summary_prompt}"
+            # Compaction bridges live in session_messages (leading user
+            # message), not in the system prompt — mutating system every
+            # compact would destroy the stable KV prefix cache.
             result = await self._run_conversation(
                 messages=working_messages,
                 model=op.model or self.default_model,
@@ -2186,31 +2203,27 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
             # Capacity pre-request checkpoint
             # 观测 token/工具调用密度,容量预检查；改写式（删旧+塞摘要）
-            _cap_decision, _compacted, cap_summary = await run_pre_request_checkpoint(
+            await run_pre_request_checkpoint(
                 self.capacity_controller,
                 self.turn_counter,
                 model,
                 messages,
                 compact_fn=self._emergency_compact,
             )
-            if cap_summary:
-                system_prompt = (
-                    f"{system_prompt}\n\n{cap_summary}"
-                    if system_prompt
-                    else cap_summary
-                )
-            # 层级压缩；L1 = 192K、L2 = 384K、L3 = 576K
-            # 发请求前,用真实 token 数判断是否越过 L1/L2/L3 阈值;若越过且该级未产出过,
-            # 就用便宜的 Flash 模型把"逐字窗口之前的旧消息"(或已有接缝)压成一段浓缩摘要,
-            # 插入(而非删除)到逐字窗口边界上——既省 token 又保住前缀缓存,
-            # 还给 LLM 留了一座读懂历史的桥。失败则静默降级,不影响主请求。
+            # Capacity refresh rewrites messages in place (bridge included);
+            # do not mutate system_prompt.
+            # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
+            self._maybe_l0_prune_tool_results(messages, model)
+            # Soft seams L1/L2/L3 at 20%/40%/55% of the model window.
             await self._maybe_layered_context_checkpoint(messages, model)
             hard_cap_hit = len(messages) > 500
             should_trigger = hard_cap_hit or (
                 self._compact_cooldown_rounds <= 0
                 and should_compact(
-                    messages, self.compaction_config,
+                    messages,
+                    self.compaction_config,
                     real_input_tokens=self.last_real_input_tokens,
+                    model=model,
                 )
             )
             if should_trigger:
@@ -2221,24 +2234,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 compact_result = await self._run_compaction(messages)
                 messages[:] = compact_result.messages
                 logger.info(
-                    "compact_done after_count=%d summary_attached=%s success=%s",
+                    "compact_done after_count=%d bridge_attached=%s success=%s",
                     len(messages),
                     bool(compact_result.summary_prompt),
                     compact_result.success,
                 )
                 if compact_result.success:
                     self._compact_cooldown_rounds = 0
-                    if compact_result.summary_prompt:
-                        system_prompt = f"{system_prompt}\n\n{compact_result.summary_prompt}"
-                        # _run_compaction already persisted the summary via
-                        # _record_compaction_summary; the local system_prompt
-                        # var only lives until this turn ends.
+                    # Bridge is already the leading user message — leave
+                    # system_prompt unchanged for KV prefix cache stability.
                 else:
-                    # Compaction failed (e.g. summary model returned empty).
-                    # Don't retry every round — it'll just fail the same way
-                    # and waste 3 LLM calls per round for the whole turn.
-                    # Back off for several rounds; the hard cap can still
-                    # force a retry if messages pile up dangerously.
                     self._compact_cooldown_rounds = 5
                     logger.warning(
                         "compact_failed_backoff cooldown_rounds=5 — "

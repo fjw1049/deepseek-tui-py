@@ -16,13 +16,9 @@ if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
     from deepseek_tui.protocol.messages import Message
 
-# --- Default thresholds ------------------------------------------------------
+# --- Defaults ----------------------------------------------------------------
 
 DEFAULT_SEAM_MODEL = "deepseek-v4-flash"
-DEFAULT_L1_THRESHOLD = 192_000
-DEFAULT_L2_THRESHOLD = 384_000
-DEFAULT_L3_THRESHOLD = 576_000
-DEFAULT_CYCLE_THRESHOLD = 768_000
 VERBATIM_WINDOW_TURNS = 5
 
 L1_MAX_TOKENS = 3_200
@@ -32,15 +28,25 @@ L3_MAX_TOKENS = 1_600
 
 @dataclass(slots=True)
 class SeamConfig:
-    """Configuration for the Flash seam manager."""
+    """Flash seam manager config — ratios of the live model window."""
 
     enabled: bool = True
     verbatim_window_turns: int = VERBATIM_WINDOW_TURNS
-    l1_threshold: int = DEFAULT_L1_THRESHOLD
-    l2_threshold: int = DEFAULT_L2_THRESHOLD
-    l3_threshold: int = DEFAULT_L3_THRESHOLD
-    cycle_threshold: int = DEFAULT_CYCLE_THRESHOLD
+    l1_ratio: float = 0.20
+    l2_ratio: float = 0.40
+    l3_ratio: float = 0.55
     seam_model: str = DEFAULT_SEAM_MODEL
+    # Absolute thresholds filled by :meth:`apply_window` before each check.
+    l1_threshold: int = 0
+    l2_threshold: int = 0
+    l3_threshold: int = 0
+
+    def apply_window(self, window: int) -> None:
+        """Derive absolute token thresholds from *window* × ratios."""
+        w = max(1, int(window))
+        self.l1_threshold = int(w * self.l1_ratio)
+        self.l2_threshold = int(w * self.l2_ratio)
+        self.l3_threshold = int(w * self.l3_ratio)
 
 
 @dataclass(slots=True)
@@ -75,10 +81,6 @@ class SeamManager:
         return seam_level_for_active_input(
             self.config, active_input_tokens, highest_existing_level
         )
-
-    def should_cycle(self, active_input_tokens: int) -> bool:
-        """Check whether the hard cycle boundary is crossed."""
-        return self.config.enabled and active_input_tokens >= self.config.cycle_threshold
 
     def verbatim_window_start(self, message_count: int) -> int:
         """Compute start index of the verbatim window (never summarized)."""
@@ -374,6 +376,8 @@ def seam_level_for_active_input(
     """
     if not config.enabled:
         return None
+    if config.l1_threshold <= 0:
+        config.apply_window(1_000_000)
     highest = highest_existing_level or 0
 
     if highest < 1 and active_input_tokens >= config.l1_threshold:

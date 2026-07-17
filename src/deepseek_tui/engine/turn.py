@@ -67,9 +67,9 @@ STREAM_MAX_DURATION_SECS = 1800
 STREAM_MAX_CONTENT_BYTES = 10 * 1024 * 1024
 MAX_TRANSPARENT_STREAM_RETRIES = 2
 
-# Compact callback may return a bare message list (legacy) or
-# ``(messages, summary_prompt)`` so emergency recovery can inject the
-# archive into the *current* request's system prompt.
+# Compact callback may return a bare message list or
+# ``(messages, bridge_text)``. The bridge is already embedded as a leading
+# user message — do NOT mutate system_prompt (that destroys the KV prefix).
 CompactFnResult = list[Message] | tuple[list[Message], str | None]
 CompactFn = Callable[[list[Message]], Awaitable[CompactFnResult]]
 
@@ -78,18 +78,12 @@ def _apply_compact_result(
     request: MessageRequest,
     result: CompactFnResult,
 ) -> None:
-    """Apply compaction output to the in-flight request (messages + summary)."""
-    summary: str | None = None
+    """Apply compaction output to the in-flight request (messages only)."""
     if isinstance(result, tuple):
-        new_messages, summary = result
+        new_messages, _bridge = result
     else:
         new_messages = result
     request.messages[:] = new_messages
-    if summary:
-        existing = request.system_prompt or ""
-        request.system_prompt = (
-            f"{existing}\n\n{summary}" if existing else summary
-        )
 
 
 class TurnOutcomeStatus(enum.Enum):

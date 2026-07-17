@@ -397,9 +397,8 @@ async def run_pre_request_checkpoint(
 ) -> tuple[CapacityDecision, bool, str | None]:
     """Pre-request checkpoint: if TARGETED_CONTEXT_REFRESH, trigger compaction.
 
-    Returns ``(decision, compacted, summary_prompt)``. When compaction
-    returns a summary, the caller must merge it into the current turn's
-    system prompt (same as the active ``/compact`` path).
+    Returns ``(decision, compacted, bridge_text)``. The bridge is already
+    inside ``messages``; callers must not inject it into the system prompt.
     """
     obs = build_observation(turn_index, model, messages)
     snapshot: CapacitySnapshot | None = controller.observe_pre_turn(obs)
@@ -494,6 +493,7 @@ from deepseek_tui.protocol.messages import Message
 
 # Configuration constants
 KEEP_RECENT_MESSAGES = 4
+KEEP_RECENT_TOKENS = 20_000
 MIN_SUMMARIZE_MESSAGES = 6
 MAX_WORKING_SET_PATHS = 24
 SUMMARY_TEXT_SNIPPET_CHARS = 800
@@ -509,30 +509,39 @@ LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS = 36_000
 LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
-# Hard floor for automatic compaction. Below this,
-# should_compact() returns false regardless of config. Tuned for V4's
-# 1M window with real-input-token semantics (last_real_input_tokens):
-# 200K = 20% of window. Below this the prefix cache is still healthy
-# (hit rate >85% in production logs) and compaction's cache-destroying
-# cost outweighs its benefit. Manual /compact bypasses this floor.
-MINIMUM_AUTO_COMPACTION_TOKENS = 200_000
+# L0 mid-session tool-result prune (grok-style).
+L0_KEEP_LAST_N_TURNS = 3
+L0_SOFT_TRIM_THRESHOLD = 4_000
+L0_SOFT_TRIM_HEAD = 1_500
+L0_SOFT_TRIM_TAIL = 1_500
+L0_HARD_CLEAR_AGE_TURNS = 10
+L0_HARD_CLEAR_PLACEHOLDER = "[Tool result omitted — too old]"
 
 
 @dataclass
 class CompactionConfig:
-    """Configuration for conversation compaction behavior.
+    """Ratio-based conversation compaction policy (relative to model window)."""
 
-    Key difference from
-    prior Python: ``model`` defaults to None which means "use the same
-    model as the main conversation". The old default of
-    "deepseek-chat" silently routed compaction to v4-flash.
-    """
     enabled: bool = True
-    token_threshold: int = 400_000  # Trigger compaction at ~40% of V4 1M window
-    message_threshold: int = 500  # token-based upstream, not message-based
     model: str | None = None  # None = inherit main model
-    cache_summary: bool = True
-    auto_floor_tokens: int = MINIMUM_AUTO_COMPACTION_TOKENS
+    auto_floor_ratio: float = 0.20
+    rewrite_ratio: float = 0.75
+    keep_recent_tokens: int = KEEP_RECENT_TOKENS
+    l0_prune_ratio: float = 0.50
+    l0_prune_enabled: bool = True
+
+
+@dataclass
+class ToolPruneConfig:
+    """Deterministic mid-session pruning of old tool result bodies."""
+
+    enabled: bool = True
+    trigger_ratio: float = 0.50
+    keep_last_n_turns: int = L0_KEEP_LAST_N_TURNS
+    soft_trim_threshold: int = L0_SOFT_TRIM_THRESHOLD
+    soft_trim_head: int = L0_SOFT_TRIM_HEAD
+    soft_trim_tail: int = L0_SOFT_TRIM_TAIL
+    hard_clear_age_turns: int = L0_HARD_CLEAR_AGE_TURNS
 
 
 @dataclass
@@ -669,39 +678,44 @@ def _estimate_tokens_for_message(msg: Message, include_thinking: bool = True) ->
 def plan_compaction(
     messages: list[Message],
     pinned_indices: set[int] | None = None,
+    *,
+    keep_recent_tokens: int = KEEP_RECENT_TOKENS,
 ) -> CompactionPlan:
     """Generate a compaction plan for messages.
 
-    Args:
-        messages: Message history
-        pinned_indices: Indices of messages to always keep
-
-    Returns:
-        Compaction plan with pinned and summarize indices
+    Pins a recent verbatim window sized by *keep_recent_tokens* (with a
+    floor of :data:`KEEP_RECENT_MESSAGES`), walking back so the window
+    never starts on a tool-result message.
     """
     if not messages:
         return CompactionPlan()
 
     plan = CompactionPlan()
     pinned_indices = pinned_indices or set()
-
-    # Always pin last KEEP_RECENT_MESSAGES messages. Extend the window
-    # backwards while it would start on a tool-result message: the API
-    # requires every tool message to directly follow the assistant message
-    # carrying the matching tool_calls, so summarizing that parent away
-    # would produce an illegal (orphaned) sequence.
-    start = max(0, len(messages) - KEEP_RECENT_MESSAGES)
     from deepseek_tui.protocol.messages import Role
+
+    # Grow the keep window from the end until token budget is met (or we
+    # hit the message floor, whichever needs more history).
+    start = len(messages)
+    accumulated = 0
+    min_messages = KEEP_RECENT_MESSAGES
+    while start > 0:
+        need_more_msgs = (len(messages) - start) < min_messages
+        need_more_tokens = accumulated < keep_recent_tokens
+        if not need_more_msgs and not need_more_tokens:
+            break
+        start -= 1
+        accumulated += _estimate_tokens_for_message(
+            messages[start], include_thinking=False
+        )
 
     while start > 0 and messages[start].role == Role.TOOL:
         start -= 1
     for i in range(start, len(messages)):
         plan.pinned_indices.add(i)
 
-    # Always pin explicitly pinned indices
     plan.pinned_indices.update(pinned_indices)
 
-    # Collect messages to summarize (not pinned)
     for i, _ in enumerate(messages):
         if i not in plan.pinned_indices:
             plan.summarize_indices.append(i)
@@ -715,85 +729,35 @@ def should_compact(
     pinned_indices: set[int] | None = None,
     *,
     real_input_tokens: int = 0,
+    model: str | None = None,
 ) -> bool:
-    """Determine if messages should be compacted.
+    """Determine if messages should be rewrite-compacted.
 
-    Args:
-        messages: Current message history
-        config: Compaction configuration
-        pinned_indices: Explicitly pinned message indices
-        real_input_tokens: Last real ``input_tokens`` reported by the
-            provider (from the previous turn's final stream). When > 0,
-            used as the primary pressure signal — it is the exact billed
-            input, zero estimation error. When 0 (first turn, or provider
-            didn't report), falls back to the char-based estimate.
-
-    Returns:
-        True if compaction should trigger
+    Primary signal is context-used *ratio* vs ``config.rewrite_ratio``
+    (default 0.75). Below ``auto_floor_ratio`` (default 0.20) auto rewrite
+    never fires — soft seams / L0 handle that band.
     """
     if not config.enabled or not messages:
         return False
 
-    # Prefer the provider's real input_tokens when available. The
-    # char-based estimate undercounts by ~6x in practice (it omits system
-    # prompt, tool schemas, framing, reasoning), which made the old
-    # auto-floor effectively unreachable. The real number has no such bias.
-    if real_input_tokens > 0:
-        if real_input_tokens < config.auto_floor_tokens:
-            return False
-        # Real input already accounts for system prompt, tools, framing —
-        # no need to add pinned_tokens adjustment (that was compensating
-        # for the estimate's blind spots). Compare directly.
-        return real_input_tokens >= config.token_threshold
+    from deepseek_tui.engine.context_pressure import measure_context_pressure
 
-    # Fallback: char-based estimate (first turn, or provider reported no usage).
-    # Hard floor — don't auto-compact below this token count.
-    # V4 prefix-cache economics: compaction rewrites the stable prefix,
-    # destroying KV cache. At low token counts the cache is healthy and
-    # compaction's cost dwarfs its benefit.
-    total_tokens = sum(
-        _estimate_tokens_for_message(m, include_thinking=False)
-        for m in messages
+    pressure = measure_context_pressure(
+        model or config.model or "deepseek-chat",
+        messages,
+        real_input_tokens=real_input_tokens,
     )
-    if total_tokens < config.auto_floor_tokens:
+    if pressure.ratio < config.auto_floor_ratio:
         return False
-
-    plan = plan_compaction(messages, pinned_indices)
-
-    # Count pinned messages and tokens
-    pinned_count = len(plan.pinned_indices)
-    pinned_tokens = sum(
-        _estimate_tokens_for_message(messages[i], include_thinking=True)
-        for i in plan.pinned_indices
-        if i < len(messages)
-    )
-
-    # Estimate tokens to summarize
-    token_estimate = sum(
-        _estimate_tokens_for_message(messages[i], include_thinking=False)
-        for i in plan.summarize_indices
-        if i < len(messages)
-    )
-    message_count = len(plan.summarize_indices)
-
-    # Adjust thresholds based on pinned messages
-    effective_token_threshold = max(0, config.token_threshold - pinned_tokens)
-    effective_message_threshold = max(0, config.message_threshold - pinned_count)
-
-    # Always compact if token threshold exceeded
-    if token_estimate > effective_token_threshold and effective_token_threshold > 0:
-        return True
-
-    # Need enough unpinned messages to justify compaction
-    enough_unpinned = (
-        message_count >= MIN_SUMMARIZE_MESSAGES
-        or effective_token_threshold == 0
-        or effective_message_threshold == 0
-    )
-    if not enough_unpinned:
-        return False
-
-    return token_estimate > effective_token_threshold or message_count > effective_message_threshold
+    if pressure.ratio >= config.rewrite_ratio:
+        # Still require enough unpinned material to be worth summarizing.
+        plan = plan_compaction(
+            messages,
+            pinned_indices,
+            keep_recent_tokens=config.keep_recent_tokens,
+        )
+        return len(plan.summarize_indices) >= MIN_SUMMARIZE_MESSAGES
+    return False
 
 
 async def compact_messages_safe(
@@ -804,62 +768,78 @@ async def compact_messages_safe(
     pinned_indices: set[int] | None = None,
     working_set_paths: list[str] | None = None,
     model_override: str | None = None,
+    previous_summary: str | None = None,
 ) -> CompactionResult:
     """Compact messages with retry and backoff for transient errors.
 
-    Args:
-        client: LLM client for summary generation
-        messages: Message history to compact
-        config: Compaction configuration
-        workspace: Workspace directory (for path normalization)
-        pinned_indices: Explicitly pinned message indices
-        working_set_paths: Working set file paths for reference
-        model_override: Model to use for summary (overrides config.model)
-
-    Returns:
-        Compaction result with compacted messages and summary
+    On success, returned ``messages`` already include a leading **user**
+    bridge carrying ``<archived_context>``. Callers must NOT inject the
+    summary into the system prompt (that destroys the stable KV prefix).
+    ``summary_prompt`` remains the bridge body for persistence / debugging.
     """
     if not messages or not config.enabled:
         return CompactionResult(messages=messages)
 
-    # # 最近4条消息 plan 不动，其余送去摘要
-    plan = plan_compaction(messages, pinned_indices)
+    from deepseek_tui.engine.context_pressure import (
+        build_compaction_bridge_text,
+        extract_compaction_bridge_text,
+        is_compaction_bridge_message,
+        prepend_compaction_bridge,
+    )
+
+    # Drop any prior bridge from the plan input; its text becomes previous_summary.
+    prior_bridge = extract_compaction_bridge_text(messages)
+    work_messages = [m for m in messages if not is_compaction_bridge_message(m)]
+    if not work_messages:
+        work_messages = list(messages)
+
+    prev = previous_summary or prior_bridge
+
+    plan = plan_compaction(
+        work_messages,
+        pinned_indices,
+        keep_recent_tokens=config.keep_recent_tokens,
+    )
 
     if not plan.summarize_indices:
         return CompactionResult(messages=messages)
 
-    # Collect messages to summarize
-    messages_to_summarize = [messages[i] for i in plan.summarize_indices if i < len(messages)]
+    messages_to_summarize = [
+        work_messages[i] for i in plan.summarize_indices if i < len(work_messages)
+    ]
 
     if len(messages_to_summarize) < MIN_SUMMARIZE_MESSAGES:
         return CompactionResult(messages=messages)
 
-    # Resolve model: explicit override > config.model > fallback
     effective_model = model_override or config.model or "deepseek-chat"
 
-    # Generate summary with retries
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            summary = await _create_summary(client, messages_to_summarize, effective_model)
-            # Empty / unstructured summaries must not replace history.
+            summary = await _create_summary(
+                client,
+                messages_to_summarize,
+                effective_model,
+                previous_summary=prev,
+            )
             validation_error = validate_compaction_summary(summary)
             if validation_error:
                 raise ValueError(validation_error)
 
-            # Build result with pinned + summary
             pinned_messages = [
-                messages[i] for i in sorted(plan.pinned_indices) if i < len(messages)
+                work_messages[i]
+                for i in sorted(plan.pinned_indices)
+                if i < len(work_messages)
             ]
-            removed_messages = messages_to_summarize
-
-            # Create system block with summary
-            summary_prompt = _build_summary_system_prompt(summary, working_set_paths)
+            bridge_text = build_compaction_bridge_text(
+                summary, working_set_paths=working_set_paths
+            )
+            compacted = prepend_compaction_bridge(pinned_messages, bridge_text)
 
             return CompactionResult(
-                messages=pinned_messages,
-                summary_prompt=summary_prompt,
-                removed_messages=removed_messages,
+                messages=compacted,
+                summary_prompt=bridge_text,
+                removed_messages=messages_to_summarize,
                 retries_used=attempt,
                 success=True,
             )
@@ -871,11 +851,9 @@ async def compact_messages_safe(
                 exc_info=True,
             )
             if attempt < max_retries - 1:
-                # Exponential backoff: 1s, 2s, 4s
-                delay = (2 ** attempt)
+                delay = 2**attempt
                 await asyncio.sleep(delay)
                 continue
-            # Final attempt failed, return original messages
             logger.warning(
                 "compact_all_retries_exhausted retries=%d",
                 max_retries,
@@ -886,7 +864,13 @@ async def compact_messages_safe(
     return CompactionResult(messages=messages)
 
 
-async def _create_summary(client: LLMClient, messages: list[Message], model: str) -> str:
+async def _create_summary(
+    client: LLMClient,
+    messages: list[Message],
+    model: str,
+    *,
+    previous_summary: str | None = None,
+) -> str:
     """Create a structured compaction handoff using the compact.md contract."""
     limits = _summary_input_limits_for_model(model)
 
@@ -924,10 +908,18 @@ async def _create_summary(client: LLMClient, messages: list[Message], model: str
         "Follow the contract exactly. Prefer structure and continuity over "
         "prose polish. Do not call tools."
     )
+    previous_block = ""
+    if previous_summary and previous_summary.strip():
+        previous_block = (
+            "Previous compaction summary (authoritative; PRESERVE still-true "
+            "facts, ADD new progress, UPDATE Next step):\n"
+            f"<previous-summary>\n{previous_summary.strip()}\n</previous-summary>\n\n"
+        )
     user_prompt = (
         f"{handoff_contract}\n\n"
         f"Keep the filled handoff under {limits.word_limit} words when possible; "
         "structure and required headings take priority over the word limit.\n\n"
+        f"{previous_block}"
         "---\n\n"
         "Conversation to archive:\n\n"
         f"{conversation_text}"
@@ -951,13 +943,94 @@ async def _create_summary(client: LLMClient, messages: list[Message], model: str
 
 
 
-def _build_summary_system_prompt(summary: str, working_set_paths: list[str] | None = None) -> str:
-    """Build system prompt block with summary and working set context."""
-    prompt = f"<archived_context>\n{summary}\n</archived_context>"
+def _turn_index_from_end(messages: list[Message], idx: int) -> int:
+    """Approximate turn age: how many user turns sit after *idx*."""
+    from deepseek_tui.protocol.messages import Role
 
-    if working_set_paths:
-        prompt += "\n\n**Working Set Files:**\n"
-        for path in working_set_paths[:10]:
-            prompt += f"- {path}\n"
+    turns = 0
+    for i in range(idx + 1, len(messages)):
+        if messages[i].role == Role.USER:
+            turns += 1
+    return turns
 
-    return prompt
+
+def prune_old_tool_results(
+    messages: list[Message],
+    *,
+    config: ToolPruneConfig | None = None,
+    mutate_before_index: int | None = None,
+) -> int:
+    """Soft-trim / hard-clear old tool result bodies in place.
+
+    Only mutates tool messages with index ``< mutate_before_index`` (defaults
+    to everything except the last ``keep_last_n_turns``). Does not touch
+    assistant tool_call structure. Returns the number of tool bodies changed.
+    """
+    cfg = config or ToolPruneConfig()
+    if not cfg.enabled or not messages:
+        return 0
+
+    from deepseek_tui.protocol.messages import Role, ToolResultBlock
+
+    boundary = (
+        mutate_before_index
+        if mutate_before_index is not None
+        else len(messages)
+    )
+    changed = 0
+    for i, msg in enumerate(messages):
+        if i >= boundary or msg.role != Role.TOOL:
+            continue
+        age = _turn_index_from_end(messages, i)
+        if age < cfg.keep_last_n_turns:
+            continue
+        new_blocks = []
+        msg_changed = False
+        for block in msg.content:
+            if not isinstance(block, ToolResultBlock):
+                new_blocks.append(block)
+                continue
+            content = block.content or ""
+            if age >= cfg.hard_clear_age_turns:
+                if content != L0_HARD_CLEAR_PLACEHOLDER:
+                    new_blocks.append(
+                        block.model_copy(update={"content": L0_HARD_CLEAR_PLACEHOLDER})
+                    )
+                    msg_changed = True
+                else:
+                    new_blocks.append(block)
+                continue
+            if len(content) > cfg.soft_trim_threshold:
+                head = content[: cfg.soft_trim_head]
+                tail = content[-cfg.soft_trim_tail :]
+                trimmed = (
+                    f"{head}\n\n[... tool output pruned for context ...]\n\n{tail}"
+                )
+                if trimmed != content:
+                    new_blocks.append(block.model_copy(update={"content": trimmed}))
+                    msg_changed = True
+                    continue
+            new_blocks.append(block)
+        if msg_changed:
+            messages[i] = msg.model_copy(update={"content": new_blocks})
+            changed += 1
+    return changed
+
+
+def should_l0_prune(
+    *,
+    model: str,
+    messages: list[Message],
+    real_input_tokens: int = 0,
+    config: CompactionConfig | None = None,
+) -> bool:
+    """True when context ratio warrants mid-session tool pruning."""
+    cfg = config or CompactionConfig()
+    if not cfg.l0_prune_enabled:
+        return False
+    from deepseek_tui.engine.context_pressure import measure_context_pressure
+
+    pressure = measure_context_pressure(
+        model, messages, real_input_tokens=real_input_tokens
+    )
+    return pressure.ratio >= cfg.l0_prune_ratio

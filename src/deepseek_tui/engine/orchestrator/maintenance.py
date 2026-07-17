@@ -11,7 +11,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.engine.capacity import CompactionResult, compact_messages_safe
+from deepseek_tui.engine.capacity import (
+    MAX_WORKING_SET_PATHS,
+    CompactionResult,
+    ToolPruneConfig,
+    compact_messages_safe,
+    prune_old_tool_results,
+    should_l0_prune,
+)
 from deepseek_tui.engine.cycle import archive_cycle, should_advance_cycle
 from deepseek_tui.protocol.messages import Message
 
@@ -124,18 +131,13 @@ class SessionMaintenanceMixin:
         if seam is None or not seam.config.enabled:
             return
 
-        # Prefer the provider's real input_tokens (zero estimation error);
-        # fall back to the char-based estimate on the first turn only.
-        # Same fix as should_compact — the estimate undercounts ~6x and
-        # made seam's L1 (192K) unreachable in practice.
-        tokens = self.last_real_input_tokens
-        if tokens <= 0:
-            from deepseek_tui.engine.context import estimated_input_tokens
+        from deepseek_tui.engine.context_pressure import measure_context_pressure
 
-            try:
-                tokens = estimated_input_tokens(messages)
-            except Exception:  # noqa: BLE001
-                return
+        pressure = measure_context_pressure(
+            model, messages, real_input_tokens=self.last_real_input_tokens
+        )
+        seam.config.apply_window(pressure.window)
+        tokens = pressure.tokens
         highest = await seam.highest_level()
         level = seam.seam_level_for(tokens, highest)
         if level is None:
@@ -198,11 +200,19 @@ class SessionMaintenanceMixin:
             session_file = sessions_dir / "current.json"
             import json as _json
 
+            from deepseek_tui.engine.context_pressure import (
+                extract_compaction_bridge_text,
+            )
+
+            bridge = extract_compaction_bridge_text(self.session_messages)
             data = {
                 "model": self.default_model,
                 "turn_counter": self.turn_counter,
                 "messages": [m.model_dump() for m in self.session_messages],
-                "compaction_summary_prompt": self._compaction_summary_prompt,
+                # Legacy field: bridge now lives inside messages; keep for
+                # older readers / debugging only.
+                "compaction_summary_prompt": bridge
+                or self._compaction_summary_prompt,
                 "metadata": {
                     "id": self._cycle_session_id,
                 },
@@ -216,32 +226,33 @@ class SessionMaintenanceMixin:
     _COMPACTION_SUMMARY_MAX_CHARS = 20_000
 
     def _record_compaction_summary(self, summary_prompt: str | None) -> None:
-        """Accumulate a compaction summary so later turns retain it.
+        """Remember the latest bridge text for iterative re-compaction.
 
-        Keeps the tail when the accumulated text exceeds the cap (newer
-        summaries are more relevant than older ones).
+        Does **not** accumulate into the system prompt. The live bridge is
+        a leading user message in ``messages``.
         """
         if not summary_prompt:
             return
-        if self._compaction_summary_prompt:
-            combined = f"{self._compaction_summary_prompt}\n\n{summary_prompt}"
-        else:
-            combined = summary_prompt
-        if len(combined) > self._COMPACTION_SUMMARY_MAX_CHARS:
-            combined = combined[-self._COMPACTION_SUMMARY_MAX_CHARS :]
-        self._compaction_summary_prompt = combined
+        text = summary_prompt
+        if len(text) > self._COMPACTION_SUMMARY_MAX_CHARS:
+            text = text[-self._COMPACTION_SUMMARY_MAX_CHARS :]
+        self._compaction_summary_prompt = text
 
     async def _run_compaction(
         self, messages: list[Message]
     ) -> CompactionResult:
         """Run compaction and return the full result (incl. success flag).
 
-        Shared by :meth:`_emergency_compact` (TurnLoop callback, which
-        only wants the messages) and the manual ``/compact`` path in
-        ``threads.py`` (which needs ``success`` to surface failures to
-        the user).
+        Successful results have the ``<archived_context>`` bridge already
+        prepended to ``result.messages`` — callers must not inject it into
+        the system prompt.
         """
         from deepseek_tui.engine.usage_ledger import usage_source
+
+        pinned = self.working_set.pinned_message_indices(
+            messages, self.tool_context.working_directory
+        )
+        paths = self.working_set.top_paths(MAX_WORKING_SET_PATHS)
 
         with usage_source("compaction"):
             result = await compact_messages_safe(
@@ -249,10 +260,11 @@ class SessionMaintenanceMixin:
                 messages,
                 self.compaction_config,
                 workspace=self.tool_context.working_directory,
+                pinned_indices=pinned or None,
+                working_set_paths=paths or None,
                 model_override=self.default_model,
+                previous_summary=self._compaction_summary_prompt,
             )
-        # Persist the summary — previously discarded, so emergency/manual
-        # compaction lost the archived history entirely.
         self._record_compaction_summary(result.summary_prompt)
         return result
 
@@ -261,13 +273,46 @@ class SessionMaintenanceMixin:
     ) -> tuple[list[Message], str | None]:
         """Emergency compaction for TurnLoop / capacity overflow recovery.
 
-        Returns ``(messages, summary_prompt)``. Callers must merge
-        ``summary_prompt`` into the *current* request's system prompt —
-        otherwise this turn only sees the pinned tail and the archive is
-        deferred until the next user turn.
+        Returns ``(messages, bridge_text)``. The bridge is already inside
+        ``messages``; the second value is for logging only.
         """
         result = await self._run_compaction(messages)
         return result.messages, result.summary_prompt
+
+    def _maybe_l0_prune_tool_results(
+        self, messages: list[Message], model: str
+    ) -> int:
+        """Prune old tool bodies when context ratio ≥ L0 threshold."""
+        if not should_l0_prune(
+            model=model,
+            messages=messages,
+            real_input_tokens=self.last_real_input_tokens,
+            config=self.compaction_config,
+        ):
+            return 0
+        # Prefer not to mutate inside the recent verbatim / seam window:
+        # only prune messages before the last soft-seam insert when present.
+        boundary = len(messages)
+        for i, msg in enumerate(messages):
+            text = ""
+            for block in msg.content:
+                if hasattr(block, "text") and isinstance(block.text, str):
+                    text = block.text
+                    break
+            if '<archived_context level="' in text:
+                boundary = i
+                break
+        changed = prune_old_tool_results(
+            messages,
+            config=ToolPruneConfig(
+                enabled=True,
+                trigger_ratio=self.compaction_config.l0_prune_ratio,
+            ),
+            mutate_before_index=boundary,
+        )
+        if changed:
+            logger.info("l0_tool_prune changed=%d boundary=%d", changed, boundary)
+        return changed
 
     async def _maybe_advance_cycle(
         self, messages: list[Message], model: str

@@ -69,7 +69,6 @@ class UiConfig(BaseModel):
     color_scheme: str = "default"
     show_thinking: bool = True
     theme: str = "default"
-    auto_compact: bool = False
     show_tool_details: bool = True
     locale: str = "auto"
     default_mode: str = "agent"
@@ -163,13 +162,17 @@ class SnapshotConfig(BaseModel):
 
 
 class ContextConfig(BaseModel):
+    """Layered context policy — ratios of the live model context window."""
+
     enabled: bool = False
-    verbatim_window_turns: int = 16
-    l1_threshold: int = 192_000
-    l2_threshold: int = 384_000
-    l3_threshold: int = 576_000
-    cycle_threshold: int = 768_000
+    verbatim_window_turns: int = 5
     seam_model: str = "deepseek-v4-flash"
+    seam_l1_ratio: float = 0.20
+    seam_l2_ratio: float = 0.40
+    l0_prune_ratio: float = 0.50
+    seam_l3_ratio: float = 0.55
+    rewrite_ratio: float = 0.75
+    cycle_ratio: float = 0.90
 
 
 class CapacityConfig(BaseModel):

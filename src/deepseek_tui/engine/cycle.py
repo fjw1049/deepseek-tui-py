@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
 
 CYCLE_ARCHIVE_SCHEMA_VERSION = 1
-DEFAULT_CYCLE_THRESHOLD_TOKENS = 768_000
 DEFAULT_BRIEFING_MAX_TOKENS = 3_000
 APPROX_CHARS_PER_TOKEN = 4
 
@@ -30,17 +29,12 @@ CYCLE_HANDOFF_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "cycle_ha
 
 @dataclass(slots=True)
 class CycleConfig:
-    """Configuration for cycle boundaries."""
+    """Configuration for cycle boundaries (ratio of model window)."""
 
     enabled: bool = True
-    threshold_tokens: int = DEFAULT_CYCLE_THRESHOLD_TOKENS
+    cycle_ratio: float = 0.90
     briefing_max_tokens: int = DEFAULT_BRIEFING_MAX_TOKENS
     per_model: dict[str, ModelCycleConfig] = field(default_factory=dict)
-
-    def threshold_for(self, model: str) -> int:
-        if model in self.per_model:
-            return self.per_model[model].threshold_tokens
-        return self.threshold_tokens
 
     def briefing_max_for(self, model: str) -> int:
         if model in self.per_model:
@@ -52,7 +46,6 @@ class CycleConfig:
 class ModelCycleConfig:
     """Per-model cycle tuning."""
 
-    threshold_tokens: int = DEFAULT_CYCLE_THRESHOLD_TOKENS
     briefing_max_tokens: int = DEFAULT_BRIEFING_MAX_TOKENS
 
 
@@ -143,20 +136,16 @@ def should_advance_cycle(
     config: CycleConfig,
     in_flight: bool,
 ) -> bool:
-    """Determine if a cycle boundary should fire."""
+    """Determine if a cycle boundary should fire (ratio ≥ cycle_ratio)."""
     if not config.enabled or in_flight:
         return False
-    threshold = config.threshold_for(model)
-    if threshold == 0:
-        return False
-    from deepseek_tui.engine.context import context_input_budget
+    from deepseek_tui.config.providers import context_window_for_model
 
-    window = context_input_budget(model, 0)
-    if window is not None:
-        trigger_floor = min(threshold, window - reserved_headroom_tokens)
-    else:
-        trigger_floor = threshold
-    return active_input_tokens >= trigger_floor
+    window = max(1, int(context_window_for_model(model) or 128_000))
+    # reserved_headroom_tokens kept for API compat; ratio already leaves room.
+    _ = reserved_headroom_tokens
+    ratio = active_input_tokens / window
+    return ratio >= float(config.cycle_ratio or 0.90)
 
 
 def extract_carry_forward(raw: str) -> str:
