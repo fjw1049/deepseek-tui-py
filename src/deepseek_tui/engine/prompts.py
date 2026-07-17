@@ -131,11 +131,24 @@ def render_plugin_context(
         "directory above. This OVERRIDES the path-escape rule (paths outside the "
         "workspace are normally rejected) for this directory only, for read operations.",
         "- Write operations remain confined to the workspace.",
+        "- Scenario tools: the API tool list for this session is authoritative "
+        "(explore, write, code_execution, shell, agents, web/session helpers as "
+        "offered). Do not invent or forge tool-call markup for tools that are "
+        "not in that list. Names in the static Toolbox that are absent from the "
+        "API tools are unavailable while this plugin is mounted.",
         f"- Declared permissions: {perms}",
     ]
     if has_mcp and not mcp_active:
         lines.append(
-            "- MCP servers from this plugin are NOT active (plugin not trusted)."
+            "- MCP servers / hooks from this plugin are NOT active "
+            "(plugin not trusted). Built-in tools above do not require trust."
+        )
+    elif has_mcp and mcp_active:
+        lines.append("- MCP servers from this plugin are active (trusted).")
+    elif not trusted:
+        lines.append(
+            "- Plugin hooks are inactive until trusted. Built-in scenario tools "
+            "do not require trust."
         )
     return "\n".join(lines)
 

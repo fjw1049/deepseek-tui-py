@@ -1660,14 +1660,15 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         assert "ro-plugin" in note
         wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
-        # Read-only plugin gets the full read base (grep_files, not the old
-        # buggy "grep"; plus file_search, git read, project_map, ...).
+        # Scenario base is generous: explore + write + code_execution + shell
+        # + agents (authors rarely declare allowed-tools). Manifest
+        # permissions: ["read"] is advisory UI, not a tool-surface cut.
         assert {"read_file", "grep_files", "list_dir", "load_skill"} <= wl
         assert {"file_search", "git_status", "git_diff", "project_map"} <= wl
-        # No write tools for a read-only plugin (incl. apply_patch).
-        assert {"write_file", "edit_file", "apply_patch"}.isdisjoint(wl)
-        # No exec either.
-        assert {"exec_shell", "code_execution"}.isdisjoint(wl)
+        assert {"write_file", "edit_file", "apply_patch"} <= wl
+        assert {"exec_shell", "code_execution", "agent_spawn"} <= wl
+        # Orchestration / mutating GitHub stay out unless skill-declared.
+        assert {"task_create", "workflow", "github_close"}.isdisjoint(wl)
     finally:
         await engine.shutdown_session()
 
@@ -1775,13 +1776,11 @@ async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
 async def test_plugin_mount_confines_advanced_meta_tools(
     tmp_path, monkeypatch
 ) -> None:
-    """Mounting a read-only plugin confines code_execution + tool_search.
+    """Meta-tools follow the focus whitelist (no ensure_advanced_tooling bypass).
 
-    Regression: ``ensure_advanced_tooling`` re-added these meta-tools to the
-    catalog AFTER the focus whitelist filter, so a ``permissions: ["read"]``
-    plugin still left ``code_execution`` (arbitrary Python incl.
-    ``subprocess``) callable - breaking the read-only confinement.
-    ``_advanced_tool_flags`` now gates them by the whitelist.
+    Scenario base includes ``code_execution`` by default; ``tool_search_*``
+    stays out unless named. Regression: ensure_advanced_tooling used to
+    re-add both after the catalog filter.
     """
     from unittest.mock import AsyncMock
 
@@ -1812,23 +1811,20 @@ async def test_plugin_mount_confines_advanced_meta_tools(
         engine._focus_tool_whitelist = (
             wl_result[0] if wl_result is not None else None
         )
-        # read-only plugin whitelist has only read tools -> both meta-tools
-        # confined (this is the regression: previously code_execution stayed
-        # available via ensure_advanced_tooling bypassing the whitelist).
+        # Scenario base includes code_execution; tool_search stays gated off.
+        assert engine._advanced_tool_flags() == (False, True)
+
+        engine._focus_tool_whitelist = frozenset({"read_file"})
         assert engine._advanced_tool_flags() == (False, False)
 
-        # If the whitelist explicitly lists code_execution (e.g. a plugin
-        # skill declared it via allowed-tools), it is allowed through.
         engine._focus_tool_whitelist = frozenset({"read_file", "code_execution"})
         assert engine._advanced_tool_flags() == (False, True)
 
-        # tool_search同理: only when whitelisted.
         engine._focus_tool_whitelist = frozenset(
             {"read_file", "tool_search_tool_bm25", "tool_search_tool_regex"}
         )
         assert engine._advanced_tool_flags() == (True, False)
 
-        # No whitelist -> normal profile defaults (both included when full).
         engine._focus_tool_whitelist = None
         _search, _code = engine._advanced_tool_flags()
         assert _code is True  # tool_profile None -> code_execution included
@@ -1910,7 +1906,9 @@ async def test_render_plugin_context_notes_inactive_mcp_when_untrusted(
         engine.set_active_plugin("mcp-untrusted")
         block = engine._render_plugin_context()
         assert block is not None
-        assert "MCP servers from this plugin are NOT active (plugin not trusted)" in block
+        assert "MCP servers / hooks from this plugin are NOT active" in block
+        assert "plugin not trusted" in block
+        assert "Scenario tools:" in block
     finally:
         await engine.shutdown_session()
 
@@ -2227,10 +2225,10 @@ async def test_set_active_plugin_scenario_copy_and_hook_filter(
         await engine.shutdown_session()
 
 
-async def test_untrusted_plugin_skill_allowed_tools_ignored_in_whitelist(
+async def test_untrusted_plugin_skill_allowed_tools_expand_whitelist(
     tmp_path, monkeypatch
 ) -> None:
-    """Untrusted mounts must not expand the whitelist via skill allowed-tools."""
+    """Untrusted mounts still merge skill allowed-tools (extras beyond base)."""
     from unittest.mock import AsyncMock
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
@@ -2245,7 +2243,7 @@ async def test_untrusted_plugin_skill_allowed_tools_ignored_in_whitelist(
     skill = plugin / "skills" / "demo-skill" / "SKILL.md"
     skill.write_text(
         "---\nname: demo-skill\ndescription: d\n"
-        "allowed-tools: write_file, exec_shell\n---\n\nBody.\n",
+        "allowed-tools: task_create, workflow\n---\n\nBody.\n",
         encoding="utf-8",
     )
 
@@ -2265,16 +2263,17 @@ async def test_untrusted_plugin_skill_allowed_tools_ignored_in_whitelist(
         engine.set_active_plugin("expand")
         wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
-        assert wl <= FOCUS_READ_BASE or wl == FOCUS_READ_BASE
-        assert "write_file" not in wl
-        assert "bash" not in wl and "exec_shell" not in wl
+        assert FOCUS_READ_BASE <= wl
+        assert {"task_create", "workflow"} <= wl
+        assert "write_file" in wl and "exec_shell" in wl
     finally:
         await engine.shutdown_session()
 
 
-async def test_agent_spawn_untrusted_plugin_confined_to_read_base(
+async def test_agent_spawn_untrusted_plugin_confined_to_scenario_base(
     tmp_path,
 ) -> None:
+    """Untrusted plugin personas inherit the generous scenario base, not full GENERAL."""
     from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
     from deepseek_tui.integrations.plugins import PluginAgent
     from deepseek_tui.tools.registry import ToolContext
@@ -2305,4 +2304,6 @@ async def test_agent_spawn_untrusted_plugin_confined_to_read_base(
     spawned = manager._agents[result.metadata["agent_id"]]
     assert spawned.allowed_tools is not None
     assert set(spawned.allowed_tools) == set(FOCUS_READ_BASE)
+    assert "code_execution" in spawned.allowed_tools
+    assert "exec_shell" in spawned.allowed_tools
     await manager.shutdown()

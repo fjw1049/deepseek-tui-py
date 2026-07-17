@@ -11,24 +11,71 @@ from typing import Any
 from deepseek_tui.engine.prompts import AppMode as _AppMode
 from deepseek_tui.protocol.messages import Message, TextBlock
 
-# Read-only exploration base - always available in every focus mode
-# (skill / mcp / plugin mount). These carry no write/exec risk and are
-# universally needed to orient and inspect code, so confining them would
-# only cripple the model without improving safety. Note ``grep_files``
-# (not ``grep``) - the old ``"grep"`` literal was a name mismatch that
+# Scenario / focus default tool surface. Authors rarely declare skill
+# ``allowed-tools``, so mounts must ship a usable agent subset by default
+# (explore + write + code_execution + shell + agents + web/session helpers).
+# Trust still gates plugin-supplied processes (hooks / MCP), not these
+# built-ins. Note ``grep_files`` (not ``grep``) — name mismatch historically
 # silently excluded grep from every focus mode.
 FOCUS_READ_BASE = frozenset(
     {
-        "read_file", "list_dir", "grep_files", "file_search",
-        "project_map", "diagnostics",
-        "git_status", "git_diff", "git_log", "git_blame", "git_show",
-        "load_skill", "note", "update_plan", "retrieve_tool_result",
+        # Explore
+        "read_file",
+        "list_dir",
+        "grep_files",
+        "file_search",
+        "project_map",
+        "diagnostics",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_show",
+        "github_issue_context",
+        "github_pr_context",
+        # Session
+        "load_skill",
+        "note",
+        "update_plan",
+        "retrieve_tool_result",
         "current_time",
+        "checklist_write",
+        "checklist_add",
+        "checklist_update",
+        "checklist_list",
+        "request_user_input",
+        "recall_archive",
+        # Research
+        "web_search",
+        "fetch_url",
+        # Work
+        "write_file",
+        "edit_file",
+        "apply_patch",
+        "code_execution",
+        # Shell
+        "exec_shell",
+        "exec_shell_wait",
+        "exec_shell_interact",
+        "exec_shell_cancel",
+        "exec_wait",
+        "exec_interact",
+        # Agents
+        "agent_spawn",
+        "agent_result",
+        "agent_wait",
+        "agent_list",
+        "agent_cancel",
+        "agent_send_input",
+        "agent_assign",
+        "close_agent",
+        "resume_agent",
+        "delegate_to_agent",
     }
 )
 
-# Write tools - included only when the focus target permits writes
-# (skill focus; mcp focus; plugin with the ``writes_files`` permission).
+# Write subset kept for MCP-focus composition and callers that want the
+# write trio without the full scenario base.
 FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file", "apply_patch"})
 
 

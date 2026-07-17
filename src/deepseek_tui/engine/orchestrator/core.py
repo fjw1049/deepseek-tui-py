@@ -475,9 +475,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         discovery 的工具也能按 server 级放行（修白名单竞态：lazy server 在
         首次工具调用前 tool 名未知，按 server 名前缀匹配兜底放行）。
 
-        基座为只读探索 + 写工具（``FOCUS_READ_BASE | FOCUS_WRITE_BASE``）：
-        连接器聚焦不仅查询连接器，还要能对工作区文件动手（如根据 PR
-        改代码），所以写工具一并放行。Exec/网络等领域工具不进基座。
+        基座为场景默认工具面（``FOCUS_READ_BASE``，已含写/exec/agents）
+        并与 ``FOCUS_WRITE_BASE`` 求并（幂等）。连接器聚焦不仅查询连接器，
+        还要能对工作区动手。
         """
         tool_names = frozenset(
             self._server_tool_names(server) | FOCUS_READ_BASE | FOCUS_WRITE_BASE
@@ -707,36 +707,29 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     ) -> tuple[frozenset[str], frozenset[str]] | None:
         """当前挂载插件的每轮工具白名单 + 放行 server 集合。
 
-        返回 ``(tool_names, server_names)`` 或 ``None``（未挂载）。tool_names
-        含只读基座 + 按 permissions 的写工具 + skill allowed-tools + 已发现
-        的 MCP 工具名；server_names 含该插件声明的 trusted MCP server 名，
-        让 lazy 未 discovery 的工具按 server 级放行（修白名单竞态）。
+        返回 ``(tool_names, server_names)`` 或 ``None``（未挂载）。
 
-        Exec/网络等领域工具不进基座，需插件 skill 显式 allowed-tools 声明。
+        tool_names = generous scenario base (``FOCUS_READ_BASE``: explore /
+        write / code_execution / shell / agents / web) ∪ skill
+        ``allowed-tools`` (always — authors rarely declare them, so the
+        base must already be runnable) ∪ trusted plugin MCP tool names.
 
-        Skills come from the eager-loaded registry (filtered by index); MCP
-        servers come from light contributions (manifest-level, no disk scan).
+        server_names = trusted MCP servers for lazy discovery-independent
+        prefix allow. Trust gates **plugin processes** (hooks / MCP), not
+        built-in exec/write/shell.
         """
         plugin = self._active_plugin
         if plugin is None:
             return None
 
         allowed: set[str] = set(FOCUS_READ_BASE)
-        # Permission claims never expand the writable toolset by themselves.
-        # Only an explicitly trusted plugin may opt into the write base; the
-        # claim is still advisory for UI / documentation.
-        if self.plugin_session is not None and getattr(plugin, "trusted", False):
-            caps = self.plugin_session.declared_write_capabilities(plugin.name)
-            if "writes_files" in caps:
-                allowed |= set(FOCUS_WRITE_BASE)
         server_names: set[str] = set()
-        # Skill allowed-tools may expand beyond the read base — only when trusted.
-        # Untrusted mounts stay on FOCUS_READ_BASE (+ MCP still gated below).
-        if getattr(plugin, "trusted", False):
-            for skill in self._active_plugin_skills():
-                declared = getattr(skill, "allowed_tools", None)
-                if declared:
-                    allowed |= set(declared)
+        # Skill allowed-tools always expand the mount surface (extras like
+        # task_* / workflow). Trust is not required for built-in declares.
+        for skill in self._active_plugin_skills():
+            declared = getattr(skill, "allowed_tools", None)
+            if declared:
+                allowed |= set(declared)
         contribs = None
         if self.plugin_session is not None:
             try:
@@ -842,14 +835,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         ``ensure_advanced_tooling`` re-adds these two meta-tools to the catalog
         AFTER the focus whitelist filter, so without gating them here they
-        would bypass the whitelist and break the plugin mount's confinement
-        (e.g. a ``permissions: ["read"]`` plugin would still leave
-        ``code_execution`` - arbitrary Python incl. ``subprocess`` - callable).
-
-        When a focus whitelist is active (plugin mount / skill / mcp focus),
-        the meta-tools are included ONLY if the whitelist explicitly lists
-        them (e.g. a plugin skill declared them via ``allowed-tools``).
-        Otherwise the normal profile-based defaults apply.
+        would bypass the whitelist. When a focus whitelist is active, each
+        meta-tool is included only if named in the whitelist (scenario base
+        includes ``code_execution`` by default; ``tool_search_*`` stays out
+        unless declared). Otherwise the normal profile-based defaults apply.
         """
         wl = self._focus_tool_whitelist
         if wl is None:
@@ -927,6 +916,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 return False
 
             result = [t for t in result if _passes_focus(t)]
+            # Without tool_search, deferred tools in the confined catalog are
+            # unreachable — activate everything that passed the whitelist.
+            include_search, _include_code = self._advanced_tool_flags()
+            if not include_search:
+                for tool in result:
+                    fn = tool.get("function", tool)
+                    if isinstance(fn, dict):
+                        fn["defer_loading"] = False
 
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
@@ -1865,9 +1862,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
             # skill 声明 ``allowed-tools`` 则完全覆盖固定白名单；否则回退到
-            # ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``（技能引导任务，需完整读写；
-            # exec/领域工具由 skill 用 allowed-tools 显式 opt-in）。
-            # MCP 连接器聚焦：该 server 工具 + 读基座 + 写基座。
+            # ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``（场景默认面已含写/exec/
+            # shell/agents；声明可再扩 task/workflow 等）。
+            # MCP 连接器聚焦：该 server 工具 + 场景基座。
             # 显式前缀（/skill、@mcp）优先级最高；两者都未命中且挂载了插件时，
             # 回退到插件白名单（持续态）。都无 -> 全量（None）。
             if focus_skill is not None:
