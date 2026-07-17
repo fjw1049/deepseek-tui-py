@@ -783,6 +783,7 @@ async def compact_messages_safe(
     from deepseek_tui.engine.context_pressure import (
         build_compaction_bridge_text,
         extract_compaction_bridge_text,
+        find_last_real_user_query,
         is_compaction_bridge_message,
         prepend_compaction_bridge,
     )
@@ -794,6 +795,7 @@ async def compact_messages_safe(
         work_messages = list(messages)
 
     prev = previous_summary or prior_bridge
+    last_real_query = find_last_real_user_query(work_messages)
 
     plan = plan_compaction(
         work_messages,
@@ -834,7 +836,11 @@ async def compact_messages_safe(
             bridge_text = build_compaction_bridge_text(
                 summary, working_set_paths=working_set_paths
             )
-            compacted = prepend_compaction_bridge(pinned_messages, bridge_text)
+            compacted = prepend_compaction_bridge(
+                pinned_messages,
+                bridge_text,
+                last_real_query=last_real_query,
+            )
 
             return CompactionResult(
                 messages=compacted,

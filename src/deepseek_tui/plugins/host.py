@@ -357,7 +357,7 @@ class PluginHost:
             uninstall_plugin,
             update_plugin,
         )
-        from deepseek_tui.plugins.grants import grant_execution, revoke_grant
+        from deepseek_tui.plugins.grants import revoke_grant
 
         if isinstance(operation, InstallPlugin):
             local_source = Path(operation.source).expanduser()
@@ -396,7 +396,17 @@ class PluginHost:
             )
             return PluginOperationResult("applied", message)
         if isinstance(operation, GrantPlugin):
-            grant_execution(operation.name, operation.digest)
+            from deepseek_tui.plugins.grants import grant_trust
+            from deepseek_tui.plugins.identity import (
+                PluginIdentityError,
+                validate_plugin_id,
+            )
+
+            try:
+                validate_plugin_id(operation.name)
+                grant_trust(operation.name, operation.digest)
+            except (PluginIdentityError, ValueError, OSError) as exc:
+                return PluginOperationResult("failed", str(exc))
             return PluginOperationResult(
                 "granted",
                 f"Granted execution for {operation.name}@{operation.digest}",
@@ -410,33 +420,76 @@ class PluginHost:
         if isinstance(operation, GcPlugins):
             from deepseek_tui.plugins.store import gc_unreferenced_sources
 
-            removed = gc_unreferenced_sources(dry_run=operation.dry_run)
+            # Include cwd so project-scope lockfiles under the current
+            # workspace are treated as live references.
+            removed = gc_unreferenced_sources(
+                dry_run=operation.dry_run,
+                workspaces=[Path.cwd()],
+            )
             verb = "Would remove" if operation.dry_run else "Removed"
             return PluginOperationResult(
                 "gc",
                 f"{verb} {len(removed)} unreferenced source digest(s)",
             )
         if isinstance(operation, RollbackPlugin):
-            from deepseek_tui.integrations.plugins import (
-                user_plugins_dir,
+            return self._rollback(operation)
+        if isinstance(operation, TrustPlugin):
+            message = set_plugin_trusted(
+                operation.name,
+                operation.trusted,
+                operation.plugins_dir,
             )
-            from deepseek_tui.plugins.store import rollback_plugin_link
-
-            target = operation.plugins_dir or user_plugins_dir()
-            try:
-                path = rollback_plugin_link(target, operation.name, operation.digest)
-            except (FileNotFoundError, ValueError, OSError) as exc:
-                return PluginOperationResult("failed", str(exc))
-            return PluginOperationResult(
-                "rolled_back",
-                f"Rolled back {operation.name} to {operation.digest} at {path}",
-            )
-        message = set_plugin_trusted(
-            operation.name,
-            operation.trusted,
-            operation.plugins_dir,
+            return PluginOperationResult("applied", message)
+        return PluginOperationResult(
+            "failed",
+            f"Unsupported plugin operation: {type(operation).__name__}",
         )
-        return PluginOperationResult("applied", message)
+
+    def _rollback(self, operation: RollbackPlugin) -> PluginOperationResult:
+        """Relink store digest and keep lockfile/grant digests in sync."""
+        from deepseek_tui.integrations.plugins import (
+            _is_project_plugins_dir,
+            _update_lockfile_entry,
+            load_plugin_manifest,
+            read_lockfile,
+            user_plugins_dir,
+        )
+        from deepseek_tui.plugins.grants import _any_grants, grant_trust, revoke_grant
+        from deepseek_tui.plugins.store import _normalize_digest, rollback_plugin_link
+
+        target = operation.plugins_dir or user_plugins_dir()
+        try:
+            path = rollback_plugin_link(target, operation.name, operation.digest)
+            sha_digest = f"sha256:{_normalize_digest(operation.digest)}"
+            manifest = load_plugin_manifest(path)
+            lock_name = manifest.name if manifest is not None else operation.name
+            entry = read_lockfile(target).get(lock_name, {})
+            was_trusted = bool(entry.get("trusted", False))
+            had_grants = _any_grants(lock_name)
+            persist_trusted = (
+                False if _is_project_plugins_dir(target) else was_trusted
+            )
+            provenance = {
+                "source": {"kind": "store", "digest": sha_digest},
+                "content_digest": sha_digest,
+            }
+            _update_lockfile_entry(
+                target,
+                lock_name,
+                trusted=persist_trusted,
+                content_digest=sha_digest,
+                derived_provenance=provenance,
+            )
+            revoke_grant(lock_name)
+            # Re-bind grant when the plugin was already authorized.
+            if was_trusted or had_grants:
+                grant_trust(lock_name, sha_digest)
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            return PluginOperationResult("failed", str(exc))
+        return PluginOperationResult(
+            "rolled_back",
+            f"Rolled back {operation.name} to {operation.digest} at {path}",
+        )
 
     def _install_local_candidate(
         self,

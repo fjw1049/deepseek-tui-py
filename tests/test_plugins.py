@@ -338,7 +338,7 @@ def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
                                     "type": "command",
                                     "command": 'node "${CODEBUDDY_PLUGIN_ROOT}/x.js" '
                                     '"${CODEBUDDY_PROJECT_DIR}"',
-                                    "timeout": 10000,
+                                    "timeout": 10,
                                 }
                             ]
                         }
@@ -362,7 +362,7 @@ def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
     events = {h.event: h for h in contribs.hook_entries}
     assert "session_start" in events
     assert "tool_call_before" in events
-    # Timeout ms -> seconds.
+    # Claude Code timeout is seconds.
     assert events["session_start"].timeout_secs == 10.0
     # Plugin-root token resolved to absolute path; project-dir -> runtime env.
     assert "${CODEBUDDY_PLUGIN_ROOT}" not in events["session_start"].command

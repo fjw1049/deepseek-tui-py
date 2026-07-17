@@ -79,9 +79,15 @@ def test_bridge_composition_is_user_message_not_system():
     assert is_compaction_bridge_message(out[0])
     assert extract_compaction_bridge_text(out) == bridge
 
-    # Soft seam (assistant + level=) is NOT a rewrite bridge.
-    seam = Message.assistant(
-        '<archived_context level="1" range="msg 0-2">old</archived_context>'
+    # Soft seam (user reminder + level=) is NOT a rewrite bridge.
+    from deepseek_tui.engine.context_pressure import wrap_system_reminder
+    from deepseek_tui.protocol.messages import MessageOrigin
+
+    seam = Message.user(
+        wrap_system_reminder(
+            '<archived_context level="1" range="msg 0-2">old</archived_context>'
+        ),
+        origin=MessageOrigin.SOFT_SEAM,
     )
     assert not is_compaction_bridge_message(seam)
 

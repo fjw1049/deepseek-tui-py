@@ -7,11 +7,12 @@ tuned to a single 1M window.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from deepseek_tui.config.providers import context_window_for_model
-from deepseek_tui.protocol.messages import Message, Role, TextBlock
+from deepseek_tui.protocol.messages import Message, MessageOrigin, Role, TextBlock
 
 # Ratio ladder (confirmed product policy).
 RATIO_SEAM_L1 = 0.20
@@ -28,6 +29,17 @@ COMPACTION_BRIDGE_PREFIX = (
 )
 ARCHIVED_CONTEXT_OPEN = "<archived_context>"
 ARCHIVED_CONTEXT_CLOSE = "</archived_context>"
+SYSTEM_REMINDER_OPEN = "<system-reminder>"
+SYSTEM_REMINDER_CLOSE = "</system-reminder>"
+USER_QUERY_OPEN = "<user_query>"
+USER_QUERY_CLOSE = "</user_query>"
+LOCAL_CONTEXT_OPEN = "<local_context>"
+LOCAL_CONTEXT_CLOSE = "</local_context>"
+
+_USER_QUERY_RE = re.compile(
+    r"<user_query>\s*(.*?)\s*</user_query>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 PressureSource = Literal["real", "estimate"]
 
@@ -91,19 +103,103 @@ def thresholds_for_window(window: int) -> dict[str, int]:
     }
 
 
-def is_compaction_bridge_message(message: Message) -> bool:
-    """True when *message* is our rewrite bridge carrier.
+def wrap_system_reminder(body: str) -> str:
+    """Wrap injected runtime text in a Claude-Code-style reminder envelope."""
+    trimmed = body.strip()
+    if trimmed.startswith(SYSTEM_REMINDER_OPEN):
+        return trimmed
+    return f"{SYSTEM_REMINDER_OPEN}\n{trimmed}\n{SYSTEM_REMINDER_CLOSE}"
 
-    Soft seams are assistant messages with ``level="…"`` and do not use
-    :data:`COMPACTION_BRIDGE_PREFIX`. Rewrite bridges are user messages.
-    """
+
+def format_user_query_message(query: str) -> str:
+    """Format a real user goal for replay after compaction/cycle."""
+    trimmed = query.strip()
+    if not trimmed:
+        return ""
+    if trimmed.startswith(USER_QUERY_OPEN):
+        return trimmed
+    return f"{USER_QUERY_OPEN}\n{trimmed}\n{USER_QUERY_CLOSE}"
+
+
+def extract_user_query_text(text: str) -> str:
+    """Pull the inner ``<user_query>`` body, or fall back to the query portion."""
+    if not text:
+        return ""
+    match = _USER_QUERY_RE.search(text)
+    if match:
+        return match.group(1).strip()
+    # Drop structured attachments if present (new or legacy glue).
+    cut = text
+    for marker in (LOCAL_CONTEXT_OPEN, "\n\n---\n", "\n---\n"):
+        idx = cut.find(marker)
+        if idx >= 0:
+            cut = cut[:idx]
+            break
+    return cut.strip()
+
+
+def is_compaction_bridge_message(message: Message) -> bool:
+    """True when *message* is our rewrite bridge carrier."""
+    if message.origin is MessageOrigin.COMPACTION_BRIDGE:
+        return True
     if message.role != Role.USER:
         return False
-    for block in message.content:
-        if isinstance(block, TextBlock) and block.text:
-            text = block.text
-            if COMPACTION_BRIDGE_PREFIX in text and ARCHIVED_CONTEXT_OPEN in text:
-                return True
+    text = message.text_content()
+    return bool(text) and COMPACTION_BRIDGE_PREFIX in text and ARCHIVED_CONTEXT_OPEN in text
+
+
+def is_synthetic_user_message(message: Message) -> bool:
+    """True for injected user-role messages that are not the human's request."""
+    if message.role != Role.USER:
+        return True
+    if message.origin in {
+        MessageOrigin.SYSTEM_REMINDER,
+        MessageOrigin.COMPACTION_BRIDGE,
+        MessageOrigin.SOFT_SEAM,
+        MessageOrigin.CYCLE_SEED,
+    }:
+        return True
+    if message.origin is MessageOrigin.REAL_USER:
+        return False
+    text = message.text_content().lstrip()
+    if not text:
+        return True
+    if is_compaction_bridge_message(message):
+        return True
+    if text.startswith(SYSTEM_REMINDER_OPEN) or "<system-reminder>" in text[:80]:
+        return True
+    if text.startswith("[CYCLE STATE") or text.startswith("[CYCLE BRIEFING"):
+        return True
+    if text.startswith("[System]"):
+        return True
+    if text.startswith("**Important**: The user asked"):
+        return True
+    if ARCHIVED_CONTEXT_OPEN in text and 'level="' in text:
+        return True
+    return False
+
+
+def find_last_real_user_query(messages: list[Message]) -> str | None:
+    """Return the latest real user goal text (without attachment bodies)."""
+    for message in reversed(messages):
+        if is_synthetic_user_message(message):
+            continue
+        query = extract_user_query_text(message.text_content())
+        if query:
+            return query
+    return None
+
+
+def _messages_contain_real_query(messages: list[Message], query: str) -> bool:
+    needle = query.strip()
+    if not needle:
+        return True
+    for message in messages:
+        if is_synthetic_user_message(message):
+            continue
+        text = message.text_content()
+        if needle == extract_user_query_text(text) or needle in text:
+            return True
     return False
 
 
@@ -112,9 +208,9 @@ def extract_compaction_bridge_text(messages: list[Message]) -> str | None:
     for msg in messages:
         if not is_compaction_bridge_message(msg):
             continue
-        for block in msg.content:
-            if isinstance(block, TextBlock) and block.text:
-                return block.text
+        text = msg.text_content()
+        if text:
+            return text
     return None
 
 
@@ -135,9 +231,23 @@ def build_compaction_bridge_text(
 def prepend_compaction_bridge(
     messages: list[Message],
     bridge_text: str,
+    *,
+    last_real_query: str | None = None,
 ) -> list[Message]:
-    """Return messages with a single leading bridge (replacing any prior bridge)."""
+    """Return messages with a leading bridge and optional replayed user goal."""
     from deepseek_tui.protocol.messages import Message as Msg
 
     rest = [m for m in messages if not is_compaction_bridge_message(m)]
-    return [Msg.user(bridge_text), *rest]
+    out: list[Message] = [
+        Msg.user(bridge_text, origin=MessageOrigin.COMPACTION_BRIDGE),
+    ]
+    query = (last_real_query or "").strip()
+    if query and not _messages_contain_real_query(rest, query):
+        out.append(
+            Msg.user(
+                format_user_query_message(query),
+                origin=MessageOrigin.REAL_USER,
+            )
+        )
+    out.extend(rest)
+    return out

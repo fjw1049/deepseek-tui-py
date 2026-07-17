@@ -293,16 +293,29 @@ class SeamManager:
         return extract_carry_forward(raw)
 
     def collect_seam_texts(self, messages: list[Message]) -> list[str]:
-        """Collect `<archived_context>` blocks from message history."""
+        """Collect `<archived_context>` soft-seam blocks from message history."""
+        from deepseek_tui.protocol.messages import MessageOrigin
+
         texts: list[str] = []
         for msg in messages:
+            origin = getattr(msg, "origin", None)
             role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
-            if role == "assistant":
-                for block in msg.content:
-                    if hasattr(block, "text"):
-                        text = block.text
-                        if isinstance(text, str) and "<archived_context" in text:
-                            texts.append(text)
+            # Soft seams are user-role reminders; keep reading legacy assistant
+            # seams so older sessions still recompact correctly.
+            if origin is not MessageOrigin.SOFT_SEAM and role not in {
+                "user",
+                "assistant",
+            }:
+                continue
+            for block in msg.content:
+                if hasattr(block, "text"):
+                    text = block.text
+                    if (
+                        isinstance(text, str)
+                        and "<archived_context" in text
+                        and 'level="' in text
+                    ):
+                        texts.append(text)
         return texts
 
     async def highest_level(self) -> int | None:

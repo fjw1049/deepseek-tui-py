@@ -343,6 +343,7 @@ export function clearedThreadSelection(): Pick<
   | 'gitCommitSelectedPaths'
   | 'queuedMessages'
   | 'scrollToBlockId'
+  | 'activePlugin'
 > {
   return {
     activeThreadId: null,
@@ -362,7 +363,8 @@ export function clearedThreadSelection(): Pick<
     gitCommitSelectionKey: null,
     gitCommitSelectedPaths: [],
     queuedMessages: [],
-    scrollToBlockId: null
+    scrollToBlockId: null,
+    activePlugin: null
   }
 }
 

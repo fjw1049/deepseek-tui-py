@@ -26,7 +26,7 @@
   "pluginSysTrustAction": "Trust (activate hooks / MCP servers)",
   "pluginSysUntrustAction": "Revoke trust",
   "pluginSysUpdateAction": "Update from source",
-  "pluginSysTrustConfirm": "Trust plugin \"{{name}}\"? Its hooks (shell commands) and MCP servers (processes) will run in future sessions.",
+  "pluginSysTrustConfirm": "Trust plugin \"{{name}}\"? Its hooks can run arbitrary shell commands as your user (full environment inherited), and MCP servers spawn processes. Only trust plugins you have reviewed.",
   "pluginSysRemoveConfirm": "Remove plugin \"{{name}}\"? This deletes its folder on disk.",
   "pluginSysScopeUser": "User",
   "pluginSysScopeProject": "Project",

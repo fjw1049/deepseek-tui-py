@@ -922,26 +922,37 @@ async def plugin_action_route(request: Request, name: str) -> dict[str, Any]:
             user_plugins_dir,
         )
         from deepseek_tui.plugins import GrantPlugin, RevokePlugin
+        from deepseek_tui.plugins.identity import (
+            PluginIdentityError,
+            source_content_digest,
+        )
 
         digest = str(payload.get("digest") or "").strip()
         scope = plugins_dir or user_plugins_dir()
-        if not digest and action == "grant":
-            resolved = resolve_plugin_dir(name, scope)
-            if resolved is None:
-                raise api_error(404, f"Plugin not found: {name}", error="plugin_not_found")
-            from deepseek_tui.plugins.identity import source_content_digest
-
-            digest = source_content_digest(resolved)
-        if action == "grant":
-            result = await asyncio.to_thread(
-                host.apply,
-                GrantPlugin(name, digest, plugins_dir),
-            )
-        else:
-            result = await asyncio.to_thread(
-                host.apply,
-                RevokePlugin(name, digest or None, plugins_dir),
-            )
+        try:
+            if not digest and action == "grant":
+                resolved = resolve_plugin_dir(name, scope)
+                if resolved is None:
+                    raise api_error(
+                        404, f"Plugin not found: {name}", error="plugin_not_found"
+                    )
+                digest = source_content_digest(resolved)
+            if action == "grant":
+                result = await asyncio.to_thread(
+                    host.apply,
+                    GrantPlugin(name, digest, plugins_dir),
+                )
+            else:
+                result = await asyncio.to_thread(
+                    host.apply,
+                    RevokePlugin(name, digest or None, plugins_dir),
+                )
+        except PluginIdentityError as exc:
+            raise api_error(400, str(exc), error="validation_error") from exc
+        except ValueError as exc:
+            raise api_error(400, str(exc), error="validation_error") from exc
+        if result.outcome == "failed":
+            raise api_error(400, result.message, error="plugin_grant_failed")
     elif action == "update":
         result = await asyncio.to_thread(
             host.apply,

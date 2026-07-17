@@ -1435,6 +1435,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   if (ap !== undefined) sink.onActivePluginChange(ap)
                 }
                 if (it && it.kind === 'status' && isPluginMountStatusItem(it)) {
+                  // Badge updates via active_plugin; still surface trust/MCP
+                  // warnings from the mount note so they are not swallowed.
+                  const text = (it.detail ?? it.summary ?? '').trim()
+                  if (
+                    text &&
+                    sink.onSystemStatus &&
+                    (/注意[:：]/.test(text) || /not trusted|untrusted|MCP/i.test(text))
+                  ) {
+                    sink.onSystemStatus(text, it.id)
+                  }
                   return
                 }
                 if (it && it.kind === 'status' && isWorkflowStatusTextItem(it)) {

@@ -185,5 +185,5 @@ def test_local_inspection_rejects_symlink_escape(tmp_path: Path) -> None:
     outside.write_text("secret", encoding="utf-8")
     (tmp_path / "escaped").symlink_to(outside)
 
-    with pytest.raises(PluginSourceError, match="symlink escapes"):
+    with pytest.raises(PluginSourceError, match="symlinks"):
         inspect_local_source(tmp_path)

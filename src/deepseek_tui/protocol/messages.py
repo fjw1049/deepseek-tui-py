@@ -28,6 +28,16 @@ class Role(str, Enum):
     TOOL = "tool"
 
 
+class MessageOrigin(str, Enum):
+    """Internal provenance for context assembly (not sent on the wire)."""
+
+    REAL_USER = "real_user"
+    SYSTEM_REMINDER = "system_reminder"
+    COMPACTION_BRIDGE = "compaction_bridge"
+    SOFT_SEAM = "soft_seam"
+    CYCLE_SEED = "cycle_seed"
+
+
 class TextBlock(BaseModel):
     type: Literal["text"] = "text"
     text: str
@@ -62,18 +72,20 @@ ContentBlock = Annotated[
 class Message(BaseModel):
     role: Role
     content: list[ContentBlock] = Field(default_factory=list)
+    # Session-local tag; ignored by API serializers that only read role/content.
+    origin: MessageOrigin | None = None
 
     @classmethod
-    def system(cls, text: str) -> Message:
-        return cls(role=Role.SYSTEM, content=[TextBlock(text=text)])
+    def system(cls, text: str, *, origin: MessageOrigin | None = None) -> Message:
+        return cls(role=Role.SYSTEM, content=[TextBlock(text=text)], origin=origin)
 
     @classmethod
-    def user(cls, text: str) -> Message:
-        return cls(role=Role.USER, content=[TextBlock(text=text)])
+    def user(cls, text: str, *, origin: MessageOrigin | None = None) -> Message:
+        return cls(role=Role.USER, content=[TextBlock(text=text)], origin=origin)
 
     @classmethod
-    def assistant(cls, text: str) -> Message:
-        return cls(role=Role.ASSISTANT, content=[TextBlock(text=text)])
+    def assistant(cls, text: str, *, origin: MessageOrigin | None = None) -> Message:
+        return cls(role=Role.ASSISTANT, content=[TextBlock(text=text)], origin=origin)
 
     @classmethod
     def assistant_with_tools(cls, blocks: list[ToolUseBlock]) -> Message:
@@ -86,6 +98,14 @@ class Message(BaseModel):
             role=Role.TOOL,
             content=[ToolResultBlock(tool_use_id=tool_use_id, content=content, is_error=is_error)],
         )
+
+    def text_content(self) -> str:
+        """Join text blocks; empty string when none."""
+        parts: list[str] = []
+        for block in self.content:
+            if isinstance(block, TextBlock) and block.text:
+                parts.append(block.text)
+        return "\n".join(parts)
 
 
 # ============================================================================

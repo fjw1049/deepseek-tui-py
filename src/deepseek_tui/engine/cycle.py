@@ -256,40 +256,48 @@ def build_seed_messages(
     briefing: CycleBriefing | None,
     pending_user_message: str | None,
 ) -> list[dict[str, str]]:
-    """Compose seed messages for the next cycle."""
+    """Compose seed messages for the next cycle.
+
+    Seeds are user-role carriers only — never fake assistant acknowledgements.
+    ``pending_user_message`` should be the last real user goal so the next
+    cycle does not lose the objective.
+    """
+    from deepseek_tui.engine.context_pressure import (
+        format_user_query_message,
+        wrap_system_reminder,
+    )
+
     out: list[dict[str, str]] = []
+    seed_parts: list[str] = []
 
     if structured_state_block and structured_state_block.strip():
-        out.append({
-            "role": "user",
-            "content": (
-                "[CYCLE STATE — auto-preserved across the cycle boundary]\n\n"
-                + structured_state_block.strip()
-            ),
-        })
-        out.append({
-            "role": "assistant",
-            "content": "Acknowledged. State carried into the new cycle.",
-        })
+        seed_parts.append(
+            "[CYCLE STATE — auto-preserved across the cycle boundary]\n\n"
+            + structured_state_block.strip()
+        )
 
     if briefing and briefing.briefing_text.strip():
         from datetime import datetime, timezone
 
         ts = datetime.fromtimestamp(briefing.timestamp, tz=timezone.utc).isoformat()
+        seed_parts.append(
+            f"[CYCLE BRIEFING — written by you on cycle {briefing.cycle} at {ts}]\n\n"
+            f"<carry_forward>\n{briefing.briefing_text.strip()}\n</carry_forward>"
+        )
+
+    if seed_parts:
         out.append({
             "role": "user",
-            "content": (
-                f"[CYCLE BRIEFING — written by you on cycle {briefing.cycle} at {ts}]\n\n"
-                f"<carry_forward>\n{briefing.briefing_text.strip()}\n</carry_forward>"
-            ),
-        })
-        out.append({
-            "role": "assistant",
-            "content": "Briefing absorbed. Continuing.",
+            "content": wrap_system_reminder("\n\n".join(seed_parts)),
+            "origin": "cycle_seed",
         })
 
     if pending_user_message and pending_user_message.strip():
-        out.append({"role": "user", "content": pending_user_message.strip()})
+        out.append({
+            "role": "user",
+            "content": format_user_query_message(pending_user_message),
+            "origin": "real_user",
+        })
 
     return out
 

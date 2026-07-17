@@ -139,4 +139,12 @@ class LifecycleLspMixin:
         rendered = render_blocks(blocks)
         if not rendered:
             return
-        messages.append(Message.user(rendered))
+        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.protocol.messages import MessageOrigin
+
+        messages.append(
+            Message.user(
+                wrap_system_reminder(rendered),
+                origin=MessageOrigin.SYSTEM_REMINDER,
+            )
+        )

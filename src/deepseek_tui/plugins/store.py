@@ -74,16 +74,36 @@ def publish_source_tree(
     with tempfile.TemporaryDirectory(prefix=".publish-", dir=staging_parent) as tmp:
         staging = Path(tmp) / "tree"
         try:
-            shutil.copytree(src, staging, symlinks=False, ignore_dangling_symlinks=True)
+            # symlinks=False would dereference links and invent bytes the
+            # source digest never covered; source trees must be symlink-free.
+            shutil.copytree(src, staging, symlinks=True)
         except OSError as exc:
             raise PluginSourceError(f"cannot publish plugin source: {exc}") from exc
-        # Re-validate the staged tree before publish.
-        LocalArtifact(staging, max_files=max_files, max_bytes=max_bytes)
+        # Re-validate and require the staged tree to hash to the same digest.
+        staged = LocalArtifact(staging, max_files=max_files, max_bytes=max_bytes)
+        if staged.digest != digest:
+            raise PluginSourceError(
+                "staged plugin tree digest does not match source digest "
+                "(refusing to publish inconsistent content-addressed store entry)"
+            )
         os_replace = dest
         try:
             staging.rename(os_replace)
         except OSError:
             if dest.exists():
+                # Another writer won; verify their content matches our key.
+                try:
+                    existing = LocalArtifact(
+                        dest, max_files=max_files, max_bytes=max_bytes
+                    )
+                except PluginSourceError:
+                    raise PluginSourceError(
+                        f"existing store entry for {digest} is unreadable"
+                    ) from None
+                if existing.digest != digest:
+                    raise PluginSourceError(
+                        f"existing store entry for {digest} has mismatched content"
+                    )
                 return digest, dest
             shutil.move(str(staging), str(dest))
     return digest, dest

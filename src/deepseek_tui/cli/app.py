@@ -1528,9 +1528,10 @@ def plugin_remove_cmd(
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
     """Uninstall a plugin."""
-    from deepseek_tui.integrations.plugins import uninstall_plugin
+    from deepseek_tui.plugins import PluginHost, RemovePlugin
 
-    typer.echo(uninstall_plugin(name, _plugins_dir(project)))
+    result = PluginHost().apply(RemovePlugin(name, _plugins_dir(project)))
+    typer.echo(result.message)
 
 
 @plugin_app.command("update")
@@ -1539,12 +1540,11 @@ def plugin_update_cmd(
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
     """Re-install a plugin from its recorded source."""
-    from deepseek_tui.integrations.plugins import update_plugin
-    from deepseek_tui.integrations.skills import InstallOutcome
+    from deepseek_tui.plugins import PluginHost, UpdatePlugin
 
-    outcome, message = update_plugin(name, _plugins_dir(project))
-    typer.echo(message)
-    if outcome == InstallOutcome.FAILED:
+    result = PluginHost().apply(UpdatePlugin(name, _plugins_dir(project)))
+    typer.echo(result.message)
+    if result.outcome == "failed":
         raise typer.Exit(1)
 
 
@@ -1553,9 +1553,10 @@ def plugin_enable_cmd(
     name: str = typer.Argument(..., help="Plugin name."),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
-    from deepseek_tui.integrations.plugins import set_plugin_enabled
+    from deepseek_tui.plugins import EnablePlugin, PluginHost
 
-    typer.echo(set_plugin_enabled(name, True, _plugins_dir(project)))
+    result = PluginHost().apply(EnablePlugin(name, True, _plugins_dir(project)))
+    typer.echo(result.message)
 
 
 @plugin_app.command("disable")
@@ -1563,9 +1564,10 @@ def plugin_disable_cmd(
     name: str = typer.Argument(..., help="Plugin name."),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
-    from deepseek_tui.integrations.plugins import set_plugin_enabled
+    from deepseek_tui.plugins import EnablePlugin, PluginHost
 
-    typer.echo(set_plugin_enabled(name, False, _plugins_dir(project)))
+    result = PluginHost().apply(EnablePlugin(name, False, _plugins_dir(project)))
+    typer.echo(result.message)
 
 
 @plugin_app.command("trust")
@@ -1573,10 +1575,15 @@ def plugin_trust_cmd(
     name: str = typer.Argument(..., help="Plugin name."),
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
-    """Trust a plugin — hooks/MCP activate on the next session."""
-    from deepseek_tui.integrations.plugins import set_plugin_trusted
+    """Trust a plugin — hooks/MCP activate on the next session.
 
-    typer.echo(set_plugin_trusted(name, True, _plugins_dir(project)))
+    Trust allows arbitrary shell hooks and MCP processes under your user
+    account; only trust plugins you have reviewed.
+    """
+    from deepseek_tui.plugins import PluginHost, TrustPlugin
+
+    result = PluginHost().apply(TrustPlugin(name, True, _plugins_dir(project)))
+    typer.echo(result.message)
 
 
 @plugin_app.command("untrust")
@@ -1585,9 +1592,10 @@ def plugin_untrust_cmd(
     project: bool = _PLUGIN_PROJECT_OPTION,
 ) -> None:
     """Revoke trust — deactivates the plugin's hooks and MCP servers."""
-    from deepseek_tui.integrations.plugins import set_plugin_trusted
+    from deepseek_tui.plugins import PluginHost, TrustPlugin
 
-    typer.echo(set_plugin_trusted(name, False, _plugins_dir(project)))
+    result = PluginHost().apply(TrustPlugin(name, False, _plugins_dir(project)))
+    typer.echo(result.message)
 
 
 @plugin_app.command("grant")

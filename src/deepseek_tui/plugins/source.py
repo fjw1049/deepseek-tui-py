@@ -45,14 +45,13 @@ class LocalArtifact:
             relative = path.relative_to(self.root).as_posix()
             if ".git" in path.relative_to(self.root).parts:
                 continue
+            # Symlinks break content-addressing: rglob does not descend into
+            # symlink directories, and copytree(symlinks=False) can materialize
+            # bytes the digest never covered. Reject them outright.
             if path.is_symlink():
-                target = path.resolve()
-                try:
-                    target.relative_to(self.root)
-                except ValueError as exc:
-                    raise PluginSourceError(
-                        f"plugin symlink escapes source root: {relative}"
-                    ) from exc
+                raise PluginSourceError(
+                    f"plugin source must not contain symlinks: {relative}"
+                )
             if path.is_dir():
                 continue
             count += 1

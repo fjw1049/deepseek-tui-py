@@ -81,7 +81,7 @@ from deepseek_tui.engine.tools import (
 from deepseek_tui.engine.turn import TurnLoop, TurnResult, prepare_turn_for_model
 from deepseek_tui.integrations.lsp import DiagnosticBlock
 from deepseek_tui.policy.approval import ApprovalCache, ExecPolicyEngine
-from deepseek_tui.protocol.messages import Message, MessageRequest
+from deepseek_tui.protocol.messages import Message, MessageOrigin, MessageRequest
 from deepseek_tui.tools.registry import ToolContext, ToolRegistry
 from deepseek_tui.tools.subagent import SubAgentCompletion
 from deepseek_tui.utils import bind_turn
@@ -524,9 +524,32 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
         m = match.manifest
         note = f"已进入场景 {m.name}，本会话仅用其工具 + 基础工具。"
-        # trusted 才收 MCP（collect_contributions 语义）；未信任时提示。
+        # trusted 才收 MCP；未信任时提示。
         if m.mcp_servers and not getattr(match, "trusted", False):
             note += " 注意：该插件的 MCP 未激活，需先信任该插件。"
+        elif m.mcp_servers and getattr(match, "trusted", False):
+            # MCP servers are injected only at Engine.create. In-session trust
+            # cannot register a new server into the live manager.
+            owned = getattr(self, "_owned_plugin_mcp_manager", None)
+            manager_names = {
+                n.lower() for n in (owned.server_names if owned is not None else [])
+            }
+            light = None
+            if self.plugin_session is not None:
+                try:
+                    light = self.plugin_session.light_contributions(m.name)
+                except Exception:  # noqa: BLE001
+                    light = None
+            declared = (
+                [s.name for s in light.mcp_servers] if light is not None else []
+            )
+            if not declared or any(
+                name.lower() not in manager_names for name in declared
+            ):
+                note += (
+                    " 注意：该插件的 MCP 未在本会话启动时注册，"
+                    "需新开会话后才会生效。"
+                )
         if m.name.lower() not in self._session_plugin_names:
             note += (
                 " 注意：本会话启动后新发现的插件，其 hooks/MCP "
@@ -1670,6 +1693,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         message=mount_note,
                     )
                 )
+            else:
+                # Mount failed (unknown plugin) — surface the error; do not
+                # leave the UI assuming the scenario chip applied.
+                await self.handle.emit(StatusEvent(message=mount_note))
             # Mount/unmount-only turn (no remaining user text): skip the LLM.
             if not (raw_content or "").strip():
                 await self.handle.emit(
@@ -1733,7 +1760,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         elif focus_mcp is not None:
             logger.info("mcp_focus_mode server=%s", focus_mcp)
 
-        user_message = Message.user(processed.model_text)
+        user_message = Message.user(
+            processed.model_text, origin=MessageOrigin.REAL_USER
+        )
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
@@ -1755,11 +1784,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Plan mode: detect quick-plan requests that skip codebase exploration
         # and inject a grounding hint
         if should_force_update_plan_first(self.mode, processed.display_text or ""):
+            from deepseek_tui.engine.context_pressure import wrap_system_reminder
+
             working_messages.append(
                 Message.user(
-                    "[System] Before creating the plan, explore the repository "
-                    "structure and relevant code first to ground your plan in "
-                    "the actual codebase."
+                    wrap_system_reminder(
+                        "[System] Before creating the plan, explore the repository "
+                        "structure and relevant code first to ground your plan in "
+                        "the actual codebase."
+                    ),
+                    origin=MessageOrigin.SYSTEM_REMINDER,
                 )
             )
 
@@ -1774,10 +1808,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # speaks Chinese so the model doesn't drift into English.
         detected_locale = _detect_locale(processed.display_text or "")
         if detected_locale == "zh":
+            from deepseek_tui.engine.context_pressure import wrap_system_reminder
+
             working_messages.append(
                 Message.user(
-                    "**Important**: The user asked the question in Chinese. Your thought process (reasoning_content) and final reply must be entirely in Simplified Chinese."
-                    "Technical identifiers such as code, paths, and commands should remain unchanged; only the natural language portion should use Chinese."
+                    wrap_system_reminder(
+                        "**Important**: The user asked the question in Chinese. "
+                        "Your thought process (reasoning_content) and final reply "
+                        "must be entirely in Simplified Chinese."
+                        "Technical identifiers such as code, paths, and commands "
+                        "should remain unchanged; only the natural language "
+                        "portion should use Chinese."
+                    ),
+                    origin=MessageOrigin.SYSTEM_REMINDER,
                 )
             )
 
@@ -2131,8 +2174,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return False
 
         count = len(completions)
+        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+
         for item in completions:
-            messages.append(Message.user(item.payload))
+            messages.append(
+                Message.user(
+                    wrap_system_reminder(item.payload),
+                    origin=MessageOrigin.SYSTEM_REMINDER,
+                )
+            )
         await self.handle.emit(
             StatusEvent(
                 message=f"Resuming turn with {count} sub-agent completion(s)"
@@ -2187,19 +2237,57 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # 这是中途转向机制
             for steer_text in self.handle.drain_steers():
                 steer_text = steer_text.strip()
-                if steer_text:
-                    processed = prepare_turn_for_model(
-                        steer_text,
-                        workspace=self.tool_context.working_directory,
-                        session_id=self._cycle_session_id,
+                if not steer_text:
+                    continue
+                # Honor @plugin: mount/unmount in steers (same as primary send).
+                plugin_mount = _detect_plugin_mount(steer_text)
+                if plugin_mount is not None:
+                    mount_note = self.set_active_plugin(
+                        None if plugin_mount == "off" else plugin_mount
                     )
-                    logger.info(
-                        "steer_injected display_len=%d model_len=%d",
-                        len(processed.display_text),
-                        len(processed.model_text),
+                    steer_text = _strip_plugin_mount(steer_text, plugin_mount)
+                    mounted = self._active_plugin
+                    if plugin_mount == "off":
+                        await self.handle.emit(
+                            PluginMountEvent(name=None, message=mount_note)
+                        )
+                    elif (
+                        mounted is not None
+                        and mounted.name.lower() == plugin_mount.lower()
+                    ):
+                        has_mcp = bool(mounted.manifest.mcp_servers)
+                        await self.handle.emit(
+                            PluginMountEvent(
+                                name=mounted.name,
+                                version=mounted.manifest.version,
+                                path=str(mounted.path.expanduser().resolve()),
+                                scope=mounted.scope,
+                                trusted=mounted.trusted,
+                                permissions=mounted.manifest.permissions,
+                                mcp_active=has_mcp and mounted.trusted,
+                                message=mount_note,
+                            )
+                        )
+                    else:
+                        await self.handle.emit(StatusEvent(message=mount_note))
+                    if not steer_text.strip():
+                        continue
+                processed = prepare_turn_for_model(
+                    steer_text,
+                    workspace=self.tool_context.working_directory,
+                    session_id=self._cycle_session_id,
+                )
+                logger.info(
+                    "steer_injected display_len=%d model_len=%d",
+                    len(processed.display_text),
+                    len(processed.model_text),
+                )
+                messages.append(
+                    Message.user(
+                        processed.model_text, origin=MessageOrigin.REAL_USER
                     )
-                    messages.append(Message.user(processed.model_text))
-                    self.working_set.observe_references(processed.references)
+                )
+                self.working_set.observe_references(processed.references)
 
             # Capacity pre-request checkpoint
             # 观测 token/工具调用密度,容量预检查；改写式（删旧+塞摘要）

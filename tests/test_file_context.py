@@ -143,7 +143,9 @@ class TestDisplayModelSplit:
             cwd=workspace,
         )
         assert out.display_text == raw
-        assert out.model_text.startswith(raw)
+        assert out.model_text.startswith("<user_query>")
+        assert raw in out.model_text
+        assert "<local_context>" in out.model_text
         assert "Local context from @mentions" in out.model_text
 
     def test_no_double_expand(self, workspace: Path) -> None:

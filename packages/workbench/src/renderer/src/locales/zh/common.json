@@ -26,7 +26,7 @@
   "pluginSysTrustAction": "信任（激活 Hooks / MCP 服务器）",
   "pluginSysUntrustAction": "撤销信任",
   "pluginSysUpdateAction": "从来源更新",
-  "pluginSysTrustConfirm": "信任插件“{{name}}”？其 Hooks（shell 命令）和 MCP 服务器（进程）将在之后的会话中运行。",
+  "pluginSysTrustConfirm": "信任插件“{{name}}”？其 Hooks 将以你的用户身份执行任意 shell（继承完整环境变量），MCP 服务器也会启动进程。仅信任你已审查过的插件。",
   "pluginSysRemoveConfirm": "移除插件“{{name}}”？将删除其磁盘上的文件夹。",
   "pluginSysScopeUser": "用户级",
   "pluginSysScopeProject": "项目级",

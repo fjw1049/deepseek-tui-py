@@ -585,6 +585,9 @@ export function FloatingComposer({
       setConnectorsLoaded(false)
       setConnectorsLoading(false)
       setComposerConnectors([])
+      setPluginsLoaded(false)
+      setPluginsLoading(false)
+      setComposerPlugins([])
     }
   }, [runtimeReady])
 
@@ -709,7 +712,10 @@ export function FloatingComposer({
     void window.dsGui
       .runtimeRequest(`/v1/plugins${qs}`, 'GET')
       .then((result) => {
-        if (!result.ok) return
+        if (!result.ok) {
+          // Keep pluginsLoaded false so a later open can retry after a blip.
+          return
+        }
         try {
           const parsed = JSON.parse(result.body) as {
             plugins?: Array<{
@@ -729,13 +735,13 @@ export function FloatingComposer({
                 enabled: p.enabled !== false
               }))
           )
+          setPluginsLoaded(true)
         } catch {
-          // Malformed JSON: leave the list as-is rather than crashing the menu.
+          // Malformed JSON: leave the list as-is; allow retry.
         }
       })
       .catch(() => undefined)
       .finally(() => {
-        setPluginsLoaded(true)
         setPluginsLoading(false)
       })
   }, [runtimeReady, pluginsLoaded, pluginsLoading, effectiveWorkspaceRoot])

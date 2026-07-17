@@ -550,6 +550,21 @@ def _scope_for(plugins_dir: Path, workspace: Path | None, override: Path | None)
     return "user"
 
 
+def _is_project_plugins_dir(plugins_dir: Path) -> bool:
+    """True when *plugins_dir* is a checkout-scoped ``.deepseek/plugins`` tree.
+
+    Trust must never be persisted into these lockfiles — they are part of the
+    git working tree and can be attacker-controlled.
+    """
+    try:
+        resolved = plugins_dir.expanduser().resolve()
+        if resolved == user_plugins_dir().resolve():
+            return False
+    except OSError:
+        return False
+    return resolved.name == "plugins" and resolved.parent.name == ".deepseek"
+
+
 INDEX_SCHEMA_VERSION = 2
 
 
@@ -606,6 +621,39 @@ def _contribution_index_is_valid(
     return True
 
 
+def _digest_for_trust_lookup(
+    path: Path, entry: dict[str, Any]
+) -> str:
+    """Best-effort content digest for project-trust / grant heal checks."""
+    from deepseek_tui.plugins.identity import source_content_digest
+
+    provenance = entry.get("derived_provenance")
+    if not isinstance(provenance, dict):
+        provenance = None
+    try:
+        return source_content_digest(path, provenance=provenance)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _project_trust_from_grants(
+    plugin_id: str, path: Path, entry: dict[str, Any]
+) -> bool:
+    """Project plugins are trusted only via a home-side digest grant.
+
+    A ``trusted: true`` flag in ``<workspace>/.deepseek/plugins/installed_plugins.json``
+    is ignored — that file is attacker-controlled in a malicious checkout.
+    """
+    from deepseek_tui.plugins.grants import has_execution_grant
+
+    digest = _digest_for_trust_lookup(path, entry)
+    if not digest:
+        return False
+    return has_execution_grant(
+        plugin_id, digest, "hooks.execute"
+    ) or has_execution_grant(plugin_id, digest, "mcp.connect")
+
+
 def discover_plugins(
     plugins_dir: Path | None = None,
     workspace: Path | None = None,
@@ -618,6 +666,9 @@ def discover_plugins(
     First scope wins on name conflicts (project overrides user, both
     override Claude Code installs). Disabled plugins are skipped unless
     ``include_disabled`` is set.
+
+    Project-scope ``trusted`` in the checkout lockfile is ignored; trust for
+    project plugins requires a digest-bound grant under ``~/.deepseek``.
 
     Discovery is pure-read: a missing or stale ``contribution_index`` is
     returned as ``None`` and Engine falls back to on-demand assembly.
@@ -637,7 +688,14 @@ def discover_plugins(
             return
         seen_names.add(key)
         enabled = bool(entry.get("enabled", True))
-        trusted = bool(entry.get("trusted", False))
+        # Project lockfiles live inside the git checkout and must never be
+        # able to self-declare trust (clone → RCE). User/claude/override
+        # scopes may read lockfile trusted; project trust comes only from a
+        # home-side digest grant (see ``_project_trust_from_grants``).
+        if scope == "project":
+            trusted = _project_trust_from_grants(manifest.name, path, entry)
+        else:
+            trusted = bool(entry.get("trusted", False))
         if not enabled and not include_disabled:
             return
         index = _ensure_contribution_index(manifest, path, entry, lock_dir)
@@ -1085,6 +1143,7 @@ def collect_light_contributions(
         if plugin.trusted:
             if enforce_grants:
                 from deepseek_tui.plugins.grants import (
+                    _any_grants,
                     execution_authorized,
                     migrate_legacy_fingerprint_grants,
                 )
@@ -1092,6 +1151,28 @@ def collect_light_contributions(
                 digest = _execution_digest_for_plugin(plugin)
                 if digest:
                     migrate_legacy_fingerprint_grants(plugin.name, digest)
+                    # User/claude scopes: heal pre-grant installs that still
+                    # have lockfile trusted=true but no grant files. Never
+                    # heal project scope (trust is grant-only there).
+                    if (
+                        plugin.scope != "project"
+                        and not _any_grants(plugin.name)
+                    ):
+                        from deepseek_tui.plugins.grants import grant_trust
+
+                        try:
+                            grant_trust(plugin.name, digest)
+                            _LOG.info(
+                                "healed missing execution grant for trusted "
+                                "plugin %s",
+                                plugin.name,
+                            )
+                        except Exception:  # noqa: BLE001
+                            _LOG.warning(
+                                "failed to heal execution grant for %s",
+                                plugin.name,
+                                exc_info=True,
+                            )
                 if not execution_authorized(
                     trusted=True,
                     plugin_id=plugin.name,
@@ -1305,11 +1386,10 @@ def _append_foreign_hooks(
                         f"{spec.get('type')!r} skipped"
                     )
                     continue
+                # Claude Code documents ``timeout`` in seconds (default 600).
                 timeout = spec.get("timeout")
                 timeout_secs = (
-                    float(timeout) / 1000.0
-                    if isinstance(timeout, (int, float))
-                    else 30.0
+                    float(timeout) if isinstance(timeout, (int, float)) else 30.0
                 )
                 out.hook_entries.append(
                     LifecycleHookEntry(
@@ -2008,12 +2088,14 @@ def _record_install(
             _LOG.warning(
                 "contribution index failed for %s", manifest.name, exc_info=True
             )
+    # Project lockfiles are in-repo; never persist trusted=true there.
+    lockfile_trusted = False if _is_project_plugins_dir(plugins_dir) else trust
     fields: dict[str, Any] = {
         "source": source_spec,
         "version": manifest.version,
         "installed_at": _now_iso(),
         "enabled": True,
-        "trusted": trust,
+        "trusted": lockfile_trusted,
         "contribution_index": index,
     }
     if provenance is not None:
@@ -2048,8 +2130,8 @@ def _finalize_installed_plugin(dest: Path) -> None:
 _HOOKS_MCP_NEXT_SESSION = (
     "Hooks/MCP take effect on the next session "
     "(restart the engine / start a new chat). "
-    "High-risk capabilities (process spawn / install scripts) "
-    "need a separate `deepseek-tui plugin grant`."
+    "Trust allows the plugin to run arbitrary shell commands and MCP "
+    "processes with your user environment."
 )
 
 
@@ -2285,11 +2367,15 @@ def update_plugin(
             _remove_path(backup)
 
     # Refresh live lockfile (staging's lockfile was discarded with staging).
-    # Preserve enabled/trusted; update source/version/installed_at.
+    # Preserve enabled; project scope never persists trusted in-repo.
     fields: dict[str, Any] = {
         "source": spec,
         "enabled": was_enabled,
-        "trusted": was_trusted,
+        "trusted": (
+            False
+            if _is_project_plugins_dir(target_dir)
+            else was_trusted
+        ),
         "installed_at": _now_iso(),
     }
     if staged_manifest is not None and staged_manifest.version:
@@ -2321,23 +2407,26 @@ def update_plugin(
                 lock_name,
                 exc_info=True,
             )
-    # Digest-bound grants do not carry across updates. A trusted plugin keeps
-    # its low-risk grant on the new digest; high-risk capabilities must be
-    # re-granted deliberately after reviewing the updated content.
+    # Digest-bound grants do not carry across updates. Require an explicit
+    # re-trust after reviewing the new content (no silent grant renewal).
     try:
-        from deepseek_tui.plugins.grants import grant_trust, revoke_grant
-        from deepseek_tui.plugins.identity import source_content_digest
+        from deepseek_tui.plugins.grants import revoke_grant
 
         revoke_grant(lock_name)
-        if was_trusted:
-            grant_trust(
-                lock_name,
-                source_content_digest(plugin_path, provenance=staged_provenance),
-            )
     except Exception:  # noqa: BLE001
-        _LOG.warning("grant rotation failed for %s", lock_name, exc_info=True)
+        _LOG.warning("grant revocation failed for %s", lock_name, exc_info=True)
+    fields["trusted"] = False
     _update_lockfile_entry(target_dir, lock_name, **fields)
-    return (InstallOutcome.UPDATED, f"Updated {lock_name} from {spec}")
+    suffix = ""
+    if was_trusted:
+        suffix = (
+            " Trust was cleared — review the update, then "
+            f"`deepseek-tui plugin trust {lock_name}`."
+        )
+    return (
+        InstallOutcome.UPDATED,
+        f"Updated {lock_name} from {spec}.{suffix}",
+    )
 
 
 def resolve_plugin_dir(name: str, target_dir: Path) -> Path | None:
@@ -2438,7 +2527,10 @@ def set_plugin_trusted(
             digest = source_content_digest(resolved, provenance=provenance)
         except Exception:  # noqa: BLE001
             digest = ""
-    _update_lockfile_entry(target_dir, lock_name, trusted=trusted)
+    # Never persist trusted=true into a project-scope lockfile — that file
+    # is inside the git checkout and must not be a trust authority.
+    persist_trusted = False if _is_project_plugins_dir(target_dir) else trusted
+    _update_lockfile_entry(target_dir, lock_name, trusted=persist_trusted)
     if trusted:
         if digest:
             from deepseek_tui.plugins.grants import grant_trust, revoke_grant
@@ -2580,9 +2672,19 @@ def load_marketplace(repo: Path) -> list[MarketplaceEntry]:
         # Local sources are plain path strings; remote sources are dicts.
         if not isinstance(source, str):
             continue
-        src_path = Path(source)
-        if not src_path.is_absolute():
-            src_path = (base / src_path).resolve()
+        # Absolute sources are rejected — a marketplace must not publish
+        # arbitrary host directories as plugins.
+        from deepseek_tui.plugins.identity import is_safe_relative_posix
+
+        if Path(source).is_absolute() or not is_safe_relative_posix(
+            source.replace("\\", "/")
+        ):
+            continue
+        try:
+            src_path = (base / source).resolve()
+            src_path.relative_to(base.resolve())
+        except (OSError, ValueError):
+            continue
         if not src_path.is_dir():
             continue
         entries.append(
@@ -2664,19 +2766,38 @@ def _marketplace_json_path(repo: Path) -> Path | None:
     return None
 
 
+def _safe_marketplace_name(value: str, fallback: str) -> str:
+    """Return a path-safe marketplace directory name.
+
+    Rejects traversal (``..``, slashes) so ``add_marketplace`` cannot rename
+    outside ``~/.deepseek/marketplaces/``.
+    """
+    from deepseek_tui.plugins.identity import is_safe_plugin_id
+
+    candidate = (value or "").strip()
+    if is_safe_plugin_id(candidate):
+        return candidate
+    if is_safe_plugin_id(fallback):
+        return fallback
+    # Last resort: sanitize fallback to a single safe segment.
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (fallback or "marketplace").strip())
+    cleaned = cleaned.strip(".-") or "marketplace"
+    return cleaned[:128]
+
+
 def _marketplace_display_name(repo: Path, fallback: str) -> str:
-    """The ``name`` field of marketplace.json, or ``fallback``."""
+    """The ``name`` field of marketplace.json, or ``fallback`` (path-safe)."""
     path = _marketplace_json_path(repo)
     if path is None:
-        return fallback
+        return _safe_marketplace_name(fallback, "marketplace")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return fallback
+        return _safe_marketplace_name(fallback, "marketplace")
     name = data.get("name") if isinstance(data, dict) else None
     if isinstance(name, str) and name.strip():
-        return name.strip()
-    return fallback
+        return _safe_marketplace_name(name, fallback)
+    return _safe_marketplace_name(fallback, "marketplace")
 
 
 def _find_marketplace_root(staging: Path) -> Path | None:
@@ -2791,7 +2912,15 @@ def _add_marketplace_from_github(
         )
     name = _marketplace_display_name(repo_root, source.repo)
     table = read_marketplaces(base)
-    dest = base / name
+    dest = (base / name).resolve()
+    try:
+        dest.relative_to(base.resolve())
+    except ValueError:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (
+            InstallOutcome.FAILED,
+            f"Marketplace name escapes marketplaces dir: {name!r}",
+        )
     if name in table or dest.exists():
         shutil.rmtree(staging, ignore_errors=True)
         return (

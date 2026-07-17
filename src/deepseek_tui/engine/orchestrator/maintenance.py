@@ -184,7 +184,16 @@ class SessionMaintenanceMixin:
             insert_at = verbatim_start
             while insert_at > 0 and messages[insert_at].role == Role.TOOL:
                 insert_at -= 1
-            messages.insert(insert_at, Message.assistant(seam_text))
+            from deepseek_tui.engine.context_pressure import wrap_system_reminder
+            from deepseek_tui.protocol.messages import MessageOrigin
+
+            messages.insert(
+                insert_at,
+                Message.user(
+                    wrap_system_reminder(seam_text),
+                    origin=MessageOrigin.SOFT_SEAM,
+                ),
+            )
 
     async def _auto_persist_session(self) -> None:
         """Best-effort session persistence after each turn.
@@ -416,10 +425,13 @@ class SessionMaintenanceMixin:
                 token_estimate=estimate_tokens(briefing_text),
             )
 
+        from deepseek_tui.engine.context_pressure import find_last_real_user_query
+
+        last_real_query = find_last_real_user_query(messages)
         seed_dicts = build_seed_messages(
             structured_state_block=structured_block,
             briefing=briefing_obj,
-            pending_user_message=None,
+            pending_user_message=last_real_query,
         )
 
         # Convert seed dicts to Message objects and preserve recent messages.
@@ -440,7 +452,7 @@ class SessionMaintenanceMixin:
 
         # Do not start the kept window on a tool-result message — that would
         # orphan TOOL rows from their parent assistant(tool_calls) message.
-        from deepseek_tui.protocol.messages import Role
+        from deepseek_tui.protocol.messages import MessageOrigin, Role
 
         start = max(0, len(messages) - keep)
         while start > 0 and messages[start].role == Role.TOOL:
@@ -451,10 +463,17 @@ class SessionMaintenanceMixin:
         for sd in seed_dicts:
             role = sd["role"]
             content = sd["content"]
+            origin_raw = sd.get("origin")
+            origin = None
+            if origin_raw:
+                try:
+                    origin = MessageOrigin(origin_raw)
+                except ValueError:
+                    origin = None
             if role == "user":
-                messages.append(Message.user(content))
+                messages.append(Message.user(content, origin=origin))
             else:
-                messages.append(Message.assistant(content))
+                messages.append(Message.assistant(content, origin=origin))
         messages.extend(recent)
 
         # Reset seam tracking for the new cycle

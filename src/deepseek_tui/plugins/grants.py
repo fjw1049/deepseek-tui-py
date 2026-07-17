@@ -231,22 +231,16 @@ def execution_authorized(
     """Return whether *plugin_id*@*digest* may exercise *capability*.
 
     Rules:
-    1. Must be lockfile-trusted and have a non-empty digest.
+    1. Must be marked trusted and have a non-empty digest.
     2. Matching digest-bound grant wins.
-    3. If grants exist for other digests, this tree is denied (content rotated).
-    4. Legacy: trusted with zero grant files still allows (pre-grant installs)
-       for low-risk capabilities. High-risk capabilities (arbitrary code
-       execution / process spawn) require an explicit grant - no bypass.
+    3. Otherwise deny (including trusted-but-no-grant). There is no
+       legacy "trusted with zero grant files" bypass — that path allowed a
+       repository-committed project lockfile to activate hooks/MCP without
+       any write under ``~/.deepseek``.
     """
     if not trusted or not digest or not is_safe_plugin_id(plugin_id):
         return False
-    if has_execution_grant(plugin_id, digest, capability, home=home):
-        return True
-    if _any_grants(plugin_id, home=home):
-        return False
-    if capability in HIGH_RISK_CAPABILITIES:
-        return False
-    return True
+    return has_execution_grant(plugin_id, digest, capability, home=home)
 
 def legacy_trust_implies_grant(
     *,

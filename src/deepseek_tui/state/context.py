@@ -88,7 +88,10 @@ def process_turn_input(
 
     tokens = _collect_tokens(raw)
     if not tokens:
-        return ProcessedTurnInput(display_text=display_text, model_text=raw)
+        return ProcessedTurnInput(
+            display_text=display_text,
+            model_text=_format_model_text(raw, ""),
+        )
 
     blocks: list[str] = []
     references: list[ContextReference] = []
@@ -213,7 +216,7 @@ def process_turn_input(
         blocks.append(_render_file_block(token, display_path, content, truncated=truncated))
 
     expansion = _assemble_expansion(blocks, cfg)
-    model_text = f"{raw}\n\n{expansion}" if expansion else raw
+    model_text = _format_model_text(raw, expansion)
     return ProcessedTurnInput(
         display_text=display_text, model_text=model_text,
         references=references, warnings=warnings,
@@ -243,7 +246,22 @@ def pending_context_previews(
 
 
 def _already_expanded(raw: str, cfg: ContextConfig) -> bool:
+    # Structured model text from a prior process_turn_input — do not re-wrap.
+    if "<user_query>" in raw:
+        return True
     return _EXPANSION_MARKER in raw and cfg.expansion_header in raw
+
+
+def _format_model_text(raw: str, expansion: str) -> str:
+    """Keep the user goal and @mention attachments structurally separate."""
+    query = (raw or "").strip()
+    body = (expansion or "").strip()
+    if not query and not body:
+        return raw or ""
+    parts = [f"<user_query>\n{query}\n</user_query>"]
+    if body:
+        parts.append(f"<local_context>\n{body}\n</local_context>")
+    return "\n\n".join(parts)
 
 
 def _collect_tokens(raw: str) -> list[tuple[str, str]]:
