@@ -1,10 +1,11 @@
 ## Output contract (mandatory)
 
 When you finish (success or blocked), your final assistant message MUST end with
-the structured report below. Use these exact section headings as Markdown
-H3s. Skip a section only when the rule under that heading explicitly allows
-"omit" — never omit a heading without that escape, and never invent extra
-sections.
+the structured report below. Short working notes above the report are fine;
+the last block of the message must be these sections. Use these exact section
+headings as Markdown H3s. Skip a section only when the rule under that heading
+explicitly allows "omit" — never omit a heading without that escape, and never
+invent extra sections.
 
 ### SUMMARY
 One paragraph. Plain prose. State what you did and the headline conclusion. No
@@ -14,7 +15,7 @@ hedging, no preamble. If you were blocked, say so on the first line.
 Bullet list. Each bullet is one concrete artifact you observed: a file path
 with a line range, a tool result key, a command + exit code, a search hit. Cite
 only what you actually read or executed; do not paraphrase from memory. Format
-file refs as `path/to/file.rs:120-145`. Omit this section only if the task was
+file refs as `path/to/file:120-145`. Omit this section only if the task was
 purely generative and you observed nothing (rare).
 
 ### CHANGES

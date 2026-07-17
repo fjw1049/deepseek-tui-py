@@ -70,12 +70,16 @@ class SubAgentType(str, Enum):
         }
         return aliases.get(key)
 
+    def type_prompt(self) -> str:
+        """Persona / method body for this agent type (no output contract)."""
+        return _SUBAGENT_PROMPTS.get(self.value, "")
+
     def system_prompt(self) -> str:
-        """Return the system prompt for this agent type."""
+        """Return the system prompt for this agent type (with markdown report)."""
         from deepseek_tui.engine.prompts import load_prompt
 
         output_contract = load_prompt("subagent_output_format")
-        base = _SUBAGENT_PROMPTS.get(self.value, "")
+        base = self.type_prompt()
         return f"{base}\n\n{output_contract}" if base else output_contract
 
 
@@ -200,21 +204,30 @@ def build_subagent_system_prompt(
     agent_type: SubAgentType,
     assignment: SubAgentAssignment,
     base_override: str | None = None,
+    *,
+    include_markdown_report_contract: bool = True,
 ) -> str:
     """Build the sub-agent system prompt.
 
     ``base_override`` supplies the persona body for a plugin agent
     (Claude Code ``agents/<name>.md``). When set it replaces the built-in
-    type prompt but still carries the shared output-format contract so the
-    sub-agent's deliverable stays consistent.
+    type prompt.
+
+    ``include_markdown_report_contract`` attaches the shared five-section
+    Output contract. Set it False when the run uses ``structured_output``
+    (JSON schema) so only one final-delivery contract is in force.
     """
     if base_override is not None and base_override.strip():
+        base = base_override.strip()
+    else:
+        base = agent_type.type_prompt()
+
+    if include_markdown_report_contract:
         from deepseek_tui.engine.prompts import load_prompt
 
         output_contract = load_prompt("subagent_output_format")
-        base = f"{base_override.strip()}\n\n{output_contract}"
-    else:
-        base = agent_type.system_prompt()
+        base = f"{base}\n\n{output_contract}" if base else output_contract
+
     role = (assignment.role or "").strip()
     if role:
         return f"{base}\n\nYou are operating in the role of `{role}`."

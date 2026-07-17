@@ -8,7 +8,16 @@ from collections.abc import AsyncIterator
 import pytest
 
 from deepseek_tui.client.base import LLMClient, RetryConfig
-from deepseek_tui.engine.capacity import KEEP_RECENT_MESSAGES, plan_compaction
+from deepseek_tui.engine.capacity import (
+    KEEP_RECENT_MESSAGES,
+    plan_compaction,
+    validate_compaction_summary,
+)
+from deepseek_tui.engine.prompts import (
+    COMPACT_CONSUMER_HINT,
+    COMPACT_TEMPLATE,
+    build_system_prompt,
+)
 from deepseek_tui.engine.context import context_input_budget
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.turn import (
@@ -84,6 +93,45 @@ def test_plan_compaction_plain_history_keeps_recent_window():
     plan = plan_compaction(messages)
     expected = set(range(10 - KEEP_RECENT_MESSAGES, 10))
     assert expected <= plan.pinned_indices
+
+
+# --- structured compaction handoff ----------------------------------------
+
+
+def test_validate_compaction_summary_accepts_structured_handoff():
+    text = (
+        "### Goal\nShip compaction handoff.\n\n"
+        "### Constraints\nNone\n\n"
+        "### Progress\n#### Done\nWired summarizer.\n"
+        "#### In Progress\nNone\n#### Blocked\nNone\n\n"
+        "### Key Decisions\nUse compact.md as summarizer contract.\n\n"
+        "### Next step\nRun unit tests.\n"
+    )
+    assert validate_compaction_summary(text) is None
+
+
+def test_validate_compaction_summary_rejects_empty_and_prose():
+    assert validate_compaction_summary("") == "compaction summary came back empty"
+    assert validate_compaction_summary("   ") == "compaction summary came back empty"
+    assert "too short" in (validate_compaction_summary("short prose") or "")
+    prose = (
+        "The user asked to fix compaction. We discussed prompts and pinning. "
+        "Next we should implement validation."
+    )
+    err = validate_compaction_summary(prose)
+    assert err is not None
+    assert "missing required headings" in err
+
+
+def test_build_system_prompt_uses_consumer_hint_not_empty_template():
+    prompt = build_system_prompt(project_context_enabled=False)
+    assert COMPACT_CONSUMER_HINT in prompt
+    assert "After Compaction" in prompt
+    # Empty Goal skeleton must not pollute the main agent system prompt.
+    assert "### Goal\n[The user's high-level objective" not in prompt
+    # Summarizer contract still loads the structured template.
+    assert "### Goal" in COMPACT_TEMPLATE()
+    assert "### Next step" in COMPACT_TEMPLATE()
 
 
 # --- EngineHandle.reset_cancel --------------------------------------------

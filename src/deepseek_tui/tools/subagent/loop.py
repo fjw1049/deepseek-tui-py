@@ -102,15 +102,27 @@ def _structured_output_contract() -> str:
         "- Your final action MUST be a structured_output tool call.\n"
         "- The structured_output arguments are the return value of this subagent.\n"
         "- Do not emit a prose final answer instead of structured_output.\n"
+        "- Do not write the five-section Markdown report; the JSON tool call "
+        "is the only deliverable.\n"
         "- If you need to inspect files or run commands first, do so, then call "
         "structured_output exactly once."
     )
 
 
+# Keep wording aligned with prompts/subagent_output_format.md (five H3s).
 _SUBAGENT_FINAL_REPORT_NUDGE = (
     "You have gathered enough information. Stop exploring and do NOT call any "
-    "more tools. Write your final report now as your message: summarize your "
-    "findings, conclusions, and any recommendations in full prose."
+    "more tools. Write your final report now as your assistant message, ending "
+    "with the mandatory Output contract sections as Markdown H3s: "
+    "### SUMMARY, ### EVIDENCE, ### CHANGES, ### RISKS, ### BLOCKERS "
+    '(use "None." / "None observed." where the contract allows). '
+    "Do not propose follow-up work or ask the parent what to do next."
+)
+
+_SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
+    "You have gathered enough information. Stop exploring. Your final action "
+    "MUST be a single structured_output tool call whose arguments match the "
+    "schema. Do not emit a prose or Markdown final answer."
 )
 
 
@@ -177,13 +189,16 @@ async def run_subagent_loop(
         StructuredOutputTool,
     )
 
+    use_structured_output = bool(agent.output_schema)
     system_prompt = build_subagent_system_prompt(
         agent.agent_type,
         agent.assignment,
         base_override=getattr(agent, "system_prompt", None),
+        # One final-delivery contract only: Markdown report XOR JSON tool.
+        include_markdown_report_contract=not use_structured_output,
     )
     extra_tools = []
-    if agent.output_schema:
+    if use_structured_output:
         extra_tools.append(StructuredOutputTool(agent.output_schema))
         system_prompt = f"{system_prompt}\n\n{_structured_output_contract()}"
     registry = build_subagent_registry(
@@ -380,7 +395,12 @@ async def run_subagent_loop(
                     break
                 if not force_summary and structured_value is None:
                     force_summary = True
-                    messages.append(Message.user(_SUBAGENT_FINAL_REPORT_NUDGE))
+                    nudge = (
+                        _SUBAGENT_STRUCTURED_OUTPUT_NUDGE
+                        if use_structured_output
+                        else _SUBAGENT_FINAL_REPORT_NUDGE
+                    )
+                    messages.append(Message.user(nudge))
                     _save_complete_checkpoint("round")
                     continue
                 if round_thinking:

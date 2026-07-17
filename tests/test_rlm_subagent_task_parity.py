@@ -17,8 +17,10 @@ from deepseek_tui.tools.subagent import (
     SubAgentManager,
     SubAgentType,
     build_subagent_system_prompt,
+    summarize_subagent_result,
     whale_nickname_for_index,
 )
+from deepseek_tui.tools.subagent.types import SubAgentResult, SubAgentStatus
 from deepseek_tui.tools.task import (
     NewTaskRequest as TaskNewTaskRequest,
 )
@@ -79,6 +81,37 @@ class TestSubagentParity:
         )
         assert "exploration sub-agent" in prompt.lower()
         assert "security" in prompt
+        assert "### SUMMARY" in prompt
+
+    def test_build_subagent_system_prompt_can_omit_markdown_report(self):
+        prompt = build_subagent_system_prompt(
+            SubAgentType.GENERAL,
+            SubAgentAssignment(objective="x"),
+            include_markdown_report_contract=False,
+        )
+        assert "### SUMMARY" not in prompt
+        assert "general-purpose sub-agent" in prompt.lower()
+
+    def test_summarize_subagent_result_prefers_summary_section(self):
+        snap = SubAgentResult(
+            agent_id="a1",
+            agent_type=SubAgentType.EXPLORE,
+            assignment=SubAgentAssignment(objective="x"),
+            model="m",
+            nickname=None,
+            status=SubAgentStatus.completed(),
+            result=(
+                "Working notes above the report.\n"
+                "### SUMMARY\nFound the bug in foo.py.\n"
+                "### EVIDENCE\n- foo.py:1-10\n"
+                "### CHANGES\nNone.\n"
+                "### RISKS\nNone observed.\n"
+                "### BLOCKERS\nNone.\n"
+            ),
+            steps_taken=3,
+            duration_ms=10,
+        )
+        assert summarize_subagent_result(snap) == "Found the bug in foo.py."
 
     @pytest.mark.asyncio
     async def test_parent_cancel_propagates(self, tmp_path: Path):

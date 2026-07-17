@@ -363,7 +363,7 @@ def build_system_prompt(
       4. context management guidance (Agent/Yolo only)
       5. skills context (available skills list)
       6. plugin context (mounted plugin dir + read grant, when mounted)
-      7. compaction handoff template
+      7. how to read post-compaction <archived_context> (consumer hint)
       8. previous-session handoff (volatile)
       9. working-set summary (volatile)
 
@@ -434,8 +434,9 @@ def build_system_prompt(
         if snippet:
             full_prompt += "\n\n" + snippet
 
-    # 模型在做上下文压缩(compaction)时应该输出什么格式
-    full_prompt += "\n\n" + COMPACT_TEMPLATE()
+    # Consumer hint only — the structured handoff is authored by the
+    # summarizer (_create_summary) using COMPACT_TEMPLATE / compact.md.
+    full_prompt += "\n\n" + COMPACT_CONSUMER_HINT
 
     # ── Volatile-content boundary ──
     # Previous-session handoff
@@ -646,7 +647,21 @@ def NEVER_APPROVAL() -> str:  # noqa: N802
 
 
 def COMPACT_TEMPLATE() -> str:  # noqa: N802
+    """Structured handoff contract for the compaction summarizer."""
     return _get("compact.md")
+
+
+# Short note for the main agent after compaction. Do not paste the empty
+# Goal/Constraints skeleton here — that belongs on the summarizer call.
+COMPACT_CONSUMER_HINT = (
+    "## After Compaction\n\n"
+    "When earlier turns are compacted, a structured summary appears in "
+    "`<archived_context>` with sections: Goal, Constraints, Progress "
+    "(Done / In Progress / Blocked), Key Decisions, and Next step. "
+    "Treat that block plus the recent verbatim messages as your "
+    "continuation context — do not ask the user to restate work that is "
+    "already covered there."
+)
 
 
 def CYCLE_HANDOFF() -> str:  # noqa: N802

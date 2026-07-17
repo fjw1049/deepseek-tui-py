@@ -20,6 +20,24 @@ class SubAgentCompletion:
     payload: str
 
 
+def _summary_section_text(body: str) -> str | None:
+    """Pull prose under ``### SUMMARY`` when the five-section report is present."""
+    marker = "### SUMMARY"
+    if marker not in body:
+        return None
+    section = body.split(marker, 1)[1]
+    lines: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### "):
+            break
+        if stripped:
+            lines.append(stripped)
+    if not lines:
+        return None
+    return " ".join(lines)
+
+
 def summarize_subagent_result(snap: SubAgentResult) -> str:
     """One-line human summary for the parent sidebar / transcript."""
 
@@ -32,7 +50,8 @@ def summarize_subagent_result(snap: SubAgentResult) -> str:
     body = (snap.result or "").strip()
     if not body:
         return f"Completed ({snap.agent_type.value})"
-    first = body.splitlines()[0].strip()
+    section = _summary_section_text(body)
+    first = (section or body.splitlines()[0]).strip()
     if len(first) > 240:
         return first[:237] + "..."
     return first

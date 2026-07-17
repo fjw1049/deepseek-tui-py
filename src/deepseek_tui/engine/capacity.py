@@ -543,8 +543,26 @@ class SummaryInputLimits:
     input_max_chars: int = SUMMARY_INPUT_MAX_CHARS
     input_head_chars: int = SUMMARY_INPUT_HEAD_CHARS
     input_tail_chars: int = SUMMARY_INPUT_TAIL_CHARS
-    max_tokens: int = 1_024
-    word_limit: int = 500
+    max_tokens: int = 1_536
+    word_limit: int = 700
+
+
+# Required headings in a structured compaction handoff (compact.md).
+_REQUIRED_HANDOFF_HEADINGS = ("### Goal", "### Next step")
+
+
+def validate_compaction_summary(summary: str) -> str | None:
+    """Return an error reason if *summary* is not a usable handoff, else None."""
+    text = (summary or "").strip()
+    if not text:
+        return "compaction summary came back empty"
+    # Reject trivially short prose that cannot carry a structured handoff.
+    if len(text) < 40:
+        return "compaction summary too short to be a handoff"
+    missing = [h for h in _REQUIRED_HANDOFF_HEADINGS if h not in text]
+    if missing:
+        return f"compaction summary missing required headings: {', '.join(missing)}"
+    return None
 
 
 @dataclass
@@ -580,7 +598,7 @@ def _summary_input_limits_for_model(model: str) -> SummaryInputLimits:
             input_head_chars=LARGE_CONTEXT_SUMMARY_INPUT_HEAD_CHARS,
             input_tail_chars=LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS,
             max_tokens=LARGE_CONTEXT_SUMMARY_MAX_TOKENS,
-            word_limit=900,
+            word_limit=1_200,
         )
     else:
         return SummaryInputLimits()
@@ -824,11 +842,10 @@ async def compact_messages_safe(
     for attempt in range(max_retries):
         try:
             summary = await _create_summary(client, messages_to_summarize, effective_model)
-            if not summary:
-                # Replacing history with an empty summary would silently
-                # delete it. Treat as a failed attempt (retried, then the
-                # original messages are returned unchanged).
-                raise ValueError("compaction summary came back empty")
+            # Empty / unstructured summaries must not replace history.
+            validation_error = validate_compaction_summary(summary)
+            if validation_error:
+                raise ValueError(validation_error)
 
             # Build result with pinned + summary
             pinned_messages = [
@@ -870,7 +887,7 @@ async def compact_messages_safe(
 
 
 async def _create_summary(client: LLMClient, messages: list[Message], model: str) -> str:
-    """Create a summary of messages using LLM."""
+    """Create a structured compaction handoff using the compact.md contract."""
     limits = _summary_input_limits_for_model(model)
 
     # Format conversation for summarization
@@ -898,27 +915,33 @@ async def _create_summary(client: LLMClient, messages: list[Message], model: str
         omitted = max(0, conv_chars - len(head) - len(tail))
         conversation_text = f"{head}\n\n[... {omitted} characters omitted ...]\n\n{tail}"
 
-    # Call LLM for summary
+    from deepseek_tui.engine.prompts import COMPACT_TEMPLATE
     from deepseek_tui.protocol.messages import MessageRequest
 
-    summary_prompt = (
-        "Summarize the following conversation in a concise but comprehensive way. "
-        "Preserve key information, decisions made, exact file paths, commands, "
-        "errors, and tool-result facts needed to continue the work. "
-        "Tool outputs may be abbreviated only when repetitive. "
-        f"Keep it under {limits.word_limit} words.\n\n---\n\n{conversation_text}"
+    handoff_contract = COMPACT_TEMPLATE().strip()
+    system_prompt = (
+        "You write structured compaction handoffs for a coding agent. "
+        "Follow the contract exactly. Prefer structure and continuity over "
+        "prose polish. Do not call tools."
+    )
+    user_prompt = (
+        f"{handoff_contract}\n\n"
+        f"Keep the filled handoff under {limits.word_limit} words when possible; "
+        "structure and required headings take priority over the word limit.\n\n"
+        "---\n\n"
+        "Conversation to archive:\n\n"
+        f"{conversation_text}"
     )
 
     request = MessageRequest(
         model=model,
-        messages=[Message.user(summary_prompt)],
+        messages=[Message.user(user_prompt)],
         max_tokens=limits.max_tokens,
-        system_prompt="You are a helpful assistant that creates concise conversation summaries.",
+        system_prompt=system_prompt,
     )
 
     response = client.stream_chat_completion(request)
 
-    # Extract text from response (simplified - just get first text block)
     summary = ""
     async for event in response:
         if hasattr(event, "text"):
