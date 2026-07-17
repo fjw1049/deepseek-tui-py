@@ -2899,6 +2899,249 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   line-height: 1.6;
 }
 
+/* Composer floats up via -mt-6 and the pet docks above it, so the transcript
+   needs a real tail inset (Synara bottomContentInset). pb-6 alone leaves the
+   last answer tucked under the mascot — reads as a "missing corner". */
+.ds-timeline-composer-clearance {
+  padding-bottom: 0.5rem;
+}
+
+.ds-timeline-composer-clearance-spacer {
+  /* ~composer card + pet dock protrusion above the overlap */
+  height: clamp(7.5rem, 18vh, 11rem);
+}
+
+/* ── Final-answer reading mode ───────────────────────────────────────────
+   Dense `.ds-markdown` stays for process-trace / reasoning. Final answers
+   keep full column width with roomier rhythm, scannable headings, and soft
+   inline code (no pill border). */
+.ds-markdown.ds-markdown--answer {
+  /* Keep the 940 stage width from the chat column — do not re-clamp here. */
+  max-width: none;
+  width: 100%;
+  font-size: var(--ds-chat-font-size, 15px);
+  line-height: 1.68;
+  letter-spacing: -0.006em;
+  color: color-mix(in srgb, var(--ds-text) 97%, var(--ds-text-muted));
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Word-style justify: even left/right edges on prose. Long inline tokens
+   (paths, identifiers) were leaving a ragged right margin when left-aligned. */
+.ds-markdown.ds-markdown--answer p,
+.ds-markdown.ds-markdown--answer li {
+  text-align: justify;
+  text-justify: inter-ideograph;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+}
+
+.ds-markdown.ds-markdown--answer h1,
+.ds-markdown.ds-markdown--answer h2,
+.ds-markdown.ds-markdown--answer h3,
+.ds-markdown.ds-markdown--answer h4,
+.ds-markdown.ds-markdown--answer pre,
+.ds-markdown.ds-markdown--answer table,
+.ds-markdown.ds-markdown--answer th,
+.ds-markdown.ds-markdown--answer td {
+  text-align: start;
+  text-justify: auto;
+}
+
+.ds-markdown.ds-markdown--answer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.75rem;
+}
+
+.ds-markdown.ds-markdown--answer > :first-child {
+  margin-top: 0;
+}
+
+.ds-markdown.ds-markdown--answer > :last-child {
+  margin-bottom: 0;
+}
+
+.ds-markdown.ds-markdown--answer p,
+.ds-markdown.ds-markdown--answer ul,
+.ds-markdown.ds-markdown--answer ol,
+.ds-markdown.ds-markdown--answer blockquote,
+.ds-markdown.ds-markdown--answer pre,
+.ds-markdown.ds-markdown--answer table,
+.ds-markdown.ds-markdown--answer hr {
+  margin: 0 0 0.7em;
+}
+
+.ds-markdown.ds-markdown--answer h1,
+.ds-markdown.ds-markdown--answer h2,
+.ds-markdown.ds-markdown--answer h3,
+.ds-markdown.ds-markdown--answer h4 {
+  color: var(--ds-text);
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  scroll-margin-top: 0.75rem;
+}
+
+.ds-markdown.ds-markdown--answer h1 {
+  margin: 1.15em 0 0.45em;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.ds-markdown.ds-markdown--answer h2 {
+  margin: 1.25em 0 0.4em;
+  font-size: 1.18rem;
+  line-height: 1.3;
+}
+
+.ds-markdown.ds-markdown--answer h3 {
+  margin: 1.1em 0 0.35em;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+
+.ds-markdown.ds-markdown--answer h4 {
+  margin: 1em 0 0.3em;
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.ds-markdown.ds-markdown--answer h1:first-child,
+.ds-markdown.ds-markdown--answer h2:first-child,
+.ds-markdown.ds-markdown--answer h3:first-child,
+.ds-markdown.ds-markdown--answer h4:first-child {
+  margin-top: 0;
+}
+
+.ds-markdown.ds-markdown--answer h1 + p,
+.ds-markdown.ds-markdown--answer h2 + p,
+.ds-markdown.ds-markdown--answer h3 + p,
+.ds-markdown.ds-markdown--answer h4 + p {
+  margin-top: 0;
+}
+
+.ds-markdown.ds-markdown--answer strong,
+.ds-markdown.ds-markdown--answer b {
+  font-weight: 575;
+  color: var(--ds-text);
+}
+
+.ds-markdown.ds-markdown--answer ul,
+.ds-markdown.ds-markdown--answer ol {
+  padding-left: 1.35rem;
+}
+
+.ds-markdown.ds-markdown--answer .ds-md-list {
+  list-style-position: outside;
+}
+
+.ds-markdown.ds-markdown--answer ul {
+  list-style-type: disc;
+}
+
+.ds-markdown.ds-markdown--answer ol {
+  list-style-type: decimal;
+}
+
+.ds-markdown.ds-markdown--answer ul ul {
+  list-style-type: circle;
+}
+
+.ds-markdown.ds-markdown--answer ul ul ul {
+  list-style-type: square;
+}
+
+.ds-markdown.ds-markdown--answer ol ol {
+  list-style-type: lower-alpha;
+}
+
+.ds-markdown.ds-markdown--answer ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.ds-markdown.ds-markdown--answer li + li {
+  margin-top: 0.28em;
+}
+
+.ds-markdown.ds-markdown--answer li::marker {
+  color: var(--ds-text-muted);
+}
+
+.ds-markdown.ds-markdown--answer li > p {
+  margin: 0;
+}
+
+.ds-markdown.ds-markdown--answer li > p + p {
+  margin-top: 0.4em;
+}
+
+.ds-markdown.ds-markdown--answer li > ul,
+.ds-markdown.ds-markdown--answer li > ol {
+  margin: 0.32em 0 0.1em;
+}
+
+.ds-markdown.ds-markdown--answer blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.1em 0 0.1em 0.85rem;
+  border-left: 2px solid color-mix(in srgb, var(--ds-border) 88%, var(--ds-text-muted));
+  color: var(--ds-text-muted);
+}
+
+.ds-markdown.ds-markdown--answer blockquote p {
+  margin-bottom: 0.45em;
+}
+
+.ds-markdown.ds-markdown--answer blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.ds-markdown.ds-markdown--answer hr {
+  border: 0;
+  height: 1px;
+  margin: 1.35em 0;
+  background: color-mix(in srgb, var(--ds-border) 88%, transparent);
+}
+
+/* Soft inline code — Synara-like, no pill border */
+.ds-markdown.ds-markdown--answer :not(pre) > code,
+.ds-markdown.ds-markdown--answer .ds-code-inline {
+  border: none;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--ds-bubble-user, var(--ds-code-bg)) 88%, transparent);
+  padding: 0.08em 0.32em;
+  /* Let long paths break so justify can keep a clean right edge. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: var(--ds-chat-code-font, var(--font-mono), ui-monospace, monospace);
+  font-size: 0.88em;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ds-text);
+  box-shadow: none;
+}
+
+.ds-markdown.ds-markdown--answer .ds-file-reference-code:hover {
+  border: none;
+  background: var(--ds-accent-soft);
+}
+
+.ds-markdown.ds-markdown--answer .ds-code-block,
+.ds-markdown.ds-markdown--answer .ds-mermaid-block {
+  margin: 0 0 0.85em;
+  border-color: color-mix(in srgb, var(--ds-border) 72%, transparent);
+  border-radius: 10px;
+}
+
+.ds-markdown.ds-markdown--answer table {
+  font-size: 0.94em;
+}
+
+.ds-markdown.ds-markdown--answer th,
+.ds-markdown.ds-markdown--answer td {
+  padding: 0.45rem 0.65rem;
+}
+
 .ds-user-message {
   display: flex;
   flex-direction: column;
@@ -3276,9 +3519,9 @@ select:focus-visible,
      (same color AND same blur, per Synara chat-content-card-backing) over it. */
   width: calc(var(--app-content-card-radius, 0.9rem) + 2px);
   pointer-events: none;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /* Prefer solid sidebar tone over translucent glass — a 6% hole lets the
+     darker window ground show through as a bitten corner. */
+  background: var(--bg-sidebar);
   transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 

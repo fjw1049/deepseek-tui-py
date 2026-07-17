@@ -34,9 +34,55 @@ const rehypePlugins = [
   ]
 ] satisfies StreamdownProps['rehypePlugins']
 
+type StreamdownListProps = ComponentPropsWithRef<'ul'> & { node?: unknown }
+type StreamdownOrderedListProps = ComponentPropsWithRef<'ol'> & { node?: unknown }
+type StreamdownListItemProps = ComponentPropsWithRef<'li'> & { node?: unknown }
+
+/** Strip Streamdown's default list-inside so wrapped lines align under text. */
+function withoutListInside(className: string | undefined): string {
+  return (className ?? '').replace(/\blist-inside\b/g, '').trim()
+}
+
+function StreamdownUl({ className, children, node: _node, ...props }: StreamdownListProps): ReactElement {
+  return (
+    <ul {...props} className={['ds-md-list list-outside', withoutListInside(className)].filter(Boolean).join(' ')}>
+      {children}
+    </ul>
+  )
+}
+
+function StreamdownOl({
+  className,
+  children,
+  node: _node,
+  ...props
+}: StreamdownOrderedListProps): ReactElement {
+  return (
+    <ol {...props} className={['ds-md-list list-outside', withoutListInside(className)].filter(Boolean).join(' ')}>
+      {children}
+    </ol>
+  )
+}
+
+function StreamdownLi({
+  className,
+  children,
+  node: _node,
+  ...props
+}: StreamdownListItemProps): ReactElement {
+  return (
+    <li {...props} className={['ds-md-list-item', className].filter(Boolean).join(' ')}>
+      {children}
+    </li>
+  )
+}
+
 const components = {
   code: StreamdownCode,
-  a: StreamdownLink
+  a: StreamdownLink,
+  ul: StreamdownUl,
+  ol: StreamdownOl,
+  li: StreamdownLi
 } satisfies StreamdownProps['components']
 
 type StreamdownLinkProps = ComponentPropsWithRef<'a'> & { node?: unknown }

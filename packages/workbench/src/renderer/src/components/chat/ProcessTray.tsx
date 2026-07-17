@@ -57,9 +57,11 @@ function WorkflowComposerPanel({
   const focus = workflowFocusLabel(snap)
   const runId = workflow.runId?.trim()
 
+  const showAlert = (snap.error_count ?? 0) > 0
+
   return (
     <section
-      className="mb-2 w-full overflow-hidden rounded-[16px] border border-sky-300/55 bg-sky-500/[0.05] shadow-[0_10px_28px_rgba(15,23,42,0.06)] dark:border-sky-800/50"
+      className="mb-2 w-full overflow-hidden rounded-[16px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.05)]"
       data-process-tray="workflow"
     >
       <div className="flex items-start gap-2 px-3 py-2.5">
@@ -69,7 +71,7 @@ function WorkflowComposerPanel({
           aria-expanded={open}
           className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
         >
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-sky-500/14 text-sky-700 dark:text-sky-300">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ds-hover/80 text-ds-ink/80">
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
           </span>
           <span className="min-w-0 flex-1">
@@ -93,12 +95,20 @@ function WorkflowComposerPanel({
             {pct != null ? (
               <span className="mt-2 block h-1 overflow-hidden rounded-full bg-ds-border/80">
                 <span
-                  className="block h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                  className="block h-full rounded-full bg-ds-ink/55 transition-[width] duration-300 dark:bg-ds-ink/70"
                   style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
                 />
               </span>
             ) : null}
           </span>
+          {showAlert ? (
+            <span
+              className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center text-[15px] font-semibold leading-none tracking-tight text-ds-ink/70"
+              aria-hidden
+            >
+              !
+            </span>
+          ) : null}
           <ChevronDown
             className={[
               'mt-1.5 h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200',

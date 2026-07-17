@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { CheckCircle2, CircleSlash, Clock, XCircle } from 'lucide-react'
+import { CheckCircle2, CircleSlash, Clock } from 'lucide-react'
 import type { TaskStatus } from '../../lib/extract-tasks-from-blocks'
 
 export function formatTaskDuration(ms: number | null): string | null {
@@ -32,18 +32,15 @@ export function TaskStatusGlyph({ status }: { status: TaskStatus }): ReactElemen
   return (
     <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
       {status === 'completed' ? (
-        <CheckCircle2
-          className="h-4 w-4 text-emerald-600/85 dark:text-emerald-400/85"
-          strokeWidth={1.9}
-        />
+        <CheckCircle2 className="h-4 w-4 text-ds-ink/55" strokeWidth={1.9} />
       ) : status === 'failed' || status === 'timed_out' ? (
-        <XCircle className="h-4 w-4 text-rose-500/85 dark:text-rose-400/85" strokeWidth={1.9} />
+        <span className="text-[13px] font-semibold leading-none text-ds-ink/70">!</span>
       ) : status === 'canceled' ? (
         <CircleSlash className="h-4 w-4 text-ds-faint/80" strokeWidth={1.85} />
       ) : status === 'running' ? (
         <span className="relative flex h-3.5 w-3.5 items-center justify-center">
-          <span className="absolute inline-flex h-3.5 w-3.5 animate-ping rounded-full bg-accent/30" />
-          <span className="relative inline-flex h-[7px] w-[7px] rounded-full bg-accent" />
+          <span className="absolute inline-flex h-3.5 w-3.5 animate-ping rounded-full bg-ds-ink/20" />
+          <span className="relative inline-flex h-[7px] w-[7px] rounded-full bg-ds-ink/65" />
         </span>
       ) : (
         <Clock className="h-4 w-4 text-ds-faint/80" strokeWidth={1.85} />

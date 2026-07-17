@@ -36,6 +36,8 @@ export function WorkflowBlock({
   const running = status === 'running'
   const pct = workflowProgressPct(snapshot)
   const focus = workflowFocusLabel(snapshot)
+  const showAlert =
+    status === 'failed' || status === 'timed_out' || snapshot.error_count > 0
 
   const header =
     status === 'completed'
@@ -60,15 +62,6 @@ export function WorkflowBlock({
           total: Math.max(snapshot.agent_count, snapshot.nodes?.length ?? 0)
         })
 
-  const tone =
-    status === 'failed' || status === 'timed_out'
-      ? 'border-rose-300/55 bg-rose-500/[0.04] dark:border-rose-800/50'
-      : status === 'cancelled'
-        ? 'border-ds-border-muted bg-ds-card/50'
-        : status === 'completed'
-          ? 'border-emerald-300/45 bg-emerald-500/[0.04] dark:border-emerald-800/45'
-          : 'border-sky-300/50 bg-sky-500/[0.05] dark:border-sky-800/50'
-
   const canResume =
     Boolean(runId) &&
     (status === 'cancelled' || status === 'failed' || status === 'timed_out') &&
@@ -87,7 +80,7 @@ export function WorkflowBlock({
   }
 
   return (
-    <div className={`overflow-hidden rounded-[14px] border text-[12.5px] leading-5 ${tone}`}>
+    <div className="overflow-hidden rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 text-[12.5px] leading-5 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
       <div className="flex items-start gap-1 px-2.5 py-2">
         <button
           type="button"
@@ -95,7 +88,7 @@ export function WorkflowBlock({
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-start gap-2.5 text-left transition hover:opacity-95"
         >
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-sky-500/12 text-sky-700 dark:text-sky-300">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ds-hover/80 text-ds-ink/80">
             {running ? (
               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.9} />
             ) : (
@@ -107,18 +100,7 @@ export function WorkflowBlock({
               <span className="truncate text-[13.5px] font-semibold tracking-[-0.015em] text-ds-ink">
                 {name}
               </span>
-              <span
-                className={[
-                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
-                  running
-                    ? 'bg-sky-500/12 text-sky-800 dark:text-sky-200'
-                    : status === 'completed'
-                      ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
-                      : status === 'failed' || status === 'timed_out'
-                        ? 'bg-rose-500/12 text-rose-800 dark:text-rose-200'
-                        : 'bg-ds-hover text-ds-muted'
-                ].join(' ')}
-              >
+              <span className="shrink-0 rounded-full bg-black/[0.05] px-1.5 py-0.5 text-[10.5px] font-semibold text-ds-muted dark:bg-white/[0.08]">
                 {header}
               </span>
             </span>
@@ -136,19 +118,21 @@ export function WorkflowBlock({
             {pct != null ? (
               <span className="mt-2 block h-1 overflow-hidden rounded-full bg-ds-border/80">
                 <span
-                  className={[
-                    'block h-full rounded-full transition-[width] duration-300',
-                    status === 'failed' || status === 'timed_out'
-                      ? 'bg-rose-500'
-                      : status === 'completed'
-                        ? 'bg-emerald-500'
-                        : 'bg-sky-500'
-                  ].join(' ')}
+                  className="block h-full rounded-full bg-ds-ink/55 transition-[width] duration-300 dark:bg-ds-ink/70"
                   style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
                 />
               </span>
             ) : null}
           </span>
+          {showAlert ? (
+            <span
+              className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center text-[15px] font-semibold leading-none tracking-tight text-ds-ink/70"
+              aria-label={header}
+              title={header}
+            >
+              !
+            </span>
+          ) : null}
           <ChevronDown
             className={[
               'mt-1.5 h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200',
@@ -163,7 +147,7 @@ export function WorkflowBlock({
             type="button"
             disabled={!canResume}
             onClick={() => void onResume()}
-            className="mt-0.5 shrink-0 rounded-full bg-sky-500/12 px-2.5 py-1 text-[11.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
+            className="mt-0.5 shrink-0 rounded-full bg-ds-hover px-2.5 py-1 text-[11.5px] font-semibold text-ds-ink transition active:scale-[0.97] hover:bg-ds-hover/80 disabled:opacity-45"
           >
             {resuming ? t('workflowResuming') : t('workflowResume')}
           </button>

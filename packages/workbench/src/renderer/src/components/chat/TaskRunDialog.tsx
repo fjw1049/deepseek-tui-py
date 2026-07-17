@@ -114,7 +114,7 @@ export function TaskRunDialog({
       >
         <header className="relative shrink-0 px-6 pb-4 pt-5">
           <div className="flex items-start gap-3 pr-10">
-            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-sky-500/12 text-sky-700 dark:text-sky-300">
+            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-ds-hover/80 text-ds-ink/80">
               <TaskStatusGlyph status={status} />
             </span>
             <div className="min-w-0 flex-1">
@@ -136,7 +136,7 @@ export function TaskRunDialog({
                 type="button"
                 disabled={!canResume}
                 onClick={() => void onResume()}
-                className="rounded-full bg-sky-500/12 px-3 py-1.5 text-[12.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
+                className="rounded-full bg-ds-hover px-3 py-1.5 text-[12.5px] font-semibold text-ds-ink transition active:scale-[0.97] hover:bg-ds-hover/80 disabled:opacity-45"
               >
                 {resuming ? t('taskResuming') : t('taskResume')}
               </button>
@@ -154,7 +154,7 @@ export function TaskRunDialog({
                   <button
                     type="button"
                     onClick={() => setPromptOpen((v) => !v)}
-                    className="text-[12px] font-medium text-sky-700 transition hover:opacity-80 dark:text-sky-300"
+                    className="text-[12px] font-medium text-ds-muted transition hover:text-ds-ink"
                   >
                     {promptOpen ? t('collapse') : t('expand')}
                   </button>
@@ -208,7 +208,7 @@ export function TaskRunDialog({
               </GroupedSection>
             ) : detail?.error ? (
               <GroupedSection title={t('contextRailTaskResult')} tone="error">
-                <p className="whitespace-pre-wrap break-words px-4 py-3 text-[13.5px] leading-6 text-rose-700 dark:text-rose-300">
+                <p className="whitespace-pre-wrap break-words px-4 py-3 text-[13.5px] leading-6 text-ds-ink">
                   {detail.error}
                 </p>
               </GroupedSection>
@@ -237,19 +237,14 @@ function StatusPill({
   children: ReactNode
   tone: 'neutral' | 'running' | 'ok' | 'danger'
 }): ReactElement {
-  const toneClass =
-    tone === 'running'
-      ? 'bg-violet-500/12 text-violet-800 dark:text-violet-200'
-      : tone === 'ok'
-        ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
-        : tone === 'danger'
-          ? 'bg-rose-500/12 text-rose-800 dark:text-rose-200'
-          : 'bg-ds-hover/70 text-ds-muted'
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-[0.01em] ${toneClass}`}
-    >
+    <span className="inline-flex items-center gap-1 rounded-full bg-ds-hover/70 px-2 py-0.5 text-[11px] font-semibold tracking-[0.01em] text-ds-muted">
       {children}
+      {tone === 'danger' ? (
+        <span className="text-[12px] font-semibold leading-none text-ds-ink/70" aria-hidden>
+          !
+        </span>
+      ) : null}
     </span>
   )
 }
@@ -284,25 +279,22 @@ function GroupedSection({
   children: ReactNode
   tone?: 'default' | 'result' | 'error'
 }): ReactElement {
-  const shell =
-    tone === 'result'
-      ? 'border-emerald-300/40 bg-emerald-500/[0.05] dark:border-emerald-800/40 dark:bg-emerald-500/[0.07]'
-      : tone === 'error'
-        ? 'border-rose-300/45 bg-rose-500/[0.05] dark:border-rose-800/40 dark:bg-rose-500/[0.08]'
-        : 'border-ds-border/70 bg-ds-card/55'
-  const titleTone =
-    tone === 'result'
-      ? 'text-emerald-700 dark:text-emerald-300'
-      : tone === 'error'
-        ? 'text-rose-700 dark:text-rose-300'
-        : 'text-ds-muted'
   return (
     <section>
       <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-        <h3 className={`text-[12px] font-semibold tracking-[0.02em] ${titleTone}`}>{title}</h3>
+        <h3 className="flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+          {title}
+          {tone === 'error' ? (
+            <span className="text-[12px] font-semibold leading-none text-ds-ink/70" aria-hidden>
+              !
+            </span>
+          ) : null}
+        </h3>
         {trailing}
       </div>
-      <div className={`overflow-hidden rounded-[16px] border ${shell}`}>{children}</div>
+      <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55">
+        {children}
+      </div>
     </section>
   )
 }

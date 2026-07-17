@@ -187,7 +187,7 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
         <button
           type="button"
           onClick={() => setDialogOpen(true)}
-          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-sky-700 transition hover:bg-sky-500/10 dark:text-sky-300"
+          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
         >
           {t('subagentDetails')}
         </button>

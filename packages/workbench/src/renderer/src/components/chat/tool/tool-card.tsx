@@ -44,9 +44,9 @@ function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): 
  * `useDisclosure` so it survives remounts.
  *
  * Default is collapsed for every state (running / success / error). Status is
- * shown by color and the header icon — not by auto-expanding the body — so
- * the work trace stays a quiet, consistent list. Users can still open a card
- * manually to inspect output or error detail.
+ * a quiet trailing cue ("…" / check / "!") — not a tinted shell — so the work
+ * trace stays a calm, consistent list. Users can still open a card manually
+ * to inspect output or error detail.
  */
 export const ToolCard = memo(function ToolCard({
   block,
@@ -191,12 +191,7 @@ export const ToolCard = memo(function ToolCard({
     <div
       id={`block-${block.id}`}
       className={cn(
-        'group overflow-hidden rounded-[14px] border',
-        ctx.state === 'error'
-          ? 'border-red-300/70 bg-red-500/5 dark:border-red-800/40 dark:bg-red-950/20'
-          : ctx.state === 'running'
-            ? 'border-amber-300/60 bg-amber-500/5 dark:border-amber-800/40 dark:bg-amber-950/15'
-            : 'border-ds-border bg-ds-card/60',
+        'group overflow-hidden rounded-[14px] border border-ds-border bg-ds-card/60',
         className
       )}
     >

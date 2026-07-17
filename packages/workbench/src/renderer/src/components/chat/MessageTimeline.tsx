@@ -572,7 +572,13 @@ export function MessageTimeline({
       <div
         className={`ds-timeline-stack flex w-full min-w-0 flex-col ${
           useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
-        } ${showEmptyHeroOnly ? 'pb-0 pt-0' : withOperationColumn ? 'ds-timeline-with-operation pb-6' : 'pb-6 pt-2'}`}
+        } ${
+          showEmptyHeroOnly
+            ? 'pb-0 pt-0'
+            : withOperationColumn
+              ? 'ds-timeline-with-operation ds-timeline-composer-clearance'
+              : 'ds-timeline-composer-clearance pt-2'
+        }`}
       >
         {!activeThreadId && (
           <EmptyHero
@@ -681,6 +687,12 @@ export function MessageTimeline({
           />
         ) : null}
         <div ref={endRef} aria-hidden className="h-px w-full shrink-0" />
+        {/* Extra tail so the last answer clears the overlapping composer + pet
+            dock (Synara MIN_BOTTOM_CONTENT_INSET). Without this, the bottom-
+            right looks like a missing chunk next to the mascot. */}
+        {!showEmptyHeroOnly ? (
+          <div aria-hidden className="ds-timeline-composer-clearance-spacer shrink-0" />
+        ) : null}
       </div>
     </div>
   )
@@ -1671,21 +1683,14 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
   ].filter(Boolean)
 
   return (
-    <section
-      className={[
-        'my-2 overflow-hidden rounded-[12px] border shadow-[0_10px_28px_rgba(86,103,136,0.04)]',
-        hasFailure
-          ? 'border-red-300/70 bg-red-500/10 dark:border-red-800/50'
-          : 'border-violet-300/45 bg-violet-500/10 dark:border-violet-800/50'
-      ].join(' ')}
-    >
+    <section className="my-2 overflow-hidden rounded-[12px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
         className="group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/35"
       >
-        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300">
+        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ds-hover/80 text-ds-ink/75">
           {active ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
           ) : (
@@ -1694,7 +1699,7 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-[14px] font-semibold text-ds-ink">
+            <span className="text-[14px] font-semibold tracking-[-0.015em] text-ds-ink">
               {t('subagentSummaryTitle', { count: summary.total })}
             </span>
             {countParts.length > 0 ? (
@@ -1709,6 +1714,14 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
             ) : null}
           </span>
         </span>
+        {hasFailure ? (
+          <span
+            className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-[15px] font-semibold leading-none tracking-tight text-ds-ink/70"
+            aria-hidden
+          >
+            !
+          </span>
+        ) : null}
         {expanded ? (
           <ChevronDown className="mt-1 h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
         ) : (
@@ -1860,20 +1873,13 @@ function SubagentSummaryRow({
   const { t } = useTranslation('common')
   const statusLabel = subagentStatusLabel(block.status, t)
   const isActive = block.status === 'running' || block.status === 'pending'
-  const statusTone =
-    block.status === 'completed'
-      ? 'text-emerald-700 dark:text-emerald-300'
-      : block.status === 'failed'
-        ? 'text-red-700 dark:text-red-300'
-        : block.status === 'running'
-          ? 'text-amber-800 dark:text-amber-200'
-          : 'text-ds-muted'
+  const failed = block.status === 'failed'
   const flowItems = useMemo(() => flowItemsForSubagentBlock(block), [block])
   // Collapsed by default so many agents don't flood the timeline.
   const [stepsOpen, setStepsOpen] = useState(false)
 
   return (
-    <div className="rounded-xl border border-ds-border-muted/70 bg-ds-card/65 px-3 py-2 text-[12.5px] leading-5 transition hover:border-violet-300/50">
+    <div className="rounded-xl border border-ds-border-muted/60 bg-ds-elevated/40 px-3 py-2 text-[12.5px] leading-5 transition hover:bg-ds-hover/30">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <button
           type="button"
@@ -1888,15 +1894,15 @@ function SubagentSummaryRow({
             ].join(' ')}
             strokeWidth={1.8}
           />
-          <span className="font-semibold text-ds-ink">
+          <span className="font-semibold tracking-[-0.01em] text-ds-ink">
             {block.cardKind === 'fanout'
               ? t('subagentFanoutTitle', { kind: block.agentType })
               : t('subagentDelegateTitle', { type: block.agentType })}
           </span>
           {isActive ? (
-            <Loader2 className="h-3 w-3 animate-spin text-amber-700 dark:text-amber-200" strokeWidth={2} />
+            <Loader2 className="h-3 w-3 animate-spin text-ds-muted" strokeWidth={2} />
           ) : null}
-          <span className={`font-medium ${statusTone}`}>{statusLabel}</span>
+          <span className="font-medium text-ds-muted">{statusLabel}</span>
           {flowItems.length > 0 ? (
             <span className="text-[11px] text-ds-faint">
               {t('subagentStepCount', {
@@ -1905,10 +1911,18 @@ function SubagentSummaryRow({
             </span>
           ) : null}
         </button>
+        {failed ? (
+          <span
+            className="flex h-5 w-5 shrink-0 items-center justify-center text-[14px] font-semibold leading-none tracking-tight text-ds-ink/70"
+            aria-hidden
+          >
+            !
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={onOpen}
-          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300"
+          className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
         >
           {t('subagentDetails')}
         </button>
@@ -1919,18 +1933,15 @@ function SubagentSummaryRow({
           {block.workers.map((worker) => (
             <span
               key={worker.id}
-              title={worker.id}
-              className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-[10px] ${
-                worker.status === 'completed'
-                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                  : worker.status === 'failed'
-                    ? 'bg-red-500/15 text-red-700 dark:text-red-300'
-                    : worker.status === 'running'
-                      ? 'bg-amber-500/15 text-amber-800 dark:text-amber-200'
-                      : 'bg-ds-hover text-ds-muted'
-              }`}
+              title={`${worker.id} · ${worker.status}`}
+              className={[
+                'inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-ds-hover px-1 font-mono text-[10px] text-ds-muted',
+                worker.status === 'failed' ? 'font-semibold text-ds-ink' : '',
+                worker.status === 'running' ? 'ring-1 ring-ds-border' : '',
+                worker.status === 'completed' ? 'opacity-70' : ''
+              ].join(' ')}
             >
-              {worker.id.slice(-2)}
+              {worker.status === 'failed' ? '!' : worker.id.slice(-2)}
             </span>
           ))}
         </div>
@@ -1968,11 +1979,11 @@ function subagentStatusDotClass(
   switch (status) {
     case 'running':
     case 'pending':
-      return 'text-violet-600 dark:text-violet-300'
+      return 'text-ds-ink/70'
     case 'completed':
-      return 'text-emerald-600 dark:text-emerald-400'
+      return 'text-ds-muted'
     case 'failed':
-      return 'text-rose-600 dark:text-rose-400'
+      return 'text-ds-ink/80 font-semibold'
     default:
       return 'text-ds-faint'
   }
@@ -1987,7 +1998,7 @@ function subagentStatusGlyph(status: SubagentBlock['status']): string {
     case 'completed':
       return '✓'
     case 'failed':
-      return '✗'
+      return '!'
     default:
       return '−'
   }
@@ -2199,15 +2210,6 @@ function SubagentDetailDialog({
 
   if (typeof document === 'undefined') return <></>
 
-  const selectedTone =
-    selectedStatus === 'running' || selectedStatus === 'pending'
-      ? 'running'
-      : selectedStatus === 'completed'
-        ? 'ok'
-        : selectedStatus === 'failed'
-          ? 'danger'
-          : 'neutral'
-
   return createPortal(
     <div
       className="ds-modal-backdrop ds-modal-backdrop--soft ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6"
@@ -2224,7 +2226,7 @@ function SubagentDetailDialog({
       >
         <header className="relative shrink-0 px-6 pb-3 pt-5">
           <div className="flex items-start gap-3 pr-10">
-            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-violet-500/12 text-violet-700 dark:text-violet-300">
+            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-ds-hover/80 text-ds-ink/80">
               <Bot className="h-5 w-5" strokeWidth={1.7} />
             </span>
             <div className="min-w-0 flex-1">
@@ -2233,20 +2235,17 @@ function SubagentDetailDialog({
               </h3>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
                 <span className="font-mono tabular-nums text-ds-faint">{block.agentId}</span>
-                <span
-                  className={[
-                    'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                    selectedTone === 'running'
-                      ? 'bg-violet-500/12 text-violet-800 dark:text-violet-200'
-                      : selectedTone === 'ok'
-                        ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
-                        : selectedTone === 'danger'
-                          ? 'bg-rose-500/12 text-rose-800 dark:text-rose-200'
-                          : 'bg-ds-hover/70 text-ds-muted'
-                  ].join(' ')}
-                >
+                <span className="inline-flex items-center rounded-full bg-ds-hover/70 px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
                   {statusLabel}
                 </span>
+                {selectedStatus === 'failed' ? (
+                  <span
+                    className="text-[14px] font-semibold leading-none tracking-tight text-ds-ink/70"
+                    aria-hidden
+                  >
+                    !
+                  </span>
+                ) : null}
               </p>
             </div>
           </div>
@@ -2257,7 +2256,7 @@ function SubagentDetailDialog({
                 type="button"
                 disabled={!canResume}
                 onClick={() => void onResume()}
-                className="rounded-full bg-sky-500/12 px-3 py-1.5 text-[12.5px] font-semibold text-sky-800 transition active:scale-[0.97] hover:bg-sky-500/18 disabled:opacity-45 dark:text-sky-200"
+                className="rounded-full bg-ds-hover px-3 py-1.5 text-[12.5px] font-semibold text-ds-ink transition active:scale-[0.97] hover:bg-ds-hover/80 disabled:opacity-45"
               >
                 {resuming
                   ? t('subagentResuming')
@@ -2295,7 +2294,7 @@ function SubagentDetailDialog({
                         className={[
                           'flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-left transition active:scale-[0.98]',
                           active
-                            ? 'bg-violet-500/14 text-violet-900 ring-1 ring-violet-400/35 dark:text-violet-100'
+                            ? 'bg-ds-hover text-ds-ink ring-1 ring-ds-ink/20'
                             : 'bg-ds-card/70 text-ds-ink ring-1 ring-ds-border/60 hover:bg-ds-hover/50'
                         ].join(' ')}
                         style={node.depth > 0 ? { marginLeft: node.depth > 1 ? 4 : 0 } : undefined}
@@ -2979,9 +2978,17 @@ function SubagentBubble({
   const statusLabel = subagentStatusLabel(block.status, t)
 
   return (
-    <div className="rounded-[14px] border border-violet-300/50 bg-[linear-gradient(180deg,rgba(139,92,246,0.06),rgba(139,92,246,0.12))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)] dark:border-violet-800/50">
+    <div className="rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="font-semibold text-violet-700 dark:text-violet-300">{title}</div>
+        <div className="flex items-center gap-2 font-semibold tracking-[-0.015em] text-ds-ink">
+          <Bot className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.8} />
+          {title}
+          {block.status === 'failed' ? (
+            <span className="text-[14px] font-semibold leading-none text-ds-ink/70" aria-hidden>
+              !
+            </span>
+          ) : null}
+        </div>
         <span className="font-mono text-[11px] text-ds-faint">{block.agentId.slice(0, 10)}</span>
       </div>
       <p className="mt-1 text-[12px] text-ds-muted">{statusLabel}</p>
@@ -2990,18 +2997,15 @@ function SubagentBubble({
           {block.workers.map((worker) => (
             <span
               key={worker.id}
-              title={worker.id}
-              className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-[10px] ${
-                worker.status === 'completed'
-                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                  : worker.status === 'failed'
-                    ? 'bg-red-500/15 text-red-700 dark:text-red-300'
-                    : worker.status === 'running'
-                      ? 'bg-amber-500/15 text-amber-800 dark:text-amber-200'
-                      : 'bg-ds-hover text-ds-muted'
-              }`}
+              title={`${worker.id} · ${worker.status}`}
+              className={[
+                'inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-ds-hover px-1 font-mono text-[10px] text-ds-muted',
+                worker.status === 'failed' ? 'font-semibold text-ds-ink' : '',
+                worker.status === 'running' ? 'ring-1 ring-ds-border' : '',
+                worker.status === 'completed' ? 'opacity-70' : ''
+              ].join(' ')}
             >
-              {worker.id.slice(-2)}
+              {worker.status === 'failed' ? '!' : worker.id.slice(-2)}
             </span>
           ))}
         </div>
@@ -3236,7 +3240,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
       : null
     return (
       <div id={`block-${block.id}`} className="group/message flex min-w-0 max-w-full flex-col">
-        <div className="ds-markdown ds-chat-answer min-w-0 max-w-full text-ds-ink">
+        <div className="ds-markdown ds-markdown--answer ds-chat-answer min-w-0 max-w-full text-ds-ink">
           <AssistantMarkdown text={block.text} streaming={streaming} />
         </div>
         {!streaming ? (

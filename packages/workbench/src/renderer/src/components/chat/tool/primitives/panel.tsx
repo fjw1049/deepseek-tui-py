@@ -22,7 +22,7 @@ export function ToolErrorState({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-[10px] border border-red-200/80 bg-red-50/80 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/40 dark:bg-red-500/10 dark:text-red-300',
+        'overflow-hidden rounded-[10px] border border-ds-border-muted/60 bg-ds-card/50 px-3 py-2 text-[12px] leading-5 text-ds-ink',
         className
       )}
     >

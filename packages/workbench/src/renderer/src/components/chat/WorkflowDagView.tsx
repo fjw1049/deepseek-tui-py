@@ -24,11 +24,11 @@ type DagNodeView = {
 function statusDotClass(status: NodeStatus | WorkflowAgentRun['status']): string {
   switch (status) {
     case 'running':
-      return 'border-sky-400/70 bg-sky-500'
+      return 'border-ds-ink/40 bg-ds-ink/70'
     case 'done':
-      return 'border-emerald-400/60 bg-emerald-500'
+      return 'border-ds-ink/25 bg-ds-ink/40'
     case 'error':
-      return 'border-rose-400/60 bg-rose-500'
+      return 'border-ds-ink/45 bg-ds-hover'
     case 'skipped':
       return 'border-ds-border-muted bg-ds-faint'
     default:
@@ -181,7 +181,16 @@ function AgentDetail({
   return (
     <div className="rounded-[10px] border border-ds-border/40 bg-ds-card/50 px-2.5 py-2">
       <div className="flex items-center gap-2">
-        <span className={`h-2 w-2 shrink-0 rounded-full border ${statusDotClass(agent.status)}`} />
+        {agent.status === 'error' ? (
+          <span
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[11px] font-semibold leading-none text-ds-ink/75"
+            aria-hidden
+          >
+            !
+          </span>
+        ) : (
+          <span className={`h-2 w-2 shrink-0 rounded-full border ${statusDotClass(agent.status)}`} />
+        )}
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ds-ink">
           {agent.label}
         </span>
@@ -219,14 +228,7 @@ function AgentDetail({
             {agent.error ? t('workflowAgentError') : t('workflowAgentPreview')}
           </button>
           {previewOpen ? (
-            <pre
-              className={[
-                'mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5',
-                agent.error
-                  ? 'text-rose-700 dark:text-rose-300'
-                  : 'text-ds-muted'
-              ].join(' ')}
-            >
+            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-ds-muted">
               {agent.error?.trim() || agent.result_preview}
             </pre>
           ) : null}
@@ -287,11 +289,20 @@ function NodeRow({
         style={node.depth > 0 ? { marginLeft: `${Math.min(node.depth, 4) * 0.7}rem` } : undefined}
       >
         <span className="relative mt-1 flex w-3.5 shrink-0 flex-col items-center">
-          <span
-            className={`h-3.5 w-3.5 rounded-full border ${statusDotClass(node.status)} ${
-              node.status === 'running' ? 'animate-pulse' : ''
-            }`}
-          />
+          {node.status === 'error' ? (
+            <span
+              className="flex h-3.5 w-3.5 items-center justify-center text-[12px] font-semibold leading-none text-ds-ink/75"
+              aria-hidden
+            >
+              !
+            </span>
+          ) : (
+            <span
+              className={`h-3.5 w-3.5 rounded-full border ${statusDotClass(node.status)} ${
+                node.status === 'running' ? 'animate-pulse' : ''
+              }`}
+            />
+          )}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

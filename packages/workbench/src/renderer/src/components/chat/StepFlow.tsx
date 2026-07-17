@@ -28,7 +28,7 @@ export type StepFlowItem = {
 
 const STATUS_STYLE: Record<
   StepFlowStatus,
-  { ring: string; fill: string; pulse?: boolean }
+  { ring: string; fill: string; pulse?: boolean; mark?: string }
 > = {
   queued: {
     ring: 'border-ds-border-muted bg-ds-card',
@@ -39,21 +39,22 @@ const STATUS_STYLE: Record<
     fill: 'bg-transparent'
   },
   running: {
-    ring: 'border-violet-400/70 bg-violet-500/10 dark:border-violet-400/50',
-    fill: 'bg-violet-500',
+    ring: 'border-ds-ink/35 bg-ds-hover',
+    fill: 'bg-ds-ink/70',
     pulse: true
   },
   ok: {
-    ring: 'border-emerald-400/60 bg-emerald-500/10',
-    fill: 'bg-emerald-500'
+    ring: 'border-ds-ink/25 bg-ds-hover/60',
+    fill: 'bg-ds-ink/45'
   },
   completed: {
-    ring: 'border-emerald-400/60 bg-emerald-500/10',
-    fill: 'bg-emerald-500'
+    ring: 'border-ds-ink/25 bg-ds-hover/60',
+    fill: 'bg-ds-ink/45'
   },
   failed: {
-    ring: 'border-rose-400/60 bg-rose-500/10',
-    fill: 'bg-rose-500'
+    ring: 'border-ds-ink/40 bg-ds-hover',
+    fill: 'bg-transparent',
+    mark: '!'
   },
   cancelled: {
     ring: 'border-ds-border-muted bg-ds-hover/50',
@@ -91,13 +92,17 @@ function StatusDot({
           style.ring
         ].join(' ')}
       >
-        <span
-          className={[
-            'h-1.5 w-1.5 rounded-full',
-            style.fill,
-            style.pulse ? 'animate-pulse' : ''
-          ].join(' ')}
-        />
+        {style.mark ? (
+          <span className="text-[9px] font-semibold leading-none text-ds-ink/75">{style.mark}</span>
+        ) : (
+          <span
+            className={[
+              'h-1.5 w-1.5 rounded-full',
+              style.fill,
+              style.pulse ? 'animate-pulse' : ''
+            ].join(' ')}
+          />
+        )}
       </span>
     </span>
   )
