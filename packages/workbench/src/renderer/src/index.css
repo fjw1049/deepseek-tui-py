@@ -1768,19 +1768,29 @@ samp {
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--surface-2) 42%, transparent);
   padding: 0.4rem 0.625rem;
-  font-family: inherit;
+  /* Explicit stack — global `input { font-family: var(--font-ui) }` plus
+     Chromium's broken `::placeholder { inherit }` was why "项目" in the
+     section label (PingFang) and "搜索项目…" placeholder (Inter/Noto) diverged. */
+  font-family: var(--font-sidebar);
   font-size: var(--sidebar-text-sm);
   font-weight: var(--sidebar-weight);
+  letter-spacing: 0;
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
   transition:
     border-color 0.2s ease,
     background 0.2s ease;
 }
 
 .ds-sidebar-search::placeholder {
-  font-family: inherit;
+  font-family: var(--font-sidebar);
   font-weight: var(--sidebar-weight);
+  letter-spacing: 0;
   color: var(--text-tertiary);
+  opacity: 1;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
 }
 
 .ds-sidebar-search:focus {
@@ -1825,7 +1835,16 @@ samp {
 .ds-sidebar-search--inline {
   min-height: 1.625rem;
   padding: 0.2rem 0.45rem 0.2rem 1.5rem;
-  font-size: var(--sidebar-text-sm);
+  /* Align with .ds-sidebar-section-label ("项目") in this row. */
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight-strong);
+  letter-spacing: 0.01em;
+}
+
+.ds-sidebar-search--inline::placeholder {
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight-strong);
+  letter-spacing: 0.01em;
 }
 
 .ds-sidebar-link {
