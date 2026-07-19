@@ -16,6 +16,7 @@ import {
 import type { NormalizedThread } from '../../agent/types'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { SidebarProjectsSection, SidebarProjectsToolbar } from './SidebarProjectsSection'
+import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 
 const EXTENSIONS_OPEN_KEY = 'deepseekgui.sidebar.extensionsOpen'
@@ -198,6 +199,15 @@ export function Sidebar({
       />
 
       <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
+        <SidebarPinnedSection
+          onSelectThread={onSelectThread}
+          onOpenThreadTerminal={onOpenThreadTerminal}
+          onDeleteThread={onDeleteThread}
+          onCompactThread={onCompactThread}
+          onTogglePin={togglePin}
+          t={t}
+        />
+
         <div className="ds-sidebar-projects-scroll ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <SidebarProjectsSection
             threads={threads}

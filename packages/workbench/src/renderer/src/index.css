@@ -1927,6 +1927,26 @@ samp {
   flex: 1 1 auto;
 }
 
+.ds-sidebar-pinned-pane {
+  display: flex;
+  max-height: 28%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
+  background: var(--ds-bg-sidebar);
+}
+
+.ds-sidebar-pinned-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem 0.35rem;
+}
+
+.ds-sidebar-pinned-list {
+  min-height: 0;
+}
+
 .ds-sidebar-chats-pane {
   display: flex;
   max-height: 38%;

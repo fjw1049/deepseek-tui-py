@@ -2,7 +2,9 @@ import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  Archive,
   Check,
+  CheckSquare,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -16,9 +18,9 @@ import {
   Pin,
   PinOff,
   Plus,
-  Trash2,
-  Archive,
-  Search
+  Search,
+  Square,
+  Trash2
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
@@ -183,15 +185,6 @@ export function SidebarProjectsSection({
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
-  // Pinned threads, ordered by pin time (the pinnedThreadIds array order).
-  // Dropped ids whose thread no longer exists are skipped.
-  const pinnedThreads = useMemo(() => {
-    const byId = new Map(threads.map((thread) => [thread.id, thread]))
-    return pinnedThreadIds
-      .map((id) => byId.get(id))
-      .filter((thread): thread is NormalizedThread => thread !== undefined)
-  }, [threads, pinnedThreadIds])
-
   const groups = useMemo(() => {
     const map = new Map<string, NormalizedThread[]>()
     const selectedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
@@ -236,12 +229,6 @@ export function SidebarProjectsSection({
     }
     return result
   }, [groups, searchQuery])
-
-  const filteredPinnedThreads = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return pinnedThreads
-    return pinnedThreads.filter((thread) => thread.title.toLowerCase().includes(query))
-  }, [pinnedThreads, searchQuery])
 
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
@@ -298,11 +285,6 @@ export function SidebarProjectsSection({
         canCompact={activeThreadId === thread.id && !busy}
       />
     )
-  }
-
-  const pinnedSourceLabel = (thread: NormalizedThread): string => {
-    if (isChatsWorkspace(thread.workspace)) return t('sidebarChatBadge')
-    return workspaceLabelFromPath(normalizeWorkspaceRoot(thread.workspace))
   }
 
   const clearFolderHoverTimer = (): void => {
@@ -484,24 +466,11 @@ export function SidebarProjectsSection({
     )
   }
 
-  const noProjectsAndPinned = groups.length === 0 && pinnedThreads.length === 0
-  const noVisible = filteredPinnedThreads.length === 0 && filteredGroups.length === 0
+  const noProjects = groups.length === 0
+  const noVisible = filteredGroups.length === 0
 
   return (
     <div className="ds-no-drag shrink-0 px-1 pt-1">
-      {filteredPinnedThreads.length > 0 ? (
-        <div className="mb-1">
-          <div className="ds-sidebar-projects-toolbar">
-            <span className="ds-sidebar-section-label shrink-0">{t('sidebarPinned')}</span>
-          </div>
-          <div className="ds-sidebar-thread-list space-y-0.5 px-1.5">
-            {filteredPinnedThreads.map((thread) =>
-              renderThreadRow(thread, { variant: 'pinned', sourceLabel: pinnedSourceLabel(thread) })
-            )}
-          </div>
-        </div>
-      ) : null}
-
       <div className="ds-sidebar-projects-panel">
         <div className="px-1.5 pb-2 pt-1">
           {filteredGroups.length > 0 ? (
@@ -509,7 +478,7 @@ export function SidebarProjectsSection({
           ) : null}
 
           {noVisible ? (
-            noProjectsAndPinned ? (
+            noProjects ? (
               <SidebarEmpty
                 runtimeReady={runtimeReady}
                 hasWorkspace={!!workspaceRoot}
@@ -566,6 +535,10 @@ type ThreadRowProps = {
   pinned: boolean
   sourceLabel?: string
   canCompact: boolean
+  /** Workspace batch-manage mode: row toggles selection instead of opening. */
+  selectionMode?: boolean
+  selected?: boolean
+  onToggleSelect?: () => void
   onSelect: () => void
   onOpenTerminal: () => void
   onDelete: () => void
@@ -584,6 +557,9 @@ export function ThreadRow({
   pinned,
   sourceLabel,
   canCompact,
+  selectionMode = false,
+  selected = false,
+  onToggleSelect,
   onSelect,
   onOpenTerminal,
   onDelete,
@@ -719,31 +695,52 @@ export function ThreadRow({
 
   return (
     <div
-      onContextMenu={handleContextMenu}
-      onMouseEnter={handleRowMouseEnter}
-      onMouseMove={handleRowMouseMove}
-      onMouseLeave={handleRowMouseLeave}
+      onContextMenu={selectionMode ? undefined : handleContextMenu}
+      onMouseEnter={selectionMode ? undefined : handleRowMouseEnter}
+      onMouseMove={selectionMode ? undefined : handleRowMouseMove}
+      onMouseLeave={selectionMode ? undefined : handleRowMouseLeave}
       className={`ds-sidebar-thread-row group relative flex min-w-0 items-center overflow-hidden ${
-        renaming ? '' : active ? 'ds-sidebar-thread-row--active' : ''
+        renaming
+          ? ''
+          : selectionMode && selected
+            ? 'ds-sidebar-thread-row--active'
+            : !selectionMode && active
+              ? 'ds-sidebar-thread-row--active'
+              : ''
       }`}
     >
       <button
         type="button"
-        onClick={renaming ? undefined : onSelect}
+        onClick={
+          renaming
+            ? undefined
+            : selectionMode
+              ? onToggleSelect
+              : onSelect
+        }
         className="ds-density-list-row relative flex min-w-0 flex-1 items-center gap-2.5 pl-2.5 pr-2 text-left"
         disabled={deleting}
+        aria-pressed={selectionMode ? selected : undefined}
         aria-label={
-          showRunning
-            ? `${thread.title} — ${t('sidebarThreadRunning')}`
-            : showTaskDot
-              ? `${thread.title} — ${t('sidebarThreadTaskRunning')}`
-              : showUnreadDot
-                ? `${thread.title} — ${t('sidebarThreadUnread')}`
-                : thread.title
+          selectionMode
+            ? thread.title
+            : showRunning
+              ? `${thread.title} — ${t('sidebarThreadRunning')}`
+              : showTaskDot
+                ? `${thread.title} — ${t('sidebarThreadTaskRunning')}`
+                : showUnreadDot
+                  ? `${thread.title} — ${t('sidebarThreadUnread')}`
+                  : thread.title
         }
       >
         <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ds-muted/70">
-          {showRunning ? (
+          {selectionMode ? (
+            selected ? (
+              <CheckSquare className="h-3.5 w-3.5 text-accent" strokeWidth={2} aria-hidden />
+            ) : (
+              <Square className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
+            )
+          ) : showRunning ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2.1} />
           ) : showTaskDot ? (
             <span
@@ -792,7 +789,7 @@ export function ThreadRow({
             })()}
           </span>
         )}
-        {showCompleted ? (
+        {selectionMode ? null : showCompleted ? (
           <span
             className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-emerald-500 group-hover:hidden group-focus-within:hidden dark:text-emerald-400"
             title={t('sidebarThreadCompleted')}
@@ -809,7 +806,11 @@ export function ThreadRow({
           </span>
         )}
       </button>
-      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex">
+      <div
+        className={`hidden shrink-0 items-center gap-0.5 pr-1 group-hover:flex group-focus-within:flex focus-within:flex ${
+          selectionMode ? '!hidden' : ''
+        }`}
+      >
         <button
           type="button"
           onClick={(event) => {
@@ -862,7 +863,7 @@ export function ThreadRow({
           )}
         </button>
       </div>
-      {hoverAnchor && !menuPos ? (
+      {!selectionMode && hoverAnchor && !menuPos ? (
         <HoverInfoCard
           anchor={hoverAnchor}
           titleIcon={MessageSquare}
@@ -873,7 +874,7 @@ export function ThreadRow({
           ]}
         />
       ) : null}
-      {menuPos ? (
+      {!selectionMode && menuPos ? (
         <ThreadContextMenu
           x={menuPos.x}
           y={menuPos.y}
