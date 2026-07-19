@@ -30,6 +30,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 import httpx
+import yaml
 
 __all__ = [
     "Skill",
@@ -159,34 +160,44 @@ _FRONTMATTER_RE = re.compile(
 
 
 def _parse_skill_file(path: Path) -> Skill:
-    """Parse a SKILL.md file into a Skill instance."""
+    """Parse a SKILL.md file into a Skill instance.
+
+    Frontmatter is parsed as YAML so folded/literal blocks (``>``, ``|``)
+    keep their full description text. ``allowed-tools`` still accepts the
+    legacy comma-string / inline-array / block-list shapes.
+    """
     content = path.read_text(encoding="utf-8")
-    meta: dict[str, str] = {}
+    name = path.parent.name
+    description = ""
     allowed_tools: tuple[str, ...] | None = None
     body = content
 
     match = _FRONTMATTER_RE.match(content)
     if match:
-        fm_lines = match.group(1).splitlines()
-        idx = 0
-        while idx < len(fm_lines):
-            line = fm_lines[idx]
-            if ":" not in line:
-                idx += 1
-                continue
-            key, _, value = line.partition(":")
-            key = key.strip().lower()
-            value = value.strip()
-            if key == "allowed-tools":
-                allowed_tools, consumed = _parse_allowed_tools(value, fm_lines, idx)
-                idx += consumed
-                continue
-            meta[key] = value
-            idx += 1
-        body = content[match.end():]
-
-    name = meta.get("name", path.parent.name)
-    description = meta.get("description", "")
+        try:
+            document = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            document = None
+        if isinstance(document, dict):
+            meta = {
+                str(key).strip().lower(): value for key, value in document.items()
+            }
+            raw_name = meta.get("name")
+            if isinstance(raw_name, str) and raw_name.strip():
+                name = raw_name.strip()
+            elif raw_name is not None:
+                text = str(raw_name).strip()
+                if text:
+                    name = text
+            raw_description = meta.get("description", "")
+            if raw_description is None:
+                description = ""
+            elif isinstance(raw_description, str):
+                description = raw_description
+            else:
+                description = str(raw_description)
+            allowed_tools = _coerce_allowed_tools(meta.get("allowed-tools"))
+        body = content[match.end() :]
 
     return Skill(
         name=name,
@@ -197,45 +208,27 @@ def _parse_skill_file(path: Path) -> Skill:
     )
 
 
-def _parse_allowed_tools(
-    value: str, fm_lines: list[str], idx: int
-) -> tuple[tuple[str, ...] | None, int]:
-    """Parse the ``allowed-tools`` frontmatter value.
-
-    Supports three shapes (returns a ``(tools, lines_consumed)`` tuple):
-
-    - Inline array:      ``allowed-tools: [read_file, grep]``
-    - Comma string:      ``allowed-tools: read_file, grep``
-    - YAML block list:    ``allowed-tools:`` then ``  - read_file`` lines
+def _coerce_allowed_tools(value: Any) -> tuple[str, ...] | None:
+    """Normalize ``allowed-tools`` from YAML / legacy string shapes.
 
     Empty / whitespace-only declarations yield ``None`` (treated as
     "not declared" so focus mode falls back to ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``).
     """
-    value = value.strip()
-
-    # Inline array or comma string on the same line.
-    if value:
-        if value.startswith("[") and value.endswith("]"):
-            value = value[1:-1]
-        items = [tok.strip().strip("'\"") for tok in value.split(",")]
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        items = [tok.strip().strip("'\"") for tok in text.split(",")]
         tools = tuple(t for t in items if t)
-        return (tools or None, 1)
-
-    # Empty value → look for a following block list.
-    tools_list: list[str] = []
-    consumed = 1
-    for follow in fm_lines[idx + 1:]:
-        stripped = follow.strip()
-        if stripped.startswith("- "):
-            item = stripped[2:].strip().strip("'\"")
-            if item:
-                tools_list.append(item)
-            consumed += 1
-        elif stripped == "":
-            consumed += 1
-        else:
-            break
-    return (tuple(tools_list) or None, consumed)
+        return tools or None
+    if isinstance(value, (list, tuple)):
+        tools = tuple(str(item).strip() for item in value if str(item).strip())
+        return tools or None
+    return None
 
 
 # ── Workspace discovery ──────────────────────────────────────────────────

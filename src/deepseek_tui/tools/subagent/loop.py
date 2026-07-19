@@ -227,7 +227,10 @@ async def run_subagent_loop(
     )
     context = ToolContext(
         working_directory=agent.workspace,
-        trust_mode=False,
+        trust_mode=(
+            getattr(runtime.config, "sandbox_mode", "") == "danger-full-access"
+            or bool(getattr(runtime, "trust_mode", False))
+        ),
         task_manager=runtime.task_manager,
         subagent_manager=runtime.manager,
         metadata={
@@ -237,11 +240,13 @@ async def run_subagent_loop(
             "auto_approve": runtime.auto_approve,
         },
     )
-    from deepseek_tui.policy.sandbox import sandbox_policy_for_mode
+    from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 
-    context.execution_sandbox_policy = sandbox_policy_for_mode(
+    context.execution_sandbox_policy = resolve_execution_sandbox_policy(
         "agent",
         agent.workspace,
+        trust_mode=context.trust_mode,
+        sandbox_mode=getattr(runtime.config, "sandbox_mode", None),
     )
     registry.set_context(context)
     api_tools = registry.to_api_tools()

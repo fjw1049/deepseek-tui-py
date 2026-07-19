@@ -898,9 +898,13 @@ def _resolve_policy(
         return context.elevated_sandbox_policy
     if context.execution_sandbox_policy is not None:
         return context.execution_sandbox_policy
-    from deepseek_tui.policy.sandbox import sandbox_policy_for_mode
+    from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 
-    return sandbox_policy_for_mode("agent", context.working_directory)
+    return resolve_execution_sandbox_policy(
+        "agent",
+        context.working_directory,
+        trust_mode=context.trust_mode,
+    )
 
 
 def _prepare_shell_exec(

@@ -1651,7 +1651,29 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   payload.elevation_id ?? payload.tool_call_id ?? payload.id ?? ''
                 )
                 if (!elevationId) return
-                emitElevationFromSsePayload(sink, payload, elevationId)
+                // Mirror approval.required: auto / full-access must not leave a
+                // pending elevation card that stalls the turn for minutes.
+                void window.dsGui
+                  .getSettings()
+                  .then(async (settings) => {
+                    const flags = runtimeExecutionFlags(settings)
+                    if (flags.auto_approve || flags.trust_mode) {
+                      await this.submitElevationDecision(elevationId, 'allow').catch(() => {
+                        /* Runtime may already have auto-elevated this request. */
+                      })
+                      return
+                    }
+                    if (shouldAutoDenyApprovals(settings)) {
+                      await this.submitElevationDecision(elevationId, 'deny').catch(() => {
+                        /* Ignore stale elevation ids. */
+                      })
+                      return
+                    }
+                    emitElevationFromSsePayload(sink, payload, elevationId)
+                  })
+                  .catch(() => {
+                    emitElevationFromSsePayload(sink, payload, elevationId)
+                  })
               }
 
               if (ev === 'evolution.suggested') {

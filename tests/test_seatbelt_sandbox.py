@@ -261,3 +261,21 @@ def test_sync_execution_sandbox_policy() -> None:
     sync_execution_sandbox_policy(context, "agent", workspace)
     assert context.execution_sandbox_policy is not None
     assert context.execution_sandbox_policy.kind == "workspace-write"
+
+
+def test_sync_execution_sandbox_policy_honors_trust_mode() -> None:
+    from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
+
+    workspace = Path("/tmp/test-sync-trust")
+    context = ToolContext(working_directory=workspace, trust_mode=True)
+    sync_execution_sandbox_policy(context, "agent", workspace)
+    assert context.execution_sandbox_policy is not None
+    assert context.execution_sandbox_policy.kind == "danger-full-access"
+
+    resolved = resolve_execution_sandbox_policy(
+        "agent",
+        workspace,
+        sandbox_mode="danger-full-access",
+    )
+    assert resolved.kind == "danger-full-access"
+    assert resolved.should_sandbox() is False

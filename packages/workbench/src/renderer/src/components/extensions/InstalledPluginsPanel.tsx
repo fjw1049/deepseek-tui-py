@@ -293,6 +293,7 @@ export function InstalledPluginsPanel({
                   busy={busyName === plugin.name}
                   onOpenDetails={() => openInstalled(plugin)}
                   onTrust={() => onTrust(plugin)}
+                  onRemove={() => onRemove(plugin)}
                 />
               ))}
             </ul>
@@ -560,7 +561,7 @@ function PluginDetailDrawer({
                     className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-ds-card px-3 py-2 text-[12px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
                   >
                     <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    {t('connectorDelete')}
+                    {t('pluginSysRemoveAction')}
                   </button>
                 </>
               )}
@@ -1050,12 +1051,14 @@ function PluginCard({
   plugin,
   busy,
   onOpenDetails,
-  onTrust
+  onTrust,
+  onRemove
 }: {
   plugin: PluginRow
   busy: boolean
   onOpenDetails: () => void
   onTrust: () => void
+  onRemove: () => void
 }): ReactElement {
   const { t, i18n } = useTranslation('common')
   const visual = pluginVisual(plugin.name)
@@ -1063,6 +1066,7 @@ function PluginCard({
   const title = pluginDisplayTitle(plugin.name, i18n.language)
   const summary = pluginDisplaySummary(plugin.name, i18n.language, plugin.description)
   const hasExecutable = plugin.components.hooks || plugin.components.mcp_servers
+  const managedElsewhere = plugin.scope === 'claude' || plugin.scope === 'override'
   const chips = [
     ...componentKeys(plugin.components).map((key) => componentLabel(key, t)),
     plugin.permissions.length > 0
@@ -1080,6 +1084,7 @@ function PluginCard({
   ]
     .filter(Boolean)
     .join(' · ')
+  const removeLabel = t('pluginSysRemoveAction')
 
   return (
     <li className={CARD_CLASS}>
@@ -1136,6 +1141,21 @@ function PluginCard({
         >
           {t('pluginDetailsAction')}
         </button>
+        {managedElsewhere ? null : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation()
+              onRemove()
+            }}
+            title={removeLabel}
+            aria-label={removeLabel}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+          >
+            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+          </button>
+        )}
         {hasExecutable ? (
           <TrustSwitch checked={plugin.trusted} disabled={busy} onChange={onTrust} />
         ) : null}

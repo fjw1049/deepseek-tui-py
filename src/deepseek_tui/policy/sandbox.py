@@ -274,6 +274,34 @@ def sandbox_policy_for_mode(mode: str, workspace: Path) -> ExecutionSandboxPolic
     )
 
 
+def resolve_execution_sandbox_policy(
+    mode: str,
+    workspace: Path,
+    *,
+    trust_mode: bool = False,
+    sandbox_mode: str | None = None,
+) -> ExecutionSandboxPolicy:
+    """Resolve Seatbelt policy from mode + explicit trust/sandbox settings.
+
+    ``trust_mode`` / ``sandbox_mode=danger-full-access`` must win over the
+    mode default (agent → workspace-write); otherwise GUI/CLI "full access"
+    only toggles path checks and still Seatbelt-denies shell.
+    """
+    sm = (sandbox_mode or "").strip().lower()
+    if trust_mode or sm == "danger-full-access":
+        return ExecutionSandboxPolicy.danger_full_access()
+    if sm == "read-only":
+        return ExecutionSandboxPolicy.read_only()
+    if sm == "external-sandbox":
+        return ExecutionSandboxPolicy.external_sandbox(network_access=True)
+    if sm == "workspace-write":
+        return ExecutionSandboxPolicy.workspace_write(
+            writable_roots=(workspace.resolve(),),
+            network_access=True,
+        )
+    return sandbox_policy_for_mode(mode, workspace)
+
+
 def suggest_elevation_policy(
     current: ExecutionSandboxPolicy,
     denial_message: str,
@@ -319,9 +347,16 @@ def sync_execution_sandbox_policy(
     context: Any,
     mode: str,
     workspace: Path | None = None,
+    *,
+    sandbox_mode: str | None = None,
 ) -> None:
     ws = workspace or context.working_directory
-    context.execution_sandbox_policy = sandbox_policy_for_mode(mode, ws)
+    context.execution_sandbox_policy = resolve_execution_sandbox_policy(
+        mode,
+        ws,
+        trust_mode=bool(getattr(context, "trust_mode", False)),
+        sandbox_mode=sandbox_mode,
+    )
 
 
 class SandboxManager:

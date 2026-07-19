@@ -1991,10 +1991,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
                 clear_checkpoint()
             usage = result.usage
-            # Record the last real input_tokens from the provider so the
-            # next turn's should_compact has a zero-estimation-error signal.
-            # result.usage is the final round's StreamDone usage, which is the
-            # largest input of the turn (messages only grow between rounds).
+            # Backstop: _run_conversation already refreshes this after every
+            # round; keep the turn-end write for paths whose result.usage is
+            # synthesized outside the round loop. result.usage is the final
+            # round's StreamDone usage, which is the largest input of the
+            # turn (messages only grow between rounds).
             if usage is not None and getattr(usage, "input_tokens", 0):
                 self.last_real_input_tokens = usage.input_tokens
             ledger_totals = self.turn_usage_ledger.totals()
@@ -2412,6 +2413,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     latency_turn_id=latency_turn_id,
                     round_idx=round_idx,
                 )
+            # Refresh the real pressure signal *within* the turn, not just at
+            # turn end: every round's StreamDone carries the provider's
+            # input_tokens and messages only grow between rounds, so this is
+            # monotonic. Otherwise the /context panel and the pre-request
+            # compaction checks (should_compact / L0 / seams) stay blind to
+            # mid-turn growth until the whole turn completes.
+            round_usage = result.usage
+            if round_usage is not None and round_usage.input_tokens:
+                self.last_real_input_tokens = round_usage.input_tokens
             if not result.cancelled:
                 from deepseek_tui.server.agent_segments import assistant_thinking_text
 

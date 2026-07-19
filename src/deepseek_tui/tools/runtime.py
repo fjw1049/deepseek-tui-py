@@ -43,7 +43,7 @@ from deepseek_tui.tools.automation import (
     run_scheduler_loop,
 )
 from deepseek_tui.tools.automation import AUTOMATION_MANAGER_KEY
-from deepseek_tui.policy.sandbox import sandbox_policy_for_mode
+from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 from typing import TYPE_CHECKING as _TC2
@@ -339,15 +339,25 @@ async def create_tool_runtime(
             ),
         )
 
+    trust_mode = bool(getattr(cfg, "trust_mode", False))
+    sandbox_mode = getattr(cfg, "sandbox_mode", None)
+    if not trust_mode and isinstance(sandbox_mode, str):
+        trust_mode = sandbox_mode.strip().lower() == "danger-full-access"
+
     context = ToolContext(
         working_directory=workspace,
-        trust_mode=getattr(cfg, "trust_mode", False),
+        trust_mode=trust_mode,
         metadata=metadata,
         policy=policy,
         task_manager=task_manager,
         subagent_manager=subagent_manager,
         network_policy=network_decider,
-        execution_sandbox_policy=sandbox_policy_for_mode(mode, workspace),
+        execution_sandbox_policy=resolve_execution_sandbox_policy(
+            mode,
+            workspace,
+            trust_mode=trust_mode,
+            sandbox_mode=sandbox_mode if isinstance(sandbox_mode, str) else None,
+        ),
     )
 
     return ToolRuntime(

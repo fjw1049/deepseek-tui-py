@@ -199,6 +199,49 @@ async def test_elevation_wait_rethrows_cancelled_error() -> None:
     await cancel_task
 
 
+@pytest.mark.asyncio
+async def test_elevation_auto_approves_when_auto_approve_enabled() -> None:
+    """auto_approve must skip the elevation bridge wait (no 600s stall)."""
+    from deepseek_tui.engine.handle import AutoApprovalHandler
+    from deepseek_tui.policy.sandbox import ExecutionSandboxPolicy
+    from deepseek_tui.protocol.responses import ToolCall
+    from deepseek_tui.server.approval import ElevationBridge
+
+    class _Harness(ToolExecutionMixin):
+        def __init__(self) -> None:
+            self.handle = EngineHandle()
+            self.approval_handler = AutoApprovalHandler()
+            self.tool_context = ToolContext(working_directory=MagicMock())
+            self.tool_context.metadata["runtime_thread_id"] = "t1"
+            self.tool_context.metadata["elevation_bridge"] = ElevationBridge()
+            self.tool_context.elevated_sandbox_policy = None
+            self.tool_context.execution_sandbox_policy = (
+                ExecutionSandboxPolicy.workspace_write(network_access=True)
+            )
+            self.mode = "agent"
+            self.retry_calls = 0
+
+        async def _execute_single_tool(self, *args: Any, **kwargs: Any) -> ToolResult:
+            self.retry_calls += 1
+            return ToolResult(success=True, content="ok")
+
+    harness = _Harness()
+    tool_call = ToolCall(id="c-auto", name="exec_shell", arguments={"command": "ls"})
+    denied = ToolResult(
+        success=False,
+        content="Sandbox blocked",
+        metadata={"sandbox_denied": True, "denial_message": "blocked"},
+    )
+    out = await harness._maybe_elevate_and_retry_tool(
+        tool_call, [], "deepseek-chat", denied
+    )
+    assert out.success is True
+    assert out.content == "ok"
+    assert harness.retry_calls == 1
+    bridge: ElevationBridge = harness.tool_context.metadata["elevation_bridge"]
+    assert bridge.list_pending() == []
+
+
 def test_task_wall_clock_constant_is_set() -> None:
     assert TASK_WALL_CLOCK_SECONDS == 1800
     assert TASK_WALL_CLOCK_SECONDS > 300

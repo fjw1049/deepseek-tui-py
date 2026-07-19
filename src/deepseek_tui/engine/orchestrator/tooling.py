@@ -785,33 +785,47 @@ class ToolExecutionMixin:
                 cmd_preview = raw_cmd[:500]
 
         kind = elevation_kind_label(elevated)
-        event = ElevationRequiredEvent(
-            tool_call_id=tool_call.id,
-            tool_name=tool_call.name,
-            reason=denial_msg,
-            elevation_kind=kind,
-            command_preview=cmd_preview,
-        )
-        await self.handle.emit(event)
+        # Auto-approve / trust_mode skip the UI elevation card — same contract
+        # as tool approvals: never emit a request the user cannot answer.
+        auto_elevated = bool(getattr(self.tool_context, "trust_mode", False))
+        if not auto_elevated:
+            handler = getattr(self, "approval_handler", None)
+            if handler is not None and hasattr(handler, "auto_approve_enabled"):
+                try:
+                    auto_elevated = bool(await handler.auto_approve_enabled())
+                except Exception:  # noqa: BLE001
+                    auto_elevated = False
 
-        thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
-        fut = bridge.register(
-            tool_call.id,
-            meta=PendingElevationRecord(
-                thread_id=thread_id,
+        if auto_elevated:
+            approved = True
+        else:
+            event = ElevationRequiredEvent(
+                tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
                 reason=denial_msg,
                 elevation_kind=kind,
                 command_preview=cmd_preview,
-            ),
-        )
-        try:
-            approved = await asyncio.wait_for(fut, timeout=600.0)
-        except asyncio.TimeoutError:
-            approved = False
-        except asyncio.CancelledError:
-            # Hard cancel must not be reinterpreted as "user denied elevation".
-            raise
+            )
+            await self.handle.emit(event)
+
+            thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
+            fut = bridge.register(
+                tool_call.id,
+                meta=PendingElevationRecord(
+                    thread_id=thread_id,
+                    tool_name=tool_call.name,
+                    reason=denial_msg,
+                    elevation_kind=kind,
+                    command_preview=cmd_preview,
+                ),
+            )
+            try:
+                approved = await asyncio.wait_for(fut, timeout=600.0)
+            except asyncio.TimeoutError:
+                approved = False
+            except asyncio.CancelledError:
+                # Hard cancel must not be reinterpreted as "user denied elevation".
+                raise
 
         if not approved:
             await self.handle.emit(

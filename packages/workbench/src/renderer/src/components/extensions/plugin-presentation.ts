@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3,
   CandlestickChart,
+  FileStack,
   GraduationCap,
   Landmark,
   Presentation,
@@ -110,6 +111,27 @@ const KNOWN: Record<string, PluginVisual> = {
     },
     icon: Presentation,
     tile: 'bg-[#E11D48] text-white'
+  },
+  'document-skills': {
+    title: { zh: '文档技能', en: 'Document Skills' },
+    blurb: {
+      zh: 'Word / Excel / PPTX / PDF 的创建、读写、编辑与转换，覆盖日常办公文档产出。',
+      en: 'Create, read, edit, and convert Word, Excel, PPTX, and PDF for everyday office work.'
+    },
+    detail: {
+      zh: [
+        '面向 Office 与 PDF 交付物：报告与合同（docx）、表格清洗与图表（xlsx/csv）、可编辑演示稿（pptx），以及 PDF 合并拆分、表单、加密与 OCR。',
+        '内置 skill：xlsx、docx、pptx、pptx-generator（JSON→PPTX）、pdf、pdfkit-py（命令型全场景工具箱）。',
+        '使用方式：在聊天中挂载 @plugin:document-skills，说明输入文件与期望格式。需要 HTML「智能 PPT」专家流时请改用 ppt-implement，不要与本插件的 pptx 能力混淆。'
+      ].join('\n\n'),
+      en: [
+        'For Office and PDF deliverables: Word reports (docx), spreadsheet clean-up and charts (xlsx/csv), editable decks (pptx), plus PDF merge/split, forms, encryption, and OCR.',
+        'Bundled skills: xlsx, docx, pptx, pptx-generator (JSON→PPTX), pdf, and pdfkit-py (command-style PDF toolkit).',
+        'How to use: mount @plugin:document-skills in chat and state inputs plus target format. For the HTML “smart PPT” expert pipeline, use ppt-implement instead of this plugin’s pptx skills.'
+      ].join('\n\n')
+    },
+    icon: FileStack,
+    tile: 'bg-[#4F46E5] text-white'
   },
   'product-management': {
     title: { zh: '产品管理', en: 'Product Management' },

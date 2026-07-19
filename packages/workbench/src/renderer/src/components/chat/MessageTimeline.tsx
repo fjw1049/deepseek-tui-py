@@ -36,7 +36,10 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import { formatHtmlPreviewPathLabel } from '../../lib/html-preview-detection'
+import {
+  formatHtmlPreviewPathLabel,
+  selectPrimaryMarkdownResult
+} from '../../lib/html-preview-detection'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import type {
   ChatBlock,
@@ -105,6 +108,8 @@ type Props = {
   onSelectSuggestion?: (prompt: string) => void
   /** Local HTML artifact from this turn — nested under file changes when present. */
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
+  /** Open a workspace file in the editor panel (final MD report, etc.). */
+  onOpenWorkspaceFile?: (path: string) => void
   /** Localhost / URL web preview card (not a workspace file). */
   devPreviewCard?: ReactElement | null
   stageCentered?: boolean
@@ -223,6 +228,7 @@ export function MessageTimeline({
   onOpenDiagnostics,
   onSelectSuggestion,
   htmlPreviewAction = null,
+  onOpenWorkspaceFile,
   devPreviewCard,
   stageCentered = false,
   useChatStageWidth = true,
@@ -646,6 +652,7 @@ export function MessageTimeline({
               durationMs={durationMs}
               reasoningDurationMs={reasoningDurationMs}
               htmlPreviewAction={isLatestTurn ? htmlPreviewAction : null}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
               devPreviewCard={isLatestTurn ? devPreviewCard : null}
               viewportRef={containerRef}
             />
@@ -671,6 +678,7 @@ export function MessageTimeline({
             liveReasoning={liveReasoning}
             live={live}
             htmlPreviewAction={htmlPreviewAction}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
             devPreviewCard={devPreviewCard}
             viewportRef={containerRef}
             liveStartedAt={
@@ -936,6 +944,7 @@ function MessageTurn({
   durationMs,
   reasoningDurationMs,
   htmlPreviewAction,
+  onOpenWorkspaceFile,
   devPreviewCard,
   viewportRef
 }: {
@@ -947,6 +956,7 @@ function MessageTurn({
   durationMs?: number
   reasoningDurationMs?: number
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
+  onOpenWorkspaceFile?: (path: string) => void
   devPreviewCard?: ReactElement | null
   viewportRef: RefObject<HTMLDivElement | null>
 }): ReactElement {
@@ -1128,6 +1138,7 @@ function MessageTurn({
               changes={turnFileChanges}
               viewportRef={viewportRef}
               htmlPreview={htmlPreviewAction ?? null}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           ) : null}
 
@@ -1154,6 +1165,7 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.durationMs === next.durationMs &&
   prev.reasoningDurationMs === next.reasoningDurationMs &&
   prev.htmlPreviewAction === next.htmlPreviewAction &&
+  prev.onOpenWorkspaceFile === next.onOpenWorkspaceFile &&
   prev.devPreviewCard === next.devPreviewCard &&
   prev.viewportRef === next.viewportRef
 ))
@@ -1173,11 +1185,13 @@ function pathsReferToSameFile(a: string, b: string): boolean {
 function TurnChangeSummary({
   changes,
   viewportRef,
-  htmlPreview
+  htmlPreview,
+  onOpenWorkspaceFile
 }: {
   changes: ToolBlock[]
   viewportRef: RefObject<HTMLDivElement | null>
   htmlPreview?: { path: string; onOpen: () => void } | null
+  onOpenWorkspaceFile?: (path: string) => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
@@ -1208,11 +1222,64 @@ function TurnChangeSummary({
     enabled: expanded,
     root: viewportRef
   })
+  const primaryMarkdown = useMemo(() => selectPrimaryMarkdownResult(changes), [changes])
+  const primaryMarkdownPath = primaryMarkdown?.filePath?.trim() ?? ''
+  const primaryMarkdownLabel = primaryMarkdownPath
+    ? formatHtmlPreviewPathLabel(primaryMarkdownPath)
+    : ''
   const previewPath = htmlPreview?.path?.trim() ?? ''
-  const previewLabel = previewPath ? formatHtmlPreviewPathLabel(previewPath) : ''
+  // Nest HTML preview only when it matches a real file_change in this turn.
+  const nestedHtmlPreview =
+    htmlPreview && previewPath
+      ? changes.some(
+          (change) =>
+            change.status !== 'error' &&
+            Boolean(change.filePath) &&
+            pathsReferToSameFile(change.filePath!, previewPath)
+        )
+        ? htmlPreview
+        : null
+      : null
+  const nestedPreviewPath = nestedHtmlPreview?.path?.trim() ?? ''
+  const previewLabel = nestedPreviewPath ? formatHtmlPreviewPathLabel(nestedPreviewPath) : ''
 
   return (
     <section className="ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
+      {primaryMarkdownPath ? (
+        <div className="border-b border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/30 to-transparent px-4 py-3">
+          <div className="relative flex items-center gap-3 overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated/90 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <span
+              aria-hidden
+              className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-accent/70"
+            />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-accent/10 text-accent">
+              <FileText className="h-4 w-4" strokeWidth={1.9} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
+                {primaryMarkdownLabel}
+              </div>
+              <div className="mt-0.5 truncate text-[11.5px] text-ds-muted">
+                {t('turnMarkdownResultHint')}
+              </div>
+            </div>
+            {onOpenWorkspaceFile ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenWorkspaceFile(primaryMarkdownPath)
+                }}
+                className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
+                title={t('turnMarkdownResultOpen')}
+              >
+                {t('turnMarkdownResultOpen')}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <button
         type="button"
         onClick={() => {
@@ -1256,9 +1323,9 @@ function TurnChangeSummary({
             const open = activeId === change.id
             const primary = change.filePath ?? t('toolActionFile')
             const isPreviewTarget =
-              Boolean(previewPath) &&
+              Boolean(nestedPreviewPath) &&
               Boolean(change.filePath) &&
-              pathsReferToSameFile(change.filePath!, previewPath)
+              pathsReferToSameFile(change.filePath!, nestedPreviewPath)
 
             return (
               <div key={change.id} className="border-b border-ds-border-muted/60 last:border-b-0">
@@ -1313,7 +1380,7 @@ function TurnChangeSummary({
         </div>
       ) : null}
 
-      {htmlPreview && previewPath ? (
+      {nestedHtmlPreview && nestedPreviewPath ? (
         <div className="border-t border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/25 to-transparent px-4 py-3">
           <div className="relative flex items-center gap-3 overflow-hidden rounded-[12px] border border-amber-500/15 bg-ds-elevated/85 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] dark:border-amber-300/15 dark:bg-white/[0.035]">
             <span
@@ -1335,7 +1402,7 @@ function TurnChangeSummary({
               type="button"
               onClick={(event) => {
                 event.stopPropagation()
-                htmlPreview.onOpen()
+                nestedHtmlPreview.onOpen()
               }}
               className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
               title={t('htmlPreviewCardOpen')}

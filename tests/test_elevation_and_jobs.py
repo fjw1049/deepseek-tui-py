@@ -35,6 +35,13 @@ class TestSuggestElevationPolicy:
         assert elevated.has_network_access()
         assert elevation_kind_label(elevated) == "network"
 
+    def test_full_access_offers_no_further_elevation(self, tmp_path: Path) -> None:
+        policy = ExecutionSandboxPolicy.danger_full_access()
+        assert (
+            suggest_elevation_policy(policy, "Sandbox blocked", workspace=tmp_path)
+            is None
+        )
+
 
 class TestElevationBridge:
     @pytest.mark.asyncio

@@ -235,10 +235,21 @@ class RuntimeThreadManager:
         self._recover_interrupted_state()
         self._schedule_mcp_warmup()
 
-    @staticmethod
-    def _sync_trust_mode(engine: Engine, trust_mode: bool) -> None:
-        """Mirror thread / turn trust onto ToolContext (TUI session parity)."""
+    def _sync_trust_mode(self, engine: Engine, trust_mode: bool) -> None:
+        """Mirror thread / turn trust onto ToolContext (TUI session parity).
+
+        Also refreshes Seatbelt policy so ``trust_mode`` / danger-full-access
+        actually disables the sandbox — not only path escape checks.
+        """
+        from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
+
         engine.tool_context.trust_mode = trust_mode
+        sync_execution_sandbox_policy(
+            engine.tool_context,
+            getattr(engine, "mode", None) or "agent",
+            engine.tool_context.working_directory,
+            sandbox_mode=getattr(self.config, "sandbox_mode", None),
+        )
 
     def _trust_mode_for_thread(
         self, thread: ThreadRecord, state: _ActiveThreadState | None

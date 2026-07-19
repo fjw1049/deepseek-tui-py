@@ -47,6 +47,10 @@ async def test_ensure_engine_applies_thread_trust_mode(
         state = mgr._active.get(thread.id)
         assert state is not None
         assert state.engine.tool_context.trust_mode is True
+        policy = state.engine.tool_context.execution_sandbox_policy
+        assert policy is not None
+        assert policy.kind == "danger-full-access"
+        assert policy.should_sandbox() is False
         state.engine_task.cancel()
         # The mocked engine.run() (AsyncMock) may already have completed,
         # in which case cancel() is a no-op and no CancelledError is raised.

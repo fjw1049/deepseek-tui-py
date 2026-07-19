@@ -1157,6 +1157,7 @@ export function Workbench(): ReactElement {
                         onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                         onSelectSuggestion={(text) => setInput(text)}
                         htmlPreviewAction={htmlPreviewAction}
+                        onOpenWorkspaceFile={openFileInEditor}
                         devPreviewCard={previewLaunchCard}
                       />
                     </div>
@@ -1203,6 +1204,7 @@ export function Workbench(): ReactElement {
                       onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                       onSelectSuggestion={(text) => setInput(text)}
                       htmlPreviewAction={htmlPreviewAction}
+                      onOpenWorkspaceFile={openFileInEditor}
                       devPreviewCard={previewLaunchCard}
                     />
                     {showOperationColumn ? (
@@ -1273,6 +1275,7 @@ export function Workbench(): ReactElement {
                     onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
                     onSelectSuggestion={(text) => setInput(text)}
                     htmlPreviewAction={htmlPreviewAction}
+                    onOpenWorkspaceFile={openFileInEditor}
                     devPreviewCard={previewLaunchCard}
                   />
                   <div className="mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
