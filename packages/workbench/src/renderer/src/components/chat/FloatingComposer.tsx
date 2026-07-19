@@ -48,6 +48,7 @@ import { decodeModelRef } from '@shared/model-ref'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { formatBytes } from '../../lib/format-bytes'
 import { getPetSlashQuery, type PetSlashMenuItem } from '../../lib/pet/pet-slash-commands'
+import { pluginDisplayTitle, pluginVisual } from '../extensions/plugin-presentation'
 import {
   isUnknownComposerSlashCommand,
   parseComposerActionCommand,
@@ -216,7 +217,7 @@ export function FloatingComposer({
   filterPetSlashCommands,
   onNoticeChange
 }: Props): ReactElement {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
@@ -225,9 +226,15 @@ export function FloatingComposer({
   const composerReasoningEffort = useChatStore((s) => s.composerReasoningEffort)
   const setComposerReasoningEffort = useChatStore((s) => s.setComposerReasoningEffort)
   const openSettings = useChatStore((s) => s.openSettings)
-  // Session-level scenario plugin (drives the footer badge) +
+  // Session-level plugin focus (drives the footer badge) +
   // send action used by the badge exit (× sends `@plugin:off` as a hidden turn).
   const activePlugin = useChatStore((s) => s.activePlugin)
+  const pluginLocale = i18n.language
+  const displayPluginName = useCallback(
+    (id: string | null | undefined): string =>
+      id ? pluginDisplayTitle(id, pluginLocale) : '',
+    [pluginLocale]
+  )
   const sendMessage = useChatStore((s) => s.sendMessage)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -1804,12 +1811,15 @@ export function FloatingComposer({
                         ) : (
                           (() => {
                             const q = pluginQuery.trim().toLowerCase()
-                            const filtered = composerPlugins.filter(
-                              (p) =>
-                                !q ||
+                            const filtered = composerPlugins.filter((p) => {
+                              if (!q) return true
+                              const title = displayPluginName(p.name).toLowerCase()
+                              return (
                                 p.name.toLowerCase().includes(q) ||
+                                title.includes(q) ||
                                 (p.description ?? '').toLowerCase().includes(q)
-                            )
+                              )
+                            })
                             if (filtered.length === 0) {
                               return (
                                 <div className="px-1.5 py-3 text-[12px] text-ds-faint">
@@ -1820,6 +1830,9 @@ export function FloatingComposer({
                             return filtered.map((plugin) => {
                               const alreadyMounted =
                                 activePlugin?.name.toLowerCase() === plugin.name.toLowerCase()
+                              const visual = pluginVisual(plugin.name)
+                              const Icon = visual.icon
+                              const title = displayPluginName(plugin.name)
                               return (
                                 <button
                                   key={plugin.name}
@@ -1832,8 +1845,19 @@ export function FloatingComposer({
                                   className="block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover"
                                 >
                                   <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
-                                    <Puzzle className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                                    <span className="truncate">{plugin.name}</span>
+                                    <span
+                                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${visual.tile}`}
+                                    >
+                                      <Icon className="h-3.5 w-3.5" strokeWidth={1.9} />
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate">
+                                      <span className="block truncate">{title}</span>
+                                      {title.toLowerCase() !== plugin.name.toLowerCase() ? (
+                                        <span className="block truncate font-mono text-[10px] font-normal text-ds-faint">
+                                          {plugin.name}
+                                        </span>
+                                      ) : null}
+                                    </span>
                                     {alreadyMounted ? (
                                       <span className="ml-auto shrink-0 rounded-full bg-[rgba(168,85,247,0.16)] px-1.5 py-0.5 text-[10px] font-semibold text-[#a855f7]">
                                         {t('composerPluginActive')}
@@ -1845,7 +1869,7 @@ export function FloatingComposer({
                                     )}
                                   </div>
                                   {plugin.description ? (
-                                    <div className="mt-0.5 line-clamp-2 pl-6 text-[11px] leading-4 text-ds-faint">
+                                    <div className="mt-0.5 line-clamp-2 pl-8 text-[11px] leading-4 text-ds-faint">
                                       {plugin.description}
                                     </div>
                                   ) : null}
@@ -1891,23 +1915,26 @@ export function FloatingComposer({
                 className="ds-no-drag group inline-flex h-8 max-w-[min(100%,240px)] shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-[#a855f7]"
                 title={
                   activePlugin
-                    ? t('composerPluginMounted', { name: activePlugin.name, path: activePlugin.path })
-                    : t('composerPluginFocus', { name: focusPlugin })
+                    ? t('composerPluginMounted', {
+                        name: displayPluginName(activePlugin.name),
+                        path: activePlugin.path
+                      })
+                    : t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
                 }
               >
                 <Puzzle className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
                 <span className="truncate">
                   {activePlugin
-                    ? t('composerPluginBadge', { name: activePlugin.name })
-                    : t('composerPluginPendingBadge', { name: focusPlugin })}
+                    ? t('composerPluginBadge', { name: displayPluginName(activePlugin.name) })
+                    : t('composerPluginPendingBadge', { name: displayPluginName(focusPlugin) })}
                 </span>
                 <span
                   role="button"
                   tabIndex={0}
                   aria-label={
                     activePlugin
-                      ? t('composerPluginUnmount', { name: activePlugin.name })
-                      : t('composerPluginFocus', { name: focusPlugin })
+                      ? t('composerPluginUnmount', { name: displayPluginName(activePlugin.name) })
+                      : t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
                   }
                   onClick={(event) => {
                     event.stopPropagation()

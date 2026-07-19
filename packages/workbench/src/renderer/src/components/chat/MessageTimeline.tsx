@@ -85,6 +85,7 @@ import {
 } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
 import { parseUserFocusPrefix, composeUserFocusMessage } from '../../lib/user-focus-prefix'
+import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
 
@@ -2676,14 +2677,16 @@ function UserFocusChip({
   kind: 'plugin' | 'skill' | 'connector'
   name: string
 }): ReactElement {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const displayName =
+    kind === 'plugin' ? pluginDisplayTitle(name, i18n.language) : name
   const meta =
     kind === 'plugin'
       ? {
           Icon: Puzzle,
           className:
             'border-[rgba(168,85,247,0.4)] bg-[rgba(168,85,247,0.14)] text-[#a855f7]',
-          title: t('composerPluginFocus', { name })
+          title: t('composerPluginFocus', { name: displayName })
         }
       : kind === 'skill'
         ? {
@@ -2706,7 +2709,7 @@ function UserFocusChip({
     >
       <Icon className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
       <span className="truncate">
-        {kind === 'plugin' ? t('composerPluginBadge', { name }) : name}
+        {kind === 'plugin' ? t('composerPluginBadge', { name: displayName }) : name}
       </span>
     </span>
   )

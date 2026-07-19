@@ -69,6 +69,62 @@ function latestWorkspaceActivity(list: NormalizedThread[]): number {
   return Math.max(...list.map((thread) => Date.parse(thread.updatedAt)))
 }
 
+/** Fixed chrome above the sidebar scroll: project label, search, add project. */
+export function SidebarProjectsToolbar({
+  workspaceRoot,
+  onPickWorkspace,
+  t
+}: {
+  workspaceRoot: string
+  onPickWorkspace: () => void
+  t: (k: string, opts?: Record<string, unknown>) => string
+}): ReactElement {
+  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
+  const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  return (
+    <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag shrink-0 px-1">
+      <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
+      <label className="relative min-w-0 flex-1">
+        <Search
+          className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
+          strokeWidth={2}
+          aria-hidden
+        />
+        <input
+          ref={searchInputRef}
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return
+            event.preventDefault()
+            if (searchQuery.trim()) {
+              setSearchQuery('')
+              return
+            }
+            searchInputRef.current?.blur()
+          }}
+          placeholder={t('sidebarSearchProjects')}
+          aria-label={t('sidebarSearchProjects')}
+          className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
+        />
+      </label>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={onPickWorkspace}
+          title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
+          className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function SidebarProjectsSection({
   threads,
   activeThreadId,
@@ -104,8 +160,6 @@ export function SidebarProjectsSection({
     branch: string | null
   } | null>(null)
   const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
-  const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
-  const searchInputRef = useRef<HTMLInputElement>(null)
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
   // The active conversation's task ids come straight from its loaded message
   // blocks, so it can light up even for tasks created before thread_id wiring
@@ -449,45 +503,6 @@ export function SidebarProjectsSection({
       ) : null}
 
       <div className="ds-sidebar-projects-panel">
-        <div className="ds-sidebar-projects-toolbar">
-          <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
-          <label className="relative min-w-0 flex-1">
-            <Search
-              className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
-              strokeWidth={2}
-              aria-hidden
-            />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return
-                event.preventDefault()
-                if (searchQuery.trim()) {
-                  setSearchQuery('')
-                  return
-                }
-                searchInputRef.current?.blur()
-              }}
-              placeholder={t('sidebarSearchProjects')}
-              aria-label={t('sidebarSearchProjects')}
-              className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
-            />
-          </label>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={onPickWorkspace}
-              title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-            </button>
-          </div>
-        </div>
-
         <div className="px-1.5 pb-2 pt-1">
           {filteredGroups.length > 0 ? (
             <div className="mb-1">{filteredGroups.map(renderWorkspace)}</div>
@@ -708,18 +723,14 @@ export function ThreadRow({
       onMouseEnter={handleRowMouseEnter}
       onMouseMove={handleRowMouseMove}
       onMouseLeave={handleRowMouseLeave}
-      className={`group relative flex min-w-0 items-center overflow-hidden rounded-[10px] transition-colors duration-200 ${
-        renaming
-          ? ''
-          : active
-            ? 'ds-sidebar-thread-row--active'
-            : 'hover:bg-ds-hover/40 dark:hover:bg-white/[0.03]'
+      className={`ds-sidebar-thread-row group relative flex min-w-0 items-center overflow-hidden ${
+        renaming ? '' : active ? 'ds-sidebar-thread-row--active' : ''
       }`}
     >
       <button
         type="button"
         onClick={renaming ? undefined : onSelect}
-        className="ds-density-list-row relative flex min-w-0 flex-1 items-center gap-1.5 pl-2.5 pr-2.5 text-left"
+        className="ds-density-list-row relative flex min-w-0 flex-1 items-center gap-2.5 pl-2.5 pr-2 text-left"
         disabled={deleting}
         aria-label={
           showRunning
@@ -731,9 +742,9 @@ export function ThreadRow({
                 : thread.title
         }
       >
-        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-ds-faint">
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ds-muted/70">
           {showRunning ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2} />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2.1} />
           ) : showTaskDot ? (
             <span
               className="block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 dark:bg-amber-400"
@@ -745,7 +756,7 @@ export function ThreadRow({
               title={t('sidebarThreadUnread')}
             />
           ) : (
-            <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            <MessageSquare className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
           )}
         </span>
         {renaming ? (
@@ -783,14 +794,17 @@ export function ThreadRow({
         )}
         {showCompleted ? (
           <span
-            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-emerald-500 group-hover:hidden dark:text-emerald-400"
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-emerald-500 group-hover:hidden group-focus-within:hidden dark:text-emerald-400"
             title={t('sidebarThreadCompleted')}
             aria-hidden
           >
             <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
         ) : (
-          <span className="ds-sidebar-thread-meta hidden shrink-0 truncate" title={sourceLabel}>
+          <span
+            className="ds-sidebar-thread-meta shrink-0 truncate group-hover:hidden group-focus-within:hidden"
+            title={sourceLabel}
+          >
             {sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt)}
           </span>
         )}

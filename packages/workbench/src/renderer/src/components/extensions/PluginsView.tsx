@@ -23,9 +23,17 @@ export function PluginsView(): ReactElement {
   const [query, setQuery] = useState('')
   const [plugins, setPlugins] = useState<PluginRow[]>([])
   const [loading, setLoading] = useState(false)
+  /** Inline status in the panel header — avoids mounting a Notice that shifts the page. */
+  const [reloadStatus, setReloadStatus] = useState<'idle' | 'loading' | 'done'>('idle')
   const [busyName, setBusyName] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   useNoticeAutoDismiss(notice, setNotice)
+
+  useEffect(() => {
+    if (reloadStatus !== 'done') return
+    const timer = window.setTimeout(() => setReloadStatus('idle'), 1600)
+    return () => window.clearTimeout(timer)
+  }, [reloadStatus])
   const [installOpen, setInstallOpen] = useState(false)
   const installMenuRef = useRef<HTMLDivElement>(null)
   const [registry, setRegistry] = useState<RegistryEntry[] | null>(null)
@@ -51,17 +59,20 @@ export function PluginsView(): ReactElement {
     async (announce = false): Promise<void> => {
       if (typeof window.dsGui?.runtimeRequest !== 'function') return
       setLoading(true)
+      if (announce) setReloadStatus('loading')
       try {
         const qs = workspaceRoot ? `?workspace=${encodeURIComponent(workspaceRoot)}` : ''
         const result = await window.dsGui.runtimeRequest(`/v1/plugins${qs}`, 'GET')
         if (!result.ok) {
+          if (announce) setReloadStatus('idle')
           setNotice({ tone: 'error', message: extractApiError(result.body) || t('pluginActionFailed') })
           return
         }
         const parsed = JSON.parse(result.body) as { plugins?: PluginRow[] }
         setPlugins(parsed.plugins ?? [])
-        setNotice(announce ? { tone: 'success', message: t('listReloaded') } : null)
+        if (announce) setReloadStatus('done')
       } catch (error) {
+        if (announce) setReloadStatus('idle')
         setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
       } finally {
         setLoading(false)
@@ -408,9 +419,22 @@ export function PluginsView(): ReactElement {
             onMarketplaceRemove={handleMarketplaceRemove}
             onMarketplacePluginInstall={(spec) => void handleMarketplacePluginInstall(spec)}
             headerRight={
-              <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
-                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{t('pluginSysRestartHint')}</span>
+              <div className="flex h-5 min-w-[8.5rem] items-center justify-end gap-1.5 text-[12px]">
+                {reloadStatus === 'loading' ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-ds-muted" strokeWidth={2} />
+                    <span className="truncate text-ds-muted">{t('skillsLoading')}</span>
+                  </>
+                ) : reloadStatus === 'done' ? (
+                  <span className="truncate font-medium text-emerald-600 dark:text-emerald-400">
+                    {t('listReloaded')}
+                  </span>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.75} />
+                    <span className="truncate text-ds-faint">{t('pluginSysRestartHint')}</span>
+                  </>
+                )}
               </div>
             }
           />

@@ -28,7 +28,7 @@ export function SidebarChatsSection({
   onCompactThread,
   onTogglePin,
   t
-}: SidebarChatsSectionProps): ReactElement | null {
+}: SidebarChatsSectionProps): ReactElement {
   const threads = useChatStore((s) => s.threads)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
@@ -70,8 +70,6 @@ export function SidebarChatsSection({
     return chatsThreads.filter((thread) => thread.title.toLowerCase().includes(query))
   }, [chatsThreads, searchQuery])
 
-  if (filteredChats.length === 0) return null
-
   const hasOverflow = filteredChats.length > CHATS_VISIBLE_LIMIT
   const visibleChats = expanded ? filteredChats : filteredChats.slice(0, CHATS_VISIBLE_LIMIT)
 
@@ -93,8 +91,8 @@ export function SidebarChatsSection({
   }
 
   return (
-    <div className="ds-sidebar-zone ds-no-drag shrink-0 px-1 pb-2">
-      <div className="ds-sidebar-projects-toolbar">
+    <div className="ds-sidebar-chats-section ds-no-drag flex h-full min-h-0 flex-col px-1">
+      <div className="ds-sidebar-chats-header shrink-0">
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
@@ -124,45 +122,53 @@ export function SidebarChatsSection({
       </div>
 
       {collapsed ? null : (
-      <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
-        {visibleChats.map((thread) => (
-          <ThreadRow
-            key={thread.id}
-            thread={thread}
-            variant="chats"
-            active={activeThreadId === thread.id}
-            deleting={deletingThreadIds[thread.id] === true}
-            showRunning={
-              thread.status?.trim().toLowerCase() === 'running' ||
-              (activeThreadId === thread.id && busy) ||
-              watchTurnCompletion[thread.id] === true
-            }
-            showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
-            hasBackgroundTask={
-              threadsWithActiveTasks.has(thread.id) ||
-              (activeThreadId === thread.id && activeThreadHasTask)
-            }
-            pinned={pinnedSet.has(thread.id)}
-            onSelect={() => onSelectThread(thread.id)}
-            onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
-            onDelete={() => void handleDeleteThread(thread)}
-            onCompact={() => void onCompactThread(thread.id)}
-            onTogglePin={() => onTogglePin(thread.id)}
-            canCompact={activeThreadId === thread.id && !busy}
-          />
-        ))}
-        {hasOverflow ? (
-          <button
-            type="button"
-            onClick={() => setExpanded((prev) => !prev)}
-            className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
-          >
-            {expanded
-              ? t('sidebarWorkspaceShowLess')
-              : t('sidebarChatsShowMore', { count: filteredChats.length - CHATS_VISIBLE_LIMIT })}
-          </button>
-        ) : null}
-      </div>
+        <div className="ds-sidebar-chats-list ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {filteredChats.length === 0 ? (
+            <div className="px-2.5 py-2 text-[13px] text-ds-faint">{t('sidebarChatsEmpty')}</div>
+          ) : (
+            <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
+              {visibleChats.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  variant="chats"
+                  active={activeThreadId === thread.id}
+                  deleting={deletingThreadIds[thread.id] === true}
+                  showRunning={
+                    thread.status?.trim().toLowerCase() === 'running' ||
+                    (activeThreadId === thread.id && busy) ||
+                    watchTurnCompletion[thread.id] === true
+                  }
+                  showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+                  hasBackgroundTask={
+                    threadsWithActiveTasks.has(thread.id) ||
+                    (activeThreadId === thread.id && activeThreadHasTask)
+                  }
+                  pinned={pinnedSet.has(thread.id)}
+                  onSelect={() => onSelectThread(thread.id)}
+                  onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
+                  onDelete={() => void handleDeleteThread(thread)}
+                  onCompact={() => void onCompactThread(thread.id)}
+                  onTogglePin={() => onTogglePin(thread.id)}
+                  canCompact={activeThreadId === thread.id && !busy}
+                />
+              ))}
+              {hasOverflow ? (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((prev) => !prev)}
+                  className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
+                >
+                  {expanded
+                    ? t('sidebarWorkspaceShowLess')
+                    : t('sidebarChatsShowMore', {
+                        count: filteredChats.length - CHATS_VISIBLE_LIMIT
+                      })}
+                </button>
+              ) : null}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

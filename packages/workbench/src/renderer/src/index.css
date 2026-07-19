@@ -271,7 +271,6 @@ html,
 .ds-workbench-right-panel,
 .ds-workbench-terminal-wrap,
 .ds-stage-surface,
-.ds-sidebar-shell,
 .ds-settings-page,
 .ds-feature-page,
 .ds-plugin-page,
@@ -295,8 +294,7 @@ html,
 .ds-composer-shell,
 .ds-composer-command-popover,
 .ds-workbench-topbar,
-.ds-session-header,
-.ds-sidebar-projects-panel {
+.ds-session-header {
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
@@ -1685,6 +1683,25 @@ samp {
 }
 
 .ds-sidebar-shell {
+  /* One CJK-first stack for the whole sidebar — Inter mixed with PingFang
+     was why nav vs thread titles felt like different products. */
+  --font-sidebar:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
+    'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --sidebar-text: 0.9375rem; /* 15px — nav, projects, threads */
+  --sidebar-text-sm: 0.875rem; /* 14px — indented nav, search */
+  --sidebar-text-xs: 0.8125rem; /* 13px — section labels, meta */
+  --sidebar-weight: 400;
+  --sidebar-weight-strong: 500; /* unread / section only */
+  font-family: var(--font-sidebar);
+  font-size: var(--sidebar-text);
+  font-weight: var(--sidebar-weight);
+  letter-spacing: 0;
+  line-height: 1.4;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
   background: var(--glass-bg);
   border-right: 1px solid var(--glass-border);
   box-shadow: inset 0 1px 0 var(--glass-highlight);
@@ -1692,11 +1709,20 @@ samp {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
+.ds-sidebar-shell button,
+.ds-sidebar-shell input,
+.ds-sidebar-shell kbd {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+
 .ds-sidebar-brand {
-  font-family: var(--font-display);
+  font-family: inherit;
   font-size: 1.125rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: var(--sidebar-weight-strong);
+  letter-spacing: 0;
   color: var(--text-primary);
 }
 
@@ -1716,20 +1742,18 @@ samp {
 }
 
 .ds-sidebar-section-label {
-  font-family: var(--font-ui);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
-  -webkit-font-smoothing: antialiased;
-  font-synthesis: none;
+  font-family: inherit;
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight-strong);
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
 }
 
 .ds-sidebar-subsection-label {
   padding: 0.5rem 0.5rem 0.35rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight-strong);
+  letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--text-tertiary);
   opacity: 0.72;
@@ -1744,18 +1768,18 @@ samp {
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--surface-2) 42%, transparent);
   padding: 0.4rem 0.625rem;
-  font-family: var(--font-ui);
-  font-size: 0.8125rem;
+  font-family: inherit;
+  font-size: var(--sidebar-text-sm);
+  font-weight: var(--sidebar-weight);
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
-  font-synthesis: none;
   transition:
     border-color 0.2s ease,
     background 0.2s ease;
 }
 
 .ds-sidebar-search::placeholder {
-  font-family: var(--font-ui);
+  font-family: inherit;
+  font-weight: var(--sidebar-weight);
   color: var(--text-tertiary);
 }
 
@@ -1777,9 +1801,7 @@ samp {
 .ds-sidebar-projects-panel {
   min-height: 0;
   background: transparent;
-  font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
-  font-synthesis: none;
+  font-family: inherit;
 }
 
 .ds-sidebar-projects-toolbar {
@@ -1789,10 +1811,21 @@ samp {
   padding: 0.35rem 0.5rem 0.5rem;
 }
 
+/* Sits outside the sidebar scroll surface so search / add never scroll away. */
+.ds-sidebar-projects-toolbar--fixed {
+  position: relative;
+  z-index: 2;
+  margin-top: 0.75rem;
+  background: var(--ds-bg-sidebar);
+  padding-top: 0.5rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
+}
+
 .ds-sidebar-search--inline {
   min-height: 1.625rem;
   padding: 0.2rem 0.45rem 0.2rem 1.5rem;
-  font-size: 0.8125rem;
+  font-size: var(--sidebar-text-sm);
 }
 
 .ds-sidebar-link {
@@ -1802,9 +1835,11 @@ samp {
   gap: 0.625rem;
   border-radius: 8px;
   padding: calc(0.4rem * var(--ds-density, 1)) 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.35;
+  font-family: inherit;
+  font-size: var(--sidebar-text);
+  font-weight: var(--sidebar-weight);
+  line-height: 1.4;
+  letter-spacing: 0;
   transition:
     background 0.2s ease,
     color 0.2s ease,
@@ -1848,12 +1883,13 @@ samp {
 
 .ds-sidebar-link--active {
   color: var(--text-primary);
+  font-weight: var(--sidebar-weight); /* selection = background only */
   border: 1px solid transparent;
-  background: var(--ds-surface-hover);
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--ds-bg-sidebar));
 }
 
 .ds-sidebar-link--active:not(:disabled):hover {
-  background: color-mix(in srgb, var(--ds-surface-hover) 160%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--ds-bg-sidebar));
 }
 
 .ds-sidebar-link:disabled {
@@ -1865,7 +1901,8 @@ samp {
 /* Child links inside a collapsible sidebar group (e.g. 应用拓展). */
 .ds-sidebar-link--indent {
   padding-left: 1.625rem;
-  font-size: 0.875rem;
+  font-size: var(--sidebar-text-sm);
+  color: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
 }
 
 .ds-sidebar-sticky-nav {
@@ -1874,6 +1911,43 @@ samp {
 }
 
 .ds-sidebar-scroll {
+  min-height: 0;
+}
+
+/* Middle column: projects scroll above a reserved workspace band. */
+.ds-sidebar-middle {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.ds-sidebar-projects-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.ds-sidebar-chats-pane {
+  display: flex;
+  max-height: 38%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  border-top: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
+  background: var(--ds-bg-sidebar);
+}
+
+.ds-sidebar-chats-section {
+  min-height: 0;
+}
+
+.ds-sidebar-chats-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem 0.35rem;
+}
+
+.ds-sidebar-chats-list {
   min-height: 0;
 }
 
@@ -1914,6 +1988,7 @@ samp {
 
 .ds-sidebar-link--action {
   color: var(--text-primary);
+  font-weight: var(--sidebar-weight);
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
@@ -1930,8 +2005,8 @@ samp {
   min-width: 1.125rem;
   padding-inline: 0.3rem;
   border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight);
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
   color: var(--text-tertiary);
@@ -1939,18 +2014,48 @@ samp {
 }
 
 .ds-sidebar-link-shortcut {
-  font-size: 0.75rem;
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight);
+}
+
+.ds-sidebar-thread-row {
+  border-radius: 10px;
+  /* Lock type on the row so project-nested vs workspace chats can't diverge
+     via button UA styles or intermediate inheritance. */
+  font-family: var(--font-sidebar);
+  font-size: var(--sidebar-text);
+  font-weight: var(--sidebar-weight);
+  letter-spacing: 0;
+  line-height: 1.4;
+  transition: background 0.16s ease;
+}
+
+.ds-sidebar-thread-row button {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+.ds-sidebar-thread-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 4.5%, transparent);
 }
 
 .ds-sidebar-thread-row--active {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 9%, var(--ds-surface-hover));
-  box-shadow: inset 2px 0 0 var(--accent);
+  /* Soft full-row pill — same weight as idle rows; no left accent bar / no bold. */
+  background: color-mix(in srgb, var(--text-primary) 9%, var(--ds-bg-sidebar));
+  box-shadow: none;
+}
+
+.ds-sidebar-thread-row--active:hover {
+  background: color-mix(in srgb, var(--text-primary) 11%, var(--ds-bg-sidebar));
 }
 
 .ds-sidebar-thread-row--active .ds-sidebar-thread {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: inherit;
 }
 
 [data-theme='dark'] .ds-sidebar-link--action {
@@ -1965,9 +2070,17 @@ samp {
   background: rgba(255, 255, 255, 0.06);
 }
 
+[data-theme='dark'] .ds-sidebar-thread-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
 [data-theme='dark'] .ds-sidebar-thread-row--active {
-  background: color-mix(in srgb, var(--accent) 12%, rgba(255, 255, 255, 0.05));
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .ds-sidebar-thread-row--active:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .ds-sidebar-link__icon {
@@ -1987,14 +2100,12 @@ samp {
   align-items: center;
   gap: 0.125rem;
   border-radius: 9px;
-  font-family: var(--font-ui);
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.45;
-  letter-spacing: -0.012em;
+  font-family: inherit;
+  font-size: var(--sidebar-text);
+  font-weight: var(--sidebar-weight);
+  line-height: 1.4;
+  letter-spacing: 0;
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
-  font-synthesis: none;
   transition:
     background 0.2s ease,
     color 0.2s ease;
@@ -2014,8 +2125,8 @@ samp {
   flex-shrink: 0;
   min-width: 1rem;
   padding-inline: 0.125rem;
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight);
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
   text-align: center;
@@ -2023,42 +2134,45 @@ samp {
 
 .ds-sidebar-thread-list {
   padding-left: 1.25rem;
+  /* Same type scale as workspace chats — nesting under a project must not
+     shrink titles via em/inheritance quirks. */
+  font-family: var(--font-sidebar);
+  font-size: var(--sidebar-text);
+  font-weight: var(--sidebar-weight);
+  letter-spacing: 0;
+  line-height: 1.4;
 }
 
 .ds-sidebar-thread {
-  font-family: var(--font-ui);
-  font-size: 0.875rem;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: -0.012em;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   color: color-mix(in srgb, var(--text-primary) 88%, var(--text-secondary));
-  -webkit-font-smoothing: antialiased;
-  font-synthesis: none;
-  transition:
-    color 0.2s ease;
+  transition: color 0.16s ease;
 }
 
 .ds-sidebar-thread--emphasis {
-  font-weight: 500;
+  font-weight: var(--sidebar-weight-strong);
   color: var(--text-primary);
 }
 
 .ds-sidebar-thread-meta {
-  font-family: var(--font-ui);
-  font-size: 0.75rem;
-  font-weight: 400;
+  font-family: inherit;
+  max-width: 4.5rem;
+  font-size: var(--sidebar-text-xs);
+  font-weight: var(--sidebar-weight);
   line-height: 1.3;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
   color: var(--text-tertiary);
-  transition: opacity 0.2s ease;
+  transition: opacity 0.16s ease;
 }
 
 .ds-sidebar-empty-copy {
-  font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
-  font-synthesis: none;
+  font-family: inherit;
 }
 
 .ds-session-header-title,
@@ -2080,11 +2194,11 @@ samp {
 
 [data-theme='dark'] .ds-sidebar-link--active {
   border-color: transparent;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme='dark'] .ds-sidebar-link--active:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .ds-sidebar-toggle-button {
@@ -4246,7 +4360,7 @@ select:focus-visible,
 
 /* Sidebar thread rows and similar list rows (replaces Tailwind py-2). */
 .ds-density-list-row {
-  padding-block: calc(0.5rem * var(--ds-density, 1));
+  padding-block: calc(0.55rem * var(--ds-density, 1));
 }
 
 [data-density='compact'] .ds-chat-composer {

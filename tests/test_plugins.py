@@ -1187,6 +1187,29 @@ def test_discover_claude_plugins_walk_fallback(tmp_path: Path) -> None:
     assert [(m.name, p) for m, p in found] == [("warp", install)]
 
 
+def test_discover_claude_plugins_empty_lockfile_ignores_marketplace(
+    tmp_path: Path,
+) -> None:
+    """An empty Claude lockfile means zero installs — do not walk catalogs."""
+    catalog = (
+        tmp_path
+        / "marketplaces"
+        / "claude-plugins-official"
+        / "plugins"
+        / "code-review"
+    )
+    (catalog / ".claude-plugin").mkdir(parents=True)
+    (catalog / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "code-review", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {}}),
+        encoding="utf-8",
+    )
+    assert discover_claude_plugins(tmp_path) == []
+
+
 def test_discover_plugins_includes_claude_scope(
     tmp_path: Path, monkeypatch
 ) -> None:

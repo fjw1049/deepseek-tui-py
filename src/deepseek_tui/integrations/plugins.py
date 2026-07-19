@@ -771,6 +771,11 @@ def discover_claude_plugins(
             out.append((manifest, path))
 
     lock = base / "installed_plugins.json"
+    # When Claude's lockfile is present and parseable, trust it as the install
+    # authority — including an empty ``plugins`` map. Falling back to a tree
+    # walk would treat marketplace *catalogs* (e.g. claude-plugins-official)
+    # as installed packages and flood discovery with dozens of false positives.
+    lock_authoritative = False
     if lock.is_file():
         try:
             data = json.loads(lock.read_text(encoding="utf-8"))
@@ -779,6 +784,7 @@ def discover_claude_plugins(
             data = None
         table = data.get("plugins") if isinstance(data, dict) else None
         if isinstance(table, dict):
+            lock_authoritative = True
             for records in table.values():
                 # v1 stores a single record object; v2+ a list per plugin.
                 items = records if isinstance(records, list) else [records]
@@ -788,11 +794,12 @@ def discover_claude_plugins(
                     raw = rec.get("installPath") or rec.get("install_path")
                     if isinstance(raw, str) and raw:
                         _try(Path(raw).expanduser())
-    if out:
+    if out or lock_authoritative:
         return out
 
     # Fallback: bounded walk covering cache/<mp>/<plugin>/<version> and
     # flatter legacy layouts; stops descending once a manifest is found.
+    # Only used when there is no usable installed_plugins.json.
     def _walk(directory: Path, depth: int) -> None:
         try:
             children = sorted(directory.iterdir())

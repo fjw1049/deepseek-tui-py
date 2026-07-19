@@ -1,17 +1,27 @@
-import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
-import { useState } from 'react'
+import type { ReactElement } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
+  Check,
   Download,
   Loader2,
+  Plus,
   Puzzle,
   RefreshCw,
   Shield,
   ShieldCheck,
   Store,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import {
+  pluginDisplayDetail,
+  pluginDisplaySummary,
+  pluginDisplayTitle,
+  pluginVisual
+} from './plugin-presentation'
 
 export type PluginRow = {
   name: string
@@ -23,8 +33,12 @@ export type PluginRow = {
   trusted: boolean
   permissions: string[]
   components: {
-    skills: boolean; hooks: boolean; mcp_servers: boolean
-    commands: boolean; agents: boolean; rules: boolean
+    skills: boolean
+    hooks: boolean
+    mcp_servers: boolean
+    commands: boolean
+    agents: boolean
+    rules: boolean
   }
 }
 
@@ -54,6 +68,11 @@ export type MarketplaceInfo = {
 
 type PluginTab = 'installed' | 'marketplace'
 
+type DetailTarget =
+  | { kind: 'installed'; key: string; plugin: PluginRow }
+  | { kind: 'registry'; key: string; entry: RegistryEntry }
+  | { kind: 'marketplace'; key: string; entry: MarketplacePluginEntry }
+
 type Props = {
   plugins: PluginRow[]
   loading: boolean
@@ -78,6 +97,110 @@ type Props = {
   onMarketplaceRemove: (name: string) => void
   onMarketplacePluginInstall: (spec: string) => void
   headerRight?: ReactElement
+}
+
+const CARD_CLASS =
+  'group relative flex min-h-[200px] flex-col rounded-2xl border border-black/[0.04] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-ds-card'
+
+function pluginKey(plugin: PluginRow): string {
+  return `${plugin.scope}:${plugin.name}`
+}
+
+function scopeLabel(scope: string, t: (key: string) => string): string {
+  switch (scope) {
+    case 'user':
+      return t('pluginSysScopeUser')
+    case 'project':
+      return t('pluginSysScopeProject')
+    case 'claude':
+      return t('pluginSysScopeClaude')
+    case 'override':
+      return t('pluginSysScopeOverride')
+    default:
+      return scope
+  }
+}
+
+function componentKeys(components: PluginRow['components']): string[] {
+  return (
+    [
+      components.skills ? 'skills' : null,
+      components.rules ? 'rules' : null,
+      components.agents ? 'agents' : null,
+      components.commands ? 'commands' : null,
+      components.hooks ? 'hooks' : null,
+      components.mcp_servers ? 'mcp' : null
+    ] as const
+  ).filter((v): v is string => v != null)
+}
+
+function componentLabel(key: string, t: (key: string) => string): string {
+  switch (key) {
+    case 'skills':
+      return t('pluginComponentSkills')
+    case 'rules':
+      return t('pluginComponentRules')
+    case 'agents':
+      return t('pluginComponentAgents')
+    case 'commands':
+      return t('pluginComponentCommands')
+    case 'hooks':
+      return t('pluginComponentHooks')
+    case 'mcp':
+      return t('pluginComponentMcp')
+    default:
+      return key
+  }
+}
+
+function MetaChips({ items }: { items: string[] }): ReactElement | null {
+  if (items.length === 0) return null
+  return (
+    <div className="mt-2.5 flex flex-wrap gap-1">
+      {items.map((item) => (
+        <span
+          key={item}
+          className="inline-flex items-center rounded-md bg-ds-subtle px-1.5 py-0.5 text-[11px] text-ds-muted"
+        >
+          {item}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function TrustSwitch({
+  checked,
+  disabled,
+  onChange
+}: {
+  checked: boolean
+  disabled?: boolean
+  onChange: () => void
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation()
+        onChange()
+      }}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+        checked
+          ? 'bg-emerald-500 shadow-sm'
+          : 'border border-ds-border bg-neutral-300 shadow-inner dark:border-neutral-500 dark:bg-neutral-600'
+      } ${disabled ? 'opacity-40' : 'cursor-pointer'}`}
+    >
+      <span
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          checked ? 'left-[22px]' : 'left-0.5'
+        } ${checked ? '' : 'ring-1 ring-black/10 dark:ring-white/20'}`}
+      />
+    </button>
+  )
 }
 
 export function InstalledPluginsPanel({
@@ -107,6 +230,7 @@ export function InstalledPluginsPanel({
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<PluginTab>('installed')
+  const [detail, setDetail] = useState<DetailTarget | null>(null)
 
   const tabItems: Array<{ value: PluginTab; label: string }> = [
     { value: 'installed', label: `${t('skillTabInstalled')} (${plugins.length})` },
@@ -115,11 +239,31 @@ export function InstalledPluginsPanel({
       : [])
   ]
 
+  // Keep installed detail in sync when list refreshes / plugin removed.
+  useEffect(() => {
+    setDetail((prev) => {
+      if (!prev || prev.kind !== 'installed') return prev
+      const next = plugins.find((p) => pluginKey(p) === prev.key)
+      if (!next) return null
+      if (next === prev.plugin) return prev
+      return { kind: 'installed', key: prev.key, plugin: next }
+    })
+  }, [plugins])
+
+  const openInstalled = (plugin: PluginRow): void => {
+    setDetail({ kind: 'installed', key: pluginKey(plugin), plugin })
+  }
+
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
         {tabItems.length > 1 ? (
-          <GlassSegmentedControl value={tab} onChange={setTab} items={tabItems} segmentClassName="px-3 py-1.5" />
+          <GlassSegmentedControl
+            value={tab}
+            onChange={setTab}
+            items={tabItems}
+            segmentClassName="px-3 py-1.5"
+          />
         ) : (
           <div className="text-[15px] font-semibold text-ds-ink">
             {t('skillTabInstalled')}
@@ -140,18 +284,19 @@ export function InstalledPluginsPanel({
         ) : plugins.length === 0 ? (
           <div className="px-5 py-10 text-center text-[13px] text-ds-faint">{t('pluginSysEmpty')}</div>
         ) : (
-          <ul className="divide-y divide-ds-border-muted/70">
-            {plugins.map((plugin) => (
-              <PluginListRow
-                key={`${plugin.scope}:${plugin.name}`}
-                plugin={plugin}
-                busy={busyName === plugin.name}
-                onTrust={() => onTrust(plugin)}
-                onUpdate={() => onUpdate(plugin)}
-                onRemove={() => onRemove(plugin)}
-              />
-            ))}
-          </ul>
+          <div className="bg-[color-mix(in_srgb,var(--ds-main)_88%,#f4f1ea)] px-4 py-4 dark:bg-ds-subtle/30 sm:px-5 sm:py-5">
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {plugins.map((plugin) => (
+                <PluginCard
+                  key={pluginKey(plugin)}
+                  plugin={plugin}
+                  busy={busyName === plugin.name}
+                  onOpenDetails={() => openInstalled(plugin)}
+                  onTrust={() => onTrust(plugin)}
+                />
+              ))}
+            </ul>
+          </div>
         )
       ) : marketplaceEnabled ? (
         <>
@@ -166,6 +311,9 @@ export function InstalledPluginsPanel({
             onUpdate={onMarketplaceUpdate}
             onRemove={onMarketplaceRemove}
             onInstall={onMarketplacePluginInstall}
+            onOpenDetails={(entry) =>
+              setDetail({ kind: 'marketplace', key: entry.spec, entry })
+            }
           />
           <div className="flex items-center gap-1.5 border-b border-t border-ds-border-muted/50 px-5 py-2.5 text-[12px] text-ds-faint">
             <Store className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
@@ -187,21 +335,396 @@ export function InstalledPluginsPanel({
               {registry.length === 0 ? t('pluginSysMarketplaceEmpty') : t('pluginNoResults')}
             </div>
           ) : (
-            <ul className="divide-y divide-ds-border-muted/70">
-              {filteredRegistry.map((entry) => (
-                <MarketplaceRow
-                  key={entry.source}
-                  entry={entry}
-                  installed={installedNames.has(entry.name.toLowerCase())}
-                  installing={installingSource === entry.source}
-                  onInstall={() => onMarketplaceInstall(entry)}
-                />
-              ))}
-            </ul>
+            <div className="bg-[color-mix(in_srgb,var(--ds-main)_88%,#f4f1ea)] px-4 py-4 dark:bg-ds-subtle/30 sm:px-5 sm:py-5">
+              <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {filteredRegistry.map((entry) => (
+                  <MarketplaceCard
+                    key={entry.source}
+                    entry={entry}
+                    installed={installedNames.has(entry.name.toLowerCase())}
+                    installing={installingSource === entry.source}
+                    onInstall={() => onMarketplaceInstall(entry)}
+                    onOpenDetails={() =>
+                      setDetail({ kind: 'registry', key: entry.source, entry })
+                    }
+                  />
+                ))}
+              </ul>
+            </div>
           )}
         </>
       ) : null}
+
+      {detail
+        ? createPortal(
+            <PluginDetailDrawer
+              detail={detail}
+              busy={
+                detail.kind === 'installed'
+                  ? busyName === detail.plugin.name
+                  : detail.kind === 'registry'
+                    ? installingSource === detail.entry.source
+                    : installingSource === detail.entry.spec
+              }
+              installed={
+                detail.kind === 'installed'
+                  ? true
+                  : installedNames.has(
+                      (detail.kind === 'registry' ? detail.entry.name : detail.entry.name).toLowerCase()
+                    )
+              }
+              onClose={() => setDetail(null)}
+              onTrust={
+                detail.kind === 'installed' ? () => onTrust(detail.plugin) : undefined
+              }
+              onUpdate={
+                detail.kind === 'installed' ? () => onUpdate(detail.plugin) : undefined
+              }
+              onRemove={
+                detail.kind === 'installed'
+                  ? () => {
+                      onRemove(detail.plugin)
+                      setDetail(null)
+                    }
+                  : undefined
+              }
+              onInstall={
+                detail.kind === 'registry'
+                  ? () => onMarketplaceInstall(detail.entry)
+                  : detail.kind === 'marketplace'
+                    ? () => onMarketplacePluginInstall(detail.entry.spec)
+                    : undefined
+              }
+            />,
+            document.body
+          )
+        : null}
     </div>
+  )
+}
+
+function PluginDetailDrawer({
+  detail,
+  busy,
+  installed,
+  onClose,
+  onTrust,
+  onUpdate,
+  onRemove,
+  onInstall
+}: {
+  detail: DetailTarget
+  busy: boolean
+  installed: boolean
+  onClose: () => void
+  onTrust?: () => void
+  onUpdate?: () => void
+  onRemove?: () => void
+  onInstall?: () => void
+}): ReactElement {
+  const { t, i18n } = useTranslation('common')
+  const name =
+    detail.kind === 'installed'
+      ? detail.plugin.name
+      : detail.kind === 'registry'
+        ? detail.entry.name
+        : detail.entry.name
+  const title = pluginDisplayTitle(name, i18n.language)
+  const visual = pluginVisual(name)
+  const Icon = visual.icon
+  const description =
+    detail.kind === 'installed'
+      ? detail.plugin.description
+      : detail.kind === 'registry'
+        ? detail.entry.description
+        : detail.entry.description
+  const version =
+    detail.kind === 'installed'
+      ? detail.plugin.version
+      : detail.kind === 'registry'
+        ? detail.entry.version
+        : detail.entry.version
+  const permissions =
+    detail.kind === 'installed'
+      ? detail.plugin.permissions
+      : detail.kind === 'registry'
+        ? detail.entry.permissions
+        : []
+  const summary = pluginDisplaySummary(name, i18n.language, description)
+  const packageDetail = pluginDisplayDetail(name, i18n.language, description)
+  const showPackageDesc = packageDetail.length > 0 && packageDetail !== summary
+  const componentsList =
+    detail.kind === 'installed'
+      ? componentKeys(detail.plugin.components).map((key) => componentLabel(key, t))
+      : detail.kind === 'registry'
+        ? detail.entry.components
+        : detail.entry.category
+          ? [detail.entry.category]
+          : []
+  const hasExecutable =
+    detail.kind === 'installed' &&
+    (detail.plugin.components.hooks || detail.plugin.components.mcp_servers)
+  const managedElsewhere =
+    detail.kind === 'installed' &&
+    (detail.plugin.scope === 'claude' || detail.plugin.scope === 'override')
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={t('pluginCloseDetail')}
+        className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
+        onClick={onClose}
+      />
+      <div className="ds-automation-drawer fixed inset-y-0 right-0 z-[90] flex w-full max-w-[440px] flex-col">
+        <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
+            >
+              <Icon className="h-5 w-5" strokeWidth={1.9} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="truncate text-[16px] font-semibold text-ds-ink">{title}</h2>
+              <p className="mt-1 truncate font-mono text-[12px] text-ds-muted">
+                {name}
+                {version ? ` · v${version}` : ''}
+              </p>
+              {detail.kind === 'installed' ? (
+                <p className="mt-1 text-[12px] text-ds-faint">
+                  {scopeLabel(detail.plugin.scope, t)}
+                  {' · '}
+                  {detail.plugin.enabled
+                    ? t('pluginDetailEnabledOn')
+                    : t('pluginDetailEnabledOff')}
+                  {' · '}
+                  {hasExecutable
+                    ? detail.plugin.trusted
+                      ? t('pluginSysTrusted')
+                      : t('pluginSysUntrusted')
+                    : t('pluginDetailContentOnly')}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            title={t('pluginCloseDetail')}
+            onClick={onClose}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-ds-border px-2.5 py-1.5 text-[12px] text-ds-muted hover:bg-ds-hover"
+          >
+            <X className="h-3.5 w-3.5" />
+            {t('pluginCloseDetail')}
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto p-5">
+          {detail.kind === 'installed' ? (
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              {hasExecutable ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={onTrust}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[12px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
+                >
+                  {detail.plugin.trusted ? (
+                    <Shield className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  ) : (
+                    <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  )}
+                  {detail.plugin.trusted
+                    ? t('pluginSysUntrustAction')
+                    : t('pluginSysTrustAction')}
+                </button>
+              ) : null}
+              {managedElsewhere ? null : (
+                <>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onUpdate}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[12px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
+                  >
+                    {busy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    )}
+                    {t('pluginSysUpdateAction')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onRemove}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-ds-card px-3 py-2 text-[12px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    {t('connectorDelete')}
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="mb-5">
+              <button
+                type="button"
+                disabled={busy || installed}
+                onClick={onInstall}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-2 text-[12px] font-medium text-accent transition hover:bg-accent/20 disabled:opacity-50"
+              >
+                {busy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                ) : installed ? (
+                  <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
+                ) : (
+                  <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+                )}
+                {installed ? t('pluginSysInstalled') : t('pluginSysInstall')}
+              </button>
+            </div>
+          )}
+
+          <h3 className="text-[12px] font-semibold text-ds-faint">{t('pluginDetailAbout')}</h3>
+          <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-ds-ink">
+            {summary || '—'}
+          </p>
+          {showPackageDesc ? (
+            <>
+              <h3 className="mt-4 text-[12px] font-semibold text-ds-faint">
+                {t('pluginDetailPackageDesc')}
+              </h3>
+              <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-ds-muted">
+                {packageDetail}
+              </p>
+            </>
+          ) : null}
+
+          <h3 className="mt-5 text-[12px] font-semibold text-ds-faint">{t('pluginDetailHowToUse')}</h3>
+          <p className="mt-2 text-[13px] leading-6 text-ds-muted">{t('pluginSysScenarioHint')}</p>
+          {hasExecutable && detail.kind === 'installed' && !detail.plugin.trusted ? (
+            <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-800 dark:text-amber-200">
+              {t('pluginSysUntrustedHint')}
+            </p>
+          ) : null}
+
+          <dl className="mt-5 grid grid-cols-2 gap-3 border-y border-ds-border-muted py-4 text-[12px]">
+            {detail.kind === 'installed' ? (
+              <>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailScope')}</dt>
+                  <dd className="mt-1 text-ds-ink">{scopeLabel(detail.plugin.scope, t)}</dd>
+                </div>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailVersion')}</dt>
+                  <dd className="mt-1 text-ds-ink">{version ? `v${version}` : '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailEnabled')}</dt>
+                  <dd className="mt-1 text-ds-ink">
+                    {detail.plugin.enabled
+                      ? t('pluginDetailEnabledOn')
+                      : t('pluginDetailEnabledOff')}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailTrust')}</dt>
+                  <dd className="mt-1 text-ds-ink">
+                    {hasExecutable
+                      ? detail.plugin.trusted
+                        ? t('pluginSysTrusted')
+                        : t('pluginSysUntrusted')
+                      : t('pluginDetailContentOnly')}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-ds-faint">{t('pluginDetailPath')}</dt>
+                  <dd className="mt-1 break-all font-mono text-[11px] text-ds-ink">
+                    {detail.plugin.path || '—'}
+                  </dd>
+                </div>
+              </>
+            ) : detail.kind === 'registry' ? (
+              <>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailVersion')}</dt>
+                  <dd className="mt-1 text-ds-ink">{version ? `v${version}` : '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginSysPermissions')}</dt>
+                  <dd className="mt-1 text-ds-ink">
+                    {t('pluginDetailPermCount', { count: permissions.length })}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-ds-faint">{t('pluginDetailSource')}</dt>
+                  <dd className="mt-1 break-all font-mono text-[11px] text-ds-ink">
+                    {detail.entry.source}
+                  </dd>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailVersion')}</dt>
+                  <dd className="mt-1 text-ds-ink">{version ? `v${version}` : '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-ds-faint">{t('pluginDetailSource')}</dt>
+                  <dd className="mt-1 break-all font-mono text-[11px] text-ds-ink">
+                    {detail.entry.spec}
+                  </dd>
+                </div>
+              </>
+            )}
+          </dl>
+
+          <h3 className="mt-5 text-[13px] font-semibold text-ds-ink">
+            {t('pluginDetailComponents')}
+            {componentsList.length > 0 ? (
+              <span className="ml-1.5 font-normal text-ds-faint">({componentsList.length})</span>
+            ) : null}
+          </h3>
+          {componentsList.length === 0 ? (
+            <p className="mt-2 text-[12px] text-ds-muted">—</p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {componentsList.map((label) => (
+                <span
+                  key={label}
+                  className="inline-flex items-center rounded-full border border-ds-border-muted px-2.5 py-1 text-[12px] text-ds-ink"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <h3 className="mt-5 text-[13px] font-semibold text-ds-ink">
+            {t('pluginSysPermissions')}
+            {permissions.length > 0 ? (
+              <span className="ml-1.5 font-normal text-ds-faint">
+                ({t('pluginDetailPermCount', { count: permissions.length })})
+              </span>
+            ) : null}
+          </h3>
+          {permissions.length === 0 ? (
+            <p className="mt-2 text-[12px] text-ds-muted">{t('pluginDetailNoPermissions')}</p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {permissions.map((perm) => (
+                <span
+                  key={perm}
+                  className="inline-flex items-center rounded-full border border-ds-border-muted px-2.5 py-1 font-mono text-[11px] text-ds-ink"
+                >
+                  {perm}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -215,7 +738,8 @@ function RegisteredMarketplacesSection({
   onAdd,
   onUpdate,
   onRemove,
-  onInstall
+  onInstall,
+  onOpenDetails
 }: {
   marketplaces: MarketplaceInfo[]
   loading: boolean
@@ -227,6 +751,7 @@ function RegisteredMarketplacesSection({
   onUpdate: (name: string) => void
   onRemove: (name: string) => void
   onInstall: (spec: string) => void
+  onOpenDetails: (entry: MarketplacePluginEntry) => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const [spec, setSpec] = useState('')
@@ -333,17 +858,20 @@ function RegisteredMarketplacesSection({
                   {t('pluginNoResults')}
                 </div>
               ) : (
-                <ul className="divide-y divide-ds-border-muted/70">
-                  {visible.map((entry) => (
-                    <MarketplacePluginRow
-                      key={entry.spec}
-                      entry={entry}
-                      installed={installedNames.has(entry.name.toLowerCase())}
-                      installing={installingSource === entry.spec}
-                      onInstall={() => onInstall(entry.spec)}
-                    />
-                  ))}
-                </ul>
+                <div className="bg-[color-mix(in_srgb,var(--ds-main)_88%,#f4f1ea)] px-4 py-4 dark:bg-ds-subtle/30 sm:px-5">
+                  <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {visible.map((entry) => (
+                      <MarketplacePluginCard
+                        key={entry.spec}
+                        entry={entry}
+                        installed={installedNames.has(entry.name.toLowerCase())}
+                        installing={installingSource === entry.spec}
+                        onInstall={() => onInstall(entry.spec)}
+                        onOpenDetails={() => onOpenDetails(entry)}
+                      />
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           )
@@ -353,256 +881,265 @@ function RegisteredMarketplacesSection({
   )
 }
 
-function MarketplacePluginRow({
+function MarketplacePluginCard({
   entry,
   installed,
   installing,
-  onInstall
+  onInstall,
+  onOpenDetails
 }: {
   entry: MarketplacePluginEntry
   installed: boolean
   installing: boolean
   onInstall: () => void
+  onOpenDetails: () => void
 }): ReactElement {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const visual = pluginVisual(entry.name)
+  const Icon = visual.icon
+  const title = pluginDisplayTitle(entry.name, i18n.language)
+  const summary = pluginDisplaySummary(entry.name, i18n.language, entry.description)
+  const actionLabel = installed ? t('pluginSysInstalled') : t('pluginSysInstall')
+  const chips = [entry.category, entry.version ? `v${entry.version}` : null].filter(
+    (v): v is string => Boolean(v)
+  )
   return (
-    <li className="group flex items-center gap-4 px-5 py-3 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <Puzzle className="h-4 w-4" strokeWidth={1.6} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[14px] font-semibold text-ds-ink">{entry.name}</span>
-          {entry.version ? (
-            <span className="font-mono text-[11px] text-ds-faint">v{entry.version}</span>
-          ) : null}
-          {entry.category ? (
-            <span className="inline-flex items-center rounded-full bg-ds-subtle px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
-              {entry.category}
-            </span>
-          ) : null}
+    <li className={CARD_CLASS}>
+      <div className="flex min-h-0 flex-1 items-start gap-3">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
+        >
+          <Icon className="h-5 w-5" strokeWidth={1.9} />
         </div>
-        {entry.description ? (
-          <p className="mt-0.5 line-clamp-1 text-[13px] leading-5 text-ds-muted" title={entry.description}>
-            {entry.description}
+        <div className="min-w-0 flex-1">
+          <button type="button" onClick={onOpenDetails} className="min-w-0 text-left">
+            <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink hover:text-accent">
+              {title}
+            </h3>
+          </button>
+          <div className="mt-0.5 truncate font-mono text-[12px] text-ds-faint">{entry.name}</div>
+          <p
+            className="mt-2 line-clamp-3 overflow-hidden text-[13px] leading-5 text-ds-muted"
+            title={summary}
+          >
+            {summary || entry.spec}
           </p>
-        ) : null}
+          <MetaChips items={chips} />
+        </div>
       </div>
-      <button
-        type="button"
-        onClick={onInstall}
-        disabled={installed || installing}
-        className="ds-ext-row-action inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-ds-subtle px-3 py-1.5 text-[12px] font-semibold text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
-      >
-        {installing ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-        ) : (
-          <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-        )}
-        {installed ? t('pluginSysInstalled') : t('pluginSysInstall')}
-      </button>
+      <div className="mt-auto flex items-center gap-2 border-t border-ds-border-muted pt-3.5">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-ds-faint">
+          <Download className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+          <span className="truncate font-mono" title={entry.spec}>
+            {entry.spec}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={onOpenDetails}
+          className="shrink-0 rounded-md border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+        >
+          {t('pluginDetailsAction')}
+        </button>
+        <button
+          type="button"
+          onClick={onInstall}
+          disabled={installed || installing}
+          title={actionLabel}
+          aria-label={actionLabel}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-subtle disabled:cursor-default"
+        >
+          {installing ? (
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+          ) : installed ? (
+            <Check className="h-4.5 w-4.5 text-emerald-500" strokeWidth={2.25} />
+          ) : (
+            <Plus className="h-4.5 w-4.5" strokeWidth={2} />
+          )}
+        </button>
+      </div>
     </li>
   )
 }
 
-function MarketplaceRow({
+function MarketplaceCard({
   entry,
   installed,
   installing,
-  onInstall
+  onInstall,
+  onOpenDetails
 }: {
   entry: RegistryEntry
   installed: boolean
   installing: boolean
   onInstall: () => void
+  onOpenDetails: () => void
 }): ReactElement {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const visual = pluginVisual(entry.name)
+  const Icon = visual.icon
+  const title = pluginDisplayTitle(entry.name, i18n.language)
+  const summary = pluginDisplaySummary(entry.name, i18n.language, entry.description)
+  const actionLabel = installed ? t('pluginSysInstalled') : t('pluginSysInstall')
+  const chips = [
+    ...(entry.components ?? []).slice(0, 4),
+    entry.permissions.length > 0
+      ? t('pluginDetailPermCount', { count: entry.permissions.length })
+      : null
+  ].filter((v): v is string => Boolean(v))
   return (
-    <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <Puzzle className="h-4.5 w-4.5" strokeWidth={1.6} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[15px] font-semibold text-ds-ink">{entry.name}</span>
-          {entry.version ? (
-            <span className="font-mono text-[11px] text-ds-faint">v{entry.version}</span>
-          ) : null}
-          <PermissionChips permissions={entry.permissions} />
+    <li className={CARD_CLASS}>
+      <div className="flex min-h-0 flex-1 items-start gap-3">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
+        >
+          <Icon className="h-5 w-5" strokeWidth={1.9} />
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-          {entry.description ? (
-            <p className="line-clamp-1 text-[13px] leading-5 text-ds-muted" title={entry.description}>
-              {entry.description}
-            </p>
-          ) : null}
-          <span className="shrink-0 font-mono text-[11px] text-ds-faint">{entry.source}</span>
+        <div className="min-w-0 flex-1">
+          <button type="button" onClick={onOpenDetails} className="min-w-0 text-left">
+            <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink hover:text-accent">
+              {title}
+            </h3>
+          </button>
+          <div className="mt-0.5 truncate font-mono text-[12px] text-ds-faint">{entry.name}</div>
+          <p
+            className="mt-2 line-clamp-3 overflow-hidden text-[13px] leading-5 text-ds-muted"
+            title={summary}
+          >
+            {summary || entry.source}
+          </p>
+          <MetaChips items={chips} />
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onInstall}
-        disabled={installed || installing}
-        className="ds-ext-row-action inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-ds-subtle px-3 py-1.5 text-[12px] font-semibold text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
-      >
-        {installing ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-        ) : (
-          <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-        )}
-        {installed ? t('pluginSysInstalled') : t('pluginSysInstall')}
-      </button>
+      <div className="mt-auto flex items-center gap-2 border-t border-ds-border-muted pt-3.5">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-ds-faint">
+          <Download className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+          <span className="truncate font-mono">
+            {entry.version ? `v${entry.version}` : entry.source}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={onOpenDetails}
+          className="shrink-0 rounded-md border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+        >
+          {t('pluginDetailsAction')}
+        </button>
+        <button
+          type="button"
+          onClick={onInstall}
+          disabled={installed || installing}
+          title={actionLabel}
+          aria-label={actionLabel}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-subtle disabled:cursor-default"
+        >
+          {installing ? (
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+          ) : installed ? (
+            <Check className="h-4.5 w-4.5 text-emerald-500" strokeWidth={2.25} />
+          ) : (
+            <Plus className="h-4.5 w-4.5" strokeWidth={2} />
+          )}
+        </button>
+      </div>
     </li>
   )
 }
 
-function PermissionChips({ permissions }: { permissions: string[] }): ReactElement | null {
-  if (permissions.length === 0) return null
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1">
-      {permissions.map((perm) => (
-        <span
-          key={perm}
-          className="inline-flex items-center rounded-full border border-ds-border-muted px-1.5 py-0.5 font-mono text-[10px] text-ds-faint"
-        >
-          {perm}
-        </span>
-      ))}
-    </span>
-  )
-}
-
-function PluginListRow({
+function PluginCard({
   plugin,
   busy,
-  onTrust,
-  onUpdate,
-  onRemove
+  onOpenDetails,
+  onTrust
 }: {
   plugin: PluginRow
   busy: boolean
+  onOpenDetails: () => void
   onTrust: () => void
-  onUpdate: () => void
-  onRemove: () => void
 }): ReactElement {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const visual = pluginVisual(plugin.name)
+  const Icon = visual.icon
+  const title = pluginDisplayTitle(plugin.name, i18n.language)
+  const summary = pluginDisplaySummary(plugin.name, i18n.language, plugin.description)
   const hasExecutable = plugin.components.hooks || plugin.components.mcp_servers
-  const managedElsewhere = plugin.scope === 'claude' || plugin.scope === 'override'
-  const stopRemove = (event: ReactMouseEvent): void => {
-    event.stopPropagation()
-    onRemove()
-  }
+  const chips = [
+    ...componentKeys(plugin.components).map((key) => componentLabel(key, t)),
+    plugin.permissions.length > 0
+      ? t('pluginDetailPermCount', { count: plugin.permissions.length })
+      : null
+  ].filter((v): v is string => Boolean(v))
+  const metaLeft = [
+    plugin.version ? `v${plugin.version}` : null,
+    scopeLabel(plugin.scope, t),
+    hasExecutable
+      ? plugin.trusted
+        ? t('pluginSysTrusted')
+        : t('pluginSysUntrusted')
+      : t('pluginDetailContentOnly')
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
   return (
-    <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <Puzzle className="h-4.5 w-4.5" strokeWidth={1.6} />
+    <li className={CARD_CLASS}>
+      <div className="flex min-h-0 flex-1 items-start gap-3">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
+        >
+          <Icon className="h-5 w-5" strokeWidth={1.9} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <button type="button" onClick={onOpenDetails} className="min-w-0 text-left">
+            <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink hover:text-accent">
+              {title}
+            </h3>
+          </button>
+          <div className="mt-0.5 truncate font-mono text-[12px] text-ds-faint">{plugin.name}</div>
+          <p
+            className="mt-2 line-clamp-3 overflow-hidden text-[13px] leading-5 text-ds-muted"
+            title={summary}
+          >
+            {summary || '—'}
+          </p>
+          <MetaChips items={chips} />
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[15px] font-semibold text-ds-ink">{plugin.name}</span>
-          <span className="font-mono text-[11px] text-ds-faint">v{plugin.version}</span>
-          <ScopeBadge scope={plugin.scope} />
+
+      <div className="mt-auto flex items-center gap-2 border-t border-ds-border-muted pt-3.5">
+        <span
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-ds-faint"
+          title={hasExecutable && !plugin.trusted ? t('pluginSysUntrustedHint') : undefined}
+        >
           {hasExecutable ? (
             plugin.trusted ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                <ShieldCheck className="h-3 w-3" strokeWidth={2} />
-                {t('pluginSysTrusted')}
-              </span>
+              <ShieldCheck
+                className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                strokeWidth={2}
+              />
             ) : (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400"
-                title={t('pluginSysUntrustedHint')}
-              >
-                <Shield className="h-3 w-3" strokeWidth={2} />
-                {t('pluginSysUntrusted')}
-              </span>
+              <Shield
+                className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                strokeWidth={2}
+              />
             )
-          ) : null}
-          <PermissionChips permissions={plugin.permissions} />
-        </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-          {plugin.description ? (
-            <p className="line-clamp-1 text-[13px] leading-5 text-ds-muted" title={plugin.description}>
-              {plugin.description}
-            </p>
-          ) : null}
-          <span className="shrink-0 font-mono text-[11px] text-ds-faint">
-            {[
-              plugin.components.skills ? 'Skills' : null,
-              plugin.components.hooks ? 'Hooks' : null,
-              plugin.components.mcp_servers ? 'MCP' : null,
-              plugin.components.commands ? 'Commands' : null,
-              plugin.components.agents ? 'Agents' : null,
-              plugin.components.rules ? 'Rules' : null
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          ) : (
+            <Puzzle className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+          )}
+          <span className="truncate">{metaLeft}</span>
+          {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2} /> : null}
+        </span>
+        <button
+          type="button"
+          onClick={onOpenDetails}
+          className="shrink-0 rounded-md border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+        >
+          {t('pluginDetailsAction')}
+        </button>
         {hasExecutable ? (
-          <button
-            type="button"
-            onClick={onTrust}
-            disabled={busy}
-            title={plugin.trusted ? t('pluginSysUntrustAction') : t('pluginSysTrustAction')}
-            aria-label={plugin.trusted ? t('pluginSysUntrustAction') : t('pluginSysTrustAction')}
-            className="ds-ext-row-action flex h-8 w-8 items-center justify-center rounded-lg text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
-          >
-            {plugin.trusted ? (
-              <Shield className="h-4 w-4" strokeWidth={1.75} />
-            ) : (
-              <ShieldCheck className="h-4 w-4" strokeWidth={1.75} />
-            )}
-          </button>
+          <TrustSwitch checked={plugin.trusted} disabled={busy} onChange={onTrust} />
         ) : null}
-        {managedElsewhere ? null : (
-          <>
-            <button
-              type="button"
-              onClick={onUpdate}
-              disabled={busy}
-              title={t('pluginSysUpdateAction')}
-              aria-label={t('pluginSysUpdateAction')}
-              className="ds-ext-row-action flex h-8 w-8 items-center justify-center rounded-lg text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
-            >
-              <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-            <button
-              type="button"
-              onClick={stopRemove}
-              disabled={busy}
-              title={t('connectorDelete')}
-              aria-label={t('connectorDelete')}
-              className="ds-ext-row-action flex h-8 w-8 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-              ) : (
-                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-              )}
-            </button>
-          </>
-        )}
       </div>
     </li>
-  )
-}
-
-function ScopeBadge({ scope }: { scope: string }): ReactElement {
-  const { t } = useTranslation('common')
-  const label =
-    scope === 'project'
-      ? t('pluginSysScopeProject')
-      : scope === 'claude'
-        ? t('pluginSysScopeClaude')
-        : scope === 'override'
-          ? t('pluginSysScopeOverride')
-          : t('pluginSysScopeUser')
-  return (
-    <span className="inline-flex items-center rounded-full bg-ds-subtle px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
-      {label}
-    </span>
   )
 }

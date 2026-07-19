@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
-import { SidebarProjectsSection } from './SidebarProjectsSection'
+import { SidebarProjectsSection, SidebarProjectsToolbar } from './SidebarProjectsSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 
 const EXTENSIONS_OPEN_KEY = 'deepseekgui.sidebar.extensionsOpen'
@@ -191,37 +191,47 @@ export function Sidebar({
         </nav>
       </div>
 
-      <div className="ds-sidebar-scroll ds-scroll-surface ds-no-drag min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <SidebarProjectsSection
-          threads={threads}
-          activeThreadId={activeThreadId}
-          runtimeReady={runtimeReady}
-          workspaceRoot={workspaceRoot}
-          busy={busy}
-          watchTurnCompletion={watchTurnCompletion}
-          unreadThreadIds={unreadThreadIds}
-          pinnedThreadIds={pinnedThreadIds}
-          locale={i18n.language}
-          onTogglePin={togglePin}
-          onPickWorkspace={() => void chooseWorkspace()}
-          onRemoveWorkspace={deleteWorkspace}
-          onCreateThreadInWorkspace={onNewChatInWorkspace}
-          onSelectThread={onSelectThread}
-          onOpenThreadTerminal={onOpenThreadTerminal}
-          onDeleteThread={onDeleteThread}
-          onCompactThread={onCompactThread}
-          t={t}
-        />
+      <SidebarProjectsToolbar
+        workspaceRoot={workspaceRoot}
+        onPickWorkspace={() => void chooseWorkspace()}
+        t={t}
+      />
 
-        <SidebarChatsSection
-          onNewChat={onNewChat}
-          onSelectThread={onSelectThread}
-          onOpenThreadTerminal={onOpenThreadTerminal}
-          onDeleteThread={onDeleteThread}
-          onCompactThread={onCompactThread}
-          onTogglePin={togglePin}
-          t={t}
-        />
+      <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
+        <div className="ds-sidebar-projects-scroll ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <SidebarProjectsSection
+            threads={threads}
+            activeThreadId={activeThreadId}
+            runtimeReady={runtimeReady}
+            workspaceRoot={workspaceRoot}
+            busy={busy}
+            watchTurnCompletion={watchTurnCompletion}
+            unreadThreadIds={unreadThreadIds}
+            pinnedThreadIds={pinnedThreadIds}
+            locale={i18n.language}
+            onTogglePin={togglePin}
+            onPickWorkspace={() => void chooseWorkspace()}
+            onRemoveWorkspace={deleteWorkspace}
+            onCreateThreadInWorkspace={onNewChatInWorkspace}
+            onSelectThread={onSelectThread}
+            onOpenThreadTerminal={onOpenThreadTerminal}
+            onDeleteThread={onDeleteThread}
+            onCompactThread={onCompactThread}
+            t={t}
+          />
+        </div>
+
+        <div className="ds-sidebar-chats-pane">
+          <SidebarChatsSection
+            onNewChat={onNewChat}
+            onSelectThread={onSelectThread}
+            onOpenThreadTerminal={onOpenThreadTerminal}
+            onDeleteThread={onDeleteThread}
+            onCompactThread={onCompactThread}
+            onTogglePin={togglePin}
+            t={t}
+          />
+        </div>
       </div>
 
       <div className="ds-sidebar-footer ds-no-drag shrink-0 px-1 pt-2">
