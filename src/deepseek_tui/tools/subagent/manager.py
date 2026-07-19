@@ -561,6 +561,10 @@ class SubAgentRuntime:
     mailbox: Mailbox | None = None
     spawn_depth: int = 0
     max_spawn_depth: int = DEFAULT_MAX_SPAWN_DEPTH
+    # Parent engine approval bridge — gated tools escalate here instead of
+    # hard-denying when the session is not auto-approved.
+    approval_handler: Any | None = None
+    emit_event: Any | None = None
 
     def would_exceed_depth(self) -> bool:
         return self.spawn_depth + 1 > self.max_spawn_depth
@@ -579,6 +583,8 @@ class SubAgentRuntime:
             mailbox=self.mailbox,
             spawn_depth=depth,
             max_spawn_depth=self.max_spawn_depth,
+            approval_handler=self.approval_handler,
+            emit_event=self.emit_event,
         )
 
     def child(self) -> SubAgentRuntime:
@@ -595,7 +601,6 @@ class SubAgentRuntime:
             mailbox=self.mailbox,
             spawn_depth=self.spawn_depth + 1,
             max_spawn_depth=self.max_spawn_depth,
+            approval_handler=self.approval_handler,
+            emit_event=self.emit_event,
         )
-
-
-        raise

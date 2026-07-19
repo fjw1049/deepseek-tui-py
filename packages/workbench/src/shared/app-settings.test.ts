@@ -118,6 +118,42 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
     expect(wrapped).toContain('automation_create')
   })
 
+  it('derives sandbox mode from the approval tier', () => {
+    const auto = normalizeAppSettings({
+      version: 1,
+      locale: 'en',
+      theme: 'system',
+      uiFontScale: 'small',
+      uiFontFamily: 'system-native',
+      agentProvider: 'deepseek-runtime',
+      workspaceRoot: '',
+      deepseek: {
+        binaryPath: '',
+        port: 7878,
+        autoStart: true,
+        apiKey: '',
+        baseUrl: '',
+        runtimeToken: '',
+        extraCorsOrigins: [],
+        approvalPolicy: 'auto',
+        sandboxMode: 'workspace-write'
+      },
+      log: { enabled: true, retentionDays: 2 },
+      notifications: { turnComplete: true },
+      skills: { extraDirs: [] },
+      memory: undefined,
+      claw: undefined,
+      guiUpdate: { channel: 'frontier' }
+    } as never)
+    expect(auto.deepseek.sandboxMode).toBe('danger-full-access')
+
+    const untrusted = normalizeAppSettings({
+      ...auto,
+      deepseek: { ...auto.deepseek, approvalPolicy: 'untrusted', sandboxMode: 'danger-full-access' }
+    } as never)
+    expect(untrusted.deepseek.sandboxMode).toBe('workspace-write')
+  })
+
   it('normalizes memory settings with safe defaults and clamps risky values', () => {
     const normalized = normalizeAppSettings({
       version: 1,

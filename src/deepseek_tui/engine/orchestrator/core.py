@@ -808,25 +808,42 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         CodeBuddy plugins carry their core behavior in ``rules`` marked
         ``alwaysApply: true``. Mounted (``@plugin:name``): the mounted
         plugin's rule bodies are injected verbatim — that IS the plugin's
-        behavior the user opted into. Unmounted: rules collapse to one
-        summary line each with a mount hint (full bodies from every
-        installed plugin would bloat and dilute the prompt).
+        behavior the user opted into. When the mounted plugin has no rules,
+        fall back to its root ``PLAYBOOK.md`` / ``README.md``. Unmounted:
+        rules collapse to one summary line each with a mount hint (full
+        bodies from every installed plugin would bloat and dilute the
+        prompt).
         """
-        if not self.plugin_rules and not self.plugin_index:
+        active_plugin = self._active_plugin
+        if (
+            not self.plugin_rules
+            and not self.plugin_index
+            and active_plugin is None
+        ):
             return None
         from deepseek_tui.engine.prompts import render_plugin_rules_context
+        from deepseek_tui.integrations.plugins import read_plugin_playbook
 
-        active = self._active_plugin.name if self._active_plugin else None
+        active = active_plugin.name if active_plugin is not None else None
+        playbook: str | None = None
+        if active_plugin is not None:
+            own = [
+                r
+                for r in self.plugin_rules
+                if getattr(r, "plugin", None) == active
+            ]
+            if not own:
+                playbook = read_plugin_playbook(active_plugin.path)
         if active is not None:
             rules = self.plugin_rules
         else:
             rules = list(self.plugin_rules)
             if self.plugin_index:
                 rules = rules + _index_rule_proxies(self.plugin_index)
-        if not rules:
+        if not rules and not playbook:
             return None
         block = render_plugin_rules_context(
-            rules, active_plugin=active
+            rules, active_plugin=active, playbook=playbook
         )
         return block or None
 
@@ -1241,6 +1258,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 task_manager=runtime.task_manager,
                 cancel_token=handle.cancel_event,
                 mailbox=subagent_manager.mailbox,
+                approval_handler=engine.approval_handler,
+                emit_event=handle.emit,
             )
             subagent_manager.attach_loop_runtime(loop_runtime)
 

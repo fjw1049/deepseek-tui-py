@@ -13,6 +13,8 @@ from deepseek_tui.policy.sandbox import (
     ExecutionSandboxPolicy,
     SANDBOX_MANAGER,
     SandboxType,
+    resolve_execution_sandbox_policy,
+    sandbox_mode_for_approval_tier,
     sandbox_policy_for_mode,
     sync_execution_sandbox_policy,
 )
@@ -38,6 +40,22 @@ class TestExecutionSandboxPolicy:
         agent = sandbox_policy_for_mode("agent", workspace)
         assert agent.kind == "workspace-write"
         assert agent.network_access is True
+
+    def test_sandbox_mode_for_approval_tier(self) -> None:
+        assert sandbox_mode_for_approval_tier("auto") == "danger-full-access"
+        assert sandbox_mode_for_approval_tier("yolo") == "danger-full-access"
+        assert sandbox_mode_for_approval_tier("on-request") == "workspace-write"
+        assert sandbox_mode_for_approval_tier("untrusted") == "workspace-write"
+
+    def test_resolve_derives_sandbox_from_approval_tier(self, tmp_path: Path) -> None:
+        full = resolve_execution_sandbox_policy(
+            "agent", tmp_path, approval_policy="auto"
+        )
+        assert full.kind == "danger-full-access"
+        ws = resolve_execution_sandbox_policy(
+            "agent", tmp_path, approval_policy="untrusted"
+        )
+        assert ws.kind == "workspace-write"
 
     def test_prepare_warns_when_sandbox_unavailable_on_any_platform(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

@@ -1702,6 +1702,7 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
 
     Usage:
         /plugins                     — list installed plugins
+        /plugins info <name>         — show plugin description + README/PLAYBOOK
         /plugins install <spec>      — github:owner/repo, local path, or <plugin>@<marketplace>
         /plugins update <name>       — re-install from recorded source
         /plugins remove <name>       — uninstall
@@ -1718,6 +1719,7 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.integrations.plugins import (
         discover_plugins,
         install_plugin,
+        plugin_description_blurb,
         set_plugin_enabled,
         set_plugin_trusted,
         uninstall_plugin,
@@ -1745,6 +1747,15 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
             if p.trusted:
                 flags.append("trusted")
             lines.append(f"  {p.name} v{p.manifest.version} ({', '.join(flags)})")
+            blurb = plugin_description_blurb(p)
+            if blurb:
+                lines.append(f"      {blurb}")
+            readme = p.path / "README.md"
+            playbook = p.path / "PLAYBOOK.md"
+            if playbook.is_file():
+                lines.append("      · docs: PLAYBOOK.md")
+            elif readme.is_file():
+                lines.append("      · docs: README.md")
             if not p.enabled:
                 continue
             c = collect_contributions([p])
@@ -1773,7 +1784,8 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
                 lines.append(f"      · rule: {r.plugin}/{r.name}")
         lines.append(
             "\nTip: skills/commands/agents load on demand; "
-            "hooks/MCP need trust + a new session."
+            "hooks/MCP need trust + a new session. "
+            "Use `/plugins info <name>` to read README/PLAYBOOK."
         )
         return CommandResult(output="\n".join(lines))
 
@@ -1782,15 +1794,17 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
     rest = parts[1].strip() if len(parts) > 1 else ""
     plugins_dir = user_plugins_dir()
     usage = (
-        "Usage: /plugins [install <spec> | update <name> | remove <name> | "
-        "enable <name> | disable <name> | trust <name> | untrust <name> | "
-        "marketplace …]"
+        "Usage: /plugins [info <name> | install <spec> | update <name> | "
+        "remove <name> | enable <name> | disable <name> | trust <name> | "
+        "untrust <name> | marketplace …]"
     )
     if head == "marketplace":
         return _plugins_marketplace(rest)
     if not rest:
         return CommandResult(error=usage)
 
+    if head == "info":
+        return _plugins_info(rest)
     if head == "install":
         outcome, message = install_plugin(rest, plugins_dir)
         if outcome.value == "failed":
@@ -1812,6 +1826,47 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
     if head == "untrust":
         return CommandResult(output=set_plugin_trusted(rest, False, plugins_dir))
     return CommandResult(error=usage)
+
+
+def _plugins_info(name: str) -> CommandResult:
+    """Show manifest description plus README/PLAYBOOK for one plugin."""
+    from deepseek_tui.integrations.plugins import (
+        discover_plugins,
+        plugin_description_blurb,
+        read_plugin_playbook,
+    )
+
+    needle = name.strip().lower()
+    if not needle:
+        return CommandResult(error="Usage: /plugins info <name>")
+    match = None
+    for plugin in discover_plugins(workspace=Path.cwd(), include_disabled=True):
+        if plugin.name.lower() == needle:
+            match = plugin
+            break
+    if match is None:
+        return CommandResult(error=f"Plugin not found: {name}")
+    lines = [
+        f"{match.name} v{match.manifest.version} ({match.scope})",
+        f"path: {match.path}",
+    ]
+    blurb = plugin_description_blurb(match, max_chars=500)
+    if blurb:
+        lines.append(f"description: {blurb}")
+    docs = read_plugin_playbook(match.path, max_chars=8_000)
+    if docs:
+        source = (
+            "PLAYBOOK.md"
+            if (match.path / "PLAYBOOK.md").is_file()
+            else "README.md"
+        )
+        lines.append("")
+        lines.append(f"--- {source} ---")
+        lines.append(docs)
+    else:
+        lines.append("")
+        lines.append("(no README.md / PLAYBOOK.md in plugin root)")
+    return CommandResult(output="\n".join(lines))
 
 
 def _plugins_marketplace(raw: str) -> CommandResult:

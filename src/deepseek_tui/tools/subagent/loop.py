@@ -90,18 +90,54 @@ async def _execute_subagent_tool(
     tool_name: str,
     tool_input: dict[str, Any],
     auto_approve: bool,
+    tool_call_id: str = "",
+    runtime: SubAgentRuntime | None = None,
 ) -> str:
-    from deepseek_tui.tools.registry import ApprovalRequirement, ToolError
+    from deepseek_tui.policy.approval import ApprovalDecision
+    from deepseek_tui.tools.approval import (
+        approval_request_for_tool,
+        enrich_approval_request,
+    )
+    from deepseek_tui.tools.registry import ToolError
     from deepseek_tui.tools.registry import ToolRegistry
 
     assert isinstance(registry, ToolRegistry)
     _reject_subagent_interactive_shell(tool_name, tool_input)
     tool = registry.get(tool_name)
-    if not auto_approve and tool.approval_requirement() != ApprovalRequirement.AUTO:
-        return (
-            f"Error: Tool {tool_name} requires approval and cannot run "
-            "inside this sub-agent unless the parent session is auto-approved"
+    policy = getattr(getattr(runtime, "config", None), "approval_policy", None)
+    if policy is None and hasattr(context, "metadata"):
+        policy = (context.metadata or {}).get("approval_policy")  # type: ignore[union-attr]
+    approval_request = None if auto_approve else approval_request_for_tool(tool, policy)
+    if approval_request is not None:
+        handler = getattr(runtime, "approval_handler", None) if runtime else None
+        if handler is None:
+            return (
+                f"Error: Tool {tool_name} requires approval and cannot run "
+                "inside this sub-agent without a parent approval bridge"
+            )
+        args = tool_input if isinstance(tool_input, dict) else {}
+        enrich_approval_request(
+            approval_request,
+            tool_name,
+            args,
+            tool_description=approval_request.reason,
         )
+        call_id = tool_call_id or f"subagent-{tool_name}"
+        emit = getattr(runtime, "emit_event", None) if runtime else None
+        if emit is not None:
+            from deepseek_tui.engine.events import ApprovalRequiredEvent
+
+            maybe = emit(
+                ApprovalRequiredEvent(tool_call_id=call_id, request=approval_request)
+            )
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        decision = await handler.request_approval(call_id, approval_request)
+        if decision not in (
+            ApprovalDecision.APPROVED,
+            ApprovalDecision.APPROVED_SESSION,
+        ):
+            return f"Error: Tool {tool_name} denied by approval policy"
     try:
         result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
         if not result.success:
@@ -225,12 +261,13 @@ async def run_subagent_loop(
         root_model=agent.model,
         extra_tools=extra_tools or None,
     )
+    approval_policy = getattr(runtime.config, "approval_policy", None)
+    trust_mode = runtime.auto_approve or bool(
+        getattr(runtime, "trust_mode", False)
+    )
     context = ToolContext(
         working_directory=agent.workspace,
-        trust_mode=(
-            getattr(runtime.config, "sandbox_mode", "") == "danger-full-access"
-            or bool(getattr(runtime, "trust_mode", False))
-        ),
+        trust_mode=trust_mode,
         task_manager=runtime.task_manager,
         subagent_manager=runtime.manager,
         metadata={
@@ -238,6 +275,7 @@ async def run_subagent_loop(
             "subagent_depth": agent.spawn_depth,
             "subagent_runtime": runtime,
             "auto_approve": runtime.auto_approve,
+            "approval_policy": approval_policy,
         },
     )
     from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
@@ -247,6 +285,7 @@ async def run_subagent_loop(
         agent.workspace,
         trust_mode=context.trust_mode,
         sandbox_mode=getattr(runtime.config, "sandbox_mode", None),
+        approval_policy=approval_policy if isinstance(approval_policy, str) else None,
     )
     registry.set_context(context)
     api_tools = registry.to_api_tools()
@@ -478,6 +517,8 @@ async def run_subagent_loop(
                         tool_name=tc.name,
                         tool_input=tc.arguments,
                         auto_approve=runtime.auto_approve,
+                        tool_call_id=tc.id,
+                        runtime=runtime,
                     )
                     ok = not output.startswith("Error:")
                 if runtime.mailbox is not None:

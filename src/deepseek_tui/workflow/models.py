@@ -28,7 +28,7 @@ StepType = Literal[
     "dynamic",
     "support",
 ]
-ApprovalMode = Literal["analysis_only", "trusted_workflow", "strict"]
+ApprovalMode = Literal["analysis_only", "trusted_workflow", "strict", "inherit"]
 OnErrorMode = Literal["continue", "fail_fast"]
 WorktreeMode = Literal["off", "on"]
 SourcePolicy = Literal["success", "partial"]
@@ -67,7 +67,7 @@ class WorkflowMeta:
 
 @dataclass(slots=True)
 class WorkflowPolicy:
-    approval_mode: ApprovalMode = "trusted_workflow"
+    approval_mode: ApprovalMode = "inherit"
     on_error: OnErrorMode = "continue"
     max_agents: int = 10
     concurrency: int = 4
@@ -551,7 +551,7 @@ def adaptive_workflow_spec(*, task_description: str = "adaptive orchestration") 
             "description": task_description,
         },
         "policy": {
-            "approval_mode": "trusted_workflow",
+            "approval_mode": "inherit",
             "on_error": "continue",
             "max_agents": 16,
             "concurrency": 4,
@@ -596,8 +596,8 @@ def adaptive_workflow_spec(*, task_description: str = "adaptive orchestration") 
 def _parse_policy(raw: dict[str, Any]) -> WorkflowPolicy:
     if not isinstance(raw, dict):
         raise WorkflowValidationError("policy must be an object")
-    mode = raw.get("approval_mode", "trusted_workflow")
-    if mode not in ("analysis_only", "trusted_workflow", "strict"):
+    mode = raw.get("approval_mode", "inherit")
+    if mode not in ("analysis_only", "trusted_workflow", "strict", "inherit"):
         raise WorkflowValidationError("policy.approval_mode invalid")
     on_error = raw.get("on_error", "continue")
     if on_error not in ("continue", "fail_fast"):

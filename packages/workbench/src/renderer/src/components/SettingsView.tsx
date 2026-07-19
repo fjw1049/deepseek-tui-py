@@ -9,14 +9,14 @@ import {
   mergeAppearanceSettings,
   mergeClawSettings,
   normalizeCustomModelContextWindow,
+  sandboxModeForApprovalPolicy,
   type AppearancePatchV1,
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
   type AsrSettingsV1,
   type CustomEndpointV1,
-  type EndpointProtocol,
-  type SandboxMode
+  type EndpointProtocol
 } from '@shared/app-settings'
 import {
   Anchor,
@@ -980,19 +980,24 @@ export function SettingsView(): ReactElement {
                 description={t('approvalPolicyDesc')}
                 control={
                   <SettingsSelect
-                    value={form.deepseek.approvalPolicy}
-                    onChange={(e) =>
+                    value={
+                      form.deepseek.approvalPolicy === 'suggest'
+                        ? 'on-request'
+                        : form.deepseek.approvalPolicy
+                    }
+                    onChange={(e) => {
+                      const approvalPolicy = e.target.value as ApprovalPolicy
                       update({
                         deepseek: {
-                          approvalPolicy: e.target.value as ApprovalPolicy
+                          approvalPolicy,
+                          sandboxMode: sandboxModeForApprovalPolicy(approvalPolicy)
                         }
                       })
-                    }
+                    }}
                   >
-                    <option value="auto">{t('approvalAuto')}</option>
                     <option value="on-request">{t('approvalOnRequest')}</option>
                     <option value="untrusted">{t('approvalUntrusted')}</option>
-                    <option value="suggest">{t('approvalSuggest')}</option>
+                    <option value="auto">{t('approvalAuto')}</option>
                     <option value="never">{t('approvalNever')}</option>
                   </SettingsSelect>
                 }
@@ -1000,25 +1005,15 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t('sandboxMode')}
                 help={
-                  <FieldHelpPopover title={t('sandboxMode')} intro={t('sandboxModeHelp')} />
+                  <FieldHelpPopover title={t('sandboxMode')} intro={t('sandboxModeDerivedHelp')} />
                 }
-                description={t('sandboxModeDesc')}
+                description={t('sandboxModeDerivedDesc')}
                 control={
-                  <SettingsSelect
-                    value={form.deepseek.sandboxMode}
-                    onChange={(e) =>
-                      update({
-                        deepseek: {
-                          sandboxMode: e.target.value as SandboxMode
-                        }
-                      })
-                    }
-                  >
-                    <option value="workspace-write">{t('sandboxWorkspaceWrite')}</option>
-                    <option value="read-only">{t('sandboxReadOnly')}</option>
-                    <option value="danger-full-access">{t('sandboxFullAccess')}</option>
-                    <option value="external-sandbox">{t('sandboxExternal')}</option>
-                  </SettingsSelect>
+                  <div className="min-w-[12rem] rounded-lg border border-ds-border bg-ds-main/60 px-3 py-2 text-[13px] text-ds-muted">
+                    {form.deepseek.approvalPolicy === 'auto'
+                      ? t('sandboxFullAccess')
+                      : t('sandboxWorkspaceWrite')}
+                  </div>
                 }
               />
             </SettingsCard>

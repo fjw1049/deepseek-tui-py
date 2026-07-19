@@ -15,6 +15,11 @@ function normalizeGuiUpdateChannel(value: unknown): GuiUpdateChannel {
 
 export type ApprovalPolicy = 'on-request' | 'untrusted' | 'never' | 'auto' | 'suggest'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access' | 'external-sandbox'
+
+/** Derive filesystem sandbox from the three product approval tiers (1A). */
+export function sandboxModeForApprovalPolicy(policy: ApprovalPolicy): SandboxMode {
+  return policy === 'auto' ? 'danger-full-access' : 'workspace-write'
+}
 export type UiFontScale = 'small' | 'medium' | 'large'
 export type UiFontFamily = 'inter-noto' | 'system-native'
 export type ClawRunMode = 'agent' | 'plan'
@@ -999,7 +1004,10 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     uiFontFamily: normalizeUiFontFamily(settings.uiFontFamily),
     deepseek: {
       ...settings.deepseek,
-      baseUrl: normalizeDeepseekBaseUrl(settings.deepseek.baseUrl)
+      baseUrl: normalizeDeepseekBaseUrl(settings.deepseek.baseUrl),
+      // Keep sandbox derived from the approval tier so the three-mode dial
+      // remains the single permission control.
+      sandboxMode: sandboxModeForApprovalPolicy(settings.deepseek.approvalPolicy)
     },
     customEndpoints: normalizeCustomEndpoints(maybeSettings.customEndpoints),
     notifications: {

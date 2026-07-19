@@ -340,9 +340,22 @@ async def create_tool_runtime(
         )
 
     trust_mode = bool(getattr(cfg, "trust_mode", False))
+    approval_policy = getattr(cfg, "approval_policy", None)
     sandbox_mode = getattr(cfg, "sandbox_mode", None)
+    # Three-tier dial: auto ⇒ full trust. Keep sandbox danger-full-access as a
+    # backward-compatible trust signal for older configs.
+    if not trust_mode and isinstance(approval_policy, str):
+        if approval_policy.strip().lower() in ("auto", "never-ask", "yolo"):
+            trust_mode = True
     if not trust_mode and isinstance(sandbox_mode, str):
         trust_mode = sandbox_mode.strip().lower() == "danger-full-access"
+    if (
+        isinstance(approval_policy, str)
+        and (not isinstance(sandbox_mode, str) or not sandbox_mode.strip())
+    ):
+        from deepseek_tui.policy.sandbox import sandbox_mode_for_approval_tier
+
+        sandbox_mode = sandbox_mode_for_approval_tier(approval_policy)
 
     context = ToolContext(
         working_directory=workspace,
@@ -357,6 +370,7 @@ async def create_tool_runtime(
             workspace,
             trust_mode=trust_mode,
             sandbox_mode=sandbox_mode if isinstance(sandbox_mode, str) else None,
+            approval_policy=approval_policy if isinstance(approval_policy, str) else None,
         ),
     )
 

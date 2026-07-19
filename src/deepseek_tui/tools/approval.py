@@ -25,7 +25,12 @@ from typing import Any
 from typing import TYPE_CHECKING
 
 _AUTO_POLICIES = frozenset({"auto", "never-ask", "yolo"})
-_PROMPT_POLICIES = frozenset({"on-request", "suggest", "untrusted"})
+# Policies that prompt for SUGGEST-tier tools (workspace writes).
+# ``untrusted`` intentionally omits SUGGEST: only REQUIRED (shell/MCP write/
+# spawn/…) prompts — matching the "sensitive only" product tier.
+# REQUIRED still returns True below; ``auto`` / ``never`` short-circuit in
+# ``_gate_action`` before this helper runs.
+_SUGGEST_PROMPT_POLICIES = frozenset({"on-request", "suggest"})
 NEVER_BLOCKED_PREFIX = "blocked by approval_policy=never"
 
 
@@ -223,7 +228,7 @@ def _requirement_needs_prompt(req: ApprovalRequirement, mode: str) -> bool:
     if req == ApprovalRequirement.REQUIRED:
         return True
     if req == ApprovalRequirement.SUGGEST:
-        return mode in _PROMPT_POLICIES
+        return mode in _SUGGEST_PROMPT_POLICIES
     return False
 
 

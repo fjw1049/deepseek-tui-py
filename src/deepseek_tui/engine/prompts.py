@@ -70,25 +70,42 @@ def _deepseek_version() -> str:
         return "unknown"
 
 
+# Calendar date frozen at process start (first render). Survives the whole
+# server lifetime so the Environment block stays KV-prefix-stable; refresh
+# only happens on process restart. Year-month-day is enough for as-of /
+# "latest" reasoning; second-precision remains on the ``current_time`` tool.
+_PROCESS_TODAY: str | None = None
+
+
+def process_today() -> str:
+    """Return ``YYYY-MM-DD`` for this process (local date at first call)."""
+    global _PROCESS_TODAY
+    if _PROCESS_TODAY is None:
+        _PROCESS_TODAY = datetime.now().strftime("%Y-%m-%d")
+    return _PROCESS_TODAY
+
+
 def render_environment_block(
     workspace: Path,
     locale_tag: str = "en",
 ) -> str:
     """Render the ``## Environment`` block.
 
-    Lists locale, runtime version, host platform, login shell, current working
-    directory. All values are session-stable so the block sits in the
-    workspace-static prefix and benefits from KV prefix cache hits.
+    Lists today's date (process-lifetime), locale, runtime version, host
+    platform, login shell, and current working directory. All values are
+    process/session-stable so the block sits in the workspace-static prefix
+    and benefits from KV prefix cache hits.
 
-    The block anchors the LLM in *where it is* — without it, models
+    The block anchors the LLM in *where and when it is* — without it, models
     hallucinate ``/home/user/...`` paths from the training distribution
-    instead of using the actual ``pwd``.
+    instead of using the actual ``pwd``, and invent stale "current" dates.
     """
     shell = os.environ.get("SHELL", "unknown")
     pwd = workspace.expanduser().resolve()
     return (
         "## Environment\n"
         "\n"
+        f"- today: {process_today()}\n"
         f"- lang: {locale_tag}\n"
         f"- deepseek_version: {_deepseek_version()}\n"
         f"- platform: {sys.platform}\n"
@@ -288,6 +305,7 @@ def render_plugin_rules_context(
     rules: list[Any] | None,
     *,
     active_plugin: str | None = None,
+    playbook: str | None = None,
 ) -> str:
     """Render plugin ``rules`` into a system-prompt block.
 
@@ -296,36 +314,54 @@ def render_plugin_rules_context(
     - ``active_plugin`` set (plugin mounted via ``@plugin:name``): the mounted
       plugin's rule bodies are injected verbatim — they carry the plugin's
       core behavior (CodeBuddy scenario rules) and mounting is the user's
-      explicit opt-in. Other plugins' rules are omitted entirely.
+      explicit opt-in. Other plugins' rules are omitted entirely. When the
+      mounted plugin ships no rules, ``playbook`` (from ``PLAYBOOK.md`` /
+      ``README.md``) is injected instead so toolkit plugins still get a
+      mount-time routing document.
     - No mount: rules collapse to one summary line each with a mount hint.
       Injecting every installed plugin's full rule bodies (tens of KB) both
       taxes every turn's input tokens and dilutes the directives until the
       model ignores them, so the bodies only ship when mounted.
     """
     rules = rules or []
-    if not rules:
-        return ""
     if active_plugin is not None:
         # Mounted: inject this plugin's rule bodies (including
         # always_apply=false scenario-only rules — mounting is the opt-in).
         own = [r for r in rules if r.plugin == active_plugin]
-        if not own:
+        if own:
+            lines = ["## Plugin Rules", ""]
+            lines.append(
+                f'The following directives come from the mounted plugin '
+                f'"{active_plugin}" and are active for this session. Treat them '
+                "as authoritative instructions."
+            )
+            for r in own:
+                body = getattr(r, "body", "") or ""
+                if not body.strip():
+                    continue
+                lines.append("")
+                lines.append(f"### Rule: {r.plugin}/{r.name}")
+                lines.append("")
+                lines.append(substitute_builtin_template_vars(body))
+            return "\n".join(lines).rstrip()
+        text = (playbook or "").strip()
+        if not text:
             return ""
-        lines = ["## Plugin Rules", ""]
-        lines.append(
-            f'The following directives come from the mounted plugin '
-            f'"{active_plugin}" and are active for this session. Treat them '
-            "as authoritative instructions."
-        )
-        for r in own:
-            body = getattr(r, "body", "") or ""
-            if not body.strip():
-                continue
-            lines.append("")
-            lines.append(f"### Rule: {r.plugin}/{r.name}")
-            lines.append("")
-            lines.append(substitute_builtin_template_vars(body))
-        return "\n".join(lines).rstrip()
+        return "\n".join(
+            [
+                "## Plugin Playbook",
+                "",
+                f'The following playbook comes from the mounted plugin '
+                f'"{active_plugin}" (no rules/ shipped; loaded from '
+                "PLAYBOOK.md/README.md). Treat it as authoritative routing "
+                "instructions; load skill bodies with `load_skill` when a "
+                "skill is named.",
+                "",
+                substitute_builtin_template_vars(text),
+            ]
+        ).rstrip()
+    if not rules:
+        return ""
     # Unmounted: catalog only always_apply rules. always_apply=false rules
     # stay silent until `@plugin:<name>` mounts the scenario.
     catalog = [
@@ -372,7 +408,7 @@ def build_system_prompt(
     Otherwise, composes from layered templates in this order:
       1. mode prompt (base + personality + mode + approval)
       2. project_context block (AGENTS.md / CLAUDE.md / instructions.md)
-      3. ## Environment block (lang / version / platform / shell / pwd)
+      3. ## Environment block (today / lang / version / platform / shell / pwd)
       4. context management guidance (Agent/Yolo only)
       5. skills context (available skills list)
       6. plugin context (mounted plugin dir + read grant, when mounted)

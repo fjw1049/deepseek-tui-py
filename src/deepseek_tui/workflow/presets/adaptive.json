@@ -5,7 +5,7 @@
     "description": "General-purpose dynamic controller: spawn/fanout/reduce as needed, then synthesize or stop."
   },
   "policy": {
-    "approval_mode": "trusted_workflow",
+    "approval_mode": "inherit",
     "on_error": "continue",
     "max_agents": 16,
     "concurrency": 4,

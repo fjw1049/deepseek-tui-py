@@ -229,6 +229,7 @@ async def execute_detached_workflow(
             raise RuntimeError("workflow detach requires features.subagents=True")
 
         client = build_llm_client(cfg)
+        _policy = (getattr(cfg, "approval_policy", None) or "on-request").strip().lower()
         loop_runtime = SubAgentRuntime(
             manager=manager,
             client=client,
@@ -236,7 +237,7 @@ async def execute_detached_workflow(
             config=cfg,
             workspace=agent_cwd,
             allow_shell=task.allow_shell,
-            auto_approve=True,
+            auto_approve=_policy in ("auto", "never-ask", "yolo"),
             task_manager=task.task_manager,
             cancel_token=cancel,
             mailbox=mailbox,

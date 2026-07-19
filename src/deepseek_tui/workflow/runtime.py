@@ -197,12 +197,17 @@ class DeepSeekAgentRunner:
         if cancel_event is not None and cancel_event.is_set():
             raise WorkflowAbortedError("workflow cancelled")
         parsed = SubAgentType.parse(agent_type) or SubAgentType.GENERAL
-        if policy.approval_mode == "trusted_workflow":
-            auto_approve: bool | None = True
-        elif policy.approval_mode == "strict":
-            auto_approve = False
-        else:
+        # Inherit the parent session's approval tier by default. ``strict``
+        # forces prompts (auto_approve=False). ``analysis_only`` keeps
+        # auto_approve=True because the tool allowlist is already read-only.
+        # Legacy ``trusted_workflow`` maps to inherit (no longer bypasses the
+        # global three-tier policy).
+        if policy.approval_mode == "strict":
+            auto_approve: bool | None = False
+        elif policy.approval_mode == "analysis_only":
             auto_approve = True
+        else:
+            auto_approve = None  # inherit / trusted_workflow
 
         request = SpawnRequest(
             prompt=prompt,

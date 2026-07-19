@@ -2,13 +2,39 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from deepseek_tui.engine.prompts import (
     build_system_prompt,
     load_handoff_reminder,
+    process_today,
+    render_environment_block,
 )
 from deepseek_tui.protocol.messages import MessageOrigin
+
+
+def test_environment_block_includes_process_today(tmp_path: Path) -> None:
+    """Service-lifetime calendar date sits at the top of Environment."""
+    block = render_environment_block(tmp_path, "zh")
+    assert block.startswith("## Environment\n")
+    lines = [ln for ln in block.splitlines() if ln.startswith("- ")]
+    assert lines[0].startswith("- today: ")
+    today = lines[0].removeprefix("- today: ").strip()
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", today)
+    assert today == process_today()
+    # Frozen for the process: second render must not drift.
+    assert render_environment_block(tmp_path, "en").splitlines()[2] == (
+        f"- today: {today}"
+    )
+
+
+def test_system_prompt_includes_today_in_environment(tmp_path: Path) -> None:
+    prompt = build_system_prompt(
+        workspace=tmp_path,
+        project_context_enabled=False,
+    )
+    assert f"- today: {process_today()}" in prompt
 
 
 def test_system_prompt_ignores_working_set_and_omits_handoff(tmp_path: Path) -> None:

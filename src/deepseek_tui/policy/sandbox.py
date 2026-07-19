@@ -274,20 +274,36 @@ def sandbox_policy_for_mode(mode: str, workspace: Path) -> ExecutionSandboxPolic
     )
 
 
+def sandbox_mode_for_approval_tier(approval_policy: str | None) -> str:
+    """Derive filesystem sandbox from the three product approval tiers.
+
+    * ``auto`` (and aliases) → full disk access (no Seatbelt)
+    * ``untrusted`` / ``on-request`` / everything else → workspace-write
+    """
+    mode = (approval_policy or "on-request").strip().lower()
+    if mode in ("auto", "never-ask", "yolo"):
+        return "danger-full-access"
+    return "workspace-write"
+
+
 def resolve_execution_sandbox_policy(
     mode: str,
     workspace: Path,
     *,
     trust_mode: bool = False,
     sandbox_mode: str | None = None,
+    approval_policy: str | None = None,
 ) -> ExecutionSandboxPolicy:
-    """Resolve Seatbelt policy from mode + explicit trust/sandbox settings.
+    """Resolve Seatbelt policy from mode + trust/sandbox/approval settings.
 
-    ``trust_mode`` / ``sandbox_mode=danger-full-access`` must win over the
-    mode default (agent → workspace-write); otherwise GUI/CLI "full access"
-    only toggles path checks and still Seatbelt-denies shell.
+    When ``sandbox_mode`` is omitted, it is derived from ``approval_policy``
+    so the three approval tiers remain the single permission dial.
+    ``trust_mode`` / ``sandbox_mode=danger-full-access`` still win over the
+    agent-mode default (workspace-write).
     """
     sm = (sandbox_mode or "").strip().lower()
+    if not sm and approval_policy is not None:
+        sm = sandbox_mode_for_approval_tier(approval_policy)
     if trust_mode or sm == "danger-full-access":
         return ExecutionSandboxPolicy.danger_full_access()
     if sm == "read-only":

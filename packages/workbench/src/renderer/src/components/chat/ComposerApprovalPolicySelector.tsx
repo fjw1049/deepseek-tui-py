@@ -7,7 +7,10 @@ import {
 } from 'react'
 import { Check, Hand, Shield, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { ApprovalPolicy } from '@shared/app-settings'
+import {
+  sandboxModeForApprovalPolicy,
+  type ApprovalPolicy
+} from '@shared/app-settings'
 import { useChatStore } from '../../store/chat-store'
 
 /**
@@ -133,7 +136,10 @@ export function ComposerApprovalPolicySelector({
     setSaving(true)
     try {
       const updated = await window.dsGui.setSettings({
-        deepseek: { approvalPolicy: next }
+        deepseek: {
+          approvalPolicy: next,
+          sandboxMode: sandboxModeForApprovalPolicy(next)
+        }
       })
       setPolicy(updated.deepseek.approvalPolicy)
       setMenuOpen(false)

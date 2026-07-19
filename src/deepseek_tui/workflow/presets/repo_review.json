@@ -5,7 +5,7 @@
     "description": "Plan review targets, fan out inspections, and synthesize findings."
   },
   "policy": {
-    "approval_mode": "trusted_workflow",
+    "approval_mode": "inherit",
     "on_error": "continue",
     "max_agents": 10,
     "concurrency": 4,

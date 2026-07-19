@@ -30,7 +30,10 @@ from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
         ("never", WriteFileTool(), False),  # G-08 prompt
         ("never", ReadFileTool(), False),  # G-09
         ("suggest", WriteFileTool(), True),  # G-12
-        ("untrusted", WriteFileTool(), True),  # G-13
+        ("untrusted", WriteFileTool(), False),  # G-13 SUGGEST auto under untrusted
+        ("untrusted", ExecShellTool(), True),  # G-14 REQUIRED still prompts
+        ("untrusted", ReadFileTool(), False),  # G-15
+        ("untrusted", AgentSpawnTool(), True),  # G-16
     ],
 )
 def test_needs_tool_approval_prompt(policy: str, tool: object, expected: bool) -> None:

@@ -444,9 +444,11 @@ function toRuntimeError(info: RuntimeErrorJson & { message: string }): Error {
 }
 
 function runtimeExecutionFlags(settings: AppSettingsV1): RuntimeExecutionFlags {
+  // Both flags follow the three-tier approval dial (sandbox is derived).
+  const auto = settings.deepseek.approvalPolicy === 'auto'
   return {
-    auto_approve: settings.deepseek.approvalPolicy === 'auto',
-    trust_mode: settings.deepseek.sandboxMode === 'danger-full-access'
+    auto_approve: auto,
+    trust_mode: auto
   }
 }
 
