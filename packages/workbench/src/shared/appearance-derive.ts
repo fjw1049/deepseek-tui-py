@@ -97,8 +97,12 @@ export function buildChromeThemeCssVars(
   // (the main working tone) and the sidebar takes the panel mix — a slightly
   // lifted veil over the darker window ground. Dark previously inverted this
   // (darkest sidebar, lifted canvas), which read backwards next to Synara.
-  const sidebarBg = panel
+  //
+  // Light caveat: panel mixes toward white, so a pure-white surface collapses
+  // sidebar onto the content card and the window-inset gutters disappear.
+  // Fall back to the window-ground mix so chrome stays distinct.
   const canvasBg = surface
+  const sidebarBg = light && hex(panel) === hex(surface) ? surfaceUnder : panel
 
   // Text tiers.
   const textSecondary = rgba(ink, 0.65 + c * 0.1)

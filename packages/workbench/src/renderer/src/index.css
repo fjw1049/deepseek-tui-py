@@ -3550,7 +3550,9 @@ summary,
    Outer surfaces own the blur. Nested cards stay translucent and lightweight
    so dense tools and settings remain readable without stacking blur layers. */
 :root {
-  --ds-window-inset: 0px;
+  /* Inset around the raised main content card only. Sidebar stays flush to
+     the window edge; gap stays 0 so the seam between sidebar and card holds. */
+  --ds-window-inset: 8px;
   --ds-window-gap: 0px;
   --ds-radius-shell: 14px;
   --ds-radius-panel: 12px;
@@ -3591,13 +3593,21 @@ select:focus-visible,
 }
 
 .ds-workbench-shell {
-  gap: 0;
-  padding: 0;
+  gap: var(--ds-window-gap);
+  /* Pad the content card via shell padding (reliable in flex). Left stays 0 so
+     the sidebar can sit flush; collapsed sidebar restores left inset below. */
+  padding: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 0;
+  /* One continuous chrome behind the inset content card — same tone as the
+     flush left sidebar, so top/right/bottom gutters read as attached frame. */
+  background: var(--bg-sidebar);
 }
 
-/* Synara-style shell: the sidebar is a flush frosted surface, the main content
-   is a raised white card whose left edge (the "seam") is rounded and carries a
-   1px inset ring + a soft depth shadow toward the sidebar. */
+.ds-workbench-shell:has(> .ds-workbench-sidebar-wrap[data-collapsed]) {
+  padding-left: var(--ds-window-inset);
+}
+
+/* Synara-style shell: sidebar is a flush frosted surface; the main content is
+   a raised card inset from the top/right/bottom on the same sidebar chrome. */
 .ds-sidebar-shell {
   overflow: hidden;
   border: none;
@@ -3609,8 +3619,20 @@ select:focus-visible,
 .ds-workbench-main {
   --seam-line: rgba(0, 0, 0, 0.1);
   --seam-shadow-color: rgba(0, 0, 0, 0.14);
-  border-radius: 0;
+  /* Soft float on every edge so the card reads raised vs chrome, not only
+     along the left seam. */
+  --card-float-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 18px -6px rgba(0, 0, 0, 0.1);
+  margin: 0;
+  border-radius: var(--ds-radius-shell);
   background: var(--ds-material-panel);
+  box-shadow: var(--card-float-shadow);
+}
+
+/* Win over .ds-stage-surface { background-color: transparent }. */
+.ds-workbench-main.ds-stage-surface {
+  background-color: var(--ds-material-panel);
 }
 
 [data-theme='dark'] .ds-workbench-main {
@@ -3618,6 +3640,9 @@ select:focus-visible,
   /* Softer than Synara's 0.36: our dark sidebar/canvas tones sit much closer
      together, so a strong fringe reads as a dirty double-line, not depth. */
   --seam-shadow-color: rgba(0, 0, 0, 0.22);
+  --card-float-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 6px 22px -8px rgba(0, 0, 0, 0.45);
 }
 
 /* Only when the left sidebar is visible does the seam exist: round the card's
@@ -3625,6 +3650,13 @@ select:focus-visible,
    ring clipped to the seam-side radius strip (Synara chat-content-card). */
 .ds-workbench-sidebar-wrap {
   transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Bleed the open sidebar through the shell's vertical padding so it stays
+   flush with the window while the content card keeps its inset gutters. */
+.ds-workbench-sidebar-wrap:not([data-collapsed]) {
+  margin-block: calc(-1 * var(--ds-window-inset));
+  min-height: calc(100% + 2 * var(--ds-window-inset));
 }
 
 .ds-workbench-sidebar-slide {
@@ -3652,13 +3684,14 @@ select:focus-visible,
 .ds-workbench-sidebar-wrap::after {
   content: '';
   position: absolute;
-  inset-block: 0;
-  right: calc(-1 * var(--app-content-card-radius, 0.9rem));
+  /* Sidebar bleeds into shell padding; keep the wedge aligned with the card. */
+  inset-block: var(--ds-window-inset);
+  right: calc(-1 * var(--ds-radius-shell));
   /* 2px wider than the radius so the strip overlaps the sidebar's right edge:
      the sidebar's backdrop blur samples the darker window ground past its own
      edge and leaves a dark fringe there — the overlap paints sidebar material
      (same color AND same blur, per Synara chat-content-card-backing) over it. */
-  width: calc(var(--app-content-card-radius, 0.9rem) + 2px);
+  width: calc(var(--ds-radius-shell) + 2px);
   pointer-events: none;
   /* Prefer solid sidebar tone over translucent glass — a 6% hole lets the
      darker window ground show through as a bitten corner. */
@@ -3667,8 +3700,11 @@ select:focus-visible,
 }
 
 .ds-workbench-sidebar-wrap + .ds-workbench-main {
-  border-radius: var(--app-content-card-radius, 0.9rem) 0 0 var(--app-content-card-radius, 0.9rem);
-  box-shadow: -6.5px 0 12px -10px var(--seam-shadow-color);
+  border-radius: var(--ds-radius-shell);
+  /* Soft left seam into the sidebar + the same float on the other edges. */
+  box-shadow:
+    -4px 0 12px -8px var(--seam-shadow-color),
+    var(--card-float-shadow);
   transition:
     border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1),
     box-shadow 300ms cubic-bezier(0.32, 0.72, 0, 1);
@@ -3681,13 +3717,12 @@ select:focus-visible,
   z-index: 40;
   pointer-events: none;
   border-radius: inherit;
+  /* Full perimeter hairline — matches top/right/bottom to the left seam. */
   box-shadow: inset 0 0 0 1px var(--seam-line);
-  clip-path: inset(0 calc(100% - var(--app-content-card-radius, 0.9rem)) 0 0);
   transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Collapsed: the card flattens back to a full-bleed surface — radius, seam
-   ring, depth shadow, and corner wedge all fade in sync with the slide. */
+/* Collapsed: wedge fades; the floating card keeps uniform radius + elevation. */
 .ds-workbench-sidebar-wrap[data-collapsed] {
   pointer-events: none;
 }
@@ -3697,12 +3732,8 @@ select:focus-visible,
 }
 
 .ds-workbench-sidebar-wrap[data-collapsed] + .ds-workbench-main {
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.ds-workbench-sidebar-wrap[data-collapsed] + .ds-workbench-main::before {
-  opacity: 0;
+  border-radius: var(--ds-radius-shell);
+  box-shadow: var(--card-float-shadow);
 }
 
 /* Header divider (Synara chat-surface-divider): a 1px bottom gradient instead
@@ -3719,9 +3750,10 @@ select:focus-visible,
   background-size: 100% 1px;
 }
 
-.ds-workbench-sidebar-wrap:not([data-collapsed]) + .ds-workbench-main .ds-surface-divider {
-  background-size: calc(100% - 1px) 1px;
-  background-position: right bottom;
+.ds-workbench-sidebar-wrap + .ds-workbench-main .ds-surface-divider {
+  /* Stay inside the full perimeter hairline on every edge. */
+  background-size: calc(100% - 2px) 1px;
+  background-position: center bottom;
 }
 
 .ds-workbench-right-panel {
@@ -3995,61 +4027,69 @@ select:focus-visible,
   transform: translateZ(0);
 }
 
-/* Settings mirrors the main shell: frosted flush sidebar + raised content card
-   whose seam side is rounded (Synara same-shell settings). */
+/* Settings mirrors the main shell: flush frosted sidebar + inset content card. */
 .ds-settings-page {
-  gap: 0;
-  padding: 0;
+  gap: var(--ds-window-gap);
+  padding: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 0;
+  background: var(--bg-sidebar);
 }
 
 .ds-settings-sidebar {
   border-radius: 0;
+  margin-block: calc(-1 * var(--ds-window-inset));
+  min-height: calc(100% + 2 * var(--ds-window-inset));
 }
 
 .ds-settings-page {
   --seam-line: rgba(0, 0, 0, 0.08);
   --seam-shadow-color: rgba(0, 0, 0, 0.1);
+  --card-float-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 18px -6px rgba(0, 0, 0, 0.1);
   position: relative;
 }
 
 [data-theme='dark'] .ds-settings-page {
   --seam-line: rgba(255, 255, 255, 0.06);
   --seam-shadow-color: rgba(0, 0, 0, 0.22);
+  --card-float-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 6px 22px -8px rgba(0, 0, 0, 0.45);
 }
 
 .ds-settings-page > .ds-page-scroll {
   overflow: auto;
   overscroll-behavior: contain;
   transform: translateZ(0);
+  margin: 0;
   border: none;
-  border-radius: var(--app-content-card-radius, 0.9rem) 0 0 var(--app-content-card-radius, 0.9rem);
+  border-radius: var(--ds-radius-shell);
   background: var(--ds-material-panel);
-  box-shadow: -6.5px 0 12px -10px var(--seam-shadow-color);
+  box-shadow:
+    -4px 0 12px -8px var(--seam-shadow-color),
+    var(--card-float-shadow);
 }
 
-/* Seam wedge + clipped ring for the settings card. Drawn on the page (not the
-   scroll container) so they stay put while the content scrolls; only the
-   left-radius strip of the ring survives the clip (same as the chat card). */
+/* Seam wedge + full perimeter ring for the settings card (same as chat). */
 .ds-settings-page::before {
   content: '';
   position: absolute;
-  inset-block: 0;
+  inset-block: var(--ds-window-inset);
   left: 260px;
-  width: var(--app-content-card-radius, 0.9rem);
+  width: var(--ds-radius-shell);
   z-index: 0;
   pointer-events: none;
-  background: var(--glass-bg);
+  background: var(--bg-sidebar);
 }
 
 .ds-settings-page::after {
   content: '';
   position: absolute;
-  inset: 0 0 0 260px;
+  inset: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 260px;
   z-index: 40;
   pointer-events: none;
-  border-radius: var(--app-content-card-radius, 0.9rem) 0 0 var(--app-content-card-radius, 0.9rem);
+  border-radius: var(--ds-radius-shell);
   box-shadow: inset 0 0 0 1px var(--seam-line);
-  clip-path: inset(0 calc(100% - var(--app-content-card-radius, 0.9rem)) 0 0);
 }
 
 .ds-content-card {
