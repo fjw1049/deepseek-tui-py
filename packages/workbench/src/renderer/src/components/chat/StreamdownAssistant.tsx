@@ -29,7 +29,10 @@ const rehypePlugins = [
   [
     harden,
     {
-      allowedLinkPrefixes: ['*']
+      allowedLinkPrefixes: ['*'],
+      // Chat path linkify emits deepseek-file://…; without this, harden
+      // replaces those anchors with plain text + a "[blocked]" suffix.
+      allowedProtocols: ['deepseek-file:']
     }
   ]
 ] satisfies StreamdownProps['rehypePlugins']
