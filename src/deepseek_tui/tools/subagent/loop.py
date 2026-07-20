@@ -296,18 +296,27 @@ async def run_subagent_loop(
     trust_mode = runtime.auto_approve or bool(
         getattr(runtime, "trust_mode", False)
     )
+    parent_task_id = getattr(runtime, "active_task_id", None)
+    if isinstance(parent_task_id, str):
+        parent_task_id = parent_task_id.strip() or None
+    else:
+        parent_task_id = None
+    metadata: dict[str, Any] = {
+        "subagent_id": agent.id,
+        "subagent_depth": agent.spawn_depth,
+        "subagent_runtime": runtime,
+        "auto_approve": runtime.auto_approve,
+        "approval_policy": approval_policy,
+    }
+    if parent_task_id is not None:
+        metadata["task_id"] = parent_task_id
     context = ToolContext(
         working_directory=agent.workspace,
         trust_mode=trust_mode,
         task_manager=runtime.task_manager,
         subagent_manager=runtime.manager,
-        metadata={
-            "subagent_id": agent.id,
-            "subagent_depth": agent.spawn_depth,
-            "subagent_runtime": runtime,
-            "auto_approve": runtime.auto_approve,
-            "approval_policy": approval_policy,
-        },
+        active_task_id=parent_task_id,
+        metadata=metadata,
     )
     from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 
@@ -444,7 +453,7 @@ async def run_subagent_loop(
                 system_prompt=system_prompt,
                 tools=round_tools,
                 tool_choice={"type": "auto"} if round_tools else None,
-                max_tokens=4096,
+                max_tokens=agent.agent_type.max_tokens(),
                 stream=True,
             )
             llm_gate = getattr(runtime.manager, "llm_semaphore", None)
@@ -609,7 +618,7 @@ async def run_subagent_loop(
             system_prompt=system_prompt,
             tools=[],
             tool_choice=None,
-            max_tokens=4096,
+            max_tokens=agent.agent_type.max_tokens(),
             stream=True,
         )
         gate = getattr(runtime.manager, "llm_semaphore", None)

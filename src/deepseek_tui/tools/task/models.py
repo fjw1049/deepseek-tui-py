@@ -29,8 +29,12 @@ TIMELINE_SUMMARY_LIMIT = 240
 ARTIFACT_THRESHOLD = 1200
 MAX_WORKERS = 4
 _MAX_TERMINAL_IN_MEMORY = 50
-# Running tasks older than this at recovery are failed instead of re-queued.
-STALE_RUNNING_TASK_SECONDS = 300
+# On process restart, RUNNING tasks younger than this are re-queued for
+# transcript resume; older ones are marked FAILED (still resumable via
+# task_resume). Must be >= ordinary TASK_WALL_CLOCK_SECONDS in
+# engine.dispatch (7200) — a 5-minute stale window previously failed any
+# durable task that had already been running >5min when the process died.
+STALE_RUNNING_TASK_SECONDS = 7200
 CRON_PROMPT_MARKER = "[cron:"
 STALE_RESTART_ERROR = "Task interrupted (stale after restart)"
 

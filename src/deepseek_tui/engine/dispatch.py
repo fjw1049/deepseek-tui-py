@@ -260,13 +260,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Background automations need headroom for web_search etc., but not unbounded loops.
-TASK_MAX_TOOL_ROUND_TRIPS = 30
-CRON_MAX_TOOL_ROUND_TRIPS = 12
-CRON_TASK_WALL_CLOCK_SECONDS = 300
-# Non-cron background tasks still need a hard ceiling so a wedged emit/queue
-# cannot run forever. 30 minutes matches long agent work without being unbounded.
-TASK_WALL_CLOCK_SECONDS = 1800
+# Durable background tasks (not short interactive turns). Align round budget
+# with the main Engine / sub-agent loop (100); keep a wall-clock ceiling so a
+# wedged emit/queue cannot run forever. Cron stays tighter — scheduled jobs
+# should finish promptly — but still large enough for search + a few tool
+# rounds rather than toy limits that abort mid-work.
+TASK_MAX_TOOL_ROUND_TRIPS = 100
+CRON_MAX_TOOL_ROUND_TRIPS = 40
+# 2h ordinary / 15min cron. Timeout → TIMED_OUT (resumable via transcript).
+TASK_WALL_CLOCK_SECONDS = 7200
+CRON_TASK_WALL_CLOCK_SECONDS = 900
 
 
 def _is_cron_task(prompt: str) -> bool:
@@ -459,6 +462,11 @@ async def _run_task_engine_turn(
     engine.tool_context.trust_mode = task.trust_mode
     engine.tool_context.active_task_id = task.id
     engine.tool_context.metadata["task_id"] = task.id
+    # Engine.create attaches SubAgentRuntime before the task id is known;
+    # bind it now so nested sub-agents inherit the nest-depth guard.
+    sub_mgr = engine.tool_context.subagent_manager
+    if sub_mgr is not None and hasattr(sub_mgr, "bind_active_task_id"):
+        sub_mgr.bind_active_task_id(task.id)
 
     from deepseek_tui.tools.durable_transcript import (
         CONTINUE_NUDGE,

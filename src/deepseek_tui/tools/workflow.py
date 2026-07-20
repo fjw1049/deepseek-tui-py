@@ -306,7 +306,11 @@ class WorkflowTool(ToolSpec):
             raise ToolError(
                 "workflow: detach requires TaskManager (features.tasks=True)"
             )
+        from deepseek_tui.tools.task.helpers import _enforce_max_task_nest_depth
         from deepseek_tui.tools.task.models import NewTaskRequest
+
+        # Detach enqueues a durable task — same nest-depth rule as task_create.
+        _enforce_max_task_nest_depth(context, action="workflow detach")
 
         await _prepare_worktree(run_record, spec=spec, cwd=cwd)
         prompt = encode_detach_prompt(run_id=run_record.run_id, workspace=cwd)

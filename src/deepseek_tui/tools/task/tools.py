@@ -23,6 +23,7 @@ from deepseek_tui.tools.registry import (
 from deepseek_tui.tools.task.helpers import (
     _MAX_SUMMARY_CHARS,
     _classify_gate_failure,
+    _enforce_max_task_nest_depth,
     _forward_to_task_manager,
     _optional_bool,
     _optional_int,
@@ -57,7 +58,8 @@ class TaskCreateTool(ToolSpec):
             "or report back in this reply (e.g. 'benchmark X and Y and summarize'), "
             "use sub-agents instead (agent_spawn + agent_wait, or delegate_to_agent). "
             "Never split one combined-report request into multiple tasks — they run "
-            "independently and are never aggregated."
+            "independently and are never aggregated. Cannot be called from inside "
+            "another running task (max_task_nest_depth=1); use sub-agents instead."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -86,6 +88,7 @@ class TaskCreateTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        _enforce_max_task_nest_depth(context)
         manager = _require_manager(context)
         prompt = _require_string(input_data, "prompt")
         origin_thread = context.metadata.get("runtime_thread_id")

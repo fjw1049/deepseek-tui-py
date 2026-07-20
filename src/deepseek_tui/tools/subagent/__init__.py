@@ -54,6 +54,8 @@ from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESU
     DEFAULT_RESULT_TIMEOUT_MS,
     MAX_RESULT_TIMEOUT_MS,
     MIN_WAIT_TIMEOUT_MS,
+    SUBAGENT_MAX_TOKENS_READ,
+    SUBAGENT_MAX_TOKENS_WRITE,
     SUBAGENT_RESTART_REASON,
     SUBAGENT_STATE_FILE,
     SUBAGENT_STATE_SCHEMA_VERSION,
@@ -65,6 +67,7 @@ from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESU
     SubAgentStatusKind,
     SubAgentType,
     build_subagent_system_prompt,
+    max_tokens_for_subagent_type,
     whale_nickname_for_index,
 )
 
@@ -87,6 +90,9 @@ __all__ = [
     "DelegateToAgentTool",
     "MAX_RESULT_TIMEOUT_MS",
     "MIN_WAIT_TIMEOUT_MS",
+    "SUBAGENT_MAX_TOKENS_READ",
+    "SUBAGENT_MAX_TOKENS_WRITE",
+    "max_tokens_for_subagent_type",
     "Mailbox",
     "MailboxEnvelope",
     "MailboxMessage",

@@ -243,8 +243,8 @@ async def test_elevation_auto_approves_when_auto_approve_enabled() -> None:
 
 
 def test_task_wall_clock_constant_is_set() -> None:
-    assert TASK_WALL_CLOCK_SECONDS == 1800
-    assert TASK_WALL_CLOCK_SECONDS > 300
+    assert TASK_WALL_CLOCK_SECONDS == 7200
+    assert TASK_WALL_CLOCK_SECONDS > 900
 
 
 def test_approval_key_shell_distinguishes_paths() -> None:
@@ -362,6 +362,88 @@ def test_task_create_schema_omits_privilege_flags() -> None:
     assert "auto_approve" not in props
     assert "trust_mode" not in props
     assert "prompt" in props
+
+
+def test_subagent_max_tokens_by_type() -> None:
+    from deepseek_tui.tools.subagent import (
+        SUBAGENT_MAX_TOKENS_READ,
+        SUBAGENT_MAX_TOKENS_WRITE,
+        SubAgentType,
+        max_tokens_for_subagent_type,
+    )
+
+    assert SUBAGENT_MAX_TOKENS_READ == 8_192
+    assert SUBAGENT_MAX_TOKENS_WRITE == 16_384
+    for kind in (
+        SubAgentType.EXPLORE,
+        SubAgentType.PLAN,
+        SubAgentType.REVIEW,
+        SubAgentType.VERIFIER,
+    ):
+        assert max_tokens_for_subagent_type(kind) == SUBAGENT_MAX_TOKENS_READ
+        assert kind.max_tokens() == SUBAGENT_MAX_TOKENS_READ
+    for kind in (
+        SubAgentType.GENERAL,
+        SubAgentType.IMPLEMENTER,
+        SubAgentType.CUSTOM,
+    ):
+        assert max_tokens_for_subagent_type(kind) == SUBAGENT_MAX_TOKENS_WRITE
+        assert kind.max_tokens() == SUBAGENT_MAX_TOKENS_WRITE
+
+
+@pytest.mark.asyncio
+async def test_task_create_rejects_nested_task_context(tmp_path) -> None:
+    from deepseek_tui.tools.task import TaskManager, TaskManagerConfig
+    from deepseek_tui.tools.task.tools import TaskCreateTool
+
+    async def _stub(task, cancel):  # noqa: ANN001
+        from deepseek_tui.tools.task import TaskExecutionResult
+
+        return TaskExecutionResult(summary="ok")
+
+    manager = TaskManager(
+        TaskManagerConfig(data_dir=tmp_path / "tasks", default_workspace=tmp_path),
+        executor=_stub,
+    )
+    await manager.start()
+    try:
+        ctx = ToolContext(
+            working_directory=tmp_path,
+            task_manager=manager,
+            active_task_id="task_parent",
+        )
+        with pytest.raises(ToolError, match="max_task_nest_depth"):
+            await TaskCreateTool().execute({"prompt": "nested"}, ctx)
+
+        # metadata-only nesting guard (sub-agent inside a task)
+        ctx2 = ToolContext(
+            working_directory=tmp_path,
+            task_manager=manager,
+            metadata={"task_id": "task_parent"},
+        )
+        with pytest.raises(ToolError, match="max_task_nest_depth"):
+            await TaskCreateTool().execute({"prompt": "nested via meta"}, ctx2)
+    finally:
+        await manager.shutdown()
+
+
+def test_subagent_runtime_copies_active_task_id(tmp_path) -> None:
+    from deepseek_tui.tools.subagent import SubAgentManager, SubAgentRuntime
+
+    manager = SubAgentManager(workspace=tmp_path)
+    rt = SubAgentRuntime(
+        manager=manager,
+        client=object(),
+        model="m",
+        config=object(),
+        workspace=tmp_path,
+        active_task_id="task_abc",
+    )
+    assert rt.with_spawn_depth(1).active_task_id == "task_abc"
+    assert rt.child().active_task_id == "task_abc"
+    manager.attach_loop_runtime(rt)
+    manager.bind_active_task_id("task_xyz")
+    assert rt.active_task_id == "task_xyz"
 
 
 def test_apply_compact_result_merges_summary_into_system_prompt() -> None:

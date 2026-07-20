@@ -110,6 +110,19 @@ class SubAgentManager:
         """Wire shared client/config for ``run_subagent_loop``."""
         self._loop_runtime = runtime
 
+    def bind_active_task_id(self, task_id: str | None) -> None:
+        """Propagate durable-task nesting guard into the loop runtime.
+
+        Called after ``Engine.create`` when a task executor sets
+        ``tool_context.active_task_id`` — create-time wiring happens too early
+        for that id to be known.
+        """
+        if self._loop_runtime is None:
+            return
+        self._loop_runtime.active_task_id = (
+            task_id.strip() if isinstance(task_id, str) and task_id.strip() else None
+        )
+
     @property
     def loop_runtime(self) -> SubAgentRuntime | None:
         return self._loop_runtime
@@ -578,6 +591,9 @@ class SubAgentRuntime:
     mailbox: Mailbox | None = None
     spawn_depth: int = 0
     max_spawn_depth: int = DEFAULT_MAX_SPAWN_DEPTH
+    # When set, children inherit the durable-task nesting guard so they
+    # cannot call ``task_create`` (max_task_nest_depth=1).
+    active_task_id: str | None = None
     # Parent engine approval bridge — gated tools escalate here instead of
     # hard-denying when the session is not auto-approved.
     approval_handler: Any | None = None
@@ -600,6 +616,7 @@ class SubAgentRuntime:
             mailbox=self.mailbox,
             spawn_depth=depth,
             max_spawn_depth=self.max_spawn_depth,
+            active_task_id=self.active_task_id,
             approval_handler=self.approval_handler,
             emit_event=self.emit_event,
         )
@@ -618,6 +635,7 @@ class SubAgentRuntime:
             mailbox=self.mailbox,
             spawn_depth=self.spawn_depth + 1,
             max_spawn_depth=self.max_spawn_depth,
+            active_task_id=self.active_task_id,
             approval_handler=self.approval_handler,
             emit_event=self.emit_event,
         )

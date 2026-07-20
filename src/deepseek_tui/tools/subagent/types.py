@@ -16,6 +16,10 @@ def _epoch_ms() -> int:
 DEFAULT_MAX_STEPS = 100
 DEFAULT_MAX_AGENTS = 10
 DEFAULT_MAX_SPAWN_DEPTH = 3
+# Per-round LLM output caps for the sub-agent loop. Read-heavy types stay
+# smaller; write/general types need headroom for patches and long reports.
+SUBAGENT_MAX_TOKENS_READ = 8_192
+SUBAGENT_MAX_TOKENS_WRITE = 16_384
 _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
 # Upper bound for the final result we surface on the Workbench sub-agent card.
 # The previous 500-char cap chopped real reports mid-sentence; the card detail
@@ -92,6 +96,22 @@ class SubAgentType(str, Enum):
         explicit ``allowed_tools`` list.
         """
         return _TYPE_ALLOWLIST.get(self)
+
+    def max_tokens(self) -> int:
+        """Per-round ``max_tokens`` for this agent type's LLM requests."""
+        return max_tokens_for_subagent_type(self)
+
+
+def max_tokens_for_subagent_type(agent_type: SubAgentType) -> int:
+    """Return the sub-agent loop output token cap for *agent_type*."""
+    if agent_type in (
+        SubAgentType.EXPLORE,
+        SubAgentType.PLAN,
+        SubAgentType.REVIEW,
+        SubAgentType.VERIFIER,
+    ):
+        return SUBAGENT_MAX_TOKENS_READ
+    return SUBAGENT_MAX_TOKENS_WRITE
 
 
 # Tool groups for type-based allowlists (see ``SubAgentType.allowed_tools``).

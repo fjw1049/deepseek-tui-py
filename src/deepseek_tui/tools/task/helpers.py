@@ -106,6 +106,28 @@ def _optional_task_id_from_input(
     return value
 
 
+def _task_context_id(context: ToolContext) -> str | None:
+    """Return the enclosing durable task id, if any."""
+    if isinstance(context.active_task_id, str) and context.active_task_id.strip():
+        return context.active_task_id.strip()
+    raw = context.metadata.get("task_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _enforce_max_task_nest_depth(
+    context: ToolContext, *, action: str = "task_create"
+) -> None:
+    """Refuse nested durable-task enqueue (max_task_nest_depth=1)."""
+    if _task_context_id(context) is None:
+        return
+    raise ToolError(
+        f"{action} is not allowed inside a running task "
+        "(max_task_nest_depth=1). Use sub-agents for nested work instead."
+    )
+
+
 def _forward_to_task_manager(context: ToolContext, metadata: dict[str, Any]) -> None:
     """Persist ``task_updates`` from tool metadata onto the active task."""
     task_id = context.active_task_id or context.metadata.get("task_id")

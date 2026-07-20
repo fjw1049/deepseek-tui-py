@@ -241,6 +241,7 @@ async def execute_detached_workflow(
             task_manager=task.task_manager,
             cancel_token=cancel,
             mailbox=mailbox,
+            active_task_id=task.id,
         )
         manager.attach_loop_runtime(loop_runtime)
         manager.attach_parent_cancel(cancel)

@@ -66,12 +66,37 @@ async def test_current_time_accepts_scalar_offset_minutes() -> None:
 
 def test_stale_running_task_detection() -> None:
     from deepseek_tui.tools.task import (
+        STALE_RUNNING_TASK_SECONDS,
         TaskRecord,
         TaskStatus,
         _is_stale_running_task,
     )
 
-    old = (datetime.now(timezone.utc) - timedelta(seconds=400)).isoformat()
+    # Just inside the window → still eligible for restart re-queue.
+    recent = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=STALE_RUNNING_TASK_SECONDS - 60)
+    ).isoformat()
+    fresh = TaskRecord(
+        schema_version=2,
+        id="task_fresh",
+        prompt="x",
+        model="m",
+        workspace="/tmp",
+        mode="agent",
+        allow_shell=False,
+        trust_mode=False,
+        auto_approve=True,
+        status=TaskStatus.RUNNING,
+        created_at=recent,
+        started_at=recent,
+    )
+    assert _is_stale_running_task(fresh) is False
+
+    old = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=STALE_RUNNING_TASK_SECONDS + 60)
+    ).isoformat()
     task = TaskRecord(
         schema_version=2,
         id="task_x",
