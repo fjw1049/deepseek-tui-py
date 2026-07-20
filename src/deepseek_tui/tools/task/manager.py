@@ -19,7 +19,6 @@ from deepseek_tui.tools.task.models import (
     ExecutorFunc,
     NewTaskRequest,
     TaskArtifactRef,
-    TaskAttemptRecord,
     TaskChecklistItem,
     TaskChecklistState,
     TaskCounts,
@@ -437,41 +436,6 @@ class TaskManager:
                         TIMELINE_SUMMARY_LIMIT,
                     ),
                     detail_path=str(gate.log_path) if gate.log_path else None,
-                )
-            )
-
-        attempt_payload = updates.get("attempt")
-        if isinstance(attempt_payload, dict):
-            attempt = TaskAttemptRecord(
-                id=str(attempt_payload.get("id", f"attempt_{uuid.uuid4().hex[:8]}")),
-                attempt_group_id=str(
-                    attempt_payload.get("attempt_group_id", "group_unknown")
-                ),
-                attempt_index=int(attempt_payload.get("attempt_index") or 1),
-                attempt_count=int(attempt_payload.get("attempt_count") or 1),
-                summary=str(attempt_payload.get("summary", "")),
-                changed_files=list(attempt_payload.get("changed_files") or []),
-                verification=list(attempt_payload.get("verification") or []),
-                selected=bool(attempt_payload.get("selected", False)),
-                recorded_at=str(attempt_payload.get("recorded_at") or now),
-                base_ref=attempt_payload.get("base_ref"),
-                base_sha=attempt_payload.get("base_sha"),
-                head_ref=attempt_payload.get("head_ref"),
-                head_sha=attempt_payload.get("head_sha"),
-                patch_path=attempt_payload.get("patch_path"),
-            )
-            task.attempts = [
-                a for a in task.attempts if a.id != attempt.id
-            ] + [attempt]
-            task.timeline.append(
-                TaskTimelineEntry(
-                    timestamp=now,
-                    kind="pr_attempt",
-                    summary=(
-                        f"Attempt {attempt.attempt_index}/{attempt.attempt_count} "
-                        f"recorded"
-                    ),
-                    detail_path=str(attempt.patch_path) if attempt.patch_path else None,
                 )
             )
 

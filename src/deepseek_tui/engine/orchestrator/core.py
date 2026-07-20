@@ -2191,7 +2191,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             "agent_result",
             "delegate_to_agent",
             "agent_cancel",
-            "close_agent",
         }:
             return
 

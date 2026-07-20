@@ -67,8 +67,6 @@ FOCUS_READ_BASE = frozenset(
         "agent_list",
         "agent_cancel",
         "agent_send_input",
-        "agent_assign",
-        "close_agent",
         "resume_agent",
         "delegate_to_agent",
     }

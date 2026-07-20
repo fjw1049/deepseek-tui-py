@@ -109,7 +109,7 @@ These are two different mechanisms. Choose by one question: **do you need the re
 
 - **Need to wait for it, aggregate several results, or report back in this reply → sub-agents** (`agent_spawn` + `agent_wait`, or `delegate_to_agent`). They return their final output to you in this turn, you synthesize, and their progress shows as live cards in the chat.
 - **Can keep working without the result right now → `agent_spawn` with `run_in_background: true`**. The parent turn does not block; when the child finishes, a `<deepseek:subagent.done>` reminder is injected automatically (including a follow-up turn if you already replied). Do not poll or call `task_create` for this.
-- **Genuinely long-running, the user won't wait, should survive restarts → `task_create`**. It runs detached in a background worker; its result lands only in the TASKS panel (read later via `task_read`) and never re-enters this turn.
+- **Genuinely long-running, the user won't wait, should survive restarts → `task_create`**. It runs detached in a background worker; its result lands only in the TASKS panel (read later via `task_read`) and never re-enters this turn. If a durable task was cancelled, timed out, or failed, continue it with `task_resume` (same task id) — do not `task_create` a duplicate.
 
 Anti-pattern: "benchmark quicksort and heapsort and give me one summary report" is sub-agent map-reduce (spawn the benchmarks, `agent_wait`, synthesize one report) — **not** two `task_create` calls and **not** two background spawns you never integrate. Multiple durable tasks run independently and are never aggregated, so you'd hand the user two disconnected results and no summary.
 
@@ -145,13 +145,13 @@ When context is deep (past a soft seam), cache conclusions in concise inline sum
 
 ## Toolbox (fast reference — tool descriptions are authoritative)
 
-- **Planning / tracking**: `update_plan` (high-level strategy), `task_create` / `task_list` / `task_read` / `task_cancel` (durable work objects), `checklist_write` (granular progress under the active task/thread), `checklist_add` / `checklist_update` / `checklist_list`, `note` (persistent memory).
+- **Planning / tracking**: `update_plan` (high-level strategy), `task_create` / `task_list` / `task_read` / `task_cancel` / `task_resume` (durable work objects), `checklist_write` (granular progress under the active task/thread), `checklist_add` / `checklist_update` / `checklist_list`, `note` (persistent memory).
 - **File I/O**: `read_file` (PDFs auto-extracted), `list_dir`, `write_file`, `edit_file`, `apply_patch`.
 - **Shell**: `task_shell_start` + `task_shell_wait` for long-running commands, diagnostics, tests, searches, and servers; `exec_shell` for bounded cancellable foreground commands; `exec_shell_wait`, `exec_shell_interact`. If foreground `exec_shell` times out, the process was killed; rerun long work with `task_shell_start` or `exec_shell` using `background: true`, then poll/wait.
-- **Task evidence**: `task_gate_run` for verification gates; `pr_attempt_record` / `pr_attempt_list` / `pr_attempt_read` / `pr_attempt_preflight`; `github_issue_context` / `github_pr_context` (read-only); `github_comment` / `github_close` (approval + evidence required); `automation_*` scheduling tools.
+- **Task evidence**: `task_gate_run` for verification gates; `github_issue_context` / `github_pr_context` (read-only); `github_comment` / `github_close` (approval + evidence required); `automation_*` scheduling tools.
 - **Structured search**: `grep_files`, `file_search`, `web_search`, `fetch_url`.
 - **Git / diag / tests**: `git_status`, `git_diff`, `git_show`, `git_log`, `git_blame`, `diagnostics`, `run_tests`.
-- **Sub-agents**: `agent_spawn`, `agent_result`, `agent_cancel`, `agent_list`, `agent_wait`, `agent_send_input`, `agent_assign`, `resume_agent`, `delegate_to_agent`.
+- **Sub-agents**: `agent_spawn`, `agent_result`, `agent_cancel`, `agent_list`, `agent_wait`, `agent_send_input`, `resume_agent`, `delegate_to_agent`.
 - **Skills**: `load_skill` (#434) — when the user names a skill or the task matches one in the `## Skills` section above, call this with the skill id to pull its `SKILL.md` body and companion-file list into context in one tool call. Faster than `read_file` + `list_dir`.
 - **Other**: `code_execution` (Python sandbox), `validate_data` (JSON/TOML), `request_user_input`, `tool_search_tool_regex`, `tool_search_tool_bm25` (deferred tool discovery).
 

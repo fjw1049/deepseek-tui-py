@@ -520,52 +520,6 @@ class AgentCancelTool(ToolSpec):
         )
 
 
-class AgentCloseTool(ToolSpec):
-    def name(self) -> str:
-        return "close_agent"
-
-    def description(self) -> str:
-        return "Close a running sub-agent. Alias for agent_cancel."
-
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string"},
-                "agent_id": {"type": "string"},
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        manager = _require_manager(context)
-        agent_id = _pick_str(input_data, "id", "agent_id")
-        if agent_id is None:
-            raise ToolError("id is required")
-        try:
-            snapshot = await manager.cancel(agent_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        payload = _result_to_json(snapshot)
-        payload["_deprecation"] = {
-            "this_tool": "close_agent",
-            "use_instead": "agent_cancel",
-            "message": "Tool 'close_agent' is deprecated; switch to 'agent_cancel'.",
-        }
-        return ToolResult(
-            success=True,
-            content=f"cancelled {snapshot.agent_id}",
-            metadata=payload,
-        )
-
-
 class AgentResumeTool(ToolSpec):
     def name(self) -> str:
         return "resume_agent"
@@ -680,53 +634,6 @@ class AgentSendInputTool(ToolSpec):
             success=True,
             content=f"sent input to {agent_id}",
             metadata={"agent_id": agent_id, "interrupt": interrupt},
-        )
-
-
-class AgentAssignTool(ToolSpec):
-    def name(self) -> str:
-        return "agent_assign"
-
-    def description(self) -> str:
-        return "Update a sub-agent's objective/role and optionally inject a message."
-
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "agent_id": {"type": "string"},
-                "id": {"type": "string"},
-                "objective": {"type": "string"},
-                "role": {"type": "string"},
-                "message": {"type": "string"},
-                "interrupt": {"type": "boolean"},
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE]
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        manager = _require_manager(context)
-        agent_id = _pick_str(input_data, "agent_id", "id")
-        if agent_id is None:
-            raise ToolError("agent_id is required")
-        try:
-            snapshot = await manager.assign(
-                agent_id,
-                objective=_pick_str(input_data, "objective"),
-                role=_pick_str(input_data, "role"),
-                message=_pick_str(input_data, "message"),
-                interrupt=_pick_bool(input_data, "interrupt"),
-            )
-        except (KeyError, RuntimeError) as exc:
-            raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content=f"reassigned {snapshot.agent_id}",
-            metadata=_result_to_json(snapshot),
         )
 
 

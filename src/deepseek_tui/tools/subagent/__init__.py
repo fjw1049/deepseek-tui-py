@@ -8,7 +8,7 @@ Split by responsibility:
 - :mod:`.agent`      — SubAgent handle + executor plumbing
 - :mod:`.manager`    — SubAgentManager + SubAgentRuntime
 - :mod:`.loop`       — run_subagent_loop executor
-- :mod:`.tools`      — the 10 agent_* tools registered with the ToolRegistry
+- :mod:`.tools`      — the agent_* tools registered with the ToolRegistry
 
 ``deepseek_tui.tools.subagent`` keeps re-exporting the public names.
 """
@@ -36,9 +36,7 @@ from deepseek_tui.tools.subagent.mailbox import (
 )
 from deepseek_tui.tools.subagent.manager import SubAgentManager, SubAgentRuntime
 from deepseek_tui.tools.subagent.tools import (
-    AgentAssignTool,
     AgentCancelTool,
-    AgentCloseTool,
     AgentListTool,
     AgentResultTool,
     AgentResumeTool,
@@ -73,9 +71,7 @@ from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESU
 
 __all__ = [
     "MAILBOX_MAX_ENVELOPES",
-    "AgentAssignTool",
     "AgentCancelTool",
-    "AgentCloseTool",
     "AgentListTool",
     "AgentResultTool",
     "AgentResumeTool",

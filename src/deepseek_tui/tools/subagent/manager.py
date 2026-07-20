@@ -1,4 +1,4 @@
-"""SubAgentManager — spawn/cancel/result/list/resume/assign/send_input.
+"""SubAgentManager — spawn/cancel/result/list/resume/send_input.
 
 ``asyncio.Task``-backed
 execution (not multiprocessing — LLM calls are IO-bound; see HANDOVER.md
@@ -278,29 +278,6 @@ class SubAgentManager:
                     f"Cannot send input to {agent_id}: {agent.status.kind.value}"
                 )
         await agent.input_queue.put((text, interrupt))
-
-    async def assign(
-        self,
-        agent_id: str,
-        objective: str | None = None,
-        role: str | None = None,
-        message: str | None = None,
-        interrupt: bool = False,
-    ) -> SubAgentResult:
-        async with self._lock:
-            agent = self._require_agent(agent_id)
-            if objective is not None:
-                agent.assignment = SubAgentAssignment(
-                    objective=objective, role=role or agent.assignment.role
-                )
-            elif role is not None:
-                agent.assignment = SubAgentAssignment(
-                    objective=agent.assignment.objective, role=role
-                )
-            snapshot = agent.snapshot()
-        if message is not None:
-            await self.send_input(agent_id, message, interrupt=interrupt)
-        return snapshot
 
     async def resume(self, agent_id: str) -> SubAgentResult:
         """True-resume a terminated agent from its durable transcript.

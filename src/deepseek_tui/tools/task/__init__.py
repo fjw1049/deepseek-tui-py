@@ -2,12 +2,11 @@
 
 Split by responsibility:
 
-- :mod:`.models`      — task records, requests, constants
-- :mod:`.store`       — (de)serialization + on-disk state loading
-- :mod:`.manager`     — durable TaskManager (queue + workers)
-- :mod:`.helpers`     — shared tool helpers (input parsing, git probes)
-- :mod:`.tools`       — task CRUD/gate/shell tools
-- :mod:`.pr_attempts` — PR-attempt tools
+- :mod:`.models`  — task records, requests, constants
+- :mod:`.store`   — (de)serialization + on-disk state loading
+- :mod:`.manager` — durable TaskManager (queue + workers)
+- :mod:`.helpers` — shared tool helpers (input parsing, git probes)
+- :mod:`.tools`   — task CRUD/gate/shell tools
 
 ``deepseek_tui.tools.task`` keeps re-exporting the public names.
 """
@@ -45,12 +44,6 @@ from deepseek_tui.tools.task.models import (
     TaskToolStatus,
     default_tasks_dir,
 )
-from deepseek_tui.tools.task.pr_attempts import (
-    PrAttemptListTool,
-    PrAttemptPreflightTool,
-    PrAttemptReadTool,
-    PrAttemptRecordTool,
-)
 from deepseek_tui.tools.task.store import (  # noqa: F401 — _is_stale_running_task used by tests
     _is_stale_running_task,
 )
@@ -76,10 +69,6 @@ __all__ = [
     "ExecutionTask",
     "ExecutorFunc",
     "NewTaskRequest",
-    "PrAttemptListTool",
-    "PrAttemptPreflightTool",
-    "PrAttemptReadTool",
-    "PrAttemptRecordTool",
     "TaskArtifactRef",
     "TaskAttemptRecord",
     "TaskCancelTool",

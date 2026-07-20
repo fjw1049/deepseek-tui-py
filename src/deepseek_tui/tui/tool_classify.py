@@ -72,8 +72,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "agent_list": ("◐", "agents"),
     "agent_cancel": ("◐", "cancel"),
     "agent_send_input": ("◐", "input"),
-    "agent_assign": ("◐", "assign"),
-    "close_agent": ("◐", "close"),
     "resume_agent": ("◐", "resume"),
     "delegate_to_agent": ("◐", "delegate"),
     # MCP
@@ -89,11 +87,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "request_user_input": ("◇", "input"),
     "retrieve_tool_result": ("◇", "retrieve"),
     "load_skill": ("◇", "skill"),
-    # PR attempt
-    "pr_attempt_record": ("◇", "pr"),
-    "pr_attempt_list": ("◇", "pr"),
-    "pr_attempt_read": ("◇", "pr"),
-    "pr_attempt_preflight": ("◇", "pr"),
     # Automation (read)
     "automation_list": ("◇", "auto"),
     "automation_read": ("◇", "auto"),

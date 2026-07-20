@@ -321,7 +321,7 @@ def classify_tool_category(tool_name: str) -> str:
         return "mcp_action" if not mcp_tool_is_read_only(tool_name) else "mcp_read"
     if tool_name.startswith("agent_") or tool_name == "delegate_to_agent":
         return "subagent"
-    if tool_name.startswith("task_") or tool_name.startswith("pr_attempt_"):
+    if tool_name.startswith("task_"):
         return "task"
     if tool_name.startswith("automation_"):
         return "automation"

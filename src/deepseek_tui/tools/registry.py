@@ -521,9 +521,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ExecShellWaitTool,
     )
     from deepseek_tui.tools.subagent import (
-        AgentAssignTool,
         AgentCancelTool,
-        AgentCloseTool,
         AgentListTool,
         AgentResultTool,
         AgentResumeTool,
@@ -533,10 +531,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         DelegateToAgentTool,
     )
     from deepseek_tui.tools.task import (
-        PrAttemptListTool,
-        PrAttemptPreflightTool,
-        PrAttemptReadTool,
-        PrAttemptRecordTool,
         TaskCancelTool,
         TaskCreateTool,
         TaskGateRunTool,
@@ -635,10 +629,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             TaskGateRunTool(),
             TaskShellStartTool(),
             TaskShellWaitTool(),
-            PrAttemptRecordTool(),
-            PrAttemptListTool(),
-            PrAttemptReadTool(),
-            PrAttemptPreflightTool(),
         ]:
             registry.register(tool)
 
@@ -649,19 +639,15 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         registry.register(WorkflowListTool())
         spawn = AgentSpawnTool()
         send = AgentSendInputTool()
-        assign = AgentAssignTool()
         for tool in [
             spawn,
             DeprecatingAliasTool(spawn, "spawn_agent", "agent_spawn"),
             AgentResultTool(),
             AgentCancelTool(),
-            AgentCloseTool(),
             AgentResumeTool(),
             AgentListTool(),
             send,
             DeprecatingAliasTool(send, "send_input", "agent_send_input"),
-            assign,
-            DeprecatingAliasTool(assign, "assign_agent", "agent_assign"),
             AgentWaitTool(),
             DelegateToAgentTool(),
         ]:
