@@ -227,12 +227,24 @@ def test_agent_round_complete_defaults_empty_tools() -> None:
     assert event.tool_calls == ()
 
 
-def test_resolve_narration_locale_from_chinese_input() -> None:
-    assert resolve_narration_locale("深入研究代码，了解整个 workflow 的工作原理") == "zh"
-
-
-def test_resolve_narration_locale_from_english_input() -> None:
-    assert resolve_narration_locale("Explain how the workflow engine orchestrates turns.") == "en"
+def test_resolve_narration_locale_follows_settings_only() -> None:
+    # Message script must not override Workbench / config.ui.locale.
+    assert (
+        resolve_narration_locale(
+            "Explain how the workflow engine orchestrates turns.",
+            config_locale="zh",
+        )
+        == "zh"
+    )
+    assert (
+        resolve_narration_locale(
+            "深入研究代码，了解整个 workflow 的工作原理",
+            config_locale="en",
+        )
+        == "en"
+    )
+    assert resolve_narration_locale("", config_locale="auto") == "zh"
+    assert resolve_narration_locale("", config_locale="zh") == "zh"
 
 
 def test_template_narration_localizes_for_chinese() -> None:

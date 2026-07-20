@@ -28,6 +28,8 @@ timeout = 120
 [ui]
 color_scheme = "default"
 show_thinking = true
+# Reply + UI language: "zh" (default) or "en". Workbench Settings syncs this.
+locale = "zh"
 
 [state]
 database_path = "~/.deepseek_tui/state.db"

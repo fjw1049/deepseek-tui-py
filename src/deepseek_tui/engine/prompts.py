@@ -87,7 +87,7 @@ def process_today() -> str:
 
 def render_environment_block(
     workspace: Path,
-    locale_tag: str = "en",
+    locale_tag: str = "zh",
 ) -> str:
     """Render the ``## Environment`` block.
 
@@ -378,7 +378,7 @@ def build_system_prompt(
     plugin_context: str | None = None,
     plugin_components_context: str | None = None,
     plugin_rules_context: str | None = None,
-    locale_tag: str = "en",
+    locale_tag: str = "zh",
     project_context_enabled: bool = True,
     workflow_guidelines: bool = False,
 ) -> str:

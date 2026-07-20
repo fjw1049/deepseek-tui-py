@@ -123,7 +123,7 @@ async function ensureClawChannelWorkspaceRootsExist(settings: AppSettingsV1): Pr
 
 const defaultSettings = (): AppSettingsV1 => ({
   version: 1,
-  locale: 'en',
+  locale: 'zh',
   theme: 'system',
   uiFontScale: 'small',
   uiFontFamily: 'system-native',

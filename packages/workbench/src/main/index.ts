@@ -49,6 +49,7 @@ import { isAllowedDevPreviewUrl } from '../shared/dev-preview-url'
 import { fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
+  localeConfigChanged,
   resolveDeepseekConfigPath,
   syncDeepseekTuiConfig
 } from './deepseek-config'
@@ -734,7 +735,11 @@ async function restartManagedRuntimeForSettingsChange(
   prev: AppSettingsV1,
   next: AppSettingsV1
 ): Promise<void> {
-  if (!runtimeStartupConfigChanged(prev, next)) return
+  // Locale drives reply language via config.ui.locale — restart so Engine
+  // picks up the new value without waiting for a cold start.
+  if (!runtimeStartupConfigChanged(prev, next) && !localeConfigChanged(prev, next)) {
+    return
+  }
 
   abortAllSseStreams()
 

@@ -59,17 +59,14 @@ def script_counts(text: str) -> tuple[int, int]:
 
 
 def resolve_narration_locale(
-    user_text: str, *, config_locale: str = "auto"
+    user_text: str = "", *, config_locale: str = "zh"
 ) -> NarrationLocale:
-    """Resolve narration language from user input, with config fallback."""
-    cleaned = user_text.strip()
-    cjk, latin = script_counts(cleaned)
-    total = cjk + latin
-    if total >= 4:
-        if cjk > 0 and cjk / total >= 0.15:
-            return "zh"
-        if latin > 0:
-            return "en"
+    """Resolve narration/reply language from settings only.
+
+    ``user_text`` is ignored (kept for call-site compatibility). Language
+    strictly follows Workbench / ``config.ui.locale``.
+    """
+    del user_text  # settings-only; message script must not override
     if config_locale in {"zh", "en"}:
         return config_locale  # type: ignore[return-value]
     return "zh"

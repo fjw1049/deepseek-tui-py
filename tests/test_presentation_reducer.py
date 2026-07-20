@@ -27,7 +27,8 @@ def test_semantics_classifies_read_batch_and_localizes_summary() -> None:
 
     assert classify_batch(tools) is BatchKind.EXPLORE_READ
     assert "并行查看" in batch_intent_text(BatchKind.EXPLORE_READ, tools, locale="zh")
-    assert resolve_narration_locale("请检查这两个模块") == "zh"
+    assert resolve_narration_locale("请检查这两个模块", config_locale="zh") == "zh"
+    assert resolve_narration_locale("请检查这两个模块", config_locale="en") == "en"
 
 
 def test_batch_completes_only_after_every_declared_tool_result() -> None:

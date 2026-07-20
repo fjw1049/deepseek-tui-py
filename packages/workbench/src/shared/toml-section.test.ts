@@ -28,6 +28,16 @@ describe('upsertTomlSections', () => {
     expect(next).toContain('capture_enabled = false')
   })
 
+  it('upserts ui.locale for reply-language sync', () => {
+    const next = upsertTomlSections(
+      '[ui]\ncolor_scheme = "default"\nshow_thinking = true\n',
+      { ui: { locale: 'en' } }
+    )
+    expect(next).toContain('[ui]')
+    expect(next).toContain('locale = "en"')
+    expect(next).toContain('color_scheme = "default"')
+  })
+
   it('writes per-model context windows with quoted model-id keys', () => {
     // Mirrors syncCustomEndpointConfig: model ids like "glm-5.2" contain
     // characters invalid in TOML bare keys, so they are pre-quoted.

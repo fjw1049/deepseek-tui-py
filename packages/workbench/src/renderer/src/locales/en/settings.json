@@ -118,7 +118,7 @@
   "sectionRuntime": "Runtime",
   "sectionPet": "Desktop pet",
   "language": "Language",
-  "languageDesc": "Applied immediately when selected.",
+  "languageDesc": "UI and assistant reply language. Default is Simplified Chinese. Applies immediately.",
   "theme": "Theme",
   "themeDesc": "Light, dark, or match the operating system.",
   "themeSystem": "System",

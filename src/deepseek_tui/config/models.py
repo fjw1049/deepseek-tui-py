@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ConfigError(Exception):
@@ -70,7 +70,8 @@ class UiConfig(BaseModel):
     show_thinking: bool = True
     theme: str = "default"
     show_tool_details: bool = True
-    locale: str = "auto"
+    # Reply + narration language. Workbench settings sync here; default zh.
+    locale: str = "zh"
     default_mode: str = "agent"
     max_history: int = 1000
     alternate_screen: str = "auto"
@@ -80,6 +81,14 @@ class UiConfig(BaseModel):
     notify_threshold_secs: float = 30.0
     frame_refresh_hz: float = 30.0
     process_narration: ProcessNarrationConfig = Field(default_factory=ProcessNarrationConfig)
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def _normalize_locale(cls, value: object) -> str:
+        if value in ("zh", "en"):
+            return str(value)
+        # Legacy "auto" and anything else → Simplified Chinese default.
+        return "zh"
 
 
 class StateConfig(BaseModel):

@@ -108,8 +108,28 @@ async function runDeepseekCommand(
 export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return (
     deepseekConfigFieldsChanged(prev, next) ||
+    prev.locale !== next.locale ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
   )
+}
+
+export function localeConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
+  return prev.locale !== next.locale
+}
+
+async function syncUiLocaleConfig(settings: AppSettingsV1): Promise<void> {
+  const configPath = resolveDeepseekConfigPath()
+  let content = ''
+  try {
+    content = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const next = upsertTomlSections(content, {
+    ui: { locale: settings.locale }
+  })
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, next, 'utf8')
 }
 
 function removeTomlSections(content: string, sectionNames: Set<string>): string {
@@ -254,6 +274,9 @@ export async function syncDeepseekTuiConfig(
     for (const command of commands) {
       await runDeepseekCommand(launcher, command)
     }
+  }
+  if (!previous || previous.locale !== settings.locale) {
+    await syncUiLocaleConfig(settings)
   }
   if (!previous || JSON.stringify(previous.customEndpoints) !== JSON.stringify(settings.customEndpoints)) {
     await syncCustomEndpointConfig(settings, previous)

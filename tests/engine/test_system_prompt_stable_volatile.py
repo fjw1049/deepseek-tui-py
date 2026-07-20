@@ -35,6 +35,18 @@ def test_system_prompt_includes_today_in_environment(tmp_path: Path) -> None:
         project_context_enabled=False,
     )
     assert f"- today: {process_today()}" in prompt
+    assert "- lang: zh" in prompt
+
+
+def test_system_prompt_lang_follows_locale_tag(tmp_path: Path) -> None:
+    zh = build_system_prompt(
+        workspace=tmp_path, project_context_enabled=False, locale_tag="zh"
+    )
+    en = build_system_prompt(
+        workspace=tmp_path, project_context_enabled=False, locale_tag="en"
+    )
+    assert "- lang: zh" in zh
+    assert "- lang: en" in en
 
 
 def test_system_prompt_ignores_working_set_and_omits_handoff(tmp_path: Path) -> None:

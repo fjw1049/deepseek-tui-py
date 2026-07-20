@@ -56,7 +56,6 @@ from deepseek_tui.engine.orchestrator.helpers import (
     _assistant_preface_text,
     _detect_focus_mcp,
     _detect_focus_skill,
-    _detect_locale,
     _detect_plugin_mount,
     _resolve_app_mode,
     _strip_focus_prefix,
@@ -262,6 +261,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.approval_handler = approval_handler or AutoApprovalHandler()
         self.max_tool_round_trips = max_tool_round_trips
         self.mode: str = "agent"
+        # Reply language from config.ui.locale (Workbench settings). Default zh.
+        self.reply_locale: str = "zh"
         self.compaction_config = compaction_config or CompactionConfig()
         self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
@@ -1107,6 +1108,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             default_extra_body=dict(provider_cfg.extra_body or {}),
             hook_executor=hook_executor,
         )
+        locale = getattr(getattr(cfg, "ui", None), "locale", None)
+        engine.reply_locale = locale if locale in ("zh", "en") else "zh"
         engine.plugin_session = plugin_session
         engine._session_mcp_manager = session_mcp_manager
         engine._owned_plugin_mcp_manager = owned_plugin_mcp_manager
@@ -1844,26 +1847,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 "the user's request into a phased workflow spec."
             )
 
-        # Language enforcement: inject a turn-level hint when user
-        # speaks Chinese so the model doesn't drift into English.
-        detected_locale = _detect_locale(processed.display_text or "")
-        if detected_locale == "zh":
-            from deepseek_tui.engine.context_pressure import wrap_system_reminder
-
-            working_messages.append(
-                Message.user(
-                    wrap_system_reminder(
-                        "**Important**: The user asked the question in Chinese. "
-                        "Your thought process (reasoning_content) and final reply "
-                        "must be entirely in Simplified Chinese."
-                        "Technical identifiers such as code, paths, and commands "
-                        "should remain unchanged; only the natural language "
-                        "portion should use Chinese."
-                    ),
-                    origin=MessageOrigin.SYSTEM_REMINDER,
-                )
-            )
-
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
@@ -1931,7 +1914,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 plugin_components_context=self._render_plugin_components_context(),
                 plugin_rules_context=self._render_plugin_rules_context(),
                 workspace=self.tool_context.working_directory,
-                locale_tag=_detect_locale(processed.display_text or ""),
+                locale_tag=self.reply_locale,
                 workflow_guidelines=self.tool_registry.contains("workflow"),
             )
             if mode_hint:

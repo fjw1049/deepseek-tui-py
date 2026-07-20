@@ -194,26 +194,6 @@ def _resolve_app_mode(mode: str) -> _AppMode:
         return _AppMode.AGENT
 
 
-def _detect_locale(text: str) -> str:
-    """Detect locale tag from user message text.
-
-    Simple heuristic: if the message contains CJK characters (Chinese),
-    return "zh". Otherwise return "en". This ensures the Environment
-    block's ``lang`` field matches the user's language so the model
-    responds in the same language.
-    """
-    if not text:
-        return "en"
-    cjk_count = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
-    # If >10% of non-space chars are CJK, treat as Chinese
-    non_space = len(text.replace(" ", ""))
-    if non_space > 0 and cjk_count / non_space > 0.1:
-        return "zh"
-    return "en"
-
-
-
-
 def _clip_summary_line(text: str, limit: int = 200) -> str:
     line = text.strip().splitlines()[0] if text.strip() else ""
     if len(line) > limit:
