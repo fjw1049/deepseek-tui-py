@@ -136,9 +136,9 @@ class SubAgentManager:
     def running_foreground_count(self) -> int:
         """Running agents the parent turn should block on (handoff).
 
-        Excludes ``background`` agents - those are detached from the handoff
-        and surface their completion via the ``<deepseek:subagent.done>``
-        sentinel at a later turn.
+        Excludes ``background`` agents — those are detached from the handoff
+        wait. Their ``<deepseek:subagent.done>`` sentinel is still delivered
+        (active-turn handoff drain, or idle hidden follow-up turn).
         """
         return sum(
             1

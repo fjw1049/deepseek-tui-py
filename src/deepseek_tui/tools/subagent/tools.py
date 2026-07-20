@@ -41,6 +41,27 @@ def _require_manager(context: ToolContext) -> SubAgentManager:
     return manager
 
 
+def _spawn_runtime(context: ToolContext) -> Any | None:
+    """Resolve SubAgentRuntime for the current caller.
+
+    Nested sub-agents stash it on ``metadata['subagent_runtime']``. The parent
+    Engine only attaches it to ``SubAgentManager.loop_runtime`` — fall back so
+    per-type model routing and depth checks work on the main agent path.
+    """
+    nested = context.metadata.get("subagent_runtime")
+    if nested is not None:
+        return nested
+    manager = context.subagent_manager
+    if manager is None:
+        return None
+    return getattr(manager, "loop_runtime", None)
+
+
+def _spawn_config(context: ToolContext) -> Any | None:
+    runtime = _spawn_runtime(context)
+    return getattr(runtime, "config", None) if runtime is not None else None
+
+
 def _result_to_json(result: SubAgentResult) -> dict[str, Any]:
     return {
         "agent_id": result.agent_id,
@@ -153,10 +174,15 @@ class AgentSpawnTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Spawn a background sub-agent. Sub-agents run with a filtered "
-            "toolset and inherit the workspace configuration from the session. "
-            "Use 'type' parameter to specify agent type (general, implementer, etc.), "
-            "and 'nickname' for custom display names."
+            "Spawn a sub-agent for an independent investigation or implementation "
+            "slice. Tool access is filtered by type (explore/review are read-only; "
+            "plan cannot exec; implementer can edit). Default: the parent turn "
+            "waits for completion via handoff / agent_wait. Set "
+            "run_in_background=true only when you can continue without this "
+            "result — completion arrives later as a <deepseek:subagent.done> "
+            "reminder (do not poll). Prefer agent_wait/delegate when you need "
+            "the result in this reply; use task_create only for work that must "
+            "survive restarts and never re-enter this conversation."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -220,9 +246,11 @@ class AgentSpawnTool(ToolSpec):
                     "type": "boolean",
                     "description": (
                         "When true, the parent turn does NOT block waiting for this "
-                        "sub-agent. Completion arrives as a <deepseek:subagent.done> "
-                        "system reminder at a later turn. Use only when the parent can "
-                        "continue other work without this result; otherwise omit it."
+                        "sub-agent. When the child finishes, the runtime injects a "
+                        "<deepseek:subagent.done> system reminder (starting a new "
+                        "turn if the parent is idle). Use only when you can continue "
+                        "other work without this result; otherwise omit it and let "
+                        "handoff / agent_wait collect the result in this turn."
                     ),
                 },
             },
@@ -356,8 +384,7 @@ class AgentSpawnTool(ToolSpec):
         if not chosen_model and persona_model.lower().startswith("deepseek"):
             chosen_model = persona_model
         if not chosen_model:
-            rt_cfg = context.metadata.get("subagent_runtime")
-            cfg = getattr(rt_cfg, "config", None) if rt_cfg is not None else None
+            cfg = _spawn_config(context)
             if cfg is not None:
                 chosen_model = resolve_subagent_model(agent_type, cfg) or ""
         parent_raw = context.metadata.get("subagent_id")
@@ -381,7 +408,7 @@ class AgentSpawnTool(ToolSpec):
             system_prompt=persona_prompt,
             background=background,
         )
-        runtime_raw = context.metadata.get("subagent_runtime")
+        runtime_raw = _spawn_runtime(context)
         if runtime_raw is not None and hasattr(runtime_raw, "would_exceed_depth"):
             if runtime_raw.would_exceed_depth():
                 raise ToolError(
@@ -396,7 +423,7 @@ class AgentSpawnTool(ToolSpec):
         content = f"spawned {snapshot.agent_id} [{snapshot.agent_type.value}]"
         if background:
             content += (
-                " (background: completion arrives in a later turn; "
+                " (background: completion is injected automatically when ready; "
                 "do not wait or poll)"
             )
         return ToolResult(

@@ -398,6 +398,7 @@ class SpawnRequest:
     # Optional per-spawn workspace override (e.g. workflow worktree).
     workspace: Path | None = None
     # When True, the parent turn does NOT block on this agent's completion
-    # (handoff skips it). Completion still injects via the
-    # ``<deepseek:subagent.done>`` sentinel at the parent's next handoff point.
+    # (handoff skips it). Completion still injects via
+    # ``<deepseek:subagent.done>`` — during an active turn at the next handoff,
+    # or via a hidden follow-up turn when the parent is already idle.
     background: bool = False

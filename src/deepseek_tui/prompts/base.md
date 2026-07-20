@@ -108,9 +108,10 @@ Use sub-agents when parallel work will materially reduce latency or improve cove
 These are two different mechanisms. Choose by one question: **do you need the result in this conversation?**
 
 - **Need to wait for it, aggregate several results, or report back in this reply → sub-agents** (`agent_spawn` + `agent_wait`, or `delegate_to_agent`). They return their final output to you in this turn, you synthesize, and their progress shows as live cards in the chat.
+- **Can keep working without the result right now → `agent_spawn` with `run_in_background: true`**. The parent turn does not block; when the child finishes, a `<deepseek:subagent.done>` reminder is injected automatically (including a follow-up turn if you already replied). Do not poll or call `task_create` for this.
 - **Genuinely long-running, the user won't wait, should survive restarts → `task_create`**. It runs detached in a background worker; its result lands only in the TASKS panel (read later via `task_read`) and never re-enters this turn.
 
-Anti-pattern: "benchmark quicksort and heapsort and give me one summary report" is sub-agent map-reduce (spawn the benchmarks, `agent_wait`, synthesize one report) — **not** two `task_create` calls. Multiple durable tasks run independently and are never aggregated, so you'd hand the user two disconnected results and no summary.
+Anti-pattern: "benchmark quicksort and heapsort and give me one summary report" is sub-agent map-reduce (spawn the benchmarks, `agent_wait`, synthesize one report) — **not** two `task_create` calls and **not** two background spawns you never integrate. Multiple durable tasks run independently and are never aggregated, so you'd hand the user two disconnected results and no summary.
 
 ## Parallel-First Heuristic
 
@@ -199,7 +200,7 @@ Use `fetch_url` to read HTTP/HTTPS content (web pages, raw GitHub files, JSON en
 Use `exec_shell` for shell-native diagnostics, pipelines, and bounded commands. Use structured tools for structured operations when they map directly (`grep_files`, `git_diff`, `read_file`). For long commands, servers, full test suites, or release computations, start background work with `task_shell_start` or `exec_shell` using `background: true`, then poll with `task_shell_wait` or `exec_shell_wait`. For temp files, see **Shell temp files and sandbox** above — prefer `/tmp` for ephemeral shell temp and `scratch/` when you need to read the output back with file tools. Do not use `exec_shell` with `curl`/`wget` to fetch a URL — use `fetch_url` instead.
 
 ### `agent_spawn`
-Use `agent_spawn` for independent investigations or implementation slices that can run while you continue coordinating. Use `fork_context: true` when the child must inherit the current transcript and plan/todo state. Use `agent_wait` when you need one or more completions. Use `agent_result` when the sentinel summary is too thin or you need the full structured output. Keep tiny single-read/search tasks local so the transcript stays compact.
+Use `agent_spawn` for independent investigations or implementation slices that can run while you continue coordinating. Type filters tools (explore/review read-only; plan has no shell; implementer can edit). Use `fork_context: true` when the child must inherit the current transcript and plan/todo state. Default: omit `run_in_background` and collect via handoff / `agent_wait` / `delegate_to_agent` when this reply needs the result. Set `run_in_background: true` only when you can proceed without it — completion arrives later as `<deepseek:subagent.done>` (do not poll). Use `agent_result` when the sentinel summary is too thin or you need the full structured output. Keep tiny single-read/search tasks local so the transcript stays compact.
 
 ## Internal Sub-agent Completion Events
 

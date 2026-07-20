@@ -2058,8 +2058,22 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # 同理复位只读放行根：仅在挂载插件的 turn 内有效，取消/异常也不泄漏。
             self.tool_context.extra_read_roots = ()
 
+    def _completion_agent_is_background(self, agent_id: str) -> bool:
+        """True when *agent_id* is a ``run_in_background`` child still known."""
+        mgr = self.tool_context.subagent_manager
+        if mgr is None:
+            return False
+        agent = mgr._agents.get(agent_id)  # noqa: SLF001 — engine owns manager
+        return bool(agent is not None and getattr(agent, "background", False))
+
     def _enqueue_subagent_completion(self, completion: SubAgentCompletion) -> None:
-        """Thread-safe enqueue from sub-agent driver tasks (#756)."""
+        """Thread-safe enqueue from sub-agent driver tasks (#756).
+
+        For ``run_in_background`` children, also schedules idle delivery so
+        results that arrive after the parent turn ends still reach the LLM via
+        a hidden follow-up turn (Kimi-style automatic notification). Foreground
+        completions stay on the handoff path only.
+        """
         if completion.agent_id in self._consumed_subagent_completions:
             return
         try:
@@ -2070,6 +2084,66 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 "handoff waiters may stall until timeout",
                 completion.agent_id,
             )
+            return
+        if self._completion_agent_is_background(completion.agent_id):
+            self._schedule_idle_subagent_completion_delivery()
+
+    def _schedule_idle_subagent_completion_delivery(self) -> None:
+        """Coalesce pending completions into a hidden turn once the engine is idle."""
+        task = getattr(self, "_idle_subagent_delivery_task", None)
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._idle_subagent_delivery_task = loop.create_task(
+            self._deliver_subagent_completions_when_idle(),
+            name="subagent-idle-completion-delivery",
+        )
+
+    async def _deliver_subagent_completions_when_idle(self) -> None:
+        """If the parent turn already ended, inject pending sub-agent results.
+
+        Active-turn completions are still handled by
+        ``_handle_subagent_turn_handoff`` (which drains the same queue). This
+        path only fires when the engine is idle so background agents do not
+        leave orphaned ``<deepseek:subagent.done>`` payloads in the queue.
+        """
+        # Wait out the current turn (handoff may still drain the queue).
+        for _ in range(12_000):  # ~10 min at 50ms
+            if not self.handle.is_turn_active():
+                break
+            await asyncio.sleep(0.05)
+        else:
+            logger.warning("subagent_idle_delivery_gave_up turn_still_active")
+            return
+        # Brief coalesce window for siblings finishing together.
+        await asyncio.sleep(0.05)
+        if self.handle.is_turn_active():
+            self._schedule_idle_subagent_completion_delivery()
+            return
+        completions = self._drain_subagent_completions()
+        if not completions:
+            return
+        for item in completions:
+            self._consumed_subagent_completions.add(item.agent_id)
+        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+
+        body = "\n\n".join(
+            wrap_system_reminder(item.payload) for item in completions
+        )
+        logger.info(
+            "subagent_idle_delivery count=%d",
+            len(completions),
+        )
+        await self.handle.send_op(
+            SendMessageOp(
+                content=body,
+                hidden=True,
+                internal_kind="subagent_background_done",
+            )
+        )
 
     def _drain_subagent_completions(self) -> list[SubAgentCompletion]:
         out: list[SubAgentCompletion] = []
@@ -2200,6 +2274,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         from deepseek_tui.engine.context_pressure import wrap_system_reminder
 
         for item in completions:
+            # Mark consumed so idle-delivery cannot re-inject the same payload
+            # if a race schedules a wake after this handoff drains the queue.
+            self._consumed_subagent_completions.add(item.agent_id)
             messages.append(
                 Message.user(
                     wrap_system_reminder(item.payload),
