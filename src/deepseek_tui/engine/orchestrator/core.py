@@ -2157,14 +2157,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return False
 
         completions = self._drain_subagent_completions()
-        running = mgr.running_count()
+        running = mgr.running_foreground_count()
         if running > 0:
             await self.handle.emit(
                 StatusEvent(
                     message=f"Waiting on {running} sub-agent(s) to complete..."
                 )
             )
-            deadline = time.monotonic() + 600.0
+            deadline = time.monotonic() + mgr.handoff_timeout_secs
             timed_out = False
             while running > 0:
                 if self.handle.cancel_event.is_set():
@@ -2187,7 +2187,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 except asyncio.TimeoutError:
                     pass
                 completions.extend(self._drain_subagent_completions())
-                running = mgr.running_count()
+                running = mgr.running_foreground_count()
             if timed_out:
                 completions.extend(self._drain_subagent_completions())
         else:

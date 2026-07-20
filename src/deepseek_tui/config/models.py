@@ -209,6 +209,9 @@ class SubagentConfig(BaseModel):
     review_model: str | None = None
     custom_model: str | None = None
     models: dict[str, str] = Field(default_factory=dict)
+    # Max seconds the parent turn blocks waiting for direct (non-background)
+    # sub-agents to complete before timing out the handoff (#756).
+    handoff_timeout_secs: float = 600.0
 
 
 class ShellHookConfig(BaseModel):

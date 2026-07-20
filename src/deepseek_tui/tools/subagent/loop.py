@@ -103,6 +103,14 @@ async def _execute_subagent_tool(
 
     assert isinstance(registry, ToolRegistry)
     _reject_subagent_interactive_shell(tool_name, tool_input)
+    if not registry.contains(tool_name):
+        # Filtered out by the sub-agent's type allowlist (or hallucinated by
+        # the model). Return a clean error rather than letting registry.get()
+        # raise an uncaught ToolError out of the loop.
+        return (
+            f"Error: Tool '{tool_name}' is not available to this sub-agent "
+            "type and was blocked."
+        )
     tool = registry.get(tool_name)
     policy = getattr(getattr(runtime, "config", None), "approval_policy", None)
     if policy is None and hasattr(context, "metadata"):
@@ -177,6 +185,20 @@ _SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
     "MUST be a single structured_output tool call whose arguments match the "
     "schema. Do not emit a prose or Markdown final answer."
 )
+
+
+_SUBAGENT_SUMMARY_CONTINUATION_NUDGE = (
+    "Your previous response did not include the mandatory output contract. "
+    "Write your final report now as your assistant message, ending with the "
+    "Markdown H3 sections: ### SUMMARY, ### EVIDENCE, ### CHANGES, "
+    '### RISKS, ### BLOCKERS (use "None." where the contract allows). '
+    "Do not call any tools."
+)
+
+
+def _has_summary_section(text: str | None) -> bool:
+    """True when *text* contains the mandatory ``### SUMMARY`` heading."""
+    return bool(text) and "### SUMMARY" in text
 
 
 def _assistant_text_and_thinking(message: Any | None) -> tuple[str, str]:
@@ -254,9 +276,18 @@ async def run_subagent_loop(
     if use_structured_output:
         extra_tools.append(StructuredOutputTool(agent.output_schema))
         system_prompt = f"{system_prompt}\n\n{_structured_output_contract()}"
+    # Type-level default allowlist: when the caller supplied no explicit
+    # ``allowed_tools``, fall back to the type's built-in set. Applied here
+    # (not in the spawn tool) so direct ``manager.spawn`` callers get the same
+    # filtering as LLM-driven ``agent_spawn``. None means full registry.
+    effective_tools = agent.allowed_tools
+    if effective_tools is None:
+        default_set = agent.agent_type.allowed_tools()
+        if default_set is not None:
+            effective_tools = sorted(default_set)
     registry = build_subagent_registry(
         runtime.config,
-        allowed_tools=agent.allowed_tools,
+        allowed_tools=effective_tools,
         client=runtime.client,
         root_model=agent.model,
         extra_tools=extra_tools or None,
@@ -561,6 +592,44 @@ async def run_subagent_loop(
         raise RuntimeError("sub-agent did not return structured_output")
     if not final_text and last_thinking:
         final_text = last_thinking
+    # Summary quality gate: if the agent stopped without producing the
+    # mandatory SUMMARY section (e.g. a terse "Done."), nudge once for a
+    # proper report. Mirrors Kimi's summaryPolicy but checks the contract
+    # section rather than a raw character count.
+    if (
+        not use_structured_output
+        and structured_value is None
+        and not _has_summary_section(final_text)
+        and not _subagent_cancelled(cancel, agent)
+    ):
+        messages.append(Message.user(_SUBAGENT_SUMMARY_CONTINUATION_NUDGE))
+        continuation_request = MessageRequest(
+            model=agent.model,
+            messages=messages,
+            system_prompt=system_prompt,
+            tools=[],
+            tool_choice=None,
+            max_tokens=4096,
+            stream=True,
+        )
+        gate = getattr(runtime.manager, "llm_semaphore", None)
+        try:
+            if gate is not None:
+                async with gate:
+                    cont = await turn_loop.run(
+                        continuation_request, _noop_emit, cancel, tools=[]
+                    )
+            else:
+                cont = await turn_loop.run(
+                    continuation_request, _noop_emit, cancel, tools=[]
+                )
+        except asyncio.CancelledError:
+            raise
+        cont_text, cont_thinking = _assistant_text_and_thinking(cont.assistant_message)
+        if cont_text:
+            final_text = cont_text
+        elif cont_thinking:
+            final_text = cont_thinking
     clear_transcript(transcript_path)
     return AgentRunOutput(text=final_text, structured=structured_value)
 

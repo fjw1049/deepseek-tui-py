@@ -27,6 +27,7 @@ from deepseek_tui.tools.subagent.types import (
     SubAgentResult,
     SubAgentStatusKind,
     SubAgentType,
+    resolve_subagent_model,
 )
 
 if TYPE_CHECKING:
@@ -215,6 +216,15 @@ class AgentSpawnTool(ToolSpec):
                         "appending this task. Defaults to false for independent exploration."
                     ),
                 },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, the parent turn does NOT block waiting for this "
+                        "sub-agent. Completion arrives as a <deepseek:subagent.done> "
+                        "system reminder at a later turn. Use only when the parent can "
+                        "continue other work without this result; otherwise omit it."
+                    ),
+                },
             },
         }
 
@@ -324,9 +334,13 @@ class AgentSpawnTool(ToolSpec):
             from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
 
             allowed_tools = sorted(FOCUS_READ_BASE)
+        # NOTE: type-level default allowlist is applied in ``run_subagent_loop``
+        # (not here) so direct ``manager.spawn`` callers (tests, delegate_to_agent,
+        # workflow) get the same filtering as LLM-driven ``agent_spawn`` calls.
         if agent_type is SubAgentType.CUSTOM and not allowed_tools:
             raise ToolError("Custom sub-agents require a non-empty allowed_tools list")
         fork_context = _pick_bool(input_data, "fork_context")
+        background = _pick_bool(input_data, "run_in_background")
         fork_messages = None
         if fork_context:
             raw = context.metadata.get("parent_session_messages")
@@ -341,6 +355,11 @@ class AgentSpawnTool(ToolSpec):
         chosen_model = user_model
         if not chosen_model and persona_model.lower().startswith("deepseek"):
             chosen_model = persona_model
+        if not chosen_model:
+            rt_cfg = context.metadata.get("subagent_runtime")
+            cfg = getattr(rt_cfg, "config", None) if rt_cfg is not None else None
+            if cfg is not None:
+                chosen_model = resolve_subagent_model(agent_type, cfg) or ""
         parent_raw = context.metadata.get("subagent_id")
         parent_agent_id = (
             parent_raw.strip()
@@ -360,6 +379,7 @@ class AgentSpawnTool(ToolSpec):
             fork_context=fork_context,
             fork_messages=fork_messages,
             system_prompt=persona_prompt,
+            background=background,
         )
         runtime_raw = context.metadata.get("subagent_runtime")
         if runtime_raw is not None and hasattr(runtime_raw, "would_exceed_depth"):
@@ -373,9 +393,15 @@ class AgentSpawnTool(ToolSpec):
             snapshot = await manager.spawn(request)
         except RuntimeError as exc:
             raise ToolError(str(exc)) from exc
+        content = f"spawned {snapshot.agent_id} [{snapshot.agent_type.value}]"
+        if background:
+            content += (
+                " (background: completion arrives in a later turn; "
+                "do not wait or poll)"
+            )
         return ToolResult(
             success=True,
-            content=f"spawned {snapshot.agent_id} [{snapshot.agent_type.value}]",
+            content=content,
             metadata=_result_to_json(snapshot),
         )
 

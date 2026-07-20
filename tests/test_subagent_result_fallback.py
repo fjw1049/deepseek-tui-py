@@ -153,7 +153,11 @@ async def test_stalled_round_triggers_forced_summary(tmp_path: Path) -> None:
             ],
             # Round 2: forced summary (tools off) — real prose report.
             [
-                StreamTextDelta(text="最终报告：115 个测试文件，649 个用例，覆盖率良好。"),
+                StreamTextDelta(text=(
+                    "### SUMMARY\n最终报告：115 个测试文件，649 个用例，覆盖率良好。\n\n"
+                    "### EVIDENCE\nNone.\n\n### CHANGES\nNone.\n\n"
+                    "### RISKS\nNone.\n\n### BLOCKERS\nNone."
+                )),
                 StreamDone(usage=None),
             ],
         ],
@@ -162,8 +166,9 @@ async def test_stalled_round_triggers_forced_summary(tmp_path: Path) -> None:
     )
 
     assert snapshot.status.kind.value == "completed"
-    assert snapshot.result == "最终报告：115 个测试文件，649 个用例，覆盖率良好。"
-    assert "Let me also look" not in snapshot.result
+    assert "最终报告：115 个测试文件，649 个用例，覆盖率良好。" in (snapshot.result or "")
+    assert "### SUMMARY" in (snapshot.result or "")
+    assert "Let me also look" not in (snapshot.result or "")
 
     client = clients[0]
     assert client.calls == 2

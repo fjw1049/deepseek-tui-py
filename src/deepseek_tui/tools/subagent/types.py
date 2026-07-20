@@ -82,6 +82,80 @@ class SubAgentType(str, Enum):
         base = self.type_prompt()
         return f"{base}\n\n{output_contract}" if base else output_contract
 
+    def allowed_tools(self) -> frozenset[str] | None:
+        """Default tool allowlist for this type, or None to keep the full registry.
+
+        Enforced at spawn via ``ToolRegistry.filter_by_names``: filtered tools
+        are removed from the sub-agent's registry, so the model never sees them
+        and they cannot be reached at execute time. ``None`` (GENERAL, CUSTOM)
+        means "do not filter"; CUSTOM still requires the caller to pass an
+        explicit ``allowed_tools`` list.
+        """
+        return _TYPE_ALLOWLIST.get(self)
+
+
+# Tool groups for type-based allowlists (see ``SubAgentType.allowed_tools``).
+# Intentionally stricter than ``FOCUS_READ_BASE`` - that set is misnamed and
+# includes write/shell/agent_spawn tools, so it cannot serve a read-only type.
+_SUBAGENT_READ_TOOLS = frozenset({
+    "read_file", "list_dir", "grep_files", "file_search", "project_map",
+    "diagnostics",
+    "git_status", "git_diff", "git_log", "git_show", "git_blame",
+    "github_issue_context", "github_pr_context",
+    "web_search", "fetch_url",
+    "note",
+})
+_SUBAGENT_PLAN_TOOLS = _SUBAGENT_READ_TOOLS | frozenset({
+    "update_plan", "checklist_write", "checklist_add", "checklist_update",
+    "checklist_list",
+})
+_SUBAGENT_WRITE_TOOLS = frozenset({"write_file", "edit_file", "apply_patch"})
+_SUBAGENT_EXEC_TOOLS = frozenset({"exec_shell", "run_tests"})
+
+_TYPE_ALLOWLIST: dict[SubAgentType, frozenset[str] | None] = {
+    SubAgentType.GENERAL: None,
+    SubAgentType.EXPLORE: _SUBAGENT_READ_TOOLS,
+    SubAgentType.PLAN: _SUBAGENT_PLAN_TOOLS,
+    SubAgentType.REVIEW: _SUBAGENT_READ_TOOLS,
+    SubAgentType.IMPLEMENTER: (
+        _SUBAGENT_READ_TOOLS
+        | _SUBAGENT_WRITE_TOOLS
+        | _SUBAGENT_EXEC_TOOLS
+        | frozenset({"update_plan", "checklist_write"})
+    ),
+    SubAgentType.VERIFIER: _SUBAGENT_READ_TOOLS | _SUBAGENT_EXEC_TOOLS,
+    SubAgentType.CUSTOM: None,
+}
+
+
+def resolve_subagent_model(agent_type: SubAgentType, cfg: Any) -> str | None:
+    """Resolve a per-type model override from ``cfg.subagents``.
+
+    Priority: ``subagents.models[type.value]`` overrides the type-specific
+    fields (explorer/worker/review/custom_model). Returns None when no
+    override is set so the caller falls back to ``default_model`` /
+    ``default_text_model``.
+    """
+    sub = getattr(cfg, "subagents", None)
+    if sub is None:
+        return None
+    overrides = getattr(sub, "models", None) or {}
+    explicit = overrides.get(agent_type.value)
+    if explicit:
+        return explicit
+    field = {
+        SubAgentType.EXPLORE: "explorer_model",
+        SubAgentType.REVIEW: "review_model",
+        SubAgentType.IMPLEMENTER: "worker_model",
+        SubAgentType.VERIFIER: "worker_model",
+        SubAgentType.PLAN: "explorer_model",
+        SubAgentType.CUSTOM: "custom_model",
+    }.get(agent_type)
+    if field is None:
+        return None
+    value = getattr(sub, field, None)
+    return value or None
+
 
 _SUBAGENT_PROMPTS: dict[str, str] = {
     "general": (
@@ -323,3 +397,7 @@ class SpawnRequest:
     system_prompt: str | None = None
     # Optional per-spawn workspace override (e.g. workflow worktree).
     workspace: Path | None = None
+    # When True, the parent turn does NOT block on this agent's completion
+    # (handoff skips it). Completion still injects via the
+    # ``<deepseek:subagent.done>`` sentinel at the parent's next handoff point.
+    background: bool = False

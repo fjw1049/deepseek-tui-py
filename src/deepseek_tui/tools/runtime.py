@@ -148,6 +148,7 @@ def build_subagent_manager(
         or cfg.default_text_model
         or "deepseek-chat",
         llm_max_concurrent=cfg.subagents.llm_max_concurrent,
+        handoff_timeout_secs=cfg.subagents.handoff_timeout_secs,
     )
     return manager, mailbox
 

@@ -39,6 +39,23 @@ autosave = true
 tasks = true
 automations = true
 
+[subagents]
+# Per-type model overrides. When a sub-agent of the given type is spawned
+# without an explicit ``model``, this is used; otherwise the spawn falls back
+# to ``default_model`` then the global ``default_text_model``.
+# default_model = "deepseek-chat"
+# explorer_model = "deepseek-chat"     # explore / plan
+# worker_model = "deepseek-chat"       # implementer / verifier
+# review_model = "deepseek-chat"       # review
+# custom_model = "deepseek-chat"       # custom
+# Per-type override map (keyed by type name) wins over the fields above.
+# models = { explore = "deepseek-chat" }
+# Max sub-agent LLM streams in flight at once (0 disables the gate).
+llm_max_concurrent = 2
+# Seconds the parent turn blocks waiting for direct (non-background)
+# sub-agents before timing out the handoff.
+handoff_timeout_secs = 600
+
 [post_turn]
 enabled = true
 

@@ -70,11 +70,13 @@ class SubAgentManager:
         mailbox: Mailbox | None = None,
         default_model: str = "deepseek-chat",
         llm_max_concurrent: int = 2,
+        handoff_timeout_secs: float = 600.0,
     ) -> None:
         self.workspace = workspace
         self.max_agents = max_agents
         self.max_steps = DEFAULT_MAX_STEPS
         self.default_model = default_model
+        self.handoff_timeout_secs = handoff_timeout_secs
         self._state_path = state_path
         self._executor: SubAgentExecutor = executor or _stub_executor
         self._mailbox = mailbox
@@ -129,6 +131,20 @@ class SubAgentManager:
             1
             for a in self._agents.values()
             if a.status.kind is SubAgentStatusKind.RUNNING
+        )
+
+    def running_foreground_count(self) -> int:
+        """Running agents the parent turn should block on (handoff).
+
+        Excludes ``background`` agents - those are detached from the handoff
+        and surface their completion via the ``<deepseek:subagent.done>``
+        sentinel at a later turn.
+        """
+        return sum(
+            1
+            for a in self._agents.values()
+            if a.status.kind is SubAgentStatusKind.RUNNING
+            and not getattr(a, "background", False)
         )
 
     def list_filtered(self, include_archived: bool = False) -> list[SubAgentResult]:
@@ -199,6 +215,7 @@ class SubAgentManager:
                 loop_runtime=self._loop_runtime_for_spawn(request, child_depth),
                 output_schema=request.output_schema,
                 system_prompt=request.system_prompt,
+                background=request.background,
             )
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()

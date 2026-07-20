@@ -65,6 +65,7 @@ class SubAgent:
         loop_runtime: SubAgentRuntime | None = None,
         output_schema: dict[str, Any] | None = None,
         system_prompt: str | None = None,
+        background: bool = False,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -87,6 +88,7 @@ class SubAgent:
         self.parent_cancel = parent_cancel
         self.mailbox = mailbox
         self.loop_runtime = loop_runtime
+        self.background = background
         self.cancel_token: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
