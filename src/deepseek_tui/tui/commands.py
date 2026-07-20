@@ -1702,7 +1702,7 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
 
     Usage:
         /plugins                     — list installed plugins
-        /plugins info <name>         — show plugin description + README/PLAYBOOK
+        /plugins info <name>         — show plugin description + rules
         /plugins install <spec>      — github:owner/repo, local path, or <plugin>@<marketplace>
         /plugins update <name>       — re-install from recorded source
         /plugins remove <name>       — uninstall
@@ -1750,12 +1750,6 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
             blurb = plugin_description_blurb(p)
             if blurb:
                 lines.append(f"      {blurb}")
-            readme = p.path / "README.md"
-            playbook = p.path / "PLAYBOOK.md"
-            if playbook.is_file():
-                lines.append("      · docs: PLAYBOOK.md")
-            elif readme.is_file():
-                lines.append("      · docs: README.md")
             if not p.enabled:
                 continue
             c = collect_contributions([p])
@@ -1783,9 +1777,10 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
             for r in c.rules:
                 lines.append(f"      · rule: {r.plugin}/{r.name}")
         lines.append(
-            "\nTip: skills/commands/agents load on demand; "
+            "\nTip: rules inject on `@plugin:` mount; "
+            "skills/commands/agents load on demand; "
             "hooks/MCP need trust + a new session. "
-            "Use `/plugins info <name>` to read README/PLAYBOOK."
+            "Use `/plugins info <name>` to read rules."
         )
         return CommandResult(output="\n".join(lines))
 
@@ -1829,11 +1824,11 @@ def cmd_plugins(args: str, app: DeepSeekTUI) -> CommandResult:
 
 
 def _plugins_info(name: str) -> CommandResult:
-    """Show manifest description plus README/PLAYBOOK for one plugin."""
+    """Show manifest description plus rules for one plugin."""
     from deepseek_tui.integrations.plugins import (
+        collect_contributions,
         discover_plugins,
         plugin_description_blurb,
-        read_plugin_playbook,
     )
 
     needle = name.strip().lower()
@@ -1853,19 +1848,21 @@ def _plugins_info(name: str) -> CommandResult:
     blurb = plugin_description_blurb(match, max_chars=500)
     if blurb:
         lines.append(f"description: {blurb}")
-    docs = read_plugin_playbook(match.path, max_chars=8_000)
-    if docs:
-        source = (
-            "PLAYBOOK.md"
-            if (match.path / "PLAYBOOK.md").is_file()
-            else "README.md"
-        )
+    rules = collect_contributions([match]).rules
+    if rules:
         lines.append("")
-        lines.append(f"--- {source} ---")
-        lines.append(docs)
+        lines.append(f"--- rules ({len(rules)}) ---")
+        for rule in rules:
+            body = (getattr(rule, "body", "") or "").strip()
+            if len(body) > 2_000:
+                body = body[:2_000].rstrip() + "\n\n… (truncated)"
+            lines.append("")
+            lines.append(f"### {rule.plugin}/{rule.name}")
+            if body:
+                lines.append(body)
     else:
         lines.append("")
-        lines.append("(no README.md / PLAYBOOK.md in plugin root)")
+        lines.append("(no rules/ — mount injects no guidance)")
     return CommandResult(output="\n".join(lines))
 
 

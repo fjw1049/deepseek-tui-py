@@ -439,17 +439,14 @@ def test_plugin_rules_context_mounted_vs_unmounted(tmp_path: Path) -> None:
     assert "BETA-BODY" not in mounted
     assert 'mounted plugin "alpha"' in mounted
 
-    # Mounted plugin without rules and without playbook -> empty.
+    # Mounted plugin without rules -> empty (README is not guidance).
     assert render_plugin_rules_context(rules, active_plugin="gamma") == ""
 
 
-def test_plugin_playbook_fallback_when_no_rules(tmp_path: Path) -> None:
-    """Mounted plugin with no rules injects PLAYBOOK.md / README.md instead."""
+def test_mounted_plugin_without_rules_injects_nothing(tmp_path: Path) -> None:
+    """Mounted plugin with no rules/ does not inject README as guidance."""
     from deepseek_tui.engine.prompts import render_plugin_rules_context
-    from deepseek_tui.integrations.plugins import (
-        plugin_description_blurb,
-        read_plugin_playbook,
-    )
+    from deepseek_tui.integrations.plugins import plugin_description_blurb
 
     plugin = tmp_path / "toolkit"
     (plugin / ".codebuddy-plugin").mkdir(parents=True)
@@ -474,52 +471,12 @@ def test_plugin_playbook_fallback_when_no_rules(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert "Route to xlsx" in (read_plugin_playbook(plugin) or "")
     loaded = discover_plugins(plugins_dir=tmp_path)[0]
     assert plugin_description_blurb(loaded).startswith("Office toolkit")
 
     rules = collect_contributions([loaded]).rules
     assert rules == []
-    ctx = render_plugin_rules_context(
-        rules,
-        active_plugin="toolkit",
-        playbook=read_plugin_playbook(plugin),
-    )
-    assert "## Plugin Playbook" in ctx
-    assert "Route to xlsx" in ctx
-    assert "load_skill" in ctx
-
-    # Prefer PLAYBOOK.md over README.md.
-    (plugin / "PLAYBOOK.md").write_text(
-        "# Playbook\n\nPLAYBOOK-BODY-ONLY\n", encoding="utf-8"
-    )
-    assert "PLAYBOOK-BODY-ONLY" in (read_plugin_playbook(plugin) or "")
-
-    # Rules win over playbook when both exist.
-    ruled = tmp_path / "ruled"
-    (ruled / ".codebuddy-plugin").mkdir(parents=True)
-    (ruled / "rules").mkdir()
-    (ruled / ".codebuddy-plugin" / "plugin.json").write_text(
-        json.dumps(
-            {"name": "ruled", "version": "1.0.0", "rules": ["./rules/r.md"]}
-        ),
-        encoding="utf-8",
-    )
-    (ruled / "rules" / "r.md").write_text(
-        "---\ndescription: d\nalwaysApply: true\n---\nRULE-BODY\n",
-        encoding="utf-8",
-    )
-    (ruled / "README.md").write_text("README-SHOULD-NOT-APPEAR\n", encoding="utf-8")
-    ruled_rules = collect_contributions(
-        discover_plugins(plugins_dir=tmp_path)
-    ).rules
-    ruled_ctx = render_plugin_rules_context(
-        ruled_rules,
-        active_plugin="ruled",
-        playbook=read_plugin_playbook(ruled),
-    )
-    assert "RULE-BODY" in ruled_ctx
-    assert "README-SHOULD-NOT-APPEAR" not in ruled_ctx
+    assert render_plugin_rules_context(rules, active_plugin="toolkit") == ""
 
 
 async def test_engine_mount_injects_own_rules(tmp_path, monkeypatch) -> None:
@@ -574,10 +531,10 @@ async def test_engine_mount_injects_own_rules(tmp_path, monkeypatch) -> None:
         await engine.shutdown_session()
 
 
-async def test_engine_mount_injects_readme_playbook_when_no_rules(
+async def test_engine_mount_without_rules_injects_nothing(
     tmp_path, monkeypatch
 ) -> None:
-    """Toolkit plugins (0 rules) get README/PLAYBOOK injected on mount."""
+    """Toolkit plugins with 0 rules inject nothing on mount (README ignored)."""
     from unittest.mock import AsyncMock
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
@@ -617,9 +574,9 @@ async def test_engine_mount_injects_readme_playbook_when_no_rules(
     try:
         engine.set_active_plugin("docs")
         mounted = engine._render_plugin_rules_context()
-        assert mounted is not None
-        assert "DOCS-PLAYBOOK-MARKER" in mounted
-        assert "## Plugin Playbook" in mounted
+        assert mounted is None or "DOCS-PLAYBOOK-MARKER" not in mounted
+        assert mounted is None or "## Plugin Playbook" not in mounted
+        assert mounted is None or "## Plugin Rules" not in mounted
     finally:
         await engine.shutdown_session()
 

@@ -305,7 +305,6 @@ def render_plugin_rules_context(
     rules: list[Any] | None,
     *,
     active_plugin: str | None = None,
-    playbook: str | None = None,
 ) -> str:
     """Render plugin ``rules`` into a system-prompt block.
 
@@ -314,10 +313,8 @@ def render_plugin_rules_context(
     - ``active_plugin`` set (plugin mounted via ``@plugin:name``): the mounted
       plugin's rule bodies are injected verbatim — they carry the plugin's
       core behavior (CodeBuddy scenario rules) and mounting is the user's
-      explicit opt-in. Other plugins' rules are omitted entirely. When the
-      mounted plugin ships no rules, ``playbook`` (from ``PLAYBOOK.md`` /
-      ``README.md``) is injected instead so toolkit plugins still get a
-      mount-time routing document.
+      explicit opt-in. Other plugins' rules are omitted entirely. A mounted
+      plugin with no ``rules/`` injects nothing (README is not guidance).
     - No mount: rules collapse to one summary line each with a mount hint.
       Injecting every installed plugin's full rule bodies (tens of KB) both
       taxes every turn's input tokens and dilutes the directives until the
@@ -328,38 +325,23 @@ def render_plugin_rules_context(
         # Mounted: inject this plugin's rule bodies (including
         # always_apply=false scenario-only rules — mounting is the opt-in).
         own = [r for r in rules if r.plugin == active_plugin]
-        if own:
-            lines = ["## Plugin Rules", ""]
-            lines.append(
-                f'The following directives come from the mounted plugin '
-                f'"{active_plugin}" and are active for this session. Treat them '
-                "as authoritative instructions."
-            )
-            for r in own:
-                body = getattr(r, "body", "") or ""
-                if not body.strip():
-                    continue
-                lines.append("")
-                lines.append(f"### Rule: {r.plugin}/{r.name}")
-                lines.append("")
-                lines.append(substitute_builtin_template_vars(body))
-            return "\n".join(lines).rstrip()
-        text = (playbook or "").strip()
-        if not text:
+        if not own:
             return ""
-        return "\n".join(
-            [
-                "## Plugin Playbook",
-                "",
-                f'The following playbook comes from the mounted plugin '
-                f'"{active_plugin}" (no rules/ shipped; loaded from '
-                "PLAYBOOK.md/README.md). Treat it as authoritative routing "
-                "instructions; load skill bodies with `load_skill` when a "
-                "skill is named.",
-                "",
-                substitute_builtin_template_vars(text),
-            ]
-        ).rstrip()
+        lines = ["## Plugin Rules", ""]
+        lines.append(
+            f'The following directives come from the mounted plugin '
+            f'"{active_plugin}" and are active for this session. Treat them '
+            "as authoritative instructions."
+        )
+        for r in own:
+            body = getattr(r, "body", "") or ""
+            if not body.strip():
+                continue
+            lines.append("")
+            lines.append(f"### Rule: {r.plugin}/{r.name}")
+            lines.append("")
+            lines.append(substitute_builtin_template_vars(body))
+        return "\n".join(lines).rstrip()
     if not rules:
         return ""
     # Unmounted: catalog only always_apply rules. always_apply=false rules

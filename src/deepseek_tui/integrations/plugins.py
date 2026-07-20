@@ -126,7 +126,6 @@ __all__ = [
     "plugin_description_blurb",
     "read_lockfile",
     "read_marketplaces",
-    "read_plugin_playbook",
     "reindex_contribution_indexes",
     "remove_marketplace",
     "resolve_marketplace_plugin",
@@ -139,10 +138,6 @@ __all__ = [
     "update_plugin",
     "user_plugins_dir",
 ]
-
-# Mount-time playbook fallback when a plugin ships no ``rules/``.
-_PLAYBOOK_CANDIDATES = ("PLAYBOOK.md", "README.md")
-_PLAYBOOK_MAX_CHARS = 12_000
 
 _LOG = logging.getLogger(__name__)
 
@@ -544,34 +539,6 @@ class LoadedPlugin:
         return self.manifest.name
 
 
-def read_plugin_playbook(
-    plugin_dir: Path,
-    *,
-    max_chars: int = _PLAYBOOK_MAX_CHARS,
-) -> str | None:
-    """Return mount playbook text from ``PLAYBOOK.md`` or ``README.md``.
-
-    Used when a mounted plugin has no ``rules/`` to inject. Prefers
-    ``PLAYBOOK.md`` (AI-oriented) over ``README.md`` (often human-oriented).
-    Returns ``None`` when neither file exists or both are empty.
-    """
-    root = plugin_dir.expanduser()
-    for name in _PLAYBOOK_CANDIDATES:
-        path = root / name
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if not text:
-            continue
-        if len(text) > max_chars:
-            text = text[:max_chars].rstrip() + "\n\n… (playbook truncated)"
-        return text
-    return None
-
-
 def plugin_description_blurb(
     plugin: LoadedPlugin,
     *,
@@ -582,14 +549,12 @@ def plugin_description_blurb(
     if desc:
         one = " ".join(desc.split())
         return one if len(one) <= max_chars else one[: max_chars - 1] + "…"
-    for name in ("README.md", "PLAYBOOK.md"):
-        path = plugin.path / name
-        if not path.is_file():
-            continue
+    readme = plugin.path / "README.md"
+    if readme.is_file():
         try:
-            text = path.read_text(encoding="utf-8")
+            text = readme.read_text(encoding="utf-8")
         except OSError:
-            continue
+            text = ""
         for line in text.splitlines():
             s = line.strip()
             if not s or s.startswith("#") or s.startswith(">") or s.startswith("```"):

@@ -14,9 +14,10 @@ import {
   type RegistryEntry
 } from './InstalledPluginsPanel'
 
-/** Plugins are bundles of skills + hooks + MCP servers managed by the Python
- * runtime (`/v1/plugins`). Skills load as-is; hooks and MCP servers stay
- * inactive until the plugin is trusted. Mutations apply on the next session. */
+/** Plugins are bundles of rules + skills + hooks + MCP servers managed by the
+ * Python runtime (`/v1/plugins`). Mounting via “Use plugin” injects `rules/`
+ * as scenario guidance; skills load on demand; hooks and MCP stay inactive
+ * until the plugin is trusted. Mutations apply on the next session. */
 export function PluginsView(): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)

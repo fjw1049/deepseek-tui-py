@@ -41,6 +41,18 @@ Source → Locator → FormatAdapter → DerivedPlugin IR
 作者默认使用 Claude 目录布局。运行时唯一真相是 `DerivedPlugin`（inspect）+
 `PluginSession`（Engine）。不要把外部插件“转换改写”成 DeepSeek 专用安装副本。
 
+### 挂载指导（rules）
+
+主界面是 Workbench：聊天「+」→「使用插件」挂载 `@plugin:<name>`。
+
+| 产物 | 角色 |
+|---|---|
+| `rules/*.md` | **唯一**挂载时行为指导；全文注入系统提示 |
+| `skills/*/SKILL.md` | 按需 `load_skill` |
+| `README.md` | 人类文档 / description 摘录；**不**注入 prompt |
+
+无 `rules/` 的插件挂载后不注入指导（不再回退 `PLAYBOOK.md` / `README.md`）。
+
 ## 2. 公共接口
 
 ```python
