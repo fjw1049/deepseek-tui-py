@@ -28,8 +28,9 @@ export type PetMascotStatus = 'ready' | 'fallback' | 'hidden'
 
 const ROAM_MIN = -70
 const ROAM_MAX = 70
-const ROAM_STEP = 0.85
-const ROAM_TICK_MS = 100
+/** Slow horizontal drift so idle roam reads as a stroll, not a dash. */
+const ROAM_STEP = 0.4
+const ROAM_TICK_MS = 120
 const FAILED_HOLD_MS = 2200
 const RESOLVED_BURST_MS = 700
 const REASONING_HOLD_MS = 1200
@@ -314,10 +315,12 @@ export function usePetController() {
     return () => window.clearInterval(timer)
   }, [canRoam])
 
+  // While roaming, always use the walk cycle — no center dead-zone that
+  // snaps back to standing idle and makes the stroll flicker.
   const displayStateId = useMemo(() => {
-    if (!canRoam || Math.abs(roam.offset) < 4) return stateId
+    if (!canRoam) return stateId
     return roam.direction > 0 ? 'running-right' : 'running-left'
-  }, [canRoam, roam.direction, roam.offset, stateId])
+  }, [canRoam, roam.direction, stateId])
 
   const setEnabled = useCallback(
     (next: boolean) => {
