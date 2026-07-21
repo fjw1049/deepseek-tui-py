@@ -70,6 +70,9 @@ async def test_compact_thread_emits_context_compaction_item(
     compaction_items = [i for i in detail.items if i.kind == TurnItemKind.CONTEXT_COMPACTION]
     assert len(compaction_items) == 1
     assert "compacted" in (compaction_items[0].detail or "").lower()
+    meta = compaction_items[0].metadata if isinstance(compaction_items[0].metadata, dict) else {}
+    snap = meta.get("session_messages")
+    assert isinstance(snap, list) and len(snap) == 2
 
     async with manager._active_lock:
         state = manager._active.get(thread.id)

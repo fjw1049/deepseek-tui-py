@@ -264,7 +264,7 @@ describe('groupProcessRows', () => {
     expect(rows).toEqual([{ type: 'block', block: expect.objectContaining({ id: 't1' }) }])
   })
 
-  it('breaks the batch on a different tool name', () => {
+  it('folds mixed consecutive probe tool names into one batch', () => {
     const blocks: ChatBlock[] = [
       toolBlock('t1', 'read_file'),
       toolBlock('t2', 'read_file'),
@@ -272,27 +272,26 @@ describe('groupProcessRows', () => {
       toolBlock('t4', 'list_dir')
     ]
     const rows = groupProcessRows(blocks)
-    expect(rows).toHaveLength(2)
-    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'read_file' })
-    expect(rows[1]).toMatchObject({ type: 'tool_batch', toolName: 'list_dir' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      type: 'tool_batch',
+      toolName: 'probe',
+      mixed: true
+    })
+    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(4)
   })
 
-  it('breaks the batch on an error block and keeps the error on its own row', () => {
+  it('folds error and running probes into the same batch as successes', () => {
     const blocks: ChatBlock[] = [
       toolBlock('t1', 'read_file'),
       toolBlock('t2', 'read_file'),
       toolBlock('t3', 'read_file', { status: 'error' }),
-      toolBlock('t4', 'read_file')
+      toolBlock('t4', 'read_file', { status: 'running' })
     ]
     const rows = groupProcessRows(blocks)
-    // batch(t1,t2) + error block(t3) + lone block(t4)
-    expect(rows).toHaveLength(3)
-    expect(rows[0]).toMatchObject({ type: 'tool_batch' })
-    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(2)
-    expect(rows[1]).toMatchObject({ type: 'block' })
-    expect(rows[1]!.type === 'block' && rows[1].block.id).toBe('t3')
-    expect(rows[2]).toMatchObject({ type: 'block' })
-    expect(rows[2]!.type === 'block' && rows[2].block.id).toBe('t4')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'read_file' })
+    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(4)
   })
 
   it('never folds file changes or shell commands', () => {

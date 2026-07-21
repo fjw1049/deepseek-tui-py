@@ -10,7 +10,9 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
 
 from deepseek_tui.server.threads.models import (
     CURRENT_RUNTIME_SCHEMA_VERSION,

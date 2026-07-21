@@ -67,6 +67,11 @@ import { StepFlow, lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
 import { humanizeAgentType } from '../../lib/agent-type-label'
 import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
 import {
+  buildProbeBatchMeta,
+  isMergeableProbeTool,
+  probeComposeSegments
+} from '../../lib/step-flow-collapse'
+import {
   ToolCard,
   registerToolRenderers,
   buildToolRenderContext,
@@ -1680,53 +1685,54 @@ function visibleExecutionBlocks(
 type ToolProcessBlock = Extract<ChatBlock, { kind: 'tool' }>
 
 /**
- * Whether a process block is a successful read-only probe (read_file, list_dir,
- * grep…) that can be folded into a batch. Mirrors the `!isHeavy` rule in
- * tool-card.tsx: running / error / file mutations / shell commands stay on their
- * own row. Todo and subagent-orchestration tool calls are excluded so their
- * dedicated panels keep working.
+ * Whether a process block is a read-only probe that can fold into a batch.
+ * Aligned with StepFlow: success / running / error probes merge; mutations,
+ * shell, todo, and subagent-orchestration stay solo.
  */
 function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
   if (block.kind !== 'tool') return false
-  if (block.status !== 'success') return false
+  if (
+    block.status !== 'success' &&
+    block.status !== 'running' &&
+    block.status !== 'error'
+  ) {
+    return false
+  }
   if (block.toolKind === 'file_change' || block.toolKind === 'command_execution') return false
   const name = toolNameFromProcessBlock(block)
   if (SHELL_TOOL_NAMES.has(name)) return false
   if (isTodoToolBlock(block)) return false
   if (isSubagentOrchestrationToolName(name)) return false
-  return true
+  return isMergeableProbeTool(name)
 }
 
 export type RenderRow =
   | { type: 'block'; block: ChatBlock }
-  | { type: 'tool_batch'; toolName: string; blocks: ToolProcessBlock[] }
+  | { type: 'tool_batch'; toolName: string; blocks: ToolProcessBlock[]; mixed?: boolean }
 
 /**
- * Fold the visible execution blocks into render rows, collapsing runs of ≥2
- * consecutive same-name read-only probes into a single `tool_batch`. A run of
- * one stays a plain block row, and any non-mergeable block (or a different tool
- * name) ends the current run.
+ * Fold consecutive settled read-only probes into one `tool_batch`, including
+ * mixed read/search/grep runs (same rule as Task/SubAgent StepFlow). A lone
+ * probe stays a plain block; non-mergeable rows end the current run.
  */
 export function groupProcessRows(visible: ChatBlock[]): RenderRow[] {
   const rows: RenderRow[] = []
   let buffer: ToolProcessBlock[] = []
-  let bufferName = ''
 
   const flush = (): void => {
     if (buffer.length >= 2) {
-      rows.push({ type: 'tool_batch', toolName: bufferName, blocks: buffer })
+      const names = new Set(buffer.map((b) => toolNameFromProcessBlock(b).toLowerCase()))
+      const mixed = names.size > 1
+      const toolName = mixed ? 'probe' : [...names][0] || toolNameFromProcessBlock(buffer[0]!)
+      rows.push({ type: 'tool_batch', toolName, blocks: buffer, mixed })
     } else if (buffer.length === 1) {
       rows.push({ type: 'block', block: buffer[0]! })
     }
     buffer = []
-    bufferName = ''
   }
 
   for (const block of visible) {
     if (isMergeableProbeBlock(block)) {
-      const name = toolNameFromProcessBlock(block)
-      if (buffer.length > 0 && name !== bufferName) flush()
-      bufferName = name
       buffer.push(block)
       continue
     }
@@ -1842,15 +1848,40 @@ function pickToolBatchIcon(toolName: string): LucideIcon {
  */
 function ToolBatchPanel({
   toolName,
-  blocks
+  blocks,
+  mixed = false
 }: {
   toolName: string
   blocks: ToolProcessBlock[]
+  mixed?: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
-  const Icon = pickToolBatchIcon(toolName)
-  const label = humanizeToolName(toolName) || toolName
+  const Icon = pickToolBatchIcon(mixed ? 'probe' : toolName)
+  const meta = useMemo(() => {
+    const rows = blocks.map((block) => {
+      const name = toolNameFromProcessBlock(block)
+      const ctx = buildToolRenderContext(block)
+      return {
+        toolName: name,
+        detail: ctx.description || undefined,
+        label: ctx.label || name
+      }
+    })
+    return buildProbeBatchMeta(rows)
+  }, [blocks])
+  const composeTitle = mixed
+    ? probeComposeSegments(meta.compose)
+        .map((seg) => t(seg.key, { count: seg.count }))
+        .join(' · ')
+    : ''
+  const label = mixed
+    ? composeTitle || t('toolBatchProbeLabel')
+    : humanizeToolName(toolName) || toolName
+  const title = mixed
+    ? label
+    : t('toolBatchTitle', { label, count: blocks.length })
+  const preview = meta.preview
 
   return (
     <div className="overflow-hidden rounded-[12px] border border-ds-border-muted/50 bg-ds-card/40">
@@ -1858,17 +1889,22 @@ function ToolBatchPanel({
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className="group flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-ds-hover/40"
+        className="group flex w-full items-start gap-2 px-2.5 py-1.5 text-left transition hover:bg-ds-hover/40"
       >
-        <Icon className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-        <span className="min-w-0 flex-1 text-[13.5px] leading-6 text-ds-muted">
-          {t('toolBatchTitle', { label, count: blocks.length })}
+        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13.5px] leading-6 text-ds-muted">{title}</span>
+          {!expanded && preview ? (
+            <span className="mt-0.5 block truncate text-[11px] leading-4 text-ds-faint" title={preview}>
+              {preview}
+            </span>
+          ) : null}
         </span>
         {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+          <ChevronDown className="mt-1 h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
         ) : (
           <ChevronRight
-            className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
+            className="mt-1 h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
             strokeWidth={1.8}
           />
         )}
@@ -2485,6 +2521,7 @@ function ProcessStream({
             key={`batch-${row.blocks[0]!.id}`}
             toolName={row.toolName}
             blocks={row.blocks}
+            mixed={row.mixed}
           />
         ) : (
           <ProcessStreamEntry

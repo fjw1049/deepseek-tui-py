@@ -295,6 +295,16 @@ async def execute_detached_workflow(
             logs=logs,
             status="running",
             workspace=project_cwd,
+            # Forward full runtime state so a crash + resume reconstructs
+            # dynamic mutations, budgets, and skip/failed sets. Without these
+            # the record stays at initial values and resume re-runs everything.
+            runtime_graph=ctx_obj.runtime_graph,
+            dynamic_states=dict(ctx_obj.dynamic_states),
+            budgets_used=dict(ctx_obj.budgets_used),
+            generated_node_ids=list(ctx_obj.generated_node_ids),
+            skipped_step_ids=list(ctx_obj.skipped_step_ids),
+            failed_step_ids=list(ctx_obj.failed_step_ids),
+            estimated_tokens_used=ctx_obj.estimated_tokens_used,
         )
 
     try:

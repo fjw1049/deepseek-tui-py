@@ -308,6 +308,8 @@ export function OperationContextDock({
   }
 
   const [collapsed, setCollapsed] = useState({ tools: false, git: true, process: true, tasks: true })
+  /** Which process todo row is expanded to full text (single-line by default). */
+  const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
 
@@ -509,54 +511,71 @@ export function OperationContextDock({
               const completed = item.status === 'completed'
               const inProgress = item.status === 'in_progress'
               const step = index + 1
+              const rowKey = `${item.id}-${item.content}`
+              const expanded = expandedTodoKey === rowKey
               return (
-                <li
-                  key={`${item.id}-${item.content}`}
-                  className={[
-                    'flex items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 transition-colors',
-                    inProgress ? 'bg-ds-hover/60' : ''
-                  ].join(' ')}
-                >
-                  <span
-                    className="flex h-5 w-5 shrink-0 items-center justify-center"
-                    aria-hidden
-                  >
-                    {completed ? (
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">
-                        <Check className="h-3 w-3" strokeWidth={3} />
-                      </span>
-                    ) : (
-                      <span
-                        className={[
-                          'flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums',
-                          inProgress
-                            ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                            : 'bg-ds-subtle text-ds-faint'
-                        ].join(' ')}
-                      >
-                        {step}
-                      </span>
-                    )}
-                  </span>
-                  <span
+                <li key={rowKey}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedTodoKey((current) => (current === rowKey ? null : rowKey))
+                    }
+                    aria-expanded={expanded}
+                    title={expanded ? undefined : item.content}
                     className={[
-                      'min-w-0 flex-1 break-words text-[13px] leading-5',
-                      completed
-                        ? 'text-ds-faint line-through decoration-ds-faint/55'
-                        : inProgress
-                          ? 'font-semibold text-ds-ink'
-                          : 'text-ds-muted'
+                      'flex w-full items-start gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left transition-colors',
+                      'hover:bg-ds-hover/50',
+                      inProgress ? 'bg-ds-hover/60' : ''
                     ].join(' ')}
                   >
-                    {item.content}
-                  </span>
-                  {!completed ? (
-                    <ChevronRight
-                      className="h-3.5 w-3.5 shrink-0 text-ds-faint/70"
-                      strokeWidth={2}
+                    <span
+                      className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center"
                       aria-hidden
-                    />
-                  ) : null}
+                    >
+                      {completed ? (
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">
+                          <Check className="h-3 w-3" strokeWidth={3} />
+                        </span>
+                      ) : (
+                        <span
+                          className={[
+                            'flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums',
+                            inProgress
+                              ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                              : 'bg-ds-subtle text-ds-faint'
+                          ].join(' ')}
+                        >
+                          {step}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={[
+                        'min-w-0 flex-1 text-[13px] leading-5',
+                        expanded ? 'break-words whitespace-pre-wrap' : 'truncate',
+                        completed
+                          ? 'text-ds-faint line-through decoration-ds-faint/55'
+                          : inProgress
+                            ? 'font-semibold text-ds-ink'
+                            : 'text-ds-muted'
+                      ].join(' ')}
+                    >
+                      {item.content}
+                    </span>
+                    {expanded ? (
+                      <ChevronDown
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint/70"
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                    ) : (
+                      <ChevronRight
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint/70"
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                    )}
+                  </button>
                 </li>
               )
             })}

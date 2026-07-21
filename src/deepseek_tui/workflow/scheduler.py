@@ -44,6 +44,7 @@ from deepseek_tui.workflow.models import (
     WorkflowStep,
     WorkflowStepError,
     WorkflowValidationError,
+    ANALYSIS_ONLY_TOOLS,
     evaluate_loop_until,
     make_step_output,
     render_template,
@@ -262,6 +263,16 @@ async def schedule_workflow(
                 f"token_budget exceeded ({ctx.estimated_tokens_used} > {spec.policy.token_budget})"
             )
 
+    def check_wall_clock() -> None:
+        # Enforce policy.wall_clock_seconds as a hard wall-clock budget.
+        # Checked alongside check_cancel() at every ready-set iteration so a
+        # long-running step is caught on the next drain tick.
+        limit = spec.policy.wall_clock_seconds
+        if limit and limit > 0 and (time.monotonic() - started) > limit:
+            raise WorkflowFailedError(
+                f"wall_clock_seconds exceeded ({int(time.monotonic() - started)}s > {limit}s)"
+            )
+
     async def cancel_pending(tasks: set[asyncio.Task[Any]]) -> None:
         for task_obj in tasks:
             if not task_obj.done():
@@ -363,6 +374,16 @@ async def schedule_workflow(
             if run is not None:
                 run.status = "skipped"
                 run.error = "aborted"
+                progress()
+            raise
+        except WorkflowFailedError:
+            # Hard budget/policy failures (token_budget, wall_clock, max_agents,
+            # reduce source_policy=success) must propagate even under
+            # on_error=continue - otherwise the budget is silently swallowed
+            # as an ordinary step failure and the workflow keeps running.
+            if run is not None:
+                run.status = "error"
+                run.error = "policy failure"
                 progress()
             raise
         except Exception as exc:  # noqa: BLE001
@@ -862,17 +883,32 @@ async def schedule_workflow(
                 )
                 check_token_budget(prompt)
 
+                # The controller is an orchestrator, not a worker. Track its
+                # agent_id separately so it does not consume the worker budget
+                # (DynamicBudget.max_agents) nor inflate agents_left accounting.
+                controller_agent_ids: list[str] = state.setdefault(
+                    "controller_agent_ids", []
+                )
+
                 def _on_ctrl(aid: str) -> None:
-                    ctx.spawned_agent_ids.append(aid)
+                    if aid not in controller_agent_ids:
+                        controller_agent_ids.append(aid)
+
+                # Enforce allow_write_tools: when False (default), intersect
+                # the controller's declared tools with the read-only allowlist
+                # so a controller cannot escalate to write tools by declaration.
+                if step.permissions.allow_write_tools:
+                    ctrl_tools = step.controller_allowed_tools
+                else:
+                    declared = step.controller_allowed_tools or []
+                    ctrl_tools = [t for t in declared if t in ANALYSIS_ONLY_TOOLS] or list(ANALYSIS_ONLY_TOOLS)
 
                 decision_out = await runner.run(
                     prompt=prompt,
                     label=f"dynamic:{step.id}:r{round_idx}",
                     agent_type=step.controller_agent_type,
                     model=step.controller_model,
-                    allowed_tools=step.controller_allowed_tools
-                    if step.permissions.allow_write_tools
-                    else (step.controller_allowed_tools or []),
+                    allowed_tools=ctrl_tools,
                     output_schema=DECISION_SCHEMA,
                     policy=spec.policy,
                     cancel_event=cancel_event,
@@ -996,6 +1032,7 @@ async def schedule_workflow(
         exclude = exclude or set()
         while True:
             check_cancel()
+            check_wall_clock()
             completed = set(ctx.completed_step_ids)
             failed = set(ctx.failed_step_ids)
             skipped = set(ctx.skipped_step_ids)

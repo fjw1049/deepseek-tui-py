@@ -78,6 +78,7 @@ from deepseek_tui.server.threads.broadcast import AsyncBroadcast
 from deepseek_tui.server.threads.items import (
     duration_ms,
     file_change_completion_detail,
+    reconstruct_messages_from_turn,
     reconstruct_messages_from_turns,
     task_tool_metadata_from_result,
     todo_tool_metadata_from_result,
@@ -957,6 +958,20 @@ class RuntimeThreadManager:
         handle, engine_task = await self._ensure_engine_loaded(thread, trace=trace)
         trace.runtime_turn_created_ms = now_ms()
 
+        # Soft-resume: previous turn cut short → rehydrate before reserving.
+        prior_turns = self.store.list_turns_for_thread(thread_id)
+        resume_from_incomplete = bool(
+            prior_turns
+            and prior_turns[-1].status
+            in (
+                RuntimeTurnStatus.INTERRUPTED,
+                RuntimeTurnStatus.FAILED,
+            )
+            and not req.hidden
+        )
+        if resume_from_incomplete:
+            self._resync_warm_engine_from_store(thread_id)
+
         now = datetime.now(timezone.utc)
         auto_approve = req.auto_approve if req.auto_approve is not None else thread.auto_approve
         trust_mode = req.trust_mode if req.trust_mode is not None else thread.trust_mode
@@ -979,6 +994,21 @@ class RuntimeThreadManager:
                 state.provider = provider
             state.engine.mode = effective_mode
             state.engine.tool_context.metadata["turn_latency_turn_id"] = turn_id
+            # Inject CONTINUE_NUDGE only after we own the turn slot so a
+            # rejected concurrent start cannot pollute session_messages.
+            if resume_from_incomplete:
+                from deepseek_tui.engine.context_pressure import wrap_system_reminder
+                from deepseek_tui.protocol.messages import Message, MessageOrigin
+                from deepseek_tui.tools.durable_transcript import CONTINUE_NUDGE
+
+                resume_msgs = list(state.engine.session_messages)
+                resume_msgs.append(
+                    Message.user(
+                        wrap_system_reminder(CONTINUE_NUDGE),
+                        origin=MessageOrigin.SYSTEM_REMINDER,
+                    )
+                )
+                state.engine.sync_session(resume_msgs, model=model)
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
             )
@@ -1164,6 +1194,7 @@ class RuntimeThreadManager:
 
         engine.turn_usage_ledger.reset()
         before_count = len(engine.session_messages)
+        compaction_succeeded = False
         if before_count == 0:
             summary_text = "Nothing to compact — session is empty."
             engine.session_messages.clear()
@@ -1171,6 +1202,7 @@ class RuntimeThreadManager:
             result = await engine._run_compaction(list(engine.session_messages))
             engine.session_messages[:] = result.messages
             if result.success:
+                compaction_succeeded = True
                 summary_text = (
                     f"Context compacted: {before_count} → {len(result.messages)} messages."
                 )
@@ -1185,6 +1217,15 @@ class RuntimeThreadManager:
                 )
 
         item_id = f"item_{uuid.uuid4().hex[:8]}"
+        # Persist the compacted session so later reconstruct/resync cannot
+        # re-inflate the pre-compact tool history from older turn items.
+        compaction_meta: dict[str, Any] | None = None
+        if compaction_succeeded:
+            compaction_meta = {
+                "session_messages": [
+                    m.model_dump(mode="json") for m in engine.session_messages
+                ]
+            }
         item = TurnItemRecord(
             id=item_id,
             turn_id=turn_id,
@@ -1192,6 +1233,7 @@ class RuntimeThreadManager:
             status=TurnItemLifecycleStatus.COMPLETED,
             summary=summarize_text(summary_text, SUMMARY_LIMIT),
             detail=summary_text,
+            metadata=compaction_meta,
             started_at=now,
             ended_at=now,
         )
@@ -1370,6 +1412,48 @@ class RuntimeThreadManager:
         messages = reconstruct_messages_from_turns(self.store, thread.id)
         if messages:
             engine.sync_session(messages, model=thread.model)
+
+    def _resync_warm_engine_from_store(self, thread_id: str) -> None:
+        """Rehydrate a warm engine after an interrupted/failed turn.
+
+        Engine cancel/fail discards in-flight ``working_messages`` so a partial
+        assistant chunk cannot corrupt later turns. Completed tool rounds from
+        that turn are already durable as turn items — sync them back so the
+        next user message (e.g. "继续") continues from the last completed
+        tool-round boundary instead of an empty ``session_messages``.
+
+        When the live engine already holds a compaction bridge, keep that
+        compacted prefix and only append the incomplete turn's durable
+        progress — a full reconstruct would re-inflate pre-compact history.
+        """
+        state = self._active.get(thread_id)
+        if state is None:
+            return
+        thread = self.store.load_thread(thread_id)
+        reconstructed = reconstruct_messages_from_turns(self.store, thread_id)
+
+        from deepseek_tui.engine.context_pressure import extract_compaction_bridge_text
+
+        engine_msgs = list(state.engine.session_messages)
+        if extract_compaction_bridge_text(engine_msgs):
+            turns = self.store.list_turns_for_thread(thread_id)
+            incomplete = [
+                t
+                for t in turns
+                if t.status
+                in (
+                    RuntimeTurnStatus.INTERRUPTED,
+                    RuntimeTurnStatus.FAILED,
+                )
+            ]
+            if incomplete:
+                tail = reconstruct_messages_from_turn(self.store, incomplete[-1])
+                state.engine.sync_session(
+                    [*engine_msgs, *tail], model=thread.model
+                )
+                return
+
+        state.engine.sync_session(reconstructed, model=thread.model)
 
     def _restore_active_plugin(self, engine: Engine, thread: ThreadRecord) -> None:
         """Re-apply the session's mounted plugin after engine reconstruction.
@@ -1631,6 +1715,12 @@ class RuntimeThreadManager:
             },
             force_checkpoint=True,
         )
+
+        if turn_status in (
+            RuntimeTurnStatus.INTERRUPTED,
+            RuntimeTurnStatus.FAILED,
+        ):
+            self._resync_warm_engine_from_store(thread_id)
 
         async with self._active_lock:
             state = self._active.get(thread_id)
@@ -2919,6 +3009,14 @@ class RuntimeThreadManager:
             },
             force_checkpoint=True,
         )
+
+        # Cancel/fail dropped Engine.session_messages mid-turn; durable items
+        # still hold completed tool rounds — rehydrate before the next turn.
+        if turn_status in (
+            RuntimeTurnStatus.INTERRUPTED,
+            RuntimeTurnStatus.FAILED,
+        ):
+            self._resync_warm_engine_from_store(thread_id)
 
         # Clear active turn
         async with self._active_lock:

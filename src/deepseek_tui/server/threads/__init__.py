@@ -16,6 +16,7 @@ keeps working as an import path.
 from deepseek_tui.server.threads.broadcast import AsyncBroadcast
 from deepseek_tui.server.threads.items import (
     file_change_completion_detail,
+    reconstruct_messages_from_turn,
     reconstruct_messages_from_turns,
     task_tool_metadata_from_result,
     todo_tool_metadata,
@@ -97,6 +98,7 @@ __all__ = [
     "build_turn_usage_record",
     "duration_ms",
     "file_change_completion_detail",
+    "reconstruct_messages_from_turn",
     "reconstruct_messages_from_turns",
     "session_model_usage_response",
     "task_tool_metadata_from_result",

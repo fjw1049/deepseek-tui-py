@@ -278,6 +278,23 @@ def apply_decision_actions(
         "new_node_ids": [],
     }
     allowed = set(step.permissions.actions)
+    # Track agent slots this action batch intends to consume so multiple
+    # spawn/fanout actions in one decision cannot collectively exceed
+    # DynamicBudget.max_agents. ctx.spawned_agent_ids holds already-running
+    # workers; pending_agent_reservations covers not-yet-scheduled ones in
+    # this batch.
+    pending_agent_reservations = 0
+
+    def _reserve_agents(n: int, *, action_label: str) -> None:
+        nonlocal pending_agent_reservations
+        used = len(ctx.spawned_agent_ids) + pending_agent_reservations
+        if used + n > step.budget.max_agents:
+            raise WorkflowFailedError(
+                f"dynamic {action_label}: max_agents budget "
+                f"({step.budget.max_agents}) exceeded "
+                f"({used + n} would run)"
+            )
+        pending_agent_reservations += n
 
     for i, action_raw in enumerate(actions):
         if not isinstance(action_raw, dict):
@@ -343,6 +360,7 @@ def apply_decision_actions(
         after = _resolve_after(action_raw, parent_id=parent_id)
 
         if action == "spawn":
+            _reserve_agents(1, action_label=f"spawn {node_id}")
             prompt = str(action_raw.get("prompt") or action_raw.get("prompt_template") or "")
             if not prompt.strip():
                 raise WorkflowValidationError("spawn requires prompt")
@@ -364,6 +382,7 @@ def apply_decision_actions(
             if isinstance(items, list) and items:
                 if len(items) > step.budget.max_fanout_items:
                     raise WorkflowValidationError("fanout items exceed budget")
+                _reserve_agents(len(items), action_label=f"fanout {node_id}")
                 parsed_items = [str(x) for x in items]
             elif isinstance(items_from, dict):
                 src = items_from.get("step")

@@ -1,6 +1,12 @@
 import { useState, type ReactElement, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import {
+  probeComposeSegments,
+  probeKindLabelKey,
+  type ProbeBatchCompose,
+  type ProbeBatchEntry
+} from '../../lib/step-flow-collapse'
 import { humanizeToolName } from './tool/render-context'
 
 export type StepFlowStatus =
@@ -36,6 +42,12 @@ export type StepFlowItem = {
   toolName?: string
   batchToolName?: string
   batchCount?: number
+  /** True when the batch mixed different probe tools (read + search + …). */
+  batchMixed?: boolean
+  /** Per-kind counts for mixed-batch titles (`读 2 · 搜 2`). */
+  batchCompose?: ProbeBatchCompose
+  /** Typed targets for expand body / preview. */
+  batchEntries?: ProbeBatchEntry[]
 }
 
 const STATUS_STYLE: Record<
@@ -128,6 +140,15 @@ function summaryText(item: StepFlowItem): string | null {
   return null
 }
 
+function batchComposeTitle(
+  compose: ProbeBatchCompose | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string | null {
+  if (!compose) return null
+  const parts = probeComposeSegments(compose).map((seg) => t(seg.key, { count: seg.count }))
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 function StepRow({
   item,
   isLast,
@@ -142,18 +163,38 @@ function StepRow({
   const isNarration = item.variant === 'narration'
   const isBatch = item.variant === 'batch'
   const batchTool = item.batchToolName || item.toolName || ''
+  const composeTitle =
+    isBatch && item.batchMixed ? batchComposeTitle(item.batchCompose, t) : null
+  const batchLabel = composeTitle
+    ? composeTitle
+    : item.batchMixed
+      ? t('toolBatchProbeLabel')
+      : humanizeToolName(batchTool) || item.label || batchTool
   const title = isBatch
-    ? t('toolBatchTitle', {
-        label: humanizeToolName(batchTool) || item.label || batchTool,
-        count: item.batchCount ?? 0
-      })
+    ? composeTitle
+      ? batchLabel
+      : t('toolBatchTitle', {
+          label: batchLabel,
+          count: item.batchCount ?? 0
+        })
     : item.label
+  const batchPreview =
+    isBatch && item.detail?.trim()
+      ? item.detail.trim()
+      : isBatch && item.batchEntries?.length
+        ? item.batchEntries
+            .map((e) => e.target)
+            .filter(Boolean)
+            .join(' · ')
+        : ''
+  const batchEntries = item.batchEntries
   // Narration already shows its full line on the rail; only expand when the
   // stored body is meaningfully longer than the visible label.
-  const body = summaryText(item)
+  const body = isBatch && batchEntries && batchEntries.length > 0 ? null : summaryText(item)
+  const hasTypedBatch = Boolean(isBatch && batchEntries && batchEntries.length > 0)
   const hasBody = Boolean(
-    body &&
-      (isBatch || !isNarration || body.trim() !== item.label.trim())
+    hasTypedBatch ||
+      (body && (isBatch || !isNarration || body.trim() !== item.label.trim()))
   )
   const depth = Math.max(0, item.depth ?? 0)
 
@@ -203,10 +244,21 @@ function StepRow({
                           : 'text-[12.5px] leading-5'
                       ].join(' ')
               ].join(' ')}
-              title={isNarration || isBatch ? title : undefined}
+              title={isBatch ? title : undefined}
             >
               {title}
             </span>
+            {isBatch && batchPreview && !open ? (
+              <span
+                className={[
+                  'mt-0.5 block truncate text-ds-faint',
+                  compact ? 'text-[10.5px] leading-4' : 'text-[11px] leading-4'
+                ].join(' ')}
+                title={batchPreview}
+              >
+                {batchPreview}
+              </span>
+            ) : null}
             {item.detail && !isBatch ? (
               <span
                 className={[
@@ -243,7 +295,26 @@ function StepRow({
           ].join(' ')}
         >
           <div className="min-h-0 overflow-hidden">
-            {hasBody && body ? (
+            {hasTypedBatch && open ? (
+              <div className="mx-1 mb-1.5 overflow-hidden rounded-[12px] bg-black/[0.03] dark:bg-white/[0.04]">
+                <ul className="max-h-44 overflow-auto px-3 py-2">
+                  {batchEntries!.map((entry, idx) => (
+                    <li
+                      key={`${entry.toolName}-${idx}-${entry.target}`}
+                      className="flex gap-2 py-0.5 text-[11.5px] leading-[1.45]"
+                    >
+                      <span className="shrink-0 font-medium text-ds-faint">
+                        {t(probeKindLabelKey(entry.kind))}
+                      </span>
+                      <span className="min-w-0 break-words text-ds-ink/90">
+                        {entry.target || '—'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {!hasTypedBatch && hasBody && body ? (
               <div className="mx-1 mb-1.5 overflow-hidden rounded-[12px] bg-black/[0.03] dark:bg-white/[0.04]">
                 <div className="px-3 pb-1 pt-2 text-[10.5px] font-semibold tracking-[0.02em] text-ds-muted">
                   {t('stepFlowSummary')}

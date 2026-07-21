@@ -53,67 +53,123 @@ def _ordered_turn_items(
     return ordered + orphans
 
 
-def reconstruct_messages_from_turns(
+def reconstruct_messages_from_turn(
     store: RuntimeThreadStore,
-    thread_id: str,
+    turn: TurnRecord,
 ) -> list:
-    """Rebuild Engine chat history from persisted turn items."""
+    """Rebuild chat messages for one turn at the last completed tool-round.
+
+    Soft-resume contract (aligned with Task/SubAgent durable transcripts):
+    - Keep COMPLETED / FAILED tools (failed = finished round with error).
+    - Drop INTERRUPTED / IN_PROGRESS / QUEUED tools and interrupted agent
+      text so the next turn never resumes mid-tool.
+    - ``CONTEXT_COMPACTION`` items that carry a ``session_messages`` snapshot
+      replace history accumulated so far (manual /compact persistence).
+    """
     from deepseek_tui.protocol.messages import (
         Message,
         Role,
         TextBlock,
         ToolUseBlock,
     )
+    from deepseek_tui.tools.durable_transcript import dicts_to_messages
 
     messages: list[Message] = []
-    for turn in store.list_turns_for_thread(thread_id):
-        for item in _ordered_turn_items(store, turn):
-            text = (item.detail or item.summary or "").strip()
-            if item.kind == TurnItemKind.USER_MESSAGE:
-                if not text:
-                    continue
-                messages.append(
-                    Message(role=Role.USER, content=[TextBlock(text=text)])
-                )
-            elif item.kind == TurnItemKind.AGENT_MESSAGE:
-                if not text:
-                    continue
-                messages.append(
-                    Message(role=Role.ASSISTANT, content=[TextBlock(text=text)])
-                )
-            elif item.kind in {
-                TurnItemKind.TOOL_CALL,
-                TurnItemKind.COMMAND_EXECUTION,
-                TurnItemKind.FILE_CHANGE,
+    for item in _ordered_turn_items(store, turn):
+        text = (item.detail or item.summary or "").strip()
+        if item.kind == TurnItemKind.CONTEXT_COMPACTION:
+            meta = item.metadata if isinstance(item.metadata, dict) else {}
+            snap = meta.get("session_messages")
+            if isinstance(snap, list) and snap:
+                messages = list(dicts_to_messages(snap))
+            continue
+        if item.kind == TurnItemKind.USER_MESSAGE:
+            if not text:
+                continue
+            messages.append(
+                Message(role=Role.USER, content=[TextBlock(text=text)])
+            )
+        elif item.kind == TurnItemKind.AGENT_MESSAGE:
+            # Partial preface from a cancelled stream must not seed resume.
+            if item.status in {
+                TurnItemLifecycleStatus.INTERRUPTED,
+                TurnItemLifecycleStatus.IN_PROGRESS,
+                TurnItemLifecycleStatus.QUEUED,
+                TurnItemLifecycleStatus.CANCELED,
             }:
-                meta = item.metadata if isinstance(item.metadata, dict) else {}
-                tool_use_id = str(meta.get("tool_use_id") or item.id)
-                tool_name = str(meta.get("tool_name") or item.summary or "tool")
-                arguments = meta.get("arguments")
-                if not isinstance(arguments, dict):
-                    arguments = {}
-                messages.append(
-                    Message.assistant_with_tools(
-                        [
-                            ToolUseBlock(
-                                id=tool_use_id,
-                                name=tool_name,
-                                input=arguments,
-                            )
-                        ]
-                    )
-                )
-                if item.status in {
-                    TurnItemLifecycleStatus.COMPLETED,
-                    TurnItemLifecycleStatus.FAILED,
-                } and text:
-                    messages.append(
-                        Message.tool_result(
-                            tool_use_id,
-                            text,
-                            is_error=item.status == TurnItemLifecycleStatus.FAILED,
+                continue
+            if not text:
+                continue
+            messages.append(
+                Message(role=Role.ASSISTANT, content=[TextBlock(text=text)])
+            )
+        elif item.kind in {
+            TurnItemKind.TOOL_CALL,
+            TurnItemKind.COMMAND_EXECUTION,
+            TurnItemKind.FILE_CHANGE,
+        }:
+            # Incomplete tool rounds are the soft-resume cutoff — omit them
+            # entirely (do not emit unpaired tool_use or interrupt stubs).
+            if item.status not in {
+                TurnItemLifecycleStatus.COMPLETED,
+                TurnItemLifecycleStatus.FAILED,
+            }:
+                continue
+            if not text:
+                continue
+            meta = item.metadata if isinstance(item.metadata, dict) else {}
+            tool_use_id = str(meta.get("tool_use_id") or item.id)
+            tool_name = str(meta.get("tool_name") or item.summary or "tool")
+            arguments = meta.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
+            messages.append(
+                Message.assistant_with_tools(
+                    [
+                        ToolUseBlock(
+                            id=tool_use_id,
+                            name=tool_name,
+                            input=arguments,
                         )
-                    )
+                    ]
+                )
+            )
+            messages.append(
+                Message.tool_result(
+                    tool_use_id,
+                    text,
+                    is_error=item.status == TurnItemLifecycleStatus.FAILED,
+                )
+            )
+    return messages
+
+
+def _turn_has_compaction_snapshot(
+    store: RuntimeThreadStore, turn: TurnRecord
+) -> bool:
+    for item in _ordered_turn_items(store, turn):
+        if item.kind is not TurnItemKind.CONTEXT_COMPACTION:
+            continue
+        meta = item.metadata if isinstance(item.metadata, dict) else {}
+        snap = meta.get("session_messages")
+        if isinstance(snap, list) and snap:
+            return True
+    return False
+
+
+def reconstruct_messages_from_turns(
+    store: RuntimeThreadStore,
+    thread_id: str,
+) -> list:
+    """Rebuild Engine chat history from persisted turn items."""
+    messages: list = []
+    for turn in store.list_turns_for_thread(thread_id):
+        turn_msgs = reconstruct_messages_from_turn(store, turn)
+        if _turn_has_compaction_snapshot(store, turn):
+            # Snapshot already includes prior history — replace, don't append.
+            messages = turn_msgs
+        else:
+            messages.extend(turn_msgs)
     return messages
 
 
