@@ -294,8 +294,8 @@ export function WorkspaceFileTree({
   }
 
   return (
-    <div className="ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden border-r border-[color-mix(in_srgb,var(--ds-text)_18%,transparent)] bg-[color-mix(in_srgb,var(--ds-sidebar)_88%,var(--ds-text)_4%)] dark:bg-[color-mix(in_srgb,var(--ds-sidebar)_92%,#000_14%)]">
-      <div className="shrink-0 border-b border-[color-mix(in_srgb,var(--ds-text)_16%,transparent)] px-3 py-2.5">
+    <div className="ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden border-r border-[color-mix(in_srgb,var(--ds-text)_14%,transparent)] bg-ds-sidebar">
+      <div className="shrink-0 border-b border-ds-border-muted/60 px-3 py-2.5">
         <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ds-muted">
           {t('workspaceTreeTitle')}
         </div>

@@ -102,6 +102,7 @@ function EditorPaneView({
   patch,
   isEditing,
   focused,
+  showFocusChrome,
   externalOpenError,
   onFocus,
   onEdit,
@@ -114,6 +115,8 @@ function EditorPaneView({
   patch?: string
   isEditing: boolean
   focused: boolean
+  /** Only when split — avoid stacking a left ring against the tree separator. */
+  showFocusChrome: boolean
   externalOpenError: string | null
   onFocus: () => void
   onEdit: () => void
@@ -126,10 +129,7 @@ function EditorPaneView({
 
   if (!tab) {
     return (
-      <div
-        className={`flex min-h-0 min-w-0 flex-1 flex-col ${focused ? 'bg-ds-sidebar' : 'bg-ds-sidebar/80'}`}
-        onMouseDown={onFocus}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar" onMouseDown={onFocus}>
         <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-ds-faint">
           {t('workspaceEditorSplitEmpty')}
         </div>
@@ -139,8 +139,10 @@ function EditorPaneView({
 
   return (
     <div
-      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
-        focused ? 'ring-1 ring-inset ring-[color-mix(in_srgb,var(--ds-text)_18%,transparent)]' : ''
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ds-sidebar ${
+        showFocusChrome && focused
+          ? 'shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ds-text)_12%,transparent)]'
+          : ''
       }`}
       onMouseDown={onFocus}
     >
@@ -462,8 +464,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
 
   return (
     <div className="ds-workspace-editor-pane ds-no-drag flex h-full min-h-0 flex-col">
-      <div className="relative flex h-full min-h-0 flex-1">
-        <div className="h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
+      <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
+        <div className="relative h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
           <WorkspaceFileTree
             workspaceRoot={trimmedRoot}
             activePaths={activePaths}
@@ -474,15 +476,15 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
             }}
             onFileContextMenu={openFileMenu}
           />
+          {/* Overlay handle — no layout gap, so tree/editor share one continuous fill. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('workspaceEditorTreeResize')}
+            className="ds-no-drag absolute inset-y-0 right-0 z-20 w-2 translate-x-1/2 cursor-col-resize"
+            onPointerDown={beginTreeResize}
+          />
         </div>
-
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('workspaceEditorTreeResize')}
-          className="ds-no-drag relative z-20 w-1.5 shrink-0 cursor-col-resize after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-[color-mix(in_srgb,var(--ds-text)_22%,transparent)] after:transition-colors after:duration-200 hover:after:bg-[color-mix(in_srgb,var(--ds-text)_34%,transparent)] active:after:bg-[color-mix(in_srgb,var(--ds-text)_34%,transparent)]"
-          onPointerDown={beginTreeResize}
-        />
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar">
           <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-ds-border-muted/60 px-1.5 py-1.5">
@@ -549,6 +551,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                   }
                   isEditing={Boolean(primaryTab && editingTabId === primaryTab.id)}
                   focused={!splitEnabled || focusedPane === 'primary'}
+                  showFocusChrome={splitEnabled}
                   externalOpenError={externalOpenError}
                   onFocus={() => focusPane('primary')}
                   onEdit={() => {
@@ -566,14 +569,16 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
 
               {splitEnabled ? (
                 <>
-                  <div
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label={t('workspaceEditorSplitResize')}
-                    className="ds-no-drag relative z-20 w-1.5 shrink-0 cursor-col-resize after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-[color-mix(in_srgb,var(--ds-text)_22%,transparent)] after:transition-colors after:duration-200 hover:after:bg-[color-mix(in_srgb,var(--ds-text)_34%,transparent)]"
-                    onPointerDown={beginSplitResize}
-                  />
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <div className="relative w-px shrink-0 bg-[color-mix(in_srgb,var(--ds-text)_14%,transparent)]">
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={t('workspaceEditorSplitResize')}
+                      className="ds-no-drag absolute inset-y-0 left-1/2 z-20 w-2 -translate-x-1/2 cursor-col-resize"
+                      onPointerDown={beginSplitResize}
+                    />
+                  </div>
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ds-sidebar">
                     <EditorPaneView
                       tab={secondaryTab}
                       workspaceRoot={trimmedRoot}
@@ -584,6 +589,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                       }
                       isEditing={Boolean(secondaryTab && editingTabId === secondaryTab.id)}
                       focused={focusedPane === 'secondary'}
+                      showFocusChrome={splitEnabled}
                       externalOpenError={externalOpenError}
                       onFocus={() => focusPane('secondary')}
                       onEdit={() => {

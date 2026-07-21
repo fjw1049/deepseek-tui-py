@@ -2801,9 +2801,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
    a VS Code / Typora–inspired reading surface: roomier type, clearer heading
    hierarchy, and a paper-like page on the panel chrome. */
 .ds-markdown-doc-shell {
-  background:
-    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--ds-text) 4%, transparent), transparent 55%),
-    var(--ds-sidebar);
+  background: var(--ds-bg-sidebar);
 }
 
 .ds-markdown-doc-page {
@@ -2977,7 +2975,7 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
 
 @media (prefers-reduced-transparency: reduce) {
   .ds-markdown-doc-shell {
-    background: var(--ds-sidebar);
+    background: var(--ds-bg-sidebar);
   }
 }
 
@@ -4030,7 +4028,16 @@ select:focus-visible,
 .ds-workbench-right-panel .ds-tool-panel,
 .ds-workbench-right-panel .ds-workspace-editor-pane,
 .ds-workbench-right-panel .ds-change-inspector {
-  background: var(--ds-sidebar, var(--ds-material-panel));
+  background: var(--ds-bg-sidebar);
+}
+
+/* Keep Monaco DOM chrome on the same fill as the file tree (theme colors
+   cover the canvas; these catch gutters/wrappers that can flash #1e1e1e). */
+.ds-workspace-editor-pane .monaco-editor,
+.ds-workspace-editor-pane .monaco-editor .margin,
+.ds-workspace-editor-pane .monaco-editor .monaco-editor-background,
+.ds-workspace-editor-pane .monaco-editor .overflow-guard {
+  background-color: var(--ds-bg-sidebar) !important;
 }
 
 .ds-terminal-panel,

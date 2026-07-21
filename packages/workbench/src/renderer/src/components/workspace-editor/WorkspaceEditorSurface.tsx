@@ -3,21 +3,22 @@ import { Loader2 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
-import { ensureMonacoConfigured } from '../../lib/monaco-editor-setup'
+import {
+  ensureMonacoConfigured,
+  ensureWorkspaceMonacoThemes,
+  workspaceMonacoTheme
+} from '../../lib/monaco-editor-setup'
 import { languageForPath } from '../../lib/monaco-language-for-path'
 import type { EditorTab } from '../../store/workspace-editor-store'
 
 ensureMonacoConfigured()
+ensureWorkspaceMonacoThemes()
 
 type Props = {
   tab: EditorTab
   patch?: string
   readOnly: boolean
   onChange: (content: string) => void
-}
-
-function readMonacoTheme(): 'vs-dark' | 'vs' {
-  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs'
 }
 
 export function WorkspaceEditorSurface({ tab, patch, readOnly, onChange }: Props): ReactElement {
@@ -76,12 +77,13 @@ export function WorkspaceEditorSurface({ tab, patch, readOnly, onChange }: Props
         height="100%"
         width="100%"
         wrapperProps={{ className: 'absolute inset-0 overflow-hidden' }}
-        theme={readMonacoTheme()}
+        theme={workspaceMonacoTheme()}
         language={languageForPath(tab.path)}
         value={tab.content}
         onChange={readOnly ? undefined : (value) => onChange(value ?? '')}
         onMount={(editor) => {
           editorRef.current = editor
+          ensureWorkspaceMonacoThemes()
           editor.updateOptions({ readOnly })
           setEditorReady(true)
           editor.layout()
