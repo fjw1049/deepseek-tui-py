@@ -45,7 +45,7 @@ import {
   type AppSettingsV1
 } from '../shared/app-settings'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
-import { isAllowedDevPreviewUrl } from '../shared/dev-preview-url'
+import { isBrowsableUrl } from '../shared/dev-preview-url'
 import { fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
@@ -126,7 +126,9 @@ function installDevPreviewWebviewGuards(): void {
   app.on('web-contents-created', (_, contents) => {
     contents.on('will-attach-webview', (event, webPreferences, params) => {
       const src = typeof params.src === 'string' ? params.src : ''
-      if (!isAllowedDevPreviewUrl(src)) {
+      // Address bar + in-page navigation may open public https; auto-follow
+      // stays local-only in the renderer.
+      if (!isBrowsableUrl(src)) {
         event.preventDefault()
         return
       }
@@ -142,12 +144,12 @@ function installDevPreviewWebviewGuards(): void {
 
     contents.on('will-navigate', (event, navigationUrl) => {
       if (contents.getType() !== 'webview') return
-      if (!isAllowedDevPreviewUrl(navigationUrl)) event.preventDefault()
+      if (!isBrowsableUrl(navigationUrl)) event.preventDefault()
     })
 
     contents.setWindowOpenHandler(({ url }) => {
       if (contents.getType() !== 'webview') return { action: 'allow' }
-      return isAllowedDevPreviewUrl(url) ? { action: 'allow' } : { action: 'deny' }
+      return isBrowsableUrl(url) ? { action: 'allow' } : { action: 'deny' }
     })
   })
 }

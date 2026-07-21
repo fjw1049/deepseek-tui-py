@@ -16,7 +16,8 @@ import {
 import type { ChatBlock } from '../agent/types'
 import {
   DEFAULT_DEV_PREVIEW_URL,
-  normalizeDevPreviewUrlInput
+  isLocalPreviewUrl,
+  normalizeBrowseUrlInput
 } from '@shared/dev-preview-url'
 import {
   extractDetectedDevPreviewUrls,
@@ -129,8 +130,9 @@ export function DevBrowserPanel({
   const latestDetectedUrl = detectedUrls[0] ?? null
   const useElectronWebview = typeof window.dsGui?.openExternal === 'function'
 
+  // Preferred may be a local workspace/HTML preview or a user-opened browse URL.
   const normalizedPreferredUrl = useMemo(
-    () => (preferredUrl ? normalizeDevPreviewUrlInput(preferredUrl) : null),
+    () => (preferredUrl ? normalizeBrowseUrlInput(preferredUrl) : null),
     [preferredUrl]
   )
 
@@ -162,7 +164,7 @@ export function DevBrowserPanel({
 
   const openOrFocusUrl = useCallback(
     (url: string, options: { title?: string; select?: boolean } = {}): void => {
-      const normalized = normalizeDevPreviewUrlInput(url)
+      const normalized = normalizeBrowseUrlInput(url)
       if (!normalized) return
       setTabs((current) => {
         const existing = current.find((tab) => tab.url === normalized)
@@ -236,7 +238,9 @@ export function DevBrowserPanel({
   }, [normalizedPreferredUrl, onPreferredUrlConsumed, openOrFocusUrl])
 
   useEffect(() => {
+    // Auto-follow stays local-only so agent-mentioned public links never hijack preview.
     if (!autoFollow || !latestDetectedUrl) return
+    if (!isLocalPreviewUrl(latestDetectedUrl)) return
     if (tabs.some((tab) => tab.url === latestDetectedUrl)) return
     openOrFocusUrl(latestDetectedUrl, { select: tabs.every((tab) => !tab.url) })
   }, [autoFollow, latestDetectedUrl, openOrFocusUrl, tabs])
@@ -249,7 +253,7 @@ export function DevBrowserPanel({
       try {
         setCanGoBack(webview.canGoBack())
         setCanGoForward(webview.canGoForward())
-        const currentUrl = normalizeDevPreviewUrlInput(webview.getURL())
+        const currentUrl = normalizeBrowseUrlInput(webview.getURL())
         if (currentUrl) {
           updateActiveTab({ url: currentUrl })
           setDraftUrl(formatAddressInput(currentUrl))
@@ -268,7 +272,7 @@ export function DevBrowserPanel({
       syncNavigationState()
     }
     const handleNavigate: EventListener = (event): void => {
-      const currentUrl = normalizeDevPreviewUrlInput((event as WebviewNavigateEvent).url)
+      const currentUrl = normalizeBrowseUrlInput((event as WebviewNavigateEvent).url)
       if (!currentUrl) return
       updateActiveTab({ url: currentUrl })
       setDraftUrl(formatAddressInput(currentUrl))
@@ -305,6 +309,12 @@ export function DevBrowserPanel({
 
   useEffect(() => {
     if (useElectronWebview || !activeUrl) return
+    // Public https can't be reliably embedded in iframe — skip load timeout.
+    if (!isLocalPreviewUrl(activeUrl)) {
+      setLoading(false)
+      setLoadError(null)
+      return
+    }
     iframeLoadedUrlRef.current = null
     setLoading(true)
     setLoadError(null)
@@ -367,7 +377,7 @@ export function DevBrowserPanel({
   }
 
   const loadUrl = (value: string, options: LoadOptions = {}): void => {
-    const normalized = normalizeDevPreviewUrlInput(value)
+    const normalized = normalizeBrowseUrlInput(value)
     if (!normalized) {
       setLoadError(t('browserInvalidUrl'))
       return
@@ -406,9 +416,9 @@ export function DevBrowserPanel({
     }
   }
 
-  const openExternal = (): void => {
-    if (!activeUrl) return
-    const normalized = normalizeDevPreviewUrlInput(activeUrl)
+  const openExternalUrl = (url: string | null | undefined = activeUrl): void => {
+    if (!url) return
+    const normalized = normalizeBrowseUrlInput(url)
     if (!normalized) return
     if (typeof window.dsGui?.openExternal === 'function') {
       void window.dsGui.openExternal(normalized)
@@ -416,6 +426,8 @@ export function DevBrowserPanel({
     }
     window.open(normalized, '_blank', 'noopener,noreferrer')
   }
+
+  const iframeCanEmbed = Boolean(activeUrl && isLocalPreviewUrl(activeUrl))
 
   const goBack = (): void => {
     if (!useElectronWebview) {
@@ -515,7 +527,7 @@ export function DevBrowserPanel({
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              onClick={openExternal}
+              onClick={() => openExternalUrl()}
               disabled={!activeUrl}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
               aria-label={t('browserOpenExternal')}
@@ -648,7 +660,7 @@ export function DevBrowserPanel({
             webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"
             className="flex h-full w-full bg-white"
           />
-        ) : (
+        ) : iframeCanEmbed ? (
           <iframe
             key={`${activeTabId}:${activeUrl}:${iframeReloadNonce}`}
             src={activeUrl}
@@ -662,6 +674,25 @@ export function DevBrowserPanel({
             }}
             className="block h-full w-full border-0 bg-white"
           />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <Globe2 className="h-8 w-8 text-ds-faint" strokeWidth={1.5} />
+            <div className="text-[14px] font-medium text-ds-ink">{t('browserEmbedUnsupportedTitle')}</div>
+            <div className="max-w-sm text-[12.5px] leading-5 text-ds-muted">
+              {t('browserEmbedUnsupportedBody')}
+            </div>
+            <div className="max-w-md truncate text-[12px] text-ds-faint" title={activeUrl}>
+              {activeUrl}
+            </div>
+            <button
+              type="button"
+              onClick={() => openExternalUrl(activeUrl)}
+              className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-white"
+            >
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.85} />
+              {t('browserOpenExternal')}
+            </button>
+          </div>
         )}
       </div>
     </aside>
