@@ -1821,7 +1821,7 @@ samp {
   padding: 0.35rem 0.5rem 0.5rem;
 }
 
-/* Sits outside the sidebar scroll surface so search / add never scroll away. */
+/* Sits outside the sidebar scroll surface so the projects header never scrolls away. */
 .ds-sidebar-projects-toolbar--fixed {
   position: relative;
   z-index: 2;
@@ -1845,6 +1845,19 @@ samp {
   font-size: var(--sidebar-text-xs);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
+}
+
+/* Titlebar expand-on-click search: no chrome until focused typing. */
+.ds-sidebar-search--titlebar,
+.ds-sidebar-search--titlebar:focus {
+  border-color: transparent;
+  background: transparent;
+}
+
+[data-theme='dark'] .ds-sidebar-search--titlebar,
+[data-theme='dark'] .ds-sidebar-search--titlebar:focus {
+  border-color: transparent;
+  background: transparent;
 }
 
 .ds-sidebar-link {
@@ -3368,9 +3381,14 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
   min-height: var(--ds-header-height, 44px);
   align-items: center;
   justify-content: flex-start;
+  gap: 0.35rem;
   /* aside px-3 (12px) + wrapper px-1 (4px) = 16px base; the expand droplet is
      fixed at left 16px, so zero extra padding lines the two triggers up. */
   padding-left: 0;
+}
+
+.ds-sidebar-titlebar-search {
+  min-width: 0;
 }
 
 :root[data-platform='darwin'] .ds-sidebar-titlebar-row {

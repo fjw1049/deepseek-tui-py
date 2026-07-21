@@ -1169,6 +1169,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sidebarLabelColors: loadSidebarLabelColors(),
   sidebarSearchQuery: '',
   chatsCollapsed: false,
+  projectsCollapsed: false,
   scrollToBlockId: null,
   activePlugin: null,
   usageRefreshKey: 0,
@@ -2524,6 +2525,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSidebarSearchQuery: (query) => set({ sidebarSearchQuery: query }),
   setChatsCollapsed: (collapsed) => set({ chatsCollapsed: collapsed }),
+  setProjectsCollapsed: (collapsed) => set({ projectsCollapsed: collapsed }),
 
   rewindAndResend: async (userBlockId, newText) => {
     const trimmed = newText.trim()

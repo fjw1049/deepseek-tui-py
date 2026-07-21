@@ -15,12 +15,13 @@ import {
   LayoutGrid,
   Loader2,
   MessageSquare,
+  MoreHorizontal,
   Pin,
   PinOff,
   Plus,
-  Search,
   Square,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
@@ -58,6 +59,9 @@ type SidebarProjectsSectionProps = {
   unreadThreadIds: Record<string, boolean>
   pinnedThreadIds: string[]
   locale: string
+  selectionMode?: boolean
+  selectedIds?: Set<string>
+  onToggleSelect?: (threadId: string) => void
   onTogglePin: (threadId: string) => void
   onPickWorkspace: () => void
   onRemoveWorkspace: (workspacePath: string) => Promise<void>
@@ -68,6 +72,15 @@ type SidebarProjectsSectionProps = {
   onDeleteThread: (threadId: string) => Promise<void>
   onCompactThread: (threadId: string) => Promise<void>
   t: (k: string, opts?: Record<string, unknown>) => string
+}
+
+type SidebarProjectsColumnProps = Omit<
+  SidebarProjectsSectionProps,
+  'selectionMode' | 'selectedIds' | 'onToggleSelect' | 'locale'
+> & {
+  locale: string
+  /** Rendered between the projects header and the project list (pinned threads). */
+  pinnedSlot?: ReactElement | null
 }
 
 type WorkspaceGroup = [string, NormalizedThread[]]
@@ -82,63 +95,172 @@ function latestWorkspaceActivity(list: NormalizedThread[]): number {
   return Math.max(...list.map((thread) => Date.parse(thread.updatedAt)))
 }
 
-/** Fixed chrome above the sidebar scroll: project label, search, add project. */
-export function SidebarProjectsToolbar({
-  workspaceRoot,
-  onPickWorkspace,
-  t
-}: {
+type ProjectsToolbarProps = {
   workspaceRoot: string
   onPickWorkspace: () => void
+  projectThreadCount: number
+  selectMode: boolean
+  selectedCount: number
+  allSelected: boolean
+  batchBusy: boolean
+  onToggleSelectAll: () => void
+  onDeleteSelected: () => void
+  onExitSelectMode: () => void
+  onEnterSelectMode: () => void
+  onClearAll: () => void
   t: (k: string, opts?: Record<string, unknown>) => string
-}): ReactElement {
+}
+
+/** Fixed chrome above the sidebar scroll: matches Workspace header (collapse / + / ⋯). */
+function SidebarProjectsToolbar({
+  workspaceRoot,
+  onPickWorkspace,
+  projectThreadCount,
+  selectMode,
+  selectedCount,
+  allSelected,
+  batchBusy,
+  onToggleSelectAll,
+  onDeleteSelected,
+  onExitSelectMode,
+  onEnterSelectMode,
+  onClearAll,
+  t
+}: ProjectsToolbarProps): ReactElement {
+  const collapsed = useChatStore((s) => s.projectsCollapsed)
+  const setCollapsed = useChatStore((s) => s.setProjectsCollapsed)
   const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
-  const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
-  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searching = searchQuery.trim().length > 0
+  const sectionCollapsed = searching || selectMode ? false : collapsed
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', onPointerDown)
+    return () => window.removeEventListener('mousedown', onPointerDown)
+  }, [menuOpen])
 
   return (
     <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag shrink-0 px-1">
-      <span className="ds-sidebar-section-label shrink-0">{t('sidebarProjects')}</span>
-      <label className="relative min-w-0 flex-1">
-        <Search
-          className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
-          strokeWidth={2}
-          aria-hidden
-        />
-        <input
-          ref={searchInputRef}
-          type="search"
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape') return
-            event.preventDefault()
-            if (searchQuery.trim()) {
-              setSearchQuery('')
-              return
-            }
-            searchInputRef.current?.blur()
-          }}
-          placeholder={t('sidebarSearchProjects')}
-          aria-label={t('sidebarSearchProjects')}
-          className="ds-sidebar-search ds-sidebar-search--inline w-full pl-7"
-        />
-      </label>
-      <div className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
-          onClick={onPickWorkspace}
-          title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-          className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-        </button>
-      </div>
+      {selectMode ? (
+        <>
+          <span className="ds-sidebar-section-label min-w-0 flex-1 truncate">
+            {t('sidebarChatsSelectedCount', { count: selectedCount })}
+          </span>
+          <button
+            type="button"
+            onClick={onToggleSelectAll}
+            disabled={projectThreadCount === 0 || batchBusy}
+            className="shrink-0 rounded-md px-1.5 py-1 text-[12px] text-ds-muted transition-colors hover:bg-ds-hover hover:text-ds-ink disabled:opacity-40"
+          >
+            {allSelected ? t('sidebarChatsDeselectAll') : t('sidebarChatsSelectAll')}
+          </button>
+          <button
+            type="button"
+            onClick={onDeleteSelected}
+            disabled={selectedCount === 0 || batchBusy}
+            title={t('sidebarChatsDeleteSelected')}
+            aria-label={t('sidebarChatsDeleteSelected')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-950/30"
+          >
+            {batchBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onExitSelectMode}
+            disabled={batchBusy}
+            title={t('sidebarChatsExitSelect')}
+            aria-label={t('sidebarChatsExitSelect')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition-colors hover:bg-ds-hover hover:text-ds-ink disabled:opacity-40"
+          >
+            <X className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+            aria-expanded={!sectionCollapsed}
+          >
+            {sectionCollapsed ? (
+              <ChevronRight className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
+            ) : (
+              <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
+            )}
+            <span className="ds-sidebar-section-label min-w-0 truncate">{t('sidebarProjects')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCollapsed(false)
+              onPickWorkspace()
+            }}
+            title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
+            aria-label={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
+            className="shrink-0 rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+          </button>
+          <div className="relative shrink-0" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              title={t('sidebarProjectsMenu')}
+              aria-label={t('sidebarProjectsMenu')}
+              aria-expanded={menuOpen}
+              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
+            </button>
+            {menuOpen ? (
+              <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg py-1">
+                <button
+                  type="button"
+                  disabled={projectThreadCount === 0}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    onEnterSelectMode()
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ds-ink hover:bg-ds-hover disabled:opacity-40"
+                >
+                  <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                  {t('sidebarChatsBatchSelect')}
+                </button>
+                <button
+                  type="button"
+                  disabled={projectThreadCount === 0 || batchBusy}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    onClearAll()
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/20"
+                >
+                  <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                  {t('sidebarChatsClearAll')}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
-export function SidebarProjectsSection({
+/** Projects column: toolbar (with batch menu) + scrollable project list. */
+export function SidebarProjectsColumn({
   threads,
   activeThreadId,
   runtimeReady,
@@ -147,6 +269,190 @@ export function SidebarProjectsSection({
   watchTurnCompletion,
   unreadThreadIds,
   pinnedThreadIds,
+  locale,
+  pinnedSlot = null,
+  onTogglePin,
+  onPickWorkspace,
+  onRemoveWorkspace,
+  onDeleteWorkspace,
+  onCreateThreadInWorkspace,
+  onSelectThread,
+  onOpenThreadTerminal,
+  onDeleteThread,
+  onCompactThread,
+  t
+}: SidebarProjectsColumnProps): ReactElement {
+  const projectsCollapsed = useChatStore((s) => s.projectsCollapsed)
+  const setProjectsCollapsed = useChatStore((s) => s.setProjectsCollapsed)
+  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
+  const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [batchBusy, setBatchBusy] = useState(false)
+
+  const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
+
+  const projectThreads = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    return threads
+      .filter((th) => {
+        if (isInternalTemporaryWorkspace(th.workspace)) return false
+        if (isClawWorkspacePath(th.workspace)) return false
+        if (isChatsWorkspace(th.workspace)) return false
+        if (pinnedSet.has(th.id)) return false
+        const key = normalizeWorkspaceRoot(th.workspace)
+        if (!key || isWorkspaceHidden(key, hiddenWorkspacePaths)) return false
+        if (!query) return true
+        const folderName = workspaceLabelFromPath(key).toLowerCase()
+        return (
+          folderName.includes(query) ||
+          key.toLowerCase().includes(query) ||
+          th.title.toLowerCase().includes(query)
+        )
+      })
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+  }, [threads, pinnedSet, hiddenWorkspacePaths, searchQuery])
+
+  const allSelected =
+    projectThreads.length > 0 && projectThreads.every((thread) => selectedIds.has(thread.id))
+  const projectsHidden = projectsCollapsed && !searchQuery.trim() && !selectMode
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev
+      const alive = new Set(projectThreads.map((thread) => thread.id))
+      let changed = false
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (alive.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [projectThreads])
+
+  const enterSelectMode = (): void => {
+    setProjectsCollapsed(false)
+    setSelectMode(true)
+    setSelectedIds(new Set())
+  }
+
+  const exitSelectMode = (): void => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  const toggleSelect = (threadId: string): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(threadId)) next.delete(threadId)
+      else next.add(threadId)
+      return next
+    })
+  }
+
+  const toggleSelectAll = (): void => {
+    setSelectedIds((prev) => {
+      if (allSelected) return new Set()
+      return new Set(projectThreads.map((thread) => thread.id))
+    })
+  }
+
+  const deleteThreads = async (targets: NormalizedThread[]): Promise<void> => {
+    if (targets.length === 0 || batchBusy) return
+    setBatchBusy(true)
+    try {
+      for (const thread of targets) {
+        await onDeleteThread(thread.id)
+      }
+      exitSelectMode()
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+
+  const handleDeleteSelected = (): void => {
+    const targets = projectThreads.filter((thread) => selectedIds.has(thread.id))
+    if (targets.length === 0) return
+    const ok = window.confirm(
+      t('sidebarProjectsDeleteSelectedConfirm', { count: targets.length })
+    )
+    if (!ok) return
+    void deleteThreads(targets)
+  }
+
+  const handleClearAll = (): void => {
+    if (projectThreads.length === 0) return
+    const ok = window.confirm(
+      t('sidebarProjectsClearAllConfirm', { count: projectThreads.length })
+    )
+    if (!ok) return
+    setProjectsCollapsed(false)
+    void deleteThreads(projectThreads)
+  }
+
+  return (
+    <>
+      <SidebarProjectsToolbar
+        workspaceRoot={workspaceRoot}
+        onPickWorkspace={onPickWorkspace}
+        projectThreadCount={projectThreads.length}
+        selectMode={selectMode}
+        selectedCount={selectedIds.size}
+        allSelected={allSelected}
+        batchBusy={batchBusy}
+        onToggleSelectAll={toggleSelectAll}
+        onDeleteSelected={handleDeleteSelected}
+        onExitSelectMode={exitSelectMode}
+        onEnterSelectMode={enterSelectMode}
+        onClearAll={handleClearAll}
+        t={t}
+      />
+      {pinnedSlot}
+      {!projectsHidden ? (
+        <div className="ds-sidebar-projects-scroll ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <SidebarProjectsSection
+            threads={threads}
+            activeThreadId={activeThreadId}
+            runtimeReady={runtimeReady}
+            workspaceRoot={workspaceRoot}
+            busy={busy}
+            watchTurnCompletion={watchTurnCompletion}
+            unreadThreadIds={unreadThreadIds}
+            pinnedThreadIds={pinnedThreadIds}
+            locale={locale}
+            selectionMode={selectMode}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onTogglePin={onTogglePin}
+            onPickWorkspace={onPickWorkspace}
+            onRemoveWorkspace={onRemoveWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+            onCreateThreadInWorkspace={onCreateThreadInWorkspace}
+            onSelectThread={onSelectThread}
+            onOpenThreadTerminal={onOpenThreadTerminal}
+            onDeleteThread={onDeleteThread}
+            onCompactThread={onCompactThread}
+            t={t}
+          />
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+function SidebarProjectsSection({
+  threads,
+  activeThreadId,
+  runtimeReady,
+  workspaceRoot,
+  busy,
+  watchTurnCompletion,
+  unreadThreadIds,
+  pinnedThreadIds,
+  selectionMode = false,
+  selectedIds,
+  onToggleSelect,
   onTogglePin,
   onPickWorkspace,
   onRemoveWorkspace,
@@ -357,6 +663,9 @@ export function SidebarProjectsSection({
         }
         pinned={pinnedSet.has(thread.id)}
         sourceLabel={options?.sourceLabel}
+        selectionMode={selectionMode}
+        selected={selectedIds?.has(thread.id) === true}
+        onToggleSelect={() => onToggleSelect?.(thread.id)}
         onSelect={() => onSelectThread(thread.id)}
         onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
         onDelete={() => void handleDeleteThread(thread)}
@@ -426,11 +735,12 @@ export function SidebarProjectsSection({
   const renderWorkspace = ([workspacePath, list]: WorkspaceGroup): ReactElement => {
     const folderName = workspaceLabelFromPath(workspacePath)
     const searching = searchQuery.trim().length > 0
-    const isCollapsed = searching ? false : collapsed[workspacePath] !== false
+    const isCollapsed = searching || selectionMode ? false : collapsed[workspacePath] !== false
     const sortedThreads = [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const workspaceExpanded = expandedWorkspaces[workspacePath] === true
-    const hasOverflow = sortedThreads.length > 5
-    const visibleThreads = workspaceExpanded ? sortedThreads : sortedThreads.slice(0, 5)
+    const hasOverflow = !selectionMode && sortedThreads.length > 5
+    const visibleThreads =
+      selectionMode || workspaceExpanded ? sortedThreads : sortedThreads.slice(0, 5)
     const folderHasActive = workspaceHasActiveThread(list, activeThreadId)
     const folderIconClass = folderHasActive ? 'text-accent' : 'text-ds-muted'
     const labelColor = (sidebarLabelColors[workspaceLabelKey(workspacePath)] ??
@@ -441,13 +751,17 @@ export function SidebarProjectsSection({
       <div key={workspacePath} className="mb-1">
         <div
           className="ds-sidebar-workspace group"
-          onContextMenu={(event) => {
-            event.preventDefault()
-            clearFolderHoverTimer()
-            clearFolderAutoHide()
-            setFolderHover(null)
-            setProjectMenu({ path: workspacePath, x: event.clientX, y: event.clientY })
-          }}
+          onContextMenu={
+            selectionMode
+              ? undefined
+              : (event) => {
+                  event.preventDefault()
+                  clearFolderHoverTimer()
+                  clearFolderAutoHide()
+                  setFolderHover(null)
+                  setProjectMenu({ path: workspacePath, x: event.clientX, y: event.clientY })
+                }
+          }
           onMouseEnter={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
             clearFolderHoverTimer()
@@ -502,20 +816,22 @@ export function SidebarProjectsSection({
               {folderName}
             </span>
           </button>
-          <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-40 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                onCreateThreadInWorkspace(workspacePath)
-              }}
-              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-ds-ink"
-              title={t('sidebarWorkspaceNewThread')}
-              aria-label={t('sidebarWorkspaceNewThread')}
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
-            </button>
-          </div>
+          {selectionMode ? null : (
+            <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-40 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onCreateThreadInWorkspace(workspacePath)
+                }}
+                className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-ds-ink"
+                title={t('sidebarWorkspaceNewThread')}
+                aria-label={t('sidebarWorkspaceNewThread')}
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
+              </button>
+            </div>
+          )}
         </div>
 
         {!isCollapsed ? (

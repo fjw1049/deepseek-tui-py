@@ -105,6 +105,7 @@ export type ChatState = {
   sidebarLabelColors: Record<string, string>
   sidebarSearchQuery: string
   chatsCollapsed: boolean
+  projectsCollapsed: boolean
   scrollToBlockId: string | null
   /** Session-level mounted plugin (drives the composer chip). null = none. */
   activePlugin: ActivePluginMeta | null
@@ -153,6 +154,7 @@ export type ChatState = {
   togglePin: (threadId: string) => void
   setSidebarSearchQuery: (query: string) => void
   setChatsCollapsed: (collapsed: boolean) => void
+  setProjectsCollapsed: (collapsed: boolean) => void
   forkThread: (threadId: string, throughItemId?: string) => Promise<void>
   resumeThread: (threadId: string) => Promise<void>
   compactActiveThread: () => Promise<void>

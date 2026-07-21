@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Blocks,
@@ -10,12 +10,13 @@ import {
   PanelLeftClose,
   Plus,
   Puzzle,
+  Search,
   Settings,
   Sparkles
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
-import { SidebarProjectsSection, SidebarProjectsToolbar } from './SidebarProjectsSection'
+import { SidebarProjectsColumn } from './SidebarProjectsSection'
 import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 
@@ -71,6 +72,10 @@ export function Sidebar({
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const togglePin = useChatStore((s) => s.togglePin)
+  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
+  const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const pluginsActive = route === 'plugins'
@@ -82,6 +87,7 @@ export function Sidebar({
     if (window.localStorage.getItem(EXTENSIONS_OPEN_KEY) === '1') return true
     return false
   })
+  const searchExpanded = searchOpen || searchQuery.trim().length > 0
 
   useEffect(() => {
     if (!extensionsActive) return
@@ -89,12 +95,22 @@ export function Sidebar({
     persistExtensionsOpen(true)
   }, [extensionsActive])
 
+  useEffect(() => {
+    if (!searchExpanded) return
+    searchInputRef.current?.focus()
+  }, [searchExpanded])
+
   const toggleExtensions = (): void => {
     setExtensionsOpen((prev) => {
       const next = !prev
       persistExtensionsOpen(next)
       return next
     })
+  }
+
+  const collapseSearch = (): void => {
+    setSearchQuery('')
+    setSearchOpen(false)
   }
 
   return (
@@ -111,6 +127,42 @@ export function Sidebar({
             >
               <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
             </button>
+            {searchExpanded ? (
+              <label className="ds-sidebar-titlebar-search ds-no-drag relative min-w-0 flex-1">
+                <Search
+                  className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onBlur={() => {
+                    if (!searchQuery.trim()) setSearchOpen(false)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return
+                    event.preventDefault()
+                    collapseSearch()
+                  }}
+                  placeholder={t('sidebarSearchAll')}
+                  aria-label={t('sidebarSearchAll')}
+                  className="ds-sidebar-search ds-sidebar-search--inline ds-sidebar-search--titlebar w-full pl-7"
+                />
+              </label>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                className="ds-sidebar-toggle-button ds-no-drag shrink-0"
+                aria-label={t('sidebarSearchAll')}
+                title={t('sidebarSearchAll')}
+              >
+                <Search className="h-4 w-4" strokeWidth={1.85} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -193,45 +245,38 @@ export function Sidebar({
         </nav>
       </div>
 
-      <SidebarProjectsToolbar
-        workspaceRoot={workspaceRoot}
-        onPickWorkspace={() => void chooseWorkspace()}
-        t={t}
-      />
-
       <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
-        <SidebarPinnedSection
+        <SidebarProjectsColumn
+          threads={threads}
+          activeThreadId={activeThreadId}
+          runtimeReady={runtimeReady}
+          workspaceRoot={workspaceRoot}
+          busy={busy}
+          watchTurnCompletion={watchTurnCompletion}
+          unreadThreadIds={unreadThreadIds}
+          pinnedThreadIds={pinnedThreadIds}
+          locale={i18n.language}
+          pinnedSlot={
+            <SidebarPinnedSection
+              onSelectThread={onSelectThread}
+              onOpenThreadTerminal={onOpenThreadTerminal}
+              onDeleteThread={onDeleteThread}
+              onCompactThread={onCompactThread}
+              onTogglePin={togglePin}
+              t={t}
+            />
+          }
+          onTogglePin={togglePin}
+          onPickWorkspace={() => void chooseWorkspace()}
+          onRemoveWorkspace={hideWorkspace}
+          onDeleteWorkspace={deleteWorkspace}
+          onCreateThreadInWorkspace={onNewChatInWorkspace}
           onSelectThread={onSelectThread}
           onOpenThreadTerminal={onOpenThreadTerminal}
           onDeleteThread={onDeleteThread}
           onCompactThread={onCompactThread}
-          onTogglePin={togglePin}
           t={t}
         />
-
-        <div className="ds-sidebar-projects-scroll ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <SidebarProjectsSection
-            threads={threads}
-            activeThreadId={activeThreadId}
-            runtimeReady={runtimeReady}
-            workspaceRoot={workspaceRoot}
-            busy={busy}
-            watchTurnCompletion={watchTurnCompletion}
-            unreadThreadIds={unreadThreadIds}
-            pinnedThreadIds={pinnedThreadIds}
-            locale={i18n.language}
-            onTogglePin={togglePin}
-            onPickWorkspace={() => void chooseWorkspace()}
-            onRemoveWorkspace={hideWorkspace}
-            onDeleteWorkspace={deleteWorkspace}
-            onCreateThreadInWorkspace={onNewChatInWorkspace}
-            onSelectThread={onSelectThread}
-            onOpenThreadTerminal={onOpenThreadTerminal}
-            onDeleteThread={onDeleteThread}
-            onCompactThread={onCompactThread}
-            t={t}
-          />
-        </div>
 
         <div className="ds-sidebar-chats-pane">
           <SidebarChatsSection
