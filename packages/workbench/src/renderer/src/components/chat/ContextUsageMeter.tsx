@@ -329,6 +329,9 @@ export function ContextUsageMeter({
 }
 
 const RING_SIZE = 14
+const RING_STROKE = 2
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
 function UsageRing({
   percent,
@@ -337,7 +340,7 @@ function UsageRing({
   percent: number
   tone: 'idle' | 'ok' | 'high' | 'critical'
 }): ReactElement {
-  // Keep a visible wedge even at very low usage so the meter never looks empty/white.
+  // Keep a visible arc even at very low usage so the meter never looks empty.
   const clamped = Math.max(0, Math.min(100, percent))
   const fillPercent = clamped <= 0 ? 0 : Math.max(clamped, 6)
 
@@ -346,21 +349,39 @@ function UsageRing({
       ? 'var(--ds-danger)'
       : tone === 'high'
         ? '#d97706'
-        : '#8ec5ff'
-  const track = 'var(--ds-accent-soft)'
+        : 'var(--ds-accent)'
+  const track = 'color-mix(in srgb, var(--ds-text-faint) 28%, transparent)'
 
   return (
-    <span
+    <svg
       aria-hidden="true"
-      className="inline-block shrink-0 rounded-full"
-      style={{
-        width: RING_SIZE,
-        height: RING_SIZE,
-        background:
-          fillPercent <= 0
-            ? track
-            : `conic-gradient(${fill} 0% ${fillPercent}%, ${track} ${fillPercent}% 100%)`
-      }}
-    />
+      width={RING_SIZE}
+      height={RING_SIZE}
+      viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+      className="shrink-0 -rotate-90"
+    >
+      <circle
+        cx={RING_SIZE / 2}
+        cy={RING_SIZE / 2}
+        r={RING_RADIUS}
+        fill="none"
+        stroke={track}
+        strokeWidth={RING_STROKE}
+      />
+      {fillPercent > 0 ? (
+        <circle
+          cx={RING_SIZE / 2}
+          cy={RING_SIZE / 2}
+          r={RING_RADIUS}
+          fill="none"
+          stroke={fill}
+          strokeWidth={RING_STROKE}
+          strokeLinecap="round"
+          strokeDasharray={RING_CIRCUMFERENCE}
+          strokeDashoffset={RING_CIRCUMFERENCE * (1 - fillPercent / 100)}
+          style={{ transition: 'stroke-dashoffset 200ms ease' }}
+        />
+      ) : null}
+    </svg>
   )
 }

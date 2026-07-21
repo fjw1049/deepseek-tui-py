@@ -472,13 +472,17 @@ export function AutomationCenter({
               )}
 
               <div className="mb-5 flex flex-wrap items-center gap-2">
-                <label className="flex min-w-[240px] flex-1 items-center gap-2 rounded-lg border border-ds-border bg-ds-card px-3 py-2">
-                  <Search className="h-4 w-4 text-ds-faint" />
+                <label className="relative flex min-w-[240px] flex-1 items-center">
+                  <Search
+                    className="pointer-events-none absolute left-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-faint"
+                    strokeWidth={2}
+                    aria-hidden
+                  />
                   <input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={t('automationSearchTasks')}
-                    className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink outline-none"
+                    className="min-w-0 w-full bg-transparent py-2 pl-6 text-[13px] text-ds-ink outline-none placeholder:text-ds-faint"
                   />
                 </label>
                 <select
