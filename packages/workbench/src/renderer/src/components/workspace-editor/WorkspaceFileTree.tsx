@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronRight, FileCode2, Folder, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -17,10 +17,11 @@ type TreeNodeState = {
 
 type Props = {
   workspaceRoot: string
-  activePath?: string | null
+  activePaths?: string[]
   dirtyPaths?: Set<string>
   patchMap?: Map<string, string>
   onOpenFile: (path: string) => void
+  onFileContextMenu?: (event: ReactMouseEvent, path: string) => void
 }
 
 function normalizePath(path: string): string {
@@ -66,15 +67,16 @@ function translateTreeError(message: string): string {
 
 export function WorkspaceFileTree({
   workspaceRoot,
-  activePath,
+  activePaths,
   dirtyPaths,
   patchMap,
-  onOpenFile
+  onOpenFile,
+  onFileContextMenu
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const trimmedRoot = workspaceRoot.trim()
   const workspaceLabel = workspaceLabelFromPath(trimmedRoot) || trimmedRoot
-  const activeKey = activePath ? normalizePath(activePath) : null
+  const activeKeys = new Set((activePaths ?? []).map(normalizePath).filter(Boolean))
   const trimmedRootRef = useRef(trimmedRoot)
   trimmedRootRef.current = trimmedRoot
 
@@ -252,13 +254,19 @@ export function WorkspaceFileTree({
         ]
       }
 
-      const isActive = activeKey === entryKey
+      const isActive = activeKeys.has(entryKey)
 
       return [
         <button
           key={entryKey}
           type="button"
           onClick={() => onOpenFile(entry.path)}
+          onContextMenu={(event) => {
+            if (!onFileContextMenu) return
+            event.preventDefault()
+            event.stopPropagation()
+            onFileContextMenu(event, entry.path)
+          }}
           aria-current={isActive ? 'page' : undefined}
           className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition hover:bg-ds-hover/60 hover:text-ds-ink ${
             isActive
@@ -286,13 +294,13 @@ export function WorkspaceFileTree({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
-      <div className="shrink-0 border-b border-ds-border-muted/40 px-3 py-2">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ds-faint">
+    <div className="ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden border-r border-[color-mix(in_srgb,var(--ds-text)_18%,transparent)] bg-[color-mix(in_srgb,var(--ds-sidebar)_88%,var(--ds-text)_4%)] dark:bg-[color-mix(in_srgb,var(--ds-sidebar)_92%,#000_14%)]">
+      <div className="shrink-0 border-b border-[color-mix(in_srgb,var(--ds-text)_16%,transparent)] px-3 py-2.5">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ds-muted">
           {t('workspaceTreeTitle')}
         </div>
         {trimmedRoot ? (
-          <div className="mt-0.5 truncate text-[12px] font-medium text-ds-ink" title={trimmedRoot}>
+          <div className="mt-0.5 truncate text-[12.5px] font-semibold text-ds-ink" title={trimmedRoot}>
             {workspaceLabel}
           </div>
         ) : (
