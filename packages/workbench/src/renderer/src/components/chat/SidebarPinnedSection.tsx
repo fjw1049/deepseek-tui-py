@@ -4,6 +4,7 @@ import type { NormalizedThread } from '../../agent/types'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
+import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { ThreadRow } from './SidebarProjectsSection'
@@ -28,6 +29,7 @@ export function SidebarPinnedSection({
   const threads = useChatStore((s) => s.threads)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
+  const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
   const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
@@ -47,8 +49,13 @@ export function SidebarPinnedSection({
     const byId = new Map(threads.map((thread) => [thread.id, thread]))
     return pinnedThreadIds
       .map((id) => byId.get(id))
-      .filter((thread): thread is NormalizedThread => thread !== undefined)
-  }, [threads, pinnedThreadIds])
+      .filter((thread): thread is NormalizedThread => {
+        if (!thread) return false
+        const workspace = normalizeWorkspaceRoot(thread.workspace)
+        if (workspace && isWorkspaceHidden(workspace, hiddenWorkspacePaths)) return false
+        return true
+      })
+  }, [threads, pinnedThreadIds, hiddenWorkspacePaths])
 
   const filteredPinnedThreads = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()

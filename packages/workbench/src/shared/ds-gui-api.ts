@@ -418,6 +418,7 @@ export type DsGuiApi = {
   onSseError: (handler: (payload: SseErrorPayload) => void) => () => void
   openExternal: (url: string) => Promise<void>
   openTerminal: (path: string) => Promise<void>
+  showItemInFolder: (path: string) => Promise<void>
   showTurnCompleteNotification: (
     payload: TurnCompleteNotificationPayload
   ) => Promise<SystemNotificationResult>

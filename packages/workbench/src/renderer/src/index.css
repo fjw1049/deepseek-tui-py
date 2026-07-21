@@ -2058,6 +2058,7 @@ samp {
 }
 
 .ds-sidebar-thread-row {
+  position: relative;
   border-radius: 10px;
   /* Lock type on the row so project-nested vs workspace chats can't diverge
      via button UA styles or intermediate inheritance. */

@@ -30,11 +30,21 @@ import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
 import {
+  copyableRelativePath,
+  isWorkspaceHidden,
+  sidebarLabelSwatch,
+  threadLabelKey,
+  workspaceLabelKey,
+  type SidebarLabelColor
+} from '../../lib/sidebar-chrome'
+import { openWorkspacePathInEditor, revealWorkspacePathInFolder } from '../../lib/open-workspace-path'
+import {
   isChatsWorkspace,
   isClawWorkspacePath,
   isInternalTemporaryWorkspace,
   normalizeWorkspaceRoot
 } from '../../lib/workspace-path'
+import { ProjectContextMenu, type ProjectContextMenuAction } from './ProjectContextMenu'
 import { ThreadContextMenu, type ThreadContextMenuAction } from './ThreadContextMenu'
 import { HoverInfoCard } from './ThreadHoverCard'
 
@@ -51,6 +61,7 @@ type SidebarProjectsSectionProps = {
   onTogglePin: (threadId: string) => void
   onPickWorkspace: () => void
   onRemoveWorkspace: (workspacePath: string) => Promise<void>
+  onDeleteWorkspace: (workspacePath: string) => Promise<void>
   onCreateThreadInWorkspace: (workspacePath: string) => void
   onSelectThread: (threadId: string) => void
   onOpenThreadTerminal: (threadId: string) => Promise<void>
@@ -139,6 +150,7 @@ export function SidebarProjectsSection({
   onTogglePin,
   onPickWorkspace,
   onRemoveWorkspace,
+  onDeleteWorkspace,
   onCreateThreadInWorkspace,
   onSelectThread,
   onOpenThreadTerminal,
@@ -162,6 +174,9 @@ export function SidebarProjectsSection({
     branch: string | null
   } | null>(null)
   const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
+  const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
+  const sidebarLabelColors = useChatStore((s) => s.sidebarLabelColors)
+  const setSidebarLabelColor = useChatStore((s) => s.setSidebarLabelColor)
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
   // The active conversation's task ids come straight from its loaded message
   // blocks, so it can light up even for tasks created before thread_id wiring
@@ -171,17 +186,22 @@ export function SidebarProjectsSection({
     if (!activeThreadId) return false
     return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
   }, [activeThreadId, activeThreadBlocks, activeTaskIds])
-
+  const [projectMenu, setProjectMenu] = useState<{
+    path: string
+    x: number
+    y: number
+  } | null>(null)
   useEffect(() => {
     if (!activeThreadId) return
     const activeThread = threads.find((thread) => thread.id === activeThreadId)
     if (!activeThread) return
     const workspacePath = normalizeWorkspaceRoot(activeThread.workspace)
     if (!workspacePath) return
+    if (isWorkspaceHidden(workspacePath, hiddenWorkspacePaths)) return
     setCollapsed((current) =>
       current[workspacePath] === false ? current : { ...current, [workspacePath]: false }
     )
-  }, [activeThreadId, threads])
+  }, [activeThreadId, threads, hiddenWorkspacePaths])
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -196,12 +216,18 @@ export function SidebarProjectsSection({
       if (pinnedSet.has(th.id)) continue
       const key = normalizeWorkspaceRoot(th.workspace)
       if (!key) continue
+      if (isWorkspaceHidden(key, hiddenWorkspacePaths)) continue
       const arr = map.get(key) ?? []
       arr.push(th)
       map.set(key, arr)
     }
 
-    if (selectedWorkspace && !isChatsWorkspace(selectedWorkspace) && !map.has(selectedWorkspace)) {
+    if (
+      selectedWorkspace &&
+      !isChatsWorkspace(selectedWorkspace) &&
+      !isWorkspaceHidden(selectedWorkspace, hiddenWorkspacePaths) &&
+      !map.has(selectedWorkspace)
+    ) {
       map.set(selectedWorkspace, [])
     }
 
@@ -210,7 +236,7 @@ export function SidebarProjectsSection({
       if (activityDiff !== 0) return activityDiff
       return workspaceLabelFromPath(pathA).localeCompare(workspaceLabelFromPath(pathB))
     })
-  }, [threads, workspaceRoot, pinnedSet])
+  }, [threads, workspaceRoot, pinnedSet, hiddenWorkspacePaths])
 
   const filteredGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -251,6 +277,60 @@ export function SidebarProjectsSection({
     const confirmMessage = t('sidebarWorkspaceRemoveConfirm', { path: workspacePath })
     if (!window.confirm(confirmMessage)) return
     await onRemoveWorkspace(workspacePath)
+    setProjectMenu(null)
+  }
+
+  const handleDeleteWorkspace = async (workspacePath: string): Promise<void> => {
+    const confirmMessage = t('sidebarWorkspaceDeleteFileConfirm', { path: workspacePath })
+    if (!window.confirm(confirmMessage)) return
+    await onDeleteWorkspace(workspacePath)
+    setProjectMenu(null)
+  }
+
+  const handleOpenWorkspaceTerminal = async (workspacePath: string): Promise<void> => {
+    const list = groups.find(([path]) => path === workspacePath)?.[1] ?? []
+    const latest = [...list].sort(
+      (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+    )[0]
+    if (latest) {
+      await onOpenThreadTerminal(latest.id)
+      return
+    }
+    if (typeof window.dsGui?.openTerminal === 'function') {
+      await window.dsGui.openTerminal(workspacePath)
+    }
+  }
+
+  const handleProjectMenuAction = (
+    workspacePath: string,
+    action: ProjectContextMenuAction
+  ): void => {
+    switch (action) {
+      case 'copy-path':
+        void navigator.clipboard?.writeText(workspacePath)
+        break
+      case 'copy-relative-path':
+        void navigator.clipboard?.writeText(copyableRelativePath(workspacePath, workspacePath))
+        break
+      case 'new-session':
+        onCreateThreadInWorkspace(workspacePath)
+        break
+      case 'open-with-editor':
+        void openWorkspacePathInEditor({ path: workspacePath }, workspacePath)
+        break
+      case 'reveal-in-folder':
+        void revealWorkspacePathInFolder(workspacePath)
+        break
+      case 'open-terminal':
+        void handleOpenWorkspaceTerminal(workspacePath)
+        break
+      case 'remove':
+        void handleRemoveWorkspace(workspacePath)
+        break
+      case 'delete':
+        void handleDeleteWorkspace(workspacePath)
+        break
+    }
   }
 
   const renderThreadRow = (
@@ -353,11 +433,21 @@ export function SidebarProjectsSection({
     const visibleThreads = workspaceExpanded ? sortedThreads : sortedThreads.slice(0, 5)
     const folderHasActive = workspaceHasActiveThread(list, activeThreadId)
     const folderIconClass = folderHasActive ? 'text-accent' : 'text-ds-muted'
+    const labelColor = (sidebarLabelColors[workspaceLabelKey(workspacePath)] ??
+      null) as SidebarLabelColor
+    const labelSwatch = sidebarLabelSwatch(labelColor)
 
     return (
       <div key={workspacePath} className="mb-1">
         <div
           className="ds-sidebar-workspace group"
+          onContextMenu={(event) => {
+            event.preventDefault()
+            clearFolderHoverTimer()
+            clearFolderAutoHide()
+            setFolderHover(null)
+            setProjectMenu({ path: workspacePath, x: event.clientX, y: event.clientY })
+          }}
           onMouseEnter={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
             clearFolderHoverTimer()
@@ -391,12 +481,26 @@ export function SidebarProjectsSection({
               <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
             )}
             {isCollapsed ? (
-              <Folder className={`h-4 w-4 shrink-0 ${folderIconClass}`} strokeWidth={1.85} aria-hidden />
+              <Folder
+                className={`h-4 w-4 shrink-0 ${labelSwatch ? '' : folderIconClass}`}
+                style={labelSwatch ? { color: labelSwatch } : undefined}
+                strokeWidth={1.85}
+                aria-hidden
+              />
             ) : (
-              <FolderOpen className={`h-4 w-4 shrink-0 ${folderIconClass}`} strokeWidth={1.85} aria-hidden />
+              <FolderOpen
+                className={`h-4 w-4 shrink-0 ${labelSwatch ? '' : folderIconClass}`}
+                style={labelSwatch ? { color: labelSwatch } : undefined}
+                strokeWidth={1.85}
+                aria-hidden
+              />
             )}
-            <span className="ds-sidebar-project-label min-w-0 flex-1 truncate">{folderName}</span>
-            <span className="ds-sidebar-project-count">{list.length}</span>
+            <span
+              className="ds-sidebar-project-label min-w-0 flex-1 truncate"
+              style={labelSwatch ? { color: labelSwatch } : undefined}
+            >
+              {folderName}
+            </span>
           </button>
           <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-40 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
             <button
@@ -410,18 +514,6 @@ export function SidebarProjectsSection({
               aria-label={t('sidebarWorkspaceNewThread')}
             >
               <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                void handleRemoveWorkspace(workspacePath)
-              }}
-              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-red-500"
-              title={t('sidebarWorkspaceRemove')}
-              aria-label={t('sidebarWorkspaceRemove')}
-            >
-              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
             </button>
           </div>
         </div>
@@ -491,7 +583,7 @@ export function SidebarProjectsSection({
           ) : null}
         </div>
       </div>
-      {folderHover ? (
+      {folderHover && !projectMenu ? (
         <HoverInfoCard
           anchor={folderHover.anchor}
           titleIcon={Folder}
@@ -516,6 +608,21 @@ export function SidebarProjectsSection({
               : []),
             { icon: FolderClosed, text: folderHover.path, divider: true }
           ]}
+        />
+      ) : null}
+      {projectMenu ? (
+        <ProjectContextMenu
+          x={projectMenu.x}
+          y={projectMenu.y}
+          labelColor={
+            (sidebarLabelColors[workspaceLabelKey(projectMenu.path)] ?? null) as SidebarLabelColor
+          }
+          onLabelColorChange={(color) =>
+            setSidebarLabelColor(workspaceLabelKey(projectMenu.path), color)
+          }
+          onAction={(action) => handleProjectMenuAction(projectMenu.path, action)}
+          onClose={() => setProjectMenu(null)}
+          t={t}
         />
       ) : null}
     </div>
@@ -570,6 +677,8 @@ export function ThreadRow({
   const renameThread = useChatStore((s) => s.renameThread)
   const markThreadUnread = useChatStore((s) => s.markThreadUnread)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const sidebarLabelColors = useChatStore((s) => s.sidebarLabelColors)
+  const setSidebarLabelColor = useChatStore((s) => s.setSidebarLabelColor)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
   // Inline rename: Electron's renderer has no window.prompt, so the row turns
   // into an editable input (mirrors the title editor in SessionHeader).
@@ -663,6 +772,9 @@ export function ThreadRow({
     setRenaming(false)
   }
 
+  const labelColor = (sidebarLabelColors[threadLabelKey(thread.id)] ?? null) as SidebarLabelColor
+  const labelSwatch = sidebarLabelSwatch(labelColor)
+
   const handleMenuAction = (action: ThreadContextMenuAction): void => {
     switch (action) {
       case 'rename':
@@ -678,6 +790,17 @@ export function ThreadRow({
         break
       case 'copy-path':
         if (threadPath) void navigator.clipboard?.writeText(threadPath)
+        break
+      case 'copy-relative-path':
+        if (threadPath) {
+          void navigator.clipboard?.writeText(copyableRelativePath(threadPath, threadPath))
+        }
+        break
+      case 'open-with-editor':
+        if (threadPath) void openWorkspacePathInEditor({ path: threadPath }, threadPath)
+        break
+      case 'reveal-in-folder':
+        if (threadPath) void revealWorkspacePathInFolder(threadPath)
         break
       case 'open-terminal':
         // Open the built-in right-side terminal panel (cd'd to this thread's
@@ -781,6 +904,7 @@ export function ThreadRow({
               'ds-sidebar-thread min-w-0 flex-1 truncate',
               showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
             ].join(' ')}
+            style={labelSwatch ? { color: labelSwatch } : undefined}
             title={thread.title}
           >
             {(() => {
@@ -882,6 +1006,10 @@ export function ThreadRow({
           pinned={pinned}
           canMarkUnread={activeThreadId !== thread.id}
           hasPath={hasPath}
+          labelColor={labelColor}
+          onLabelColorChange={(color) =>
+            setSidebarLabelColor(threadLabelKey(thread.id), color)
+          }
           onAction={handleMenuAction}
           onClose={() => setMenuPos(null)}
           t={t}

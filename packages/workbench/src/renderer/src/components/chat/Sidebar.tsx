@@ -64,6 +64,7 @@ export function Sidebar({
   const openConnectors = useChatStore((s) => s.openConnectors)
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
+  const hideWorkspace = useChatStore((s) => s.hideWorkspace)
   const deleteWorkspace = useChatStore((s) => s.deleteWorkspace)
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
@@ -221,7 +222,8 @@ export function Sidebar({
             locale={i18n.language}
             onTogglePin={togglePin}
             onPickWorkspace={() => void chooseWorkspace()}
-            onRemoveWorkspace={deleteWorkspace}
+            onRemoveWorkspace={hideWorkspace}
+            onDeleteWorkspace={deleteWorkspace}
             onCreateThreadInWorkspace={onNewChatInWorkspace}
             onSelectThread={onSelectThread}
             onOpenThreadTerminal={onOpenThreadTerminal}

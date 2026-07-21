@@ -1288,6 +1288,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const target = parseIpcPayload('shell:open-terminal', shellOpenTerminalPathSchema, path)
     await openTerminalAtPath(target)
   })
+  ipcMain.handle('shell:show-item-in-folder', async (_, path: unknown) => {
+    const target = parseIpcPayload('shell:show-item-in-folder', shellOpenTerminalPathSchema, path)
+    shell.showItemInFolder(target)
+  })
   ipcMain.handle('notification:turn-complete', async (_, payload: unknown) =>
     showTurnCompleteNotification(
       parseIpcPayload('notification:turn-complete', notificationPayloadSchema, payload)

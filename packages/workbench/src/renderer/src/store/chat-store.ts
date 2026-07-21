@@ -58,6 +58,14 @@ import {
   savePinnedThreadIds
 } from './chat-store-helpers'
 import {
+  isWorkspaceHidden,
+  loadHiddenWorkspacePaths,
+  loadSidebarLabelColors,
+  saveHiddenWorkspacePaths,
+  saveSidebarLabelColors,
+  type SidebarLabelColorId
+} from '../lib/sidebar-chrome'
+import {
   clearedThreadSelection,
   findLatestUserBlockId,
   findReusableEmptyThreadId,
@@ -1157,6 +1165,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   watchTurnCompletion: {},
   unreadThreadIds: {},
   pinnedThreadIds: loadPinnedThreadIds(),
+  hiddenWorkspacePaths: loadHiddenWorkspacePaths(),
+  sidebarLabelColors: loadSidebarLabelColors(),
   sidebarSearchQuery: '',
   chatsCollapsed: false,
   scrollToBlockId: null,
@@ -1376,9 +1386,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const next = await window.dsGui.setSettings({ workspaceRoot: requested })
       const workspaceRoot = normalizeWorkspaceRoot(next.workspaceRoot)
+      // Re-importing a previously hidden project brings its history back into the sidebar.
+      const remainingHidden = get().hiddenWorkspacePaths.filter(
+        (path) => normalizeWorkspaceRoot(path).toLowerCase() !== workspaceRoot.toLowerCase()
+      )
+      if (remainingHidden.length !== get().hiddenWorkspacePaths.length) {
+        saveHiddenWorkspacePaths(remainingHidden)
+      }
       set({
         workspaceRoot,
         workspaceLabel: workspaceLabelFromPath(workspaceRoot),
+        hiddenWorkspacePaths: remainingHidden,
         error: null
       })
       await get().refreshThreads()
@@ -1443,6 +1461,60 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  hideWorkspace: async (workspacePath) => {
+    const normalizedPath = normalizeWorkspaceRoot(workspacePath)
+    if (!normalizedPath) return
+    const hidden = get().hiddenWorkspacePaths
+    if (isWorkspaceHidden(normalizedPath, hidden)) return
+
+    const nextHidden = [...hidden, normalizedPath]
+    saveHiddenWorkspacePaths(nextHidden)
+
+    const activeThreadId = get().activeThreadId
+    const activeBelongs = get().threads.some(
+      (thread) =>
+        thread.id === activeThreadId && threadBelongsToWorkspace(thread, normalizedPath)
+    )
+    if (activeBelongs) {
+      sseAbort?.abort()
+      sseAbort = null
+      clearBusyWatchdog()
+    }
+
+    set({
+      hiddenWorkspacePaths: nextHidden,
+      ...(activeBelongs ? clearedThreadSelection() : {}),
+      error: null
+    })
+
+    if (normalizeWorkspaceRoot(get().workspaceRoot) === normalizedPath) {
+      try {
+        if (typeof window.dsGui?.setSettings === 'function') {
+          const next = await window.dsGui.setSettings({ workspaceRoot: '' })
+          set({
+            workspaceRoot: normalizeWorkspaceRoot(next.workspaceRoot),
+            workspaceLabel: workspaceLabelFromPath('')
+          })
+        }
+      } catch {
+        /* silently keep workspaceRoot if settings clear fails */
+      }
+    }
+  },
+
+  setSidebarLabelColor: (key, color) => {
+    const trimmedKey = key.trim()
+    if (!trimmedKey) return
+    const current = { ...get().sidebarLabelColors }
+    if (!color) {
+      delete current[trimmedKey]
+    } else {
+      current[trimmedKey] = color
+    }
+    saveSidebarLabelColors(current as Record<string, SidebarLabelColorId>)
+    set({ sidebarLabelColors: current })
+  },
+
   deleteWorkspace: async (workspacePath) => {
     const normalizedPath = normalizeWorkspaceRoot(workspacePath)
     if (!normalizedPath) return
@@ -1466,6 +1538,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await p.deleteThread(th.id)
       }
       const removeIds = new Set(workspaceThreads.map((th) => th.id))
+      const nextHidden = get().hiddenWorkspacePaths.filter(
+        (path) => normalizeWorkspaceRoot(path).toLowerCase() !== normalizedPath.toLowerCase()
+      )
+      if (nextHidden.length !== get().hiddenWorkspacePaths.length) {
+        saveHiddenWorkspacePaths(nextHidden)
+      }
       set((s) => {
         const w = { ...s.watchTurnCompletion }
         const u = { ...s.unreadThreadIds }
@@ -1483,6 +1561,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           watchTurnCompletion: w,
           unreadThreadIds: u,
           pinnedThreadIds: nextPinned,
+          hiddenWorkspacePaths: nextHidden,
           ...(deletingActive ? clearedThreadSelection() : {}),
           error: null
         }

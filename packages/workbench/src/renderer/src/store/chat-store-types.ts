@@ -99,6 +99,10 @@ export type ChatState = {
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
   pinnedThreadIds: string[]
+  /** Soft-hidden project roots; threads are kept and reappear on re-import. */
+  hiddenWorkspacePaths: string[]
+  /** Color labels keyed by `w:<workspace>` or `t:<threadId>`. */
+  sidebarLabelColors: Record<string, string>
   sidebarSearchQuery: string
   chatsCollapsed: boolean
   scrollToBlockId: string | null
@@ -127,7 +131,11 @@ export type ChatState = {
     options?: { createThreadAfter?: boolean }
   ) => Promise<string | null>
   clearWorkspace: () => Promise<void>
+  /** Permanently delete all threads under a workspace (legacy hard delete). */
   deleteWorkspace: (workspacePath: string) => Promise<void>
+  /** Remove a project from the sidebar without deleting thread history. */
+  hideWorkspace: (workspacePath: string) => Promise<void>
+  setSidebarLabelColor: (key: string, color: string | null) => void
   refreshThreads: () => Promise<void>
   createThread: (options?: { workspaceRoot?: string; chats?: boolean }) => Promise<void>
   selectThread: (id: string) => Promise<void>
