@@ -3382,6 +3382,13 @@ class RuntimeThreadManager:
                         item = self.store.load_item(item_id)
                     except FileNotFoundError:
                         continue
+                    except Exception:
+                        logger.warning(
+                            "Skipping unreadable item %s during interrupted-state recovery",
+                            item_id,
+                            exc_info=True,
+                        )
+                        continue
                     if item.status in (
                         TurnItemLifecycleStatus.QUEUED,
                         TurnItemLifecycleStatus.IN_PROGRESS,

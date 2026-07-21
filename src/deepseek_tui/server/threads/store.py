@@ -10,9 +10,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypeVar
-
-from pydantic import BaseModel
+from typing import Any, Protocol, TypeVar
 
 from deepseek_tui.server.threads.models import (
     CURRENT_RUNTIME_SCHEMA_VERSION,
@@ -25,6 +23,16 @@ from deepseek_tui.server.threads.models import (
 from deepseek_tui.utils import write_json_atomic
 
 logger = logging.getLogger(__name__)
+
+
+class _VersionedRecord(Protocol):
+    schema_version: int
+
+    @classmethod
+    def model_validate(cls, obj: Any) -> Any: ...
+
+
+_T = TypeVar("_T", bound=_VersionedRecord)
 
 
 class RuntimeThreadStore:
@@ -134,19 +142,36 @@ class RuntimeThreadStore:
             )
         return record
 
+    def _load_listing_record(self, path: Path, model: type[_T]) -> _T | None:
+        """Load one record during a directory listing.
+
+        A single corrupt/unreadable/newer-schema file must not take down the
+        whole listing (and with it server startup recovery) — skip it and warn.
+        """
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            record: _T = model.model_validate(raw)
+        except Exception:
+            logger.warning("Skipping unreadable record file: %s", path, exc_info=True)
+            return None
+        if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
+            logger.warning(
+                "Skipping %s: schema v%s is newer than supported v%s",
+                path,
+                record.schema_version,
+                CURRENT_RUNTIME_SCHEMA_VERSION,
+            )
+            return None
+        return record
+
     def list_threads(self) -> list[ThreadRecord]:
         out: list[ThreadRecord] = []
         if not self._threads_dir.exists():
             return out
         for path in self._threads_dir.glob("*.json"):
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            record = ThreadRecord.model_validate(raw)
-            if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
-                raise ValueError(
-                    f"Thread schema v{record.schema_version} is newer than supported "
-                    f"v{CURRENT_RUNTIME_SCHEMA_VERSION}"
-                )
-            out.append(record)
+            record = self._load_listing_record(path, ThreadRecord)
+            if record is not None:
+                out.append(record)
         out.sort(key=lambda t: t.updated_at, reverse=True)
         return out
 
@@ -155,14 +180,8 @@ class RuntimeThreadStore:
         if not self._turns_dir.exists():
             return out
         for path in self._turns_dir.glob("*.json"):
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            record = TurnRecord.model_validate(raw)
-            if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
-                raise ValueError(
-                    f"Turn schema v{record.schema_version} is newer than supported "
-                    f"v{CURRENT_RUNTIME_SCHEMA_VERSION}"
-                )
-            if record.thread_id == thread_id:
+            record = self._load_listing_record(path, TurnRecord)
+            if record is not None and record.thread_id == thread_id:
                 out.append(record)
         out.sort(key=lambda t: t.created_at)
         return out
@@ -183,14 +202,8 @@ class RuntimeThreadStore:
                     continue
             return out
         for path in self._items_dir.glob("*.json"):
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            record = TurnItemRecord.model_validate(raw)
-            if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
-                raise ValueError(
-                    f"Item schema v{record.schema_version} is newer than supported "
-                    f"v{CURRENT_RUNTIME_SCHEMA_VERSION}"
-                )
-            if record.turn_id == turn_id:
+            record = self._load_listing_record(path, TurnItemRecord)
+            if record is not None and record.turn_id == turn_id:
                 out.append(record)
         out.sort(key=lambda i: i.started_at or datetime.min.replace(tzinfo=timezone.utc))
         return out
