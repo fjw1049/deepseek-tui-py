@@ -6,6 +6,8 @@ import { isImagePreviewPath } from '@shared/image-preview'
 import type { ChatBlock } from '../../agent/types'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
+import { useChatStore } from '../../store/chat-store'
 import { isMarkdownPath } from '../../lib/monaco-language-for-path'
 import {
   openWorkspacePathInEditor,
@@ -231,7 +233,9 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   const updateTabContent = useWorkspaceEditorStore((s) => s.updateTabContent)
   const saveTab = useWorkspaceEditorStore((s) => s.saveTab)
   const resetForWorkspace = useWorkspaceEditorStore((s) => s.resetForWorkspace)
-  const { result: gitChanges } = useGitWorkingChanges(trimmedRoot)
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(trimmedRoot)
+  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
 
   const [treeWidth, setTreeWidth] = useState(readStoredTreeWidth)
   const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio)

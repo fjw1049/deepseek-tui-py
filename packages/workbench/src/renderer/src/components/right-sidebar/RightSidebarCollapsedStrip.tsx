@@ -1,8 +1,11 @@
 import type { ReactElement } from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { sumDiffStats } from '../../lib/diff-stats'
+import { useChatStore } from '../../store/chat-store'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 
 type Props = {
@@ -13,8 +16,14 @@ type Props = {
 export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): ReactElement {
   const { t } = useTranslation('common')
   const root = workspaceRoot.trim()
-  const { result: gitResult } = useGitBranches(root)
-  const { result: gitChanges } = useGitWorkingChanges(root)
+  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
+  const { result: gitResult, reload: reloadGitBranches } = useGitBranches(root)
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  const refreshGit = useCallback((): void => {
+    void reloadGitBranches()
+    void reloadGitChanges()
+  }, [reloadGitBranches, reloadGitChanges])
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGit)
   const changeStats = gitChanges?.ok
     ? sumDiffStats(gitChanges.files.map((file) => file.patch))
     : null

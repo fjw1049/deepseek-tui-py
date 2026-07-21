@@ -4,8 +4,9 @@ import type {
   UserMessageEventPayload,
   WorkflowProgressPayload
 } from '../agent/types'
+import { finalizeOrphanSubagentBlocks } from '../lib/subagent-mailbox'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
-import type { ChatState } from './chat-store-types'
+import type { ChatState, QueuedUserMessage } from './chat-store-types'
 
 export type PendingApprovalPayload = {
   approvalId: string
@@ -153,6 +154,39 @@ export function hasPendingRuntimeWork(block: ChatBlock): boolean {
     return block.status === 'pending' || block.status === 'running'
   }
   return false
+}
+
+/**
+ * After an interrupt (or force-clear), mark in-flight tools/workflows/subagents
+ * terminal so `hasPendingRuntimeWork` cannot keep the composer stuck in queue mode.
+ */
+export function finalizeOrphanRuntimeBlocks(blocks: ChatBlock[]): ChatBlock[] {
+  const withSubagents = finalizeOrphanSubagentBlocks(blocks)
+  let changed = withSubagents !== blocks
+  const next = withSubagents.map((block) => {
+    if (block.kind === 'tool' && block.status === 'running') {
+      changed = true
+      return { ...block, status: 'error' as const }
+    }
+    if (block.kind === 'workflow' && block.status === 'running') {
+      changed = true
+      return { ...block, status: 'cancelled' as const }
+    }
+    return block
+  })
+  return changed ? next : blocks
+}
+
+/** Move a queued message to the front (for send-now). Returns null if missing. */
+export function moveQueuedMessageToFront(
+  queued: QueuedUserMessage[],
+  id: string
+): QueuedUserMessage[] | null {
+  const idx = queued.findIndex((message) => message.id === id)
+  if (idx < 0) return null
+  if (idx === 0) return queued
+  const target = queued[idx]
+  return [target, ...queued.slice(0, idx), ...queued.slice(idx + 1)]
 }
 
 export function upsertWorkflowBlock(

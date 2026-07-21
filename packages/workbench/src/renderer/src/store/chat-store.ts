@@ -67,12 +67,14 @@ import {
 } from '../lib/sidebar-chrome'
 import {
   clearedThreadSelection,
+  finalizeOrphanRuntimeBlocks,
   findLatestUserBlockId,
   findReusableEmptyThreadId,
   hasPendingRuntimeWork,
   mergePendingApprovalBlocks,
   mergePendingEvolutionBlocks,
   mergePendingUserInputBlocks,
+  moveQueuedMessageToFront,
   reconcileOptimisticUserBlock,
   threadBelongsToWorkspace,
   threadSnapshotLooksRunning,
@@ -561,8 +563,10 @@ function buildThreadEventSink(
         }
         // When deltas arrive but busy is false (e.g. switching back to a running
         // thread or SSE stream recovered from a transient error), restore the
-        // busy flag so the interrupt button reappears.
-        if (!s.busy) {
+        // busy flag so the interrupt button reappears. Skip when the turn was
+        // already interrupted/cleared (currentTurnId null) so late events cannot
+        // freeze the composer again.
+        if (!s.busy && s.currentTurnId) {
           base.busy = true
           armBusyWatchdog(set, get)
         }
@@ -643,9 +647,15 @@ function buildThreadEventSink(
         resetBusyRecoveryAttempts()
         // Restore busy state on tool events (same reasoning as onDelta).
         const base: Partial<ChatState> = {}
-        if (!s.busy) {
+        if (!s.busy && s.currentTurnId) {
           base.busy = true
           armBusyWatchdog(set, get)
+        }
+        if (
+          ev.status !== 'running' &&
+          (ev.toolKind === 'file_change' || ev.toolKind === 'command_execution')
+        ) {
+          base.workspaceDirtyTick = s.workspaceDirtyTick + 1
         }
         const idx = s.blocks.findIndex((b) => b.kind === 'tool' && b.id === ev.itemId)
         let blocks = s.blocks
@@ -968,10 +978,10 @@ function buildThreadEventSink(
         // is still active — a late completed event must not re-stick the UI.
         if (ev.completed) {
           nextBlocks = finalizeOrphanSubagentBlocks(nextBlocks)
-          if (!s.currentTurnId) {
-            return { ...flushed, blocks: nextBlocks }
-          }
-        } else if (!s.currentTurnId && !s.busy) {
+        }
+        // After interrupt, currentTurnId is cleared — never revive busy from
+        // late workflow SSE, or the composer freezes again with a queue chip.
+        if (!s.currentTurnId) {
           return { ...flushed, blocks: nextBlocks }
         }
         resetBusyRecoveryAttempts()
@@ -1093,7 +1103,10 @@ function buildThreadEventSink(
         }
         return base
       })
-      set((s) => ({ usageRefreshKey: s.usageRefreshKey + 1 }))
+      set((s) => ({
+        usageRefreshKey: s.usageRefreshKey + 1,
+        workspaceDirtyTick: s.workspaceDirtyTick + 1
+      }))
       notifyTurnComplete(completedThreadId, completedState, completedKey)
       syncTurnCompletionPoll(set, get)
       void reloadActiveThreadBlocks(get, set)
@@ -1173,6 +1186,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   scrollToBlockId: null,
   activePlugin: null,
   usageRefreshKey: 0,
+  workspaceDirtyTick: 0,
 
   ...createAppActions({
     set,
@@ -1916,6 +1930,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       queuedMessages: s.queuedMessages.filter((message) => message.id !== id)
     })),
 
+  withdrawQueuedMessage: (id) => {
+    const message = get().queuedMessages.find((item) => item.id === id) ?? null
+    if (!message) return null
+    set((s) => ({
+      queuedMessages: s.queuedMessages.filter((item) => item.id !== id)
+    }))
+    return message
+  },
+
+  sendQueuedMessageNow: async (id) => {
+    const reordered = moveQueuedMessageToFront(get().queuedMessages, id)
+    if (!reordered) return
+    set({ queuedMessages: reordered })
+    const { busy, currentTurnId, blocks } = get()
+    const hasPending = blocks.some(hasPendingRuntimeWork)
+    if (busy || currentTurnId || hasPending) {
+      await get().interrupt()
+    }
+    if (!get().busy && !get().blocks.some(hasPendingRuntimeWork)) {
+      void get().drainQueuedMessages()
+    }
+  },
+
   sendMessage: async (text, mode, overrides) => {
     const { providerId } = get()
     const trimmedText = text.trim()
@@ -1934,51 +1971,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const p = getProvider(providerId)
     const hasPendingActiveTurn = get().blocks.some(hasPendingRuntimeWork)
+    // While a turn is in flight, park composer input in the queue chip UI
+    // (send-now / withdraw / delete). Do not auto-steer into the live turn —
+    // that injects a timeline bubble without chip actions.
     if (get().busy || hasPendingActiveTurn) {
       const activeThreadId = get().activeThreadId
-      const turnId = get().currentTurnId
-      // Plugin control turns must not be steered into an in-flight reply.
-      if (
-        !hidden &&
-        activeThreadId &&
-        turnId &&
-        typeof p.steerUserMessage === 'function'
-      ) {
-        const now = Date.now()
-        const threadSnap = get().threads.find((thread) => thread.id === activeThreadId)
-        const composerModel = get().composerModel.trim()
-        const userModelChip = optimisticUserModelLabel(composerModel, threadSnap?.model)
-        const steerBlockId = `u-steer-${now}`
-        const previousBlocks = get().blocks
-        set((s) => ({
-          blocks: [
-            ...s.blocks,
-            {
-              kind: 'user' as const,
-              id: steerBlockId,
-              createdAt: new Date(now).toISOString(),
-              text: displayText,
-              ...(userModelChip ? { modelLabel: userModelChip } : {})
-            }
-          ],
-          error: null
-        }))
-        try {
-          await p.steerUserMessage(activeThreadId, turnId, trimmedText)
-          return true
-        } catch (error) {
-          set({
-            blocks: previousBlocks,
-            error: formatRuntimeError(error)
-          })
-          const section = settingsSectionForRuntimeError(error)
-          if (section) {
-            set({ route: 'settings', settingsSection: section })
-          }
-          return false
-        }
-      }
-
       const now = Date.now()
       const threadSnap = activeThreadId
         ? get().threads.find((thread) => thread.id === activeThreadId)
@@ -2786,31 +2783,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
   interrupt: async () => {
     const { activeThreadId, currentTurnId, providerId } = get()
     if (!activeThreadId) return
+
+    const settleInterrupted = (s: ChatState): Partial<ChatState> => {
+      const flushed = flushLiveBlocks(s, {
+        ...finalizeTurnTiming(s),
+        busy: false,
+        currentTurnId: null
+      })
+      const blocks = finalizeOrphanRuntimeBlocks(flushed.blocks ?? s.blocks)
+      return {
+        ...flushed,
+        blocks,
+        workspaceDirtyTick: s.workspaceDirtyTick + 1
+      }
+    }
+
     // No live turn id to interrupt (e.g. busy was restored after a runtime
     // restart whose turn is already dead). Force-clear the local busy state so
     // the UI doesn't stay stuck in "processing" with an unresponsive stop key.
     if (!currentTurnId) {
       clearBusyWatchdog()
-      set((s) =>
-        flushLiveBlocks(s, {
-          ...finalizeTurnTiming(s),
-          busy: false,
-          currentTurnId: null
-        })
-      )
+      set((s) => settleInterrupted(s))
+      // Do not auto-drain the queue after Stop — chips stay for withdraw/delete/send-now.
       return
     }
     const p = getProvider(providerId)
     try {
       await p.interruptTurn(activeThreadId, currentTurnId)
       clearBusyWatchdog()
-      set((s) =>
-        flushLiveBlocks(s, {
-          ...finalizeTurnTiming(s),
-          busy: false,
-          currentTurnId: null
-        })
-      )
+      set((s) => settleInterrupted(s))
     } catch (e) {
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('interrupt', 'Failed to interrupt turn', { message: msg })
@@ -2819,13 +2820,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const isTurnGone = msg.includes('not active') || msg.includes('not loaded')
       if (isTurnGone) {
         clearBusyWatchdog()
-        set((s) =>
-          flushLiveBlocks(s, {
-            ...finalizeTurnTiming(s),
-            busy: false,
-            currentTurnId: null
-          })
-        )
+        set((s) => settleInterrupted(s))
       } else {
         set({
           error: msg,

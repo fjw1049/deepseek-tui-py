@@ -218,6 +218,8 @@ export function Workbench(): ReactElement {
     sendMessage,
     queuedMessages,
     removeQueuedMessage,
+    withdrawQueuedMessage,
+    sendQueuedMessageNow,
     interrupt,
     probeRuntime,
     composerModel,
@@ -248,6 +250,8 @@ export function Workbench(): ReactElement {
       sendMessage: s.sendMessage,
       queuedMessages: s.queuedMessages,
       removeQueuedMessage: s.removeQueuedMessage,
+      withdrawQueuedMessage: s.withdrawQueuedMessage,
+      sendQueuedMessageNow: s.sendQueuedMessageNow,
       interrupt: s.interrupt,
       probeRuntime: s.probeRuntime,
       composerModel: s.composerModel,
@@ -1183,6 +1187,8 @@ export function Workbench(): ReactElement {
                         onOpenDiff={handleComposerOpenDiff}
                         queuedMessages={queuedMessages}
                         onRemoveQueuedMessage={removeQueuedMessage}
+                        onWithdrawQueuedMessage={withdrawQueuedMessage}
+                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
                         onInterrupt={() => void interrupt()}
                       />
                     </div>
@@ -1242,6 +1248,8 @@ export function Workbench(): ReactElement {
                         onOpenDiff={handleComposerOpenDiff}
                         queuedMessages={queuedMessages}
                         onRemoveQueuedMessage={removeQueuedMessage}
+                        onWithdrawQueuedMessage={withdrawQueuedMessage}
+                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
                         onInterrupt={() => void interrupt()}
                       />
                     </div>
@@ -1299,6 +1307,8 @@ export function Workbench(): ReactElement {
                       onOpenDiff={handleComposerOpenDiff}
                       queuedMessages={queuedMessages}
                       onRemoveQueuedMessage={removeQueuedMessage}
+                      onWithdrawQueuedMessage={withdrawQueuedMessage}
+                      onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
                       onInterrupt={() => void interrupt()}
                     />
                   </div>

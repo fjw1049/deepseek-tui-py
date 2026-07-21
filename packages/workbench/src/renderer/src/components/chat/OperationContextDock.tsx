@@ -16,6 +16,7 @@ import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { sumDiffStats } from '../../lib/diff-stats'
 import {
   extractTasksFromBlocks,
@@ -242,7 +243,8 @@ export function OperationContextDock({
     threads,
     gitCommitSelectionKey,
     gitCommitSelectedPaths,
-    syncGitCommitSelection
+    syncGitCommitSelection,
+    workspaceDirtyTick
   } = useChatStore(
     useShallow((s) => ({
       workspaceRoot: s.workspaceRoot,
@@ -251,12 +253,18 @@ export function OperationContextDock({
       threads: s.threads,
       gitCommitSelectionKey: s.gitCommitSelectionKey,
       gitCommitSelectedPaths: s.gitCommitSelectedPaths,
-      syncGitCommitSelection: s.syncGitCommitSelection
+      syncGitCommitSelection: s.syncGitCommitSelection,
+      workspaceDirtyTick: s.workspaceDirtyTick
     }))
   )
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
   const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
   const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  const refreshGitState = useCallback((): void => {
+    void reloadGitBranches()
+    void reloadGitChanges()
+  }, [reloadGitBranches, reloadGitChanges])
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
   const doneCount = todos.filter((item) => item.status === 'completed').length
@@ -293,11 +301,6 @@ export function OperationContextDock({
   const canCommit = gitReady && gitDirtyCount > 0 && !explicitSelectNone
   const hasGitChanges = gitDirtyCount > 0 || gitFilePaths.length > 0
   const hasChanges = changeStats !== null || hasGitChanges
-
-  const refreshGitState = useCallback((): void => {
-    void reloadGitBranches()
-    void reloadGitChanges()
-  }, [reloadGitBranches, reloadGitChanges])
 
   const openChangesPanel = (): void => {
     if (!hasChanges) return

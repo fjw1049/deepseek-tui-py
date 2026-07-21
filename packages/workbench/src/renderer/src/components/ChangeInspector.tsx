@@ -7,6 +7,7 @@ import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
 import { DiffView } from './DiffView'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
 import {
   countDiffStats,
   extractDiffFilePath,
@@ -98,15 +99,17 @@ export function ChangeInspector({
   const syncGitCommitSelection = useChatStore((s) => s.syncGitCommitSelection)
   const toggleGitCommitPath = useChatStore((s) => s.toggleGitCommitPath)
   const setGitCommitSelectedPaths = useChatStore((s) => s.setGitCommitSelectedPaths)
-  const { workspaceRoot, activeThreadId, threads } = useChatStore(
+  const { workspaceRoot, activeThreadId, threads, workspaceDirtyTick } = useChatStore(
     useShallow((s) => ({
       workspaceRoot: s.workspaceRoot,
       activeThreadId: s.activeThreadId,
-      threads: s.threads
+      threads: s.threads,
+      workspaceDirtyTick: s.workspaceDirtyTick
     }))
   )
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
-  const { result: gitChanges, loading: gitLoading } = useGitWorkingChanges(root)
+  const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
   const gitFilePaths = useMemo(
     () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
     [gitChanges]

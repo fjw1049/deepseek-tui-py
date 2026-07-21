@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
+import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
   filterComposerModelOptions,
@@ -128,6 +129,7 @@ function fileBadge(name: string): FileBadge {
 type QueuedComposerMessage = {
   id: string
   text: string
+  displayText?: string
   hidden?: boolean
 }
 
@@ -144,6 +146,8 @@ type Props = {
   onComposerModelChange: (modelId: string) => void
   queuedMessages: QueuedComposerMessage[]
   onRemoveQueuedMessage: (id: string) => void
+  onWithdrawQueuedMessage: (id: string) => QueuedComposerMessage | null
+  onSendQueuedMessageNow: (id: string) => void
   onSend: (text: string) => void
   onInterrupt: () => void
   onCompact: () => Promise<void>
@@ -205,6 +209,8 @@ export function FloatingComposer({
   onComposerModelChange,
   queuedMessages,
   onRemoveQueuedMessage,
+  onWithdrawQueuedMessage,
+  onSendQueuedMessageNow,
   onSend,
   onInterrupt,
   onCompact,
@@ -289,7 +295,19 @@ export function FloatingComposer({
   const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
 
   const pendingApprovals = useMemo(
-    () => blocks.filter((block) => block.kind === 'approval' && block.status === 'pending'),
+    () =>
+      blocks.filter(
+        (block): block is Extract<(typeof blocks)[number], { kind: 'approval' }> =>
+          block.kind === 'approval' && block.status === 'pending'
+      ),
+    [blocks]
+  )
+  const pendingUserInputs = useMemo(
+    () =>
+      blocks.filter(
+        (block): block is Extract<(typeof blocks)[number], { kind: 'user_input' }> =>
+          block.kind === 'user_input' && block.status === 'pending'
+      ),
     [blocks]
   )
 
@@ -1098,10 +1116,13 @@ export function FloatingComposer({
         useChatStageWidth ? 'ds-chat-stage px-3 pb-2 pt-0 sm:px-4' : 'max-w-none px-0 pb-2 pt-0'
       } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-0 pt-1'}`}
     >
-      {pendingApprovals.length > 0 ? (
-        <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(240px,32vh)] space-y-2 overflow-y-auto overscroll-contain">
+      {pendingApprovals.length > 0 || pendingUserInputs.length > 0 ? (
+        <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(320px,40vh)] space-y-2 overflow-y-auto overscroll-contain">
           {pendingApprovals.map((block) => (
             <ApprovalBubble key={block.id} block={block} />
+          ))}
+          {pendingUserInputs.map((block) => (
+            <UserInputBubble key={block.id} block={block} />
           ))}
         </div>
       ) : null}
@@ -1117,23 +1138,46 @@ export function FloatingComposer({
             </div>
             <div className="text-[12px] text-ds-muted">{t('queuedMessagesHint')}</div>
           </div>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-col gap-2">
             {visibleQueued.map((message, index) => (
               <div
                 key={message.id}
-                className="flex min-w-0 max-w-full items-center gap-2 rounded-full border border-ds-border-muted bg-ds-main/80 px-3 py-1.5 text-[13px] text-ds-ink"
+                className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-[12px] border border-ds-border-muted bg-ds-main/80 px-3 py-2 text-[13px] text-ds-ink"
               >
                 <span className="shrink-0 text-ds-faint">{index + 1}.</span>
-                <span className="max-w-[360px] truncate">{message.text}</span>
-                <button
-                  type="button"
-                  onClick={() => onRemoveQueuedMessage(message.id)}
-                  className="shrink-0 rounded-full p-0.5 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-                  aria-label={t('queuedMessageRemove')}
-                  title={t('queuedMessageRemove')}
-                >
-                  <X className="h-3.5 w-3.5" strokeWidth={2} />
-                </button>
+                <span className="min-w-0 flex-1 truncate" title={message.text}>
+                  {message.text}
+                </span>
+                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onSendQueuedMessageNow(message.id)}
+                    className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[12px] font-medium text-accent transition hover:bg-accent/16"
+                  >
+                    {t('queuedMessageSendNow')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const withdrawn = onWithdrawQueuedMessage(message.id)
+                      if (!withdrawn) return
+                      setInput(withdrawn.displayText?.trim() || withdrawn.text)
+                      focusComposer()
+                    }}
+                    className="rounded-full border border-ds-border-muted px-2.5 py-1 text-[12px] font-medium text-ds-ink transition hover:bg-ds-hover"
+                  >
+                    {t('queuedMessageWithdraw')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveQueuedMessage(message.id)}
+                    className="rounded-full border border-ds-border-muted px-2.5 py-1 text-[12px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+                    aria-label={t('queuedMessageRemove')}
+                    title={t('queuedMessageRemove')}
+                  >
+                    {t('queuedMessageRemove')}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

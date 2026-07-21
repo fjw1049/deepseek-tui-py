@@ -1,6 +1,11 @@
 import { memo } from 'react'
 import { DiffView } from '../../../DiffView'
 import { looksLikeUnifiedDiff, countDiffStats } from '../../../../lib/diff-stats'
+import {
+  languageFromPath,
+  SharedCodeBlock,
+  titleFromPath
+} from '../../SharedCodeBlock'
 import { ToolBody, ToolErrorState } from '../primitives'
 import type { ToolRenderContext } from '../render-context'
 
@@ -26,12 +31,19 @@ export const FileEditRenderer = {
     const output = context.output
     if (!output) return null
     if (!looksLikeUnifiedDiff(output)) {
+      const path = context.input.path || context.description
+      const language = languageFromPath(path)
+      const title = titleFromPath(path) || language || 'text'
+      const downloadName = path?.split(/[\\/]/).pop()
       return (
-        <ToolBody>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-ds-ink">
-            {output}
-          </pre>
-        </ToolBody>
+        <div className="ds-markdown px-2 pb-2 pt-1">
+          <SharedCodeBlock
+            code={output}
+            language={language}
+            title={title}
+            downloadName={downloadName}
+          />
+        </div>
       )
     }
     return <DiffView patch={output} filePath={context.input.path} maxHeight={440} />

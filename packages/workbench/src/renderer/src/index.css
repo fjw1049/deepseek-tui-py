@@ -2612,9 +2612,18 @@ samp {
   box-sizing: border-box;
 }
 
-.ds-markdown .ds-mermaid-block-label {
-  padding: 0.42rem 0.75rem;
+.ds-markdown .ds-mermaid-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   border-bottom: 1px solid var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-code-bg) 88%, var(--ds-card-muted));
+  padding: 0.42rem 0.6rem;
+}
+
+.ds-markdown .ds-mermaid-block-label {
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
@@ -2623,16 +2632,260 @@ samp {
   color: var(--ds-text-faint);
 }
 
+.ds-markdown .ds-mermaid-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.18rem;
+}
+
 .ds-markdown .ds-mermaid-svg {
-  overflow-x: auto;
+  max-height: min(420px, 55vh);
+  overflow: auto;
   padding: 0.75rem 1rem 1rem;
 }
 
+/* Keep native SVG size — shrinking max-width crushes node labels. */
 .ds-markdown .ds-mermaid-svg svg {
   display: block;
-  max-width: 100%;
+  max-width: none;
   height: auto;
   margin: 0 auto;
+}
+
+.ds-markdown .ds-mermaid-svg--fullscreen {
+  max-height: none;
+  height: 100%;
+}
+
+.ds-mermaid-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(18px, 4vw, 56px);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08), transparent 34%),
+    color-mix(in srgb, #000 64%, transparent);
+  color: var(--ds-text);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+
+.ds-mermaid-fullscreen-panel {
+  display: flex;
+  min-height: 0;
+  width: min(1120px, 100%);
+  max-width: 100%;
+  height: min(760px, 86vh);
+  max-height: 100%;
+  flex-direction: column;
+  /* Do not overflow-hide the panel: that clips the top-right action pill
+     against the 22px corner radius. Round header/body separately. */
+  overflow: visible;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: 22px;
+  background: var(--ds-card-strong);
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.ds-mermaid-fullscreen-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+  border-bottom: 1px solid var(--ds-border-muted);
+  border-radius: 22px 22px 0 0;
+  background: var(--ds-topbar-bg);
+  padding: 0.7rem 1rem;
+  overflow: visible;
+}
+
+.ds-mermaid-fullscreen-header .ds-mermaid-block-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ds-text-faint);
+}
+
+/* Portal is outside .ds-markdown — re-declare toolbar styles here. */
+.ds-mermaid-fullscreen .ds-mermaid-block-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ds-card) 88%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.ds-mermaid-fullscreen .ds-code-block-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.7rem;
+  width: 1.7rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ds-text-muted);
+  opacity: 0.92;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.ds-mermaid-fullscreen .ds-code-block-action:hover {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+  opacity: 1;
+}
+
+.ds-mermaid-fullscreen-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 0.85rem;
+  border-radius: 0 0 22px 22px;
+  background: var(--ds-card-muted);
+}
+
+.ds-code-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(18px, 4vw, 56px);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08), transparent 34%),
+    color-mix(in srgb, #000 64%, transparent);
+  color: var(--ds-text);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+
+.ds-code-fullscreen-panel {
+  display: flex;
+  min-height: 0;
+  width: min(1120px, 100%);
+  max-width: 100%;
+  height: min(760px, 86vh);
+  max-height: 100%;
+  flex-direction: column;
+  overflow: visible;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: 22px;
+  background: var(--ds-card-strong);
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.ds-code-fullscreen-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+  border-bottom: 1px solid var(--ds-border-muted);
+  border-radius: 22px 22px 0 0;
+  background: var(--ds-topbar-bg);
+  padding: 0.7rem 1rem;
+  overflow: visible;
+}
+
+.ds-code-fullscreen-header .ds-code-block-language {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--ds-text-muted);
+}
+
+.ds-code-fullscreen .ds-code-block-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ds-card) 88%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.ds-code-fullscreen .ds-code-block-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.7rem;
+  width: 1.7rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ds-text-muted);
+  opacity: 0.92;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.ds-code-fullscreen .ds-code-block-action:hover {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+  opacity: 1;
+}
+
+.ds-code-fullscreen-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  border-radius: 0 0 22px 22px;
+  background: var(--ds-pre-bg);
+}
+
+.ds-code-fullscreen .ds-code-block-body {
+  max-height: none !important;
+  overflow: visible;
+}
+
+.ds-code-fullscreen .ds-code-block-html > pre {
+  max-height: none;
+}
+
+.ds-code-block-language {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ds-markdown .ds-mermaid-loading {

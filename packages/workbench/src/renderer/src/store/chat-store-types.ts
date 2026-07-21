@@ -110,6 +110,11 @@ export type ChatState = {
   /** Session-level mounted plugin (drives the composer chip). null = none. */
   activePlugin: ActivePluginMeta | null
   usageRefreshKey: number
+  /**
+   * Bumped when workspace files may have changed on disk (tool/turn edges).
+   * Git docks and the workspace editor debounce-reload against this.
+   */
+  workspaceDirtyTick: number
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void
@@ -145,6 +150,10 @@ export type ChatState = {
   sendMessage: (text: string, mode?: string, overrides?: SendMessageOverrides) => Promise<boolean>
   drainQueuedMessages: () => Promise<void>
   removeQueuedMessage: (id: string) => void
+  /** Remove a queued message and return it so the composer can restore the draft. */
+  withdrawQueuedMessage: (id: string) => QueuedUserMessage | null
+  /** Interrupt the active turn (if any), then send this queued message next. */
+  sendQueuedMessageNow: (id: string) => Promise<void>
   rewindAndResend: (userBlockId: string, newText: string) => Promise<void>
   interrupt: () => Promise<void>
   renameActiveThread: (title: string) => Promise<void>
