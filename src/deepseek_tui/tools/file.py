@@ -76,7 +76,10 @@ class WriteFileTool(ToolSpec):
         return "write_file"
 
     def description(self) -> str:
-        return "Write UTF-8 text to a file on disk."
+        return (
+            "Write UTF-8 text to a file on disk. Prefer this (or edit_file / "
+            "apply_patch) for source changes — do not rewrite files via exec_shell."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -92,11 +95,32 @@ class WriteFileTool(ToolSpec):
         return [ToolCapability.WRITES_FILES]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        path = context.resolve_path(_require_string(input_data, "path"))
+        from deepseek_tui.workspace.diff_synth import synthesize_unified_diff
+        from deepseek_tui.workspace.mutation_ledger import build_mutation_metadata
+
+        rel = _require_string(input_data, "path")
+        path = context.resolve_path(rel)
         content = _require_string(input_data, "content")
+        old_text = ""
+        if path.exists():
+            try:
+                old_text = await _read_text(path)
+            except OSError:
+                old_text = ""
         await _write_text(path, content)
         logger.info("write_file path=%s bytes=%d", path, len(content))
-        return ToolResult(success=True, content="ok", metadata={"path": str(path)})
+        display_path = _workspace_rel(path, context.working_directory, rel)
+        unified, stats, op = synthesize_unified_diff(display_path, old_text, content)
+        meta = build_mutation_metadata(
+            path=display_path,
+            op=op,  # type: ignore[arg-type]
+            unified_diff=unified,
+            additions=stats.additions,
+            deletions=stats.deletions,
+            source="write_file",
+        )
+        context.report_file_mutation(meta["mutation"])
+        return ToolResult(success=True, content="ok", metadata=meta)
 
 
 class EditFileTool(ToolSpec):
@@ -108,7 +132,8 @@ class EditFileTool(ToolSpec):
     def description(self) -> str:
         return (
             "Replace text in a single file via exact search/replace. "
-            "Use 'search' and 'replace'; all occurrences of search are substituted."
+            "Use 'search' and 'replace'; all occurrences of search are substituted. "
+            "Prefer this over sed/python via exec_shell for source edits."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -126,7 +151,11 @@ class EditFileTool(ToolSpec):
         return [ToolCapability.WRITES_FILES]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        path = context.resolve_path(_require_string(input_data, "path"))
+        from deepseek_tui.workspace.diff_synth import synthesize_unified_diff
+        from deepseek_tui.workspace.mutation_ledger import build_mutation_metadata
+
+        rel = _require_string(input_data, "path")
+        path = context.resolve_path(rel)
         search = _require_string_with_alias(input_data, "search", "old_string")
         replace = _require_string_with_alias(input_data, "replace", "new_string")
         # Empty search matches every character gap in str.replace/count and
@@ -140,7 +169,8 @@ class EditFileTool(ToolSpec):
             raise ToolError(f"Search string not found in {path}")
         updated = content.replace(search, replace)
         await _write_text(path, updated)
-        summary = f"Replaced {count} occurrence(s) in {path}"
+        display_path = _workspace_rel(path, context.working_directory, rel)
+        summary = f"Replaced {count} occurrence(s) in {display_path}"
         logger.info(
             "edit_file path=%s search_len=%d replace_len=%d count=%d",
             path,
@@ -148,10 +178,21 @@ class EditFileTool(ToolSpec):
             len(replace),
             count,
         )
+        unified, stats, op = synthesize_unified_diff(display_path, content, updated)
+        meta = build_mutation_metadata(
+            path=display_path,
+            op=op,  # type: ignore[arg-type]
+            unified_diff=unified,
+            additions=stats.additions,
+            deletions=stats.deletions,
+            source="edit_file",
+        )
+        meta["occurrences"] = count
+        context.report_file_mutation(meta["mutation"])
         return ToolResult(
             success=True,
             content=summary,
-            metadata={"path": str(path), "occurrences": count},
+            metadata=meta,
         )
 
 
@@ -232,6 +273,15 @@ def _optional_non_negative_int(
     if value < 0:
         raise ToolError(f"{key} must be a non-negative integer")
     return value
+
+
+def _workspace_rel(path: Path, workspace: Path, fallback: str) -> str:
+    try:
+        return str(path.resolve().relative_to(workspace.expanduser().resolve())).replace(
+            "\\", "/"
+        )
+    except ValueError:
+        return fallback.replace("\\", "/")
 
 
 async def _read_text(path: Path) -> str:

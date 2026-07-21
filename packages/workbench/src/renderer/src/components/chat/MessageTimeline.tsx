@@ -53,6 +53,12 @@ import {
   looksLikeUnifiedDiff,
   sumDiffStats
 } from '../../lib/diff-stats'
+import {
+  resolveLatestTurnDiffId,
+  toolBlocksFromTurnSummary,
+  turnSummaryFromSources,
+  type TurnDiffSnapshot
+} from '../../lib/turn-mutation-view'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { getTimestampFormat, subscribeAppearance } from '../../lib/apply-appearance'
 import { useChatStore } from '../../store/chat-store'
@@ -242,7 +248,11 @@ export function MessageTimeline({
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
   const busy = useChatStore((s) => s.busy)
+  const currentTurnId = useChatStore((s) => s.currentTurnId)
+  const lastCompletedTurnId = useChatStore((s) => s.lastCompletedTurnId)
+  const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
   const currentTurnUserId = useChatStore((s) => s.currentTurnUserId)
+  const latestTurnDiffId = resolveLatestTurnDiffId(currentTurnId, lastCompletedTurnId)
   const turnStartedAtByUserId = useChatStore((s) => s.turnStartedAtByUserId)
   const turnDurationByUserId = useChatStore((s) => s.turnDurationByUserId)
   const turnReasoningFirstAtByUserId = useChatStore((s) => s.turnReasoningFirstAtByUserId)
@@ -645,11 +655,12 @@ export function MessageTimeline({
           const turnPending = turnHasPendingRuntimeWork(turn)
           const isLatestTurn = index === visibleTurns.length - 1
           const hasLiveStream = isLatestTurn && !!(liveReasoning.trim() || live.trim())
+          const processing = (busy && isLatestTurn) || turnPending || hasLiveStream
           return (
             <MemoMessageTurn
               key={userId ?? `turn-${index}`}
               turn={turn}
-              isProcessing={(busy && isLatestTurn) || turnPending || hasLiveStream}
+              isProcessing={processing}
               liveReasoning={isLatestTurn ? liveReasoning : ''}
               live={isLatestTurn ? live : ''}
               liveStartedAt={liveStartedAt}
@@ -659,6 +670,17 @@ export function MessageTimeline({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               devPreviewCard={isLatestTurn ? devPreviewCard : null}
               viewportRef={containerRef}
+              turnDiffSnapshot={
+                isLatestTurn && latestTurnDiffId
+                  ? turnDiffByTurnId[latestTurnDiffId]
+                  : undefined
+              }
+              turnDiffTurnId={isLatestTurn ? latestTurnDiffId : null}
+              turnDiffRevision={
+                isLatestTurn && latestTurnDiffId
+                  ? (turnDiffByTurnId[latestTurnDiffId]?.revision ?? 0)
+                  : 0
+              }
             />
           )
         })}
@@ -950,7 +972,10 @@ function MessageTurn({
   htmlPreviewAction,
   onOpenWorkspaceFile,
   devPreviewCard,
-  viewportRef
+  viewportRef,
+  turnDiffSnapshot,
+  turnDiffTurnId = null,
+  turnDiffRevision = 0
 }: {
   turn: Turn
   isProcessing: boolean
@@ -963,8 +988,13 @@ function MessageTurn({
   onOpenWorkspaceFile?: (path: string) => void
   devPreviewCard?: ReactElement | null
   viewportRef: RefObject<HTMLDivElement | null>
+  /** Ledger snapshot for the latest turn (live or just-completed). */
+  turnDiffSnapshot?: TurnDiffSnapshot
+  turnDiffTurnId?: string | null
+  turnDiffRevision?: number
 }): ReactElement {
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+  void turnDiffRevision
   const { think: liveThink, content: liveContent } = splitThink(live)
   const liveProcessText = [liveReasoning, liveThink].filter(Boolean).join('\n\n')
   const hasLiveAssistantStream = isProcessing && !!liveContent.trim()
@@ -1027,26 +1057,35 @@ function MessageTurn({
       nextProcessBlocks.push({ kind: 'assistant', id: 'live-assistant', text: liveContent })
     }
 
-    // Show successful file_change diffs live while the turn is still running
-    // (previously gated on !isProcessing, which hid mid-turn edits).
-    const nextTurnFileChanges = turn.blocks.flatMap((block): ToolBlock[] => {
-      if (
-        !(block.kind === 'tool' && block.toolKind === 'file_change' && block.status === 'success')
-      ) {
-        return []
-      }
+    // Prefer File Mutation Ledger turn.diff snapshot (includes subagent / reconcile);
+    // fall back to per-tool file_change blocks for legacy sessions.
+    const summary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
+    let nextTurnFileChanges: ToolBlock[] = []
+    if (summary.files.length > 0 && turnDiffTurnId) {
+      nextTurnFileChanges = toolBlocksFromTurnSummary(turnDiffTurnId, summary).map((block) => ({
+        ...block,
+        filePath: formatFilePathForDisplay(block.filePath, workspaceRoot) || block.filePath
+      }))
+    } else {
+      nextTurnFileChanges = turn.blocks.flatMap((block): ToolBlock[] => {
+        if (
+          !(block.kind === 'tool' && block.toolKind === 'file_change' && block.status === 'success')
+        ) {
+          return []
+        }
 
-      const detailText = block.detail?.trim() ?? ''
-      if (!looksLikeUnifiedDiff(detailText)) return []
+        const detailText = block.detail?.trim() ?? ''
+        if (!looksLikeUnifiedDiff(detailText)) return []
 
-      const resolvedFilePath = formatFilePathForDisplay(
-        extractDiffFilePath(detailText, block.filePath),
-        workspaceRoot
-      )
-      if (!resolvedFilePath) return []
+        const resolvedFilePath = formatFilePathForDisplay(
+          extractDiffFilePath(detailText, block.filePath),
+          workspaceRoot
+        )
+        if (!resolvedFilePath) return []
 
-      return [{ ...block, filePath: resolvedFilePath }]
-    })
+        return [{ ...block, filePath: resolvedFilePath }]
+      })
+    }
 
     return {
       processBlocks: nextProcessBlocks,
@@ -1054,7 +1093,15 @@ function MessageTurn({
       turnFileChanges: nextTurnFileChanges,
       systemBlocks: nextSystemBlocks
     }
-  }, [turn.blocks, liveProcessText, hasLiveAssistantStream, liveContent, workspaceRoot])
+  }, [
+    turn.blocks,
+    liveProcessText,
+    hasLiveAssistantStream,
+    liveContent,
+    workspaceRoot,
+    turnDiffSnapshot,
+    turnDiffTurnId
+  ])
 
   const showLiveAssistant = !isProcessing && !!liveContent.trim()
 
@@ -1171,7 +1218,10 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.htmlPreviewAction === next.htmlPreviewAction &&
   prev.onOpenWorkspaceFile === next.onOpenWorkspaceFile &&
   prev.devPreviewCard === next.devPreviewCard &&
-  prev.viewportRef === next.viewportRef
+  prev.viewportRef === next.viewportRef &&
+  prev.turnDiffSnapshot === next.turnDiffSnapshot &&
+  prev.turnDiffTurnId === next.turnDiffTurnId &&
+  prev.turnDiffRevision === next.turnDiffRevision
 ))
 
 function normalizePathKey(path: string): string {

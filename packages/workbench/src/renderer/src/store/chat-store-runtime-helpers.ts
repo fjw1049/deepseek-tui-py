@@ -367,6 +367,7 @@ export function clearedThreadSelection(): Pick<
   | 'liveAssistant'
   | 'busy'
   | 'currentTurnId'
+  | 'lastCompletedTurnId'
   | 'currentTurnUserId'
   | 'turnStartedAtByUserId'
   | 'turnDurationByUserId'
@@ -378,6 +379,7 @@ export function clearedThreadSelection(): Pick<
   | 'queuedMessages'
   | 'scrollToBlockId'
   | 'activePlugin'
+  | 'turnDiffByTurnId'
 > {
   return {
     activeThreadId: null,
@@ -388,6 +390,7 @@ export function clearedThreadSelection(): Pick<
     liveAssistant: '',
     busy: false,
     currentTurnId: null,
+    lastCompletedTurnId: null,
     currentTurnUserId: null,
     turnStartedAtByUserId: {},
     turnDurationByUserId: {},
@@ -398,7 +401,8 @@ export function clearedThreadSelection(): Pick<
     gitCommitSelectedPaths: [],
     queuedMessages: [],
     scrollToBlockId: null,
-    activePlugin: null
+    activePlugin: null,
+    turnDiffByTurnId: {}
   }
 }
 

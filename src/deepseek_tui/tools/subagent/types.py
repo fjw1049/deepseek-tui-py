@@ -245,6 +245,7 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "Method:\n"
         "- Read target file(s) end-to-end before editing.\n"
         "- Prefer `edit_file` for narrow changes, `apply_patch` for multi-hunk.\n"
+        "- Never mutate source via exec_shell (sed/python/heredoc); use edit tools.\n"
         "- After edits, run a quick verification (lint/test).\n"
         "- If tests are needed, write them alongside the implementation.\n\n"
         "CHANGES is the load-bearing section — list every file modified with a one-line summary."

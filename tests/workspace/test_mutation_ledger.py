@@ -1,0 +1,152 @@
+"""Unit tests for File Mutation Ledger core modules."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from deepseek_tui.workspace.diff_synth import count_diff_stats, synthesize_unified_diff
+from deepseek_tui.workspace.mutation_ledger import (
+    FileMutation,
+    TurnMutationLedger,
+    mutation_from_metadata,
+)
+from deepseek_tui.workspace.shell_write_guard import check_shell_write, is_allowlisted_path
+
+
+def test_synthesize_unified_diff_update() -> None:
+    unified, stats, op = synthesize_unified_diff(
+        "src/foo.py", "hello\n", "hello\nworld\n"
+    )
+    assert op == "update"
+    assert "diff --git" in unified
+    assert "+world" in unified
+    assert stats.additions >= 1
+
+
+def test_synthesize_unified_diff_create() -> None:
+    unified, stats, op = synthesize_unified_diff("notes.md", "", "hi\n")
+    assert op == "create"
+    assert "--- /dev/null" in unified
+    assert stats.additions >= 1
+
+
+def test_ledger_folds_by_path() -> None:
+    ledger = TurnMutationLedger("turn_1", throttle_ms=0)
+    ledger.commit(
+        FileMutation(
+            mutation_id="m1",
+            turn_id="turn_1",
+            path="a.py",
+            op="create",
+            unified_diff="diff --git a/a.py b/a.py\n--- /dev/null\n+++ b/a.py\n@@\n+x\n",
+            additions=1,
+            deletions=0,
+            source="write_file",
+        ),
+        emit=False,
+    )
+    ledger.commit(
+        FileMutation(
+            mutation_id="m2",
+            turn_id="turn_1",
+            path="a.py",
+            op="update",
+            unified_diff="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@\n-x\n+y\n",
+            additions=1,
+            deletions=1,
+            source="edit_file",
+        ),
+        emit=False,
+    )
+    snap = ledger.snapshot()
+    assert snap.totals["files"] == 1
+    assert snap.files[0].path == "a.py"
+    assert snap.files[0].op == "update"
+    assert "+y" in snap.files[0].unified_diff
+
+
+def test_mutation_from_metadata() -> None:
+    meta = {
+        "path": "src/a.py",
+        "mutation": {
+            "path": "src/a.py",
+            "op": "update",
+            "unified_diff": "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@\n-a\n+b\n",
+            "additions": 1,
+            "deletions": 1,
+            "source": "edit_file",
+        },
+    }
+    muts = mutation_from_metadata(meta, turn_id="t1", tool_call_id="tc1")
+    assert len(muts) == 1
+    assert muts[0].path == "src/a.py"
+    assert muts[0].source == "edit_file"
+    assert count_diff_stats(muts[0].unified_diff).additions == 1
+
+
+def test_shell_write_guard_denies_sed_inplace() -> None:
+    v = check_shell_write("sed -i 's/foo/bar/' src/main.py")
+    assert not v.allowed
+    assert "edit_file" in v.reason
+
+
+def test_shell_write_guard_denies_heredoc_source() -> None:
+    v = check_shell_write("cat > src/foo.py <<'EOF'\nprint(1)\nEOF")
+    assert not v.allowed
+
+
+def test_shell_write_guard_allows_scratch() -> None:
+    v = check_shell_write("cat > scratch/demo.py <<'EOF'\nprint(1)\nEOF")
+    assert v.allowed
+
+
+def test_shell_write_guard_allows_pytest() -> None:
+    v = check_shell_write("pytest tests/ -q")
+    assert v.allowed
+
+
+def test_allowlist_tmp() -> None:
+    assert is_allowlisted_path("/tmp/out.txt")
+    assert is_allowlisted_path("scratch/x.py")
+    assert not is_allowlisted_path("src/x.py")
+
+
+def test_ledger_throttle_and_flush() -> None:
+    emitted: list[int] = []
+    ledger = TurnMutationLedger(
+        "turn_t",
+        throttle_ms=10_000,
+        on_snapshot=lambda snap: emitted.append(snap.revision),
+    )
+    ledger.commit(
+        FileMutation(
+            mutation_id="m1",
+            turn_id="turn_t",
+            path="a.py",
+            op="update",
+            unified_diff="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@\n-a\n+b\n",
+            additions=1,
+            deletions=1,
+            source="edit_file",
+        ),
+        emit=True,
+    )
+    # First emit always goes through (last_emit was 0).
+    assert len(emitted) == 1
+    ledger.commit(
+        FileMutation(
+            mutation_id="m2",
+            turn_id="turn_t",
+            path="b.py",
+            op="create",
+            unified_diff="diff --git a/b.py b/b.py\n--- /dev/null\n+++ b/b.py\n@@\n+z\n",
+            additions=1,
+            deletions=0,
+            source="write_file",
+        ),
+        emit=True,
+    )
+    # Throttled — pending
+    assert len(emitted) == 1
+    ledger.flush()
+    assert len(emitted) == 2

@@ -283,6 +283,23 @@ export type TurnCompletePayload = {
   usage?: Record<string, unknown> | null
 }
 
+/** Live / final turn-level file mutation snapshot (`turn.diff.updated`). */
+export type TurnDiffUpdatedPayload = {
+  turnId: string
+  revision: number
+  files: Array<{
+    path: string
+    op?: string
+    additions: number
+    deletions: number
+    unified_diff: string
+    detail_truncated?: boolean
+  }>
+  totals: { files: number; additions: number; deletions: number }
+  mergedUnifiedDiff?: string
+  complete: boolean
+}
+
 export type ThreadUpdatedPayload = {
   threadId: string
   title?: string | null
@@ -302,6 +319,8 @@ export type ThreadEventSink = {
   onUserInput(req: UserInputRequestPayload): void
   onUserInputStatus(ev: UserInputStatusPayload): void
   onTurnComplete(payload?: TurnCompletePayload): void
+  /** Optional: cumulative file mutations for the active turn. */
+  onTurnDiffUpdated?(ev: TurnDiffUpdatedPayload): void
   /** Reasoning or assistant live segment finalized on the runtime. */
   onLiveSegmentComplete?(
     kind: 'agent_reasoning' | 'agent_message',

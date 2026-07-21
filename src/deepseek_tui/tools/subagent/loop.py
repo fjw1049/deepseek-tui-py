@@ -310,6 +310,13 @@ async def run_subagent_loop(
     }
     if parent_task_id is not None:
         metadata["task_id"] = parent_task_id
+    # Look up the parent sink at call time so a late ThreadManager bind still
+    # reaches mutations started before the monitor attached the callback.
+    def _parent_mutation_sink(mut: dict[str, object]) -> None:
+        sink = getattr(runtime.manager, "on_file_mutation", None)
+        if callable(sink):
+            sink(mut)
+
     context = ToolContext(
         working_directory=agent.workspace,
         trust_mode=trust_mode,
@@ -317,6 +324,8 @@ async def run_subagent_loop(
         subagent_manager=runtime.manager,
         active_task_id=parent_task_id,
         metadata=metadata,
+        on_file_mutation=_parent_mutation_sink,
+        mutation_agent_id=agent.id,
     )
     from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 

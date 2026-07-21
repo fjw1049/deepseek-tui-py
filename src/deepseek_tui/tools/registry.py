@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 import asyncio
@@ -130,6 +130,25 @@ class ToolContext:
     network_policy: NetworkPolicyDecider | None = None
     execution_sandbox_policy: ExecutionSandboxPolicy | None = None
     elevated_sandbox_policy: ExecutionSandboxPolicy | None = None
+    # Optional sink for File Mutation Ledger (main turn + subagents).
+    # Receives a mutation dict matching ToolResult metadata["mutation"].
+    on_file_mutation: Callable[[dict[str, Any]], None] | None = None
+    # Subagent id when tools run inside a child agent (projected into ledger).
+    mutation_agent_id: str | None = None
+
+    def report_file_mutation(self, mutation: dict[str, Any]) -> None:
+        """Notify the turn ledger about a successful workspace file write."""
+        if self.on_file_mutation is None:
+            return
+        payload = dict(mutation)
+        if self.mutation_agent_id and "agent_id" not in payload:
+            payload["agent_id"] = self.mutation_agent_id
+        try:
+            self.on_file_mutation(payload)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "on_file_mutation_failed", exc_info=True
+            )
 
     @staticmethod
     def _within(child: Path, parent: Path) -> bool:

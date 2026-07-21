@@ -479,8 +479,27 @@ def file_change_completion_detail(
     tool_name: str,
     arguments: Any,
     result_content: str,
+    result_metadata: Any = None,
 ) -> str:
     """Return unified diff text for Workbench ChangeInspector when possible."""
+    # Prefer structured mutation from write tools (File Mutation Ledger).
+    if isinstance(result_metadata, dict):
+        mutation = result_metadata.get("mutation")
+        if isinstance(mutation, dict):
+            unified = mutation.get("unified_diff")
+            if isinstance(unified, str) and unified.strip():
+                return unified
+        mutations = result_metadata.get("mutations")
+        if isinstance(mutations, list) and mutations:
+            parts: list[str] = []
+            for entry in mutations:
+                if isinstance(entry, dict):
+                    u = entry.get("unified_diff")
+                    if isinstance(u, str) and u.strip():
+                        parts.append(u.rstrip())
+            if parts:
+                return "\n\n".join(parts) + "\n"
+
     content = (result_content or "").strip()
     if content and _looks_like_unified_diff(content):
         return content

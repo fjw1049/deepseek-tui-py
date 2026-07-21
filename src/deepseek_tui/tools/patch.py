@@ -56,7 +56,8 @@ class ApplyPatchTool(ToolSpec):
     def description(self) -> str:
         return (
             "Apply a unified diff patch to files. Supports multi-hunk patches "
-            "with fuzzy matching and cumulative offset tracking."
+            "with fuzzy matching and cumulative offset tracking. Prefer this "
+            "(or edit_file / write_file) for source edits — not exec_shell sed/python."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -157,9 +158,12 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
     if not isinstance(raw, list):
         raise ToolError("changes must be a list")
 
+    from deepseek_tui.workspace.diff_synth import synthesize_unified_diff
+
     touched: list[str] = []
     summaries: list[FileSummary] = []
     backups: list[_FileBackup] = []
+    mutations: list[dict[str, Any]] = []
     try:
         for idx, change in enumerate(raw):
             if not isinstance(change, dict):
@@ -172,6 +176,12 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
                 raise ToolError(f"changes[{idx}].content must be a string")
             target = context.resolve_path(path)
             created = not target.exists()
+            old_text = ""
+            if not created:
+                try:
+                    old_text = target.read_text(encoding="utf-8")
+                except OSError:
+                    old_text = ""
             backups.append(_backup_file(target))
             write_text_atomic(target, content)
             touched.append(path)
@@ -186,6 +196,18 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
                     deleted=False,
                 )
             )
+            unified, stats, op = synthesize_unified_diff(path, old_text, content)
+            mutations.append(
+                {
+                    "path": path.replace("\\", "/"),
+                    "op": op,
+                    "unified_diff": unified,
+                    "additions": stats.additions,
+                    "deletions": stats.deletions,
+                    "source": "apply_patch",
+                    "status": "applied",
+                }
+            )
     except Exception:
         _restore_file_backups(backups)
         raise
@@ -196,17 +218,22 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
         agg=HunkApplyStats(),
         touched=touched,
         summaries=summaries,
+        mutations=mutations,
+        context=context,
     )
 
 
 def _apply_file_patches(
     file_patches: list[FilePatch], context: ToolContext, fuzz: int
 ) -> ToolResult:
+    from deepseek_tui.workspace.diff_synth import synthesize_unified_diff
+
     agg = HunkApplyStats()
     touched: list[str] = []
     summaries: list[FileSummary] = []
     files_applied = 0
     backups: list[_FileBackup] = []
+    mutations: list[dict[str, Any]] = []
 
     try:
         for patch in file_patches:
@@ -215,6 +242,10 @@ def _apply_file_patches(
 
             if patch.delete_after:
                 if target.exists():
+                    try:
+                        old_text = target.read_text(encoding="utf-8")
+                    except OSError:
+                        old_text = ""
                     backups.append(_backup_file(target))
                     target.unlink()
                     summaries.append(
@@ -230,6 +261,20 @@ def _apply_file_patches(
                     )
                     files_applied += 1
                     touched.append(patch.path)
+                    unified, stats, op = synthesize_unified_diff(
+                        patch.path, old_text, ""
+                    )
+                    mutations.append(
+                        {
+                            "path": patch.path.replace("\\", "/"),
+                            "op": op,
+                            "unified_diff": unified,
+                            "additions": stats.additions,
+                            "deletions": stats.deletions,
+                            "source": "apply_patch",
+                            "status": "applied",
+                        }
+                    )
                 continue
 
             created = False
@@ -275,6 +320,19 @@ def _apply_file_patches(
             )
             files_applied += 1
             touched.append(patch.path)
+            before = "" if created else original
+            unified, stats, op = synthesize_unified_diff(patch.path, before, out)
+            mutations.append(
+                {
+                    "path": patch.path.replace("\\", "/"),
+                    "op": op,
+                    "unified_diff": unified,
+                    "additions": stats.additions,
+                    "deletions": stats.deletions,
+                    "source": "apply_patch",
+                    "status": "applied",
+                }
+            )
     except Exception:
         _restore_file_backups(backups)
         raise
@@ -285,6 +343,8 @@ def _apply_file_patches(
         agg=agg,
         touched=touched,
         summaries=summaries,
+        mutations=mutations,
+        context=context,
     )
 
 
@@ -295,6 +355,8 @@ def _build_result(
     agg: HunkApplyStats,
     touched: list[str],
     summaries: list[FileSummary],
+    mutations: list[dict[str, Any]] | None = None,
+    context: ToolContext | None = None,
 ) -> ToolResult:
     hunks_total = sum(s.hunks for s in summaries)
     message = _format_summary(
@@ -303,20 +365,29 @@ def _build_result(
         agg=agg,
         hunks_total=hunks_total,
     )
+    meta: dict[str, Any] = {
+        "files_applied": files_applied,
+        "files_total": files_total,
+        "hunks_applied": agg.hunks_applied,
+        "hunks_total": hunks_total,
+        "fuzz_used": agg.fuzz_used,
+        "hunks_with_fuzz": agg.hunks_with_fuzz,
+        "touched_files": touched,
+        "file_summaries": [asdict(s) for s in summaries],
+        "message": message,
+    }
+    if mutations:
+        meta["mutations"] = mutations
+        if len(mutations) == 1:
+            meta["path"] = mutations[0].get("path")
+            meta["mutation"] = mutations[0]
+        if context is not None:
+            for mut in mutations:
+                context.report_file_mutation(mut)
     return ToolResult(
         success=True,
         content=message,
-        metadata={
-            "files_applied": files_applied,
-            "files_total": files_total,
-            "hunks_applied": agg.hunks_applied,
-            "hunks_total": hunks_total,
-            "fuzz_used": agg.fuzz_used,
-            "hunks_with_fuzz": agg.hunks_with_fuzz,
-            "touched_files": touched,
-            "file_summaries": [asdict(s) for s in summaries],
-            "message": message,
-        },
+        metadata=meta,
     )
 
 

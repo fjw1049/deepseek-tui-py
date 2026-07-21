@@ -51,6 +51,31 @@ function sessionChangeItems(blocks: ChatBlock[]): InspectorChangeItem[] {
   })
 }
 
+function turnLedgerChangeItems(
+  turnDiffByTurnId: Record<
+    string,
+    {
+      turn_id: string
+      files: Array<{ path: string; unified_diff: string; additions: number; deletions: number }>
+    }
+  >
+): InspectorChangeItem[] {
+  const items: InspectorChangeItem[] = []
+  for (const snap of Object.values(turnDiffByTurnId)) {
+    for (const file of snap.files ?? []) {
+      const detail = file.unified_diff?.trim() ?? ''
+      if (!looksLikeUnifiedDiff(detail)) continue
+      items.push({
+        id: `turn-ledger:${snap.turn_id}:${file.path}`,
+        filePath: file.path,
+        detail,
+        status: 'success'
+      })
+    }
+  }
+  return items
+}
+
 function gitChangeItems(files: GitWorkingChangeFile[]): InspectorChangeItem[] {
   return files.map((file) => ({
     id: `git:${file.path}`,
@@ -99,14 +124,16 @@ export function ChangeInspector({
   const syncGitCommitSelection = useChatStore((s) => s.syncGitCommitSelection)
   const toggleGitCommitPath = useChatStore((s) => s.toggleGitCommitPath)
   const setGitCommitSelectedPaths = useChatStore((s) => s.setGitCommitSelectedPaths)
-  const { workspaceRoot, activeThreadId, threads, workspaceDirtyTick } = useChatStore(
-    useShallow((s) => ({
-      workspaceRoot: s.workspaceRoot,
-      activeThreadId: s.activeThreadId,
-      threads: s.threads,
-      workspaceDirtyTick: s.workspaceDirtyTick
-    }))
-  )
+  const { workspaceRoot, activeThreadId, threads, workspaceDirtyTick, turnDiffByTurnId } =
+    useChatStore(
+      useShallow((s) => ({
+        workspaceRoot: s.workspaceRoot,
+        activeThreadId: s.activeThreadId,
+        threads: s.threads,
+        workspaceDirtyTick: s.workspaceDirtyTick,
+        turnDiffByTurnId: s.turnDiffByTurnId
+      }))
+    )
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
   const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
@@ -117,10 +144,13 @@ export function ChangeInspector({
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const fileChanges = useMemo(() => {
-    const sessionItems = sessionChangeItems(blocks)
+    const sessionItems = mergeChangeItems(
+      sessionChangeItems(blocks),
+      turnLedgerChangeItems(turnDiffByTurnId)
+    )
     const gitItems = gitChanges?.ok ? gitChangeItems(gitChanges.files) : []
     return mergeChangeItems(sessionItems, gitItems)
-  }, [blocks, gitChanges])
+  }, [blocks, gitChanges, turnDiffByTurnId])
 
   const changeStats = useMemo(
     () => sumDiffStats(fileChanges.map((item) => item.detail)),

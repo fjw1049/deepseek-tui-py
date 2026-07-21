@@ -83,6 +83,11 @@ export type ChatState = {
   error: string | null
   runtimeErrorDetail: string | null
   currentTurnId: string | null
+  /**
+   * Last finished turn id — keeps `turnDiffByTurnId` lookup alive after
+   * `currentTurnId` is cleared on turn complete (TurnChangeSummary / inspector).
+   */
+  lastCompletedTurnId: string | null
   currentTurnUserId: string | null
   turnStartedAtByUserId: Record<string, number>
   turnDurationByUserId: Record<string, number>
@@ -115,6 +120,8 @@ export type ChatState = {
    * Git docks and the workspace editor debounce-reload against this.
    */
   workspaceDirtyTick: number
+  /** Latest `turn.diff.updated` snapshot per turn id (File Mutation Ledger). */
+  turnDiffByTurnId: Record<string, import('../lib/turn-mutation-view').TurnDiffSnapshot>
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void

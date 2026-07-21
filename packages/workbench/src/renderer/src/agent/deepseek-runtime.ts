@@ -1543,6 +1543,53 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 return
               }
 
+              if (ev === 'turn.diff.updated' && sink.onTurnDiffUpdated) {
+                const turnId =
+                  typeof payload.turn_id === 'string'
+                    ? payload.turn_id
+                    : typeof payload.turnId === 'string'
+                      ? payload.turnId
+                      : ''
+                if (!turnId) return
+                const filesRaw = Array.isArray(payload.files) ? payload.files : []
+                const files = filesRaw.flatMap((entry) => {
+                  if (!entry || typeof entry !== 'object') return []
+                  const f = entry as Record<string, unknown>
+                  const path = typeof f.path === 'string' ? f.path : ''
+                  if (!path) return []
+                  return [
+                    {
+                      path,
+                      op: typeof f.op === 'string' ? f.op : undefined,
+                      additions: typeof f.additions === 'number' ? f.additions : 0,
+                      deletions: typeof f.deletions === 'number' ? f.deletions : 0,
+                      unified_diff: typeof f.unified_diff === 'string' ? f.unified_diff : '',
+                      detail_truncated: Boolean(f.detail_truncated)
+                    }
+                  ]
+                })
+                const totalsRaw =
+                  payload.totals && typeof payload.totals === 'object'
+                    ? (payload.totals as Record<string, unknown>)
+                    : {}
+                sink.onTurnDiffUpdated({
+                  turnId,
+                  revision: typeof payload.revision === 'number' ? payload.revision : 0,
+                  files,
+                  totals: {
+                    files: typeof totalsRaw.files === 'number' ? totalsRaw.files : files.length,
+                    additions: typeof totalsRaw.additions === 'number' ? totalsRaw.additions : 0,
+                    deletions: typeof totalsRaw.deletions === 'number' ? totalsRaw.deletions : 0
+                  },
+                  mergedUnifiedDiff:
+                    typeof payload.merged_unified_diff === 'string'
+                      ? payload.merged_unified_diff
+                      : undefined,
+                  complete: Boolean(payload.complete)
+                })
+                return
+              }
+
               if (ev === 'turn.completed') {
                 const turn = payload.turn as Record<string, unknown> | undefined
                 const turnError =

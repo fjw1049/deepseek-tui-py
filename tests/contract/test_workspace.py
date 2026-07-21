@@ -74,6 +74,17 @@ def test_file_change_completion_detail_write_file() -> None:
     assert "+world" in detail
 
 
+def test_file_change_completion_detail_prefers_mutation_metadata() -> None:
+    patch = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@\n-old\n+new\n"
+    detail = file_change_completion_detail(
+        "edit_file",
+        {"path": "x.py", "search": "ignored", "replace": "ignored"},
+        "Replaced 1 occurrence(s)",
+        {"mutation": {"unified_diff": patch, "path": "x.py"}},
+    )
+    assert detail == patch
+
+
 @pytest.mark.asyncio
 async def test_workspace_status(client: AsyncClient) -> None:
     r = await client.get("/v1/workspace/status")

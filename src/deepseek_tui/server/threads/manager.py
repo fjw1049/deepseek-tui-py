@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -1918,6 +1919,15 @@ class RuntimeThreadManager:
         mode: str,
     ) -> None:
         """Consume engine events and persist turn items + runtime events."""
+        from deepseek_tui.workspace.git_reconcile import (
+            capture_baseline,
+            reconcile_to_ledger,
+        )
+        from deepseek_tui.workspace.mutation_ledger import (
+            TurnMutationLedger,
+            mutation_from_metadata,
+        )
+
         current_message_text = ""
         current_message_item_id: str | None = None
         # Preface item already finalized earlier in this round (a ToolCallEvent
@@ -1931,6 +1941,58 @@ class RuntimeThreadManager:
         workflow_items: dict[str, str] = {}  # tool_call_id -> item_id (workflow progress)
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
         seen_subagent_ids: set[str] = set()  # agents touched this turn (for reconcile)
+        pending_turn_diffs: list[dict[str, Any]] = []
+        mutation_ledger = TurnMutationLedger(turn_id, throttle_ms=150)
+        mutation_lock = threading.Lock()
+
+        def _mutation_sink(mut: dict[str, Any]) -> None:
+            # Subagent tasks may call this concurrently; guard ledger + queue.
+            agent_id = mut.get("agent_id") if isinstance(mut.get("agent_id"), str) else None
+            with mutation_lock:
+                for m in mutation_from_metadata(
+                    {"mutation": mut, "path": mut.get("path")},
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    source_fallback=(
+                        mut.get("source")
+                        if mut.get("source")
+                        in (
+                            "edit_file",
+                            "apply_patch",
+                            "write_file",
+                            "shell_allowlist",
+                            "git_reconcile",
+                        )
+                        else "write_file"
+                    ),
+                ):
+                    snap = mutation_ledger.commit(m, emit=False)
+                    pending_turn_diffs.append(snap.to_dict())
+
+        async def flush_turn_diffs() -> None:
+            with mutation_lock:
+                batch = list(pending_turn_diffs)
+                pending_turn_diffs.clear()
+            for payload in batch:
+                await self._emit_event(
+                    thread_id, turn_id, None, "turn.diff.updated", payload
+                )
+
+        async with self._active_lock:
+            _state = self._active.get(thread_id)
+            _engine = _state.engine if _state is not None else None
+        git_baseline = None
+        if _engine is not None:
+            _engine.tool_context.on_file_mutation = _mutation_sink
+            mgr = _engine.tool_context.subagent_manager
+            if mgr is not None:
+                mgr.on_file_mutation = _mutation_sink
+            try:
+                git_baseline = await capture_baseline(
+                    _engine.tool_context.working_directory
+                )
+            except Exception:
+                logger.debug("git_baseline_capture_failed", exc_info=True)
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
@@ -2505,6 +2567,7 @@ class RuntimeThreadManager:
                             event.tool_name,
                             tool_args,
                             event.content or "",
+                            event.metadata,
                         )
                     else:
                         item.detail = event.content
@@ -2512,6 +2575,14 @@ class RuntimeThreadManager:
                         item.metadata = {"tool_name": event.tool_name}
                     elif "tool_name" not in item.metadata:
                         item.metadata = {**item.metadata, "tool_name": event.tool_name}
+                    # Merge tool mutation metadata onto the item for clients.
+                    if isinstance(event.metadata, dict):
+                        for key in ("mutation", "mutations", "path", "occurrences"):
+                            if key in event.metadata:
+                                item.metadata = {
+                                    **item.metadata,
+                                    key: event.metadata[key],
+                                }
                     refreshed = todo_tool_metadata_from_result(
                         event.tool_name,
                         tool_args,
@@ -2542,6 +2613,9 @@ class RuntimeThreadManager:
                         thread_id, turn_id, item_id, event_name,
                         {"item": item.model_dump(mode="json")},
                     )
+                    # Main-agent write tools also report via on_file_mutation;
+                    # flush any turn.diff.updated snapshots queued by the sink.
+                    await flush_turn_diffs()
 
             elif isinstance(event, ApprovalRequiredEvent):
                 from deepseek_tui.tools.approval import (
@@ -2750,6 +2824,7 @@ class RuntimeThreadManager:
                 await self._persist_subagent_mailbox(
                     thread_id, turn_id, event.seq, event.message
                 )
+                await flush_turn_diffs()
 
             elif isinstance(event, ErrorEvent):
                 await flush_delta_batch()
@@ -2900,6 +2975,27 @@ class RuntimeThreadManager:
                         or "Turn failed"
                     )
                 break
+
+        # File Mutation Ledger: git reconcile orphans, then final turn.diff.
+        try:
+            if git_baseline is not None and git_baseline.is_git:
+                await reconcile_to_ledger(mutation_ledger, git_baseline)
+            final_snap = mutation_ledger.mark_complete(emit=False)
+            if final_snap.totals.get("files", 0) > 0 or mutation_ledger.revision > 0:
+                pending_turn_diffs.append(final_snap.to_dict())
+            await flush_turn_diffs()
+        except Exception:
+            logger.debug(
+                "turn_diff_finalize_failed turn=%s", turn_id, exc_info=True
+            )
+        finally:
+            async with self._active_lock:
+                _state = self._active.get(thread_id)
+                if _state is not None:
+                    _state.engine.tool_context.on_file_mutation = None
+                    _mgr = _state.engine.tool_context.subagent_manager
+                    if _mgr is not None:
+                        _mgr.on_file_mutation = None
 
         watchdog.cancel()
         try:

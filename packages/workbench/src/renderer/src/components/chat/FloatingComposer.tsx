@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
+import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
 import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
@@ -1126,6 +1127,11 @@ export function FloatingComposer({
           ))}
         </div>
       ) : null}
+      <ComposerLiveChangesHeader
+        onReview={() => {
+          window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
+        }}
+      />
       {(() => {
         const visibleQueued = queuedMessages.filter((message) => !message.hidden)
         if (visibleQueued.length === 0) return null

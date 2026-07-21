@@ -97,6 +97,8 @@ class SubAgentManager:
             None
         )
         self._loop_runtime: SubAgentRuntime | None = None
+        # Wired per parent turn by ThreadManager for File Mutation Ledger.
+        self.on_file_mutation: Callable[[dict[str, Any]], None] | None = None
         if state_path is not None:
             self._load_state()
 

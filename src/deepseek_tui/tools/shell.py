@@ -49,7 +49,9 @@ class ExecShellTool(ToolSpec):
             "Foreground commands are killed after timeout_ms milliseconds "
             "(default 120000, max 600000). Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
-            "is unavailable or you need shell piping around the response."
+            "is unavailable or you need shell piping around the response. "
+            "Do not mutate source files via sed/python/heredoc — use edit_file, "
+            "apply_patch, or write_file (scratch/, build outputs, and /tmp are allowed)."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -93,6 +95,26 @@ class ExecShellTool(ToolSpec):
         refusal = check_command_policy(command, context)
         if refusal is not None:
             return refusal
+
+        from deepseek_tui.workspace.shell_write_guard import check_shell_write
+
+        write_guard = check_shell_write(
+            command, workspace=context.working_directory
+        )
+        if not write_guard.allowed:
+            logger.info(
+                "exec_shell_source_write_denied command=%r reason=%s",
+                command[:200],
+                write_guard.reason,
+            )
+            return ToolResult(
+                success=False,
+                content=write_guard.reason,
+                metadata={
+                    "shell_write_denied": True,
+                    "blocked_path": write_guard.blocked_path,
+                },
+            )
 
         if use_pty:
             return await _run_pty(

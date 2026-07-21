@@ -1070,6 +1070,26 @@ function buildThreadEventSink(
           )
         }
       }),
+    onTurnDiffUpdated: (ev) => {
+      set((s) => {
+        const prev = s.turnDiffByTurnId[ev.turnId]
+        if (prev && prev.revision > ev.revision) return {}
+        return {
+          turnDiffByTurnId: {
+            ...s.turnDiffByTurnId,
+            [ev.turnId]: {
+              turn_id: ev.turnId,
+              files: ev.files,
+              totals: ev.totals,
+              revision: ev.revision,
+              merged_unified_diff: ev.mergedUnifiedDiff,
+              complete: ev.complete
+            }
+          },
+          workspaceDirtyTick: s.workspaceDirtyTick + 1
+        }
+      })
+    },
     onTurnComplete: (payload) => {
       clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
@@ -1085,7 +1105,9 @@ function buildThreadEventSink(
         const base = flushLiveBlocks(s, {
           ...finalizeTurnTiming(s),
           error: null,
-          currentTurnId: null
+          currentTurnId: null,
+          // Keep ledger lookup key so TurnChangeSummary survives after busy clears.
+          ...(completedTurnId ? { lastCompletedTurnId: completedTurnId } : {})
         })
         if (s.busy) base.busy = false
         // Interrupt can finish before a cancelled mailbox is persisted; clear
@@ -1162,6 +1184,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   runtimeErrorDetail: null,
   currentTurnId: null,
+  lastCompletedTurnId: null,
   currentTurnUserId: null,
   turnStartedAtByUserId: {},
   turnDurationByUserId: {},
@@ -1187,6 +1210,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activePlugin: null,
   usageRefreshKey: 0,
   workspaceDirtyTick: 0,
+  turnDiffByTurnId: {},
 
   ...createAppActions({
     set,
@@ -1881,6 +1905,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         busy,
         activePlugin: loadedPlugin ?? null,
         currentTurnId: busy ? latestTurnId ?? null : null,
+        lastCompletedTurnId: null,
+        turnDiffByTurnId: {},
         currentTurnUserId,
         turnStartedAtByUserId: {},
         turnDurationByUserId: {},
