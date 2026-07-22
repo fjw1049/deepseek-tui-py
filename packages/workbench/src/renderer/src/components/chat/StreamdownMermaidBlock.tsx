@@ -13,10 +13,10 @@ import {
   useState,
   type ReactElement
 } from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useIsCodeFenceIncomplete } from 'streamdown'
 import { getMermaidTheme, initMermaid, loadMermaid } from '../../lib/load-mermaid'
+import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 
 type Props = {
   chart: string
@@ -25,16 +25,32 @@ type Props = {
 const COPY_RESET_MS = 2000
 const MAX_LABEL_CHARS = 24
 
-/** Truncate long node labels so scaled-down diagrams stay readable. */
+/**
+ * Truncate long node labels so scaled-down diagrams stay readable.
+ * Preserve quote wrappers inside shapes (`["long text"]`) — slicing through
+ * the closing quote breaks Mermaid parsing for the rest of the chart.
+ */
 export function truncateMermaidLabels(chart: string, maxLen = MAX_LABEL_CHARS): string {
   return chart.replace(
     /(\[[^\]]+\]|\{[^}]+\}|\([^)]+\)|"[^"]+")/g,
     (match) => {
       const open = match[0]
       const close = match[match.length - 1]
-      const inner = match.slice(1, -1)
+      let inner = match.slice(1, -1)
+      let quote = ''
+      if (
+        inner.length >= 2 &&
+        ((inner.startsWith('"') && inner.endsWith('"')) ||
+          (inner.startsWith("'") && inner.endsWith("'")))
+      ) {
+        quote = inner[0]
+        inner = inner.slice(1, -1)
+      }
       if (inner.length <= maxLen) return match
-      return `${open}${inner.slice(0, Math.max(1, maxLen - 1))}…${close}`
+      const clipped = `${inner.slice(0, Math.max(1, maxLen - 1))}…`
+      return quote
+        ? `${open}${quote}${clipped}${quote}${close}`
+        : `${open}${clipped}${close}`
     }
   )
 }
@@ -123,24 +139,29 @@ function MermaidToolbar({
 
 function MermaidSvgHost({
   chart,
-  className
+  className,
+  onErrorChange
 }: {
   chart: string
   className?: string
+  onErrorChange?: (error: string | null) => void
 }): ReactElement {
+  const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const renderSeqRef = useRef(0)
   const displayChart = useMemo(() => truncateMermaidLabels(chart), [chart])
 
   useEffect(() => {
+    onErrorChange?.(error)
+  }, [error, onErrorChange])
+
+  useEffect(() => {
     if (!displayChart.trim()) return
 
-    const container = containerRef.current
-    if (!container) return
-
     const seq = ++renderSeqRef.current
-    container.replaceChildren()
+    setError(null)
+    containerRef.current?.replaceChildren()
 
     void loadMermaid()
       .then((mermaid) => {
@@ -160,38 +181,35 @@ function MermaidSvgHost({
       })
   }, [displayChart])
 
-  if (error) {
-    return (
-      <div className={className}>
-        <p className="ds-mermaid-error">{error}</p>
-        <pre className="ds-mermaid-source">{chart}</pre>
-      </div>
-    )
-  }
-
-  return <div ref={containerRef} className={className} />
+  return (
+    <div className={className}>
+      {error ? (
+        <div className="ds-mermaid-fallback" role="alert">
+          <p className="ds-mermaid-error">{t('mermaidRenderFailed')}</p>
+          <details className="ds-mermaid-error-details">
+            <summary>{t('mermaidParseDetail')}</summary>
+            <pre className="ds-mermaid-error-detail">{error}</pre>
+          </details>
+          <div className="ds-mermaid-source-label">{t('mermaidSourceLabel')}</div>
+          <pre className="ds-mermaid-source">{chart}</pre>
+        </div>
+      ) : null}
+      <div ref={containerRef} hidden={Boolean(error)} />
+    </div>
+  )
 }
 
 export function StreamdownMermaidBlock({ chart }: Props): ReactElement {
   const { t } = useTranslation('common')
   const isIncomplete = useIsCodeFenceIncomplete()
   const [fullscreen, setFullscreen] = useState(false)
+  const [renderError, setRenderError] = useState<string | null>(null)
 
   const closeFullscreen = useCallback(() => setFullscreen(false), [])
-
-  useEffect(() => {
-    if (!fullscreen) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closeFullscreen()
-    }
-    window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
-    }
-  }, [fullscreen, closeFullscreen])
+  const handleErrorChange = useCallback((next: string | null) => {
+    setRenderError(next)
+    if (next) setFullscreen(false)
+  }, [])
 
   if (isIncomplete) {
     return (
@@ -204,54 +222,59 @@ export function StreamdownMermaidBlock({ chart }: Props): ReactElement {
     )
   }
 
+  const failed = Boolean(renderError)
+
   return (
     <>
-      <div className="ds-mermaid-block" data-streamdown="mermaid-block">
+      <div
+        className={`ds-mermaid-block${failed ? ' ds-mermaid-block--error' : ''}`}
+        data-streamdown="mermaid-block"
+      >
         <div className="ds-mermaid-block-header">
-          <div className="ds-mermaid-block-label">mermaid</div>
-          <MermaidToolbar chart={chart} onFullscreen={() => setFullscreen(true)} />
+          <div className="ds-mermaid-block-label">
+            {failed ? t('mermaidRenderFailedShort') : 'mermaid'}
+          </div>
+          <MermaidToolbar
+            chart={chart}
+            onFullscreen={failed ? undefined : () => setFullscreen(true)}
+          />
         </div>
-        <MermaidSvgHost chart={chart} className="ds-mermaid-svg" />
+        <MermaidSvgHost
+          chart={chart}
+          className="ds-mermaid-svg"
+          onErrorChange={handleErrorChange}
+        />
       </div>
-      {fullscreen
-        ? createPortal(
-            <div
-              className="ds-mermaid-fullscreen"
-              data-streamdown="mermaid-fullscreen"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Mermaid diagram"
-              onClick={closeFullscreen}
-            >
-              <div
-                className="ds-mermaid-fullscreen-panel"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="ds-mermaid-fullscreen-header">
-                  <div className="ds-mermaid-block-label">mermaid</div>
-                  <MermaidToolbar
-                    chart={chart}
-                    trailing={
-                      <button
-                        type="button"
-                        className="ds-code-block-action"
-                        title="Close"
-                        aria-label="Close"
-                        onClick={closeFullscreen}
-                      >
-                        <X className="h-3.5 w-3.5" strokeWidth={1.9} />
-                      </button>
-                    }
-                  />
-                </div>
-                <div className="ds-mermaid-fullscreen-body">
-                  <MermaidSvgHost chart={chart} className="ds-mermaid-svg ds-mermaid-svg--fullscreen" />
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <ResizableFullscreenDialog
+        open={fullscreen && !failed}
+        onClose={closeFullscreen}
+        ariaLabel="Mermaid diagram"
+        overlayClassName="ds-mermaid-fullscreen"
+        panelClassName="ds-mermaid-fullscreen-panel"
+        bodyClassName="ds-mermaid-fullscreen-body"
+        dataAttr="mermaid-fullscreen"
+        header={
+          <>
+            <div className="ds-mermaid-block-label">mermaid</div>
+            <MermaidToolbar
+              chart={chart}
+              trailing={
+                <button
+                  type="button"
+                  className="ds-code-block-action"
+                  title="Close"
+                  aria-label="Close"
+                  onClick={closeFullscreen}
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
+              }
+            />
+          </>
+        }
+      >
+        <MermaidSvgHost chart={chart} className="ds-mermaid-svg ds-mermaid-svg--fullscreen" />
+      </ResizableFullscreenDialog>
     </>
   )
 }

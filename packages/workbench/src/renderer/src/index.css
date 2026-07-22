@@ -2675,11 +2675,8 @@ samp {
 
 .ds-mermaid-fullscreen-panel {
   display: flex;
+  position: relative;
   min-height: 0;
-  width: min(1120px, 100%);
-  max-width: 100%;
-  height: min(760px, 86vh);
-  max-height: 100%;
   flex-direction: column;
   /* Do not overflow-hide the panel: that clips the top-right action pill
      against the 22px corner radius. Round header/body separately. */
@@ -2692,7 +2689,7 @@ samp {
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-.ds-mermaid-fullscreen-header {
+.ds-mermaid-fullscreen .ds-expand-header {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -2706,7 +2703,7 @@ samp {
   overflow: visible;
 }
 
-.ds-mermaid-fullscreen-header .ds-mermaid-block-label {
+.ds-mermaid-fullscreen .ds-expand-header .ds-mermaid-block-label {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -2768,6 +2765,85 @@ samp {
   background: var(--ds-card-muted);
 }
 
+/* Shared edge/corner grips for Maximize2 expand dialogs (code + mermaid). */
+.ds-expand-panel {
+  box-sizing: border-box;
+}
+
+.ds-expand-handle {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+
+.ds-expand-handle--n,
+.ds-expand-handle--s {
+  left: 12px;
+  right: 12px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.ds-expand-handle--e,
+.ds-expand-handle--w {
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.ds-expand-handle--n { top: -3px; }
+.ds-expand-handle--s { bottom: -3px; }
+.ds-expand-handle--e { right: -3px; }
+.ds-expand-handle--w { left: -3px; }
+
+.ds-expand-handle--ne,
+.ds-expand-handle--nw,
+.ds-expand-handle--se,
+.ds-expand-handle--sw {
+  width: 14px;
+  height: 14px;
+}
+
+.ds-expand-handle--ne {
+  top: -4px;
+  right: -4px;
+  cursor: nesw-resize;
+}
+
+.ds-expand-handle--nw {
+  top: -4px;
+  left: -4px;
+  cursor: nwse-resize;
+}
+
+.ds-expand-handle--se {
+  right: -4px;
+  bottom: -4px;
+  cursor: nwse-resize;
+}
+
+.ds-expand-handle--sw {
+  left: -4px;
+  bottom: -4px;
+  cursor: nesw-resize;
+}
+
+.ds-expand-handle--se::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid color-mix(in srgb, var(--ds-text-faint) 70%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--ds-text-faint) 70%, transparent);
+  border-radius: 0 0 2px 0;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 .ds-code-fullscreen {
   position: fixed;
   inset: 0;
@@ -2786,11 +2862,8 @@ samp {
 
 .ds-code-fullscreen-panel {
   display: flex;
+  position: relative;
   min-height: 0;
-  width: min(1120px, 100%);
-  max-width: 100%;
-  height: min(760px, 86vh);
-  max-height: 100%;
   flex-direction: column;
   overflow: visible;
   border: 1px solid var(--ds-border-strong);
@@ -2801,7 +2874,7 @@ samp {
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-.ds-code-fullscreen-header {
+.ds-code-fullscreen .ds-expand-header {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -2815,7 +2888,7 @@ samp {
   overflow: visible;
 }
 
-.ds-code-fullscreen-header .ds-code-block-language {
+.ds-code-fullscreen .ds-expand-header .ds-code-block-language {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -2895,17 +2968,68 @@ samp {
   color: var(--ds-text-faint);
 }
 
-.ds-markdown .ds-mermaid-block--error .ds-mermaid-error {
+.ds-markdown .ds-mermaid-block--error {
+  border-color: color-mix(in srgb, var(--ds-danger) 45%, var(--ds-border));
+}
+
+.ds-markdown .ds-mermaid-block--error .ds-mermaid-block-label {
+  color: var(--ds-danger);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.ds-markdown .ds-mermaid-fallback {
+  min-width: 0;
+}
+
+.ds-markdown .ds-mermaid-error {
   margin: 0;
-  padding: 0.75rem 1rem 0;
   font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
   color: var(--ds-danger);
 }
 
-.ds-markdown .ds-mermaid-source {
-  margin: 0.5rem 0 0;
-  padding: 0.75rem 1rem 1rem;
+.ds-markdown .ds-mermaid-error-details {
+  margin: 0.55rem 0 0;
+  font-size: 12px;
+  color: var(--ds-text-muted);
+}
+
+.ds-markdown .ds-mermaid-error-details summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--ds-text-faint);
+}
+
+.ds-markdown .ds-mermaid-error-detail {
+  margin: 0.4rem 0 0;
+  padding: 0.55rem 0.65rem;
   overflow-x: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ds-danger) 8%, var(--ds-pre-bg));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ds-text-muted);
+  white-space: pre-wrap;
+}
+
+.ds-markdown .ds-mermaid-source-label {
+  margin: 0.85rem 0 0.35rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ds-text-faint);
+}
+
+.ds-markdown .ds-mermaid-source {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-code-bg) 70%, transparent);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
@@ -3252,13 +3376,16 @@ html[data-theme='dark'] .ds-markdown .ds-code-block-html > pre {
 
 [data-streamdown='table-fullscreen'] > div {
   display: flex;
-  min-height: 0;
+  position: relative;
+  min-width: 420px;
+  min-height: 280px;
   width: min(1120px, 100%);
-  max-width: 100%;
+  max-width: calc(100vw - 72px);
   height: min(760px, 86vh);
-  max-height: 100%;
+  max-height: calc(100vh - 72px);
   flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
+  resize: both;
   border: 1px solid var(--ds-border-strong);
   border-radius: 22px;
   background: var(--ds-card-strong);

@@ -8,6 +8,7 @@ import {
   X
 } from 'lucide-react'
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,9 +16,9 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react'
-import { createPortal } from 'react-dom'
 import type { ThemeRegistration } from 'shiki'
 import { useChatStore } from '../../store/chat-store'
+import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 
 const TRAILING_NEWLINES_REGEX = /\n+$/
 const COLLAPSE_HEIGHT = 200
@@ -404,19 +405,7 @@ export function SharedCodeBlock({
     []
   )
 
-  useEffect(() => {
-    if (!fullscreen) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setFullscreen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
-    }
-  }, [fullscreen])
+  const closeFullscreen = useCallback(() => setFullscreen(false), [])
 
   const handleCopy = async (): Promise<void> => {
     if (!navigator?.clipboard?.writeText) return
@@ -520,66 +509,57 @@ export function SharedCodeBlock({
           bodyRef
         })}
       </div>
-      {fullscreen
-        ? createPortal(
-            <div
-              className="ds-code-fullscreen"
-              data-streamdown="code-fullscreen"
-              role="dialog"
-              aria-modal="true"
-              aria-label={headerLabel}
-              onClick={() => setFullscreen(false)}
-            >
-              <div
-                className="ds-code-fullscreen-panel"
-                onClick={(event) => event.stopPropagation()}
+      <ResizableFullscreenDialog
+        open={fullscreen}
+        onClose={closeFullscreen}
+        ariaLabel={headerLabel}
+        overlayClassName="ds-code-fullscreen"
+        panelClassName="ds-code-fullscreen-panel"
+        bodyClassName="ds-code-fullscreen-body"
+        dataAttr="code-fullscreen"
+        header={
+          <>
+            <span className="ds-code-block-language" title={headerLabel}>
+              {headerLabel}
+            </span>
+            <div className="ds-code-block-actions">
+              <button
+                type="button"
+                className="ds-code-block-action"
+                title="Download code"
+                aria-label="Download code"
+                onClick={() => downloadCode(trimmedCode, language, downloadName)}
               >
-                <div className="ds-code-fullscreen-header">
-                  <span className="ds-code-block-language" title={headerLabel}>
-                    {headerLabel}
-                  </span>
-                  <div className="ds-code-block-actions">
-                    <button
-                      type="button"
-                      className="ds-code-block-action"
-                      title="Download code"
-                      aria-label="Download code"
-                      onClick={() => downloadCode(trimmedCode, language, downloadName)}
-                    >
-                      <Download className="h-3.5 w-3.5" strokeWidth={1.9} />
-                    </button>
-                    <button
-                      type="button"
-                      className="ds-code-block-action"
-                      title="Copy code"
-                      aria-label="Copy code"
-                      onClick={() => void handleCopy()}
-                    >
-                      {isCopied ? (
-                        <Check className="h-3.5 w-3.5" strokeWidth={2.1} />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" strokeWidth={1.9} />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="ds-code-block-action"
-                      title="Close"
-                      aria-label="Close"
-                      onClick={() => setFullscreen(false)}
-                    >
-                      <X className="h-3.5 w-3.5" strokeWidth={1.9} />
-                    </button>
-                  </div>
-                </div>
-                <div className="ds-code-fullscreen-body">
-                  {codeBody({ collapsed: false })}
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+                <Download className="h-3.5 w-3.5" strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                className="ds-code-block-action"
+                title="Copy code"
+                aria-label="Copy code"
+                onClick={() => void handleCopy()}
+              >
+                {isCopied ? (
+                  <Check className="h-3.5 w-3.5" strokeWidth={2.1} />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" strokeWidth={1.9} />
+                )}
+              </button>
+              <button
+                type="button"
+                className="ds-code-block-action"
+                title="Close"
+                aria-label="Close"
+                onClick={closeFullscreen}
+              >
+                <X className="h-3.5 w-3.5" strokeWidth={1.9} />
+              </button>
+            </div>
+          </>
+        }
+      >
+        {codeBody({ collapsed: false })}
+      </ResizableFullscreenDialog>
     </>
   )
 }
