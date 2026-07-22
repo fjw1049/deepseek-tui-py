@@ -1425,6 +1425,7 @@
   "inspectorSummaryFiles": "{{count}} 个文件变更",
   "inspectorStatusRunning": "运行中",
   "inspectorOpenInEditor": "在编辑器打开",
+  "inspectorResizeDiff": "拖动调整 diff 高度",
   "inspectorDiffEmpty": "暂无可用的 diff。",
   "browserTitle": "浏览器",
   "browserAddressPlaceholder": "localhost:5173 或 https://www.baidu.com",

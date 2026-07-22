@@ -1,7 +1,15 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronRight, FileCode, FileEdit } from 'lucide-react'
+import { ChevronRight, FileEdit, Pencil } from 'lucide-react'
 import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
@@ -91,10 +99,35 @@ function mergeChangeItems(
   sessionItems: InspectorChangeItem[],
   gitItems: InspectorChangeItem[]
 ): InspectorChangeItem[] {
+  // Prefer session/ledger detail (agent turn), but keep git commit metadata so
+  // AI-touched files that are also dirty in git still show checkboxes.
+  const gitByPath = new Map<string, InspectorChangeItem>()
+  for (const item of gitItems) {
+    const key = normalizeChangePath(item.filePath)
+    if (key) gitByPath.set(key, item)
+  }
+
   const seen = new Set<string>()
   const merged: InspectorChangeItem[] = []
 
-  for (const item of [...sessionItems, ...gitItems]) {
+  for (const item of sessionItems) {
+    const key = normalizeChangePath(item.filePath) || item.id
+    if (seen.has(key)) continue
+    seen.add(key)
+    const git = item.filePath ? gitByPath.get(normalizeChangePath(item.filePath)) : undefined
+    if (git) {
+      merged.push({
+        ...item,
+        committable: true,
+        gitStage: git.gitStage,
+        detail: item.detail.trim() ? item.detail : git.detail
+      })
+    } else {
+      merged.push(item)
+    }
+  }
+
+  for (const item of gitItems) {
     const key = normalizeChangePath(item.filePath) || item.id
     if (seen.has(key)) continue
     seen.add(key)
@@ -103,6 +136,10 @@ function mergeChangeItems(
 
   return merged
 }
+
+const DIFF_HEIGHT_DEFAULT = 360
+const DIFF_HEIGHT_MIN = 160
+const DIFF_HEIGHT_MAX = 900
 
 /**
  * Right-side change list — expand a file to review its unified diff;
@@ -123,7 +160,6 @@ export function ChangeInspector({
   const gitCommitSelectedPaths = useChatStore((s) => s.gitCommitSelectedPaths)
   const syncGitCommitSelection = useChatStore((s) => s.syncGitCommitSelection)
   const toggleGitCommitPath = useChatStore((s) => s.toggleGitCommitPath)
-  const setGitCommitSelectedPaths = useChatStore((s) => s.setGitCommitSelectedPaths)
   const { workspaceRoot, activeThreadId, threads, workspaceDirtyTick, turnDiffByTurnId } =
     useChatStore(
       useShallow((s) => ({
@@ -142,6 +178,37 @@ export function ChangeInspector({
     [gitChanges]
   )
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [diffHeight, setDiffHeight] = useState(DIFF_HEIGHT_DEFAULT)
+  const resizeDrag = useRef<{ startY: number; startHeight: number } | null>(null)
+
+  const onDiffResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const target = event.currentTarget
+    target.setPointerCapture(event.pointerId)
+    resizeDrag.current = { startY: event.clientY, startHeight: diffHeight }
+  }, [diffHeight])
+
+  const onDiffResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeDrag.current
+    if (!drag) return
+    const next = Math.min(
+      DIFF_HEIGHT_MAX,
+      Math.max(DIFF_HEIGHT_MIN, drag.startHeight + (event.clientY - drag.startY))
+    )
+    setDiffHeight(next)
+  }, [])
+
+  const onDiffResizePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeDrag.current) {
+      resizeDrag.current = null
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch {
+        /* already released */
+      }
+    }
+  }, [])
 
   const fileChanges = useMemo(() => {
     const sessionItems = mergeChangeItems(
@@ -241,23 +308,6 @@ export function ChangeInspector({
                     total: gitFilePaths.length
                   })}
                 </span>
-                <button
-                  type="button"
-                  className="shrink-0 text-ds-muted transition hover:text-ds-ink"
-                  onClick={() => setGitCommitSelectedPaths([...gitFilePaths])}
-                >
-                  {t('gitCommitSelectAll')}
-                </button>
-                <span aria-hidden className="text-ds-border-strong">
-                  ·
-                </span>
-                <button
-                  type="button"
-                  className="shrink-0 text-ds-muted transition hover:text-ds-ink"
-                  onClick={() => setGitCommitSelectedPaths([])}
-                >
-                  {t('gitCommitSelectNone')}
-                </button>
               </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto py-2">
@@ -338,18 +388,33 @@ export function ChangeInspector({
                             title={t('inspectorOpenInEditor')}
                             aria-label={t('inspectorOpenInEditor')}
                           >
-                            <FileCode className="h-3.5 w-3.5" strokeWidth={1.85} />
+                            <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
                           </button>
                         ) : null}
                       </div>
                       {isExpanded ? (
                         <div className="border-t border-ds-border-muted/50 bg-ds-sidebar/40 px-3 py-2.5">
                           {hasPatch ? (
-                            <DiffView
-                              patch={item.detail}
-                              filePath={item.filePath}
-                              maxHeight={360}
-                            />
+                            <div className="flex min-w-0 flex-col">
+                              <DiffView
+                                patch={item.detail}
+                                filePath={item.filePath}
+                                maxHeight={diffHeight}
+                              />
+                              <div
+                                role="separator"
+                                aria-orientation="horizontal"
+                                aria-label={t('inspectorResizeDiff')}
+                                title={t('inspectorResizeDiff')}
+                                className="ds-no-drag group mt-1 flex h-2.5 cursor-row-resize touch-none items-center justify-center"
+                                onPointerDown={onDiffResizePointerDown}
+                                onPointerMove={onDiffResizePointerMove}
+                                onPointerUp={onDiffResizePointerUp}
+                                onPointerCancel={onDiffResizePointerUp}
+                              >
+                                <span className="h-0.5 w-8 rounded-full bg-ds-border-strong transition group-hover:bg-ds-muted" />
+                              </div>
+                            </div>
                           ) : (
                             <div className="px-1 py-3 text-center text-[12px] text-ds-faint">
                               {t('inspectorDiffEmpty')}

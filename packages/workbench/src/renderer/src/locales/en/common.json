@@ -1459,6 +1459,7 @@
   "inspectorSummaryFiles": "{{count}} file changes",
   "inspectorStatusRunning": "running",
   "inspectorOpenInEditor": "Open in editor",
+  "inspectorResizeDiff": "Drag to resize diff",
   "inspectorDiffEmpty": "No diff available.",
   "browserTitle": "Browser",
   "browserAddressPlaceholder": "localhost:5173 or https://www.baidu.com",
