@@ -1,9 +1,11 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode
@@ -17,8 +19,13 @@ type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 const MIN_WIDTH = 420
 const MIN_HEIGHT = 280
 const VIEW_PAD = 36
+/** Ignore backdrop dismiss briefly after open (avoids the opening click closing us). */
+const BACKDROP_ARM_MS = 280
 
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
+
+/** Open expand dialogs, bottom → top. Escape closes only the topmost. */
+const openStack: string[] = []
 
 function defaultSize(): Size {
   if (typeof window === 'undefined') return { width: 1120, height: 760 }
@@ -61,7 +68,10 @@ export function ResizableFullscreenDialog({
   bodyClassName,
   dataAttr
 }: Props): ReactElement | null {
+  const dialogId = useId()
   const [size, setSize] = useState<Size>(() => defaultSize())
+  const [stackDepth, setStackDepth] = useState(0)
+  const armedRef = useRef(false)
   const dragRef = useRef<{
     edge: Edge
     startX: number
@@ -73,21 +83,32 @@ export function ResizableFullscreenDialog({
   useEffect(() => {
     if (!open) return
     setSize(defaultSize())
-  }, [open])
+    armedRef.current = false
+    const armTimer = window.setTimeout(() => {
+      armedRef.current = true
+    }, BACKDROP_ARM_MS)
+    openStack.push(dialogId)
+    setStackDepth(openStack.length)
 
-  useEffect(() => {
-    if (!open) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      if (openStack[openStack.length - 1] !== dialogId) return
+      event.stopPropagation()
+      onClose()
     }
-    window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
+    window.addEventListener('keydown', onKey, true)
+    const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+
     return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
+      window.clearTimeout(armTimer)
+      window.removeEventListener('keydown', onKey, true)
+      const index = openStack.lastIndexOf(dialogId)
+      if (index >= 0) openStack.splice(index, 1)
+      if (openStack.length === 0) document.body.style.overflow = prevOverflow
+      armedRef.current = false
     }
-  }, [open, onClose])
+  }, [dialogId, open, onClose])
 
   useEffect(() => {
     if (!open) return
@@ -158,6 +179,14 @@ export function ResizableFullscreenDialog({
     [endDrag, onPointerMove]
   )
 
+  const onBackdropMouseDown = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    // Only dismiss when pressing the dimmed backdrop itself — not children.
+    // Avoids click bubbling from nested Maximize buttons closing the parent.
+    if (event.target !== event.currentTarget) return
+    if (!armedRef.current) return
+    onClose()
+  }
+
   if (!open || typeof document === 'undefined') return null
 
   const panelStyle: CSSProperties = {
@@ -174,12 +203,13 @@ export function ResizableFullscreenDialog({
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel}
-      onClick={onClose}
+      style={{ zIndex: 9999 + stackDepth }}
+      onMouseDown={onBackdropMouseDown}
     >
       <div
         className={`${panelClassName} ds-expand-panel`}
         style={panelStyle}
-        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="ds-expand-header">{header}</div>
         <div className={`${bodyClassName} ds-expand-body`}>{children}</div>

@@ -2844,6 +2844,78 @@ samp {
   pointer-events: none;
 }
 
+.ds-subagent-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(18px, 4vw, 56px);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08), transparent 34%),
+    color-mix(in srgb, #000 64%, transparent);
+  color: var(--ds-text);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+
+.ds-subagent-dialog-panel {
+  display: flex;
+  position: relative;
+  min-height: 0;
+  flex-direction: column;
+  overflow: visible;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: 22px;
+  background: var(--ds-card-strong);
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.ds-subagent-dialog .ds-expand-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+  border-bottom: 1px solid var(--ds-border-muted);
+  border-radius: 22px 22px 0 0;
+  background: var(--ds-topbar-bg);
+  padding: 0.85rem 1rem 0.75rem;
+  overflow: visible;
+}
+
+.ds-subagent-dialog-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 1rem 1.15rem 1.25rem;
+  border-radius: 0 0 22px 22px;
+  background: var(--ds-bg-canvas, var(--ds-card-muted));
+}
+
+.ds-subagent-report-body {
+  padding: 0.15rem 0.15rem 0.5rem;
+}
+
+.ds-subagent-dialog .ds-subagent-report-body.ds-markdown--answer p {
+  margin: 0 0 0.85em;
+  line-height: 1.65;
+}
+
+.ds-subagent-dialog .ds-subagent-report-body.ds-markdown--answer :not(pre) > code,
+.ds-subagent-dialog .ds-subagent-report-body.ds-markdown--answer .ds-code-inline,
+.ds-subagent-dialog .ds-subagent-report-body.ds-markdown--answer .ds-file-reference-code {
+  border: none;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--ds-code-bg) 78%, transparent);
+  padding: 0.05em 0.28em;
+  box-shadow: none;
+}
+
 .ds-code-fullscreen {
   position: fixed;
   inset: 0;

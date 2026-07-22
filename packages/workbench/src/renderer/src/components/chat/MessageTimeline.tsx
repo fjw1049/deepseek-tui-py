@@ -101,6 +101,7 @@ import { parseUserFocusPrefix, composeUserFocusMessage } from '../../lib/user-fo
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
+import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -2374,37 +2375,25 @@ function SubagentDetailDialog({
     }
   }
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  const [stepsOpen, setStepsOpen] = useState(() => !hasResult)
 
-  if (typeof document === 'undefined') return <></>
-
-  return createPortal(
-    <div
-      className="ds-modal-backdrop ds-modal-backdrop--soft ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div
-        className="ds-modal-surface ds-modal-surface--solid flex max-h-[min(88vh,52rem)] w-full max-w-[42rem] flex-col overflow-hidden rounded-[22px] animate-[ds-sheet-in_280ms_cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="relative shrink-0 px-6 pb-3 pt-5">
-          <div className="flex items-start gap-3 pr-10">
+  return (
+    <ResizableFullscreenDialog
+      open
+      onClose={onClose}
+      ariaLabel={title}
+      overlayClassName="ds-subagent-dialog"
+      panelClassName="ds-subagent-dialog-panel"
+      bodyClassName="ds-subagent-dialog-body"
+      dataAttr="subagent-dialog"
+      header={
+        <>
+          <div className="flex min-w-0 flex-1 items-start gap-3">
             <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-ds-hover/80 text-ds-ink/80">
               <Bot className="h-5 w-5" strokeWidth={1.7} />
             </span>
             <div className="min-w-0 flex-1">
-              <h3 className="text-[20px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
+              <h3 className="text-[18px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
                 {title}
               </h3>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
@@ -2423,7 +2412,7 @@ function SubagentDetailDialog({
               </p>
             </div>
           </div>
-          <div className="absolute right-4 top-4 flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             {hasResult ? <ToolCopyButton text={resultText} className="!opacity-100" /> : null}
             {canResumeDelegate || resumableWorkerIds.length > 0 ? (
               <button
@@ -2448,82 +2437,85 @@ function SubagentDetailDialog({
               <X className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
           </div>
-        </header>
+        </>
+      }
+    >
+      <div className="flex min-h-full flex-col gap-4">
+        {treeNodes.length > 1 ? (
+          <section>
+            <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+              {t('subagentTreeTitle')}
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {treeNodes.map((node) => {
+                const active = node.id === selectedId
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    onClick={() => setSelectedId(node.id)}
+                    className={[
+                      'flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-left transition active:scale-[0.98]',
+                      active
+                        ? 'bg-ds-hover text-ds-ink ring-1 ring-ds-ink/20'
+                        : 'bg-ds-card/70 text-ds-ink ring-1 ring-ds-border/60 hover:bg-ds-hover/50'
+                    ].join(' ')}
+                    style={node.depth > 0 ? { marginLeft: node.depth > 1 ? 4 : 0 } : undefined}
+                  >
+                    <span
+                      className={`text-[11px] ${subagentStatusDotClass(node.status)}`}
+                      aria-hidden
+                    >
+                      {subagentStatusGlyph(node.status)}
+                    </span>
+                    <span className="max-w-[9rem] truncate text-[12.5px] font-medium tracking-[-0.01em]">
+                      {node.label}
+                    </span>
+                    <span className="font-mono text-[10px] text-ds-faint">
+                      {node.id.slice(0, 6)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
-          <div className="flex flex-col gap-5">
-            {treeNodes.length > 1 ? (
-              <section>
-                <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-                  {t('subagentTreeTitle')}
-                </div>
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {treeNodes.map((node) => {
-                    const active = node.id === selectedId
-                    return (
-                      <button
-                        key={node.id}
-                        type="button"
-                        onClick={() => setSelectedId(node.id)}
-                        className={[
-                          'flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-left transition active:scale-[0.98]',
-                          active
-                            ? 'bg-ds-hover text-ds-ink ring-1 ring-ds-ink/20'
-                            : 'bg-ds-card/70 text-ds-ink ring-1 ring-ds-border/60 hover:bg-ds-hover/50'
-                        ].join(' ')}
-                        style={node.depth > 0 ? { marginLeft: node.depth > 1 ? 4 : 0 } : undefined}
-                      >
-                        <span
-                          className={`text-[11px] ${subagentStatusDotClass(node.status)}`}
-                          aria-hidden
-                        >
-                          {subagentStatusGlyph(node.status)}
-                        </span>
-                        <span className="max-w-[9rem] truncate text-[12.5px] font-medium tracking-[-0.01em]">
-                          {node.label}
-                        </span>
-                        <span className="font-mono text-[10px] text-ds-faint">
-                          {node.id.slice(0, 6)}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </section>
-            ) : null}
+        <section>
+          <button
+            type="button"
+            className="mb-2 flex w-full items-center justify-between gap-2 px-1 text-left"
+            onClick={() => setStepsOpen((value) => !value)}
+            aria-expanded={stepsOpen}
+          >
+            <h4 className="text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+              {t('subagentStepFlowTitle')}
+            </h4>
+            <span className="flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-ds-faint">
+              {selectedId.slice(0, 10)} · {subagentStatusLabel(selectedStatus, t)}
+              <ChevronDown
+                className={`h-3.5 w-3.5 transition ${stepsOpen ? 'rotate-180' : ''}`}
+                strokeWidth={1.9}
+              />
+            </span>
+          </button>
+          {stepsOpen ? (
+            <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-1.5 py-1">
+              <StepFlow items={flowItems} emptyLabel={t('subagentStepFlowEmpty')} />
+            </div>
+          ) : null}
+        </section>
 
-            <section>
-              <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-                <h4 className="text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-                  {t('subagentStepFlowTitle')}
-                </h4>
-                <span className="font-mono text-[11px] tabular-nums text-ds-faint">
-                  {selectedId.slice(0, 10)} · {subagentStatusLabel(selectedStatus, t)}
-                </span>
-              </div>
-              <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-1.5 py-1">
-                <StepFlow
-                  items={flowItems}
-                  emptyLabel={t('subagentStepFlowEmpty')}
-                />
-              </div>
-            </section>
-
-            <section>
-              <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-                {resultTitle}
-              </div>
-              <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-4 py-3">
-                <div className="ds-markdown text-[13.5px] leading-6 tracking-[-0.01em] text-ds-ink">
-                  <AssistantMarkdown text={finalText} streaming={false} />
-                </div>
-              </div>
-            </section>
+        <section className="ds-subagent-report min-h-0 flex-1">
+          <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
+            {resultTitle}
           </div>
-        </div>
+          <div className="ds-subagent-report-body ds-markdown ds-markdown--answer ds-chat-answer text-ds-ink">
+            <AssistantMarkdown text={finalText} streaming={false} />
+          </div>
+        </section>
       </div>
-    </div>,
-    document.body
+    </ResizableFullscreenDialog>
   )
 }
 

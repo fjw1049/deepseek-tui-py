@@ -126,7 +126,10 @@ function MermaidToolbar({
           className="ds-code-block-action"
           title="Expand diagram"
           aria-label="Expand diagram"
-          onClick={onFullscreen}
+          onClick={(event) => {
+            event.stopPropagation()
+            onFullscreen()
+          }}
           disabled={disabled}
         >
           <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.9} />

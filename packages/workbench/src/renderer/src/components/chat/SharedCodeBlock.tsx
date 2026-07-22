@@ -458,7 +458,10 @@ export function SharedCodeBlock({
         className="ds-code-block-action"
         title="Expand code"
         aria-label="Expand code"
-        onClick={() => setFullscreen(true)}
+        onClick={(event) => {
+          event.stopPropagation()
+          setFullscreen(true)
+        }}
         disabled={actionsDisabled}
       >
         <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.9} />
