@@ -14,8 +14,20 @@ def test_agent_spawn_is_always_active_in_agent_mode() -> None:
     assert should_default_defer_tool("agent_spawn", "agent") is False
     assert should_default_defer_tool("agent_result", "agent") is False
     assert should_default_defer_tool("task_create", "agent") is False
-    # Unrelated write tools stay deferred.
-    assert should_default_defer_tool("write_file", "agent") is True
+    # Core write / git / shell tools stay always-active (not deferred).
+    for name in (
+        "write_file",
+        "edit_file",
+        "apply_patch",
+        "git_status",
+        "git_diff",
+        "exec_shell",
+        "exec_shell_wait",
+        "exec_shell_interact",
+    ):
+        assert should_default_defer_tool(name, "agent") is False
+    # Unrelated rarer tools stay deferred.
+    assert should_default_defer_tool("git_blame", "agent") is True
 
 
 def test_strip_subagent_sentinels_removes_complete_tag() -> None:

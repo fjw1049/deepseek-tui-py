@@ -47,9 +47,20 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "file_search",
         "diagnostics",
         "project_map",
+        # Core write tools — keep visible so the model does not fall back to
+        # shell heredocs / cp for ordinary file edits (selection bias).
+        "write_file",
+        "edit_file",
+        "apply_patch",
+        "git_status",
+        "git_diff",
+        # Shell family (also force-active in agent mode via _SHELL_TOOLS).
+        "exec_shell",
+        "exec_shell_wait",
+        "exec_shell_interact",
+        "exec_wait",
+        "exec_interact",
         "load_skill",
-        "note",
-        "recall_archive",
         MULTI_TOOL_PARALLEL_NAME,
         "update_plan",
         "checklist_write",
