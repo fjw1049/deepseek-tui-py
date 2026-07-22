@@ -17,6 +17,12 @@ import type {
   WorkspacePickResult
 } from '../../shared/ds-gui-api'
 import {
+  buildEndpointProbeBody,
+  buildEndpointProbeUrl,
+  responseHasProbeToolCall,
+  shouldRetryProbeWithAutoToolChoice
+} from './endpoint-compat-probe'
+import {
   deepseekConfigContentSchema,
   emailSecretPayloadSchema,
   feishuConfigPayloadSchema,
@@ -946,112 +952,63 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     model: string
   }) => {
     const { protocol, baseUrl, apiKey, model } = args
-    let url = baseUrl.replace(/\/+$/, '')
-    if (protocol === 'anthropic') {
-      if (url.endsWith('/v1/messages')) {
-        // Full Messages URL supplied.
-      } else if (url.endsWith('/v1')) {
-        url = `${url}/messages`
-      } else {
-        url = `${url}/v1/messages`
-      }
-    } else if (/\/v\d+$/.test(url)) {
-      url = `${url}/chat/completions`
-    } else {
-      url = `${url}/v1/chat/completions`
-    }
+    const url = buildEndpointProbeUrl(protocol, baseUrl)
     const start = Date.now()
-    try {
+    const headers = protocol === 'anthropic'
+      ? {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json'
+        }
+      : {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+
+    const postProbe = async (toolChoice: 'forced' | 'auto'): Promise<Response> => {
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15_000)
-      const anthropic = protocol === 'anthropic'
-      const toolName = 'compat_probe'
-      let resp: Response
       try {
-        resp = await fetch(url, {
+        return await fetch(url, {
           method: 'POST',
-          headers: anthropic
-            ? {
-                'x-api-key': apiKey,
-                'anthropic-version': '2023-06-01',
-                'Content-Type': 'application/json'
-              }
-            : {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-              },
-          body: JSON.stringify(anthropic
-            ? {
-                model,
-                messages: [{ role: 'user', content: 'Call compat_probe with value ok.' }],
-                max_tokens: 64,
-                stream: false,
-                tools: [{
-                  name: toolName,
-                  description: 'Compatibility probe',
-                  input_schema: {
-                    type: 'object',
-                    properties: { value: { type: 'string' } },
-                    required: ['value']
-                  }
-                }],
-                tool_choice: { type: 'tool', name: toolName }
-              }
-            : {
-                model,
-                messages: [{ role: 'user', content: 'Call compat_probe with value ok.' }],
-                max_tokens: 64,
-                stream: false,
-                tools: [{
-                  type: 'function',
-                  function: {
-                    name: toolName,
-                    description: 'Compatibility probe',
-                    parameters: {
-                      type: 'object',
-                      properties: { value: { type: 'string' } },
-                      required: ['value']
-                    }
-                  }
-                }],
-                tool_choice: { type: 'function', function: { name: toolName } }
-              }),
+          headers,
+          body: JSON.stringify(buildEndpointProbeBody(protocol, model, toolChoice)),
           signal: controller.signal
         })
       } finally {
         clearTimeout(timeout)
       }
+    }
+
+    const evaluateOkResponse = async (resp: Response) => {
+      const latencyMs = Date.now() - start
+      const body = await resp.json() as Record<string, unknown>
+      if (!responseHasProbeToolCall(protocol, body)) {
+        return {
+          ok: false as const,
+          model,
+          latencyMs,
+          message: '连接成功，但模型未返回必需的工具调用'
+        }
+      }
+      const respModel = typeof body.model === 'string' ? body.model : model
+      return {
+        ok: true as const,
+        model: respModel,
+        latencyMs,
+        message: `文本与工具协议兼容 (模型: ${respModel}, 延迟: ${latencyMs}ms)`
+      }
+    }
+
+    try {
+      let resp = await postProbe('forced')
+      if (!resp.ok && shouldRetryProbeWithAutoToolChoice(resp.status)) {
+        // kimi-k2.7-code (and similar) reject forced tool_choice; retry with auto.
+        resp = await postProbe('auto')
+      }
       const latencyMs = Date.now() - start
       if (resp.ok) {
-        const body = await resp.json() as Record<string, unknown>
-        const content = Array.isArray(body.content) ? body.content : []
-        const choices = Array.isArray(body.choices) ? body.choices : []
-        const anthropicToolOk = content.some((item) =>
-          item && typeof item === 'object' &&
-          (item as { type?: unknown }).type === 'tool_use' &&
-          (item as { name?: unknown }).name === toolName
-        )
-        const firstChoice = choices[0] as {
-          message?: { tool_calls?: Array<{ function?: { name?: string } }> }
-        } | undefined
-        const openAiToolOk = firstChoice?.message?.tool_calls?.some(
-          (call) => call.function?.name === toolName
-        ) === true
-        if (!(anthropic ? anthropicToolOk : openAiToolOk)) {
-          return {
-            ok: false,
-            model,
-            latencyMs,
-            message: '连接成功，但模型未返回必需的工具调用'
-          }
-        }
-        const respModel = typeof body.model === 'string' ? body.model : model
-        return {
-          ok: true,
-          model: respModel,
-          latencyMs,
-          message: `文本与工具协议兼容 (模型: ${respModel}, 延迟: ${latencyMs}ms)`
-        }
+        return await evaluateOkResponse(resp)
       }
       const bodyText = (await resp.text()).slice(0, 200)
       return { ok: false, model, latencyMs, message: `HTTP ${resp.status}: ${bodyText}` }
