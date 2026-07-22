@@ -136,6 +136,37 @@ def test_snapshot_dict_includes_line_start() -> None:
     assert snap_dict["files"][0]["line_start"] == 5
 
 
+def test_shell_detected_mutation_roundtrip() -> None:
+    # Shape produced by shell_mutation_watch.detect_shell_mutations.
+    detected = {
+        "path": "b.py",
+        "op": "update",
+        "unified_diff": "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@\n-x\n+y\n",
+        "additions": 1,
+        "deletions": 1,
+        "source": "shell_detected",
+        "status": "applied",
+        "line_start": 3,
+    }
+    muts = mutation_from_metadata(
+        {"mutation": detected, "path": detected["path"]},
+        turn_id="t1",
+        tool_call_id="tc_shell",
+        source_fallback="shell_detected",
+    )
+    assert len(muts) == 1
+    assert muts[0].source == "shell_detected"
+    assert muts[0].line_start == 3
+
+    ledger = TurnMutationLedger("t1", throttle_ms=0)
+    ledger.commit(muts[0], emit=False)
+    assert ledger.covered_paths() == {"b.py"}
+    snap_dict = ledger.snapshot().to_dict()
+    assert snap_dict["files"][0]["path"] == "b.py"
+    assert snap_dict["files"][0]["line_start"] == 3
+    assert snap_dict["totals"] == {"files": 1, "additions": 1, "deletions": 1}
+
+
 def test_shell_write_guard_denies_sed_inplace() -> None:
     v = check_shell_write("sed -i 's/foo/bar/' src/main.py")
     assert not v.allowed

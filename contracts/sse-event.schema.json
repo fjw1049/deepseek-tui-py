@@ -149,14 +149,17 @@
                     "properties": {
                       "mutation": {
                         "type": "object",
-                        "description": "Single file mutation reported by edit_file / write_file / apply_patch.",
+                        "description": "Single file mutation reported by edit_file / write_file / apply_patch, or detected on disk after a shell command (source shell_detected).",
                         "properties": {
                           "path": { "type": "string" },
                           "op": { "type": "string", "enum": ["create", "update", "delete", "rename"] },
                           "unified_diff": { "type": "string" },
                           "additions": { "type": "integer" },
                           "deletions": { "type": "integer" },
-                          "source": { "type": "string" },
+                          "source": {
+                            "type": "string",
+                            "enum": ["edit_file", "apply_patch", "write_file", "shell_allowlist", "shell_detected", "git_reconcile"]
+                          },
                           "status": { "type": "string" },
                           "line_start": {
                             "type": ["integer", "null"],

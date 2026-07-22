@@ -92,3 +92,29 @@ describe('buildToolRenderContext edit line', () => {
     expect(ctx.editLine).toBeUndefined()
   })
 })
+
+describe('buildToolRenderContext label', () => {
+  it('uses the edit label for shell-detected file changes', () => {
+    const ctx = buildToolRenderContext(
+      fileChangeBlock({ summary: 'exec_shell: update src/foo.ts' })
+    )
+    expect(ctx.label).toBe('编辑文件')
+  })
+
+  it('keeps genuine edit tool labels', () => {
+    const ctx = buildToolRenderContext(
+      fileChangeBlock({ summary: 'apply_patch: update src/foo.ts' })
+    )
+    expect(ctx.label).toBe('应用补丁')
+  })
+
+  it('keeps the command label for real shell executions', () => {
+    const ctx = buildToolRenderContext(
+      fileChangeBlock({
+        summary: 'exec_shell: npm test',
+        toolKind: 'command_execution'
+      })
+    )
+    expect(ctx.label).toBe('执行命令')
+  })
+})

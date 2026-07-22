@@ -14,6 +14,7 @@ MutationSource = Literal[
     "apply_patch",
     "write_file",
     "shell_allowlist",
+    "shell_detected",
     "git_reconcile",
 ]
 MutationOp = Literal["create", "update", "delete", "rename"]
@@ -160,7 +161,14 @@ def _one_mutation_from_dict(
     source: MutationSource = (
         source_raw
         if source_raw
-        in ("edit_file", "apply_patch", "write_file", "shell_allowlist", "git_reconcile")
+        in (
+            "edit_file",
+            "apply_patch",
+            "write_file",
+            "shell_allowlist",
+            "shell_detected",
+            "git_reconcile",
+        )
         else source_fallback
     )
     status_raw = entry.get("status")

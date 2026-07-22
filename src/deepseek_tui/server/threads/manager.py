@@ -1927,6 +1927,11 @@ class RuntimeThreadManager:
             TurnMutationLedger,
             mutation_from_metadata,
         )
+        from deepseek_tui.workspace.shell_mutation_watch import (
+            ShellMutationSnapshot,
+            capture_shell_snapshot,
+            detect_shell_mutations,
+        )
 
         current_message_text = ""
         current_message_item_id: str | None = None
@@ -1940,6 +1945,8 @@ class RuntimeThreadManager:
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
         workflow_items: dict[str, str] = {}  # tool_call_id -> item_id (workflow progress)
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
+        # tool_call_id -> pre-exec workspace snapshot (shell mutation detection)
+        shell_watch: dict[str, ShellMutationSnapshot] = {}
         seen_subagent_ids: set[str] = set()  # agents touched this turn (for reconcile)
         pending_turn_diffs: list[dict[str, Any]] = []
         mutation_ledger = TurnMutationLedger(turn_id, throttle_ms=150)
@@ -1961,6 +1968,7 @@ class RuntimeThreadManager:
                             "apply_patch",
                             "write_file",
                             "shell_allowlist",
+                            "shell_detected",
                             "git_reconcile",
                         )
                         else "write_file"
@@ -1977,6 +1985,62 @@ class RuntimeThreadManager:
                 await self._emit_event(
                     thread_id, turn_id, None, "turn.diff.updated", payload
                 )
+
+        async def emit_shell_detected_mutations(
+            snapshot: ShellMutationSnapshot,
+            *,
+            tool_call_id: str,
+            tool_name: str,
+            tool_args: Any,
+            result_metadata: Any,
+        ) -> None:
+            # Paths the tool result already reported (e.g. allowlisted shell
+            # writes) must not be double-reported by disk detection.
+            skip: set[str] = set()
+            if isinstance(result_metadata, dict):
+                reported = result_metadata.get("mutation")
+                if isinstance(reported, dict) and isinstance(reported.get("path"), str):
+                    skip.add(reported["path"])
+                listed = result_metadata.get("mutations")
+                if isinstance(listed, list):
+                    for entry in listed:
+                        if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                            skip.add(entry["path"])
+            for mut in await detect_shell_mutations(snapshot, skip_paths=skip):
+                now = datetime.now(timezone.utc)
+                sub_item_id = f"item_{uuid.uuid4().hex[:8]}"
+                sub_item = TurnItemRecord(
+                    id=sub_item_id,
+                    turn_id=turn_id,
+                    kind=TurnItemKind.FILE_CHANGE,
+                    status=TurnItemLifecycleStatus.COMPLETED,
+                    summary=summarize_text(
+                        f"{tool_name}: {mut['op']} {mut['path']}", SUMMARY_LIMIT
+                    ),
+                    detail=mut["unified_diff"],
+                    metadata={
+                        "tool_name": tool_name,
+                        "path": mut["path"],
+                        "mutation": mut,
+                    },
+                    started_at=now,
+                    ended_at=now,
+                )
+                self.store.save_item(sub_item)
+                self._attach_item_to_turn(turn_id, sub_item_id)
+                tool_ref = {"id": tool_call_id, "name": tool_name, "input": tool_args}
+                await self._emit_event(
+                    thread_id, turn_id, sub_item_id, "item.started",
+                    {"item": sub_item.model_dump(mode="json"), "tool": tool_ref},
+                )
+                await self._emit_event(
+                    thread_id, turn_id, sub_item_id, "item.completed",
+                    {"item": sub_item.model_dump(mode="json")},
+                )
+                # Committing to the ledger also covers the path for turn-end
+                # reconcile_to_ledger (covered_paths), so the same disk delta
+                # is not counted a second time there.
+                _mutation_sink(mut)
 
         async with self._active_lock:
             _state = self._active.get(thread_id)
@@ -2516,11 +2580,26 @@ class RuntimeThreadManager:
                         },
                     },
                 )
+                # Shell commands can mutate files behind the tool layer
+                # (git apply / patch / heredocs): snapshot the workspace so
+                # the delta can be detected when the result arrives.
+                if (
+                    kind == TurnItemKind.COMMAND_EXECUTION
+                    and git_baseline is not None
+                    and git_baseline.is_git
+                ):
+                    try:
+                        shell_watch[tc.id] = await capture_shell_snapshot(
+                            git_baseline.workspace
+                        )
+                    except Exception:
+                        logger.debug("shell_watch_capture_failed", exc_info=True)
 
             elif isinstance(event, ToolResultEvent):
                 note_tool_result_timing(event.tool_call_id)
                 item_id = tool_items.pop(event.tool_call_id, None)
                 tool_args = tool_call_args.pop(event.tool_call_id, None)
+                shell_snapshot = shell_watch.pop(event.tool_call_id, None)
                 if item_id is not None:
                     item = self.store.load_item(item_id)
                     now = datetime.now(timezone.utc)
@@ -2613,6 +2692,23 @@ class RuntimeThreadManager:
                         thread_id, turn_id, item_id, event_name,
                         {"item": item.model_dump(mode="json")},
                     )
+                    if shell_snapshot is not None:
+                        # Detect files the shell command mutated on disk behind
+                        # the tool layer and surface each as its own
+                        # file_change item + ledger entry. Runs for failed
+                        # commands too — a failing command can still mutate;
+                        # guard-denied ones simply yield nothing. Detection
+                        # must never break a turn.
+                        try:
+                            await emit_shell_detected_mutations(
+                                shell_snapshot,
+                                tool_call_id=event.tool_call_id,
+                                tool_name=event.tool_name,
+                                tool_args=tool_args,
+                                result_metadata=event.metadata,
+                            )
+                        except Exception:
+                            logger.debug("shell_watch_detect_failed", exc_info=True)
                     # Main-agent write tools also report via on_file_mutation;
                     # flush any turn.diff.updated snapshots queued by the sink.
                     await flush_turn_diffs()

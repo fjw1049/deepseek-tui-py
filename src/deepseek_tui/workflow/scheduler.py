@@ -286,6 +286,7 @@ async def schedule_workflow(
         indexed_items: list[tuple[int, str]],
         worker: Callable[[str], Awaitable[StepOutput | None]],
         on_item_done: Callable[[str, StepOutput], None] | None = None,
+        on_item_failed: Callable[[str], None] | None = None,
     ) -> list[tuple[str, StepOutput]]:
         tasks: dict[asyncio.Task[StepOutput | None], tuple[int, str]] = {
             asyncio.create_task(worker(item)): (idx, item)
@@ -318,6 +319,8 @@ async def schedule_workflow(
                         raise
                     except Exception as e:  # noqa: BLE001
                         log(f"{step_id}[{item}]: {e}")
+                        if on_item_failed is not None:
+                            on_item_failed(item)
                         if spec.policy.on_error == "fail_fast":
                             await cancel_pending(pending)
                             if manager is not None:
@@ -328,6 +331,8 @@ async def schedule_workflow(
                         continue
                     if result is None:
                         log(f"{step_id}[{item}]: agent failed")
+                        if on_item_failed is not None:
+                            on_item_failed(item)
                         if spec.policy.on_error == "fail_fast":
                             await cancel_pending(pending)
                             if manager is not None:
@@ -613,11 +618,18 @@ async def schedule_workflow(
                     checkpoint()
                     progress()
 
+                def _on_fanout_item_failed(item: str) -> None:
+                    key = _item_key(item)
+                    if key not in ctx.failed_step_ids:
+                        ctx.failed_step_ids.append(key)
+                    progress()
+
                 new_results = await gather_step_outputs(
                     step_id=f"fanout {step.id}",
                     indexed_items=pending_indexed,
                     worker=_fanout_item,
                     on_item_done=_on_fanout_item_done,
+                    on_item_failed=_on_fanout_item_failed,
                 )
                 by_item = {item: res for item, res in new_results}
                 previews: list[str] = []
@@ -665,10 +677,16 @@ async def schedule_workflow(
                             prev = stage_out
                         return prev
 
+                def _on_pipe_item_failed(item: str) -> None:
+                    key = f"{step.id}:{item}"
+                    if key not in ctx.failed_step_ids:
+                        ctx.failed_step_ids.append(key)
+
                 pipe_results = await gather_step_outputs(
                     step_id=f"pipeline {step.id}",
                     indexed_items=list(enumerate(step.items)),
                     worker=_pipeline_item,
+                    on_item_failed=_on_pipe_item_failed,
                 )
                 lines = []
                 for item, res in pipe_results:
@@ -1077,7 +1095,10 @@ async def schedule_workflow(
                     if spec.policy.on_error == "fail_fast":
                         _mark_successors_skipped(nid)
                         raise WorkflowFailedError(f"step {nid} failed")
-                    # continue: leave successors for ready-set / partial reduce
+                    # continue: skip non-partial successors (they can never
+                    # become ready once a pred failed); partial joins are
+                    # preserved by _mark_successors_skipped for ready_ids.
+                    _mark_successors_skipped(nid)
                 checkpoint()
                 progress()
 
@@ -1101,6 +1122,12 @@ async def schedule_workflow(
                 raise
 
     def _mark_successors_skipped(nid: str) -> None:
+        # Skip successors of a failed node. Partial joins (reduce/synthesis
+        # with source_policy=partial) are left for ``ready_ids`` to admit -
+        # they may still run on the remaining completed predecessors. Other
+        # successors have no recovery path and must be marked skipped so the
+        # ready-set is not blocked waiting on a predecessor that will never
+        # complete.
         stack = list(graph.successors.get(nid, ()))
         seen: set[str] = set()
         while stack:
@@ -1108,6 +1135,16 @@ async def schedule_workflow(
             if cur in seen:
                 continue
             seen.add(cur)
+            cur_step = graph.nodes.get(cur)
+            is_partial = (
+                isinstance(cur_step, (ReduceStep, SynthesisStep))
+                and cur_step.source_policy == "partial"
+            )
+            if is_partial:
+                # A partial join may still fire on other completed preds;
+                # do not force-skip it. Its own non-partial successors will
+                # be visited if/when it is skipped later.
+                continue
             if (
                 cur not in ctx.completed_step_ids
                 and cur not in ctx.failed_step_ids

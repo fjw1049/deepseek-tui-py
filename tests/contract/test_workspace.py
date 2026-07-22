@@ -4,10 +4,46 @@ import pytest
 from httpx import AsyncClient
 
 from deepseek_tui.server.threads import (
+    TurnItemKind,
     file_change_completion_detail,
     tool_item_metadata,
+    tool_kind_for_name,
     tool_started_metadata,
 )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("write_file", TurnItemKind.FILE_CHANGE),
+        ("edit_file", TurnItemKind.FILE_CHANGE),
+        ("apply_patch", TurnItemKind.FILE_CHANGE),
+        ("exec_shell", TurnItemKind.COMMAND_EXECUTION),
+        ("exec_shell_wait", TurnItemKind.COMMAND_EXECUTION),
+        ("checklist_write", TurnItemKind.TOOL_CALL),
+        ("checklist_update", TurnItemKind.TOOL_CALL),
+        ("checklist_add", TurnItemKind.TOOL_CALL),
+        ("todo_write", TurnItemKind.TOOL_CALL),
+        ("update_plan", TurnItemKind.TOOL_CALL),
+        ("read_file", TurnItemKind.TOOL_CALL),
+        ("grep_files", TurnItemKind.TOOL_CALL),
+    ],
+)
+def test_tool_kind_for_name_uses_exact_file_tools(
+    name: str, expected: TurnItemKind
+) -> None:
+    assert tool_kind_for_name(name) == expected
+
+
+def test_tool_item_metadata_checklist_write_is_todo_not_file_path() -> None:
+    meta = tool_item_metadata(
+        "checklist_write",
+        {"todos": [{"id": 1, "content": "fix kind", "status": "pending"}]},
+    )
+    assert meta is not None
+    assert meta.get("tool_name") == "checklist_write"
+    assert "path" not in meta
+    assert meta.get("items")
 
 
 def test_tool_item_metadata_edit_file() -> None:

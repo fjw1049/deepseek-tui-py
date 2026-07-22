@@ -59,11 +59,16 @@ export interface ToolInput {
 export function buildToolRenderContext(block: ToolBlock): ToolRenderContext {
   const toolName = extractToolName(block.summary)
   const shortName = stripToolPrefix(toolName)
-  const label = humanizeToolName(toolName)
+  const isFileChange = block.toolKind === 'file_change'
+  // Shell-detected edits arrive as file_change blocks under a non-edit tool
+  // name (e.g. exec_shell); render them with the edit label, not "执行命令".
+  const label =
+    isFileChange && !FILE_EDIT_TOOL_NAMES.has(toolName.trim().toLowerCase())
+      ? TOOL_NAME_LABELS.edit_file
+      : humanizeToolName(toolName)
   const description = buildDescription(block, toolName)
   const input = extractInput(block)
   const state = mapState(block)
-  const isFileChange = block.toolKind === 'file_change'
   const isCommand = block.toolKind === 'command_execution'
   const mutation = readMutationMeta(block.meta)
   const diffStats = isFileChange ? resolveDiffStats(block, mutation) : undefined
@@ -132,6 +137,9 @@ const TOOL_NAME_LABELS: Record<string, string> = {
   web_search: '网络搜索',
   write_file: '写入文件'
 }
+
+/** Tools whose own label already describes a file edit (others fall back). */
+const FILE_EDIT_TOOL_NAMES = new Set(['edit_file', 'write_file', 'apply_patch'])
 
 export function humanizeToolName(name: string): string {
   const canonical = name.trim().toLowerCase()

@@ -173,12 +173,21 @@ def reconstruct_messages_from_turns(
     return messages
 
 
+# Exact tool names that mutate workspace source files. Substring matching
+# (e.g. "write" in name) incorrectly classifies checklist_write / todo_write
+# as file_change and makes the chat UI render fake "Edited" rows.
+_FILE_CHANGE_TOOLS = frozenset({"write_file", "edit_file", "apply_patch"})
+_COMMAND_EXECUTION_TOOLS = frozenset(
+    {"exec_shell", "exec_shell_wait", "exec_shell_interact"}
+)
+
+
 def tool_kind_for_name(name: str) -> TurnItemKind:
     """Classify a tool name into its turn-item kind."""
     lower = name.lower()
-    if lower in ("exec_shell", "exec_shell_wait", "exec_shell_interact"):
+    if lower in _COMMAND_EXECUTION_TOOLS:
         return TurnItemKind.COMMAND_EXECUTION
-    if "patch" in lower or "write" in lower or "edit" in lower:
+    if lower in _FILE_CHANGE_TOOLS:
         return TurnItemKind.FILE_CHANGE
     return TurnItemKind.TOOL_CALL
 
