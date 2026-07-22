@@ -1185,7 +1185,9 @@ function MessageTurn({
             <MessageBubble block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }} />
           ) : null}
 
-          {turnFileChanges.length > 0 ? (
+          {/* Turn fold-up: only after the turn finishes. Mid-turn edits stay
+              in the process rail as per-tool file_change cards. */}
+          {!isProcessing && turnFileChanges.length > 0 ? (
             <TurnChangeSummary
               changes={turnFileChanges}
               viewportRef={viewportRef}
