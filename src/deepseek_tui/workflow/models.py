@@ -148,6 +148,9 @@ class SynthesisStep:
     prompt_template: str = ""
     output_schema: dict[str, Any] | None = None
     timeout_seconds: int | None = None
+    # partial: join may run when some predecessors failed (needs ≥1 success).
+    # success: every graph predecessor must complete; any failure blocks this step.
+    source_policy: SourcePolicy = "partial"
 
 
 @dataclass(slots=True)
@@ -745,6 +748,11 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
         tmpl = raw.get("prompt_template")
         if not isinstance(tmpl, str) or not tmpl.strip():
             raise WorkflowValidationError(f"step {step_id}: prompt_template required")
+        source_policy = raw.get("source_policy", "partial")
+        if source_policy not in ("success", "partial"):
+            raise WorkflowValidationError(
+                f"step {step_id}: source_policy must be success or partial"
+            )
         return SynthesisStep(
             id=step_id.strip(),
             type="synthesis",
@@ -760,6 +768,7 @@ def _parse_step(raw: Any, phase_id: str, step_index: int = 0) -> WorkflowStep:
                 min_val=1,
                 max_val=3600,
             ),
+            source_policy=source_policy,  # type: ignore[arg-type]
         )
     if step_type == "reduce":
         label = raw.get("label")

@@ -59,11 +59,10 @@ class CompiledGraph:
                 ready.append(nid)
                 continue
             step = self.nodes.get(nid)
-            accepts_partial = False
-            if isinstance(step, ReduceStep) and step.source_policy == "partial":
-                accepts_partial = True
-            elif isinstance(step, SynthesisStep):
-                accepts_partial = True
+            accepts_partial = (
+                isinstance(step, (ReduceStep, SynthesisStep))
+                and step.source_policy == "partial"
+            )
             if accepts_partial:
                 if all(p in terminal_ok or p in failed for p in preds) and any(
                     p in completed for p in preds
@@ -307,6 +306,7 @@ def step_to_dict(step: WorkflowStep) -> dict[str, Any]:
                 "prompt_template": step.prompt_template,
                 "output_schema": step.output_schema,
                 "timeout_seconds": step.timeout_seconds,
+                "source_policy": step.source_policy,
             }
         )
     elif step.type == "reduce":

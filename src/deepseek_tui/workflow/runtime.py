@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 _LOG = logging.getLogger(__name__)
 
@@ -32,9 +33,97 @@ __all__ = [
     "WorkflowAbortedError",
     "WorkflowFailedError",
     "WorkflowRunner",
+    "format_workflow_result_body",
+    "render_workflow_tool_text",
+    "resolve_workflow_terminal_status",
     "render_workflow_text",
     "run_workflow",
 ]
+
+_RESULT_FINDINGS_CAP = 3
+_RESULT_LINE_MAX = 200
+_RESULT_VERDICT_MAX = 280
+
+
+def resolve_workflow_terminal_status(
+    result: WorkflowRunResult,
+) -> Literal["completed", "failed"]:
+    """Map a finished scheduler result to durable run status.
+
+    ``on_error=continue`` can finish the DAG without raising, even when every
+    agent errored. Treat "errors and zero successful agents" as failed so the
+    UI / tool result do not claim success.
+    """
+    if result.errors and result.snapshot.done_count == 0:
+        return "failed"
+    return "completed"
+
+
+def _clip_result_line(text: str, limit: int) -> str:
+    one = " ".join(text.split())
+    if len(one) <= limit:
+        return one
+    return one[: max(1, limit - 1)] + "…"
+
+
+def format_workflow_result_body(value: Any) -> str:
+    """Compact tool-facing summary; full payload stays in metadata."""
+    if isinstance(value, str):
+        return _clip_result_line(value, _RESULT_VERDICT_MAX)
+    if isinstance(value, dict):
+        lines: list[str] = []
+        if "ok" in value:
+            lines.append(f"ok: {value['ok']}")
+        verdict = value.get("verdict")
+        if isinstance(verdict, str) and verdict.strip():
+            lines.append(f"verdict: {_clip_result_line(verdict, _RESULT_VERDICT_MAX)}")
+        findings = value.get("findings")
+        if isinstance(findings, list) and findings:
+            lines.append("findings:")
+            for item in findings[:_RESULT_FINDINGS_CAP]:
+                lines.append(f"  - {_clip_result_line(str(item), _RESULT_LINE_MAX)}")
+            extra = len(findings) - _RESULT_FINDINGS_CAP
+            if extra > 0:
+                lines.append(f"  … +{extra} more")
+        if lines:
+            return "\n".join(lines)
+    try:
+        dumped = json.dumps(value, ensure_ascii=False, default=str)
+    except TypeError:
+        dumped = str(value)
+    return _clip_result_line(dumped, 500)
+
+
+def render_workflow_tool_text(
+    result: WorkflowRunResult,
+    *,
+    run_id: str,
+    worktree_path: str | None = None,
+    worktree_branch: str | None = None,
+) -> str:
+    """Build concise tool ``content`` for a finished workflow run."""
+    terminal = resolve_workflow_terminal_status(result)
+    text = render_workflow_text(
+        result.snapshot, completed=(terminal == "completed")
+    )
+    if terminal == "failed":
+        text = text.replace("Workflow completed", "Workflow failed", 1)
+    if result.errors:
+        err_bits = "; ".join(
+            f"{e.step_id}: {e.error}" for e in result.errors[:4]
+        )
+        if len(result.errors) > 4:
+            err_bits = f"{err_bits}; … +{len(result.errors) - 4} more"
+        text = f"{text}\n\nErrors ({len(result.errors)}): {err_bits}"
+    if result.result is not None:
+        text = f"{text}\n\nResult:\n{format_workflow_result_body(result.result)}"
+    text = f"{text}\n\nrun_id: {run_id}"
+    if worktree_path:
+        text = (
+            f"{text}\nworktree_path: {worktree_path}\n"
+            f"worktree_branch: {worktree_branch or ''}"
+        )
+    return text
 
 
 def _recompute_snapshot(snapshot: WorkflowSnapshot) -> WorkflowSnapshot:

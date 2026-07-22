@@ -16,7 +16,7 @@ Use the `workflow` tool when the user explicitly asks for "workflow", multi-agen
 - `policy.token_budget` is enforced via a rough char/4 estimate of prompts/outputs (not a provider tokenizer). Bound wall time via `max_agents`, `concurrency`, `wall_clock_seconds`, and per-step `timeout_seconds`.
 - Templates support `{{task}}`, `{{item}}`, `{{previous}}`, `{{round}}`, and `{{outputs.<step_id>}}`.
 - When merging branches, include a `reduce`/`synthesis` step that references prior outputs via `{{outputs.<step_id>}}`.
-- Failed steps may be omitted from outputs; synthesis/reduce prompts must tolerate missing references (`source_policy: partial` default for reduce).
+- Failed steps may be omitted from outputs; synthesis/reduce prompts must tolerate missing references (`source_policy: partial` default). Use `source_policy: success` when a join must not run after any source failure.
 - Sub-agents do not inherit implicit repository context — include paths, files, and goals in prompts.
 - Do not duplicate work with batch `agent_spawn` outside the workflow after starting a workflow.
 - Opt-in isolation: set `policy.worktree` to `"on"` so the run edits a git worktree under `.deepseek/workflow-runs/<run_id>/tree` (fails closed if not a git repo). Default is `"off"`.

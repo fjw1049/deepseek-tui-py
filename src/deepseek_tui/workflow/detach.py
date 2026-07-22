@@ -391,26 +391,34 @@ async def execute_detached_workflow(
         # acquire: no new spawns can race our teardown.
         release_run_lease(run_id, lease_token, workspace=project_cwd)
 
+    from deepseek_tui.workflow.runtime import resolve_workflow_terminal_status
+
+    final_status = resolve_workflow_terminal_status(result)
     safe_checkpoint_run(
         record,
         completed_step_ids=list(record.completed_step_ids),
         outputs=record.restored_outputs(),
         snapshot=result.snapshot,
         logs=list(result.logs),
-        status="completed",
+        status=final_status,
         result=result.result,
+        error=(
+            "; ".join(f"{e.step_id}: {e.error}" for e in result.errors[:4])
+            if final_status == "failed" and result.errors
+            else None
+        ),
         workspace=project_cwd,
     )
     clear_stop_intent(record.run_id, workspace=project_cwd)
 
     payload = {
         "run_id": record.run_id,
-        "status": "completed",
+        "status": final_status,
         "worktree_path": record.worktree_path,
         "worktree_branch": record.worktree_branch,
         "result": result.result,
     }
     return TaskExecutionResult(
-        summary=f"Workflow {record.run_id} completed",
+        summary=f"Workflow {record.run_id} {final_status}",
         detail=json.dumps(payload, default=str),
     )

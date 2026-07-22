@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ChatBlock } from '../../agent/types'
 import {
+  clipMidTurnPrefaceText,
   groupProcessRows,
   isSubagentOrchestrationToolName,
   isWorkflowStatusSystemText,
@@ -90,6 +91,30 @@ describe('isWorkflowStatusSystemText', () => {
       true
     )
     expect(isWorkflowStatusSystemText('Waiting on 1 sub-agent')).toBe(false)
+  })
+})
+
+describe('clipMidTurnPrefaceText', () => {
+  it('keeps short single-line prefaces intact', () => {
+    expect(clipMidTurnPrefaceText('开始探索代码库结构。')).toEqual({
+      preview: '开始探索代码库结构。',
+      clipped: false
+    })
+  })
+
+  it('clips long prefaces and multi-line repair plans', () => {
+    const plan = [
+      '所有修复点的代码上下文已确认。现在列计划，请批准后批量执行。',
+      '',
+      '## 修复计划',
+      '',
+      '针对审核报告里的 C1、C2、C3、H1 四个 bug，做以下最小侵入修复。'
+    ].join('\n')
+    const clipped = clipMidTurnPrefaceText(plan)
+    expect(clipped.clipped).toBe(true)
+    expect(clipped.preview.endsWith('…')).toBe(true)
+    expect(clipped.preview.includes('## 修复计划')).toBe(false)
+    expect(clipped.preview.length).toBeLessThan(plan.length)
   })
 })
 

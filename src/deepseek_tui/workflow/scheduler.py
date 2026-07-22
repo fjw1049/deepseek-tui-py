@@ -704,6 +704,12 @@ async def schedule_workflow(
                 timeout = step.timeout_seconds
             else:
                 assert isinstance(step, SynthesisStep)
+                if step.source_policy == "success":
+                    for pred in graph.predecessors.get(step.id, ()):
+                        if pred in ctx.failed_step_ids:
+                            raise WorkflowFailedError(
+                                f"synthesis {step.id}: predecessor {pred} failed"
+                            )
                 ctx.synthesis_step_ids.append(step.id)
                 prompt = render_template(
                     step.prompt_template,

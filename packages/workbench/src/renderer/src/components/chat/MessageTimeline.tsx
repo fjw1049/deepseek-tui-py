@@ -119,7 +119,7 @@ type Props = {
   /** Local HTML artifact from this turn — nested under file changes when present. */
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
   /** Open a workspace file in the editor panel (final MD report, etc.). */
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
   /** Localhost / URL web preview card (not a workspace file). */
   devPreviewCard?: ReactElement | null
   stageCentered?: boolean
@@ -985,7 +985,7 @@ function MessageTurn({
   durationMs?: number
   reasoningDurationMs?: number
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
   devPreviewCard?: ReactElement | null
   viewportRef: RefObject<HTMLDivElement | null>
   /** Ledger snapshot for the latest turn (live or just-completed). */
@@ -1150,6 +1150,7 @@ function MessageTurn({
                   todoEvents={todoEvents}
                   subagentSummary={subagentSummary}
                   subagentStepsByAgentId={subagentStepsByAgentId}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
                 />
               ) : null}
             </div>
@@ -1245,7 +1246,7 @@ function TurnChangeSummary({
   changes: ToolBlock[]
   viewportRef: RefObject<HTMLDivElement | null>
   htmlPreview?: { path: string; onOpen: () => void } | null
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
@@ -1899,11 +1900,13 @@ function pickToolBatchIcon(toolName: string): LucideIcon {
 function ToolBatchPanel({
   toolName,
   blocks,
-  mixed = false
+  mixed = false,
+  onOpenWorkspaceFile
 }: {
   toolName: string
   blocks: ToolProcessBlock[]
   mixed?: boolean
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
@@ -1962,7 +1965,7 @@ function ToolBatchPanel({
       {expanded ? (
         <div className="flex flex-col gap-1.5 border-t border-ds-border-muted/40 px-2.5 py-2">
           {blocks.map((block) => (
-            <ToolCard key={block.id} block={block} />
+            <ToolCard key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           ))}
         </div>
       ) : null}
@@ -2522,6 +2525,62 @@ function SubagentDetailDialog({
   )
 }
 
+/** Soft cap for process-rail mid-turn prefaces (one short storyline line). */
+export const MID_TURN_PREFACE_MAX_CHARS = 160
+
+/** Clip a mid-turn preface for the process rail; full text stays expand-able. */
+export function clipMidTurnPrefaceText(
+  text: string,
+  maxChars: number = MID_TURN_PREFACE_MAX_CHARS
+): { preview: string; clipped: boolean } {
+  const trimmed = text.trim()
+  if (!trimmed) return { preview: '', clipped: false }
+
+  // Prefer the first line when the model dumps a multi-line mini-report.
+  const firstLine = trimmed.split(/\n/, 1)[0] ?? trimmed
+  const source =
+    firstLine.length > 0 && firstLine.length < trimmed.length ? firstLine : trimmed
+
+  if (source === trimmed && source.length <= maxChars) {
+    return { preview: trimmed, clipped: false }
+  }
+
+  let cut = source.length <= maxChars ? source : source.slice(0, maxChars)
+  if (cut.length < source.length) {
+    const ws = cut.lastIndexOf(' ')
+    if (ws >= Math.floor(maxChars * 0.6)) cut = cut.slice(0, ws)
+  }
+  return { preview: `${cut.trimEnd()}…`, clipped: true }
+}
+
+function MidTurnPrefaceLine({ text }: { text: string }): ReactElement {
+  const { t } = useTranslation('common')
+  const [expanded, setExpanded] = useState(false)
+  const { preview, clipped } = clipMidTurnPrefaceText(text)
+  const shown = expanded || !clipped ? text.trim() : preview
+
+  return (
+    <div className="flex items-start gap-1.5 py-0.5">
+      <Bot
+        className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse"
+        strokeWidth={1.8}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="whitespace-pre-wrap text-[13.5px] leading-6 text-ds-muted">{shown}</p>
+        {clipped ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-0.5 text-[11.5px] font-medium text-ds-faint transition hover:text-ds-muted"
+          >
+            {expanded ? t('collapse') : t('expand')}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Chronological work-process stream. Replaces the old phase-grouper: blocks
  * render in the exact order the runtime emitted them, with no client-side
@@ -2545,7 +2604,8 @@ function ProcessStream({
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
-  subagentStepsByAgentId
+  subagentStepsByAgentId,
+  onOpenWorkspaceFile
 }: {
   blocks: ChatBlock[]
   processing: boolean
@@ -2553,6 +2613,7 @@ function ProcessStream({
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
   subagentStepsByAgentId?: Record<string, StepFlowItem[]>
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
   const visible = visibleExecutionBlocks(blocks, todoSession, subagentSummary)
   const rows = groupProcessRows(visible)
@@ -2572,6 +2633,7 @@ function ProcessStream({
             toolName={row.toolName}
             blocks={row.blocks}
             mixed={row.mixed}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
           />
         ) : (
           <ProcessStreamEntry
@@ -2583,6 +2645,7 @@ function ProcessStream({
             subagentSummary={subagentSummary}
             subagentStepsByAgentId={subagentStepsByAgentId}
             showLiveReasoningPreview={showLiveReasoningPreview}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
           />
         )
       )}
@@ -2597,7 +2660,8 @@ function ProcessStreamEntry({
   todoEvents = [],
   subagentSummary = null,
   subagentStepsByAgentId,
-  showLiveReasoningPreview = false
+  showLiveReasoningPreview = false,
+  onOpenWorkspaceFile
 }: {
   block: ChatBlock
   processing: boolean
@@ -2606,6 +2670,7 @@ function ProcessStreamEntry({
   subagentSummary?: SubagentTurnSummary | null
   subagentStepsByAgentId?: Record<string, StepFlowItem[]>
   showLiveReasoningPreview?: boolean
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement | null {
   // Inline todo card at its anchor block.
   if (todoSession && isTodoToolBlock(block) && block.id === todoSession.anchorBlockId) {
@@ -2651,7 +2716,7 @@ function ProcessStreamEntry({
 
   // The actual content blocks.
   if (block.kind === 'tool') {
-    return <ToolCard block={block} />
+    return <ToolCard block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
   }
   if (block.kind === 'reasoning') {
     return (
@@ -2668,20 +2733,14 @@ function ProcessStreamEntry({
     // the throughline the user follows while tools execute. When the frame
     // carries no wording yet (structured intent only), show a neutral
     // progress state derived from metadata instead of fabricating prose.
-    if (block.agentSegment === 'mid_turn_preface') {
+    // Long prefaces are clipped — repair plans / mini-reports belong in the
+    // final answer bubble, not the process rail.
+    if (block.agentSegment === 'mid_turn_preface' || block.agentSegment == null) {
       if (!block.text.trim()) {
         if (!block.processIntent) return null
         return <NeutralIntentLine intent={block.processIntent} />
       }
-      return (
-        <div className="flex items-start gap-1.5 py-0.5">
-          <Bot
-            className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse"
-            strokeWidth={1.8}
-          />
-          <p className="text-[13.5px] leading-6 text-ds-muted">{block.text}</p>
-        </div>
-      )
+      return <MidTurnPrefaceLine text={block.text} />
     }
     // Other assistant content that landed in the work trace (interstitial
     // final-answer segments).

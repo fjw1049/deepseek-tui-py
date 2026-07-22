@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +24,8 @@ from deepseek_tui.workflow.models import WorkflowSnapshot
 from deepseek_tui.workflow.models import WorkflowAbortedError, WorkflowFailedError
 from deepseek_tui.workflow.runtime import (
     DeepSeekAgentRunner,
-    render_workflow_text,
+    render_workflow_tool_text,
+    resolve_workflow_terminal_status,
     run_workflow,
 )
 from deepseek_tui.workflow.models import snapshot_to_dict
@@ -669,51 +669,54 @@ class WorkflowTool(ToolSpec):
                 emit_progress(last_snapshot, completed=True, status="failed")
                 raise
 
+            final_status = resolve_workflow_terminal_status(result)
             safe_checkpoint_run(
                 run_record,
                 completed_step_ids=list(run_record.completed_step_ids),
                 outputs=run_record.restored_outputs(),
                 snapshot=result.snapshot,
                 logs=list(result.logs),
-                status="completed",
+                status=final_status,
                 result=result.result,
+                error=(
+                    "; ".join(f"{e.step_id}: {e.error}" for e in result.errors[:4])
+                    if final_status == "failed" and result.errors
+                    else None
+                ),
                 workspace=cwd,
             )
             clear_stop_intent(run_record.run_id, workspace=cwd)
 
-            text = render_workflow_text(result.snapshot, completed=True)
-            if result.result is not None:
-                if isinstance(result.result, str):
-                    body = result.result
-                else:
-                    body = json.dumps(result.result, indent=2, default=str)
-                text = f"{text}\n\nResult:\n{body}"
-            text = f"{text}\n\nrun_id: {run_record.run_id}"
             wt = _worktree_meta(run_record)
-            if wt.get("worktree_path"):
-                text = (
-                    f"{text}\nworktree_path: {wt['worktree_path']}\n"
-                    f"worktree_branch: {wt.get('worktree_branch', '')}"
-                )
+            text = render_workflow_tool_text(
+                result,
+                run_id=run_record.run_id,
+                worktree_path=wt.get("worktree_path"),
+                worktree_branch=wt.get("worktree_branch"),
+            )
 
-            emit_progress(result.snapshot, completed=True, status="completed")
+            emit_progress(
+                result.snapshot, completed=True, status=final_status
+            )
 
             errors_list = [
                 {"step_id": e.step_id, "error": e.error}
                 for e in result.errors
             ]
             return ToolResult(
-                success=True,
+                success=(final_status == "completed"),
                 content=text,
                 metadata=_result_meta(
                     {
                         "name": spec.meta.name,
                         "run_id": run_record.run_id,
+                        "status": final_status,
                         "snapshot": snapshot_to_dict(result.snapshot),
                         "result": result.result,
                         "logs": result.logs,
                         "duration_ms": result.duration_ms,
                         **({"errors": errors_list} if errors_list else {}),
+                        **({"failed": True} if final_status == "failed" else {}),
                     }
                 ),
             )
