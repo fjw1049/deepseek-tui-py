@@ -17,7 +17,9 @@ import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
 import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
 import { SharedCodeBlock } from './SharedCodeBlock'
+import { StructureBlock } from './StructureBlock'
 import { StreamdownMermaidBlock } from './StreamdownMermaidBlock'
+import { looksLikeStructureTree } from './structure-tree'
 
 const LANGUAGE_REGEX = /language-([^\s]+)/
 
@@ -133,6 +135,9 @@ function CodeBlock({
   language: string
 }): ReactNode {
   const { isAnimating } = useContext(StreamdownContext)
+  if (looksLikeStructureTree(code, language)) {
+    return <StructureBlock content={code} actionsDisabled={isAnimating} />
+  }
   return (
     <SharedCodeBlock
       code={code}

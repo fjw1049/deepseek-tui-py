@@ -546,6 +546,8 @@
   "mermaidRenderFailedShort": "渲染失败",
   "mermaidSourceLabel": "源码",
   "mermaidParseDetail": "解析详情",
+  "structureBlockLabel": "结构",
+  "structureBlockCopy": "复制结构",
   "composerAttachNeedsWorkspace": "请先选择工作目录，才能引用工作区内的文件。",
   "composerAttachNeedRestart": "添加文件功能需要新版预加载脚本。请完全退出应用后重新打开（仅刷新页面不够）。",
   "composerAttachUnavailable": "当前环境无法打开系统文件选择框。",

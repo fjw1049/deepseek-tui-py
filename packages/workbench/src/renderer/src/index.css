@@ -3037,6 +3037,54 @@ samp {
   white-space: pre-wrap;
 }
 
+.ds-markdown .ds-structure-block {
+  margin: 0 0 0.48rem;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ds-card-muted) 72%, var(--ds-pre-bg));
+  box-sizing: border-box;
+}
+
+.ds-markdown .ds-structure-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--ds-border-muted);
+  background: color-mix(in srgb, var(--ds-code-bg) 70%, var(--ds-card-muted));
+  padding: 0.42rem 0.6rem;
+}
+
+.ds-markdown .ds-structure-block-label {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ds-text-muted);
+}
+
+.ds-markdown .ds-structure-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.18rem;
+}
+
+.ds-markdown .ds-structure-block-body {
+  margin: 0;
+  padding: 0.7rem 0.85rem 0.85rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ds-text);
+  white-space: pre;
+  tab-size: 2;
+}
+
 .ds-markdown .ds-code-block-header {
   display: flex;
   align-items: center;

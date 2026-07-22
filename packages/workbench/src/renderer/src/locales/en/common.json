@@ -546,6 +546,8 @@
   "mermaidRenderFailedShort": "Render failed",
   "mermaidSourceLabel": "Source",
   "mermaidParseDetail": "Parse details",
+  "structureBlockLabel": "Structure",
+  "structureBlockCopy": "Copy structure",
   "composerAttachNeedsWorkspace": "Choose a workspace before attaching files from it.",
   "composerAttachNeedRestart": "File attach needs the updated preload bridge. Fully quit the app and reopen it (reloading the page is not enough).",
   "composerAttachUnavailable": "Cannot open the system file picker in this environment.",
