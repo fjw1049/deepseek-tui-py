@@ -681,6 +681,7 @@ async def schedule_workflow(
                     key = f"{step.id}:{item}"
                     if key not in ctx.failed_step_ids:
                         ctx.failed_step_ids.append(key)
+                    progress()
 
                 pipe_results = await gather_step_outputs(
                     step_id=f"pipeline {step.id}",
@@ -943,6 +944,7 @@ async def schedule_workflow(
                     raise WorkflowFailedError(
                         f"dynamic {step.id}: controller returned no structured decision"
                     )
+                check_token_budget(decision_out.text or "")
                 decision = decision_out.structured
                 if not isinstance(decision, dict):
                     raise WorkflowFailedError("dynamic decision must be an object")
@@ -1198,6 +1200,10 @@ async def schedule_workflow(
         result = _final_result(spec, ctx)
         _json_serializable(result)
         snapshot.result = result
+        # Normalize leftover running agent rows so tray progress can reach 100%.
+        for agent in snapshot.agents:
+            if agent.status == "running":
+                agent.status = "done"
         snapshot.duration_ms = int((time.monotonic() - started) * 1000)
         final_snapshot = _recompute_snapshot(snapshot)
         _refresh_graph_snapshot(final_snapshot, graph, ctx)

@@ -1,4 +1,5 @@
 import type { ChatBlock } from '../agent/types'
+import { workflowProgressPct } from '../components/chat/WorkflowDagView'
 
 type WorkflowBlock = Extract<ChatBlock, { kind: 'workflow' }>
 
@@ -22,11 +23,6 @@ export type TrackedProcess = {
 
 export type BuildTrackedProcessesInput = {
   blocks: ChatBlock[]
-}
-
-function progressPercent(done: number, total: number): number | null {
-  if (total <= 0) return null
-  return Math.max(0, Math.min(100, Math.round((done * 100) / total)))
 }
 
 function workflowSubtitle(block: WorkflowBlock): string {
@@ -77,7 +73,9 @@ function runningWorkflowProcesses(blocks: ChatBlock[]): TrackedProcess[] {
     status: 'running' as const,
     title: block.workflowName || block.snapshot.name,
     subtitle: workflowSubtitle(block),
-    progressPct: progressPercent(block.snapshot.done_count, block.snapshot.agent_count),
+    // Prefer node-based progress (done+skipped / graph nodes). Agent-row
+    // done_count/agent_count under-reports fanout/dynamic runs (e.g. 1/100 → 1%).
+    progressPct: workflowProgressPct(block.snapshot),
     relatedBlockIds: [block.id],
     workflow: block
   }))

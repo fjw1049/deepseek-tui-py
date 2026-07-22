@@ -99,6 +99,11 @@ export function ContextUsageMeter({
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
+  const workflowRunning = useMemo(
+    () => blocks.some((block) => block.kind === 'workflow' && block.status === 'running'),
+    [blocks]
+  )
+
   useEffect(() => {
     if (!hasActiveThread || !threadId) {
       setBreakdown(null)
@@ -106,7 +111,7 @@ export function ContextUsageMeter({
       return
     }
     let cancelled = false
-    void (async () => {
+    const fetchBreakdown = async (): Promise<void> => {
       try {
         const r = await window.dsGui.runtimeRequest(
           `/v1/threads/${encodeURIComponent(threadId)}/context`,
@@ -124,11 +129,20 @@ export function ContextUsageMeter({
           setLiveBreakdown(false)
         }
       }
-    })()
+    }
+    void fetchBreakdown()
+    // Workflow upserts the same block in place (blocks.length unchanged), so
+    // poll while a workflow is running to keep the meter from going stale.
+    const intervalId = workflowRunning
+      ? window.setInterval(() => {
+          void fetchBreakdown()
+        }, 4000)
+      : undefined
     return () => {
       cancelled = true
+      if (intervalId !== undefined) window.clearInterval(intervalId)
     }
-  }, [hasActiveThread, threadId, blocks.length, model])
+  }, [hasActiveThread, threadId, blocks.length, model, workflowRunning])
 
   const effectiveBreakdown = useMemo(() => {
     if (breakdown) return breakdown

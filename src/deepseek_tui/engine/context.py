@@ -419,12 +419,17 @@ def estimate_context_breakdown(
     ``tool_definitions``, ``mcp``, ``skills``, ``rules``, and ``conversation``.
 
     ``real_input_tokens``: when > 0, the provider's last reported input
-    (from the previous turn's StreamDone). Used to calibrate the total: the
-    static buckets (system/tools/rules/skills) keep their estimate (small,
-    relatively stable), and conversation is back-derived as
-    ``real_total - static``. This makes the total and conversation accurate
-    while keeping per-bucket proportions meaningful. When 0 (first turn),
-    falls back to pure estimation for all buckets.
+    (from the previous turn's StreamDone). Used to calibrate the total:
+
+    - If real ≥ static estimates: static buckets stay as-is and conversation
+      is back-derived as ``real - static`` (typical case; char estimates
+      undercount framing / reasoning).
+    - If real < static estimates: static buckets are scaled down
+      proportionally so ``sum(buckets) == real`` and conversation is 0.
+      Without scaling, the UI would show e.g. ~4.5k total next to ~17k of
+      unscaled category rows.
+
+    When 0 (first turn), falls back to pure estimation for all buckets.
     """
     from pathlib import Path
 
@@ -478,13 +483,32 @@ def estimate_context_breakdown(
     # Calibrate against the provider's real input when available. The char-
     # based estimate undercounts ~3x (omits framing, reasoning, API overhead),
     # so the GUI would show "13% Full" when reality is ~44%. Real total is
-    # authoritative; conversation is back-derived as real - static.
+    # authoritative; conversation is back-derived as real - static when
+    # estimates undershoot. When estimates overshoot, scale static buckets.
     static_total = (
         system_tokens + rules_tokens + skills_tokens + tools_tokens
     )
     if real_input_tokens > 0:
         total = real_input_tokens
-        conv_tokens = max(0, real_input_tokens - static_total)
+        if real_input_tokens >= static_total:
+            conv_tokens = real_input_tokens - static_total
+        else:
+            conv_tokens = 0
+            (
+                system_tokens,
+                tool_definitions_tokens,
+                mcp_tokens,
+                skills_tokens,
+                rules_tokens,
+            ) = _scale_static_context_buckets(
+                real_input_tokens,
+                system_tokens,
+                tool_definitions_tokens,
+                mcp_tokens,
+                skills_tokens,
+                rules_tokens,
+            )
+            tools_tokens = tool_definitions_tokens + mcp_tokens
     else:
         total = static_total + conv_tokens
     window = context_window_for_model(target_model) or 0
@@ -502,6 +526,48 @@ def estimate_context_breakdown(
         "window": window,
         "free": free,
     }
+
+
+def _scale_static_context_buckets(
+    target_total: int,
+    system_tokens: int,
+    tool_definitions_tokens: int,
+    mcp_tokens: int,
+    skills_tokens: int,
+    rules_tokens: int,
+) -> tuple[int, int, int, int, int]:
+    """Scale static buckets so they sum exactly to ``target_total``.
+
+    Uses largest-remainder so integer rounding does not drift off the target.
+    """
+    values = [
+        system_tokens,
+        tool_definitions_tokens,
+        mcp_tokens,
+        skills_tokens,
+        rules_tokens,
+    ]
+    source_total = sum(values)
+    if target_total <= 0 or source_total <= 0:
+        return (0, 0, 0, 0, 0)
+
+    exact = [v * target_total / source_total for v in values]
+    floored = [int(v) for v in exact]
+    remainder = target_total - sum(floored)
+    order = sorted(
+        range(len(exact)),
+        key=lambda i: (exact[i] - floored[i], values[i]),
+        reverse=True,
+    )
+    for i in order[:remainder]:
+        floored[i] += 1
+    return (
+        floored[0],
+        floored[1],
+        floored[2],
+        floored[3],
+        floored[4],
+    )
 
 
 # Project context loader — discovers AGENTS.md / CLAUDE.md / instructions.

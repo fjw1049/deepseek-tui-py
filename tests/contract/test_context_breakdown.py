@@ -46,6 +46,97 @@ def test_context_breakdown_splits_user_controlled_buckets(tmp_path):
     )
 
 
+def test_context_breakdown_scales_static_buckets_when_real_undershoots(tmp_path):
+    """Provider real input can be lower than char-based static estimates.
+
+    Without scaling, Conversation clamps to 0 while category rows still show
+    the full static sum — e.g. header ~4.5k vs rows ~17k.
+    """
+    (tmp_path / "AGENTS.md").write_text(
+        "Project rule: keep changes surgical.\n",
+        encoding="utf-8",
+    )
+    baseline = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        skills_context="Skill: use the reviewer skill for code review.",
+        api_tools=[
+            _api_tool("read_file"),
+            _api_tool("mcp__github__list_issues"),
+        ],
+    )
+    static_total = (
+        baseline["system_prompt"]
+        + baseline["rules"]
+        + baseline["skills"]
+        + baseline["tools"]
+    )
+    assert static_total > 100
+    real = max(1, static_total // 4)
+
+    breakdown = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        skills_context="Skill: use the reviewer skill for code review.",
+        api_tools=[
+            _api_tool("read_file"),
+            _api_tool("mcp__github__list_issues"),
+        ],
+        real_input_tokens=real,
+    )
+
+    assert breakdown["total"] == real
+    assert breakdown["conversation"] == 0
+    assert breakdown["tools"] == breakdown["tool_definitions"] + breakdown["mcp"]
+    assert breakdown["total"] == (
+        breakdown["system_prompt"]
+        + breakdown["rules"]
+        + breakdown["skills"]
+        + breakdown["tools"]
+        + breakdown["conversation"]
+    )
+    # Rows must shrink with the real total — not stay at the unscaled static sum.
+    assert (
+        breakdown["system_prompt"]
+        + breakdown["rules"]
+        + breakdown["skills"]
+        + breakdown["tools"]
+    ) == real
+    assert breakdown["system_prompt"] < baseline["system_prompt"]
+    assert breakdown["tool_definitions"] < baseline["tool_definitions"]
+
+
+def test_context_breakdown_back_derives_conversation_when_real_overshoots(tmp_path):
+    baseline = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        api_tools=[_api_tool("read_file")],
+    )
+    static_total = (
+        baseline["system_prompt"]
+        + baseline["rules"]
+        + baseline["skills"]
+        + baseline["tools"]
+    )
+    real = static_total + 1234
+    breakdown = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        api_tools=[_api_tool("read_file")],
+        real_input_tokens=real,
+    )
+    assert breakdown["total"] == real
+    assert breakdown["conversation"] == 1234
+    assert breakdown["system_prompt"] == baseline["system_prompt"]
+    assert breakdown["total"] == (
+        breakdown["system_prompt"]
+        + breakdown["rules"]
+        + breakdown["skills"]
+        + breakdown["tools"]
+        + breakdown["conversation"]
+    )
+
+
 def test_initial_request_tools_apply_native_deferral(tmp_path):
     engine = Engine(
         handle=EngineHandle(),

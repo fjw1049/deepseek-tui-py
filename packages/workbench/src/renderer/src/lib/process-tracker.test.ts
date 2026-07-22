@@ -134,4 +134,56 @@ describe('buildTrackedProcesses', () => {
 
     expect(buildTrackedProcesses({ blocks })).toEqual([])
   })
+
+  it('prefers node-based progress over agent_count for fanout-heavy runs', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'workflow',
+        id: 'workflow-fanout',
+        toolCallId: 'tool_fan',
+        workflowName: 'Fanout',
+        status: 'running',
+        snapshot: {
+          name: 'Fanout',
+          description: '',
+          phases: ['fan'],
+          current_phase: 'fan',
+          logs: [],
+          agents: Array.from({ length: 100 }, (_, i) => ({
+            step_id: 'fan',
+            label: `item-${i}`,
+            phase_id: 'fan',
+            status: i === 0 ? ('done' as const) : ('running' as const),
+            agent_id: `aid-${i}`
+          })),
+          agent_count: 100,
+          running_count: 99,
+          done_count: 1,
+          error_count: 0,
+          nodes: [
+            {
+              id: 'fan',
+              label: 'Fan',
+              type: 'fanout',
+              status: 'running',
+              generated: false,
+              predecessors: []
+            },
+            {
+              id: 'reduce',
+              label: 'Reduce',
+              type: 'reduce',
+              status: 'queued',
+              generated: false,
+              predecessors: ['fan']
+            }
+          ]
+        }
+      }
+    ]
+
+    const processes = buildTrackedProcesses({ blocks })
+    // Agent-row math would be 1% (1/100); node-based is 0% (0/2 done+skipped).
+    expect(processes[0]?.progressPct).toBe(0)
+  })
 })
