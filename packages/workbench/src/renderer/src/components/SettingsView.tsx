@@ -609,8 +609,8 @@ export function SettingsView(): ReactElement {
         </div>
       </aside>
 
-      <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-10 py-10">
-        <div className="mx-auto max-w-2xl">
+      <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
+        <div className="mx-auto max-w-[836px]">
           {!form.deepseek.apiKey.trim() && category === 'models' ? (
             <div className="mb-6 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-5 py-4 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/35 dark:text-amber-100">
               <div className="text-[15px] font-semibold">{t('apiKeyRequiredTitle')}</div>
@@ -1009,7 +1009,7 @@ export function SettingsView(): ReactElement {
                 }
                 description={t('sandboxModeDerivedDesc')}
                 control={
-                  <div className="min-w-[12rem] rounded-lg border border-ds-border bg-ds-main/60 px-3 py-2 text-[13px] text-ds-muted">
+                  <div className="flex h-10 w-full min-w-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card/70 px-3 text-center text-[14px] font-medium leading-none text-ds-muted shadow-sm">
                     {form.deepseek.approvalPolicy === 'auto'
                       ? t('sandboxFullAccess')
                       : t('sandboxWorkspaceWrite')}

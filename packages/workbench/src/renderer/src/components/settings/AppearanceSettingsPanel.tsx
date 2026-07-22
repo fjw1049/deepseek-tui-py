@@ -102,6 +102,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           description={t('themeDesc')}
           control={
             <GlassSegmentedControl
+              className="w-full"
               value={form.theme}
               items={[
                 { value: 'light', label: t('themeLight') },
@@ -115,7 +116,6 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
         <Row
           title={t('fontScale')}
           description={t('fontScaleDesc')}
-          controlMaxWidth="sm:max-w-[120px]"
           control={
             <SettingsSelect
               value={form.uiFontScale}
@@ -149,6 +149,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           description={t('uiDensityDesc')}
           control={
             <GlassSegmentedControl<UiDensity>
+              className="w-full"
               value={appearance.uiDensity}
               items={[
                 { value: 'compact', label: t('uiDensityCompact') },
@@ -187,20 +188,20 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           title={t('terminalFont')}
           description={t('terminalFontDesc')}
           control={
-            <>
+            <div className="w-full min-w-0">
               <input
                 list="ds-terminal-font-suggestions"
                 value={appearance.terminalFontFamily}
                 onChange={(e) => onAppearancePatch({ terminalFontFamily: e.target.value })}
                 placeholder={t('terminalFontPlaceholder')}
-                className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm placeholder:text-ds-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                className={`${CONTROL_FIELD_CLASS} text-center`}
               />
               <datalist id="ds-terminal-font-suggestions">
                 {TERMINAL_FONT_SUGGESTIONS.map((family) => (
                   <option key={family} value={family} />
                 ))}
               </datalist>
-            </>
+            </div>
           }
         />
         {IS_MAC ? (
@@ -423,7 +424,7 @@ function ThemePackCard({
               value={theme.uiFont}
               onChange={(e) => onThemePatch({ uiFont: e.target.value })}
               placeholder={t('themeUiFontPlaceholder')}
-              className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm placeholder:text-ds-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+              className={CONTROL_FIELD_CLASS}
             />
           }
         />
@@ -434,7 +435,7 @@ function ThemePackCard({
               value={theme.codeFont}
               onChange={(e) => onThemePatch({ codeFont: e.target.value })}
               placeholder={t('themeCodeFontPlaceholder')}
-              className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm placeholder:text-ds-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+              className={CONTROL_FIELD_CLASS}
             />
           }
         />
@@ -450,7 +451,7 @@ function ThemePackCard({
         <Row
           title={t('themeContrast')}
           control={
-            <div className="flex w-full items-center gap-3">
+            <div className="flex h-10 w-full items-center gap-3">
               <input
                 type="range"
                 min={0}
@@ -459,7 +460,7 @@ function ThemePackCard({
                 onChange={(e) => onThemePatch({ contrast: Number(e.target.value) })}
                 className="ds-no-drag h-1.5 w-full cursor-pointer appearance-none rounded-full bg-ds-border accent-[var(--ds-accent)]"
               />
-              <span className="w-8 shrink-0 text-right font-mono text-[13px] text-ds-muted">
+              <span className="w-8 shrink-0 text-center font-mono text-[13px] leading-none text-ds-muted">
                 {theme.contrast}
               </span>
             </div>
@@ -493,14 +494,14 @@ function ColorPill({
 
   return (
     <div
-      className="flex h-10 w-full items-center gap-2 overflow-hidden rounded-full border px-2 shadow-sm"
+      className="relative flex h-10 w-full items-center overflow-hidden rounded-full border px-2 shadow-sm"
       style={{
         backgroundColor: value,
         borderColor: 'var(--ds-border)',
         color: pickReadableTextColor(value)
       }}
     >
-      <span className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center">
+      <span className="absolute left-2 top-1/2 z-[1] inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center">
         <span
           aria-hidden
           className="block h-6 w-6 rounded-full border"
@@ -522,7 +523,7 @@ function ColorPill({
           if (e.key === 'Enter') commitDraft()
         }}
         spellCheck={false}
-        className="w-full min-w-0 bg-transparent font-mono text-[13px] font-medium uppercase focus:outline-none"
+        className="h-full w-full min-w-0 bg-transparent px-9 text-center font-mono text-[13px] font-medium uppercase leading-10 focus:outline-none"
         // Override the global .ds-settings-page input glass material (bg + blur +
         // inset shadow) so the hex text stays on the solid color pill behind it.
         style={{
@@ -546,6 +547,9 @@ function pickReadableTextColor(hexColor: string): string {
   return luminance > 0.6 ? '#1a1a1a' : '#ffffff'
 }
 
+const CONTROL_FIELD_CLASS =
+  'box-border h-10 w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 text-center text-[14px] leading-10 text-ds-ink shadow-sm placeholder:text-ds-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30'
+
 function PxInput({
   value,
   min,
@@ -558,7 +562,7 @@ function PxInput({
   onCommit: (value: number) => void
 }): ReactElement {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex h-10 w-full items-center gap-2">
       <input
         type="number"
         min={min}
@@ -571,9 +575,9 @@ function PxInput({
             onCommit(Math.min(max, Math.max(min, Math.round(parsed))))
           }
         }}
-        className="w-24 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
+        className={`${CONTROL_FIELD_CLASS} text-center tabular-nums`}
       />
-      <span className="text-[13px] text-ds-faint">px</span>
+      <span className="shrink-0 text-[13px] leading-none text-ds-faint">px</span>
     </div>
   )
 }
@@ -608,15 +612,15 @@ function Row({
   return (
     <div className="ds-density-row flex flex-col gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
       <div className="min-w-0 flex-1">
-        <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
+        <div className="text-[14px] font-semibold leading-none text-ds-ink">{title}</div>
         {description ? (
-          <p className="mt-0.5 max-w-md text-pretty text-[13px] leading-relaxed text-ds-muted">
+          <p className="mt-1.5 max-w-md text-pretty text-[13px] leading-relaxed text-ds-muted">
             {description}
           </p>
         ) : null}
       </div>
-      <div className={`w-full min-w-0 sm:ml-auto ${controlMaxWidth} sm:shrink-0`}>
-        <div className="flex w-full justify-end">{control}</div>
+      <div className={`flex w-full min-w-0 items-center justify-end sm:ml-auto ${controlMaxWidth} sm:shrink-0`}>
+        {control}
       </div>
     </div>
   )
@@ -635,7 +639,7 @@ function Toggle({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition ${
+      className={`relative h-7 w-12 shrink-0 self-center rounded-full transition ${
         checked ? 'bg-accent' : 'bg-ds-faint'
       }`}
     >

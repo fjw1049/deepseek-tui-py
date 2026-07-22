@@ -26,6 +26,7 @@ export function GlassSegmentedControl<T extends string>({
   const [thumb, setThumb] = useState({ left: 0, width: 0 })
 
   const highlight = hovered ?? value
+  const stretch = /\bw-full\b/.test(className)
 
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -43,13 +44,15 @@ export function GlassSegmentedControl<T extends string>({
     const observer = new ResizeObserver(update)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [highlight, items])
+  }, [highlight, items, stretch])
 
   return (
     <div
       ref={containerRef}
       className={[
-        'relative inline-flex shrink-0 rounded-full border border-ds-border/70 bg-ds-elevated/45 p-0.5',
+        stretch
+          ? 'relative flex h-10 w-full min-w-0 items-stretch rounded-full border border-ds-border/70 bg-ds-elevated/45 p-0.5'
+          : 'relative inline-flex h-10 shrink-0 items-stretch rounded-full border border-ds-border/70 bg-ds-elevated/45 p-0.5',
         className
       ].join(' ')}
       onMouseLeave={() => setHovered(null)}
@@ -72,7 +75,8 @@ export function GlassSegmentedControl<T extends string>({
           onFocus={() => setHovered(item.value)}
           onBlur={() => setHovered(null)}
           className={[
-            'relative z-10 rounded-full text-[12px] font-medium transition-colors duration-200',
+            'relative z-10 flex items-center justify-center rounded-full text-center text-[12px] font-medium leading-none transition-colors duration-200',
+            stretch ? 'min-w-0 flex-1' : 'shrink-0',
             segmentClassName,
             value === item.value ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
           ].join(' ')}
