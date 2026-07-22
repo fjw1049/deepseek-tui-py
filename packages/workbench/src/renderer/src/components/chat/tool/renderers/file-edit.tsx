@@ -54,8 +54,7 @@ export const FileEditRenderer = {
   }: {
     context: ToolRenderContext
   }): React.JSX.Element | null {
-    if (!context.output) return null
-    const stats = countDiffStats(context.output)
+    const stats = context.diffStats ?? countDiffStats(context.output)
     if (!stats) return null
     return (
       <div className="flex items-center gap-1.5 px-3 pb-2 text-[11px] tabular-nums text-ds-faint">

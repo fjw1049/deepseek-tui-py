@@ -1,4 +1,10 @@
 import type { ToolBlock } from '../../../agent/types'
+import {
+  countDiffStats,
+  looksLikeUnifiedDiff,
+  type DiffStats
+} from '../../../lib/diff-stats'
+import { parseUnifiedDiffForEditor } from '../../../lib/parse-unified-diff-for-editor'
 
 /**
  * The lifecycle state of a tool call, as the renderer sees it. Mapped from
@@ -31,6 +37,10 @@ export interface ToolRenderContext {
   isFileChange: boolean
   /** Whether this tool is a command execution (drives terminal rendering). */
   isCommand: boolean
+  /** +N/-N for file mutations (exact runtime counts preferred, else parsed). */
+  diffStats?: DiffStats
+  /** First changed line in the new file (1-based), for "open at line" jumps. */
+  editLine?: number
   /** Structured metadata from the runtime (exit_code, duration_ms, command…). */
   meta?: Record<string, unknown>
 }
@@ -55,6 +65,9 @@ export function buildToolRenderContext(block: ToolBlock): ToolRenderContext {
   const state = mapState(block)
   const isFileChange = block.toolKind === 'file_change'
   const isCommand = block.toolKind === 'command_execution'
+  const mutation = readMutationMeta(block.meta)
+  const diffStats = isFileChange ? resolveDiffStats(block, mutation) : undefined
+  const editLine = isFileChange ? resolveEditLine(block, mutation) : undefined
 
   return {
     toolName,
@@ -71,6 +84,8 @@ export function buildToolRenderContext(block: ToolBlock): ToolRenderContext {
     ...(state === 'error' && block.detail ? { errorText: block.detail } : {}),
     isFileChange,
     isCommand,
+    ...(diffStats ? { diffStats } : {}),
+    ...(editLine !== undefined ? { editLine } : {}),
     ...(block.meta ? { meta: block.meta } : {})
   }
 }
@@ -299,6 +314,50 @@ function readMetaString(
   if (!meta) return undefined
   const value = meta[key]
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+/** Structured file-mutation payload (`meta.mutation`) when the runtime sends it. */
+function readMutationMeta(
+  meta: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  const raw = meta?.mutation
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : undefined
+}
+
+function readMutationNumber(
+  mutation: Record<string, unknown> | undefined,
+  key: string
+): number | undefined {
+  const value = mutation?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/** Exact +N/-N from the runtime when present; otherwise counted from the patch. */
+function resolveDiffStats(
+  block: ToolBlock,
+  mutation: Record<string, unknown> | undefined
+): DiffStats | undefined {
+  const added = readMutationNumber(mutation, 'additions')
+  const removed = readMutationNumber(mutation, 'deletions')
+  if (added !== undefined || removed !== undefined) {
+    const stats = { added: Math.max(0, added ?? 0), removed: Math.max(0, removed ?? 0) }
+    return stats.added > 0 || stats.removed > 0 ? stats : undefined
+  }
+  return countDiffStats(block.detail) ?? undefined
+}
+
+/** First changed line in the NEW file: runtime hint, else parsed from the patch. */
+function resolveEditLine(
+  block: ToolBlock,
+  mutation: Record<string, unknown> | undefined
+): number | undefined {
+  const fromMeta = readMutationNumber(mutation, 'line_start')
+  if (fromMeta !== undefined && fromMeta >= 1) return Math.floor(fromMeta)
+  const detail = block.detail
+  if (!detail || !looksLikeUnifiedDiff(detail)) return undefined
+  return parseUnifiedDiffForEditor(detail).addedLines[0]
 }
 
 function summarizeProcessText(text: string, max = 96): string {

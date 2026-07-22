@@ -37,6 +37,8 @@ class FileMutation:
     tool_call_id: str | None = None
     agent_id: str | None = None
     old_path: str | None = None
+    # 1-based line of the first change in the NEW file; None when unknown.
+    line_start: int | None = None
     created_at: int = field(default_factory=lambda: int(time.time() * 1000))
     detail_truncated: bool = False
 
@@ -52,6 +54,7 @@ class TurnFileFold:
     deletions: int
     unified_diff: str
     detail_truncated: bool = False
+    line_start: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -168,6 +171,12 @@ def _one_mutation_from_dict(
     if not isinstance(mid, str) or not mid.strip():
         mid = f"mut_{uuid.uuid4().hex[:12]}"
     old_path = entry.get("old_path")
+    line_start_raw = entry.get("line_start")
+    line_start = (
+        line_start_raw
+        if isinstance(line_start_raw, int) and not isinstance(line_start_raw, bool)
+        else None
+    )
     return FileMutation(
         mutation_id=mid,
         turn_id=turn_id,
@@ -181,6 +190,7 @@ def _one_mutation_from_dict(
         tool_call_id=tool_call_id,
         agent_id=agent_id if isinstance(agent_id, str) else None,
         old_path=old_path if isinstance(old_path, str) else None,
+        line_start=line_start,
         detail_truncated=bool(entry.get("detail_truncated")),
     )
 
@@ -300,6 +310,7 @@ class TurnMutationLedger:
                     deletions=m.deletions,
                     unified_diff=m.unified_diff,
                     detail_truncated=m.detail_truncated,
+                    line_start=m.line_start,
                 )
             )
         return folds
@@ -328,17 +339,21 @@ def build_mutation_metadata(
     additions: int,
     deletions: int,
     source: MutationSource,
+    line_start: int | None = None,
 ) -> dict[str, Any]:
     """Compact mutation dict for ToolResult.metadata."""
+    mutation: dict[str, Any] = {
+        "path": path.replace("\\", "/"),
+        "op": op,
+        "unified_diff": unified_diff,
+        "additions": additions,
+        "deletions": deletions,
+        "source": source,
+        "status": "applied",
+    }
+    if line_start is not None:
+        mutation["line_start"] = line_start
     return {
         "path": path.replace("\\", "/"),
-        "mutation": {
-            "path": path.replace("\\", "/"),
-            "op": op,
-            "unified_diff": unified_diff,
-            "additions": additions,
-            "deletions": deletions,
-            "source": source,
-            "status": "applied",
-        },
+        "mutation": mutation,
     }

@@ -206,6 +206,8 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
                     "deletions": stats.deletions,
                     "source": "apply_patch",
                     "status": "applied",
+                    # Full-file replacement (like write_file): starts at line 1.
+                    "line_start": 1,
                 }
             )
     except Exception:
@@ -322,17 +324,20 @@ def _apply_file_patches(
             touched.append(patch.path)
             before = "" if created else original
             unified, stats, op = synthesize_unified_diff(patch.path, before, out)
-            mutations.append(
-                {
-                    "path": patch.path.replace("\\", "/"),
-                    "op": op,
-                    "unified_diff": unified,
-                    "additions": stats.additions,
-                    "deletions": stats.deletions,
-                    "source": "apply_patch",
-                    "status": "applied",
-                }
-            )
+            mutation: dict[str, Any] = {
+                "path": patch.path.replace("\\", "/"),
+                "op": op,
+                "unified_diff": unified,
+                "additions": stats.additions,
+                "deletions": stats.deletions,
+                "source": "apply_patch",
+                "status": "applied",
+            }
+            if patch.hunks:
+                mutation["line_start"] = patch.hunks[0].new_start
+            elif created:
+                mutation["line_start"] = 1
+            mutations.append(mutation)
     except Exception:
         _restore_file_backups(backups)
         raise

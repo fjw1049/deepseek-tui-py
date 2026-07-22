@@ -135,9 +135,15 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
 
     const existing = get().tabs.find((tab) => tab.id === id)
     if (existing && !existing.loading) {
-      set({
+      set((state) => ({
+        // Re-opening an already-loaded tab with a position retargets it, so
+        // the editor surface re-reveals the newly requested line.
+        tabs:
+          line !== undefined || column !== undefined
+            ? upsertTab(state.tabs, { ...existing, line, column })
+            : state.tabs,
         ...paneAssignment(id, targetPane, toSide)
-      })
+      }))
       return
     }
 

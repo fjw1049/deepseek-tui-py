@@ -8,6 +8,7 @@ from deepseek_tui.workspace.diff_synth import count_diff_stats, synthesize_unifi
 from deepseek_tui.workspace.mutation_ledger import (
     FileMutation,
     TurnMutationLedger,
+    build_mutation_metadata,
     mutation_from_metadata,
 )
 from deepseek_tui.workspace.shell_write_guard import check_shell_write, is_allowlisted_path
@@ -82,6 +83,57 @@ def test_mutation_from_metadata() -> None:
     assert muts[0].path == "src/a.py"
     assert muts[0].source == "edit_file"
     assert count_diff_stats(muts[0].unified_diff).additions == 1
+
+
+def test_build_mutation_metadata_line_start_roundtrip() -> None:
+    meta = build_mutation_metadata(
+        path="src/a.py",
+        op="update",
+        unified_diff="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@\n-a\n+b\n",
+        additions=1,
+        deletions=1,
+        source="edit_file",
+        line_start=7,
+    )
+    assert meta["mutation"]["line_start"] == 7
+    muts = mutation_from_metadata(meta, turn_id="t1")
+    assert len(muts) == 1
+    assert muts[0].line_start == 7
+    assert muts[0].to_dict()["line_start"] == 7
+
+    # Absent line_start is tolerated and stays None.
+    meta_none = build_mutation_metadata(
+        path="src/a.py",
+        op="update",
+        unified_diff="",
+        additions=0,
+        deletions=0,
+        source="edit_file",
+    )
+    assert "line_start" not in meta_none["mutation"]
+    muts_none = mutation_from_metadata(meta_none, turn_id="t1")
+    assert len(muts_none) == 1
+    assert muts_none[0].line_start is None
+
+
+def test_snapshot_dict_includes_line_start() -> None:
+    ledger = TurnMutationLedger("turn_ls", throttle_ms=0)
+    ledger.commit(
+        FileMutation(
+            mutation_id="m1",
+            turn_id="turn_ls",
+            path="a.py",
+            op="update",
+            unified_diff="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@\n-a\n+b\n",
+            additions=1,
+            deletions=1,
+            source="edit_file",
+            line_start=5,
+        ),
+        emit=False,
+    )
+    snap_dict = ledger.snapshot().to_dict()
+    assert snap_dict["files"][0]["line_start"] == 5
 
 
 def test_shell_write_guard_denies_sed_inplace() -> None:

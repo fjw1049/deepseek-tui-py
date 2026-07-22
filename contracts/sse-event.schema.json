@@ -92,6 +92,87 @@
           }
         }
       }
+    },
+    {
+      "if": { "properties": { "event": { "const": "turn.diff.updated" } }, "required": ["event"] },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "description": "TurnDiffSnapshot for the turn's file mutations, folded by path.",
+            "required": ["turn_id", "files", "totals", "revision", "merged_unified_diff", "complete"],
+            "properties": {
+              "turn_id": { "type": "string" },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "Per-file fold of the latest applied mutation.",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "op": { "type": "string", "enum": ["create", "update", "delete", "rename"] },
+                    "additions": { "type": "integer" },
+                    "deletions": { "type": "integer" },
+                    "unified_diff": { "type": "string" },
+                    "detail_truncated": { "type": "boolean" },
+                    "line_start": {
+                      "type": ["integer", "null"],
+                      "minimum": 1,
+                      "description": "1-based line of the first changed line in the NEW file; null when unknown (e.g. deleted files)."
+                    }
+                  }
+                }
+              },
+              "totals": { "type": "object" },
+              "revision": { "type": "integer" },
+              "merged_unified_diff": { "type": "string" },
+              "complete": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "item.completed" } }, "required": ["event"] },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["item"],
+            "properties": {
+              "item": {
+                "type": "object",
+                "properties": {
+                  "metadata": {
+                    "type": ["object", "null"],
+                    "description": "For file_change items, tool mutation metadata is merged here.",
+                    "properties": {
+                      "mutation": {
+                        "type": "object",
+                        "description": "Single file mutation reported by edit_file / write_file / apply_patch.",
+                        "properties": {
+                          "path": { "type": "string" },
+                          "op": { "type": "string", "enum": ["create", "update", "delete", "rename"] },
+                          "unified_diff": { "type": "string" },
+                          "additions": { "type": "integer" },
+                          "deletions": { "type": "integer" },
+                          "source": { "type": "string" },
+                          "status": { "type": "string" },
+                          "line_start": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "description": "1-based line of the first changed line in the NEW file; null when unknown. Clients may open an editor at this location."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

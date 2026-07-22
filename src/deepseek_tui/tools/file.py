@@ -118,6 +118,7 @@ class WriteFileTool(ToolSpec):
             additions=stats.additions,
             deletions=stats.deletions,
             source="write_file",
+            line_start=1,  # whole file replaced/created
         )
         context.report_file_mutation(meta["mutation"])
         return ToolResult(success=True, content="ok", metadata=meta)
@@ -179,6 +180,8 @@ class EditFileTool(ToolSpec):
             count,
         )
         unified, stats, op = synthesize_unified_diff(display_path, content, updated)
+        first_idx = content.find(search)
+        line_start = content[:first_idx].count("\n") + 1 if first_idx >= 0 else None
         meta = build_mutation_metadata(
             path=display_path,
             op=op,  # type: ignore[arg-type]
@@ -186,6 +189,7 @@ class EditFileTool(ToolSpec):
             additions=stats.additions,
             deletions=stats.deletions,
             source="edit_file",
+            line_start=line_start,
         )
         meta["occurrences"] = count
         context.report_file_mutation(meta["mutation"])

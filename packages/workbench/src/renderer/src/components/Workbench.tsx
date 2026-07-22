@@ -399,9 +399,9 @@ export function Workbench(): ReactElement {
   }, [])
 
   const openFileInEditor = useCallback(
-    (path: string): void => {
+    (path: string, line?: number): void => {
       openRightSidebar('editor')
-      void openEditorFile(path, activeWorkspaceRoot)
+      void openEditorFile(path, activeWorkspaceRoot, line)
     },
     [activeWorkspaceRoot, openEditorFile, openRightSidebar]
   )

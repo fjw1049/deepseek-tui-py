@@ -6,11 +6,14 @@ import { buildToolRenderContext, isPendingState } from './render-context'
 import { resolveToolRenderer } from './registry'
 import { useDisclosure } from '../model/use-disclosure'
 import { ToolBody, ToolCopyButton, ToolErrorState, ToolHeaderRow } from './primitives'
+import { looksLikeUnifiedDiff } from '../../../lib/diff-stats'
 import type { ToolBlock } from '../../../agent/types'
 
 export interface ToolCardProps {
   block: ToolBlock
   className?: string
+  /** Open a workspace file in the editor panel (file-mutation rows). */
+  onOpenWorkspaceFile?: (path: string, line?: number) => void
 }
 
 const LazyFullOutput = lazy(() => import('./lazy-full-output'))
@@ -43,18 +46,22 @@ function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): 
  * Output/Footer inside a collapsible shell. Expand state is persisted via
  * `useDisclosure` so it survives remounts.
  *
- * Default is collapsed for every state (running / success / error). Status is
- * a quiet trailing cue ("…" / check / "!") — not a tinted shell — so the work
- * trace stays a calm, consistent list. Users can still open a card manually
- * to inspect output or error detail.
+ * Default is collapsed for every state (running / success / error) — except a
+ * completed file mutation whose output is a unified diff, which opens expanded
+ * (Cursor-style) so the patch is visible inline. An explicit user toggle always
+ * wins over the default. Status is a quiet trailing cue ("…" / check / "!") —
+ * not a tinted shell — so the work trace stays a calm, consistent list.
  */
 export const ToolCard = memo(function ToolCard({
   block,
-  className
+  className,
+  onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
   const ctx = useMemo(() => buildToolRenderContext(block), [block])
   const disclosureKey = `tool:${ctx.toolCallId}`
-  const [storedOpen, setDisclosureOpen] = useDisclosure(disclosureKey, false)
+  const defaultOpen =
+    ctx.isFileChange && ctx.state === 'success' && looksLikeUnifiedDiff(ctx.output)
+  const [storedOpen, setDisclosureOpen] = useDisclosure(disclosureKey, defaultOpen)
 
   const isShell = SHELL_TOOL_NAMES.has(ctx.toolName) || ctx.isCommand
 
@@ -97,6 +104,12 @@ export const ToolCard = memo(function ToolCard({
       state={ctx.state}
       expanded={open}
       canExpand={canExpand}
+      diffStats={ctx.diffStats}
+      onOpenInEditor={
+        onOpenWorkspaceFile && ctx.isFileChange && ctx.input.path
+          ? () => onOpenWorkspaceFile(ctx.input.path!, ctx.editLine)
+          : undefined
+      }
     />
   )
 

@@ -41,6 +41,36 @@ async def test_write_file_is_atomic_no_tmp_leftover(tmp_path) -> None:
     assert not list(tmp_path.glob(".*.tmp"))
 
 
+@pytest.mark.asyncio
+async def test_write_file_reports_line_start_one(tmp_path) -> None:
+    """write_file replaces/creates the whole file: mutation starts at line 1."""
+    from deepseek_tui.tools.file import WriteFileTool
+
+    result = await WriteFileTool().execute(
+        {"path": "out.txt", "content": "hello\n"},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert result.success is True
+    assert result.metadata["mutation"]["line_start"] == 1
+
+
+@pytest.mark.asyncio
+async def test_edit_file_reports_first_occurrence_line(tmp_path) -> None:
+    """edit_file mutation line_start is the 1-based line of the first match."""
+    from deepseek_tui.tools.file import EditFileTool
+
+    target = tmp_path / "note.txt"
+    target.write_text("one\ntwo\nmark\nfour\nmark\n", encoding="utf-8")
+
+    result = await EditFileTool().execute(
+        {"path": "note.txt", "search": "mark", "replace": "MARK"},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert result.success is True
+    assert result.metadata["mutation"]["line_start"] == 3
+    assert result.metadata["occurrences"] == 2
+
+
 def test_write_text_atomic_failure_preserves_original(tmp_path, monkeypatch) -> None:
     """M1: if the final rename fails, the original is intact and the temp
     file is cleaned up - no half-written file on a crash-equivalent failure."""

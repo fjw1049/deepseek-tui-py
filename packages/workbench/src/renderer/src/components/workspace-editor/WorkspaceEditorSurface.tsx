@@ -70,6 +70,21 @@ export function WorkspaceEditorSurface({ tab, patch, readOnly, onChange }: Props
     }
   }, [editorReady, syncHighlights, tab.loading, patch])
 
+  // Honor "open at line N" requests (e.g. a file-edit tool card). Deps are the
+  // tab/line primitives only, so typing, scrolling, or content updates never
+  // re-trigger a reveal — it fires on mount and on actual tab/line changes.
+  useEffect(() => {
+    if (!editorReady || tab.loading) return
+    const line = tab.line
+    if (typeof line !== 'number' || !Number.isFinite(line)) return
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (!editor || !model) return
+    const target = Math.min(Math.max(1, Math.floor(line)), model.getLineCount())
+    editor.revealLineInCenter(target)
+    editor.setPosition({ lineNumber: target, column: tab.column ?? 1 })
+  }, [editorReady, tab.id, tab.line, tab.column, tab.loading])
+
   return (
     <div ref={hostRef} className="relative min-h-0 flex-1 overflow-hidden bg-ds-sidebar">
       <Editor

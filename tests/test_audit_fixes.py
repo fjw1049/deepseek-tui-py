@@ -143,6 +143,40 @@ async def test_apply_patch_tool_end_to_end(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_patch_mutation_reports_first_hunk_line(tmp_path: Path) -> None:
+    """mutation.line_start comes from the first hunk's new_start."""
+    target = tmp_path / "file.txt"
+    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    patch = (
+        "--- a/file.txt\n"
+        "+++ b/file.txt\n"
+        "@@ -2,1 +2,1 @@\n"
+        "-two\n"
+        "+TWO\n"
+    )
+    tool = ApplyPatchTool()
+    context = _tool_context(tmp_path)
+    result = await tool.execute({"patch": patch}, context)
+    assert result.success
+    assert result.metadata["mutation"]["line_start"] == 2
+    assert result.metadata["mutations"][0]["line_start"] == 2
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_changes_reports_line_start_one(tmp_path: Path) -> None:
+    """Full-file `changes` replacements behave like write_file: line 1."""
+    target = tmp_path / "file.txt"
+    target.write_text("old\n", encoding="utf-8")
+    tool = ApplyPatchTool()
+    context = _tool_context(tmp_path)
+    result = await tool.execute(
+        {"changes": [{"path": "file.txt", "content": "new\n"}]}, context
+    )
+    assert result.success
+    assert result.metadata["mutation"]["line_start"] == 1
+
+
+@pytest.mark.asyncio
 async def test_action_quit_awaits_cancelled_engine_task() -> None:
     from deepseek_tui.tui.app import DeepSeekTUI
 
