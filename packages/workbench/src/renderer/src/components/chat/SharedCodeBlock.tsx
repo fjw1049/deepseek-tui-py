@@ -288,11 +288,11 @@ async function highlightCodeHtml(code: string, language: string): Promise<string
       highlightCache.set(cacheKey, html)
       trimHighlightCache()
       return html
-    } catch {
-      const fallback = renderFallbackHtml(code)
-      highlightCache.set(cacheKey, fallback)
-      trimHighlightCache()
-      return fallback
+    } catch (error) {
+      // Common cause in Electron: CSP missing 'wasm-unsafe-eval' for Oniguruma.
+      // Do not cache failures — CSP/HMR fixes should be able to retry.
+      console.warn('[SharedCodeBlock] Shiki highlight failed; using plain text', error)
+      return renderFallbackHtml(code)
     }
   })()
 
@@ -355,28 +355,40 @@ export function SharedCodeBlock({
   const [fullscreen, setFullscreen] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const copyResetRef = useRef<number | null>(null)
+  /** Content key that currently has successful Shiki HTML (not plain fallback). */
+  const highlightedForRef = useRef<string | null>(null)
   const headerLabel = title?.trim() || language || 'text'
+  const contentKey = `${normalizeLanguage(language) || 'plain'}\u0000${trimmedCode}`
 
   useEffect(() => {
     let cancelled = false
     const skipHighlight = deferHighlightWhileBusy && busy
 
     if (skipHighlight) {
-      setHtml(renderFallbackHtml(trimmedCode))
+      // Keep prior highlight for this content; only fall back when none yet
+      // (e.g. first paint mid-stream). Avoid wiping every block while busy.
+      if (highlightedForRef.current !== contentKey) {
+        setHtml(renderFallbackHtml(trimmedCode))
+      }
       return () => {
         cancelled = true
       }
     }
 
-    setHtml(renderFallbackHtml(trimmedCode))
+    if (highlightedForRef.current !== contentKey) {
+      setHtml(renderFallbackHtml(trimmedCode))
+    }
+
     void highlightCodeHtml(trimmedCode, language).then((nextHtml) => {
-      if (!cancelled) setHtml(nextHtml)
+      if (cancelled) return
+      setHtml(nextHtml)
+      highlightedForRef.current = contentKey
     })
 
     return () => {
       cancelled = true
     }
-  }, [busy, deferHighlightWhileBusy, trimmedCode, language])
+  }, [busy, contentKey, deferHighlightWhileBusy, language, trimmedCode])
 
   useEffect(() => {
     const el = bodyRef.current
