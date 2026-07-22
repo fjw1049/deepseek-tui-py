@@ -653,7 +653,6 @@ samp {
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-.ds-project-context-menu__title,
 .ds-editor-picker-menu__title {
   font-size: 12px;
   font-weight: 650;
@@ -662,7 +661,6 @@ samp {
   color: var(--ds-text);
 }
 
-.ds-project-context-menu__hint,
 .ds-editor-picker-menu__hint {
   margin-top: 3px;
   font-size: 11px;
@@ -676,7 +674,7 @@ samp {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 0;
   min-height: 28px;
   padding: 0;
   color: var(--ds-text-muted);

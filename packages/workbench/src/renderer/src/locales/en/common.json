@@ -484,8 +484,6 @@
   "contextBarNewProject": "New project",
   "contextBarNoProject": "Workspace",
   "contextBarWorkInProject": "Import project",
-  "contextBarProjectMenuTitle": "Projects",
-  "contextBarProjectMenuHint": "Pick a local folder, or create a new one.",
   "contextBarNoMatchingProjects": "No matching projects.",
   "sessionUsageTokens": "{{tokens}} tokens",
   "sessionUsageCost": "{{cost}}",

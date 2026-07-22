@@ -484,8 +484,6 @@
   "contextBarNewProject": "新建项目",
   "contextBarNoProject": "工作空间",
   "contextBarWorkInProject": "项目导入",
-  "contextBarProjectMenuTitle": "项目",
-  "contextBarProjectMenuHint": "选择本地项目目录，或新建一个。",
   "contextBarNoMatchingProjects": "没有匹配的项目。",
   "sessionUsageTokens": "{{tokens}} tokens",
   "sessionUsageCost": "{{cost}}",

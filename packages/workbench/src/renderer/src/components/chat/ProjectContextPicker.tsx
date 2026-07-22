@@ -239,8 +239,6 @@ export function ProjectContextPicker({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div className="ds-project-context-menu__header">
-        <div className="ds-project-context-menu__title">{t('contextBarProjectMenuTitle')}</div>
-        <div className="ds-project-context-menu__hint">{t('contextBarProjectMenuHint')}</div>
         <label className="ds-project-context-menu__search">
           <Search className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.85} aria-hidden />
           <input
