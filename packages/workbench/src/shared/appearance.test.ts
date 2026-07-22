@@ -67,9 +67,30 @@ describe('theme presets', () => {
     }
   })
 
-  it('the default preset matches the built-in chrome themes', () => {
-    expect(getThemePresetSeed('default', 'light')).toEqual(DEFAULT_CHROME_THEMES.light)
-    expect(getThemePresetSeed('default', 'dark')).toEqual(DEFAULT_CHROME_THEMES.dark)
+  it('factory defaults use Notion light and One dark', () => {
+    expect(DEFAULT_CHROME_THEMES.light.presetId).toBe('notion')
+    expect(DEFAULT_CHROME_THEMES.dark.presetId).toBe('one')
+    expect(DEFAULT_CHROME_THEMES.light.contrast).toBe(100)
+    expect(DEFAULT_CHROME_THEMES.dark.contrast).toBe(100)
+    expect(DEFAULT_CHROME_THEMES.light.codeFont).toContain('JetBrains Mono')
+    expect(DEFAULT_CHROME_THEMES.dark.codeFont).toContain('JetBrains Mono')
+  })
+
+  it('the Workbench preset keeps the legacy handcrafted seeds', () => {
+    const light = getThemePresetSeed('default', 'light')
+    const dark = getThemePresetSeed('default', 'dark')
+    expect(light).toMatchObject({
+      presetId: 'default',
+      accent: '#0088ff',
+      surface: '#ffffff',
+      ink: '#262626'
+    })
+    expect(dark).toMatchObject({
+      presetId: 'default',
+      accent: '#339cff',
+      surface: '#111111',
+      ink: '#ececec'
+    })
   })
 })
 
@@ -115,18 +136,22 @@ describe('theme share strings', () => {
 })
 
 describe('appearance-derive', () => {
-  it('emits no override CSS for default settings (zero regression)', () => {
-    expect(buildAppearanceOverrideCss(defaultAppearanceSettings())).toBe('')
+  it('emits override CSS for factory defaults (Notion light / One dark)', () => {
+    const css = buildAppearanceOverrideCss(defaultAppearanceSettings())
+    expect(css).toContain(":root[data-theme='light']")
+    expect(css).toContain(":root[data-theme='dark']")
+    expect(css).toContain("--ds-accent:")
+    expect(css).toContain('JetBrains Mono')
   })
 
-  it('emits scoped override blocks only for customized variants', () => {
+  it('emits scoped override blocks for both variants', () => {
     const settings = mergeAppearanceSettings(defaultAppearanceSettings(), {
       themes: { dark: getThemePresetSeed('dracula', 'dark')! }
     })
     const css = buildAppearanceOverrideCss(settings)
     expect(css).toContain(":root[data-theme='dark']")
     expect(css).toContain(":root[data-theme='dark'] .ds-workbench-shell")
-    expect(css).not.toContain(":root[data-theme='light']")
+    expect(css).toContain(":root[data-theme='light']")
     expect(css).toContain('--ds-accent:')
   })
 

@@ -12,7 +12,6 @@
 
 import {
   CONTRAST_BASELINE,
-  isDefaultChromeTheme,
   type AppearanceSettingsV1,
   type ChromeThemeV1,
   type ThemeVariant
@@ -247,15 +246,14 @@ function cssBlock(selector: string, vars: Record<string, string>): string {
 }
 
 /**
- * Builds the stylesheet text applied for customized themes. Returns '' when
- * both variants are still the built-in default (no overrides → the
- * handcrafted index.css palette stays exactly as-is).
+ * Builds the stylesheet text applied for appearance themes. Factory defaults
+ * (Notion light / One dark) and every preset go through the same derivation
+ * so first-launch looks match Settings → Appearance.
  */
 export function buildAppearanceOverrideCss(appearance: AppearanceSettingsV1): string {
   const blocks: string[] = []
   for (const variant of ['light', 'dark'] as const) {
     const theme = appearance.themes[variant]
-    if (isDefaultChromeTheme(theme, variant)) continue
     const vars = buildChromeThemeCssVars(theme, variant)
     // The second selector out-specifies `[data-theme='dark'] .ds-workbench-shell`,
     // which re-declares many tokens on the workbench shell element.

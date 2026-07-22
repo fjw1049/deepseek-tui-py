@@ -73,14 +73,48 @@ export const CUSTOM_THEME_PRESET_ID = 'custom'
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/
 
 /**
- * Seeds for the `default` preset mirror the handcrafted values in index.css
- * (--ds-accent, --bg-canvas, --text-primary, semantic colors). They are only
- * used as the editing baseline: while presetId === 'default' AND the values
- * are untouched, no CSS overrides are emitted.
+ * Factory-default chrome themes (Settings → Appearance on first launch /
+ * "Restore defaults"). Light ships as Notion + JetBrains Mono at full
+ * contrast; dark ships as One with the same font/contrast/glass choices.
+ * The legacy handcrafted Workbench palette remains available as the
+ * `default` preset in the catalog.
  */
 export const DEFAULT_CHROME_THEMES: Record<ThemeVariant, ChromeThemeV1> = {
   light: {
-    presetId: DEFAULT_THEME_PRESET_ID,
+    presetId: 'notion',
+    accent: '#3183d8',
+    surface: '#ffffff',
+    ink: '#37352f',
+    contrast: 100,
+    translucent: true,
+    uiFont: '',
+    codeFont: '"JetBrains Mono"',
+    semanticColors: { diffAdded: '#008000', diffRemoved: '#a31515', skill: '#0000ff' }
+  },
+  dark: {
+    presetId: 'one',
+    accent: '#4d78cc',
+    surface: '#282c34',
+    ink: '#abb2bf',
+    contrast: 100,
+    translucent: true,
+    uiFont: '',
+    codeFont: '"JetBrains Mono"',
+    semanticColors: { diffAdded: '#8cc265', diffRemoved: '#e05561', skill: '#c162de' }
+  }
+}
+
+type PresetSeed = Omit<ChromeThemeV1, 'presetId'>
+
+export type AppearanceThemePreset = {
+  id: string
+  label: string
+  seeds: Partial<Record<ThemeVariant, PresetSeed>>
+}
+
+/** Legacy Workbench seeds that mirror the handcrafted index.css palette. */
+const WORKBENCH_CHROME_SEEDS: Record<ThemeVariant, PresetSeed> = {
+  light: {
     accent: '#0088ff',
     surface: '#ffffff',
     ink: '#262626',
@@ -91,7 +125,6 @@ export const DEFAULT_CHROME_THEMES: Record<ThemeVariant, ChromeThemeV1> = {
     semanticColors: { diffAdded: '#128a4a', diffRemoved: '#c92a2a', skill: '#7c3aed' }
   },
   dark: {
-    presetId: DEFAULT_THEME_PRESET_ID,
     accent: '#339cff',
     surface: '#111111',
     ink: '#ececec',
@@ -101,14 +134,6 @@ export const DEFAULT_CHROME_THEMES: Record<ThemeVariant, ChromeThemeV1> = {
     codeFont: '',
     semanticColors: { diffAdded: '#40c977', diffRemoved: '#fa423e', skill: '#ad7bf9' }
   }
-}
-
-type PresetSeed = Omit<ChromeThemeV1, 'presetId'>
-
-export type AppearanceThemePreset = {
-  id: string
-  label: string
-  seeds: Partial<Record<ThemeVariant, PresetSeed>>
 }
 
 function seed(
@@ -141,8 +166,8 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
     id: DEFAULT_THEME_PRESET_ID,
     label: 'Workbench',
     seeds: {
-      light: seedFromDefault('light'),
-      dark: seedFromDefault('dark')
+      light: { ...WORKBENCH_CHROME_SEEDS.light },
+      dark: { ...WORKBENCH_CHROME_SEEDS.dark }
     }
   },
   {
@@ -450,11 +475,6 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
   }
 ]
 
-function seedFromDefault(variant: ThemeVariant): PresetSeed {
-  const { presetId: _presetId, ...rest } = DEFAULT_CHROME_THEMES[variant]
-  return rest
-}
-
 export function getThemePresetSeed(presetId: string, variant: ThemeVariant): ChromeThemeV1 | null {
   const preset = APPEARANCE_THEME_PRESETS.find((entry) => entry.id === presetId)
   const presetSeed = preset?.seeds[variant]
@@ -543,8 +563,10 @@ export function normalizeChromeTheme(input: unknown, variant: ThemeVariant): Chr
     ink: normalizeHexColor(raw.ink, defaults.ink),
     contrast: normalizeContrast(raw.contrast, defaults.contrast),
     translucent: normalizeBoolean(raw.translucent, defaults.translucent),
-    uiFont: normalizeFont(raw.uiFont),
-    codeFont: normalizeFont(raw.codeFont),
+    // Empty string is a valid "use system/app default" choice; only fall back
+    // when the field is absent (fresh / partial payloads).
+    uiFont: 'uiFont' in raw ? normalizeFont(raw.uiFont) : defaults.uiFont,
+    codeFont: 'codeFont' in raw ? normalizeFont(raw.codeFont) : defaults.codeFont,
     semanticColors: normalizeSemanticColors(raw.semanticColors, defaults.semanticColors)
   }
 }

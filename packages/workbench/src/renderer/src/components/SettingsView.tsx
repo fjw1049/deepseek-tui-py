@@ -1631,7 +1631,7 @@ function EndpointConfigSheet({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="ds-modal-surface ds-endpoint-sheet flex max-h-[min(88vh,720px)] w-full max-w-[440px] flex-col overflow-hidden rounded-[22px]"
+        className="ds-modal-surface ds-endpoint-sheet flex max-h-[min(88vh,720px)] w-full max-w-[560px] flex-col overflow-hidden rounded-[22px]"
       >
         <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-1 pt-5">
           <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.022em] text-ds-ink">
