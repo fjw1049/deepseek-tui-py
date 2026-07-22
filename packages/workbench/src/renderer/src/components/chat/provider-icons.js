@@ -18,7 +18,9 @@ const ICONS = {
   gemini: { key: 'gemini', color: '#8E75B2', svg: geminiSvg },
   grok: { key: 'grok', color: 'var(--ds-text, #1A1A1A)', svg: grokSvg },
   deepseek: { key: 'deepseek', color: '#4D6BFE', svg: deepseekSvg },
-  glm: { key: 'glm', color: '#3859FF', svg: glmSvg, colored: true },
+  // ChatGLM bubble mark — readable at 12px. The old Zhipu constellation
+  // glyph collapses into a scribble that looks like a stray "Z".
+  glm: { key: 'glm', color: '#3859FF', svg: glmSvg },
   kimi: { key: 'kimi', color: '#027AFF', svg: kimiSvg, colored: true },
   qwen: { key: 'qwen', color: '#615CED', svg: qwenSvg, colored: true },
   minimax: { key: 'minimax', color: '#E2167E', svg: minimaxSvg, colored: true },
@@ -62,7 +64,7 @@ export function resolveProviderIcon(parts = {}) {
   if (/(gemini|google)/.test(hay)) return ICONS.gemini
   if (/(grok|\bxai\b)/.test(hay)) return ICONS.grok
   if (/(deepseek)/.test(hay)) return ICONS.deepseek
-  if (/(glm|zhipu|chatglm|智谱|清言)/.test(hay)) return ICONS.glm
+  if (/(glm|zhipu|chatglm|\bzai\b|\bz\.ai\b|智谱|清言)/.test(hay)) return ICONS.glm
   if (/(kimi|moonshot|月之暗面|moonshotai)/.test(hay)) return ICONS.kimi
   if (/(qwen|qwq|通义|千问|dashscope)/.test(hay)) return ICONS.qwen
   if (/(minimax|海螺|\babab[-_.]|minimaxi)/.test(hay)) return ICONS.minimax

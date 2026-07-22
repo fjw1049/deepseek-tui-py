@@ -70,7 +70,8 @@ export function ReasoningEffortSelector({
   const labels = useMemo<ReasoningSelectorLabels>(
     () => ({
       title: t('composerReasoningTitle'),
-      hint: t('composerReasoningHint'),
+      // Keep English always — short hint reads cleaner than localized copy.
+      hint: 'Faster ←→ Smarter',
       warning: t('composerReasoningWarning'),
       aria: t('composerReasoningAria'),
       desc: t('composerReasoningDesc'),

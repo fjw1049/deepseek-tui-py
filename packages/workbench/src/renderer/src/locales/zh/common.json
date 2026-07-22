@@ -554,7 +554,7 @@
   "composerConnectorFocus": "聚焦模式：本轮仅由「{{name}}」连接器作答",
   "composerModelSection": "模型",
   "composerReasoningTitle": "推理强度",
-  "composerReasoningHint": "更快 ← → 更强",
+  "composerReasoningHint": "Faster ←→ Smarter",
   "composerReasoningWarning": "消耗更快",
   "composerReasoningAria": "推理强度",
   "composerReasoningDesc": "向左更快，向右更强。",

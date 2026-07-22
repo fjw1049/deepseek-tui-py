@@ -16,7 +16,7 @@ class ChatGPTModelSelector extends HTMLElement {
   #modelId = '';       // currently selected model id
   #labels = {
     title: 'Reasoning',
-    hint: 'Faster ← → Smarter',
+    hint: 'Faster ←→ Smarter',
     warning: 'Uses limits faster',
     aria: 'Reasoning intensity',
     desc: 'Left for faster responses, right for smarter responses.',
@@ -263,7 +263,9 @@ class ChatGPTModelSelector extends HTMLElement {
       .intensity-value.is-ultra { color: var(--ultra-text); font-weight: 600; }
       .intensity-hint {
         font-size: 11px;
-        color: var(--ink-2);
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        color: color-mix(in srgb, var(--ink-2) 88%, var(--blue));
         white-space: nowrap;
       }
       .intensity-warning {
@@ -527,7 +529,7 @@ class ChatGPTModelSelector extends HTMLElement {
                 <span class="intensity-value">High</span>
               </div>
               <div class="intensity-layer intensity-hint-layer" aria-hidden="true">
-                <span class="intensity-hint">Faster ← → Smarter</span>
+                <span class="intensity-hint">Faster ←→ Smarter</span>
               </div>
               <div class="intensity-layer intensity-warning-layer" aria-hidden="true">
                 <span class="intensity-warning">Uses limits faster</span>
