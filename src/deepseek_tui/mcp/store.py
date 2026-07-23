@@ -42,7 +42,7 @@ def resolve_mcp_config_path(config: Config | None = None) -> Path:
 def load_raw_document(path: Path) -> dict[str, Any]:
     validate_mcp_config_path(path)
     if not path.exists():
-        return {"servers": {}, "timeouts": dict(DEFAULT_TIMEOUTS)}
+        return {"mcp": {"servers": {}}, "timeouts": dict(DEFAULT_TIMEOUTS)}
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid MCP config document: {path}")
@@ -50,13 +50,26 @@ def load_raw_document(path: Path) -> dict[str, Any]:
 
 
 def _servers_table(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    servers = doc.get("servers", doc.get("mcpServers"))
-    if not isinstance(servers, dict):
+    """Return the mutable servers map, preserving the document's existing shape."""
+    mcp = doc.get("mcp")
+    if isinstance(mcp, dict):
+        servers = mcp.get("servers")
+        if isinstance(servers, dict):
+            return servers  # type: ignore[return-value]
         servers = {}
+        mcp["servers"] = servers
+        return servers  # type: ignore[return-value]
+    servers = doc.get("servers", doc.get("mcpServers"))
+    if isinstance(servers, dict):
+        if "servers" not in doc and "mcpServers" in doc:
+            # Keep mcpServers key as-is when that was the original shape.
+            return servers  # type: ignore[return-value]
         doc["servers"] = servers
-    elif "servers" not in doc:
-        doc["servers"] = servers
-    return servers
+        return servers  # type: ignore[return-value]
+    # Default new documents to the nested TikHub-compatible shape.
+    servers = {}
+    doc["mcp"] = {"servers": servers}
+    return servers  # type: ignore[return-value]
 
 
 def save_document(path: Path, doc: dict[str, Any]) -> None:
@@ -69,13 +82,15 @@ def init_config(path: Path, *, force: bool = False) -> McpWriteStatus:
         return McpWriteStatus.SKIPPED_EXISTS
     status = McpWriteStatus.OVERWRITTEN if path.exists() else McpWriteStatus.CREATED
     doc = {
-        "servers": {
-            "example": {
-                "command": "node",
-                "args": ["./path/to/your-mcp-server.js"],
-                "enabled": True,
-                "disabled": True,
-                "required": False,
+        "mcp": {
+            "servers": {
+                "example": {
+                    "command": "node",
+                    "args": ["./path/to/your-mcp-server.js"],
+                    "enabled": True,
+                    "disabled": True,
+                    "required": False,
+                }
             }
         },
         "timeouts": dict(DEFAULT_TIMEOUTS),

@@ -41,6 +41,34 @@ def test_servers_from_document_parses_load_policy_and_catalog() -> None:
     assert by_name["tikhub-wechat"].catalog == "media"
 
 
+def test_servers_from_document_accepts_nested_mcp_servers() -> None:
+    """TikHub documented shape: {\"mcp\": {\"servers\": {...}}}."""
+    configs = servers_from_document(
+        {
+            "mcp": {
+                "servers": {
+                    "tikhub-zhihu": {
+                        "command": "npx",
+                        "args": [
+                            "mcp-remote",
+                            "https://mcp.tikhub.io/zhihu/mcp",
+                            "--header",
+                            "Authorization: Bearer YOUR_API_KEY",
+                        ],
+                        "load_policy": "on_focus",
+                        "catalog": "media",
+                    }
+                }
+            }
+        }
+    )
+    assert len(configs) == 1
+    assert configs[0].name == "tikhub-zhihu"
+    assert configs[0].command == "npx"
+    assert configs[0].args[1] == "https://mcp.tikhub.io/zhihu/mcp"
+    assert configs[0].is_on_focus is True
+
+
 @pytest.mark.asyncio
 async def test_discover_tools_skips_on_focus_servers(tmp_path: Path) -> None:
     progressive = McpServerConfig(name="fetch", command="echo")

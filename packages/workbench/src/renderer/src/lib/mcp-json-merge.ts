@@ -15,20 +15,35 @@ export type McpServerEntry = {
   catalog?: string
 }
 
+/**
+ * Resolve the servers map from supported mcp.json shapes.
+ * Prefer nested ``mcp.servers`` (TikHub form), then ``servers``, then ``mcpServers``.
+ */
 function serversTable(doc: Record<string, unknown>): Record<string, unknown> {
-  const servers = doc.mcpServers ?? doc.servers
+  const mcp = doc.mcp
+  if (mcp && typeof mcp === 'object' && !Array.isArray(mcp)) {
+    const nested = (mcp as Record<string, unknown>).servers
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>
+    }
+    const next: Record<string, unknown> = {}
+    ;(mcp as Record<string, unknown>).servers = next
+    return next
+  }
+  const servers = doc.servers ?? doc.mcpServers
   if (servers && typeof servers === 'object' && !Array.isArray(servers)) {
     return servers as Record<string, unknown>
   }
+  // Default new documents to nested TikHub-compatible shape.
   const next: Record<string, unknown> = {}
-  doc.mcpServers = next
+  doc.mcp = { servers: next }
   return next
 }
 
 export function parseMcpConfigDocument(raw: string): Record<string, unknown> {
   const trimmed = raw.trim()
   if (!trimmed) {
-    return { mcpServers: {} }
+    return { mcp: { servers: {} } }
   }
   const parsed = JSON.parse(trimmed) as unknown
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -54,12 +69,19 @@ export function mergeMcpServerIntoConfig(
 ): string {
   const doc = parseMcpConfigDocument(raw)
   const servers = serversTable(doc)
-  servers[serverId] = {
-    enabled: true,
-    disabled: false,
-    required: false,
-    ...entry
-  }
+  // Media / TikHub-style entries already carry command+args; don't force
+  // enabled/disabled/required unless the caller omitted them and the server
+  // is not a media on_focus connector (those stay minimal like TikHub docs).
+  const isMediaFocus =
+    entry.load_policy === 'on_focus' || entry.catalog === 'media'
+  servers[serverId] = isMediaFocus
+    ? { ...entry }
+    : {
+        enabled: true,
+        disabled: false,
+        required: false,
+        ...entry
+      }
   return `${JSON.stringify(doc, null, 2)}\n`
 }
 

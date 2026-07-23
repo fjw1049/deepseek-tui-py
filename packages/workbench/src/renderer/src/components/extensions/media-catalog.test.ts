@@ -4,7 +4,10 @@ import {
   extractBearerFromEntry,
   MEDIA_CATALOG
 } from './media-catalog'
-import { normalizeMcpLoadPolicy } from '../../lib/mcp-json-merge'
+import {
+  mergeMcpServerIntoConfig,
+  normalizeMcpLoadPolicy
+} from '../../lib/mcp-json-merge'
 
 describe('media-catalog', () => {
   it('builds on_focus tikhub entries with bearer header', () => {
@@ -21,6 +24,31 @@ describe('media-catalog', () => {
       'Authorization: Bearer secret-key'
     ])
     expect(normalizeMcpLoadPolicy(entry.load_policy)).toBe('on_focus')
+  })
+
+  it('writes nested mcp.servers TikHub form', () => {
+    const item = MEDIA_CATALOG.find((entry) => entry.id === 'tikhub-zhihu')
+    expect(item).toBeTruthy()
+    const entry = buildTikhubServerEntry(item!, 'YOUR_API_KEY')
+    const next = mergeMcpServerIntoConfig('', 'tikhub-zhihu', entry)
+    const doc = JSON.parse(next) as {
+      mcp: { servers: Record<string, { command: string; args: string[] }> }
+    }
+    expect(doc.mcp.servers['tikhub-zhihu']).toEqual({
+      command: 'npx',
+      args: [
+        'mcp-remote',
+        'https://mcp.tikhub.io/zhihu/mcp',
+        '--header',
+        'Authorization: Bearer YOUR_API_KEY'
+      ],
+      load_policy: 'on_focus',
+      catalog: 'media'
+    })
+  })
+
+  it('includes tiktok in the catalog', () => {
+    expect(MEDIA_CATALOG.some((item) => item.id === 'tikhub-tiktok')).toBe(true)
   })
 
   it('extracts bearer tokens from args', () => {

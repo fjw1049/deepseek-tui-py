@@ -80,14 +80,35 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
     return servers_from_document(data)
 
 
+def extract_servers_table(data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the servers map from supported mcp.json shapes.
+
+    Accepted layouts (first match wins):
+    - ``{"mcp": {"servers": {...}}}``  (TikHub / nested form)
+    - ``{"servers": {...}}``
+    - ``{"mcpServers": {...}}``
+    """
+    mcp = data.get("mcp")
+    if isinstance(mcp, dict):
+        nested = mcp.get("servers")
+        if isinstance(nested, dict):
+            return nested
+    servers = data.get("servers", data.get("mcpServers", {}))
+    if isinstance(servers, dict):
+        return servers
+    raise ValueError("Invalid MCP servers table")
+
+
 def servers_from_document(data: dict[str, Any]) -> list[McpServerConfig]:
     """Parse an in-memory mcp.json-shaped document into server configs."""
     defaults = data.get("timeouts", {})
     if not isinstance(defaults, dict):
         defaults = {}
-    servers = data.get("servers", data.get("mcpServers", {}))
-    if not isinstance(servers, dict):
-        raise ValueError("Invalid MCP servers table")
+    # Timeouts may also live under nested mcp.
+    mcp = data.get("mcp")
+    if isinstance(mcp, dict) and isinstance(mcp.get("timeouts"), dict):
+        defaults = {**defaults, **mcp["timeouts"]}
+    servers = extract_servers_table(data)
     return [
         _server_from_raw(name, raw, defaults)
         for name, raw in servers.items()
