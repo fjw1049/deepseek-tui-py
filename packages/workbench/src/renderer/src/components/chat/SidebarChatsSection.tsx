@@ -206,7 +206,7 @@ export function SidebarChatsSection({
   }
 
   return (
-    <div className="ds-sidebar-chats-section ds-no-drag flex h-full min-h-0 flex-col px-1">
+    <div className="ds-sidebar-chats-section ds-no-drag flex h-full min-h-0 flex-col">
       <div className="ds-sidebar-chats-header shrink-0">
         {selectMode ? (
           <>

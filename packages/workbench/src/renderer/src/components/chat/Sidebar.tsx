@@ -166,7 +166,7 @@ export function Sidebar({
           </div>
         </div>
 
-        <nav className="flex flex-col gap-0.5 px-1" aria-label={t('extensions')}>
+        <nav className="ds-sidebar-top-nav flex flex-col gap-px px-1" aria-label={t('extensions')}>
           <SidebarLink
             icon={<Plus className="h-4 w-4" strokeWidth={2} />}
             label={t('newAgent')}
@@ -192,7 +192,7 @@ export function Sidebar({
             }
           />
           {extensionsOpen ? (
-            <div className="ds-sidebar-subgroup flex flex-col gap-0.5">
+            <div className="ds-sidebar-subgroup flex flex-col gap-px">
               <SidebarLink
                 icon={<Puzzle className="h-4 w-4" strokeWidth={1.9} />}
                 label={t('extPlugins')}

@@ -409,38 +409,42 @@ export function AutomationCenter({
         </div>
       </header>
 
-      {/* Wake hint */}
-      <div className="mx-auto mt-4 w-full max-w-6xl px-8">
-        <div className="flex items-center gap-2 rounded-lg bg-amber-50/80 px-4 py-2.5 text-[12px] text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          {t('automationWakeHint')}
+      {/* Wake hint — same px-8 → max-w-6xl shell as header/tabs/content so left edges align */}
+      <div className="mt-4 shrink-0 px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="flex items-center gap-2 rounded-lg bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            <span>{t('automationWakeHint')}</span>
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="mx-auto mt-4 flex w-full max-w-6xl gap-6 border-b border-ds-border-muted px-8">
-        <button
-          className={`relative pb-3 text-[14px] font-medium transition ${
-            tab === 'tasks' ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
-          }`}
-          onClick={() => setTab('tasks')}
-        >
-          {t('automationTabTasks')}
-          {tab === 'tasks' && (
-            <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-accent" />
-          )}
-        </button>
-        <button
-          className={`relative pb-3 text-[14px] font-medium transition ${
-            tab === 'runs' ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
-          }`}
-          onClick={() => setTab('runs')}
-        >
-          {t('automationTabRuns')}
-          {tab === 'runs' && (
-            <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-accent" />
-          )}
-        </button>
+      <div className="mt-4 shrink-0 px-8">
+        <div className="mx-auto flex max-w-6xl gap-6 border-b border-ds-border-muted">
+          <button
+            className={`relative pb-3 text-[14px] font-medium transition ${
+              tab === 'tasks' ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
+            }`}
+            onClick={() => setTab('tasks')}
+          >
+            {t('automationTabTasks')}
+            {tab === 'tasks' && (
+              <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-accent" />
+            )}
+          </button>
+          <button
+            className={`relative pb-3 text-[14px] font-medium transition ${
+              tab === 'runs' ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
+            }`}
+            onClick={() => setTab('runs')}
+          >
+            {t('automationTabRuns')}
+            {tab === 'runs' && (
+              <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-accent" />
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Content */}

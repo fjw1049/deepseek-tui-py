@@ -147,7 +147,7 @@ function SidebarProjectsToolbar({
   }, [menuOpen])
 
   return (
-    <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag shrink-0 px-1">
+    <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag shrink-0">
       {selectMode ? (
         <>
           <span className="ds-sidebar-section-label min-w-0 flex-1 truncate">

@@ -1813,7 +1813,8 @@ samp {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.35rem 0.5rem 0.5rem;
+  /* Same horizontal inset as .ds-sidebar-chats-header (chevron / + / ⋯ must line up). */
+  padding: 0.35rem 0.25rem 0.5rem;
 }
 
 /* Sits outside the sidebar scroll surface so the projects header never scrolls away. */
@@ -1937,6 +1938,12 @@ samp {
   z-index: 2;
 }
 
+/* Top nav: tighter than default, but looser than the previous 0.28rem trial. */
+.ds-sidebar-top-nav .ds-sidebar-link {
+  padding-top: calc(0.34rem * var(--ds-density, 1));
+  padding-bottom: calc(0.34rem * var(--ds-density, 1));
+}
+
 .ds-sidebar-scroll {
   min-height: 0;
 }
@@ -1967,7 +1974,7 @@ samp {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.5rem 0.35rem;
+  padding: 0.4rem 0.25rem 0.35rem;
 }
 
 .ds-sidebar-pinned-list {
@@ -1991,7 +1998,8 @@ samp {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.5rem 0.35rem;
+  /* Match .ds-sidebar-projects-toolbar horizontal inset exactly. */
+  padding: 0.4rem 0.25rem 0.35rem;
 }
 
 .ds-sidebar-chats-list {
