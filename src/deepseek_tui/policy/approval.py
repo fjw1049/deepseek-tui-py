@@ -102,8 +102,6 @@ _SHELL_TOOLS = {
     "exec_shell",
     "exec_shell_wait",
     "exec_shell_interact",
-    "exec_wait",
-    "exec_interact",
 }
 _PATCH_TOOLS = {"apply_patch"}
 _FETCH_TOOLS = {"fetch_url", "web.fetch", "web_fetch"}

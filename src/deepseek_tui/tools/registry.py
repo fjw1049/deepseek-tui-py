@@ -672,8 +672,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ]:
             registry.register(tool)
 
+    # Session clock — always available (not tied to automations CRUD).
+    registry.register(CurrentTimeTool())
+
     if cfg.features.automations:
-        registry.register(CurrentTimeTool())
         for tool in [
             AutomationCreateTool(),
             AutomationListTool(),

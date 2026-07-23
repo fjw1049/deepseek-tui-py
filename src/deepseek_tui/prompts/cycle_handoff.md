@@ -48,12 +48,9 @@ its own line. No prose outside the tags. No nested tags. No code fences around
 the block itself (you can use code fences inside if you need to quote a
 specific snippet).
 
-The `recall_archive` tool is available in the next cycle. It searches the
-archived transcripts (BM25 over message text, top-N hits) when your briefing
-missed something the next cycle needs. Use it sparingly — frequent recalls
-mean your briefing was too sparse, so refine your *next* briefing rather than
-leaning on the archive. Don't try to be exhaustive here: be precise about the
-load-bearing state and trust the archive for the rest.
+There is no archive-recall tool in the next cycle — put every load-bearing
+fact into `<carry_forward>` itself. Prefer a precise briefing over a sparse
+one that the next cycle cannot recover.
 
 ## Example shape (do not copy verbatim — write your own)
 

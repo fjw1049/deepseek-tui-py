@@ -58,8 +58,6 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "exec_shell",
         "exec_shell_wait",
         "exec_shell_interact",
-        "exec_wait",
-        "exec_interact",
         "load_skill",
         MULTI_TOOL_PARALLEL_NAME,
         "update_plan",
@@ -99,8 +97,6 @@ _SHELL_TOOLS = frozenset(
         "exec_shell",
         "exec_shell_wait",
         "exec_shell_interact",
-        "exec_wait",
-        "exec_interact",
     }
 )
 
@@ -137,6 +133,7 @@ def apply_mcp_tool_deferral(
         {
             "list_mcp_resources",
             "list_mcp_resource_templates",
+            # mcp_read_resource is a bridge alias → read_mcp_resource
             "mcp_read_resource",
             "read_mcp_resource",
             "mcp_get_prompt",

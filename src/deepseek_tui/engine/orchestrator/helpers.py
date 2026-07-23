@@ -11,13 +11,19 @@ from typing import Any
 from deepseek_tui.engine.prompts import AppMode as _AppMode
 from deepseek_tui.protocol.messages import Message, TextBlock
 
+# Meta-tools that are NOT registered on ToolRegistry. Focus gating still
+# names them so ``_advanced_tool_flags`` / ``ensure_advanced_tooling`` can
+# re-inject them after the registry whitelist filter.
+FOCUS_META_TOOLS = frozenset({"code_execution"})
+
 # Scenario / focus default tool surface. Authors rarely declare skill
 # ``allowed-tools``, so mounts must ship a usable agent subset by default
 # (explore + write + code_execution + shell + agents + web/session helpers).
 # Trust still gates plugin-supplied processes (hooks / MCP), not these
 # built-ins. Note ``grep_files`` (not ``grep``) — name mismatch historically
 # silently excluded grep from every focus mode.
-FOCUS_READ_BASE = frozenset(
+# Only real registered names belong here (plus FOCUS_META_TOOLS).
+_FOCUS_REGISTRY_TOOLS = frozenset(
     {
         # Explore
         "read_file",
@@ -44,7 +50,6 @@ FOCUS_READ_BASE = frozenset(
         "checklist_update",
         "checklist_list",
         "request_user_input",
-        "recall_archive",
         # Research
         "web_search",
         "fetch_url",
@@ -52,14 +57,11 @@ FOCUS_READ_BASE = frozenset(
         "write_file",
         "edit_file",
         "apply_patch",
-        "code_execution",
-        # Shell
+        # Shell (registered names only — no exec_wait / exec_interact aliases)
         "exec_shell",
         "exec_shell_wait",
         "exec_shell_interact",
         "exec_shell_cancel",
-        "exec_wait",
-        "exec_interact",
         # Agents
         "agent_spawn",
         "agent_result",
@@ -71,6 +73,8 @@ FOCUS_READ_BASE = frozenset(
         "delegate_to_agent",
     }
 )
+
+FOCUS_READ_BASE = _FOCUS_REGISTRY_TOOLS | FOCUS_META_TOOLS
 
 # Write subset kept for MCP-focus composition and callers that want the
 # write trio without the full scenario base.
