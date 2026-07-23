@@ -601,10 +601,8 @@ function PluginDetailDrawer({
             </>
           ) : null}
 
-          <h3 className="mt-5 text-[12px] font-semibold text-ds-faint">{t('pluginDetailHowToUse')}</h3>
-          <p className="mt-2 text-[13px] leading-6 text-ds-muted">{t('pluginSysScenarioHint')}</p>
           {hasExecutable && detail.kind === 'installed' && !detail.plugin.trusted ? (
-            <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-800 dark:text-amber-200">
+            <p className="mt-5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-800 dark:text-amber-200">
               {t('pluginSysUntrustedHint')}
             </p>
           ) : null}
