@@ -5,6 +5,13 @@ export type McpServerEntry = {
   args?: string[]
   url?: string
   env?: Record<string, string>
+  /** Extra HTTP headers for url / streamablehttp transports (e.g. Authorization). */
+  headers?: Record<string, string>
+  /**
+   * Cursor-style transport hint: ``streamablehttp`` / ``sse`` / ``stdio``.
+   * Ignored for stdio (command) servers.
+   */
+  type?: string
   timeout?: number
   enabled?: boolean
   disabled?: boolean
@@ -13,6 +20,46 @@ export type McpServerEntry = {
   load_policy?: McpLoadPolicy
   /** Catalog bucket, e.g. media / sports */
   catalog?: string
+}
+
+const MCP_DOC_META_KEYS = new Set(['timeouts', 'mcp', 'mcpServers', 'servers'])
+
+/** True when ``value`` looks like a single MCP server config object. */
+export function looksLikeMcpServerEntry(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entry = value as Record<string, unknown>
+  return typeof entry.command === 'string' || typeof entry.url === 'string'
+}
+
+/**
+ * Pull the servers table from a parsed document.
+ * Accepts ``mcp.servers``, ``servers``, ``mcpServers``, or a bare
+ * Cursor-style map ``{ "name": { url|command, ... } }``.
+ */
+export function extractMcpServersFromDocument(
+  doc: Record<string, unknown>
+): Record<string, McpServerEntry> {
+  const mcp = doc.mcp
+  if (mcp && typeof mcp === 'object' && !Array.isArray(mcp)) {
+    const nested = (mcp as Record<string, unknown>).servers
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, McpServerEntry>
+    }
+  }
+  if (doc.mcpServers && typeof doc.mcpServers === 'object' && !Array.isArray(doc.mcpServers)) {
+    return doc.mcpServers as Record<string, McpServerEntry>
+  }
+  if (doc.servers && typeof doc.servers === 'object' && !Array.isArray(doc.servers)) {
+    return doc.servers as Record<string, McpServerEntry>
+  }
+  // Bare server table (Cursor snippet without mcpServers wrapper).
+  if (!('mcpServers' in doc) && !('servers' in doc) && !('mcp' in doc)) {
+    const entries = Object.entries(doc).filter(([key]) => !MCP_DOC_META_KEYS.has(key))
+    if (entries.length > 0 && entries.every(([, value]) => looksLikeMcpServerEntry(value))) {
+      return Object.fromEntries(entries) as Record<string, McpServerEntry>
+    }
+  }
+  return {}
 }
 
 /**

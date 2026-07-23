@@ -5,22 +5,16 @@
  * object) — or, rarely, in a remote `deployedUrl`.
  */
 import { withDefaultOnFocusPolicy } from '../../lib/connector-groups'
-import { parseMcpConfigDocument, type McpServerEntry } from '../../lib/mcp-json-merge'
+import {
+  extractMcpServersFromDocument,
+  parseMcpConfigDocument,
+  type McpServerEntry
+} from '../../lib/mcp-json-merge'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 function serversFromDoc(doc: Record<string, unknown>): Record<string, McpServerEntry> | undefined {
-  const mcp = doc.mcp
-  if (mcp && typeof mcp === 'object' && !Array.isArray(mcp)) {
-    const nested = (mcp as Record<string, unknown>).servers
-    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-      return nested as Record<string, McpServerEntry>
-    }
-  }
-  const servers = doc.mcpServers ?? doc.servers
-  if (servers && typeof servers === 'object' && !Array.isArray(servers)) {
-    return servers as Record<string, McpServerEntry>
-  }
-  return undefined
+  const servers = extractMcpServersFromDocument(doc)
+  return Object.keys(servers).length > 0 ? servers : undefined
 }
 
 /** First JSON object in the README that contains an `mcpServers`/`servers` table. */

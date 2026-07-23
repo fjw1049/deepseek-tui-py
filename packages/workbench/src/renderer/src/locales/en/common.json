@@ -461,7 +461,7 @@
   "mcpDialogExists": "A server named {{name}} already exists.",
   "mcpDialogSubmit": "Add",
   "mcpImportTitle": "Import from JSON",
-  "mcpImportPlaceholder": "Paste {\"mcpServers\": { ... }} config",
+  "mcpImportPlaceholder": "Paste {\"mcpServers\": { ... }} or a bare {\"name\": {\"url\": \"...\"}} map",
   "mcpImportParseError": "Failed to parse JSON, please check the format.",
   "mcpImportEmpty": "No MCP server entries found.",
   "mcpImportResult": "Imported {{added}}, skipped {{skipped}}.",

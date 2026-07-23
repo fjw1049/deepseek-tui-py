@@ -20,6 +20,7 @@ from deepseek_tui.mcp.transport import (
     McpTransportError,
     SseTransport,
     StdioTransport,
+    StreamableHttpTransport,
 )
 
 
@@ -75,10 +76,19 @@ class McpToolDescriptor:
 
 
 def build_transport(config: McpServerConfig) -> McpTransport:
-    """Pick stdio vs SSE transport from the config shape."""
+    """Pick stdio / SSE / Streamable HTTP from the config shape."""
     if config.url is not None:
+        headers = dict(config.headers)
+        hint = (config.transport or "").strip().lower()
+        if hint in {"streamablehttp", "http"}:
+            return StreamableHttpTransport(
+                url=config.url,
+                headers=headers,
+                connect_timeout=config.connect_timeout,
+            )
         return SseTransport(
             url=config.url,
+            headers=headers,
             connect_timeout=config.connect_timeout,
         )
     if config.command is None:

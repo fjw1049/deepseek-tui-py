@@ -461,7 +461,7 @@
   "mcpDialogExists": "已存在同名服务器：{{name}}。",
   "mcpDialogSubmit": "添加",
   "mcpImportTitle": "通过 JSON 导入",
-  "mcpImportPlaceholder": "粘贴 {\"mcpServers\": { ... }} 配置",
+  "mcpImportPlaceholder": "粘贴 mcpServers 配置，或直接粘贴 {\"name\": {\"url\": \"...\"}}",
   "mcpImportParseError": "JSON 解析失败，请检查格式。",
   "mcpImportEmpty": "未找到任何 MCP 服务器条目。",
   "mcpImportResult": "已导入 {{added}} 个，跳过 {{skipped}} 个。",

@@ -290,6 +290,125 @@ class SseTransport(McpTransport):
         self._endpoint_ready.set()
 
 
+# --- Streamable HTTP -------------------------------------------------------
+
+
+class StreamableHttpTransport(McpTransport):
+    """MCP Streamable HTTP transport (spec 2025-03-26).
+
+    Single endpoint: every JSON-RPC message is an HTTP POST. The server may
+    reply with ``application/json`` or ``text/event-stream``. Session id from
+    ``Mcp-Session-Id`` is echoed on subsequent requests.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        client: httpx.AsyncClient | None = None,
+        connect_timeout: float = 10.0,
+    ) -> None:
+        self.url = url
+        self.headers = dict(headers or {})
+        self.connect_timeout = connect_timeout
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(connect_timeout))
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._session_id: str | None = None
+        self._started = False
+
+    async def start(self) -> None:
+        self._started = True
+
+    async def stop(self) -> None:
+        self._started = False
+        if self._owns_client:
+            await self._client.aclose()
+
+    def _request_headers(self) -> dict[str, str]:
+        headers = {
+            **self.headers,
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        return headers
+
+    async def send(self, message: dict[str, Any]) -> None:
+        if not self._started:
+            raise McpTransportError("streamable HTTP transport not started")
+        response = await self._client.post(
+            self.url, json=message, headers=self._request_headers()
+        )
+        session = response.headers.get("mcp-session-id") or response.headers.get(
+            "Mcp-Session-Id"
+        )
+        if session:
+            self._session_id = session
+        # Notifications / acks may return 202 with an empty body.
+        if response.status_code == 202 or not response.content:
+            if response.status_code >= 300:
+                raise McpTransportError(
+                    f"Streamable HTTP rejected: {response.status_code} "
+                    f"{response.text[:200]}"
+                )
+            return
+        if response.status_code >= 300:
+            raise McpTransportError(
+                f"Streamable HTTP rejected: {response.status_code} "
+                f"{response.text[:200]}"
+            )
+        content_type = (response.headers.get("content-type") or "").lower()
+        if "text/event-stream" in content_type:
+            for item in _iter_sse_json_objects(response.text):
+                await self._queue.put(item)
+            return
+        try:
+            data = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise McpTransportError(
+                f"Streamable HTTP non-JSON body from {_mask_url(self.url)}"
+            ) from exc
+        if isinstance(data, dict):
+            await self._queue.put(data)
+
+    async def recv(self) -> dict[str, Any]:
+        if not self._started:
+            raise McpTransportError("streamable HTTP transport not started")
+        return await self._queue.get()
+
+
+def _iter_sse_json_objects(body: str) -> list[dict[str, Any]]:
+    """Parse a finite SSE body into JSON-RPC dicts (data: lines)."""
+    out: list[dict[str, Any]] = []
+    data_lines: list[str] = []
+    for raw_line in body.splitlines():
+        line = raw_line.rstrip("\r")
+        if line == "":
+            if data_lines:
+                payload = "\n".join(data_lines)
+                data_lines = []
+                try:
+                    parsed = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    out.append(parsed)
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if data_lines:
+        try:
+            parsed = json.loads("\n".join(data_lines))
+        except json.JSONDecodeError:
+            return out
+        if isinstance(parsed, dict):
+            out.append(parsed)
+    return out
+
+
 def _mask_url(url: str) -> str:
     """Strip userinfo / query params so secrets don't leak in logs."""
     try:

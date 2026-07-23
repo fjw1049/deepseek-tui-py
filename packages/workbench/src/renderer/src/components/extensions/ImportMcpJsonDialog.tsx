@@ -2,20 +2,17 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, Upload, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { parseMcpConfigDocument, type McpServerEntry } from '../../lib/mcp-json-merge'
+import {
+  extractMcpServersFromDocument,
+  parseMcpConfigDocument,
+  type McpServerEntry
+} from '../../lib/mcp-json-merge'
 
 type Props = {
   open: boolean
   onClose: () => void
   isDuplicate: (id: string) => boolean
   onSubmit: (id: string, entry: McpServerEntry) => Promise<void>
-}
-
-/** Pull the `mcpServers` / `servers` table out of a parsed config document. */
-function extractServers(doc: Record<string, unknown>): Record<string, McpServerEntry> {
-  const table = (doc.mcpServers ?? doc.servers) as Record<string, McpServerEntry> | undefined
-  if (table && typeof table === 'object' && !Array.isArray(table)) return table
-  return {}
 }
 
 export function ImportMcpJsonDialog({ open, onClose, isDuplicate, onSubmit }: Props): ReactElement | null {
@@ -48,7 +45,7 @@ export function ImportMcpJsonDialog({ open, onClose, isDuplicate, onSubmit }: Pr
   const submit = async (): Promise<void> => {
     let servers: Record<string, McpServerEntry>
     try {
-      servers = extractServers(parseMcpConfigDocument(text))
+      servers = extractMcpServersFromDocument(parseMcpConfigDocument(text))
     } catch {
       setError(t('mcpImportParseError'))
       return
