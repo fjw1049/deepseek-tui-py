@@ -839,13 +839,17 @@ class AppRuntime:
         manager = self._tool_runtime.mcp_manager
         out: list[dict[str, Any]] = []
         for name in manager.server_names:
-            cfg = manager._configs.get(name)  # noqa: SLF001
+            cfg = manager.server_config(name) if hasattr(manager, "server_config") else manager._configs.get(name)  # noqa: SLF001
+            load_policy = getattr(cfg, "load_policy", "progressive") if cfg else "progressive"
+            catalog = getattr(cfg, "catalog", None) if cfg else None
             out.append(
                 {
                     "name": name,
                     "enabled": bool(getattr(cfg, "enabled", False)),
                     "transport": _transport_label(cfg),
                     "connected": manager.is_server_running(name),
+                    "load_policy": load_policy,
+                    "catalog": catalog,
                 }
             )
         return {"ok": True, "servers": out}

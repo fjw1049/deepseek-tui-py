@@ -896,6 +896,22 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
                 result = filter_tools_for_profile(combined, profile)
 
+        # on_focus (@connector) tools are kept out of progressive cache —
+        # merge them in only while a focus whitelist is active.
+        if (
+            self._focus_allowed_servers
+            and mcp is not None
+            and hasattr(mcp, "focus_api_tools")
+        ):
+            focus_extra: list[dict[str, Any]] = []
+            for server in self._focus_allowed_servers:
+                focus_extra.extend(mcp.focus_api_tools(server))
+            if focus_extra:
+                combined = build_model_tool_catalog(
+                    list(result), list(focus_extra), self.mode
+                )
+                result = filter_tools_for_profile(combined, profile)
+
         # 聚焦模式：收窄到最小工具白名单。在 catalog 层直接裁剪（而非依赖
         # defer_loading），确保模型无法经 tool-search 调回被屏蔽的工具。
         # MCP 工具额外按 server 级放行：lazy server 未 discovery 时工具名
@@ -1865,9 +1881,27 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
                 self._focus_allowed_servers = frozenset()
             elif focus_mcp is not None:
-                tools, servers = self._mcp_focus_whitelist(focus_mcp)
-                self._focus_tool_whitelist = tools
-                self._focus_allowed_servers = servers
+                mcp_mgr = self.mcp_manager
+                focus_ready = True
+                if mcp_mgr is not None:
+                    ensure = getattr(mcp_mgr, "ensure_focus_server_discovered", None)
+                    if callable(ensure):
+                        try:
+                            await ensure(focus_mcp)
+                        except Exception as exc:  # noqa: BLE001
+                            focus_ready = False
+                            await self.handle.emit(
+                                StatusEvent(message=f"连接器未就绪：{exc}")
+                            )
+                if focus_ready:
+                    # Drop progressive MCP cache so this turn rebuilds with focus tools.
+                    self._mcp_tools_cache = None
+                    tools, servers = self._mcp_focus_whitelist(focus_mcp)
+                    self._focus_tool_whitelist = tools
+                    self._focus_allowed_servers = servers
+                else:
+                    self._focus_tool_whitelist = None
+                    self._focus_allowed_servers = None
             elif self._active_plugin is not None:
                 wl_result = self._active_plugin_whitelist()
                 if wl_result is not None:
@@ -2052,11 +2086,26 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 self._user_turn_index += 1
         finally:
             self.handle.clear_response_id()
+            # Disconnect on_focus media connectors after the turn so they never
+            # linger in preload / progressive catalog.
+            focused_servers = self._focus_allowed_servers
             # 复位聚焦模式白名单，确保不跨 turn 保留。
             self._focus_tool_whitelist = None
             self._focus_allowed_servers = None
             # 同理复位只读放行根：仅在挂载插件的 turn 内有效，取消/异常也不泄漏。
             self.tool_context.extra_read_roots = ()
+            mcp_mgr = self.mcp_manager
+            if focused_servers and mcp_mgr is not None:
+                release = getattr(mcp_mgr, "release_focus_server", None)
+                if callable(release):
+                    for server in focused_servers:
+                        try:
+                            await release(server)
+                        except Exception:  # noqa: BLE001
+                            logger.exception(
+                                "mcp_focus_release_failed server=%s", server
+                            )
+                self._mcp_tools_cache = None
 
     def _completion_agent_is_background(self, agent_id: str) -> bool:
         """True when *agent_id* is a ``run_in_background`` child still known."""

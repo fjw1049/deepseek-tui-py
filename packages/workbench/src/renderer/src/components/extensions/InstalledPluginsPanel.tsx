@@ -233,7 +233,7 @@ export function InstalledPluginsPanel({
   const [detail, setDetail] = useState<DetailTarget | null>(null)
 
   const tabItems: Array<{ value: PluginTab; label: string }> = [
-    { value: 'installed', label: `${t('skillTabInstalled')} (${plugins.length})` },
+    { value: 'installed', label: t('skillTabInstalled') },
     ...(marketplaceEnabled
       ? [{ value: 'marketplace' as const, label: t('pluginSysMarketplace') }]
       : [])

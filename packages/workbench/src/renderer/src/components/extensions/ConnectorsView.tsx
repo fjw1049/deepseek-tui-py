@@ -14,6 +14,8 @@ import { reloadMcpWithRuntime } from '../../lib/settings-reload'
 import { loadInstalledPlugins, saveInstalledPlugins, storageKey, useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
+import { MediaCatalogPanel } from './MediaCatalogPanel'
+import { MEDIA_CATALOG } from './media-catalog'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { AddMcpServerDialog } from './AddMcpServerDialog'
 import { ImportMcpJsonDialog } from './ImportMcpJsonDialog'
@@ -114,16 +116,22 @@ export function ConnectorsView(): ReactElement {
 
   // Connectors come solely from mcp.json servers.
   const connectors = useMemo<ConnectorItem[]>(() => {
+    const titleById = new Map(MEDIA_CATALOG.map((item) => [item.id, item.title]))
     const userConnectors = listMcpServers(mcpConfigText).map((server) => ({
       id: server.id,
-      name: server.id,
+      name: titleById.get(server.id) ?? server.id,
       summary: server.summary,
-      enabled: server.enabled
+      enabled: server.enabled,
+      loadPolicy: server.loadPolicy,
+      catalog: server.catalog
     }))
     const normalizedQuery = query.trim().toLowerCase()
     if (!normalizedQuery) return userConnectors
     return userConnectors.filter(
-      (c) => c.name.toLowerCase().includes(normalizedQuery) || c.summary.toLowerCase().includes(normalizedQuery)
+      (c) =>
+        c.name.toLowerCase().includes(normalizedQuery) ||
+        c.id.toLowerCase().includes(normalizedQuery) ||
+        c.summary.toLowerCase().includes(normalizedQuery)
     )
   }, [mcpConfigText, query])
 
@@ -147,6 +155,35 @@ export function ConnectorsView(): ReactElement {
         // live immediately, without forcing the user to click 重新加载.
         void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
       })
+    },
+    [mcpLoaded, mcpConfigText, readMcpConfig, t, withMcpWriteLock]
+  )
+
+  /** Upsert for media catalog (allows updating API key / re-enabling). */
+  const upsertMcpServer = useCallback(
+    async (id: string, entry: McpServerEntry): Promise<void> => {
+      if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
+      setBusyId(id)
+      setNotice(null)
+      try {
+        await withMcpWriteLock(async () => {
+          const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+          const next = mergeMcpServerIntoConfig(content, id, entry)
+          const result = await window.dsGui.setMcpConfigFile(next)
+          setMcpConfigText(next)
+          setMcpLoaded(true)
+          markInstalled(storageKey('mcp', id))
+          setNotice({
+            tone: 'success',
+            message: t('mediaCatalogSaved', { name: id, path: result.path })
+          })
+          void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+        })
+      } catch (e) {
+        setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
+      } finally {
+        setBusyId(null)
+      }
     },
     [mcpLoaded, mcpConfigText, readMcpConfig, t, withMcpWriteLock]
   )
@@ -302,6 +339,26 @@ export function ConnectorsView(): ReactElement {
                 <RefreshCw className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{t('pluginMcpRestartHint')}</span>
               </div>
+            }
+            mediaSlot={
+              <MediaCatalogPanel
+                mcpConfigText={mcpConfigText}
+                busyId={busyId}
+                onConfigure={(id, entry) => upsertMcpServer(id, entry)}
+                onToggle={(id, enabled) =>
+                  void toggleConnector(
+                    {
+                      id,
+                      name: id,
+                      summary: '',
+                      enabled: !enabled,
+                      loadPolicy: 'on_focus',
+                      catalog: 'media'
+                    },
+                    enabled
+                  )
+                }
+              />
             }
             marketplaceSlot={
               <MarketplaceBrowser

@@ -218,6 +218,10 @@ class McpManager:
         self._discovered_tools_cache_path: Path | None = None
         self._preload = McpPreloadTracker()
         self._discover_errors: dict[str, str] = {}
+        # on_focus servers: discovered only under @connector; never merged into
+        # the progressive disk cache / tool_search catalog.
+        self._focus_api_tools: dict[str, list[dict[str, Any]]] = {}
+        self._focus_tool_map: dict[str, tuple[str, str]] = {}
         if self._config_path is not None:
             from deepseek_tui.mcp.store import validate_mcp_config_path
 
@@ -234,18 +238,37 @@ class McpManager:
         if self._discovered_tools_cache is not None:
             self._preload.mark_ready_from_disk(
                 tools_count=len(self._discovered_tools_cache),
-                enabled_servers=len(self._enabled_server_names()),
+                enabled_servers=len(self._progressive_enabled_server_names()),
             )
 
     def _enabled_server_names(self) -> list[str]:
         return [name for name, cfg in self._configs.items() if cfg.enabled]
 
+    def _progressive_enabled_server_names(self) -> list[str]:
+        """Enabled servers that participate in preload / progressive catalog."""
+        return [
+            name
+            for name, cfg in self._configs.items()
+            if cfg.enabled and not cfg.is_on_focus
+        ]
+
+    def server_config(self, name: str) -> McpServerConfig | None:
+        return self._configs.get(name)
+
+    def is_on_focus_server(self, name: str) -> bool:
+        cfg = self._configs.get(name)
+        return bool(cfg and cfg.is_on_focus)
+
     def _connected_server_count(self) -> int:
         count = 0
-        for name in self._enabled_server_names():
+        for name in self._progressive_enabled_server_names():
             if self.is_server_running(name):
                 count += 1
         return count
+
+    def _restore_focus_into_tool_map(self) -> None:
+        for qualified, mapping in self._focus_tool_map.items():
+            self._tool_map[qualified] = mapping
 
     def is_server_running(self, name: str) -> bool:
         """Whether ``name``'s client subprocess/connection is live right now."""
@@ -284,7 +307,11 @@ class McpManager:
            names and typically points at an unconfigured server, so
            ``call_tool`` then fails closed at ``_ensure_client``.
         """
-        mapping = self._tool_map.get(qualified) or self._cached_tool_map.get(qualified)
+        mapping = (
+            self._tool_map.get(qualified)
+            or self._focus_tool_map.get(qualified)
+            or self._cached_tool_map.get(qualified)
+        )
         if mapping is not None:
             return mapping
         if self._match_configured_server(qualified) is not None:
@@ -320,7 +347,7 @@ class McpManager:
     def preload_status(self) -> dict[str, Any]:
         cached = self.cached_tools()
         tools_count = len(cached) if cached is not None else 0
-        enabled = len(self._enabled_server_names())
+        enabled = len(self._progressive_enabled_server_names())
         if enabled == 0:
             payload = self._preload.snapshot(
                 enabled_servers=0,
@@ -344,7 +371,7 @@ class McpManager:
         force: bool = False,
     ) -> None:
         """Background MCP connect + tool discovery after runtime serve starts."""
-        enabled = self._enabled_server_names()
+        enabled = self._progressive_enabled_server_names()
         if not enabled:
             self._preload.phase = "disabled"
             return
@@ -384,7 +411,7 @@ class McpManager:
     async def _run_startup_preload(self, timeout_s: float) -> None:
         import time
 
-        enabled = self._enabled_server_names()
+        enabled = self._progressive_enabled_server_names()
         self._preload.phase = "warming"
         self._preload.started_at_ms = int(time.time() * 1000)
         self._preload.error = None
@@ -442,7 +469,7 @@ class McpManager:
         reused), non-blocking, and skipped when no event loop is running or a
         connect task is already in flight.
         """
-        if not self._enabled_server_names():
+        if not self._progressive_enabled_server_names():
             return
         if self._connect_task is not None and not self._connect_task.done():
             return
@@ -497,15 +524,15 @@ class McpManager:
             await _emit_async(name, McpStartupStatus.ready())
             return name, None
 
-        # Lazy servers (e.g. plugin-contributed) are excluded from eager
-        # startup; they connect on first tool call / discovery instead.
+        # Lazy + on_focus servers are excluded from eager startup.
+        # on_focus only connects under ``@connector`` focus.
         start_names = [
             name
             for name, cfg in self._configs.items()
-            if cfg.enabled and not cfg.lazy
+            if cfg.enabled and not cfg.lazy and not cfg.is_on_focus
         ]
         for name, cfg in self._configs.items():
-            if not cfg.enabled:
+            if not cfg.enabled or cfg.is_on_focus:
                 await _emit_async(name, McpStartupStatus.cancelled())
                 cancelled.append(name)
 
@@ -550,6 +577,8 @@ class McpManager:
             await client.stop()
         self._clients.clear()
         self._tool_map.clear()
+        self._focus_api_tools.clear()
+        self._focus_tool_map.clear()
         # Demote live cache to stale rather than discarding — discover_tools()
         # can serve it immediately while reconnecting in the background.
         if self._discovered_tools_cache is not None:
@@ -572,18 +601,49 @@ class McpManager:
         tool_map = raw.get("tool_map")
         if isinstance(tool_map, dict):
             self._cached_tool_map = {
-                qualified: (pair[0], pair[1])
+                qualified: (str(pair[0]), str(pair[1]))
                 for qualified, pair in tool_map.items()
                 if isinstance(qualified, str)
                 and isinstance(pair, list)
                 and len(pair) == 2
             }
+        filtered_tools, filtered_map = self._strip_on_focus_from_cache(tools)
+        self._cached_tool_map = filtered_map
         if raw.get("config_hash") == self._config_hash:
             # Fresh cache — use directly.
-            self._discovered_tools_cache = list(tools)
+            self._discovered_tools_cache = filtered_tools
         else:
             # Stale cache (config changed) — serve immediately, refresh later.
-            self._stale_cache = list(tools)
+            self._stale_cache = filtered_tools
+
+    def _strip_on_focus_from_cache(
+        self, tools: list[Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
+        """Drop on_focus server tools from a disk cache payload."""
+        kept: list[dict[str, Any]] = []
+        kept_map: dict[str, tuple[str, str]] = {}
+        for entry in tools:
+            if not isinstance(entry, dict):
+                continue
+            fn = entry.get("function", entry)
+            if not isinstance(fn, dict):
+                continue
+            qualified = fn.get("name")
+            if not isinstance(qualified, str):
+                continue
+            mapping = self._cached_tool_map.get(qualified)
+            if mapping is None:
+                # Prefix match against configured servers.
+                server = self._match_configured_server(qualified)
+                if server is not None and self.is_on_focus_server(server):
+                    continue
+                kept.append(entry)
+                continue
+            if self.is_on_focus_server(mapping[0]):
+                continue
+            kept.append(entry)
+            kept_map[qualified] = mapping
+        return kept, kept_map
 
     def _persist_discovered_tools_cache_to_disk(self) -> None:
         path = self._discovered_tools_cache_path
@@ -659,26 +719,92 @@ class McpManager:
     def grouped_discovered_tools(self) -> dict[str, list[dict[str, str]]]:
         """Group cached tools by server for CLI/TUI snapshots."""
         grouped: dict[str, list[dict[str, str]]] = {}
-        for entry in self.cached_tools() or []:
-            fn = entry.get("function", entry)
-            if not isinstance(fn, dict):
-                continue
-            qualified = fn.get("name")
-            if not isinstance(qualified, str):
-                continue
-            mapping = self._resolve_qualified(qualified)
-            if mapping is None:
-                continue
-            server_name, raw_name = mapping
-            description = fn.get("description", "")
-            grouped.setdefault(server_name, []).append(
-                {
-                    "name": raw_name,
-                    "model_name": qualified,
-                    "description": description if isinstance(description, str) else "",
-                }
-            )
+
+        def _ingest(entries: list[dict[str, Any]]) -> None:
+            for entry in entries:
+                fn = entry.get("function", entry)
+                if not isinstance(fn, dict):
+                    continue
+                qualified = fn.get("name")
+                if not isinstance(qualified, str):
+                    continue
+                mapping = self._resolve_qualified(qualified)
+                if mapping is None:
+                    continue
+                server_name, raw_name = mapping
+                description = fn.get("description", "")
+                grouped.setdefault(server_name, []).append(
+                    {
+                        "name": raw_name,
+                        "model_name": qualified,
+                        "description": description if isinstance(description, str) else "",
+                    }
+                )
+
+        _ingest(self.cached_tools() or [])
+        for tools in self._focus_api_tools.values():
+            _ingest(tools)
         return grouped
+
+    async def ensure_focus_server_discovered(self, name: str) -> list[dict[str, Any]]:
+        """Connect + list tools for an ``on_focus`` server under ``@connector``.
+
+        Progressive servers fall through to normal discovery. Raises
+        ``McpError`` when the server is missing or disabled.
+        """
+        cfg = self._configs.get(name)
+        if cfg is None:
+            raise McpError(f"Unknown MCP server: {name}")
+        if not cfg.enabled:
+            raise McpError(
+                f"MCP server '{name}' is disabled. Enable it in Connectors first."
+            )
+        if not cfg.is_on_focus:
+            # Progressive path: ensure catalog is warm.
+            return await self.discover_tools()
+
+        if name in self._focus_api_tools:
+            return list(self._focus_api_tools[name])
+
+        timeout = cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]
+        try:
+            client = await asyncio.wait_for(self._ensure_client(name), timeout=timeout)
+            descriptors = await asyncio.wait_for(client.list_tools(), timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            self._discover_errors[name] = str(exc)
+            raise McpError(f"Failed to load connector '{name}': {exc}") from exc
+
+        api_tools: list[dict[str, Any]] = []
+        for qualified, server_name, raw_name, api_dict in _tools_from_descriptors(
+            name, cfg, descriptors
+        ):
+            self._focus_tool_map[qualified] = (server_name, raw_name)
+            self._tool_map[qualified] = (server_name, raw_name)
+            api_tools.append(api_dict)
+        self._focus_api_tools[name] = api_tools
+        self._discover_errors.pop(name, None)
+        return list(api_tools)
+
+    async def release_focus_server(self, name: str) -> None:
+        """Drop on_focus discovery state and disconnect after the focus turn."""
+        cfg = self._configs.get(name)
+        if cfg is None or not cfg.is_on_focus:
+            return
+        for qualified, (server, _raw) in list(self._focus_tool_map.items()):
+            if server == name:
+                self._focus_tool_map.pop(qualified, None)
+                self._tool_map.pop(qualified, None)
+        self._focus_api_tools.pop(name, None)
+        client = self._clients.pop(name, None)
+        if client is not None:
+            try:
+                await client.stop()
+            except Exception:  # noqa: BLE001
+                logger.exception("mcp_focus_disconnect_failed server=%s", name)
+
+    def focus_api_tools(self, server: str) -> list[dict[str, Any]]:
+        """API-format tools discovered for an on_focus server (may be empty)."""
+        return list(self._focus_api_tools.get(server, []))
 
     def tools_http_payload(self) -> list[dict[str, Any]]:
         """Build App Server ``list_mcp_tools`` payload from the warm cache."""
@@ -790,8 +916,11 @@ class McpManager:
                 return []
             return _tools_from_descriptors(server_name, cfg, descriptors)
 
+        # Never discover on_focus servers here — they load only under @focus.
         enabled = [
-            (name, cfg) for name, cfg in self._configs.items() if cfg.enabled
+            (name, cfg)
+            for name, cfg in self._configs.items()
+            if cfg.enabled and not cfg.is_on_focus
         ]
         all_results = await asyncio.gather(
             *(_discover_one(name, cfg) for name, cfg in enabled)
@@ -803,11 +932,17 @@ class McpManager:
             for qualified, server_name, raw_name, api_dict in server_results:
                 self._tool_map[qualified] = (server_name, raw_name)
                 api_tools.append(api_dict)
+        self._restore_focus_into_tool_map()
 
         self._discovered_tools_cache = sorted(
             api_tools, key=lambda t: t["function"]["name"]
         )
-        self._cached_tool_map = dict(self._tool_map)
+        # Persist progressive map only (exclude on_focus mappings).
+        self._cached_tool_map = {
+            q: m
+            for q, m in self._tool_map.items()
+            if q not in self._focus_tool_map
+        }
         self._persist_discovered_tools_cache_to_disk()
 
         # Schedule background retry for servers that timed out so their tools
@@ -865,6 +1000,7 @@ class McpManager:
         # parallel discovery path. Keep _stale_cache untouched as fallback.
         self._discovered_tools_cache = None
         self._tool_map.clear()
+        self._restore_focus_into_tool_map()
         try:
             await self.discover_tools()
         except Exception:  # noqa: BLE001
@@ -876,20 +1012,20 @@ class McpManager:
 
     def _rebuild_tool_map_from_cache(self) -> None:
         self._tool_map.clear()
-        if self._discovered_tools_cache is None:
-            return
-        for entry in self._discovered_tools_cache:
-            fn = entry.get("function", entry)
-            qualified = fn.get("name")
-            if not isinstance(qualified, str):
-                continue
-            # _resolve_qualified prefers the persisted (server, tool) pair
-            # and falls back to an unambiguous prefix match - string parsing
-            # is ambiguous when the server name contains underscores.
-            mapping = self._resolve_qualified(qualified)
-            if mapping is None:
-                continue
-            self._tool_map[qualified] = mapping
+        if self._discovered_tools_cache is not None:
+            for entry in self._discovered_tools_cache:
+                fn = entry.get("function", entry)
+                qualified = fn.get("name")
+                if not isinstance(qualified, str):
+                    continue
+                # _resolve_qualified prefers the persisted (server, tool) pair
+                # and falls back to an unambiguous prefix match - string parsing
+                # is ambiguous when the server name contains underscores.
+                mapping = self._resolve_qualified(qualified)
+                if mapping is None:
+                    continue
+                self._tool_map[qualified] = mapping
+        self._restore_focus_into_tool_map()
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         mapping = self._resolve_qualified(qualified_name)

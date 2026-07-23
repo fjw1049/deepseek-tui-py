@@ -1,3 +1,5 @@
+export type McpLoadPolicy = 'progressive' | 'on_focus'
+
 export type McpServerEntry = {
   command?: string
   args?: string[]
@@ -7,6 +9,10 @@ export type McpServerEntry = {
   enabled?: boolean
   disabled?: boolean
   required?: boolean
+  /** progressive (default) — catalog + tool_search; on_focus — @connector only */
+  load_policy?: McpLoadPolicy
+  /** Catalog bucket, e.g. media / sports */
+  catalog?: string
 }
 
 function serversTable(doc: Record<string, unknown>): Record<string, unknown> {
@@ -151,6 +157,12 @@ export type McpServerSummary = {
   id: string
   enabled: boolean
   summary: string
+  loadPolicy: McpLoadPolicy
+  catalog?: string
+}
+
+export function normalizeMcpLoadPolicy(value: unknown): McpLoadPolicy {
+  return value === 'on_focus' ? 'on_focus' : 'progressive'
 }
 
 function asMcpServerEntry(value: unknown): McpServerEntry {
@@ -180,13 +192,27 @@ export function listMcpServers(raw: string): McpServerSummary[] {
   return Object.entries(servers)
     .map(([id, value]) => {
       const entry = asMcpServerEntry(value)
+      const catalog = entry.catalog?.trim()
       return {
         id,
         enabled: isMcpServerEnabled(entry),
-        summary: summarizeMcpServer(entry)
+        summary: summarizeMcpServer(entry),
+        loadPolicy: normalizeMcpLoadPolicy(entry.load_policy),
+        ...(catalog ? { catalog } : {})
       }
     })
     .sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** Read a single server entry (empty object if missing). */
+export function getMcpServerEntry(raw: string, serverId: string): McpServerEntry {
+  try {
+    const doc = parseMcpConfigDocument(raw)
+    const servers = serversTable(doc)
+    return asMcpServerEntry(servers[serverId])
+  } catch {
+    return {}
+  }
 }
 
 export function setMcpServerEnabled(raw: string, serverId: string, enabled: boolean): string {

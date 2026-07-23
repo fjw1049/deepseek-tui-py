@@ -70,6 +70,14 @@ import {
   isMediaCaptureSupported,
   loadComposerAsrConfig
 } from '../../lib/load-composer-asr-config'
+import {
+  buildComposerConnectorRows,
+  diskServersFromMcpConfig,
+  filterComposerConnectorRows,
+  mediaConnectorTitle,
+  type ComposerConnectorRow,
+  type ComposerConnectorSection
+} from '../../lib/composer-connectors'
 
 export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
 
@@ -260,12 +268,11 @@ export function FloatingComposer({
   // MCP connectors mirror skills: listed from the runtime (so we know live
   // connection state), picked as an inline chip, and prepended as a leading
   // `@name` token on send. ``connected`` drives the green/red status dot.
-  const [composerConnectors, setComposerConnectors] = useState<
-    Array<{ id: string; summary: string; connected: boolean }>
-  >([])
+  const [composerConnectors, setComposerConnectors] = useState<ComposerConnectorRow[]>([])
   const [connectorsLoading, setConnectorsLoading] = useState(false)
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
+  const [connectorSection, setConnectorSection] = useState<ComposerConnectorSection>('installed')
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
@@ -624,6 +631,7 @@ export function FloatingComposer({
       setPlusSubmenu(null)
       setSkillQuery('')
       setConnectorQuery('')
+      setConnectorSection('installed')
       setPluginQuery('')
     }
   }, [plusMenuOpen])
@@ -679,40 +687,55 @@ export function FloatingComposer({
     focusComposer()
   }
 
-  const loadComposerConnectors = useCallback((): void => {
-    if (connectorsLoaded || connectorsLoading) return
-    // Connection state only exists once the runtime is up; short-circuit
-    // otherwise (the panel then shows the "connect runtime" empty state).
-    if (!runtimeReady) {
-      setConnectorsLoaded(true)
-      return
-    }
-    setConnectorsLoading(true)
-    void window.dsGui
-      .runtimeRequest('/v1/mcp/servers', 'GET')
-      .then((result) => {
-        if (!result.ok) return
+  const loadComposerConnectors = useCallback(
+    (opts?: { force?: boolean }): void => {
+      if (!opts?.force && (connectorsLoaded || connectorsLoading)) return
+      setConnectorsLoading(true)
+
+      const loadDisk = async () => {
+        if (typeof window.dsGui?.getMcpConfigFile !== 'function') return []
         try {
-          const parsed = JSON.parse(result.body) as {
-            servers?: Array<{ name: string; transport?: string; connected?: boolean }>
-          }
-          setComposerConnectors(
-            (parsed.servers ?? []).map((s) => ({
-              id: s.name,
-              summary: s.transport ?? '',
-              connected: s.connected === true
-            }))
-          )
+          const file = await window.dsGui.getMcpConfigFile()
+          return diskServersFromMcpConfig(file.content ?? '')
         } catch {
-          // Malformed JSON: leave the list as-is rather than crashing the menu.
+          return []
         }
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        setConnectorsLoaded(true)
-        setConnectorsLoading(false)
-      })
-  }, [runtimeReady, connectorsLoaded, connectorsLoading])
+      }
+
+      const loadRuntime = async () => {
+        if (!runtimeReady) return []
+        try {
+          const result = await window.dsGui.runtimeRequest('/v1/mcp/servers', 'GET')
+          if (!result.ok) return []
+          const parsed = JSON.parse(result.body) as {
+            servers?: Array<{
+              name: string
+              transport?: string
+              connected?: boolean
+              enabled?: boolean
+              load_policy?: string
+              catalog?: string | null
+            }>
+          }
+          return parsed.servers ?? []
+        } catch {
+          return []
+        }
+      }
+
+      void Promise.all([loadDisk(), loadRuntime()])
+        .then(([diskServers, runtimeServers]) => {
+          setComposerConnectors(
+            buildComposerConnectorRows({ diskServers, runtimeServers })
+          )
+        })
+        .finally(() => {
+          setConnectorsLoaded(true)
+          setConnectorsLoading(false)
+        })
+    },
+    [runtimeReady, connectorsLoaded, connectorsLoading]
+  )
 
   const handlePickConnector = (id: string): void => {
     // Mirror handlePickSkill: hold the connector as an inline chip; `@id ` is
@@ -1432,11 +1455,15 @@ export function FloatingComposer({
                   setFocusConnector(null)
                   focusComposer()
                 }}
-                title={t('composerConnectorFocus', { name: focusConnector })}
+                title={t('composerConnectorFocus', {
+                  name: mediaConnectorTitle(focusConnector) ?? focusConnector
+                })}
                 className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(16,185,129,0.4)] bg-[rgba(16,185,129,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#10b981] transition hover:bg-[rgba(16,185,129,0.22)]"
               >
                 <Plug className="h-3 w-3 shrink-0" strokeWidth={2} />
-                <span className="truncate">{focusConnector}</span>
+                <span className="truncate">
+                  {mediaConnectorTitle(focusConnector) ?? focusConnector}
+                </span>
                 <X
                   className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
                   strokeWidth={2}
@@ -1597,12 +1624,12 @@ export function FloatingComposer({
                       type="button"
                       onMouseEnter={() => {
                         setPlusSubmenu('connectors')
-                        loadComposerConnectors()
+                        loadComposerConnectors({ force: true })
                       }}
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => {
                         setPlusSubmenu('connectors')
-                        loadComposerConnectors()
+                        loadComposerConnectors({ force: true })
                       }}
                       className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
                         plusSubmenu === 'connectors'
@@ -1757,6 +1784,28 @@ export function FloatingComposer({
 
                   {plusSubmenu === 'connectors' ? (
                     <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                      <div className="mb-2 flex shrink-0 gap-1 rounded-xl bg-ds-subtle/70 p-0.5">
+                        {(
+                          [
+                            ['installed', t('skillTabInstalled')],
+                            ['media', t('mediaCatalogTab')]
+                          ] as const
+                        ).map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => setConnectorSection(value)}
+                            className={`min-w-0 flex-1 rounded-[10px] px-2 py-1.5 text-[12px] font-semibold transition ${
+                              connectorSection === value
+                                ? 'bg-ds-card text-ds-ink shadow-sm'
+                                : 'text-ds-muted hover:text-ds-ink'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
@@ -1772,44 +1821,53 @@ export function FloatingComposer({
                           <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
                             <Loader2 className="h-4 w-4 animate-spin" />
                           </div>
-                        ) : !runtimeReady ? (
-                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {t('composerConnectorsNeedRuntime')}
-                          </div>
                         ) : (
                           (() => {
-                            const q = connectorQuery.trim().toLowerCase()
-                            const filtered = composerConnectors.filter(
-                              (c) =>
-                                !q ||
-                                c.id.toLowerCase().includes(q) ||
-                                c.summary.toLowerCase().includes(q)
+                            const filtered = filterComposerConnectorRows(
+                              composerConnectors,
+                              connectorSection,
+                              connectorQuery
                             )
                             if (filtered.length === 0) {
                               return (
                                 <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                                  {t('composerConnectorsEmpty')}
+                                  {connectorSection === 'media'
+                                    ? t('mediaCatalogEmpty')
+                                    : !runtimeReady
+                                      ? t('composerConnectorsNeedRuntime')
+                                      : t('composerConnectorsEmpty')}
                                 </div>
                               )
                             }
-                            return filtered.map((connector) => (
+                            return filtered.map((connector) => {
+                              // 已安装: enabled in mcp.json (connection optional for pick).
+                              // 媒体: configured + enabled.
+                              const selectable =
+                                connectorSection === 'media'
+                                  ? !connector.needsConfig && connector.enabled
+                                  : connector.enabled
+                              return (
                               <button
                                 key={connector.id}
                                 type="button"
-                                disabled={!connector.connected}
+                                disabled={!selectable}
                                 title={
-                                  connector.connected
-                                    ? undefined
-                                    : t('composerConnectorDisconnected', { name: connector.id })
+                                  connector.needsConfig
+                                    ? t('composerConnectorNeedsMediaConfig', { name: connector.title })
+                                    : selectable
+                                      ? connector.loadPolicy === 'on_focus'
+                                        ? t('composerConnectorOnFocusHint')
+                                        : undefined
+                                      : t('composerConnectorDisconnected', { name: connector.title })
                                 }
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => {
-                                  if (!connector.connected) return
+                                  if (!selectable) return
                                   handlePickConnector(connector.id)
                                   setPlusMenuOpen(false)
                                 }}
                                 className={`block w-full rounded-xl px-2.5 py-2 text-left transition ${
-                                  connector.connected
+                                  selectable
                                     ? 'hover:bg-ds-hover'
                                     : 'cursor-not-allowed opacity-40'
                                 }`}
@@ -1817,20 +1875,32 @@ export function FloatingComposer({
                                 <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
                                   <span
                                     className={`h-2 w-2 shrink-0 rounded-full ${
-                                      connector.connected ? 'bg-emerald-500' : 'bg-red-500'
+                                      connector.connected
+                                        ? 'bg-emerald-500'
+                                        : connector.needsConfig
+                                          ? 'bg-ds-faint'
+                                          : connector.loadPolicy === 'on_focus'
+                                            ? 'bg-amber-400'
+                                            : 'bg-red-500'
                                     }`}
                                     aria-hidden
                                   />
                                   <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                                  <span className="truncate">{connector.id}</span>
+                                  <span className="truncate">{connector.title}</span>
+                                  {connector.section === 'media' ? (
+                                    <span className="shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
+                                      {connector.needsConfig
+                                        ? t('mediaCatalogDisabled')
+                                        : t('composerConnectorOnFocusHint')}
+                                    </span>
+                                  ) : null}
                                 </div>
-                                {connector.summary ? (
-                                  <div className="mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 font-mono text-ds-faint">
-                                    {connector.summary}
-                                  </div>
-                                ) : null}
+                                <div className="mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 text-ds-faint">
+                                  {connector.summary || connector.id}
+                                </div>
                               </button>
-                            ))
+                              )
+                            })
                           })()
                         )}
                       </div>

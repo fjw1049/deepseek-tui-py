@@ -1,17 +1,21 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Cable, Loader2, Trash2 } from 'lucide-react'
+import { Loader2, Trash2 } from 'lucide-react'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import { ConnectorIcon } from './connector-icons'
+import type { McpLoadPolicy } from '../../lib/mcp-json-merge'
 
 export type ConnectorItem = {
   id: string
   name: string
   summary: string
   enabled: boolean
+  loadPolicy?: McpLoadPolicy
+  catalog?: string
 }
 
-type ConnectorTab = 'installed' | 'marketplace'
+type ConnectorTab = 'installed' | 'media' | 'marketplace'
 
 type Props = {
   connectors: ConnectorItem[]
@@ -21,15 +25,14 @@ type Props = {
   onDelete: (connector: ConnectorItem) => void
   /** Content rendered when the ModelScope 市场 tab is active. */
   marketplaceSlot?: ReactElement
+  /** Content for the 媒体 catalog tab. */
+  mediaSlot?: ReactElement
   /** Optional content pinned to the right of the tab row (e.g. a hint). */
   headerRight?: ReactElement
 }
 
 /**
- * Installed-connectors list with 已安装 / ModelScope 市场 segmented tabs, mirroring
- * the skills panel. The 已安装 tab shows the mcp.json servers with a delete
- * action on hover and an enable/disable toggle. The marketplace tab renders
- * `marketplaceSlot` (the ModelScope browser).
+ * Installed-connectors list with 已安装 / 媒体 / ModelScope 市场 tabs.
  */
 export function InstalledConnectorsPanel({
   connectors,
@@ -38,13 +41,15 @@ export function InstalledConnectorsPanel({
   onToggle,
   onDelete,
   marketplaceSlot,
+  mediaSlot,
   headerRight
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<ConnectorTab>('installed')
 
   const tabItems = [
-    { value: 'installed' as const, label: `${t('skillTabInstalled')} (${connectors.length})` },
+    { value: 'installed' as const, label: t('skillTabInstalled') },
+    { value: 'media' as const, label: t('mediaCatalogTab') },
     { value: 'marketplace' as const, label: t('marketplaceTitle') }
   ]
 
@@ -55,7 +60,9 @@ export function InstalledConnectorsPanel({
         {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
       </div>
 
-      {tab === 'marketplace' ? null : loading ? (
+      {tab === 'media' ? (
+        mediaSlot ?? null
+      ) : tab === 'marketplace' ? null : loading ? (
         <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">
           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
           {t('skillsLoading')}
@@ -104,13 +111,19 @@ function ConnectorRow({
     event.stopPropagation()
     onDelete()
   }
+  const onFocus = connector.loadPolicy === 'on_focus'
   return (
     <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <Cable className="h-4.5 w-4.5" strokeWidth={1.6} />
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-ds-border bg-ds-card text-ds-muted">
+        <ConnectorIcon connector={connector} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-semibold text-ds-ink">{connector.name}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-[15px] font-semibold text-ds-ink">{connector.name}</div>
+          <span className="shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
+            {onFocus ? t('connectorLoadOnFocus') : t('connectorLoadProgressive')}
+          </span>
+        </div>
         <p className="mt-0.5 line-clamp-1 font-mono text-[12px] leading-5 text-ds-muted" title={connector.summary}>
           {connector.summary}
         </p>

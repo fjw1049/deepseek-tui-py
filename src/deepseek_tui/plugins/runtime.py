@@ -83,6 +83,29 @@ class CompositeMcpManager(McpManager):
         for manager in self._managers:
             manager.schedule_background_discover()
 
+    def server_config(self, name: str):  # type: ignore[override]
+        manager = self._manager_for_server(name)
+        return manager.server_config(name) if manager else None
+
+    def is_on_focus_server(self, name: str) -> bool:
+        manager = self._manager_for_server(name)
+        return manager.is_on_focus_server(name) if manager else False
+
+    def focus_api_tools(self, server: str) -> list[dict[str, Any]]:
+        manager = self._manager_for_server(server)
+        return manager.focus_api_tools(server) if manager else []
+
+    async def ensure_focus_server_discovered(self, name: str) -> list[dict[str, Any]]:
+        manager = self._manager_for_server(name)
+        if manager is None:
+            raise McpError(f"Unknown MCP server: {name}")
+        return await manager.ensure_focus_server_discovered(name)
+
+    async def release_focus_server(self, name: str) -> None:
+        manager = self._manager_for_server(name)
+        if manager is not None:
+            await manager.release_focus_server(name)
+
     async def discover_tools(self) -> list[dict[str, Any]]:
         groups = await asyncio.gather(*(manager.discover_tools() for manager in self._managers))
         return [tool for group in groups for tool in group]

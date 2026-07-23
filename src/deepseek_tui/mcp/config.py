@@ -13,6 +13,12 @@ DEFAULT_TIMEOUTS: dict[str, float] = {
     "read_timeout": 120.0,
 }
 
+# progressive — startup preload + catalog + tool_search (default / 已安装)
+# on_focus — never preload or progressive-search; only after ``@connector``
+LOAD_POLICY_PROGRESSIVE = "progressive"
+LOAD_POLICY_ON_FOCUS = "on_focus"
+VALID_LOAD_POLICIES = frozenset({LOAD_POLICY_PROGRESSIVE, LOAD_POLICY_ON_FOCUS})
+
 
 @dataclass(slots=True)
 class McpServerConfig:
@@ -37,6 +43,14 @@ class McpServerConfig:
     # Declared capability hints (e.g. from a plugin manifest's
     # ``permissions``) consumed by the approval presentation layer.
     capabilities: list[str] = field(default_factory=list)
+    # progressive (default) vs on_focus (media/sports catalogs — @ only).
+    load_policy: str = LOAD_POLICY_PROGRESSIVE
+    # Optional catalog bucket id, e.g. ``media`` / ``sports``.
+    catalog: str | None = None
+
+    @property
+    def is_on_focus(self) -> bool:
+        return self.load_policy == LOAD_POLICY_ON_FOCUS
 
 
 @dataclass(slots=True)
@@ -120,7 +134,25 @@ def _server_from_raw(
         if enabled_tools or disabled_tools
         else None,
         lazy=bool(raw["lazy"]) if "lazy" in raw else None,
+        load_policy=_parse_load_policy(raw.get("load_policy")),
+        catalog=_optional_string(raw.get("catalog")),
     )
+
+
+def _parse_load_policy(value: Any) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in VALID_LOAD_POLICIES:
+            return normalized
+    return LOAD_POLICY_PROGRESSIVE
+
+
+def _optional_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            return text
+    return None
 
 
 def _string_list(value: Any) -> list[str]:

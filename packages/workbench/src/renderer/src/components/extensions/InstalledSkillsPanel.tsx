@@ -48,7 +48,7 @@ export function InstalledSkillsPanel({
   const [tab, setTab] = useState<SkillTab>('installed')
 
   const tabItems = [
-    { value: 'installed' as const, label: `${t('skillTabInstalled')} (${skills.length})` },
+    { value: 'installed' as const, label: t('skillTabInstalled') },
     { value: 'marketplace' as const, label: t('marketplaceTitle') }
   ]
 
