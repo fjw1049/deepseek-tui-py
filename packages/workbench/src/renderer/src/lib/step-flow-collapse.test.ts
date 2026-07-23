@@ -4,8 +4,11 @@ import {
   batchStatus,
   buildProbeBatchMeta,
   collapseStepFlowProbes,
+  formatProbeComposeTitleSegment,
   isMergeableProbeTool,
   probeComposeSegments,
+  probeComposeTitleIsFullyConcrete,
+  probeComposeTitleSegments,
   probeToolKind
 } from './step-flow-collapse'
 import { timelineToFlowItems } from './task-step-flow'
@@ -64,6 +67,71 @@ describe('probeToolKind / compose', () => {
     ])
     expect(entries).toHaveLength(4)
     expect(preview).toBe('a.py · foo · b.py · bar')
+  })
+
+  it('uses concrete targets only when each kind appears once', () => {
+    const { compose, entries } = buildProbeBatchMeta([
+      { toolName: 'read_file', detail: '…/plan.py' },
+      { toolName: 'list_dir', detail: '…/model_runners' },
+      { toolName: 'grep', detail: 'plan|Plan · apps/routes' }
+    ])
+    const segments = probeComposeTitleSegments(entries, compose)
+    expect(segments).toEqual([
+      {
+        key: 'toolBatchComposeRead',
+        concrete: true,
+        target: '…/plan.py',
+        count: 1
+      },
+      {
+        key: 'toolBatchComposeList',
+        concrete: true,
+        target: '…/model_runners',
+        count: 1
+      },
+      {
+        key: 'toolBatchComposeGrep',
+        concrete: true,
+        target: 'plan|Plan · apps/routes',
+        count: 1
+      }
+    ])
+    expect(probeComposeTitleIsFullyConcrete(segments)).toBe(true)
+  })
+
+  it('keeps count form when a kind appears more than once', () => {
+    const { compose, entries } = buildProbeBatchMeta([
+      { toolName: 'read_file', detail: 'a.py' },
+      { toolName: 'search_files', detail: 'foo' },
+      { toolName: 'read_file', detail: 'b.py' }
+    ])
+    const segments = probeComposeTitleSegments(entries, compose)
+    expect(segments).toEqual([
+      { key: 'toolBatchComposeRead', concrete: false, target: '', count: 2 },
+      { key: 'toolBatchComposeSearch', concrete: true, target: 'foo', count: 1 }
+    ])
+    expect(probeComposeTitleIsFullyConcrete(segments)).toBe(false)
+    const t = (key: string, opts?: Record<string, unknown>) => {
+      if (key === 'toolBatchComposeReadCount') return `读 ${opts?.count} 项`
+      if (key === 'toolBatchComposeSearch') return `搜 ${opts?.target}`
+      return key
+    }
+    expect(segments.map((seg) => formatProbeComposeTitleSegment(seg, t)).join(' · ')).toBe(
+      '读 2 项 · 搜 foo'
+    )
+  })
+
+  it('falls back to counts when a singleton kind has no target', () => {
+    const { compose, entries } = buildProbeBatchMeta([
+      { toolName: 'read_file', label: '读取文件' },
+      { toolName: 'list_dir', label: '列出目录' }
+    ])
+    const segments = probeComposeTitleSegments(entries, compose)
+    expect(segments).toEqual([
+      { key: 'toolBatchComposeRead', concrete: false, target: '', count: 1 },
+      { key: 'toolBatchComposeList', concrete: false, target: '', count: 1 }
+    ])
+    expect(probeComposeTitleIsFullyConcrete(segments)).toBe(false)
   })
 
   it('never uses humanized tool title as target/preview', () => {

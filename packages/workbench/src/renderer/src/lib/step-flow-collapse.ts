@@ -111,18 +111,87 @@ export function addProbeCompose(compose: ProbeBatchCompose, kind: ProbeBatchKind
   else compose.others += 1
 }
 
+const COMPOSE_KIND_ORDER: Array<{
+  kind: ProbeBatchKind
+  key: ProbeComposeSegmentKey
+  countKey: keyof ProbeBatchCompose
+}> = [
+  { kind: 'read', key: 'toolBatchComposeRead', countKey: 'reads' },
+  { kind: 'search', key: 'toolBatchComposeSearch', countKey: 'searches' },
+  { kind: 'list', key: 'toolBatchComposeList', countKey: 'lists' },
+  { kind: 'grep', key: 'toolBatchComposeGrep', countKey: 'greps' },
+  { kind: 'web', key: 'toolBatchComposeWeb', countKey: 'webs' },
+  { kind: 'other', key: 'toolBatchComposeOther', countKey: 'others' }
+]
+
 /** Ordered non-zero compose segments for i18n title assembly. */
 export function probeComposeSegments(
   compose: ProbeBatchCompose
 ): Array<{ key: ProbeComposeSegmentKey; count: number }> {
   const out: Array<{ key: ProbeComposeSegmentKey; count: number }> = []
-  if (compose.reads > 0) out.push({ key: 'toolBatchComposeRead', count: compose.reads })
-  if (compose.searches > 0) out.push({ key: 'toolBatchComposeSearch', count: compose.searches })
-  if (compose.lists > 0) out.push({ key: 'toolBatchComposeList', count: compose.lists })
-  if (compose.greps > 0) out.push({ key: 'toolBatchComposeGrep', count: compose.greps })
-  if (compose.webs > 0) out.push({ key: 'toolBatchComposeWeb', count: compose.webs })
-  if (compose.others > 0) out.push({ key: 'toolBatchComposeOther', count: compose.others })
+  for (const { key, countKey } of COMPOSE_KIND_ORDER) {
+    const count = compose[countKey]
+    if (count > 0) out.push({ key, count })
+  }
   return out
+}
+
+export type ProbeComposeTitleSegment = {
+  key: ProbeComposeSegmentKey
+  /** True when the segment names a real path/query instead of a count. */
+  concrete: boolean
+  /** Concrete path/query when `concrete`; otherwise unused. */
+  target: string
+  count: number
+}
+
+/**
+ * Title segments for *mixed* probe batches.
+ * - kind count === 1 and a concrete target exists → “读 plan.py”
+ * - kind count > 1 (or no target) → “读 2 项”
+ * Same-tool batches do not use this.
+ */
+export function probeComposeTitleSegments(
+  entries: ProbeBatchEntry[],
+  compose?: ProbeBatchCompose
+): ProbeComposeTitleSegment[] {
+  const grouped = new Map<ProbeBatchKind, string[]>()
+  for (const entry of entries) {
+    const target = entry.target.trim()
+    if (!target) continue
+    const list = grouped.get(entry.kind) ?? []
+    list.push(target)
+    grouped.set(entry.kind, list)
+  }
+  const out: ProbeComposeTitleSegment[] = []
+  for (const { kind, key, countKey } of COMPOSE_KIND_ORDER) {
+    const targets = grouped.get(kind) ?? []
+    const count = compose?.[countKey] ?? (targets.length > 0 ? targets.length : 0)
+    if (count <= 0) continue
+    if (count === 1 && targets.length === 1) {
+      out.push({ key, concrete: true, target: targets[0]!, count })
+    } else {
+      out.push({ key, concrete: false, target: '', count })
+    }
+  }
+  return out
+}
+
+/** True when every mixed-title segment is a concrete target (no count leftovers). */
+export function probeComposeTitleIsFullyConcrete(
+  segments: ProbeComposeTitleSegment[]
+): boolean {
+  return segments.length > 0 && segments.every((seg) => seg.concrete)
+}
+
+/** Render one mixed-batch title segment via i18n (target form vs “N 项” count). */
+export function formatProbeComposeTitleSegment(
+  seg: ProbeComposeTitleSegment,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  return seg.concrete
+    ? t(seg.key, { target: seg.target })
+    : t(`${seg.key}Count`, { count: seg.count })
 }
 
 export function probeKindLabelKey(kind: ProbeBatchKind): ProbeKindLabelKey {
@@ -189,9 +258,9 @@ export function batchStatus(items: StepFlowItem[]): StepFlowStatus {
 
 /**
  * Fold runs of ≥2 consecutive probes into one batch row.
- * Same-name runs keep that tool label; mixed read/search/grep runs carry
- * compose counts (`batchCompose`) for a “读 2 · 搜 2” title. Narration /
- * lifecycle / queued rows flush the buffer.
+ * Same-name runs keep that tool label (“读取文件 · N 项”); mixed
+ * read/search/grep runs carry compose + entries for a target-first title
+ * (“读 a.py · 搜 foo”). Narration / lifecycle / queued rows flush the buffer.
  */
 export function collapseStepFlowProbes(items: StepFlowItem[]): StepFlowItem[] {
   if (items.length < 2) return items

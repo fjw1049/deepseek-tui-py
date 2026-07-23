@@ -74,8 +74,10 @@ import { humanizeAgentType } from '../../lib/agent-type-label'
 import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
 import {
   buildProbeBatchMeta,
+  formatProbeComposeTitleSegment,
   isMergeableProbeTool,
-  probeComposeSegments
+  probeComposeTitleIsFullyConcrete,
+  probeComposeTitleSegments
 } from '../../lib/step-flow-collapse'
 import {
   ToolCard,
@@ -1897,8 +1899,9 @@ function pickToolBatchIcon(toolName: string): LucideIcon {
 
 /**
  * A folded batch of consecutive same-name read-only probes (e.g. "读取文件 · 5
- * 项"). Collapsed by default with neutral styling so the work trace stays calm;
- * expanding reveals each call as its regular lightweight `ToolCard` row.
+ * 项"), or a mixed probe run whose title lists concrete targets
+ * (“读 plan.py · 列出 cores”). Collapsed by default; expanding reveals each
+ * call as its regular lightweight `ToolCard` row.
  */
 function ToolBatchPanel({
   toolName,
@@ -1926,18 +1929,24 @@ function ToolBatchPanel({
     })
     return buildProbeBatchMeta(rows)
   }, [blocks])
-  const composeTitle = mixed
-    ? probeComposeSegments(meta.compose)
-        .map((seg) => t(seg.key, { count: seg.count }))
-        .join(' · ')
-    : ''
+  // Only mixed batches use the compose title (“读 x · 列出 y”). Same-tool
+  // batches keep the previous “读取文件 · N 项” + preview-subtitle layout.
+  const composeSegments = mixed
+    ? probeComposeTitleSegments(meta.entries, meta.compose)
+    : []
+  const composeTitle = composeSegments
+    .map((seg) => formatProbeComposeTitleSegment(seg, t))
+    .join(' · ')
   const label = mixed
     ? composeTitle || t('toolBatchProbeLabel')
     : humanizeToolName(toolName) || toolName
   const title = mixed
     ? label
     : t('toolBatchTitle', { label, count: blocks.length })
-  const preview = meta.preview
+  // Hide the muted preview only when every mixed segment already names its
+  // target. If any kind stays as a count (“读 2 项”), keep the path preview.
+  const preview =
+    mixed && probeComposeTitleIsFullyConcrete(composeSegments) ? '' : meta.preview
 
   return (
     <div className="overflow-hidden rounded-[12px] border border-ds-border-muted/50 bg-ds-card/40">
@@ -1949,7 +1958,9 @@ function ToolBatchPanel({
       >
         <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13.5px] leading-6 text-ds-muted">{title}</span>
+          <span className="block truncate text-[13.5px] leading-6 text-ds-muted" title={title}>
+            {title}
+          </span>
           {!expanded && preview ? (
             <span className="mt-0.5 block truncate text-[11px] leading-4 text-ds-faint" title={preview}>
               {preview}

@@ -2,7 +2,9 @@ import { useState, type ReactElement, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
-  probeComposeSegments,
+  formatProbeComposeTitleSegment,
+  probeComposeTitleIsFullyConcrete,
+  probeComposeTitleSegments,
   probeKindLabelKey,
   type ProbeBatchCompose,
   type ProbeBatchEntry
@@ -44,9 +46,9 @@ export type StepFlowItem = {
   batchCount?: number
   /** True when the batch mixed different probe tools (read + search + …). */
   batchMixed?: boolean
-  /** Per-kind counts for mixed-batch titles (`读 2 · 搜 2`). */
+  /** Per-kind counts for mixed-batch titles (`读 a.py · 搜 foo`). */
   batchCompose?: ProbeBatchCompose
-  /** Typed targets for expand body / preview. */
+  /** Typed targets for expand body / mixed-batch title. */
   batchEntries?: ProbeBatchEntry[]
 }
 
@@ -141,12 +143,16 @@ function summaryText(item: StepFlowItem): string | null {
 }
 
 function batchComposeTitle(
+  entries: ProbeBatchEntry[] | undefined,
   compose: ProbeBatchCompose | undefined,
   t: (key: string, opts?: Record<string, unknown>) => string
-): string | null {
-  if (!compose) return null
-  const parts = probeComposeSegments(compose).map((seg) => t(seg.key, { count: seg.count }))
-  return parts.length > 0 ? parts.join(' · ') : null
+): { title: string; fullyConcrete: boolean } | null {
+  const segments = probeComposeTitleSegments(entries ?? [], compose)
+  if (segments.length === 0) return null
+  return {
+    title: segments.map((seg) => formatProbeComposeTitleSegment(seg, t)).join(' · '),
+    fullyConcrete: probeComposeTitleIsFullyConcrete(segments)
+  }
 }
 
 function StepRow({
@@ -163,25 +169,30 @@ function StepRow({
   const isNarration = item.variant === 'narration'
   const isBatch = item.variant === 'batch'
   const batchTool = item.batchToolName || item.toolName || ''
-  const composeTitle =
-    isBatch && item.batchMixed ? batchComposeTitle(item.batchCompose, t) : null
-  const batchLabel = composeTitle
-    ? composeTitle
+  // Compose titles are only for mixed probe runs; same-tool batches keep
+  // “读取文件 · N 项” with targets in the subtitle preview.
+  const compose =
+    isBatch && item.batchMixed
+      ? batchComposeTitle(item.batchEntries, item.batchCompose, t)
+      : null
+  const batchLabel = compose
+    ? compose.title
     : item.batchMixed
       ? t('toolBatchProbeLabel')
       : humanizeToolName(batchTool) || item.label || batchTool
   const title = isBatch
-    ? composeTitle
+    ? compose
       ? batchLabel
       : t('toolBatchTitle', {
           label: batchLabel,
           count: item.batchCount ?? 0
         })
     : item.label
+  const titleUsesTargets = Boolean(compose?.fullyConcrete)
   const batchPreview =
-    isBatch && item.detail?.trim()
+    isBatch && !titleUsesTargets && item.detail?.trim()
       ? item.detail.trim()
-      : isBatch && item.batchEntries?.length
+      : isBatch && !titleUsesTargets && item.batchEntries?.length
         ? item.batchEntries
             .map((e) => e.target)
             .filter(Boolean)
