@@ -8,6 +8,7 @@ import os
 import pty
 import re
 import shlex
+import signal
 import uuid
 from asyncio.subprocess import Process
 from pathlib import Path
@@ -156,6 +157,19 @@ class ExecShellTool(ToolSpec):
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout_ms / 1000.0
             )
+        except asyncio.CancelledError:
+            # Hard turn cancel (turn_task.cancel()) lands here while the
+            # subprocess is still running. wait_for re-raises CancelledError
+            # (not TimeoutError), so without this branch the child is
+            # orphaned. Kill the whole process group (child + descendants
+            # like the `sleep` under `bash -c`) before re-raising so the
+            # cancel tears down the tree, not just the direct child.
+            _kill_process_group(process)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, ProcessLookupError):
+                pass
+            raise
         except asyncio.TimeoutError:
             logger.warning(
                 "exec_shell_timeout command=%r timeout_ms=%d pid=%s",
@@ -172,16 +186,14 @@ class ExecShellTool(ToolSpec):
 
                 record_host_timeout(context, _url)
             # Kill so we don't leak a zombie when the model fires off a
-            # runaway command. Best-effort terminate first to give Python
-            # signal handlers a chance, then fall back to kill.
+            # runaway command. Kill the whole process group (child +
+            # descendants) - a bare terminate() only reaches the direct child
+            # and orphans grandchildren like `sleep` under `bash -c`.
+            _kill_process_group(process)
             try:
-                process.terminate()
                 await asyncio.wait_for(process.wait(), timeout=1.0)
             except (ProcessLookupError, asyncio.TimeoutError):
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
+                pass
             return ToolResult(
                 success=False,
                 content=(
@@ -803,16 +815,26 @@ async def _run_pty(
     timed_out = False
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout_ms / 1000)
+    except asyncio.CancelledError:
+        # Hard turn cancel (turn_task.cancel()) lands here while the PTY
+        # child is still running. wait_for re-raises CancelledError (not
+        # TimeoutError), so without this branch the forked child (its own
+        # session via setsid) is orphaned. Kill the whole process group
+        # (child + descendants) before re-raising so the cancel tears down
+        # the tree, not just the direct child.
+        _kill_pty_process_group(proc)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        raise
     except asyncio.TimeoutError:
         timed_out = True
-        proc.kill()
+        _kill_pty_process_group(proc)
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
         except asyncio.TimeoutError:
-            try:
-                os.kill(proc.pid, 9)
-            except ProcessLookupError:
-                pass
+            pass
     text = proc.output.decode("utf-8", errors="replace")
     if timed_out:
         return ToolResult(
@@ -952,7 +974,47 @@ async def _spawn_from_exec_env(exec_env: ExecEnv) -> Process:
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        # New session so the child + its descendants (e.g. `bash -c "sleep 30"`
+        # -> `sleep`) share one process group. Kill paths then use killpg() to
+        # tear down the whole tree on cancel/timeout instead of orphaning the
+        # grandchildren (process.kill() only reaches the direct child).
+        start_new_session=True,
     )
+
+
+def _kill_process_group(proc: Process) -> None:
+    """Kill the child's whole process group, falling back to the child only.
+
+    Pairs with ``start_new_session=True`` in :func:`_spawn_from_exec_env`: the
+    child is its own session/group leader, so ``killpg(getpgid(pid))`` reaches
+    descendants a bare ``proc.kill()`` would orphan. Best-effort - the process
+    may already be reaped (ProcessLookupError), in which case there is nothing
+    to kill.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+def _kill_pty_process_group(proc: PtyProcess) -> None:
+    """Kill the PTY child's whole process group.
+
+    The PTY child is forked with ``os.setsid()`` so it is its own session
+    leader (``getpgid(pid) == pid``); ``killpg`` reaches descendants (e.g. the
+    ``sleep`` under ``bash -c``) that a bare ``proc.kill()`` (single-process
+    SIGTERM) would orphan. Best-effort against reaped processes.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            os.kill(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 async def spawn_sandboxed_shell(

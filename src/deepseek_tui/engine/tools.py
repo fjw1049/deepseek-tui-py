@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import signal
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -496,6 +498,23 @@ def execute_tool_search(
     )
 
 
+def _kill_code_exec_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the code_execution child's whole process group.
+
+    Pairs with ``start_new_session=True``: the child is its own session/group
+    leader, so ``killpg(getpgid(pid))`` reaches descendants (user code may
+    spawn its own children) that a bare ``proc.kill()`` would orphan.
+    Best-effort against already-reaped processes.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
 async def execute_code_execution_tool(
     input_data: dict[str, Any], workspace: Path
 ) -> ToolResult:
@@ -514,20 +533,35 @@ async def execute_code_execution_tool(
                 cwd=str(workspace),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                # New session so user code that spawns children (e.g.
+                # subprocess.run("sleep 30")) shares one process group; the
+                # kill paths then use killpg() to tear down the whole tree
+                # instead of orphaning those grandchildren.
+                start_new_session=True,
             ),
             timeout=120,
         )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             proc.communicate(), timeout=120
         )
+    except asyncio.CancelledError:
+        # Hard turn cancel (turn_task.cancel()) propagates here while the
+        # subprocess is still running. wait_for re-raises CancelledError (not
+        # TimeoutError), so without this branch the child is orphaned. Kill
+        # the whole process group before re-raising so the cancel tears down
+        # the tree, not just the direct child.
+        if proc is not None and proc.returncode is None:
+            _kill_code_exec_group(proc)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        raise
     except asyncio.TimeoutError as exc:
         # Reap the subprocess on timeout; otherwise it keeps running and
         # accumulates as an orphan across repeated timeouts.
         if proc is not None and proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+            _kill_code_exec_group(proc)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
