@@ -2,9 +2,7 @@ import { useState, type ReactElement, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
-  formatProbeComposeTitleSegment,
-  probeComposeTitleIsFullyConcrete,
-  probeComposeTitleSegments,
+  probeComposeSegments,
   probeKindLabelKey,
   type ProbeBatchCompose,
   type ProbeBatchEntry
@@ -46,9 +44,9 @@ export type StepFlowItem = {
   batchCount?: number
   /** True when the batch mixed different probe tools (read + search + …). */
   batchMixed?: boolean
-  /** Per-kind counts for mixed-batch titles (`读 a.py · 搜 foo`). */
+  /** Per-kind counts for mixed-batch titles (`读 2 · 搜 2`). */
   batchCompose?: ProbeBatchCompose
-  /** Typed targets for expand body / mixed-batch title. */
+  /** Typed targets for expand body / preview. */
   batchEntries?: ProbeBatchEntry[]
 }
 
@@ -143,16 +141,12 @@ function summaryText(item: StepFlowItem): string | null {
 }
 
 function batchComposeTitle(
-  entries: ProbeBatchEntry[] | undefined,
   compose: ProbeBatchCompose | undefined,
   t: (key: string, opts?: Record<string, unknown>) => string
-): { title: string; fullyConcrete: boolean } | null {
-  const segments = probeComposeTitleSegments(entries ?? [], compose)
-  if (segments.length === 0) return null
-  return {
-    title: segments.map((seg) => formatProbeComposeTitleSegment(seg, t)).join(' · '),
-    fullyConcrete: probeComposeTitleIsFullyConcrete(segments)
-  }
+): string | null {
+  if (!compose) return null
+  const parts = probeComposeSegments(compose).map((seg) => t(seg.key, { count: seg.count }))
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 function StepRow({
@@ -169,30 +163,25 @@ function StepRow({
   const isNarration = item.variant === 'narration'
   const isBatch = item.variant === 'batch'
   const batchTool = item.batchToolName || item.toolName || ''
-  // Compose titles are only for mixed probe runs; same-tool batches keep
-  // “读取文件 · N 项” with targets in the subtitle preview.
-  const compose =
-    isBatch && item.batchMixed
-      ? batchComposeTitle(item.batchEntries, item.batchCompose, t)
-      : null
-  const batchLabel = compose
-    ? compose.title
+  const composeTitle =
+    isBatch && item.batchMixed ? batchComposeTitle(item.batchCompose, t) : null
+  const batchLabel = composeTitle
+    ? composeTitle
     : item.batchMixed
       ? t('toolBatchProbeLabel')
       : humanizeToolName(batchTool) || item.label || batchTool
   const title = isBatch
-    ? compose
+    ? composeTitle
       ? batchLabel
       : t('toolBatchTitle', {
           label: batchLabel,
           count: item.batchCount ?? 0
         })
     : item.label
-  const titleUsesTargets = Boolean(compose?.fullyConcrete)
   const batchPreview =
-    isBatch && !titleUsesTargets && item.detail?.trim()
+    isBatch && item.detail?.trim()
       ? item.detail.trim()
-      : isBatch && !titleUsesTargets && item.batchEntries?.length
+      : isBatch && item.batchEntries?.length
         ? item.batchEntries
             .map((e) => e.target)
             .filter(Boolean)
