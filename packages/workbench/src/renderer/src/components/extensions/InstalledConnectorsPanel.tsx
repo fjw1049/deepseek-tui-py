@@ -1,9 +1,10 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Trash2 } from 'lucide-react'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
 import { ConnectorIcon } from './connector-icons'
+import { partitionConnectorsByGroup } from '../../lib/connector-groups'
 import type { McpLoadPolicy } from '../../lib/mcp-json-merge'
 
 export type ConnectorItem = {
@@ -33,6 +34,7 @@ type Props = {
 
 /**
  * Installed-connectors list with 已安装 / 媒体 / ModelScope 市场 tabs.
+ * 「已安装」splits into 自带 (yahoo) and 已激活 (media / market / manual).
  */
 export function InstalledConnectorsPanel({
   connectors,
@@ -46,6 +48,11 @@ export function InstalledConnectorsPanel({
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<ConnectorTab>('installed')
+
+  const { builtin, activated } = useMemo(
+    () => partitionConnectorsByGroup(connectors),
+    [connectors]
+  )
 
   const tabItems = [
     { value: 'installed' as const, label: t('skillTabInstalled') },
@@ -72,6 +79,62 @@ export function InstalledConnectorsPanel({
           {t('connectorsInstalledEmpty')}
         </div>
       ) : (
+        <div>
+          <ConnectorGroupSection
+            title={t('connectorSectionBuiltin')}
+            empty={t('connectorSectionBuiltinEmpty')}
+            connectors={builtin}
+            busyId={busyId}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
+          <ConnectorGroupSection
+            title={t('connectorSectionActivated')}
+            empty={t('connectorSectionActivatedEmpty')}
+            connectors={activated}
+            busyId={busyId}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            bordered
+          />
+        </div>
+      )}
+      {/* MarketplaceBrowser stays mounted across tabs so the parent's top
+          "重新加载" refresh signal reaches it even while the market tab is
+          hidden — otherwise the signal would fire into an unmounted component
+          and the catalog would never re-fetch. */}
+      <div className={tab === 'marketplace' ? '' : 'hidden'}>
+        {marketplaceSlot ?? null}
+      </div>
+    </div>
+  )
+}
+
+function ConnectorGroupSection({
+  title,
+  empty,
+  connectors,
+  busyId,
+  onToggle,
+  onDelete,
+  bordered
+}: {
+  title: string
+  empty: string
+  connectors: ConnectorItem[]
+  busyId: string | null
+  onToggle: (connector: ConnectorItem, enabled: boolean) => void
+  onDelete: (connector: ConnectorItem) => void
+  bordered?: boolean
+}): ReactElement {
+  return (
+    <section className={bordered ? 'border-t border-ds-border-muted/70' : undefined}>
+      <div className="px-5 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-[0.04em] text-ds-faint">
+        {title}
+      </div>
+      {connectors.length === 0 ? (
+        <div className="px-5 pb-5 pt-1 text-[13px] text-ds-faint">{empty}</div>
+      ) : (
         <ul className="divide-y divide-ds-border-muted/70">
           {connectors.map((connector) => (
             <ConnectorRow
@@ -84,14 +147,7 @@ export function InstalledConnectorsPanel({
           ))}
         </ul>
       )}
-      {/* MarketplaceBrowser stays mounted across tabs so the parent's top
-          "重新加载" refresh signal reaches it even while the market tab is
-          hidden — otherwise the signal would fire into an unmounted component
-          and the catalog would never re-fetch. */}
-      <div className={tab === 'marketplace' ? '' : 'hidden'}>
-        {marketplaceSlot ?? null}
-      </div>
-    </div>
+    </section>
   )
 }
 

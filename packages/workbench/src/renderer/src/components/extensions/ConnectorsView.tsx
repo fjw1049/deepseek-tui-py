@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, RefreshCw, Search, Settings } from 'lucide-react'
+import { withDefaultOnFocusPolicy } from '../../lib/connector-groups'
 import {
   listMcpServers,
   mergeMcpServerIntoConfig,
@@ -145,7 +146,8 @@ export function ConnectorsView(): ReactElement {
           setNotice({ tone: 'info', message: t('pluginAlreadyAdded') })
           return
         }
-        const next = mergeMcpServerIntoConfig(content, id, entry)
+        // ModelScope / manual installs default to on_focus (not progressive).
+        const next = mergeMcpServerIntoConfig(content, id, withDefaultOnFocusPolicy(entry))
         const result = await window.dsGui.setMcpConfigFile(next)
         setMcpConfigText(next)
         setMcpLoaded(true)

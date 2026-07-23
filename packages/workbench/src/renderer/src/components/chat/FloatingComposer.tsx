@@ -272,7 +272,7 @@ export function FloatingComposer({
   const [connectorsLoading, setConnectorsLoading] = useState(false)
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
-  const [connectorSection, setConnectorSection] = useState<ComposerConnectorSection>('installed')
+  const [connectorSection, setConnectorSection] = useState<ComposerConnectorSection>('builtin')
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
@@ -631,7 +631,7 @@ export function FloatingComposer({
       setPlusSubmenu(null)
       setSkillQuery('')
       setConnectorQuery('')
-      setConnectorSection('installed')
+      setConnectorSection('builtin')
       setPluginQuery('')
     }
   }, [plusMenuOpen])
@@ -1787,8 +1787,8 @@ export function FloatingComposer({
                       <div className="mb-2 flex shrink-0 gap-1 rounded-xl bg-ds-subtle/70 p-0.5">
                         {(
                           [
-                            ['installed', t('skillTabInstalled')],
-                            ['media', t('mediaCatalogTab')]
+                            ['builtin', t('connectorSectionBuiltin')],
+                            ['activated', t('connectorSectionActivated')]
                           ] as const
                         ).map(([value, label]) => (
                           <button
@@ -1831,34 +1831,27 @@ export function FloatingComposer({
                             if (filtered.length === 0) {
                               return (
                                 <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                                  {connectorSection === 'media'
-                                    ? t('mediaCatalogEmpty')
+                                  {connectorSection === 'activated'
+                                    ? t('connectorSectionActivatedEmpty')
                                     : !runtimeReady
                                       ? t('composerConnectorsNeedRuntime')
-                                      : t('composerConnectorsEmpty')}
+                                      : t('connectorSectionBuiltinEmpty')}
                                 </div>
                               )
                             }
                             return filtered.map((connector) => {
-                              // 已安装: enabled in mcp.json (connection optional for pick).
-                              // 媒体: configured + enabled.
-                              const selectable =
-                                connectorSection === 'media'
-                                  ? !connector.needsConfig && connector.enabled
-                                  : connector.enabled
+                              const selectable = connector.enabled
                               return (
                               <button
                                 key={connector.id}
                                 type="button"
                                 disabled={!selectable}
                                 title={
-                                  connector.needsConfig
-                                    ? t('composerConnectorNeedsMediaConfig', { name: connector.title })
-                                    : selectable
-                                      ? connector.loadPolicy === 'on_focus'
-                                        ? t('composerConnectorOnFocusHint')
-                                        : undefined
-                                      : t('composerConnectorDisconnected', { name: connector.title })
+                                  selectable
+                                    ? connector.loadPolicy === 'on_focus'
+                                      ? t('composerConnectorOnFocusHint')
+                                      : undefined
+                                    : t('composerConnectorDisconnected', { name: connector.title })
                                 }
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => {
@@ -1877,21 +1870,17 @@ export function FloatingComposer({
                                     className={`h-2 w-2 shrink-0 rounded-full ${
                                       connector.connected
                                         ? 'bg-emerald-500'
-                                        : connector.needsConfig
-                                          ? 'bg-ds-faint'
-                                          : connector.loadPolicy === 'on_focus'
-                                            ? 'bg-amber-400'
-                                            : 'bg-red-500'
+                                        : connector.loadPolicy === 'on_focus'
+                                          ? 'bg-amber-400'
+                                          : 'bg-red-500'
                                     }`}
                                     aria-hidden
                                   />
                                   <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                                   <span className="truncate">{connector.title}</span>
-                                  {connector.section === 'media' ? (
+                                  {connector.loadPolicy === 'on_focus' ? (
                                     <span className="shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
-                                      {connector.needsConfig
-                                        ? t('mediaCatalogDisabled')
-                                        : t('composerConnectorOnFocusHint')}
+                                      {t('composerConnectorOnFocusHint')}
                                     </span>
                                   ) : null}
                                 </div>

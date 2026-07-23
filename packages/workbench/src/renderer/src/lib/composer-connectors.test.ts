@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { classifyConnector, withDefaultOnFocusPolicy } from './connector-groups'
 import {
   buildComposerConnectorRows,
   diskServersFromMcpConfig,
@@ -6,22 +7,41 @@ import {
   mediaConnectorTitle
 } from './composer-connectors'
 
+describe('connector-groups', () => {
+  it('classifies yahoo as builtin and others as activated', () => {
+    expect(classifyConnector('yahoo-finance')).toBe('builtin')
+    expect(classifyConnector('tikhub-zhihu')).toBe('activated')
+    expect(classifyConnector('some-market-mcp')).toBe('activated')
+  })
+
+  it('defaults missing load_policy to on_focus', () => {
+    expect(withDefaultOnFocusPolicy({ command: 'npx', args: ['x'] }).load_policy).toBe(
+      'on_focus'
+    )
+    expect(
+      withDefaultOnFocusPolicy({ command: 'npx', load_policy: 'progressive' }).load_policy
+    ).toBe('progressive')
+  })
+})
+
 describe('composer-connectors', () => {
-  it('shows yahoo from mcp.json under installed even if runtime omits it', () => {
+  it('puts yahoo under builtin and tikhub under activated', () => {
     const diskServers = diskServersFromMcpConfig(
       JSON.stringify({
-        mcpServers: {
-          'yahoo-finance': {
-            command: 'uvx',
-            args: ['mcp-yahoo-finance'],
-            enabled: true
-          },
-          'tikhub-wechat': {
-            command: 'npx',
-            args: ['mcp-remote', 'https://x'],
-            enabled: true,
-            load_policy: 'on_focus',
-            catalog: 'media'
+        mcp: {
+          servers: {
+            'yahoo-finance': {
+              command: 'uvx',
+              args: ['mcp-yahoo-finance'],
+              enabled: true
+            },
+            'tikhub-wechat': {
+              command: 'npx',
+              args: ['mcp-remote', 'https://x'],
+              enabled: true,
+              load_policy: 'on_focus',
+              catalog: 'media'
+            }
           }
         }
       })
@@ -29,19 +49,18 @@ describe('composer-connectors', () => {
 
     const rows = buildComposerConnectorRows({
       diskServers,
-      runtimeServers: [] // runtime cold / not listing yahoo yet
+      runtimeServers: []
     })
 
-    const installed = filterComposerConnectorRows(rows, 'installed', '')
-    const media = filterComposerConnectorRows(rows, 'media', '')
+    const builtin = filterComposerConnectorRows(rows, 'builtin', '')
+    const activated = filterComposerConnectorRows(rows, 'activated', '')
 
-    expect(installed.map((r) => r.id)).toContain('yahoo-finance')
-    expect(installed.map((r) => r.id)).not.toContain('tikhub-wechat')
-    expect(media.find((r) => r.id === 'tikhub-wechat')?.title).toBe('微信公众号')
-    expect(media.find((r) => r.id === 'tikhub-wechat')?.needsConfig).toBe(false)
+    expect(builtin.map((r) => r.id)).toEqual(['yahoo-finance'])
+    expect(activated.map((r) => r.id)).toContain('tikhub-wechat')
+    expect(activated.find((r) => r.id === 'tikhub-wechat')?.title).toBe('微信公众号')
   })
 
-  it('merges runtime connected dots onto disk installed servers', () => {
+  it('merges runtime connected dots onto disk builtin servers', () => {
     const diskServers = diskServersFromMcpConfig(
       JSON.stringify({
         mcpServers: {
@@ -56,22 +75,32 @@ describe('composer-connectors', () => {
       ]
     })
     expect(rows.find((r) => r.id === 'yahoo-finance')?.connected).toBe(true)
+    expect(rows.find((r) => r.id === 'yahoo-finance')?.section).toBe('builtin')
   })
 
-  it('keeps media catalog titles when nothing configured', () => {
-    const media = filterComposerConnectorRows(
-      buildComposerConnectorRows({ diskServers: [], runtimeServers: [] }),
-      'media',
-      ''
+  it('does not list unconfigured media catalog stubs', () => {
+    const rows = buildComposerConnectorRows({ diskServers: [], runtimeServers: [] })
+    expect(rows).toEqual([])
+    expect(filterComposerConnectorRows(rows, 'activated', '')).toEqual([])
+    expect(filterComposerConnectorRows(rows, 'builtin', '')).toEqual([])
+  })
+
+  it('skips disabled disk servers', () => {
+    const diskServers = diskServersFromMcpConfig(
+      JSON.stringify({
+        servers: {
+          'tikhub-zhihu': {
+            command: 'npx',
+            args: ['mcp-remote', 'https://x'],
+            enabled: false,
+            load_policy: 'on_focus',
+            catalog: 'media'
+          }
+        }
+      })
     )
-    expect(media.some((r) => r.title === '微信公众号')).toBe(true)
-    expect(
-      filterComposerConnectorRows(
-        buildComposerConnectorRows({ diskServers: [], runtimeServers: [] }),
-        'installed',
-        ''
-      )
-    ).toEqual([])
+    const rows = buildComposerConnectorRows({ diskServers, runtimeServers: [] })
+    expect(rows.map((r) => r.id)).not.toContain('tikhub-zhihu')
   })
 
   it('resolves media titles', () => {
