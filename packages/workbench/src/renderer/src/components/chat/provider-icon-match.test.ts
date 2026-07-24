@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { modelIconMatchText, resolveProviderIconBrand } from './provider-icon-match'
+import {
+  modelIconMatchText,
+  modelIconPrefixText,
+  resolveProviderIconBrand
+} from './provider-icon-match'
 
 describe('resolveProviderIconBrand', () => {
-  it('does not treat endpoint name zhipu as the model brand', () => {
+  it('does not treat endpoint name zhipu as the model brand when model identifies another vendor', () => {
     expect(
       resolveProviderIconBrand({
         providerId: 'zhipu',
@@ -46,6 +50,35 @@ describe('resolveProviderIconBrand', () => {
     ).toBe('glm')
   })
 
+  it('falls back to label/id prefix when the short model token has no brand', () => {
+    expect(
+      resolveProviderIconBrand({
+        providerId: 'kimi',
+        id: 'kimi::k3',
+        label: 'kimi/k3'
+      })
+    ).toBe('kimi')
+
+    expect(
+      resolveProviderIconBrand({
+        providerId: 'moonshot',
+        id: 'moonshot::k3',
+        label: 'kimi/k3'
+      })
+    ).toBe('kimi')
+  })
+
+  it('uses endpoint prefix only after the model token fails', () => {
+    // Unknown model under a zhipu-named endpoint → prefix fallback to glm.
+    expect(
+      resolveProviderIconBrand({
+        providerId: 'zhipu',
+        id: 'zhipu::totally-custom-42',
+        label: 'zhipu/totally-custom-42'
+      })
+    ).toBe('glm')
+  })
+
   it('matches model tokens only in modelIconMatchText', () => {
     expect(
       modelIconMatchText({
@@ -53,5 +86,14 @@ describe('resolveProviderIconBrand', () => {
         label: 'zhipu/kimi-k2.7-code'
       })
     ).toBe('kimi-k2.7-code kimi-k2.7-code')
+  })
+
+  it('extracts prefixes for the fallback pass', () => {
+    expect(
+      modelIconPrefixText({
+        id: 'kimi::k3',
+        label: 'kimi/k3'
+      })
+    ).toBe('kimi kimi')
   })
 })
