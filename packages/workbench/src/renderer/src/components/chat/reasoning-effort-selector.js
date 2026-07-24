@@ -107,15 +107,17 @@ class ChatGPTModelSelector extends HTMLElement {
       }
 
       .pill {
-        width: 220px;
+        /* Grow with short names; cap long ones so the composer stays calm. */
+        width: auto;
+        max-width: 220px;
         height: 36px;
         border-radius: 999px;
         background: var(--pill-bg);
-        display: flex;
+        display: inline-flex;
         align-items: center;
         gap: 6px;
         position: relative;
-        padding: 0 11px 0 10px;
+        padding: 0 10px 0 8px;
         transition: background-color 120ms var(--ease-out), transform 100ms ease-out;
       }
       .pill:hover { background: var(--pill-bg-hover); }
@@ -125,6 +127,14 @@ class ChatGPTModelSelector extends HTMLElement {
       .pill:focus-visible {
         outline: 2px solid var(--blue);
         outline-offset: 2px;
+      }
+      /* Icon + name + tier stay glued as one lead cluster. */
+      .pill-lead {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        flex: 1 1 auto;
       }
       .pill-icon {
         flex: none;
@@ -155,12 +165,11 @@ class ChatGPTModelSelector extends HTMLElement {
         height: 100%;
       }
       .pill .label {
-        flex: 1 1 auto;
         min-width: 0;
         display: flex;
         align-items: baseline;
         gap: 5px;
-        justify-content: center;
+        justify-content: flex-start;
         overflow: hidden;
         font-size: 14px;
         font-weight: 600;
@@ -182,6 +191,7 @@ class ChatGPTModelSelector extends HTMLElement {
       .pill .tier.is-ultra { color: var(--ultra-text); }
       .pill .chev {
         flex: none;
+        margin-left: auto;
         color: var(--ink-2);
         transition: rotate 200ms var(--ease-out);
       }
@@ -576,8 +586,10 @@ class ChatGPTModelSelector extends HTMLElement {
     </style>
 
     <button class="pill" aria-haspopup="dialog" aria-expanded="false">
-      <span class="pill-icon" aria-hidden="true"></span>
-      <span class="label"><span class="model-name">Model</span><span class="tier">High</span></span>
+      <span class="pill-lead">
+        <span class="pill-icon" aria-hidden="true"></span>
+        <span class="label"><span class="model-name">Model</span><span class="tier">High</span></span>
+      </span>
       <svg class="chev" width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
         <path d="M2.5 4.25 6 7.75l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
