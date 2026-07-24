@@ -646,6 +646,7 @@ class HookExecutor:
     async def _run_background_hook(
         self, hook: LifecycleHookEntry, env_vars: dict[str, str]
     ) -> None:
+        # 这个 task 没人持有引用，后续在优化
         cwd = str(self._working_dir())
         try:
             proc = await asyncio.create_subprocess_shell(
