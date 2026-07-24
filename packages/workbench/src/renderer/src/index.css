@@ -1966,8 +1966,14 @@ samp {
   max-height: 28%;
   flex: 0 1 auto;
   flex-direction: column;
+  margin-top: 0.75rem;
   border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
   background: var(--ds-bg-sidebar);
+}
+
+/* Pinned sits above Projects — drop the toolbar's top gap to avoid double spacing. */
+.ds-sidebar-pinned-pane + .ds-sidebar-projects-toolbar--fixed {
+  margin-top: 0;
 }
 
 .ds-sidebar-pinned-header {

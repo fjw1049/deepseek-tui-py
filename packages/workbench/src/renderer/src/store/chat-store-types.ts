@@ -111,6 +111,7 @@ export type ChatState = {
   sidebarSearchQuery: string
   chatsCollapsed: boolean
   projectsCollapsed: boolean
+  pinnedCollapsed: boolean
   scrollToBlockId: string | null
   /** Session-level mounted plugin (drives the composer chip). null = none. */
   activePlugin: ActivePluginMeta | null
@@ -171,6 +172,7 @@ export type ChatState = {
   setSidebarSearchQuery: (query: string) => void
   setChatsCollapsed: (collapsed: boolean) => void
   setProjectsCollapsed: (collapsed: boolean) => void
+  setPinnedCollapsed: (collapsed: boolean) => void
   forkThread: (threadId: string, throughItemId?: string) => Promise<void>
   resumeThread: (threadId: string) => Promise<void>
   compactActiveThread: () => Promise<void>

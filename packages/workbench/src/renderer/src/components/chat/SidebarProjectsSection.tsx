@@ -79,7 +79,7 @@ type SidebarProjectsColumnProps = Omit<
   'selectionMode' | 'selectedIds' | 'onToggleSelect' | 'locale'
 > & {
   locale: string
-  /** Rendered between the projects header and the project list (pinned threads). */
+  /** Rendered above the projects header (pinned threads). */
   pinnedSlot?: ReactElement | null
 }
 
@@ -393,6 +393,7 @@ export function SidebarProjectsColumn({
 
   return (
     <>
+      {pinnedSlot}
       <SidebarProjectsToolbar
         workspaceRoot={workspaceRoot}
         onPickWorkspace={onPickWorkspace}
@@ -408,7 +409,6 @@ export function SidebarProjectsColumn({
         onClearAll={handleClearAll}
         t={t}
       />
-      {pinnedSlot}
       {!projectsHidden ? (
         <div className="ds-sidebar-projects-scroll ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <SidebarProjectsSection

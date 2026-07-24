@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
@@ -31,12 +32,16 @@ export function SidebarPinnedSection({
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
   const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
+  const collapsed = useChatStore((s) => s.pinnedCollapsed)
+  const setCollapsed = useChatStore((s) => s.setPinnedCollapsed)
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
   const activeThreadBlocks = useChatStore((s) => s.blocks)
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
+  const searching = searchQuery.trim().length > 0
+  const sectionCollapsed = searching ? false : collapsed
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -90,39 +95,53 @@ export function SidebarPinnedSection({
   return (
     <div className="ds-sidebar-pinned-pane ds-no-drag">
       <div className="ds-sidebar-pinned-header">
-        <span className="ds-sidebar-section-label shrink-0">{t('sidebarPinned')}</span>
+        <button
+          type="button"
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          aria-expanded={!sectionCollapsed}
+        >
+          {sectionCollapsed ? (
+            <ChevronRight className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
+          ) : (
+            <ChevronDown className="h-3 w-3 shrink-0 text-ds-faint" strokeWidth={2} />
+          )}
+          <span className="ds-sidebar-section-label min-w-0 truncate">{t('sidebarPinned')}</span>
+        </button>
       </div>
-      <div className="ds-sidebar-pinned-list ds-scroll-surface min-h-0 overflow-y-auto overscroll-contain">
-        <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
-          {filteredPinnedThreads.map((thread) => (
-            <ThreadRow
-              key={thread.id}
-              thread={thread}
-              variant="pinned"
-              active={activeThreadId === thread.id}
-              deleting={deletingThreadIds[thread.id] === true}
-              showRunning={
-                thread.status?.trim().toLowerCase() === 'running' ||
-                (activeThreadId === thread.id && busy) ||
-                watchTurnCompletion[thread.id] === true
-              }
-              showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
-              hasBackgroundTask={
-                threadsWithActiveTasks.has(thread.id) ||
-                (activeThreadId === thread.id && activeThreadHasTask)
-              }
-              pinned={pinnedSet.has(thread.id)}
-              sourceLabel={pinnedSourceLabel(thread)}
-              onSelect={() => onSelectThread(thread.id)}
-              onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
-              onDelete={() => void handleDeleteThread(thread)}
-              onCompact={() => void onCompactThread(thread.id)}
-              onTogglePin={() => onTogglePin(thread.id)}
-              canCompact={activeThreadId === thread.id && !busy}
-            />
-          ))}
+      {sectionCollapsed ? null : (
+        <div className="ds-sidebar-pinned-list ds-scroll-surface min-h-0 overflow-y-auto overscroll-contain">
+          <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
+            {filteredPinnedThreads.map((thread) => (
+              <ThreadRow
+                key={thread.id}
+                thread={thread}
+                variant="pinned"
+                active={activeThreadId === thread.id}
+                deleting={deletingThreadIds[thread.id] === true}
+                showRunning={
+                  thread.status?.trim().toLowerCase() === 'running' ||
+                  (activeThreadId === thread.id && busy) ||
+                  watchTurnCompletion[thread.id] === true
+                }
+                showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+                hasBackgroundTask={
+                  threadsWithActiveTasks.has(thread.id) ||
+                  (activeThreadId === thread.id && activeThreadHasTask)
+                }
+                pinned={pinnedSet.has(thread.id)}
+                sourceLabel={pinnedSourceLabel(thread)}
+                onSelect={() => onSelectThread(thread.id)}
+                onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
+                onDelete={() => void handleDeleteThread(thread)}
+                onCompact={() => void onCompactThread(thread.id)}
+                onTogglePin={() => onTogglePin(thread.id)}
+                canCompact={activeThreadId === thread.id && !busy}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

@@ -1095,7 +1095,7 @@
   "sidebarProjectsDeleteSelectedConfirm": "Delete {{count}} selected chats? This cannot be undone.",
   "sidebarPinned": "Pinned",
   "sidebarChats": "Workspace",
-  "sidebarChatBadge": "Chat",
+  "sidebarChatBadge": "Workspace",
   "sidebarPinThread": "Pin",
   "sidebarUnpinThread": "Unpin",
   "sidebarPinLimitReached": "You can pin up to {{count}} chats",
