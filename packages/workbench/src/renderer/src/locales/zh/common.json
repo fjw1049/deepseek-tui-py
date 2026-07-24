@@ -993,7 +993,7 @@
   "usageHeroModelListTitle": "模型用量",
   "usageHeroHeatLess": "较少",
   "usageHeroHeatMore": "较多",
-  "usageHeroHeatHint": "点击日期查看当天的 token 用量",
+  "usageHeroHeatHint": "点击查看用量",
   "usageHeroHeatNoUsage": "无用量",
   "clawEmptyHeroBadge": "Claw 智能体",
   "clawEmptyHeroTitle": "开始和 {{name}} 对话",

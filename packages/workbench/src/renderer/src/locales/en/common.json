@@ -1027,7 +1027,7 @@
   "usageHeroModelListTitle": "By model",
   "usageHeroHeatLess": "Less",
   "usageHeroHeatMore": "More",
-  "usageHeroHeatHint": "Click a day to see token usage",
+  "usageHeroHeatHint": "Click to view usage",
   "usageHeroHeatNoUsage": "No usage",
   "clawEmptyHeroBadge": "Claw agent",
   "clawEmptyHeroTitle": "Start a conversation with {{name}}",
