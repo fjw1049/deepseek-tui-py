@@ -1665,8 +1665,15 @@ export function FloatingComposer({
                   </div>
 
                   {plusSubmenu === 'mode' ? (
-                    <div className="ds-glass absolute bottom-0 left-full ml-2 w-[248px] overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
-                      <p className="px-1.5 pb-2 pt-1 text-[12px] leading-5 text-ds-faint">
+                    <div className="ds-glass absolute bottom-0 left-full ml-2 w-max overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                      {/* Lock panel width to Plan hint so toggling Ask/Workflow doesn't resize. */}
+                      <p
+                        aria-hidden
+                        className="h-0 overflow-hidden px-1.5 text-[12px] leading-5 whitespace-nowrap"
+                      >
+                        {t('composerModeHintPlan')}
+                      </p>
+                      <p className="px-1.5 pb-1.5 pt-0.5 text-[12px] leading-5 text-ds-faint">
                         {mode === 'plan'
                           ? t('composerModeHintPlan')
                           : mode === 'ask'
@@ -1696,9 +1703,9 @@ export function FloatingComposer({
                                 setMode(on ? 'agent' : item.id)
                                 focusComposer()
                               }}
-                              className="flex w-full items-center gap-2 rounded-xl px-1.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-hover"
+                              className="flex w-full items-center justify-between gap-2.5 rounded-xl px-1.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-hover"
                             >
-                              <span className="flex-1">{item.label}</span>
+                              <span className="whitespace-nowrap">{item.label}</span>
                               <span
                                 className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition ${
                                   on ? 'bg-accent' : 'bg-ds-border'
