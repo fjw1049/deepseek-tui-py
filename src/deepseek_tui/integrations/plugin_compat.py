@@ -26,7 +26,7 @@ FOREIGN_TOOL_NAME_MAP: dict[str, tuple[str, ...]] = {
     "read": ("read_file",),
     "write": ("write_file",),
     "edit": ("edit_file",),
-    "multiedit": ("edit_file", "apply_patch"),
+    "multiedit": ("edit_file",),
     "notebookedit": ("edit_file",),
     "bash": ("exec_shell",),
     "glob": ("file_search",),
@@ -34,7 +34,7 @@ FOREIGN_TOOL_NAME_MAP: dict[str, tuple[str, ...]] = {
     "ls": ("list_dir",),
     "webfetch": ("fetch_url",),
     "websearch": ("web_search",),
-    "task": ("agent_spawn", "delegate_to_agent"),
+    "task": ("agent_spawn",),
     "todowrite": ("checklist_write",),
     "skill": ("load_skill",),
 }

@@ -1774,7 +1774,7 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         # permissions: ["read"] is advisory UI, not a tool-surface cut.
         assert {"read_file", "grep_files", "list_dir", "load_skill"} <= wl
         assert {"file_search", "git_status", "git_diff", "project_map"} <= wl
-        assert {"write_file", "edit_file", "apply_patch"} <= wl
+        assert {"write_file", "edit_file"} <= wl
         assert {"exec_shell", "code_execution", "agent_spawn"} <= wl
         # Orchestration / mutating GitHub stay out unless skill-declared.
         assert {"task_create", "workflow", "github_close"}.isdisjoint(wl)
@@ -1811,7 +1811,7 @@ async def test_active_plugin_whitelist_write_permission(tmp_path, monkeypatch) -
         engine.set_active_plugin("rw-plugin")
         wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
-        assert {"write_file", "edit_file", "apply_patch"} <= wl
+        assert {"write_file", "edit_file"} <= wl
         # Read base still present alongside writes.
         assert {"read_file", "grep_files", "file_search"} <= wl
         # clearing restores full toolset (None sentinel)

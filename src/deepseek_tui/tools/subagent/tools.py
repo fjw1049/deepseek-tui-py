@@ -363,8 +363,8 @@ class AgentSpawnTool(ToolSpec):
 
             allowed_tools = sorted(FOCUS_READ_BASE)
         # NOTE: type-level default allowlist is applied in ``run_subagent_loop``
-        # (not here) so direct ``manager.spawn`` callers (tests, delegate_to_agent,
-        # workflow) get the same filtering as LLM-driven ``agent_spawn`` calls.
+        # (not here) so direct ``manager.spawn`` callers (tests, workflow) get
+        # the same filtering as LLM-driven ``agent_spawn`` calls.
         if agent_type is SubAgentType.CUSTOM and not allowed_tools:
             raise ToolError("Custom sub-agents require a non-empty allowed_tools list")
         fork_context = _pick_bool(input_data, "fork_context")
@@ -438,7 +438,11 @@ class AgentResultTool(ToolSpec):
         return "agent_result"
 
     def description(self) -> str:
-        return "Fetch result of a sub-agent; optionally block until complete."
+        return (
+            "Fetch result of a background job (sub-agent via agent_id, or "
+            "background shell process via process_id); optionally block until "
+            "complete."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -446,6 +450,10 @@ class AgentResultTool(ToolSpec):
             "properties": {
                 "agent_id": {"type": "string"},
                 "id": {"type": "string"},
+                "process_id": {
+                    "type": "string",
+                    "description": "Background shell process id (from exec_shell background=true).",
+                },
                 "block": {"type": "boolean"},
                 "timeout_ms": {"type": "integer"},
             },
@@ -457,15 +465,25 @@ class AgentResultTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        manager = _require_manager(context)
-        agent_id = _pick_str(input_data, "agent_id", "id")
-        if agent_id is None:
-            raise ToolError("agent_id is required")
         block = _pick_bool(input_data, "block")
         timeout_ms = _pick_int(
             input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS
         ) or DEFAULT_RESULT_TIMEOUT_MS
         timeout_ms = max(1000, min(MAX_RESULT_TIMEOUT_MS, int(timeout_ms)))
+        process_id = _pick_str(input_data, "process_id")
+        if process_id is not None:
+            # Background shell process — route to the shell process store.
+            from deepseek_tui.tools import shell as _shell
+
+            if block:
+                return await _shell.wait_background_process(
+                    context, process_id, timeout_ms=timeout_ms
+                )
+            return await _shell.peek_background_process(context, process_id)
+        agent_id = _pick_str(input_data, "agent_id", "id")
+        if agent_id is None:
+            raise ToolError("agent_id or process_id is required")
+        manager = _require_manager(context)
         try:
             if block:
                 snapshots = await manager.wait([agent_id], mode="any", timeout_ms=timeout_ms)
@@ -487,13 +505,21 @@ class AgentCancelTool(ToolSpec):
         return "agent_cancel"
 
     def description(self) -> str:
-        return "Cancel a running sub-agent."
+        return (
+            "Cancel a running background job (sub-agent via agent_id, or "
+            "background shell process via process_id)."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"agent_id": {"type": "string"}},
-            "required": ["agent_id"],
+            "properties": {
+                "agent_id": {"type": "string"},
+                "process_id": {
+                    "type": "string",
+                    "description": "Background shell process id (from exec_shell background=true).",
+                },
+            },
         }
 
     def capabilities(self) -> list[ToolCapability]:
@@ -505,10 +531,15 @@ class AgentCancelTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        manager = _require_manager(context)
+        process_id = _pick_str(input_data, "process_id")
+        if process_id is not None:
+            from deepseek_tui.tools import shell as _shell
+
+            return await _shell.cancel_background_process(context, process_id)
         agent_id = _pick_str(input_data, "agent_id", "id")
         if agent_id is None:
-            raise ToolError("agent_id is required")
+            raise ToolError("agent_id or process_id is required")
+        manager = _require_manager(context)
         try:
             snapshot = await manager.cancel(agent_id)
         except KeyError as exc:
@@ -715,57 +746,4 @@ class AgentWaitTool(ToolSpec):
             success=True,
             content=json.dumps(payload, ensure_ascii=False),
             metadata={"agents": payload, "wait_mode": mode, "waited_ids": agent_ids},
-        )
-
-
-class DelegateToAgentTool(ToolSpec):
-    """``delegate_to_agent`` — convenience combo: spawn + block on result.
-
-    Internally spawns a fresh agent
-    then waits up to ``timeout_ms`` for it to terminate.
-    """
-
-    def name(self) -> str:
-        return "delegate_to_agent"
-
-    def description(self) -> str:
-        return "Spawn a sub-agent and wait for its completion."
-
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "prompt": {"type": "string"},
-                "message": {"type": "string"},
-                "objective": {"type": "string"},
-                "type": {"type": "string"},
-                "agent_type": {"type": "string"},
-                "role": {"type": "string"},
-                "model": {"type": "string"},
-                "allowed_tools": {"type": "array", "items": {"type": "string"}},
-                "timeout_ms": {"type": "integer"},
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        spawn_result = await AgentSpawnTool().execute(input_data, context)
-        agent_id = spawn_result.metadata["agent_id"]
-        timeout_ms = _pick_int(
-            input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS
-        ) or DEFAULT_RESULT_TIMEOUT_MS
-        wait_input = {"agent_id": agent_id, "mode": "any", "timeout_ms": timeout_ms}
-        wait_result = await AgentWaitTool().execute(wait_input, context)
-        final = wait_result.metadata["agents"][0]
-        return ToolResult(
-            success=True,
-            content=f"delegated to {agent_id} → {final['status']['kind']}",
-            metadata=final,
         )

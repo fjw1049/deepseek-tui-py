@@ -14,20 +14,37 @@ def test_agent_spawn_is_always_active_in_agent_mode() -> None:
     assert should_default_defer_tool("agent_spawn", "agent") is False
     assert should_default_defer_tool("agent_result", "agent") is False
     assert should_default_defer_tool("task_create", "agent") is False
-    # Core write / git / shell tools stay always-active (not deferred).
+    # Core write / shell tools stay always-active (not deferred).
     for name in (
         "write_file",
         "edit_file",
-        "apply_patch",
-        "git_status",
-        "git_diff",
         "exec_shell",
-        "exec_shell_wait",
         "exec_shell_interact",
     ):
         assert should_default_defer_tool(name, "agent") is False
-    # Unrelated rarer tools stay deferred.
-    assert should_default_defer_tool("git_blame", "agent") is True
+    # Non-core tools defer in agent mode (discoverable via tool_search,
+    # or auto-activated by calling them directly).
+    for name in (
+        "git_status",
+        "git_diff",
+        "git_blame",
+        "diagnostics",
+        "project_map",
+        "run_tests",
+        "validate_data",
+        "workflow",
+        "task_gate_run",
+        "task_shell_start",
+        "task_shell_wait",
+        "github_issue_context",
+        "github_pr_context",
+        "code_execution",
+    ):
+        assert should_default_defer_tool(name, "agent") is True
+    # workflow mode keeps the workflow tool itself active.
+    assert should_default_defer_tool("workflow", "workflow") is False
+    # yolo mode never defers.
+    assert should_default_defer_tool("git_status", "yolo") is False
 
 
 def test_strip_subagent_sentinels_removes_complete_tag() -> None:

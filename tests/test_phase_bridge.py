@@ -85,7 +85,7 @@ def test_gate_allows_explore_read_on_phase_transition() -> None:
 
 def test_gate_compute_for_mutate_batch() -> None:
     state = TurnNarrationState()
-    tools = (_tool("apply_patch", path="src/foo.py"),)
+    tools = (_tool("write_file", path="src/foo.py"),)
     assert gate_decision(
         state=state,
         segment=_segment(),
@@ -101,7 +101,7 @@ def test_gate_respects_publish_cap() -> None:
     assert gate_decision(
         state=state,
         segment=_segment(),
-        tool_calls=(_tool("apply_patch", path="x"),),
+        tool_calls=(_tool("write_file", path="x"),),
         narrated_ids=set(),
         min_chars=200,
         has_tool_error=False,

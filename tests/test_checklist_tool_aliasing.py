@@ -17,8 +17,6 @@ from deepseek_tui.tools.registry import ToolContext, build_default_registry
 _LEGACY_NAMES = ["todo_write", "todo_add", "todo_update", "todo_list"]
 _CANONICAL_NAMES = [
     "checklist_write",
-    "checklist_add",
-    "checklist_update",
     "checklist_list",
 ]
 

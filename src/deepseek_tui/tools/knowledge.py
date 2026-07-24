@@ -73,8 +73,11 @@ class PlanUpdateTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Update or replace the current execution plan. Use this to track "
-            "progress, add new steps, or mark steps complete."
+            "Update the user-facing execution plan. Use ONLY for plan mode, "
+            "when the user explicitly asks for a plan, or when the engine "
+            "requires a plan first. This is NOT routine progress tracking — "
+            "use checklist_write for that, and never maintain both for the "
+            "same work."
         )
 
     def input_schema(self) -> dict[str, object]:

@@ -39,7 +39,7 @@ _PREVIEW_LINE_LIMIT = 10
 # ── Agent ID extraction (shared) ─────────────────────────────────────
 
 _COMPACT_DELEGATE_TOOLS = frozenset(
-    {"agent_spawn", "delegate_to_agent", "spawn_agent", "agent_result", "agent_wait"}
+    {"agent_spawn", "agent_result", "agent_wait"}
 )
 _SPAWNED_ID_RE = re.compile(r"spawned\s+(\S+)")
 

@@ -9,8 +9,6 @@ from deepseek_tui.policy.approval import (
 )
 from deepseek_tui.tools.approval import (
     approval_request_to_sse_payload,
-    build_impacts,
-    build_primary_preview,
     classify_presentation_risk,
     classify_tool_category,
     enrich_approval_request,
@@ -39,18 +37,6 @@ def test_pr01_write_file_impacts_and_preview() -> None:
     assert "src/foo.py" in req.primary_preview
     assert req.title
     assert "medium risk" not in req.title
-
-
-def test_pr02_apply_patch_diff_preview() -> None:
-    patch = "--- a/x\n+++ b/x\n@@\n+line\n"
-    preview = build_primary_preview(
-        "apply_patch",
-        "file_write",
-        {"patch": patch},
-    )
-    assert "---" in preview or "patch" in preview.lower()
-    impacts = build_impacts("apply_patch", "file_write", {"patch": patch})
-    assert any("diff" in line.lower() or "patch" in line.lower() for line in impacts)
 
 
 def test_pr03_exec_shell_command_and_cwd() -> None:

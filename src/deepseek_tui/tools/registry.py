@@ -520,7 +520,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         AutomationRunTool,
         AutomationUpdateTool,
     )
-    from deepseek_tui.tools.encoding import DeprecatingAliasTool
     from deepseek_tui.tools.file import (
         EditFileTool,
         ListDirTool,
@@ -545,14 +544,11 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         McpGetPromptTool,
         ReadMcpResourceTool,
     )
-    from deepseek_tui.tools.patch import ApplyPatchTool, DiagnosticsTool, ProjectMapTool
-    from deepseek_tui.tools.runtime import MultiToolUseParallelTool
+    from deepseek_tui.tools.patch import DiagnosticsTool, ProjectMapTool
     from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
     from deepseek_tui.tools.shell import (
-        ExecShellCancelTool,
         ExecShellInteractTool,
         ExecShellTool,
-        ExecShellWaitTool,
     )
     from deepseek_tui.tools.subagent import (
         AgentCancelTool,
@@ -562,7 +558,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         AgentSendInputTool,
         AgentSpawnTool,
         AgentWaitTool,
-        DelegateToAgentTool,
     )
     from deepseek_tui.tools.task import (
         TaskCancelTool,
@@ -576,9 +571,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     )
     from deepseek_tui.tools.time_tools import CurrentTimeTool
     from deepseek_tui.tools.todo import (
-        TodoAddTool,
         TodoListTool,
-        TodoUpdateTool,
         TodoWriteTool,
     )
     from deepseek_tui.tools.user_input import RequestUserInputTool, RetrieveToolResultTool
@@ -610,13 +603,8 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             WriteFileTool(),
             EditFileTool(),
             TodoWriteTool(),
-            TodoAddTool(),
-            TodoUpdateTool(),
         ]:
             registry.register(tool)
-
-    if cfg.features.apply_patch and mode != "plan":
-        registry.register(ApplyPatchTool())
 
     if cfg.features.web_search:
         registry.register(
@@ -630,9 +618,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     if cfg.allow_shell and cfg.features.shell_tool and mode != "plan":
         for tool in [
             ExecShellTool(),
-            ExecShellWaitTool(),
             ExecShellInteractTool(),
-            ExecShellCancelTool(),
         ]:
             registry.register(tool)
 
@@ -671,19 +657,14 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
         registry.register(WorkflowTool())
         registry.register(WorkflowListTool())
-        spawn = AgentSpawnTool()
-        send = AgentSendInputTool()
         for tool in [
-            spawn,
-            DeprecatingAliasTool(spawn, "spawn_agent", "agent_spawn"),
+            AgentSpawnTool(),
             AgentResultTool(),
             AgentCancelTool(),
             AgentResumeTool(),
             AgentListTool(),
-            send,
-            DeprecatingAliasTool(send, "send_input", "agent_send_input"),
+            AgentSendInputTool(),
             AgentWaitTool(),
-            DelegateToAgentTool(),
         ]:
             registry.register(tool)
 
@@ -709,7 +690,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(SkillLoadTool())
 
     # Engine-intercepted special tools (always active)
-    registry.register(MultiToolUseParallelTool())
     registry.register(RequestUserInputTool())
 
     registry.register(ValidateDataTool())

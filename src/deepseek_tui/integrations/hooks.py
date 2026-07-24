@@ -472,7 +472,7 @@ def _tool_category(tool_name: str | None) -> str | None:
         return None
     if tool_name == "exec_shell":
         return "shell"
-    if tool_name in {"write_file", "edit_file", "apply_patch"}:
+    if tool_name in {"write_file", "edit_file"}:
         return "file_write"
     if tool_name in {"read_file", "list_dir", "grep_files"}:
         return "safe"

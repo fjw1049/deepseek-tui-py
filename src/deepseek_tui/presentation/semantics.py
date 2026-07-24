@@ -12,18 +12,16 @@ from deepseek_tui.protocol.responses import ToolCall
 NarrationLocale = Literal["zh", "en"]
 
 _TOOL_NAME_RE = re.compile(
-    r"\b(read_file|list_dir|grep_files?|search_files?|write_file|apply_patch|"
+    r"\b(read_file|list_dir|grep_files?|search_files?|write_file|"
     r"exec_shell|run_terminal|glob_file_search|codebase_search)\b",
     re.I,
 )
 _MUTATE_TOOLS = frozenset(
     {
         "write_file",
-        "apply_patch",
         "edit_file",
         "search_replace",
         "exec_shell",
-        "exec_shell_wait",
         "exec_shell_interact",
         "run_terminal_cmd",
     }

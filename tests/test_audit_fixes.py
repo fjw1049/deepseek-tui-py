@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -11,27 +10,10 @@ import pytest
 
 from deepseek_tui.protocol.messages import Message, TextBlock
 from deepseek_tui.state.session import clear_checkpoint, save_checkpoint
-from deepseek_tui.tools.registry import ToolError
-from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.patch import (
-    FilePatch,
-    Hunk,
-    HunkLine,
-    HunkLineKind,
-)
-from deepseek_tui.tools.patch import (
-    ApplyPatchTool,
-    _apply_changes,
-    _apply_file_patches,
-)
 from deepseek_tui.tui.session_restore import (
     apply_messages_to_engine,
     try_restore_crash_checkpoint,
 )
-
-
-def _tool_context(tmp_path: Path) -> ToolContext:
-    return ToolContext(working_directory=tmp_path, metadata={})
 
 
 def test_apply_messages_to_engine_replaces_list() -> None:
@@ -69,111 +51,6 @@ def test_try_restore_crash_checkpoint() -> None:
     assert engine.turn_counter == 3
     assert engine.default_model == "deepseek-chat"
     clear_checkpoint()
-
-
-def test_apply_file_patches_rolls_back_on_failure(tmp_path: Path) -> None:
-    first = tmp_path / "a.txt"
-    second = tmp_path / "b.txt"
-    first.write_text("alpha\n", encoding="utf-8")
-    second.write_text("beta\n", encoding="utf-8")
-    context = _tool_context(tmp_path)
-
-    first_patch = FilePatch(
-        path="a.txt",
-        hunks=[
-            Hunk(
-                old_start=1,
-                old_count=1,
-                new_start=1,
-                new_count=1,
-                lines=[
-                    HunkLine(kind=HunkLineKind.CONTEXT, content="alpha"),
-                    HunkLine(kind=HunkLineKind.REMOVE, content="alpha"),
-                    HunkLine(kind=HunkLineKind.ADD, content="ALPHA"),
-                ],
-            )
-        ],
-    )
-    bad_hunk = Hunk(
-        old_start=99,
-        old_count=1,
-        new_start=99,
-        new_count=1,
-        lines=[HunkLine(kind=HunkLineKind.REMOVE, content="missing")],
-    )
-    second_patch = FilePatch(path="b.txt", hunks=[bad_hunk])
-
-    with pytest.raises(ToolError):
-        _apply_file_patches([first_patch, second_patch], context, fuzz=0)
-
-    assert first.read_text(encoding="utf-8") == "alpha\n"
-    assert second.read_text(encoding="utf-8") == "beta\n"
-
-
-def test_apply_changes_rolls_back_on_failure(tmp_path: Path) -> None:
-    path = tmp_path / "only.txt"
-    path.write_text("before\n", encoding="utf-8")
-    context = _tool_context(tmp_path)
-    changes = [
-        {"path": "only.txt", "content": "after\n"},
-        {"path": "", "content": "bad"},
-    ]
-    with pytest.raises(ToolError):
-        _apply_changes(changes, context)
-    assert path.read_text(encoding="utf-8") == "before\n"
-
-
-@pytest.mark.asyncio
-async def test_apply_patch_tool_end_to_end(tmp_path: Path) -> None:
-    target = tmp_path / "file.txt"
-    target.write_text("line one\nline two\n", encoding="utf-8")
-    patch = (
-        "--- a/file.txt\n"
-        "+++ b/file.txt\n"
-        "@@ -1,2 +1,2 @@\n"
-        " line one\n"
-        "-line two\n"
-        "+line TWO\n"
-    )
-    tool = ApplyPatchTool()
-    context = _tool_context(tmp_path)
-    result = await tool.execute({"patch": patch}, context)
-    assert result.success
-    assert "line TWO" in target.read_text(encoding="utf-8")
-
-
-@pytest.mark.asyncio
-async def test_apply_patch_mutation_reports_first_hunk_line(tmp_path: Path) -> None:
-    """mutation.line_start comes from the first hunk's new_start."""
-    target = tmp_path / "file.txt"
-    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
-    patch = (
-        "--- a/file.txt\n"
-        "+++ b/file.txt\n"
-        "@@ -2,1 +2,1 @@\n"
-        "-two\n"
-        "+TWO\n"
-    )
-    tool = ApplyPatchTool()
-    context = _tool_context(tmp_path)
-    result = await tool.execute({"patch": patch}, context)
-    assert result.success
-    assert result.metadata["mutation"]["line_start"] == 2
-    assert result.metadata["mutations"][0]["line_start"] == 2
-
-
-@pytest.mark.asyncio
-async def test_apply_patch_changes_reports_line_start_one(tmp_path: Path) -> None:
-    """Full-file `changes` replacements behave like write_file: line 1."""
-    target = tmp_path / "file.txt"
-    target.write_text("old\n", encoding="utf-8")
-    tool = ApplyPatchTool()
-    context = _tool_context(tmp_path)
-    result = await tool.execute(
-        {"changes": [{"path": "file.txt", "content": "new\n"}]}, context
-    )
-    assert result.success
-    assert result.metadata["mutation"]["line_start"] == 1
 
 
 @pytest.mark.asyncio

@@ -17,12 +17,8 @@ from deepseek_tui.server.threads import (
     [
         ("write_file", TurnItemKind.FILE_CHANGE),
         ("edit_file", TurnItemKind.FILE_CHANGE),
-        ("apply_patch", TurnItemKind.FILE_CHANGE),
         ("exec_shell", TurnItemKind.COMMAND_EXECUTION),
-        ("exec_shell_wait", TurnItemKind.COMMAND_EXECUTION),
         ("checklist_write", TurnItemKind.TOOL_CALL),
-        ("checklist_update", TurnItemKind.TOOL_CALL),
-        ("checklist_add", TurnItemKind.TOOL_CALL),
         ("todo_write", TurnItemKind.TOOL_CALL),
         ("update_plan", TurnItemKind.TOOL_CALL),
         ("read_file", TurnItemKind.TOOL_CALL),
@@ -87,16 +83,6 @@ def test_file_change_completion_detail_edit_file() -> None:
     assert "--- a/src/main.py" in detail
     assert "-foo" in detail
     assert "+bar" in detail
-
-
-def test_file_change_completion_detail_apply_patch() -> None:
-    patch = "--- a/x.txt\n+++ b/x.txt\n@@\n-old\n+new\n"
-    detail = file_change_completion_detail(
-        "apply_patch",
-        {"patch": patch},
-        "Applied 1/1 file(s)",
-    )
-    assert detail == patch
 
 
 def test_file_change_completion_detail_write_file() -> None:

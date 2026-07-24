@@ -1,7 +1,7 @@
 """Todo / checklist tools.
 
-This module exposes a single 4-tool family — ``checklist_write`` /
-``checklist_add`` / ``checklist_update`` / ``checklist_list`` — operating on
+This module exposes a 2-tool family — ``checklist_write`` /
+``checklist_list`` — operating on
 one in-memory ``TodoList`` (kept on ``ToolContext.metadata['todos']``).
 
 History note: these tools were previously registered twice, under both the
@@ -26,8 +26,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from deepseek_tui.tools.validation import optional_string as _optional_string
-from deepseek_tui.tools.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
 
@@ -99,13 +97,6 @@ def _todo_store(context: ToolContext) -> dict[str, Any]:
     return store
 
 
-def _require_todo(context: ToolContext, item_id: str) -> TodoItem:
-    for item in _todo_store(context)["items"]:
-        if isinstance(item, TodoItem) and item.id == item_id:
-            return item
-    raise ToolError(f"Unknown item_id: {item_id}")
-
-
 def _coerce_status(value: object, *, default: TodoStatus = "pending") -> TodoStatus:
     if value is None:
         return default
@@ -126,7 +117,7 @@ def _coerce_status(value: object, *, default: TodoStatus = "pending") -> TodoSta
 def _enforce_single_in_progress(items: list[TodoItem]) -> None:
     """Enforce the "at most one item in_progress" invariant.
 
-    Called on every write path (add / update / write) before persisting.
+    Called on every write path (checklist_write) before persisting.
     """
     in_progress_ids = [i.id for i in items if i.status == "in_progress"]
     if len(in_progress_ids) > 1:
@@ -225,8 +216,12 @@ class TodoWriteTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Replace the active thread/task checklist. Durable tasks remain "
-            "the real executable work object; this is granular progress."
+            "The canonical progress tracker for multi-step work — use it "
+            "whenever a task has more than a couple of steps and keep it "
+            "current as you go. Replaces the entire checklist on every call "
+            "(full-list rewrite). At most one item may be in_progress at a "
+            "time. Durable tasks remain the real executable work object; "
+            "this is granular progress."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -307,151 +302,6 @@ class TodoWriteTool(ToolSpec):
         return ToolResult(
             success=True,
             content=f"{len(store['items'])} items written",
-            metadata=metadata,
-        )
-
-
-class TodoAddTool(ToolSpec):
-    """Append one item to the active checklist."""
-
-    def name(self) -> str:
-        return "checklist_add"
-
-    def description(self) -> str:
-        return "Add one checklist item on the active thread/task."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "content": {"type": "string"},
-                "text": {
-                    "type": "string",
-                    "description": "Legacy alias for content.",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": list(_VALID_STATUSES),
-                    "description": "Optional initial status (default: pending).",
-                },
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        content = _optional_string(input_data, "content")
-        if content is None:
-            content = _optional_string(input_data, "text")
-        if content is None:
-            raise ToolError("content (or legacy 'text') must be a string")
-        status = _coerce_status(input_data.get("status"))
-        store = _todo_store(context)
-        item = TodoItem(id=str(store["next_id"]), content=content, status=status)
-        candidate_items = list(store["items"]) + [item]
-        _enforce_single_in_progress(candidate_items)
-        store["next_id"] += 1
-        store["items"].append(item)
-        metadata = _build_result_metadata(store, tool_name=self.name())
-        # Preserve legacy ``metadata["item"]`` shape (some tests inspect it).
-        metadata["item"] = {
-            "id": item.id,
-            "content": item.content,
-            "status": item.status,
-            # Legacy mirror fields:
-            "text": item.content,
-            "done": item.done,
-        }
-        _forward_to_task_manager(context, metadata)
-        return ToolResult(
-            success=True,
-            content=item.id,
-            metadata=metadata,
-        )
-
-
-class TodoUpdateTool(ToolSpec):
-    """Update one checklist item's content or status.
-
-    Schema accepts both new ``status: "pending|in_progress|completed"``
-    and legacy ``done: bool`` (mapped to ``completed`` / ``pending``).
-    """
-
-    def name(self) -> str:
-        return "checklist_update"
-
-    def description(self) -> str:
-        return "Update one checklist item's content or status by id."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "item_id": {"type": "string"},
-                "content": {"type": "string"},
-                "text": {
-                    "type": "string",
-                    "description": "Legacy alias for content.",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": list(_VALID_STATUSES),
-                },
-                "done": {
-                    "type": "boolean",
-                    "description": (
-                        "Legacy: true → status=completed, false → pending. "
-                        "Prefer the 'status' field."
-                    ),
-                },
-            },
-            "required": ["item_id"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        item = _require_todo(context, _require_string(input_data, "item_id"))
-        new_content = _optional_string(input_data, "content")
-        if new_content is None:
-            new_content = _optional_string(input_data, "text")
-        prev_content = item.content
-        prev_status = item.status
-        if new_content is not None:
-            item.content = new_content
-        if "status" in input_data:
-            item.status = _coerce_status(input_data.get("status"))
-        elif "done" in input_data:
-            done = input_data.get("done")
-            if isinstance(done, bool):
-                item.status = "completed" if done else "pending"
-            else:
-                raise ToolError("done must be a boolean")
-        store = _todo_store(context)
-        try:
-            _enforce_single_in_progress(list(store["items"]))
-        except ToolError:
-            item.content = prev_content
-            item.status = prev_status
-            raise
-        metadata = _build_result_metadata(store, tool_name=self.name())
-        metadata["item"] = {
-            "id": item.id,
-            "content": item.content,
-            "status": item.status,
-            "text": item.content,
-            "done": item.done,
-        }
-        _forward_to_task_manager(context, metadata)
-        return ToolResult(
-            success=True,
-            content="updated",
             metadata=metadata,
         )
 

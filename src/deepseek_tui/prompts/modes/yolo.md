@@ -7,4 +7,5 @@ overwrite user work, or run destructive commands, pause and double-check. The un
 
 Even with auto-approval, create a `checklist_write` first so your work is visible and trackable in the
 sidebar. Decomposition is not red tape — it's how you organize complex work and demonstrate thoroughness.
-For multi-step initiatives, use `update_plan` + `checklist_write` together.
+For multi-step initiatives, keep the checklist current as you go (`update_plan` is only for user-facing
+plans on explicit request — never track the same work in both).

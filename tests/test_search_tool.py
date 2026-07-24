@@ -68,3 +68,102 @@ async def test_grep_normal_result_not_truncated(tmp_path: Path):
     assert result.metadata["count"] == 1
     assert result.metadata["truncated"] is False
     assert "truncated" not in result.content
+
+
+async def test_grep_output_mode_files_with_matches(tmp_path: Path):
+    (tmp_path / "a.py").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("nothing\n", encoding="utf-8")
+    (tmp_path / "c.py").write_text("needle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "output_mode": "files_with_matches"},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    lines = result.content.splitlines()
+    assert len(lines) == 2
+    assert any(line.endswith("a.py") for line in lines)
+    assert any(line.endswith("c.py") for line in lines)
+    assert not any("b.py" in line for line in lines)
+    assert result.metadata["count"] == 3  # true match total across files
+
+
+async def test_grep_output_mode_count_matches(tmp_path: Path):
+    (tmp_path / "a.py").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "c.py").write_text("needle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "output_mode": "count_matches"},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    lines = result.content.splitlines()
+    assert any(line.endswith("a.py:2") for line in lines)
+    assert any(line.endswith("c.py:1") for line in lines)
+    assert lines[-1] == "total: 3"
+
+
+async def test_grep_content_mode_has_line_numbers(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x\nneedle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "output_mode": "content"},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.content.splitlines()[0].endswith("a.py:2:needle")
+
+
+async def test_grep_context_lines(tmp_path: Path):
+    (tmp_path / "a.py").write_text(
+        "one\ntwo\nneedle\nfour\nfive\n", encoding="utf-8"
+    )
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "-C": 1},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    lines = result.content.splitlines()
+    assert len(lines) == 3
+    assert lines[0].endswith("a.py-2-two")       # before context
+    assert lines[1].endswith("a.py:3:needle")    # the match
+    assert lines[2].endswith("a.py-4-four")      # after context
+
+
+async def test_grep_context_a_b_sides(tmp_path: Path):
+    (tmp_path / "a.py").write_text(
+        "one\ntwo\nneedle\nfour\nfive\n", encoding="utf-8"
+    )
+
+    before_only = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "-B": 2},
+        ToolContext(working_directory=tmp_path),
+    )
+    before_lines = before_only.content.splitlines()
+    assert before_lines[0].endswith("a.py-1-one")
+    assert before_lines[1].endswith("a.py-2-two")
+    assert before_lines[2].endswith("a.py:3:needle")
+    assert len(before_lines) == 3
+
+    after_only = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "-A": 1},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert after_only.content.splitlines()[-1].endswith("a.py-4-four")
+
+
+async def test_grep_head_limit_caps_matches(tmp_path: Path):
+    (tmp_path / "big.txt").write_text(
+        "\n".join("needle" for _ in range(10)) + "\n", encoding="utf-8"
+    )
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "head_limit": 3},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.metadata["count"] == 10
+    assert result.metadata["shown"] == 3
+    assert result.metadata["truncated"] is True
+    assert "showing 3 of 10 matches" in result.content

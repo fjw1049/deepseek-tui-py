@@ -2117,7 +2117,6 @@ class RuntimeThreadManager:
                         if mut.get("source")
                         in (
                             "edit_file",
-                            "apply_patch",
                             "write_file",
                             "shell_allowlist",
                             "shell_detected",

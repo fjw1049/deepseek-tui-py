@@ -11,7 +11,6 @@ from deepseek_tui.workspace.diff_synth import count_diff_stats, truncate_unified
 
 MutationSource = Literal[
     "edit_file",
-    "apply_patch",
     "write_file",
     "shell_allowlist",
     "shell_detected",
@@ -163,7 +162,6 @@ def _one_mutation_from_dict(
         if source_raw
         in (
             "edit_file",
-            "apply_patch",
             "write_file",
             "shell_allowlist",
             "shell_detected",

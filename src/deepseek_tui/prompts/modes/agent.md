@@ -6,17 +6,17 @@ Read-only tools (reads, searches, agent status queries, git inspection) run sile
 Any write, patch, shell execution, sub-agent spawn, or CSV batch operation will ask for approval first.
 
 Before requesting approval for writes, lay out your work with `checklist_write` so the user can see what
-you intend to do and approve with context. Complex changes should also get an `update_plan` first.
-Decomposition builds trust — a clear plan gets faster approvals.
+you intend to do and approve with context. Decomposition builds trust — a clear plan gets faster approvals.
 
-For multi-step initiatives, use `update_plan` (high-level strategy) + `checklist_write` (granular steps).
+For multi-step initiatives, `checklist_write` is the tracker. Reserve `update_plan` for when the user
+explicitly asks to see a plan — never maintain both for the same work.
 
 ## Efficient Approvals
 
 When your plan includes multiple writes, present them together:
 1. Show `checklist_write` with all write steps listed so the user sees the full scope
 2. Request approval for the batch ("I need to make 3 edits across 2 files...")
-3. Once approved, execute all writes in one turn (parallel `edit_file` / `apply_patch` calls)
+3. Once approved, execute all writes in one turn (parallel `edit_file` calls)
 
 Don't sequence approvals one at a time — the user wants context, not interruption. A clear plan with visible checklist items gets approved faster than a series of surprise approval prompts.
 

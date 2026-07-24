@@ -307,11 +307,11 @@ def approval_request_to_sse_payload(
 
 
 def classify_tool_category(tool_name: str) -> str:
-    if tool_name in ("write_file", "edit_file", "apply_patch"):
+    if tool_name in ("write_file", "edit_file"):
         return "file_write"
     if tool_name in ("web_search", "fetch_url"):
         return "network"
-    if tool_name in ("exec_shell", "exec_shell_wait", "exec_shell_interact"):
+    if tool_name in ("exec_shell", "exec_shell_interact"):
         return "shell"
     if tool_name.startswith("list_mcp_") or tool_name.startswith("read_mcp_"):
         return "mcp_read"
@@ -319,7 +319,7 @@ def classify_tool_category(tool_name: str) -> str:
         from deepseek_tui.engine.dispatch import mcp_tool_is_read_only
 
         return "mcp_action" if not mcp_tool_is_read_only(tool_name) else "mcp_read"
-    if tool_name.startswith("agent_") or tool_name == "delegate_to_agent":
+    if tool_name.startswith("agent_"):
         return "subagent"
     if tool_name.startswith("task_"):
         return "task"
@@ -371,8 +371,6 @@ def build_impacts(tool_name: str, category: str, args: dict[str, Any]) -> list[s
         lines = ["Writes files in the workspace or an approved write scope."]
         if path := _param_preview(args, ("path", "target", "destination"), 72):
             lines.append(f"Writes: {path}")
-        if tool_name == "apply_patch" and (args.get("patch") or args.get("changes")):
-            lines.append("Applies a unified diff or multi-file patch.")
         return lines
     if category == "shell":
         lines = ["Executes a shell command."]
@@ -426,18 +424,6 @@ def build_impacts(tool_name: str, category: str, args: dict[str, Any]) -> list[s
 def build_primary_preview(
     tool_name: str, category: str, args: dict[str, Any]
 ) -> str:
-    if category == "file_write" and tool_name == "apply_patch":
-        patch = args.get("patch")
-        if isinstance(patch, str) and patch.strip():
-            return _truncate(patch, _PREVIEW_MAX)
-        changes = args.get("changes")
-        if isinstance(changes, list) and changes:
-            paths = []
-            for item in changes[:8]:
-                if isinstance(item, dict) and isinstance(item.get("path"), str):
-                    paths.append(item["path"])
-            if paths:
-                return "Files:\n" + "\n".join(paths)
     if category == "shell":
         parts = []
         if cmd := _param_preview(args, ("command", "cmd"), _LINE_MAX):

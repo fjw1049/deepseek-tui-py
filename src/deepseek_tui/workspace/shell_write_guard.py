@@ -230,12 +230,12 @@ def check_shell_write(
                 return _deny(
                     token,
                     f"Shell cannot mutate source files in-place ({token}). "
-                    "Use edit_file / apply_patch / write_file.",
+                    "Use edit_file / write_file.",
                 )
         return _deny(
             None,
             "Shell cannot mutate source files in-place (sed/perl/ruby -i). "
-            "Use edit_file / apply_patch / write_file.",
+            "Use edit_file / write_file.",
         )
 
     for target in _extract_redirect_targets(cmd):
@@ -243,7 +243,7 @@ def check_shell_write(
             return _deny(
                 target,
                 f"Shell cannot write source file {target!r}. "
-                "Use edit_file / apply_patch / write_file.",
+                "Use edit_file / write_file.",
             )
 
     if _PYTHON_WRITE.search(cmd):
@@ -256,13 +256,13 @@ def check_shell_write(
                 return _deny(
                     token,
                     f"Shell cannot mutate source files via interpreter write "
-                    f"({token}). Use edit_file / apply_patch / write_file.",
+                    f"({token}). Use edit_file / write_file.",
                 )
         # Matched write API but no path extracted — still deny (fail closed).
         return _deny(
             None,
             "Shell cannot mutate source files via interpreter write. "
-            "Use edit_file / apply_patch / write_file.",
+            "Use edit_file / write_file.",
         )
 
     cp_mv = _CP_MV_RM.search(cmd)
@@ -289,7 +289,7 @@ def check_shell_write(
                     return _deny(
                         op,
                         f"Shell cannot rm source path {op!r}. "
-                        "Use edit_file / apply_patch / write_file (or git).",
+                        "Use edit_file / write_file (or git).",
                     )
         elif tool in {"cp", "mv"} and operands:
             # Only the destination matters for "writing source".
@@ -298,7 +298,7 @@ def check_shell_write(
                 return _deny(
                     dest,
                     f"Shell cannot {tool} onto source path {dest!r}. "
-                    "Use edit_file / apply_patch / write_file.",
+                    "Use edit_file / write_file.",
                 )
 
     return ShellWriteVerdict(allowed=True)

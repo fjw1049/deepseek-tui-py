@@ -47,12 +47,14 @@ class ExecShellTool(ToolSpec):
         return (
             "Execute a shell command. Supports background jobs (background=true) "
             "and an optional pseudo-TTY (pty=true) for interactive programs. "
+            "Background jobs return a process_id — collect their output with "
+            "agent_result and cancel them with agent_cancel. "
             "Foreground commands are killed after timeout_ms milliseconds "
             "(default 120000, max 600000). Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
             "is unavailable or you need shell piping around the response. "
-            "Do not mutate source files via sed/python/heredoc — use edit_file, "
-            "apply_patch, or write_file (scratch/, build outputs, and /tmp are allowed)."
+            "Do not mutate source files via sed/python/heredoc — use edit_file "
+            "or write_file (scratch/, build outputs, and /tmp are allowed)."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -261,7 +263,7 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
       - active durable task      → task_shell_start + task_shell_wait
       - task_manager wired but
         no active task           → task_create first, then task_shell_start
-      - otherwise                → exec_shell(background=true) + exec_shell_wait
+      - otherwise                → exec_shell(background=true) + agent_result
 
     The mirror/tool-swap suggestion appears once the host has crossed the
     escalation threshold (see network_escalation). A single timeout stays
@@ -304,7 +306,7 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
         )
     return (
         "For long-running work, use exec_shell(background=true) and then "
-        "exec_shell_wait to collect output, instead of a foreground "
+        "agent_result to collect output, instead of a foreground "
         "exec_shell that blocks until the timeout."
     )
 
@@ -324,60 +326,129 @@ def _timeout_job_hint(command: str, context: ToolContext) -> str:
     return "exec_shell_background"
 
 
-class ExecShellWaitTool(ToolSpec):
-    def name(self) -> str:
-        return "exec_shell_wait"
+async def wait_background_process(
+    context: ToolContext,
+    process_id: str,
+    *,
+    timeout_ms: int | None = None,
+) -> ToolResult:
+    """Block until a background shell process exits and collect its output.
 
-    def description(self) -> str:
-        return "Wait for a background shell command to finish and collect output."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"process_id": {"type": "string"}},
-            "required": ["process_id"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        process_id = _require_string(input_data, "process_id")
-        pty_proc = _pop_pty(context, process_id)
-        if pty_proc is not None:
+    With ``timeout_ms`` set, a still-running process yields a
+    ``status: running`` result (and stays registered) instead of blocking
+    forever. Shared by ``agent_result`` (background-job result fetch) and
+    ``task_shell_wait``.
+    """
+    pty_proc = _get_pty(context, process_id)
+    if pty_proc is not None:
+        if timeout_ms is not None and not pty_proc.done:
+            try:
+                await asyncio.wait_for(pty_proc.wait(), timeout=timeout_ms / 1000.0)
+            except asyncio.TimeoutError:
+                return _running_process_result(process_id)
+        else:
             await pty_proc.wait()
-            text = pty_proc.output.decode("utf-8", errors="replace")
-            exec_env = _pop_exec_env(context, process_id)
-            metadata: dict[str, Any] = {
+        _pop_pty(context, process_id)
+        text = pty_proc.output.decode("utf-8", errors="replace")
+        exec_env = _pop_exec_env(context, process_id)
+        metadata: dict[str, Any] = {
+            "returncode": pty_proc.exit_code,
+            "stdout": text,
+            "stderr": "",
+            "status": "completed",
+            "process_id": process_id,
+            "pty": True,
+        }
+        if exec_env is not None:
+            apply_sandbox_metadata(
+                metadata,
+                exec_env=exec_env,
+                exit_code=pty_proc.exit_code if pty_proc.exit_code is not None else 1,
+                stderr=text,
+            )
+        return ToolResult(
+            success=pty_proc.exit_code == 0,
+            content=text.strip(),
+            metadata=metadata,
+        )
+
+    process = _get_process(context, process_id)
+    if timeout_ms is not None and process.returncode is None:
+        # wait() does not consume the pipes, so a timeout leaves the
+        # process (and its buffered output) intact for a later call.
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout_ms / 1000.0)
+        except asyncio.TimeoutError:
+            return _running_process_result(process_id)
+    _pop_process(context, process_id)
+    exec_env = _pop_exec_env(context, process_id)
+    stdout, stderr = await process.communicate()
+    return _build_shell_result(
+        process,
+        stdout,
+        stderr,
+        extra_metadata={"process_id": process_id},
+        exec_env=exec_env,
+    )
+
+
+async def peek_background_process(context: ToolContext, process_id: str) -> ToolResult:
+    """Non-blocking status check: collect output if done, else report running."""
+    pty_proc = _get_pty(context, process_id)
+    if pty_proc is not None:
+        if not pty_proc.done:
+            return _running_process_result(process_id)
+        return await wait_background_process(context, process_id)
+    process = _get_process(context, process_id)
+    if process.returncode is None:
+        return _running_process_result(process_id)
+    return await wait_background_process(context, process_id)
+
+
+def _running_process_result(process_id: str) -> ToolResult:
+    return ToolResult(
+        success=True,
+        content=f"process {process_id} still running",
+        metadata={"process_id": process_id, "status": "running"},
+    )
+
+
+async def cancel_background_process(context: ToolContext, process_id: str) -> ToolResult:
+    """Terminate a background shell process and collect partial output.
+
+    Shared by ``agent_cancel``.
+    """
+    pty_proc = _pop_pty(context, process_id)
+    if pty_proc is not None:
+        pty_proc.kill()
+        await pty_proc.wait()
+        text = pty_proc.output.decode("utf-8", errors="replace")
+        return ToolResult(
+            success=True,
+            content="cancelled",
+            metadata={
+                "process_id": process_id,
                 "returncode": pty_proc.exit_code,
                 "stdout": text,
                 "stderr": "",
-                "status": "completed",
-                "process_id": process_id,
+                "status": "cancelled",
                 "pty": True,
-            }
-            if exec_env is not None:
-                apply_sandbox_metadata(
-                    metadata,
-                    exec_env=exec_env,
-                    exit_code=pty_proc.exit_code if pty_proc.exit_code is not None else 1,
-                    stderr=text,
-                )
-            return ToolResult(
-                success=pty_proc.exit_code == 0,
-                content=text.strip(),
-                metadata=metadata,
-            )
-        process = _pop_process(context, process_id)
-        exec_env = _pop_exec_env(context, process_id)
-        stdout, stderr = await process.communicate()
-        return _build_shell_result(
-            process,
-            stdout,
-            stderr,
-            extra_metadata={"process_id": process_id},
-            exec_env=exec_env,
+            },
         )
+    process = _pop_process(context, process_id)
+    process.terminate()
+    stdout, stderr = await process.communicate()
+    return ToolResult(
+        success=True,
+        content="cancelled",
+        metadata={
+            "process_id": process_id,
+            "returncode": process.returncode,
+            "stdout": _decode_stream(stdout),
+            "stderr": _decode_stream(stderr),
+            "status": "cancelled",
+        },
+    )
 
 
 class ExecShellInteractTool(ToolSpec):
@@ -445,58 +516,6 @@ class ExecShellInteractTool(ToolSpec):
             success=True,
             content="sent",
             metadata={"process_id": process_id, "close_stdin": close_stdin},
-        )
-
-
-class ExecShellCancelTool(ToolSpec):
-    def name(self) -> str:
-        return "exec_shell_cancel"
-
-    def description(self) -> str:
-        return "Cancel a background shell command."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"process_id": {"type": "string"}},
-            "required": ["process_id"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        process_id = _require_string(input_data, "process_id")
-        pty_proc = _pop_pty(context, process_id)
-        if pty_proc is not None:
-            pty_proc.kill()
-            await pty_proc.wait()
-            text = pty_proc.output.decode("utf-8", errors="replace")
-            return ToolResult(
-                success=True,
-                content="cancelled",
-                metadata={
-                    "process_id": process_id,
-                    "returncode": pty_proc.exit_code,
-                    "stdout": text,
-                    "stderr": "",
-                    "status": "cancelled",
-                    "pty": True,
-                },
-            )
-        process = _pop_process(context, process_id)
-        process.terminate()
-        stdout, stderr = await process.communicate()
-        return ToolResult(
-            success=True,
-            content="cancelled",
-            metadata={
-                "process_id": process_id,
-                "returncode": process.returncode,
-                "stdout": _decode_stream(stdout),
-                "stderr": _decode_stream(stderr),
-                "status": "cancelled",
-            },
         )
 
 

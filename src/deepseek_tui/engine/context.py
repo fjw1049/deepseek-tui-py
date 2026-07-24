@@ -73,9 +73,7 @@ def summarize_text_head_tail(text: str, limit: int) -> str:
 _NOISY_TOOLS = frozenset(
     {
         "exec_shell",
-        "exec_shell_wait",
         "exec_shell_interact",
-        "multi_tool_use.parallel",
         "web_search",
     }
 )

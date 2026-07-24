@@ -205,7 +205,7 @@ def _assert_workflow_trace(trace: WorkflowTrace, runtime: ToolRuntime) -> None:
     assert "agent_spawn" in names, f"model never called agent_spawn; got {names}"
     assert "rlm" in names, f"model never called rlm; got {names}"
 
-    agent_followups = {"agent_result", "agent_wait", "delegate_to_agent"}
+    agent_followups = {"agent_result", "agent_wait"}
     assert any(n in names for n in agent_followups), (
         f"model never waited on subagent; got {names}"
     )

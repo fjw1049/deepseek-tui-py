@@ -104,7 +104,7 @@ def test_mutations_list_from_metadata() -> None:
                 "unified_diff": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@\n-a\n+b\n",
                 "additions": 1,
                 "deletions": 1,
-                "source": "apply_patch",
+                "source": "edit_file",
             },
             {
                 "path": "b.py",
@@ -112,14 +112,14 @@ def test_mutations_list_from_metadata() -> None:
                 "unified_diff": "diff --git a/b.py b/b.py\n--- /dev/null\n+++ b/b.py\n@@\n+z\n",
                 "additions": 1,
                 "deletions": 0,
-                "source": "apply_patch",
+                "source": "edit_file",
             },
         ]
     }
     muts = mutation_from_metadata(meta, turn_id="t1", tool_call_id="patch1")
     assert len(muts) == 2
     assert {m.path for m in muts} == {"a.py", "b.py"}
-    assert all(m.source == "apply_patch" for m in muts)
+    assert all(m.source == "edit_file" for m in muts)
     assert all(m.tool_call_id == "patch1" for m in muts)
 
 

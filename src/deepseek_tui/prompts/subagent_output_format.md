@@ -58,10 +58,9 @@ not cover (build, test, format, lint, ad-hoc one-liners).
 - List a directory: `list_dir` (NOT `exec_shell` with `ls`).
 - Search file contents: `grep_files` (NOT `exec_shell` with `rg`/`grep`).
 - Find files by name: `file_search` (NOT `exec_shell` with `find`).
-- Single search/replace edit in one file: `edit_file`.
-- Multi-hunk or multi-file edits: `apply_patch` (NOT a sequence of
-  `edit_file` calls — patches are atomic and easier for the parent to audit).
-- Brand-new file: `write_file` (NOT `apply_patch` against `/dev/null`).
+- Single search/replace edit in one file: `edit_file` (one call per
+  replacement; batch independent edits in the same turn).
+- Brand-new file or full rewrite: `write_file`.
 - Inspect git state: `git_status` / `git_diff` / `git_log` / `git_show` /
   `git_blame` (NOT `exec_shell` with `git`).
 - Web lookup: `web_search` / `fetch_url` (NOT `exec_shell` with `curl`).

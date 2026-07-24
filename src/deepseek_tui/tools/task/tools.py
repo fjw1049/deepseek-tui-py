@@ -56,7 +56,7 @@ class TaskCreateTool(ToolSpec):
             "this turn. Use ONLY for long-running work the user will not wait for "
             "here. If you need to WAIT for the result, AGGREGATE several results, "
             "or report back in this reply (e.g. 'benchmark X and Y and summarize'), "
-            "use sub-agents instead (agent_spawn + agent_wait, or delegate_to_agent). "
+            "use sub-agents instead (agent_spawn + agent_wait). "
             "Never split one combined-report request into multiple tasks — they run "
             "independently and are never aggregated. Cannot be called from inside "
             "another running task (max_task_nest_depth=1); use sub-agents instead."
@@ -575,15 +575,13 @@ class TaskShellWaitTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        from deepseek_tui.tools.shell import ExecShellWaitTool
+        from deepseek_tui.tools.shell import wait_background_process
 
         process_id = _require_string(input_data, "process_id")
         task_id_opt = _optional_task_id_from_input(input_data, context)
 
-        # Delegate to ExecShellWaitTool — it handles pty and pipe cases.
-        wait_result = await ExecShellWaitTool().execute(
-            {"process_id": process_id}, context
-        )
+        # Delegate to the shared background-process wait — handles pty and pipe.
+        wait_result = await wait_background_process(context, process_id)
 
         # Record artifact on the task if we know which one.
         if task_id_opt is not None:

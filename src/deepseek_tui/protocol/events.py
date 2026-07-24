@@ -21,7 +21,6 @@ __all__ = [
     "McpStartupStatus",
     "McpStartupUpdateEvent",
     # Event frame variants
-    "ApplyPatchApprovalRequestEvent",
     "ElicitationRequestEvent",
     "ErrorEventFrame",
     "ExecApprovalRequestEventFrame",
@@ -210,12 +209,6 @@ class ExecApprovalRequestEventFrame(BaseModel):
     request: ExecApprovalRequestEvent
 
 
-class ApplyPatchApprovalRequestEvent(BaseModel):
-    model_config = _BASE
-    event: Literal["apply_patch_approval_request"] = "apply_patch_approval_request"
-    request: ExecApprovalRequestEvent
-
-
 class ElicitationRequestEvent(BaseModel):
     model_config = _BASE
     event: Literal["elicitation_request"] = "elicitation_request"
@@ -301,7 +294,6 @@ EventFrame = Annotated[
     | McpToolCallBeginEvent
     | McpToolCallEndEvent
     | ExecApprovalRequestEventFrame
-    | ApplyPatchApprovalRequestEvent
     | ElicitationRequestEvent
     | ExecCommandBeginEvent
     | ExecCommandOutputDeltaEvent

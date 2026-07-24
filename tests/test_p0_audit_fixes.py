@@ -23,13 +23,9 @@ from deepseek_tui.mcp.transport import McpTransportError
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.tools.file import EditFileTool
 from deepseek_tui.tools.registry import (
-    ApprovalRequirement,
-    ToolCapability,
     ToolContext,
     ToolError,
-    ToolRegistry,
     ToolResult,
-    ToolSpec,
 )
 
 
@@ -111,50 +107,6 @@ async def test_mcp_client_marks_dead_after_transport_error() -> None:
     await asyncio.wait_for(client._reader_task, timeout=2.0)  # noqa: SLF001
     assert client.is_running is False
     assert client._closed is True  # noqa: SLF001
-
-
-class _SuggestReadOnlyTool(ToolSpec):
-    def name(self) -> str:
-        return "suggest_readonly"
-
-    def description(self) -> str:
-        return "read-only but requires suggest approval"
-
-    def input_schema(self) -> dict[str, Any]:
-        return {"type": "object", "properties": {}}
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.NETWORK]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.SUGGEST
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        return ToolResult(success=True, content="should not run")
-
-
-@pytest.mark.asyncio
-async def test_parallel_tool_rejects_approval_required_readonly() -> None:
-    class _Harness(ToolExecutionMixin):
-        def __init__(self) -> None:
-            self.tool_registry = ToolRegistry()
-            self.tool_registry.register(_SuggestReadOnlyTool())
-            self.tool_context = ToolContext(working_directory=MagicMock())
-            self.exec_policy = MagicMock()
-            self.exec_policy.approval_policy = "on-request"
-
-    harness = _Harness()
-    result = await harness._execute_parallel_tools(
-        {
-            "tool_uses": [
-                {"recipient_name": "suggest_readonly", "parameters": {}}
-            ]
-        }
-    )
-    assert result.success is False
-    assert "requires approval" in result.content
 
 
 @pytest.mark.asyncio

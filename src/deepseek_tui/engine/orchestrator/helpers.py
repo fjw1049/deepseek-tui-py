@@ -46,8 +46,6 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         "retrieve_tool_result",
         "current_time",
         "checklist_write",
-        "checklist_add",
-        "checklist_update",
         "checklist_list",
         "request_user_input",
         # Research
@@ -56,12 +54,9 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         # Work
         "write_file",
         "edit_file",
-        "apply_patch",
         # Shell (registered names only — no exec_wait / exec_interact aliases)
         "exec_shell",
-        "exec_shell_wait",
         "exec_shell_interact",
-        "exec_shell_cancel",
         # Agents
         "agent_spawn",
         "agent_result",
@@ -70,15 +65,14 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         "agent_cancel",
         "agent_send_input",
         "resume_agent",
-        "delegate_to_agent",
     }
 )
 
 FOCUS_READ_BASE = _FOCUS_REGISTRY_TOOLS | FOCUS_META_TOOLS
 
 # Write subset kept for MCP-focus composition and callers that want the
-# write trio without the full scenario base.
-FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file", "apply_patch"})
+# write tools without the full scenario base.
+FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file"})
 
 
 def _detect_focus_prefix(text: str, sigil: str) -> str | None:

@@ -1490,6 +1490,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             catalog,
             include_tool_search=_include_search,
             include_code_execution=_include_code,
+            mode=mode,
         )
         active_names = initial_active_tools(catalog)
         return active_tools_for_step(catalog, active_names, force_update_plan_first=False)
@@ -2238,7 +2239,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if tool_name not in {
             "agent_wait",
             "agent_result",
-            "delegate_to_agent",
             "agent_cancel",
         }:
             return

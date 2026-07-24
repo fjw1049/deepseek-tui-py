@@ -53,7 +53,6 @@ from .approval import (
     ToolPayloadMcp,
 )
 from .events import (
-    ApplyPatchApprovalRequestEvent,
     ElicitationRequestEvent,
     ErrorEventFrame,
     EventFrame,
@@ -159,7 +158,6 @@ __all__ = [
     "McpStartupStatus",
     "McpStartupUpdateEvent",
     # Event frames
-    "ApplyPatchApprovalRequestEvent",
     "ElicitationRequestEvent",
     "ErrorEventFrame",
     "EventFrame",

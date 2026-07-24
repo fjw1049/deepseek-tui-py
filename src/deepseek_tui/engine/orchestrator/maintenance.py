@@ -29,7 +29,7 @@ class SessionMaintenanceMixin:
     """Checkpoint / persistence / compaction / cycle methods shared into Engine."""
 
     _SNAPSHOT_TOOLS: frozenset[str] = frozenset(
-        {"write_file", "edit_file", "apply_patch"}
+        {"write_file", "edit_file"}
     )
 
     def _take_pre_tool_snapshot(

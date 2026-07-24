@@ -24,7 +24,7 @@ def test_map_tool_matcher() -> None:
     assert map_tool_matcher("Edit|Write") == ["edit_file", "write_file"]
     assert map_tool_matcher("Skill") == ["load_skill"]
     assert map_tool_matcher("Bash|Read") == ["exec_shell", "read_file"]
-    assert map_tool_matcher("MultiEdit") == ["edit_file", "apply_patch"]
+    assert map_tool_matcher("MultiEdit") == ["edit_file"]
     # All-tools sentinels -> no filter.
     assert map_tool_matcher("") == []
     assert map_tool_matcher("*") == []

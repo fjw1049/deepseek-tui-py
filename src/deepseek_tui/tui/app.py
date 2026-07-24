@@ -672,7 +672,7 @@ class DeepSeekTUI(App[None]):
             elif isinstance(event, ToolCallEvent):
                 tc = event.tool_call
                 transcript.add_tool_call(tc.id, tc.name, tc.arguments)
-                if tc.name in ("agent_spawn", "delegate_to_agent", "spawn_agent"):
+                if tc.name == "agent_spawn":
                     status.set_phase("spawning sub-agent...")
                 else:
                     status.set_phase(f"running {tc.name}")
@@ -687,11 +687,7 @@ class DeepSeekTUI(App[None]):
                     transcript.try_collapse_batch(completed_batch)
                 self._refresh_plan_progress_hint(status)
                 self._schedule_info_sidebar_refresh()
-                if event.success and event.tool_name in (
-                    "agent_spawn",
-                    "delegate_to_agent",
-                    "spawn_agent",
-                ):
+                if event.success and event.tool_name == "agent_spawn":
                     agent_id = _agent_id_from_spawn_result(event.content)
                     if agent_id:
                         self._turn_agent_ids.add(agent_id)

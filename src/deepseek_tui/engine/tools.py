@@ -25,7 +25,6 @@ from dataclasses import dataclass
 
 # --- Constants ------------------------------------------------------------
 
-MULTI_TOOL_PARALLEL_NAME = "multi_tool_use.parallel"
 REQUEST_USER_INPUT_NAME = "request_user_input"
 CODE_EXECUTION_TOOL_NAME = "code_execution"
 
@@ -47,32 +46,20 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "list_dir",
         "grep_files",
         "file_search",
-        "diagnostics",
-        "project_map",
         # Core write tools — keep visible so the model does not fall back to
         # shell heredocs / cp for ordinary file edits (selection bias).
         "write_file",
         "edit_file",
-        "apply_patch",
-        "git_status",
-        "git_diff",
         # Shell family (also force-active in agent mode via _SHELL_TOOLS).
         "exec_shell",
-        "exec_shell_wait",
         "exec_shell_interact",
         "load_skill",
-        MULTI_TOOL_PARALLEL_NAME,
         "update_plan",
         "checklist_write",
-        "checklist_add",
-        "checklist_update",
         "checklist_list",
         "task_create",
         "task_list",
         "task_read",
-        "task_gate_run",
-        "task_shell_start",
-        "task_shell_wait",
         # Sub-agent orchestration — keep visible alongside task_* so the
         # model does not reach for task_create when the user asks for
         # agent_spawn (both families were originally deferred; task_* was
@@ -84,10 +71,6 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "agent_cancel",
         "agent_send_input",
         "resume_agent",
-        "delegate_to_agent",
-        "workflow",
-        "github_issue_context",
-        "github_pr_context",
         "web_search",
         "fetch_url",
         REQUEST_USER_INPUT_NAME,
@@ -97,7 +80,6 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
 _SHELL_TOOLS = frozenset(
     {
         "exec_shell",
-        "exec_shell_wait",
         "exec_shell_interact",
     }
 )
@@ -131,16 +113,9 @@ def apply_mcp_tool_deferral(
     catalog: list[dict[str, Any]], mode: str
 ) -> None:
     """Set ``defer_loading`` on each MCP tool dict in-place."""
-    keep_loaded = frozenset(
-        {
-            "list_mcp_resources",
-            "list_mcp_resource_templates",
-            # mcp_read_resource is a bridge alias → read_mcp_resource
-            "mcp_read_resource",
-            "read_mcp_resource",
-            "mcp_get_prompt",
-        }
-    )
+    # Everything in the MCP catalog defers outside yolo mode; the model
+    # discovers entries via tool_search or activates them by calling directly.
+    keep_loaded = frozenset()
     for tool in catalog:
         fn = tool.get("function", tool)
         tool_name = fn.get("name", "")
@@ -174,14 +149,25 @@ def ensure_advanced_tooling(
     *,
     include_tool_search: bool = True,
     include_code_execution: bool = True,
+    mode: str | None = None,
 ) -> None:
-    """Ensure built-in advanced tools (code_execution, tool_search) are present."""
+    """Ensure built-in advanced tools (code_execution, tool_search) are present.
+
+    ``mode`` (when given) defers ``code_execution`` under the same policy as
+    registry tools; tool_search always stays active so deferred tools remain
+    discoverable.
+    """
     existing = set()
     for t in tools:
         fn = t.get("function", t)
         existing.add(fn.get("name"))
 
     if CODE_EXECUTION_TOOL_NAME not in existing and include_code_execution:
+        code_defer = (
+            should_default_defer_tool(CODE_EXECUTION_TOOL_NAME, mode)
+            if mode is not None
+            else False
+        )
         tools.append(
             {
                 "type": "function",
@@ -203,7 +189,7 @@ def ensure_advanced_tooling(
                         "required": ["code"],
                     },
                     "allowed_callers": ["direct"],
-                    "defer_loading": False,
+                    "defer_loading": code_defer,
                 },
             }
         )

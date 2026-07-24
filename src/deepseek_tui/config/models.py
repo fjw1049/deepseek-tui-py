@@ -109,7 +109,6 @@ class FeatureConfig(BaseModel):
     subagents: bool = True
     tasks: bool = True
     web_search: bool = True
-    apply_patch: bool = True
     mcp: bool = True
     exec_policy: bool = True
     # 2026-05-15: opt-in. When True, AutomationManager + scheduler are

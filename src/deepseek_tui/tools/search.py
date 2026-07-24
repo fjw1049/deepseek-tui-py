@@ -49,7 +49,14 @@ class GrepFilesTool(ToolSpec):
         return (
             "Search files for a regular expression. ``pattern`` is a Python "
             "regex (use ``\\\\b`` for word boundaries, ``(?i)`` for case-insensitive). "
-            "``ignore_case`` toggles case insensitivity without inline flags."
+            "``ignore_case`` toggles case insensitivity without inline flags. "
+            "``output_mode`` selects the result shape: 'files_with_matches' "
+            "(default first pass — just the paths that match, cheap), "
+            "'content' (matching lines as path:line_number:line, with "
+            "optional -A/-B/-C context lines), or 'count_matches' "
+            "(path:match_count plus a total). Locate with "
+            "files_with_matches, then drill in with content. ``head_limit`` "
+            "caps the returned entries (default 200)."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -62,6 +69,39 @@ class GrepFilesTool(ToolSpec):
                 },
                 "path": {"type": "string"},
                 "ignore_case": {"type": "boolean", "default": False},
+                "output_mode": {
+                    "type": "string",
+                    "enum": ["content", "files_with_matches", "count_matches"],
+                    "default": "content",
+                    "description": (
+                        "content: matching lines with line numbers; "
+                        "files_with_matches: only paths with at least one match; "
+                        "count_matches: per-file match counts plus a total."
+                    ),
+                },
+                "head_limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Maximum entries to return (matching lines in content "
+                        "mode, files otherwise). Default 200."
+                    ),
+                },
+                "-C": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Context lines before and after each match (content mode only).",
+                },
+                "-A": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Context lines after each match (content mode only).",
+                },
+                "-B": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Context lines before each match (content mode only).",
+                },
             },
             "required": ["pattern", "path"],
         }
@@ -73,35 +113,89 @@ class GrepFilesTool(ToolSpec):
         pattern = _require_string(input_data, "pattern")
         root = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
         ignore_case = bool(input_data.get("ignore_case", False))
+        output_mode = input_data.get("output_mode", "content")
+        if output_mode not in ("content", "files_with_matches", "count_matches"):
+            raise ToolError(
+                "output_mode must be one of: content, files_with_matches, count_matches"
+            )
+        head_limit = _optional_non_negative_int(input_data, "head_limit")
+        if head_limit is None:
+            head_limit = _MAX_MATCHES
+        context_before = _optional_non_negative_int(input_data, "-B") or 0
+        context_after = _optional_non_negative_int(input_data, "-A") or 0
+        context_both = _optional_non_negative_int(input_data, "-C")
+        if context_both is not None:
+            # -A / -B win over -C on their respective side (grep semantics).
+            if "-B" not in input_data:
+                context_before = context_both
+            if "-A" not in input_data:
+                context_after = context_both
         try:
             flags = re.IGNORECASE if ignore_case else 0
             compiled = re.compile(pattern, flags)
         except re.error as exc:
             logger.warning("grep_files_invalid_regex pattern=%r error=%s", pattern, exc)
             raise ToolError(f"invalid regex pattern: {exc}") from exc
-        matches, total = await asyncio.to_thread(_grep_files, root, compiled)
+        rows, file_counts, total = await asyncio.to_thread(
+            _grep_files,
+            root,
+            compiled,
+            before=context_before if output_mode == "content" else 0,
+            after=context_after if output_mode == "content" else 0,
+            head_limit=head_limit,
+        )
         logger.info(
-            "grep_files pattern=%r root=%s ignore_case=%s match_count=%d shown=%d",
+            "grep_files pattern=%r root=%s ignore_case=%s mode=%s match_count=%d",
             pattern,
             root,
             ignore_case,
+            output_mode,
             total,
-            len(matches),
         )
-        content = "\n".join(matches)
-        if total > len(matches):
-            content += (
-                f"\n… (showing {len(matches)} of {total} matches; "
-                "refine the pattern or narrow the path)"
-            )
+        if output_mode == "files_with_matches":
+            paths = list(file_counts)
+            shown = paths[:head_limit]
+            content_lines = [str(p) for p in shown]
+            if len(paths) > len(shown):
+                content_lines.append(
+                    f"… (showing {len(shown)} of {len(paths)} files; "
+                    "refine the pattern or narrow the path)"
+                )
+            truncated = len(paths) > len(shown)
+            shown_count: int = len(shown)
+        elif output_mode == "count_matches":
+            items = list(file_counts.items())
+            shown_items = items[:head_limit]
+            content_lines = [f"{p}:{n}" for p, n in shown_items]
+            if len(items) > len(shown_items):
+                content_lines.append(
+                    f"… (showing {len(shown_items)} of {len(items)} files)"
+                )
+            content_lines.append(f"total: {total}")
+            truncated = len(items) > len(shown_items)
+            shown_count = len(shown_items)
+        else:
+            content_lines = [
+                f"{p}:{n}:{line}" if not is_context else f"{p}-{n}-{line}"
+                for p, n, line, is_context in rows
+            ]
+            shown_matches = sum(1 for r in rows if not r[3])
+            if total > shown_matches:
+                content_lines.append(
+                    f"… (showing {shown_matches} of {total} matches; "
+                    "refine the pattern or narrow the path)"
+                )
+            truncated = total > shown_matches
+            shown_count = shown_matches
         return ToolResult(
             success=True,
-            content=content,
+            content="\n".join(content_lines),
             metadata={
                 "path": str(root),
+                "output_mode": output_mode,
                 "count": total,
-                "shown": len(matches),
-                "truncated": total > len(matches),
+                "shown": shown_count,
+                "truncated": truncated,
             },
         )
 
@@ -157,29 +251,67 @@ def _iter_files(root: Path) -> Iterable[Path]:
             yield Path(dirpath) / name
 
 
-def _grep_files(root: Path, pattern: re.Pattern[str]) -> tuple[list[str], int]:
-    """Return ``(shown_lines, total_matches)``.
+def _grep_files(
+    root: Path,
+    pattern: re.Pattern[str],
+    *,
+    before: int = 0,
+    after: int = 0,
+    head_limit: int = _MAX_MATCHES,
+) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int]:
+    """Return ``(rows, file_counts, total_matches)``.
 
-    ``shown_lines`` is capped at ``_MAX_MATCHES`` and each line at
-    ``_MAX_LINE_LEN``; ``total_matches`` is the true count so the caller can
-    tell the model how much was elided.
+    ``rows`` are ``(path, line_number, line, is_context)`` tuples in output
+    order; matching rows are capped at ``head_limit`` (context rows ride
+    along for free). ``file_counts`` maps every file with at least one
+    match to its true match count, so files/count modes can report the
+    full picture even when content rows are capped.
     """
-    results: list[str] = []
+    rows: list[tuple[Path, int, str, bool]] = []
+    file_counts: dict[Path, int] = {}
     total = 0
+    shown_matches = 0
     for path in _iter_files(root):
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if not pattern.search(line):
-                continue
-            total += 1
-            if len(results) < _MAX_MATCHES:
+        lines = text.splitlines()
+        match_idx = [i for i, line in enumerate(lines) if pattern.search(line)]
+        if not match_idx:
+            continue
+        file_counts[path] = len(match_idx)
+        total += len(match_idx)
+        last_emitted = 0  # 1-based line no. dedup for overlapping context
+        for i in match_idx:
+            if shown_matches >= head_limit:
+                break
+            shown_matches += 1
+            lo = max(0, i - before)
+            hi = min(len(lines) - 1, i + after)
+            for j in range(lo, hi + 1):
+                line_no = j + 1
+                if line_no <= last_emitted:
+                    continue
+                last_emitted = line_no
+                line = lines[j]
                 if len(line) > _MAX_LINE_LEN:
                     line = line[:_MAX_LINE_LEN] + "… (line truncated)"
-                results.append(f"{path}:{line_number}:{line}")
-    return results, total
+                rows.append((path, line_no, line, j != i))
+    return rows, file_counts, total
+
+
+def _optional_non_negative_int(
+    input_data: dict[str, object], key: str
+) -> int | None:
+    if key not in input_data:
+        return None
+    value = input_data[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ToolError(f"{key} must be a non-negative integer")
+    if value < 0:
+        raise ToolError(f"{key} must be a non-negative integer")
+    return value
 
 
 def _file_search(root: Path, pattern: str) -> list[str]:

@@ -50,8 +50,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     # Plan / checklist
     "update_plan": ("◇", "plan"),
     "checklist_write": ("◇", "checklist"),
-    "checklist_add": ("◇", "checklist"),
-    "checklist_update": ("◇", "checklist"),
     "checklist_list": ("◇", "checklist"),
     "todo_write": ("◇", "todo"),
     "todo_add": ("◇", "todo"),
@@ -73,7 +71,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "agent_cancel": ("◐", "cancel"),
     "agent_send_input": ("◐", "input"),
     "resume_agent": ("◐", "resume"),
-    "delegate_to_agent": ("◐", "delegate"),
     # MCP
     "list_mcp_resources": ("◇", "mcp"),
     "list_mcp_resource_templates": ("◇", "mcp"),
@@ -90,19 +87,15 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     # Automation (read)
     "automation_list": ("◇", "auto"),
     "automation_read": ("◇", "auto"),
-    # Shell cancel / stop (no output expected)
-    "exec_shell_cancel": ("⊘", "stop"),
 }
 
 _BLOCK_TOOLS: dict[str, tuple[str, str]] = {
     # File writes
     "write_file": ("←", "write"),
     "edit_file": ("←", "edit"),
-    "apply_patch": ("←", "patch"),
     "multi_edit": ("←", "patch"),
     # Shell with output
     "exec_shell": ("$", "run"),
-    "exec_shell_wait": ("$", "run"),
     "exec_shell_interact": ("$", "run"),
     # GitHub writes
     "github_comment": ("◈", "comment"),

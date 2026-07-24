@@ -112,7 +112,7 @@ def test_default_long_command_suggests_background_shell():
     cmd = "npm run build"
     hint = _timeout_fallback_hint(cmd, _ctx())
     assert "exec_shell(background=true)" in hint
-    assert "exec_shell_wait" in hint
+    assert "agent_result" in hint
     assert _timeout_job_hint(cmd, _ctx()) == "exec_shell_background"
 
 

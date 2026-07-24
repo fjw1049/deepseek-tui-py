@@ -176,9 +176,9 @@ def reconstruct_messages_from_turns(
 # Exact tool names that mutate workspace source files. Substring matching
 # (e.g. "write" in name) incorrectly classifies checklist_write / todo_write
 # as file_change and makes the chat UI render fake "Edited" rows.
-_FILE_CHANGE_TOOLS = frozenset({"write_file", "edit_file", "apply_patch"})
+_FILE_CHANGE_TOOLS = frozenset({"write_file", "edit_file"})
 _COMMAND_EXECUTION_TOOLS = frozenset(
-    {"exec_shell", "exec_shell_wait", "exec_shell_interact"}
+    {"exec_shell", "exec_shell_interact"}
 )
 
 
@@ -519,19 +519,6 @@ def file_change_completion_detail(
 
     lower = tool_name.lower()
     path = _file_path_from_arguments(args)
-
-    if lower == "apply_patch":
-        patch = args.get("patch")
-        if isinstance(patch, str) and _looks_like_unified_diff(patch):
-            return patch
-        changes = args.get("changes")
-        if isinstance(changes, list) and len(changes) == 1:
-            only = changes[0]
-            if isinstance(only, dict):
-                change_path = only.get("path")
-                change_content = only.get("content")
-                if isinstance(change_path, str) and isinstance(change_content, str):
-                    return _synthesize_new_file_diff(change_path.strip(), change_content)
 
     if lower == "edit_file":
         search = args.get("search", args.get("old_string"))

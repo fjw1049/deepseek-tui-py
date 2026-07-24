@@ -156,8 +156,11 @@ def test_initial_request_tools_apply_native_deferral(tmp_path):
     active_names = {tool["function"]["name"] for tool in active}
 
     assert "read_file" in active_names
-    assert "workflow" in active_names
-    assert "write_file" not in active_names
+    # Core write tools stay always-active (selection-bias guard — see
+    # _ALWAYS_ACTIVE_TOOLS in engine/tools.py).
+    assert "write_file" in active_names
+    # workflow defers in agent mode (discoverable via tool_search).
+    assert "workflow" not in active_names
 
 
 async def test_live_context_breakdown_counts_initial_active_tools(tmp_path):

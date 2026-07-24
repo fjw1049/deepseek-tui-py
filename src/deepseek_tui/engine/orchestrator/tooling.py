@@ -16,7 +16,6 @@ from deepseek_tui.engine.dispatch import (
     emit_tool_audit,
     format_tool_error,
     is_mcp_tool,
-    parse_parallel_tool_calls,
     should_parallelize_tool_batch,
 )
 from deepseek_tui.engine.events import (
@@ -30,7 +29,6 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.engine.tools import (
     CODE_EXECUTION_TOOL_NAME,
-    MULTI_TOOL_PARALLEL_NAME,
     REQUEST_USER_INPUT_NAME,
     execute_code_execution_tool,
     execute_tool_search,
@@ -476,8 +474,7 @@ class ToolExecutionMixin:
         # 先归一化：把桥接别名（如 mcp_read_resource）映射回注册表工具名，
         # 后续的 is_external_mcp_tool 判定才会把它正确归到注册表分支而非外部 MCP 分支。
         tool_name = normalize_mcp_bridge_tool_name(tool_call.name)
-        # 写文件类工具执行前拍快照（供 /undo）。注意：parallel 自身不是写工具，
-        # 这里不会拍；其子工具的快照由 _execute_parallel_tools 逐个走完整分发时各自拍。
+        # 写文件类工具执行前拍快照（供 /undo）。
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
         # --- Special built-in tools (not in ToolRegistry) ---
@@ -515,9 +512,6 @@ class ToolExecutionMixin:
             return await execute_code_execution_tool(
                 tool_call.arguments, self.tool_context.working_directory
             )
-
-        if tool_name == MULTI_TOOL_PARALLEL_NAME:
-            return await self._execute_parallel_tools(tool_call.arguments)
 
         if tool_name == REQUEST_USER_INPUT_NAME:
             return await self._await_user_input(tool_call.id, tool_call.arguments)
@@ -726,7 +720,6 @@ class ToolExecutionMixin:
     def _is_sandbox_denied_tool_result(tool_name: str, result: ToolResult) -> bool:
         if tool_name not in (
             "exec_shell",
-            "exec_shell_wait",
             "exec_shell_interact",
         ):
             return False
@@ -848,69 +841,6 @@ class ToolExecutionMixin:
         finally:
             self.tool_context.elevated_sandbox_policy = prev
         return retry if retry is not None else result
-
-    async def _execute_parallel_tools(self, input_data: dict[str, Any]) -> ToolResult:
-        """Fan out multi_tool_use.parallel sub-calls concurrently.
-
-        Only read-only tools that don't require approval are eligible.
-        Recursive self-calls are rejected.
-        """
-        calls = parse_parallel_tool_calls(input_data)
-        if not calls:
-            raise ToolError(
-                "multi_tool_use.parallel: no valid tool_uses entries — each "
-                "entry must be an object with recipient_name and parameters"
-            )
-
-        async def _run_one(name: str, params: dict[str, Any]) -> dict[str, str]:
-            if name == MULTI_TOOL_PARALLEL_NAME:
-                return {
-                    "tool": name,
-                    "error": "multi_tool_use.parallel cannot call itself",
-                    "success": "false",
-                }
-            if not self.tool_registry.contains(name):
-                return {
-                    "tool": name,
-                    "error": f"Tool '{name}' not found",
-                    "success": "false",
-                }
-            tool = self.tool_registry.get(name)
-            if not tool.is_read_only():
-                return {
-                    "tool": name,
-                    "error": f"Tool '{name}' is not read-only; denied",
-                    "success": "false",
-                }
-            # Align with batch parallelization: tools that need an approval
-            # prompt (or never-block) must not bypass _execute_single_tool.
-            from deepseek_tui.tools.approval import plan_requires_approval
-
-            if plan_requires_approval(tool, self.exec_policy.approval_policy):
-                return {
-                    "tool": name,
-                    "error": (
-                        f"Tool '{name}' requires approval and cannot run "
-                        "inside multi_tool_use.parallel; call it directly"
-                    ),
-                    "success": "false",
-                }
-            try:
-                result = await self.tool_registry.execute(
-                    name, params, self.tool_context
-                )
-                return {"tool": name, "content": result.content, "success": "true"}
-            except (ToolError, Exception) as exc:
-                return {"tool": name, "error": str(exc), "success": "false"}
-
-        import json as _json
-
-        results = await asyncio.gather(*[_run_one(n, p) for n, p in calls])
-        all_failed = all(r.get("success") == "false" for r in results)
-        return ToolResult(
-            content=_json.dumps(results, ensure_ascii=False),
-            success=not all_failed,
-        )
 
     async def _await_user_input(
         self, tool_call_id: str, input_data: dict[str, Any]

@@ -84,7 +84,6 @@ class PolicyRule:
 #
 # Fingerprint shapes:
 #
-# - ``apply_patch`` → ``patch:<hash of sorted unique file paths>``
 # - ``exec_shell*`` → ``shell:<positional tokens, flags dropped>``
 #   so ``rm a.txt`` ≠ ``rm b.txt``, while ``git status -s`` ≡
 #   ``git status --porcelain``.
@@ -100,10 +99,8 @@ class PolicyRule:
 
 _SHELL_TOOLS = {
     "exec_shell",
-    "exec_shell_wait",
     "exec_shell_interact",
 }
-_PATCH_TOOLS = {"apply_patch"}
 _FETCH_TOOLS = {"fetch_url", "web.fetch", "web_fetch"}
 _FILE_WRITE_TOOLS = {"write_file", "edit_file"}
 
@@ -174,8 +171,6 @@ class ApprovalCache:
 
 def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
     """Build the approval-cache key for a tool call."""
-    if tool_name in _PATCH_TOOLS:
-        return ApprovalKey(f"patch:{_hash_patch_paths(tool_input)}")
     if tool_name in _SHELL_TOOLS:
         return ApprovalKey(f"shell:{_command_prefix(tool_input)}")
     if tool_name in _FETCH_TOOLS:
@@ -223,43 +218,6 @@ def _file_path_key(tool_input: Any) -> str:
     if not path:
         return "no_path"
     return path
-
-
-def _hash_patch_paths(tool_input: Any) -> str:
-    """Hash the sorted set of file paths referenced by a patch input.
-
-    Supports both the structured ``changes`` list and the unified-diff
-    ``patch`` text. We use ``blake2b`` truncated to 16 hex chars —
-    stable across Python runs (unlike ``hash()``) and fast. Only the
-    fingerprint *identity* matters, not any cross-implementation hash
-    compatibility, because each session has its own cache.
-    """
-    paths: list[str] = []
-    if isinstance(tool_input, dict):
-        changes = tool_input.get("changes")
-        if isinstance(changes, list):
-            for change in changes:
-                if isinstance(change, dict):
-                    p = change.get("path")
-                    if isinstance(p, str) and p:
-                        paths.append(p)
-        elif isinstance(tool_input.get("patch"), str):
-            patch_text = tool_input["patch"]
-            for line in patch_text.splitlines():
-                if line.startswith("+++ b/"):
-                    rest = line[len("+++ b/") :].strip()
-                    if rest and rest != "/dev/null":
-                        paths.append(rest)
-
-    if not paths:
-        return "no_files"
-
-    unique_sorted = sorted(set(paths))
-    digest = hashlib.blake2b(digest_size=8)
-    for path in unique_sorted:
-        digest.update(path.encode("utf-8"))
-        digest.update(b"\x00")
-    return digest.hexdigest()
 
 
 def _parse_host(tool_input: Any) -> str:

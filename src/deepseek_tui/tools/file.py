@@ -13,6 +13,11 @@ from deepseek_tui.utils import write_text_atomic
 
 logger = logging.getLogger(__name__)
 
+# read_file output guardrails (Claude Code Read parity): page size and
+# per-line width.
+_DEFAULT_READ_LIMIT = 2000
+_MAX_READ_LINE_LEN = 2000
+
 
 class ReadFileTool(ToolSpec):
     def name(self) -> str:
@@ -20,8 +25,10 @@ class ReadFileTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Read a UTF-8 text file from disk. Use offset/limit to read a "
-            "specific line range instead of loading large files in full."
+            "Read a UTF-8 text file from disk. Output is line-numbered "
+            "(cat -n style). By default at most 2000 lines are returned and "
+            "lines longer than 2000 characters are truncated; use offset/limit "
+            "to page through large files in ranges."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -40,7 +47,10 @@ class ReadFileTool(ToolSpec):
                 "limit": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Optional maximum number of lines to return.",
+                    "description": (
+                        "Optional maximum number of lines to return "
+                        "(default 2000)."
+                    ),
                 },
             },
             "required": ["path"],
@@ -54,21 +64,29 @@ class ReadFileTool(ToolSpec):
         content = await _read_text(path)
         offset = _optional_non_negative_int(input_data, "offset")
         limit = _optional_non_negative_int(input_data, "limit")
-        metadata: dict[str, object] = {"path": str(path)}
-        if offset is not None or limit is not None:
-            lines = content.splitlines(keepends=True)
-            start = max((offset or 0) - 1, 0)
-            end = None if limit is None else start + limit
-            content = "".join(lines[start:end])
-            metadata.update(
-                {
-                    "line_offset": offset or 0,
-                    "line_limit": limit,
-                    "total_lines": len(lines),
-                }
+        all_lines = content.splitlines()
+        total_lines = len(all_lines)
+        start = max((offset or 0) - 1, 0)
+        effective_limit = _DEFAULT_READ_LIMIT if limit is None else limit
+        end = start + effective_limit
+        numbered: list[str] = []
+        for line_no, line in enumerate(all_lines[start:end], start=start + 1):
+            if len(line) > _MAX_READ_LINE_LEN:
+                line = line[:_MAX_READ_LINE_LEN] + "... (line truncated)"
+            numbered.append(f"{line_no}\t{line}")
+        if end < total_lines:
+            numbered.append(
+                f"... (showing lines {start + 1}-{end} of {total_lines}; "
+                "use offset to continue)"
             )
+        metadata: dict[str, object] = {
+            "path": str(path),
+            "line_offset": offset or 0,
+            "line_limit": effective_limit,
+            "total_lines": total_lines,
+        }
         logger.info("read_file path=%s bytes=%d", path, len(content))
-        return ToolResult(success=True, content=content, metadata=metadata)
+        return ToolResult(success=True, content="\n".join(numbered), metadata=metadata)
 
 
 class WriteFileTool(ToolSpec):
@@ -77,8 +95,11 @@ class WriteFileTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Write UTF-8 text to a file on disk. Prefer this (or edit_file / "
-            "apply_patch) for source changes — do not rewrite files via exec_shell."
+            "Write UTF-8 text to a file on disk. If the file already exists, "
+            "you must have used read_file on it earlier in the conversation "
+            "before overwriting it; new files can be written directly. "
+            "Prefer this (or edit_file) for source changes — do not rewrite "
+            "files via exec_shell."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -130,15 +151,17 @@ class WriteFileTool(ToolSpec):
 
 
 class EditFileTool(ToolSpec):
-    """Replace text in a UTF-8 file via exact search/replace (all occurrences)."""
+    """Replace text in a UTF-8 file via exact string replacement."""
 
     def name(self) -> str:
         return "edit_file"
 
     def description(self) -> str:
         return (
-            "Replace text in a single file via exact search/replace. "
-            "Use 'search' and 'replace'; all occurrences of search are substituted. "
+            "Perform exact string replacement in a single file. Fails if "
+            "old_string is not found, or if it is not unique unless "
+            "replace_all is true. You must have used read_file on this file "
+            "earlier in the conversation before editing it. "
             "Prefer this over sed/python via exec_shell for source edits."
         )
 
@@ -147,10 +170,15 @@ class EditFileTool(ToolSpec):
             "type": "object",
             "properties": {
                 "path": {"type": "string"},
-                "search": {"type": "string", "description": "Text to find."},
-                "replace": {"type": "string", "description": "Replacement text."},
+                "old_string": {"type": "string", "description": "Text to replace."},
+                "new_string": {"type": "string", "description": "Replacement text."},
+                "replace_all": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Replace all occurrences of old_string (default false)",
+                },
             },
-            "required": ["path", "search", "replace"],
+            "required": ["path", "old_string", "new_string"],
         }
 
     def capabilities(self) -> list[ToolCapability]:
@@ -162,18 +190,27 @@ class EditFileTool(ToolSpec):
 
         rel = _require_string(input_data, "path")
         path = context.resolve_path(rel)
-        search = _require_string_with_alias(input_data, "search", "old_string")
-        replace = _require_string_with_alias(input_data, "replace", "new_string")
-        # Empty search matches every character gap in str.replace/count and
+        old_string = _require_string_with_alias(input_data, "old_string", "search")
+        new_string = _require_string_with_alias(input_data, "new_string", "replace")
+        replace_all = input_data.get("replace_all", False)
+        if not isinstance(replace_all, bool):
+            raise ToolError("replace_all must be a boolean")
+        # Empty old_string matches every character gap in str.replace/count and
         # would rewrite the entire file — reject before touching disk.
-        if search == "":
-            raise ToolError("edit_file search string must not be empty")
+        if old_string == "":
+            raise ToolError("edit_file old_string must not be empty")
         content = await _read_text(path)
-        count = content.count(search)
+        count = content.count(old_string)
         if count == 0:
-            logger.warning("edit_file_no_match path=%s search_len=%d", path, len(search))
+            logger.warning("edit_file_no_match path=%s search_len=%d", path, len(old_string))
             raise ToolError(f"Search string not found in {path}")
-        updated = content.replace(search, replace)
+        if count > 1 and not replace_all:
+            raise ToolError(
+                f"old_string occurs {count} times in {path}; provide more "
+                "surrounding context to make it unique, or set "
+                "replace_all=true to change every instance"
+            )
+        updated = content.replace(old_string, new_string)
         context.capture_pre_write(
             _workspace_rel(path, context.working_directory, rel), content
         )
@@ -183,12 +220,12 @@ class EditFileTool(ToolSpec):
         logger.info(
             "edit_file path=%s search_len=%d replace_len=%d count=%d",
             path,
-            len(search),
-            len(replace),
+            len(old_string),
+            len(new_string),
             count,
         )
         unified, stats, op = synthesize_unified_diff(display_path, content, updated)
-        first_idx = content.find(search)
+        first_idx = content.find(old_string)
         line_start = content[:first_idx].count("\n") + 1 if first_idx >= 0 else None
         meta = build_mutation_metadata(
             path=display_path,
@@ -259,8 +296,8 @@ def _require_string_with_alias(
 ) -> str:
     """Accept primary key, fall back to alias (for schema migration).
 
-    Used by ``edit_file`` to accept both ``search``/``replace``
-    and legacy ``old_string``/``new_string`` so models trained on either
+    Used by ``edit_file`` to accept both ``old_string``/``new_string``
+    and legacy ``search``/``replace`` so models trained on either
     schema still work.
     """
     if primary in input_data:

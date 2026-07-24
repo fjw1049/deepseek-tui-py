@@ -43,7 +43,6 @@ from deepseek_tui.tools.subagent.tools import (
     AgentSendInputTool,
     AgentSpawnTool,
     AgentWaitTool,
-    DelegateToAgentTool,
 )
 from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESULT_CHARS used by tests
     DEFAULT_MAX_AGENTS,
@@ -83,7 +82,6 @@ __all__ = [
     "DEFAULT_MAX_SPAWN_DEPTH",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_RESULT_TIMEOUT_MS",
-    "DelegateToAgentTool",
     "MAX_RESULT_TIMEOUT_MS",
     "MIN_WAIT_TIMEOUT_MS",
     "SUBAGENT_MAX_TOKENS_READ",

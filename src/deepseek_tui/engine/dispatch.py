@@ -4,7 +4,6 @@ Consolidates dispatch.py, executors.py, arg_repair.py.
 Tool dispatch — plan/execute helpers for the per-turn tool batch.
 
 Owns:
-  * The ``multi_tool_use.parallel`` payload parser.
   * Policy predicates: parallel batch, plan-mode stop/force, MCP safety.
   * Tool execution plan/outcome types.
 """
@@ -77,53 +76,6 @@ def format_tool_error(err: Exception, tool_name: str) -> str:
             "Adjust approval mode or request permission."
         )
     return msg
-
-
-# --- Parallel tool calls --------------------------------------------------
-
-
-def _normalize_parallel_tool_name(raw: str) -> str:
-    name = raw.strip()
-    for prefix in ("functions.", "tools.", "tool."):
-        if name.startswith(prefix):
-            return name[len(prefix) :]
-    return name
-
-
-def parse_parallel_tool_calls(
-    input_data: dict[str, Any],
-) -> list[tuple[str, dict[str, Any]]]:
-    """Parse a multi_tool_use.parallel payload into (name, params) pairs."""
-    tool_uses = input_data.get("tool_uses")
-    if not isinstance(tool_uses, list) or not tool_uses:
-        raise ToolError(
-            "multi_tool_use.parallel requires at least one tool call in 'tool_uses'"
-        )
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-    for item in tool_uses:
-        if not isinstance(item, dict):
-            continue
-        name = (
-            item.get("recipient_name")
-            or item.get("tool_name")
-            or item.get("name")
-            or item.get("tool")
-        )
-        if not isinstance(name, str):
-            raise ToolError("Each tool_use must have a 'recipient_name' or 'name'")
-        params = (
-            item.get("parameters")
-            or item.get("input")
-            or item.get("args")
-            or item.get("arguments")
-            or {}
-        )
-        if not isinstance(params, dict):
-            params = {}
-        calls.append((_normalize_parallel_tool_name(name), params))
-
-    return calls
 
 
 # --- Dispatch policy ------------------------------------------------------
@@ -283,7 +235,6 @@ _TOOL_PRIMARY_ARG: dict[str, str] = {
     "write_file": "path",
     "edit_file": "path",
     "list_dir": "path",
-    "apply_patch": "path",
     "exec_shell": "command",
     "exec_shell_interact": "input",
     "grep_files": "pattern",
@@ -294,7 +245,6 @@ _TOOL_PRIMARY_ARG: dict[str, str] = {
     "load_skill": "name",
     "task_create": "prompt",
     "agent_spawn": "prompt",
-    "delegate_to_agent": "prompt",
 }
 
 

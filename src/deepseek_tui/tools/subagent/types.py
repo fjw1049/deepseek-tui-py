@@ -126,10 +126,10 @@ _SUBAGENT_READ_TOOLS = frozenset({
     "note",
 })
 _SUBAGENT_PLAN_TOOLS = _SUBAGENT_READ_TOOLS | frozenset({
-    "update_plan", "checklist_write", "checklist_add", "checklist_update",
+    "update_plan", "checklist_write",
     "checklist_list",
 })
-_SUBAGENT_WRITE_TOOLS = frozenset({"write_file", "edit_file", "apply_patch"})
+_SUBAGENT_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
 _SUBAGENT_EXEC_TOOLS = frozenset({"exec_shell", "run_tests"})
 
 _TYPE_ALLOWLIST: dict[SubAgentType, frozenset[str] | None] = {
@@ -244,7 +244,7 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "- All file operations are relative to the workspace root\n\n"
         "Method:\n"
         "- Read target file(s) end-to-end before editing.\n"
-        "- Prefer `edit_file` for narrow changes, `apply_patch` for multi-hunk.\n"
+        "- Prefer `edit_file` for narrow changes, `write_file` for new files or full rewrites.\n"
         "- Never mutate source via exec_shell (sed/python/heredoc); use edit tools.\n"
         "- After edits, run a quick verification (lint/test).\n"
         "- If tests are needed, write them alongside the implementation.\n\n"

@@ -49,4 +49,4 @@ def test_shell_active_sets_have_no_ghost_aliases() -> None:
     assert "exec_interact" not in _ALWAYS_ACTIVE_TOOLS
     assert "exec_wait" not in _SHELL_TOOLS
     assert "exec_interact" not in _SHELL_TOOLS
-    assert {"exec_shell", "exec_shell_wait", "exec_shell_interact"} <= _SHELL_TOOLS
+    assert {"exec_shell", "exec_shell_interact"} <= _SHELL_TOOLS
