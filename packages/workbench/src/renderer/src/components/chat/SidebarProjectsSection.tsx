@@ -835,7 +835,7 @@ function SidebarProjectsSection({
         </div>
 
         {!isCollapsed ? (
-          <div className="ds-sidebar-thread-list mt-0.5 space-y-0.5">
+          <div className="ds-sidebar-thread-list mt-0.5">
             {sortedThreads.length === 0 ? (
               <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                 <div className="text-[13px] leading-5 text-ds-faint">{t('sidebarWorkspaceEmpty')}</div>
@@ -1229,20 +1229,26 @@ export function ThreadRow({
             })()}
           </span>
         )}
-        {selectionMode ? null : showCompleted ? (
+        {selectionMode ? null : (
           <span
-            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-emerald-500 group-hover:hidden group-focus-within:hidden dark:text-emerald-400"
-            title={t('sidebarThreadCompleted')}
-            aria-hidden
+            className="ds-sidebar-thread-meta group-hover:hidden group-focus-within:hidden"
+            title={
+              showCompleted
+                ? t('sidebarThreadCompleted')
+                : (sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt))
+            }
           >
-            <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
-          </span>
-        ) : (
-          <span
-            className="ds-sidebar-thread-meta shrink-0 truncate group-hover:hidden group-focus-within:hidden"
-            title={sourceLabel}
-          >
-            {sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt)}
+            {showCompleted ? (
+              <Check
+                className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400"
+                strokeWidth={2.25}
+                aria-hidden
+              />
+            ) : (
+              <span className="min-w-0 truncate">
+                {sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt)}
+              </span>
+            )}
           </span>
         )}
       </button>

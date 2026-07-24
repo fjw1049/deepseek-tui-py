@@ -6,8 +6,7 @@ import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
-import { workspaceLabelFromPath } from '../../lib/workspace-label'
-import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { ThreadRow } from './SidebarProjectsSection'
 
 type SidebarPinnedSectionProps = {
@@ -70,11 +69,6 @@ export function SidebarPinnedSection({
 
   if (filteredPinnedThreads.length === 0) return null
 
-  const pinnedSourceLabel = (thread: NormalizedThread): string => {
-    if (isChatsWorkspace(thread.workspace)) return t('sidebarChatBadge')
-    return workspaceLabelFromPath(normalizeWorkspaceRoot(thread.workspace))
-  }
-
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
     if (!threadId || deletingThreadIds[threadId]) return
@@ -111,7 +105,7 @@ export function SidebarPinnedSection({
       </div>
       {sectionCollapsed ? null : (
         <div className="ds-sidebar-pinned-list ds-scroll-surface min-h-0 overflow-y-auto overscroll-contain">
-          <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
+          <div className="ds-sidebar-thread-list px-1.5 pb-1">
             {filteredPinnedThreads.map((thread) => (
               <ThreadRow
                 key={thread.id}
@@ -130,7 +124,6 @@ export function SidebarPinnedSection({
                   (activeThreadId === thread.id && activeThreadHasTask)
                 }
                 pinned={pinnedSet.has(thread.id)}
-                sourceLabel={pinnedSourceLabel(thread)}
                 onSelect={() => onSelectThread(thread.id)}
                 onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
                 onDelete={() => void handleDeleteThread(thread)}

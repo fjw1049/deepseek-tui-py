@@ -1987,6 +1987,11 @@ samp {
   min-height: 0;
 }
 
+/* Pinned is a top-level section, not nested under a project folder. */
+.ds-sidebar-pinned-list .ds-sidebar-thread-list {
+  padding-left: 0;
+}
+
 .ds-sidebar-chats-pane {
   display: flex;
   max-height: 38%;
@@ -2010,6 +2015,21 @@ samp {
 
 .ds-sidebar-chats-list {
   min-height: 0;
+}
+
+/* Sidebar thread lists — stack flush; density comes from row padding. */
+.ds-sidebar-chats-list .ds-sidebar-thread-list,
+.ds-sidebar-pinned-list .ds-sidebar-thread-list,
+.ds-sidebar-projects-scroll .ds-sidebar-thread-list {
+  display: flex;
+  flex-direction: column;
+  row-gap: 0;
+}
+
+.ds-sidebar-chats-list .ds-sidebar-thread-row,
+.ds-sidebar-pinned-list .ds-sidebar-thread-row,
+.ds-sidebar-projects-scroll .ds-sidebar-thread-row {
+  border-radius: 8px;
 }
 
 .ds-sidebar-footer {
@@ -2221,8 +2241,13 @@ samp {
 }
 
 .ds-sidebar-thread-meta {
+  display: flex;
+  width: 2.35rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
   font-family: inherit;
-  max-width: 4.5rem;
   font-size: var(--sidebar-text-xs);
   font-weight: var(--sidebar-weight);
   line-height: 1.3;
@@ -4983,6 +5008,27 @@ select:focus-visible,
 /* Sidebar thread rows and similar list rows (replaces Tailwind py-2). */
 .ds-density-list-row {
   padding-block: calc(0.55rem * var(--ds-density, 1));
+}
+
+/* Slightly compact thread rows across chats / pinned / projects. */
+.ds-sidebar-chats-list .ds-density-list-row,
+.ds-sidebar-pinned-list .ds-density-list-row,
+.ds-sidebar-projects-scroll .ds-density-list-row {
+  gap: 0.3rem;
+  padding-block: calc(0.4rem * var(--ds-density, 1));
+  padding-inline: 0.5rem 0;
+}
+
+/* Project folder headers — match the slightly compact thread rhythm. */
+.ds-sidebar-projects-scroll .ds-sidebar-workspace > button:first-child {
+  min-height: 32px;
+  gap: 0.4rem;
+  padding-block: 0.3rem;
+  padding-inline: 0.45rem;
+}
+
+.ds-sidebar-projects-scroll .ds-sidebar-thread-list {
+  margin-top: 0;
 }
 
 [data-density='compact'] .ds-chat-composer {

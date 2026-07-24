@@ -316,7 +316,7 @@ export function SidebarChatsSection({
           {filteredChats.length === 0 ? (
             <div className="px-2.5 py-2 text-[13px] text-ds-faint">{t('sidebarChatsEmpty')}</div>
           ) : (
-            <div className="ds-sidebar-thread-list space-y-0.5 px-1.5 pb-1">
+            <div className="ds-sidebar-thread-list px-1.5 pb-1">
               {visibleChats.map((thread) => (
                 <ThreadRow
                   key={thread.id}
