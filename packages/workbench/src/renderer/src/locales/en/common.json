@@ -918,6 +918,7 @@
   "contextRailEmptyOutput": "No output yet",
   "contextRailCollapse": "Hide context",
   "contextRailExpand": "Show context",
+  "operationDockSettings": "Dock settings",
   "operationDockToolsTitle": "General",
   "operationDockToolOpen": "Open",
   "rightSidebarTitle": "Workspace",

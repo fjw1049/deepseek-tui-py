@@ -7,6 +7,7 @@ import {
   FileEdit,
   Globe2,
   Loader2,
+  Settings,
   Terminal,
   X
 } from 'lucide-react'
@@ -38,6 +39,7 @@ import {
   resolveGitCommitPaths
 } from '../../lib/git-commit-selection'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
+import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
 import { GitCommitPopover } from './GitCommitPopover'
@@ -430,8 +432,23 @@ export function OperationContextDock({
 
   if (!root) return null
 
+  const workspaceLabel = workspaceLabelFromPath(root)
+
   return (
-    <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[14px] px-4 py-3.5">
+    <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[18px]">
+      <div className="ds-operation-dock-topbar">
+        <span className="ds-operation-dock-topbar__title min-w-0 flex-1 truncate" title={workspaceLabel}>
+          {workspaceLabel}
+        </span>
+        <span
+          className="ds-operation-dock-topbar__settings"
+          aria-hidden
+          title={t('operationDockSettings')}
+        >
+          <Settings className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </span>
+      </div>
+      <div className="ds-operation-dock-body px-4 py-3.5">
       <SectionHeader
         label={t('operationDockToolsTitle')}
         collapsed={collapsed.tools}
@@ -733,6 +750,7 @@ export function OperationContextDock({
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyTasks')}</p>
         )
       ) : null}
+      </div>
     </div>
   )
 }

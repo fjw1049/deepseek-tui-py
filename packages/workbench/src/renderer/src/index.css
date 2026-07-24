@@ -4441,6 +4441,89 @@ select:focus-visible,
   font-synthesis: none;
 }
 
+/* Nested chrome: clear pocket vs white body, still soft enough to stay quiet. */
+.ds-operation-dock.ds-hero-panel.ds-glass {
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--ds-card-strong));
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
+  background: color-mix(in srgb, #fff 9%, var(--ds-card-strong));
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.28),
+    0 6px 18px rgba(0, 0, 0, 0.32);
+}
+
+.ds-operation-dock-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem 0.35rem 0.85rem;
+}
+
+.ds-operation-dock-topbar__title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+/* Decorative gear — hover to spin, not interactive yet. */
+.ds-operation-dock-topbar__settings {
+  display: inline-flex;
+  height: 1.55rem;
+  width: 1.55rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  color: var(--text-secondary);
+  opacity: 0.62;
+  pointer-events: auto;
+  cursor: default;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.ds-operation-dock-topbar__settings:hover {
+  color: var(--text-primary);
+  opacity: 1;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.ds-operation-dock-topbar__settings:hover svg {
+  animation: ds-operation-dock-settings-spin 0.85s linear infinite;
+}
+
+@keyframes ds-operation-dock-settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-operation-dock-topbar__settings:hover svg {
+    animation: none;
+  }
+}
+
+.ds-operation-dock-body {
+  background: var(--ds-card-strong);
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='dark'] .ds-operation-dock-body {
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
 .ds-operation-dock-section-label {
   font-family: var(--font-ui);
   font-size: 0.8125rem;
@@ -4496,27 +4579,19 @@ select:focus-visible,
   line-height: 1.55;
 }
 
-/* Operation dock: stronger border + a light outer shadow. */
-.ds-operation-dock.ds-hero-panel.ds-glass {
-  background: var(--ds-card-strong);
-  border-color: rgba(0, 0, 0, 0.14);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
-}
-
-[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.34);
-}
-
 .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
   transform: none;
-  border-color: rgba(0, 0, 0, 0.18);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.16);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 6px 18px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.38);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.32),
+    0 8px 22px rgba(0, 0, 0, 0.38);
 }
 
 .ds-operation-rail {
