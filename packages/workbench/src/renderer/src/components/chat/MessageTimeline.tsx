@@ -804,6 +804,13 @@ function groupTurns(blocks: ChatBlock[]): Turn[] {
     // otherwise they get embedded inside an adjacent turn (e.g. between a
     // user message and the assistant reply), which reads as an interruption.
     if (block.kind === 'system') {
+      // Orchestrator chrome — keep out of the dialogue turn stream.
+      if (
+        isWorkflowStatusSystemText(block.text) ||
+        isInternalSubagentHandoffSystemText(block.text)
+      ) {
+        continue
+      }
       if (current) turns.push(current)
       current = null
       turns.push({ blocks: [block] })
@@ -889,6 +896,16 @@ export function isSubagentOrchestrationToolName(name: string | undefined): boole
 export function isWorkflowStatusSystemText(text: string | undefined): boolean {
   const trimmed = text?.trim() ?? ''
   return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(trimmed)
+}
+
+/**
+ * Sub-agent wait/resume StatusEvents — internal handoff, not chat content.
+ * Same English-prefix debt as `isInternalSubagentHandoffStatusItem` in
+ * deepseek-runtime.ts — prefer a `visibility: internal` field when that lands.
+ */
+export function isInternalSubagentHandoffSystemText(text: string | undefined): boolean {
+  const trimmed = text?.trim() ?? ''
+  return /^(?:Resuming turn with \d+ sub-agent|Waiting on \d+ sub-agent)/i.test(trimmed)
 }
 
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
@@ -1027,7 +1044,10 @@ function MessageTurn({
         continue
       }
       if (block.kind === 'system') {
-        if (!isWorkflowStatusSystemText(block.text)) {
+        if (
+          !isWorkflowStatusSystemText(block.text) &&
+          !isInternalSubagentHandoffSystemText(block.text)
+        ) {
           nextSystemBlocks.push(block)
         }
         continue
@@ -1805,7 +1825,10 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
   ].filter(Boolean)
 
   return (
-    <section className="my-2 overflow-hidden rounded-[12px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+    <section
+      id={`block-${summary.anchorBlockId}`}
+      className="my-2 overflow-hidden rounded-[12px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+    >
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -1858,7 +1881,13 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         <div className="border-t border-ds-border-muted/60 px-4 py-3">
           <div className="flex flex-col gap-2">
             {summary.blocks.map((block) => (
-              <SubagentSummaryRow key={block.id} block={block} onOpen={() => setDetailBlock(block)} />
+              <SubagentSummaryRow
+                key={block.id}
+                block={block}
+                // Anchor id lives on the panel; other rows keep their own jump targets.
+                scrollTargetId={block.id === summary.anchorBlockId ? null : block.id}
+                onOpen={() => setDetailBlock(block)}
+              />
             ))}
           </div>
         </div>
@@ -2028,9 +2057,11 @@ function collectSubagentStepsByAgentId(blocks: ChatBlock[]): Record<string, Step
 
 function SubagentSummaryRow({
   block,
+  scrollTargetId,
   onOpen
 }: {
   block: SubagentBlock
+  scrollTargetId: string | null
   onOpen: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
@@ -2042,7 +2073,10 @@ function SubagentSummaryRow({
   const [stepsOpen, setStepsOpen] = useState(false)
 
   return (
-    <div className="rounded-xl border border-ds-border-muted/60 bg-ds-elevated/40 px-3 py-2 text-[12.5px] leading-5 transition hover:bg-ds-hover/30">
+    <div
+      id={scrollTargetId ? `block-${scrollTargetId}` : undefined}
+      className="rounded-xl border border-ds-border-muted/60 bg-ds-elevated/40 px-3 py-2 text-[12.5px] leading-5 transition hover:bg-ds-hover/30"
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <button
           type="button"
@@ -3220,7 +3254,10 @@ function SubagentBubble({
   const statusLabel = subagentStatusLabel(block.status, t)
 
   return (
-    <div className="rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
+    <div
+      id={`block-${block.id}`}
+      className="rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(15,23,42,0.04)]"
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex items-center gap-2 font-semibold tracking-[-0.015em] text-ds-ink">
           <Bot className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.8} />

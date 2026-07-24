@@ -5,6 +5,7 @@ import {
   clipMidTurnPrefaceText,
   groupProcessRows,
   isSubagentOrchestrationToolName,
+  isInternalSubagentHandoffSystemText,
   isWorkflowStatusSystemText,
   placeAssistantContentBlock,
   reasoningDetailTextFromBlocks,
@@ -91,6 +92,18 @@ describe('isWorkflowStatusSystemText', () => {
       true
     )
     expect(isWorkflowStatusSystemText('Waiting on 1 sub-agent')).toBe(false)
+  })
+})
+
+describe('isInternalSubagentHandoffSystemText', () => {
+  it('detects wait/resume handoff chrome', () => {
+    expect(isInternalSubagentHandoffSystemText('Waiting on 1 sub-agent(s) to complete...')).toBe(
+      true
+    )
+    expect(
+      isInternalSubagentHandoffSystemText('Resuming turn with 1 sub-agent completion(s)')
+    ).toBe(true)
+    expect(isInternalSubagentHandoffSystemText('Workflow completed ◆ Workflow: x')).toBe(false)
   })
 })
 

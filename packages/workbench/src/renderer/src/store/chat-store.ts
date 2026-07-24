@@ -953,6 +953,14 @@ function buildThreadEventSink(
       }),
     onSystemStatus: (text, itemId) =>
       set((s) => {
+        const trimmed = text.trim()
+        // Sub-agent handoff chrome is filtered in the runtime too; keep this as
+        // a belt-and-suspenders so leaked StatusEvents never become pills.
+        if (
+          /^(?:Resuming turn with \d+ sub-agent|Waiting on \d+ sub-agent)/i.test(trimmed)
+        ) {
+          return {}
+        }
         if (s.blocks.some((b) => b.kind === 'system' && b.id === itemId)) return {}
         return {
           blocks: [

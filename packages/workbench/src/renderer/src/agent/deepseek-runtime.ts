@@ -591,7 +591,23 @@ function isWorkflowStatusTextItem(it: TurnItemJson): boolean {
   return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(text)
 }
 
-/** Internal orchestrator handoff status — TUI keeps it in the status bar only. */
+/**
+ * Internal orchestrator handoff status — TUI keeps it in the status bar only.
+ *
+ * TECH DEBT (string match, not a real visibility model):
+ * We hide "Waiting on N sub-agent…" / "Resuming turn with N sub-agent…" by
+ * English prefix regex at hydrate + live ingest. That is intentional for now
+ * (cheap, no protocol change) but brittle.
+ *
+ * Consider replacing when any of these show up:
+ * - Copy is i18n'd / rephrased and pills reappear in chat
+ * - More orchestrator chrome needs the same treatment (regex list grows)
+ * - A non-English or alternate summary/detail shape bypasses the match
+ *
+ * Proper fix: StatusEvent (or item metadata) carries something like
+ * `visibility: "internal" | "user"` at emit time in orchestrator handoff,
+ * and the workbench filters on that field only — delete these regexes.
+ */
 function isInternalSubagentHandoffStatusItem(it: TurnItemJson): boolean {
   if (it.kind !== 'status') return false
   const text = (it.detail ?? it.summary ?? '').trim()
@@ -1078,6 +1094,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         if (it.kind === 'status' && isPluginMountStatusItem(it)) continue
         // Workflow progress text StatusEvents duplicate the WorkflowBlock card.
         if (it.kind === 'status' && isWorkflowStatusTextItem(it)) continue
+        // Sub-agent handoff waits are orchestrator chrome (status bar / dock).
+        if (it.kind === 'status' && isInternalSubagentHandoffStatusItem(it)) continue
         const text = it.summary || it.kind
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
       }

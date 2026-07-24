@@ -7,16 +7,19 @@ import {
   FileEdit,
   Globe2,
   Loader2,
-  Terminal
+  Terminal,
+  X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../../agent/types'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
+import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-subagents'
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
+import { humanizeAgentType } from '../../lib/agent-type-label'
 import { sumDiffStats } from '../../lib/diff-stats'
 import {
   extractTasksFromBlocks,
@@ -24,10 +27,11 @@ import {
   taskListTitle,
   type TaskItemView
 } from '../../lib/extract-tasks-from-blocks'
+import { isActiveSubagentStatus } from '../../lib/extract-subagents-from-blocks'
 import { timelineToFlowItems } from '../../lib/task-step-flow'
 import { TaskRunDialog } from './TaskRunDialog'
 import { StepFlow } from './StepFlow'
-import { TaskStatusGlyph, taskStatusLabelKey } from './task-status'
+import { taskStatusLabelKey } from './task-status'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import {
   isExplicitGitCommitSelectionNone,
@@ -112,7 +116,64 @@ function SectionHeader({
   )
 }
 
-function TaskRow({ task }: { task: TaskItemView }): ReactElement {
+function subagentDockDotClass(status: DockSubagentView['status']): string {
+  if (status === 'failed') return 'bg-red-500'
+  if (status === 'completed') return 'bg-sky-500'
+  if (status === 'cancelled') return 'bg-ds-border'
+  return 'bg-emerald-500'
+}
+
+function SubagentDockRow({ item }: { item: DockSubagentView }): ReactElement {
+  const { t } = useTranslation('common')
+  const scrollToBlock = useChatStore((s) => s.scrollToBlock)
+  const active = isActiveSubagentStatus(item.status)
+  const label = humanizeAgentType(item.agentType) || t('contextRailSubagentFallback')
+
+  return (
+    <li
+      className={[
+        'transition-opacity duration-500',
+        item.fading ? 'pointer-events-none opacity-0' : 'opacity-100'
+      ].join(' ')}
+    >
+      <button
+        type="button"
+        onClick={() => scrollToBlock(item.id)}
+        title={t('contextRailSubagentJump')}
+        className="flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
+      >
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${subagentDockDotClass(item.status)}`}
+          aria-hidden
+        />
+        <span
+          className={[
+            'min-w-0 flex-1 truncate text-[12.5px] leading-5 tracking-[-0.01em]',
+            active ? 'font-medium text-ds-ink' : 'font-medium text-ds-ink/85'
+          ].join(' ')}
+        >
+          {label}
+        </span>
+      </button>
+    </li>
+  )
+}
+
+function TaskGroupLabel({ label }: { label: string }): ReactElement {
+  return (
+    <p className="px-1.5 pb-0.5 pt-1 text-[11px] font-medium tracking-[0.02em] text-ds-faint">
+      {label}
+    </p>
+  )
+}
+
+function TaskRow({
+  task,
+  onDismiss
+}: {
+  task: TaskItemView
+  onDismiss?: () => void
+}): ReactElement {
   const { t } = useTranslation()
   const { status } = task
   const running = isActiveTaskStatus(status)
@@ -163,7 +224,7 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
           onClick={() => setStepsOpen((v) => !v)}
           title={task.prompt.trim() || task.id}
           aria-expanded={stepsOpen}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
         >
           <ChevronDown
             className={[
@@ -172,7 +233,6 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
             ].join(' ')}
             strokeWidth={1.8}
           />
-          <TaskStatusGlyph status={status} />
           <span
             className={[
               'min-w-0 flex-1 truncate text-[12.5px] leading-5 tracking-[-0.01em]',
@@ -192,6 +252,17 @@ function TaskRow({ task }: { task: TaskItemView }): ReactElement {
             className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
           >
             {t('subagentDetails')}
+          </button>
+        ) : null}
+        {onDismiss ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            title={t('contextRailTaskClear')}
+            aria-label={t('contextRailTaskClear')}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          >
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
           </button>
         ) : null}
       </div>
@@ -271,8 +342,32 @@ export function OperationContextDock({
   const totalCount = todos.length
   const baseTasks = useMemo(() => extractTasksFromBlocks(blocks), [blocks])
   const tasks = useLiveTasks(baseTasks)
-  const activeTasks = useMemo(() => tasks.filter((task) => isActiveTaskStatus(task.status)), [tasks])
-  const doneTasks = useMemo(() => tasks.filter((task) => !isActiveTaskStatus(task.status)), [tasks])
+  /** Local dock dismissals — hide from the rail without cancelling the backend task. */
+  const [dismissedTaskIds, setDismissedTaskIds] = useState(() => new Set<string>())
+  useEffect(() => {
+    setDismissedTaskIds(new Set())
+  }, [activeThreadId])
+  const visibleTasks = useMemo(
+    () => tasks.filter((task) => !dismissedTaskIds.has(task.id)),
+    [tasks, dismissedTaskIds]
+  )
+  const activeTasks = useMemo(
+    () => visibleTasks.filter((task) => isActiveTaskStatus(task.status)),
+    [visibleTasks]
+  )
+  const doneTasks = useMemo(
+    () => visibleTasks.filter((task) => !isActiveTaskStatus(task.status)),
+    [visibleTasks]
+  )
+  const dismissTask = useCallback((taskId: string): void => {
+    setDismissedTaskIds((prev) => {
+      if (prev.has(taskId)) return prev
+      const next = new Set(prev)
+      next.add(taskId)
+      return next
+    })
+  }, [])
+  const dockSubagents = useDockSubagents(blocks)
   const changeStats = useMemo(() => {
     const gitPatches = gitChanges?.ok ? gitChanges.files.map((file) => file.patch) : []
     return sumDiffStats([...sessionChangePatches(blocks), ...gitPatches])
@@ -318,13 +413,17 @@ export function OperationContextDock({
   // one section never overrides another. The "tools" section has no effect:
   // it stays expanded by default.
   const hasTodos = totalCount > 0
-  const hasTasks = tasks.length > 0
+  const hasTasks = visibleTasks.length > 0
+  const hasSubagents = dockSubagents.length > 0
+  const hasTaskSection = hasTasks || hasSubagents
   useEffect(() => {
     setCollapsed((prev) => (prev.process === !hasTodos ? prev : { ...prev, process: !hasTodos }))
   }, [hasTodos])
   useEffect(() => {
-    setCollapsed((prev) => (prev.tasks === !hasTasks ? prev : { ...prev, tasks: !hasTasks }))
-  }, [hasTasks])
+    setCollapsed((prev) =>
+      prev.tasks === !hasTaskSection ? prev : { ...prev, tasks: !hasTaskSection }
+    )
+  }, [hasTaskSection])
   useEffect(() => {
     setCollapsed((prev) => (prev.git === !hasChanges ? prev : { ...prev, git: !hasChanges }))
   }, [hasChanges])
@@ -592,19 +691,44 @@ export function OperationContextDock({
         collapsed={collapsed.tasks}
         onToggle={() => toggle('tasks')}
         trailing={
-          tasks.length > 0 ? (
-            <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">{tasks.length}</span>
+          hasTaskSection ? (
+            <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">
+              {visibleTasks.length + dockSubagents.length}
+            </span>
           ) : undefined
         }
       />
 
       {!collapsed.tasks ? (
-        tasks.length > 0 ? (
-          <ul className="mt-1.5 max-h-[min(36vh,240px)] space-y-0.5 overflow-y-auto overflow-x-hidden">
-            {[...activeTasks, ...doneTasks].map((task) => (
-              <TaskRow key={task.id} task={task} />
-            ))}
-          </ul>
+        hasTaskSection ? (
+          <div className="mt-1.5 max-h-[min(36vh,240px)] space-y-0.5 overflow-y-auto overflow-x-hidden">
+            {hasTasks ? (
+              <>
+                {hasSubagents ? <TaskGroupLabel label={t('contextRailTaskGroup')} /> : null}
+                <ul className="space-y-0.5">
+                  {[...activeTasks, ...doneTasks].map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      onDismiss={
+                        isActiveTaskStatus(task.status) ? undefined : () => dismissTask(task.id)
+                      }
+                    />
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {hasSubagents ? (
+              <>
+                <TaskGroupLabel label={t('contextRailSubagentGroup')} />
+                <ul className="space-y-0.5">
+                  {dockSubagents.map((item) => (
+                    <SubagentDockRow key={item.id} item={item} />
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </div>
         ) : (
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyTasks')}</p>
         )
