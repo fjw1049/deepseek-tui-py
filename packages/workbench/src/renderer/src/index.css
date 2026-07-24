@@ -1158,6 +1158,22 @@ samp {
   }
 }
 
+/* Greeting weather glyph — static forecast-style sun/moon. */
+.ds-weather-sky {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.ds-weather-sky__svg {
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
 
 /* ── Workflow running glow bar ── */
 
