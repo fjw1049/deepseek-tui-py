@@ -101,12 +101,17 @@ class WriteFileTool(ToolSpec):
         rel = _require_string(input_data, "path")
         path = context.resolve_path(rel)
         content = _require_string(input_data, "content")
+        existed = path.exists()
         old_text = ""
-        if path.exists():
+        if existed:
             try:
                 old_text = await _read_text(path)
             except OSError:
                 old_text = ""
+        context.capture_pre_write(
+            _workspace_rel(path, context.working_directory, rel),
+            old_text if existed else None,
+        )
         await _write_text(path, content)
         logger.info("write_file path=%s bytes=%d", path, len(content))
         display_path = _workspace_rel(path, context.working_directory, rel)
@@ -169,6 +174,9 @@ class EditFileTool(ToolSpec):
             logger.warning("edit_file_no_match path=%s search_len=%d", path, len(search))
             raise ToolError(f"Search string not found in {path}")
         updated = content.replace(search, replace)
+        context.capture_pre_write(
+            _workspace_rel(path, context.working_directory, rel), content
+        )
         await _write_text(path, updated)
         display_path = _workspace_rel(path, context.working_directory, rel)
         summary = f"Replaced {count} occurrence(s) in {display_path}"

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { isImagePreviewPath } from '@shared/image-preview'
+import type { WorkspaceFileReadResult } from '@shared/workspace-file'
 
 export type EditorTabKind = 'text' | 'image'
 export type EditorPaneId = 'primary' | 'secondary'
@@ -43,6 +44,8 @@ type WorkspaceEditorStore = {
   updateTabContent: (tabId: string, content: string) => void
   saveTab: (tabId: string, workspaceRoot: string) => Promise<boolean>
   saveActiveTab: (workspaceRoot: string) => Promise<boolean>
+  /** Re-read clean (non-dirty) text tabs from disk after external changes (agent writes, rewind restore). */
+  reloadCleanTabs: (workspaceRoot: string) => Promise<void>
   resetForWorkspace: (workspaceKey: string) => void
 }
 
@@ -335,5 +338,55 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       splitEnabled && focusedPane === 'secondary' ? secondaryTabId : activeTabId
     if (!tabId) return false
     return get().saveTab(tabId, workspaceRoot)
+  },
+  reloadCleanTabs: async (workspaceRoot) => {
+    const root = normalizeWorkspaceKey(workspaceRoot)
+    if (!root || typeof window.dsGui?.readWorkspaceFile !== 'function') return
+    // Dirty tabs are never touched: an external change (agent write, rewind
+    // restore) must not clobber the user's unsaved edits.
+    const targets = get().tabs.filter(
+      (tab) => tab.kind === 'text' && !tab.loading && !isDirty(tab)
+    )
+    await Promise.all(
+      targets.map(async (target) => {
+        let result: WorkspaceFileReadResult
+        try {
+          result = await window.dsGui.readWorkspaceFile({
+            path: target.path,
+            workspaceRoot: root
+          })
+        } catch (error) {
+          result = {
+            ok: false,
+            message: error instanceof Error ? error.message : String(error)
+          }
+        }
+        set((state) => {
+          const currentKey = normalizeWorkspaceKey(state.workspaceKey)
+          if (currentKey !== root && currentKey !== '') return {}
+          return {
+            tabs: state.tabs.map((entry) => {
+              // Re-check: the user may have started editing (or closed) the
+              // tab while the read was in flight.
+              if (entry.id !== target.id || entry.loading || isDirty(entry)) return entry
+              if (!result.ok) {
+                // A restore can delete the file — surface it through the
+                // tab's existing error banner instead of silently keeping
+                // stale content that a later save would resurrect.
+                return { ...entry, error: result.message }
+              }
+              return {
+                ...entry,
+                content: result.content,
+                savedContent: result.content,
+                error: result.truncated
+                  ? 'File truncated for preview; edits may be limited.'
+                  : null
+              }
+            })
+          }
+        })
+      })
+    )
   }
 }))

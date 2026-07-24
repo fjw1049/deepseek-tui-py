@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     from deepseek_tui.engine.orchestrator import Engine
     from deepseek_tui.engine.handle import ApprovalHandler
     from deepseek_tui.server.sessions import ImportTuiSessionRequest
+    from deepseek_tui.workspace.turn_checkpoints import TurnCheckpoint
 
 from deepseek_tui.server.threads.broadcast import AsyncBroadcast
 from deepseek_tui.server.threads.items import (
@@ -213,6 +214,9 @@ class RuntimeThreadManager:
         self.workspace = workspace.resolve()
         self.manager_cfg = manager_cfg
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
+        from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
+
+        self.checkpoints = TurnCheckpointStore(manager_cfg.data_dir / "checkpoints")
         self._llm_client = llm_client
         self._provider_clients: dict[str, LLMClient] = {}
         self._approval_bridge = approval_bridge
@@ -861,8 +865,48 @@ class RuntimeThreadManager:
         )
         return forked
 
+    def _turns_from_item(
+        self, thread_id: str, before_item_id: str
+    ) -> tuple[list[TurnRecord], int]:
+        """Turns of a thread plus the index of the turn holding the item."""
+        turns = self.store.list_turns_for_thread(thread_id)
+        for idx, turn in enumerate(turns):
+            if before_item_id in turn.item_ids:
+                return turns, idx
+        raise ValueError(f"item not found in thread: {before_item_id}")
+
+    def _checkpoint_candidates(
+        self, thread_id: str, turns: list[TurnRecord], cutoff_turn_index: int
+    ) -> list[TurnCheckpoint]:
+        """Checkpoints a file restore at ``cutoff_turn_index`` should replay.
+
+        The dropped turns' checkpoints plus this thread's orphan checkpoints
+        (their turns are already gone — left over from an earlier
+        conversation-only rewind), newest first by creation time. The
+        checkpoint directory is shared across threads, so ownership is
+        filtered by ``thread_id``.
+
+        Restore means "back to the cutoff turn's start state", so an orphan
+        is replayed only when it was created at/after the cutoff turn:
+        replaying an older orphan would also roll back changes made by later
+        turns that are still in the conversation. Legacy checkpoints
+        (created_at=0.0) never satisfy this and are intentionally excluded —
+        the conservative side.
+        """
+        current_ids = {t.id for t in turns}
+        dropped_ids = {t.id for t in turns[cutoff_turn_index:]}
+        cutoff_ts = turns[cutoff_turn_index].created_at.timestamp()
+        candidates = [
+            cp
+            for cp in self.checkpoints.list_for_thread(thread_id)
+            if cp.turn_id in dropped_ids
+            or (cp.turn_id not in current_ids and cp.created_at >= cutoff_ts)
+        ]
+        candidates.sort(key=lambda cp: cp.created_at, reverse=True)
+        return candidates
+
     async def rewind_thread(
-        self, thread_id: str, *, before_item_id: str
+        self, thread_id: str, *, before_item_id: str, restore_files: bool = False
     ) -> ThreadRecord:
         """Truncate a thread in place at ``before_item_id``.
 
@@ -870,57 +914,83 @@ class RuntimeThreadManager:
         same turn plus all later turns) from the durable store, then re-syncs
         the warm engine session so the model no longer sees the dropped
         history. Backs the Workbench "edit & resend" (rewind) flow.
+
+        With ``restore_files=True`` the dropped turns' file checkpoints —
+        plus orphan checkpoints left over from earlier conversation-only
+        rewinds — are restored (workspace rolled back to its pre-turn state)
+        before truncation and then consumed (deleted). With
+        ``restore_files=False`` checkpoints are deliberately kept on disk so
+        a later restore-code can still roll the files back: orphans linger
+        until consumed (disk space in exchange for rollback-ability —
+        intentionally no TTL or other reaping).
+
+        Cutoff semantics (v1): the cutoff turn is consumed/restored whole,
+        even when the rewind keeps its earlier items. The UI only exposes
+        rewind on user messages — always the first item of a turn — so
+        mid-turn truncation is not reachable today; a future mid-turn entry
+        point must resolve this semantics first.
         """
         thread = self.store.load_thread(thread_id)
 
+        # Active-check → restore → truncate → engine re-sync in one critical
+        # section: start_turn reserves its turn slot under the same lock, so
+        # no turn can start midway through the truncation. _emit_event stays
+        # outside the lock (it only takes store/event-bus locks, and there is
+        # no reason to hold _active_lock across the broadcast).
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
                 raise ValueError("cannot rewind thread while a turn is active")
 
-        turns = self.store.list_turns_for_thread(thread_id)
-        cutoff_turn_index: int | None = None
-        for idx, turn in enumerate(turns):
-            if before_item_id in turn.item_ids:
-                cutoff_turn_index = idx
-                break
-        if cutoff_turn_index is None:
-            raise ValueError(f"item not found in thread: {before_item_id}")
+            turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
 
-        cutoff_turn = turns[cutoff_turn_index]
-        kept_item_ids: list[str] = []
-        dropping = False
-        for item_id in cutoff_turn.item_ids:
-            if item_id == before_item_id:
-                dropping = True
-            if dropping:
-                self.store.delete_item(item_id)
+            restored_files: list[str] = []
+            skipped_files: list[str] = []
+            if restore_files:
+                candidates = self._checkpoint_candidates(
+                    thread_id, turns, cutoff_turn_index
+                )
+                report = await self.checkpoints.restore(
+                    [cp.turn_id for cp in candidates],
+                    _resolved_workspace_path(thread.workspace),
+                )
+                restored_files = report.restored
+                skipped_files = report.skipped
+                for cp in candidates:
+                    self.checkpoints.delete(cp.turn_id)
+
+            cutoff_turn = turns[cutoff_turn_index]
+            kept_item_ids: list[str] = []
+            dropping = False
+            for item_id in cutoff_turn.item_ids:
+                if item_id == before_item_id:
+                    dropping = True
+                if dropping:
+                    self.store.delete_item(item_id)
+                else:
+                    kept_item_ids.append(item_id)
+            if kept_item_ids:
+                cutoff_turn.item_ids = kept_item_ids
+                self.store.save_turn(cutoff_turn)
             else:
-                kept_item_ids.append(item_id)
-        if kept_item_ids:
-            cutoff_turn.item_ids = kept_item_ids
-            self.store.save_turn(cutoff_turn)
-        else:
-            self.store.delete_turn(cutoff_turn.id)
+                self.store.delete_turn(cutoff_turn.id)
 
-        for turn in turns[cutoff_turn_index + 1 :]:
-            for item_id in turn.item_ids:
-                self.store.delete_item(item_id)
-            self.store.delete_turn(turn.id)
+            for turn in turns[cutoff_turn_index + 1 :]:
+                for item_id in turn.item_ids:
+                    self.store.delete_item(item_id)
+                self.store.delete_turn(turn.id)
 
-        remaining = self.store.list_turns_for_thread(thread_id)
-        thread.latest_turn_id = remaining[-1].id if remaining else None
-        thread.updated_at = datetime.now(timezone.utc)
-        self.store.save_thread(thread)
+            remaining = self.store.list_turns_for_thread(thread_id)
+            thread.latest_turn_id = remaining[-1].id if remaining else None
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
 
-        # A warm engine still holds the dropped turns in session_messages;
-        # replace them so regeneration truly starts from the rewound state.
-        # (Unlike _sync_engine_session, an empty history must clear too.)
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-        if state is not None:
-            messages = reconstruct_messages_from_turns(self.store, thread_id)
-            state.engine.sync_session(messages, model=thread.model)
+            # A warm engine still holds the dropped turns in session_messages;
+            # replace them so regeneration truly starts from the rewound state.
+            # (Unlike _sync_engine_session, an empty history must clear too.)
+            if state is not None:
+                messages = reconstruct_messages_from_turns(self.store, thread_id)
+                state.engine.sync_session(messages, model=thread.model)
 
         await self._emit_event(
             thread_id,
@@ -930,9 +1000,91 @@ class RuntimeThreadManager:
             {
                 "thread": thread.model_dump(mode="json"),
                 "before_item_id": before_item_id,
+                "restore_files": restore_files,
+                "restored_files": restored_files,
+                "skipped_files": skipped_files,
             },
         )
         return thread
+
+    async def restore_code(
+        self, thread_id: str, *, before_item_id: str
+    ) -> dict[str, Any]:
+        """Roll workspace files back to ``before_item_id``, conversation intact.
+
+        Restores and consumes (deletes) the file checkpoints of the cutoff
+        turn and every turn after it, plus this thread's orphan checkpoints
+        left over from earlier conversation-only rewinds. Dropped turns
+        without a checkpoint are listed in ``turns_without_checkpoint`` so
+        callers can surface that only some files were recoverable.
+
+        Cutoff semantics (v1, same as rewind_thread): the cutoff turn is
+        consumed/restored whole, even when ``before_item_id`` sits mid-turn.
+        """
+        thread = self.store.load_thread(thread_id)
+
+        # Same critical section as rewind_thread: start_turn reserves its
+        # turn slot under this lock, so the restore cannot interleave with a
+        # new turn's file writes.
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is not None and state.active_turn is not None:
+                raise ValueError("cannot restore code while a turn is active")
+
+            turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
+            candidates = self._checkpoint_candidates(thread_id, turns, cutoff_turn_index)
+            report = await self.checkpoints.restore(
+                [cp.turn_id for cp in candidates],
+                _resolved_workspace_path(thread.workspace),
+            )
+            for cp in candidates:
+                self.checkpoints.delete(cp.turn_id)
+
+        candidate_ids = {cp.turn_id for cp in candidates}
+        return {
+            "thread_id": thread_id,
+            "before_item_id": before_item_id,
+            "restored_files": report.restored,
+            "skipped_files": report.skipped,
+            "turns_without_checkpoint": [
+                t.id for t in turns[cutoff_turn_index:] if t.id not in candidate_ids
+            ],
+            "turns": len(turns) - cutoff_turn_index,
+        }
+
+    async def rewind_preview(
+        self, thread_id: str, *, before_item_id: str
+    ) -> dict[str, Any]:
+        """Aggregate the file-restore impact of rewinding to ``before_item_id``.
+
+        ``files`` lists every workspace path the affected checkpoints mutate —
+        the exact candidate set rewind/restore-code would replay, including
+        orphan checkpoints left by earlier conversation-only rewinds.
+        ``skipped`` is the subset whose pre-image cannot be resolved (non-git
+        workspace without recorded content). Conversation turns in range
+        without a checkpoint are counted in ``no_checkpoint``.
+        """
+        self.store.load_thread(thread_id)
+        turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
+        ranged = turns[cutoff_turn_index:]
+        candidates = self._checkpoint_candidates(thread_id, turns, cutoff_turn_index)
+        files: dict[str, bool] = {}  # path -> pre-image resolvable in some turn
+        is_git = False
+        for checkpoint in candidates:
+            is_git = is_git or checkpoint.is_git
+            for path in checkpoint.mutated:
+                resolvable = path in checkpoint.pre_contents or (
+                    checkpoint.is_git and bool(checkpoint.head)
+                )
+                files[path] = files.get(path, False) or resolvable
+        candidate_ids = {cp.turn_id for cp in candidates}
+        return {
+            "files": sorted(files),
+            "skipped": sorted(p for p, ok in files.items() if not ok),
+            "is_git": is_git,
+            "turns": len(ranged),
+            "no_checkpoint": sum(1 for t in ranged if t.id not in candidate_ids),
+        }
 
     # --- turn lifecycle ------------------------------------------------------
 
@@ -2007,6 +2159,7 @@ class RuntimeThreadManager:
                         if isinstance(entry, dict) and isinstance(entry.get("path"), str):
                             skip.add(entry["path"])
             for mut in await detect_shell_mutations(snapshot, skip_paths=skip):
+                self.checkpoints.record_out_of_band(turn_id, mut["path"])
                 now = datetime.now(timezone.utc)
                 sub_item_id = f"item_{uuid.uuid4().hex[:8]}"
                 sub_item = TurnItemRecord(
@@ -2057,6 +2210,28 @@ class RuntimeThreadManager:
                 )
             except Exception:
                 logger.debug("git_baseline_capture_failed", exc_info=True)
+            try:
+                turn_snapshot = await capture_shell_snapshot(
+                    _engine.tool_context.working_directory
+                )
+            except Exception:
+                logger.debug("turn_snapshot_capture_failed", exc_info=True)
+                turn_snapshot = None
+            try:
+                self.checkpoints.begin_turn(
+                    turn_id,
+                    turn_snapshot,
+                    head=git_baseline.head if git_baseline is not None else None,
+                    is_git=bool(git_baseline is not None and git_baseline.is_git),
+                    thread_id=thread_id,
+                )
+            except Exception:
+                logger.debug("turn_checkpoint_begin_failed", exc_info=True)
+            _engine.tool_context.pre_write_capture = (
+                lambda path, old: self.checkpoints.record_pre_write(
+                    turn_id, path, old
+                )
+            )
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
@@ -3075,7 +3250,8 @@ class RuntimeThreadManager:
         # File Mutation Ledger: git reconcile orphans, then final turn.diff.
         try:
             if git_baseline is not None and git_baseline.is_git:
-                await reconcile_to_ledger(mutation_ledger, git_baseline)
+                for fm in await reconcile_to_ledger(mutation_ledger, git_baseline):
+                    self.checkpoints.record_out_of_band(turn_id, fm.path)
             final_snap = mutation_ledger.mark_complete(emit=False)
             if final_snap.totals.get("files", 0) > 0 or mutation_ledger.revision > 0:
                 pending_turn_diffs.append(final_snap.to_dict())
@@ -3089,6 +3265,7 @@ class RuntimeThreadManager:
                 _state = self._active.get(thread_id)
                 if _state is not None:
                     _state.engine.tool_context.on_file_mutation = None
+                    _state.engine.tool_context.pre_write_capture = None
                     _mgr = _state.engine.tool_context.subagent_manager
                     if _mgr is not None:
                         _mgr.on_file_mutation = None

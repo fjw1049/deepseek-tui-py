@@ -33,6 +33,7 @@ import {
   Search,
   Sparkles,
   Terminal,
+  AlertTriangle,
   Wrench,
   X
 } from 'lucide-react'
@@ -43,6 +44,7 @@ import {
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import type {
   ChatBlock,
+  RewindPreview,
   RuntimeConnectionStatus,
   ToolBlock
 } from '../../agent/types'
@@ -98,6 +100,7 @@ import {
 } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
 import { parseUserFocusPrefix, composeUserFocusMessage } from '../../lib/user-focus-prefix'
+import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
@@ -2926,10 +2929,24 @@ function UserFocusChip({
 }
 
 /**
+ * Rewind actions offered by the user-message hover menu, in display order
+ * after the existing "edit & resend" entry.
+ */
+type RewindMenuAction = 'restoreBoth' | 'restoreConversation' | 'restoreCode'
+
+/** How many preview files the rewind confirmation dialog lists before collapsing. */
+const REWIND_PREVIEW_FILE_LIMIT = 20
+/** How long the inline "code restored" confirmation stays visible. */
+const RESTORE_NOTICE_MS = 4000
+/** Must match the `ds-rewind-menu-dismiss` animation duration in index.css. */
+const REWIND_MENU_DISMISS_MS = 140
+
+/**
  * User message bubble with hover affordance to rewind/edit. Click the rewind
- * pill, the bubble flips into a textarea, and Resend submits an edited
- * version of the message — locally truncating subsequent turns and starting
- * a fresh turn on the same thread (see chat-store `rewindAndResend`).
+ * pill to open a small menu: 编辑并重发 flips the bubble into a textarea (see
+ * chat-store `rewindAndResend`); the restore entries preview the affected
+ * files and ask for confirmation before dispatching `rewindToMessage` /
+ * `restoreCodeAt`.
  */
 function UserMessageBubble({
   block
@@ -2939,11 +2956,29 @@ function UserMessageBubble({
   const { t } = useTranslation('common')
   const busy = useChatStore((s) => s.busy)
   const rewindAndResend = useChatStore((s) => s.rewindAndResend)
+  const rewindToMessage = useChatStore((s) => s.rewindToMessage)
+  const restoreCodeAt = useChatStore((s) => s.restoreCodeAt)
+  const setError = useChatStore((s) => s.setError)
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const providerId = useChatStore((s) => s.providerId)
   const focus = useMemo(() => parseUserFocusPrefix(block.text), [block.text])
   const displayBody = focus ? focus.body : block.text
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(displayBody)
+  // "Edit & resend" restores code changes by default (Cursor-style rewind);
+  // only possible for messages persisted on the runtime (`item_…` ids).
+  const canRestoreOnResend = activeThreadId != null && block.id.startsWith('item_')
+  const [restoreFilesOnResend, setRestoreFilesOnResend] = useState(true)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuClosing, setMenuClosing] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState<RewindMenuAction | null>(null)
+  const [confirm, setConfirm] = useState<{ action: RewindMenuAction; preview: RewindPreview } | null>(null)
+  const [confirmPending, setConfirmPending] = useState(false)
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null)
+  const menuWrapRef = useRef<HTMLDivElement>(null)
+  const noticeTimerRef = useRef<number | null>(null)
+  const menuCloseTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!editing) return
@@ -2957,9 +2992,72 @@ function UserMessageBubble({
     el.style.height = `${Math.min(el.scrollHeight, 360)}px`
   }, [editing])
 
+  // Animated dismiss: play the exit keyframes, then unmount. Reopening while
+  // a dismiss is in flight cancels it, so the menu never gets stuck mid-close.
+  // Guards on the timer ref (not menuOpen/menuClosing closures) so the outside
+  // -click/Escape listeners below can stay bound with a [menuOpen] dependency.
+  const closeMenu = (): void => {
+    if (menuCloseTimerRef.current !== null) return
+    setMenuClosing(true)
+    menuCloseTimerRef.current = window.setTimeout(() => {
+      menuCloseTimerRef.current = null
+      setMenuOpen(false)
+      setMenuClosing(false)
+    }, REWIND_MENU_DISMISS_MS)
+  }
+
+  const toggleMenu = (): void => {
+    if (menuOpen && !menuClosing) {
+      closeMenu()
+      return
+    }
+    if (menuCloseTimerRef.current !== null) {
+      window.clearTimeout(menuCloseTimerRef.current)
+      menuCloseTimerRef.current = null
+    }
+    setMenuClosing(false)
+    setMenuOpen(true)
+  }
+
+  // Close the rewind menu on outside pointerdown or Escape (same approach as
+  // the git branch picker dropdown).
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (menuWrapRef.current?.contains(target)) return
+      closeMenu()
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeMenu()
+      }
+    }
+    const timer = window.setTimeout(() => {
+      window.addEventListener('pointerdown', onPointerDown, true)
+      window.addEventListener('keydown', onKeyDown)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen])
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
+      if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current)
+    },
+    []
+  )
+
   const startEdit = (): void => {
     if (busy) return
     setDraft(focus ? focus.body : block.text)
+    setRestoreFilesOnResend(true)
     setEditing(true)
   }
 
@@ -2973,7 +3071,72 @@ function UserMessageBubble({
     if (!trimmed || busy) return
     const wireText = focus ? composeUserFocusMessage(focus, trimmed) : trimmed
     setEditing(false)
-    await rewindAndResend(block.id, wireText)
+    await rewindAndResend(block.id, wireText, {
+      restoreFiles: restoreFilesOnResend && canRestoreOnResend
+    })
+  }
+
+  const showRestoreNotice = (text: string): void => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
+    setRestoreNotice(text)
+    noticeTimerRef.current = window.setTimeout(() => {
+      setRestoreNotice(null)
+      noticeTimerRef.current = null
+    }, RESTORE_NOTICE_MS)
+  }
+
+  const openRewindPreview = async (action: RewindMenuAction): Promise<void> => {
+    closeMenu()
+    if (busy) return
+    setPreviewLoading(action)
+    try {
+      let preview: RewindPreview
+      if (activeThreadId && block.id.startsWith('item_')) {
+        const p = getProvider(providerId)
+        if (typeof p.rewindPreview !== 'function') {
+          setError(t('rewindRestoreUnsupported'))
+          return
+        }
+        try {
+          preview = await p.rewindPreview(activeThreadId, block.id)
+        } catch (e) {
+          setError(formatRuntimeError(e))
+          return
+        }
+      } else {
+        // Local-only message: nothing persisted on the runtime to restore.
+        preview = { files: [], skipped: [], isGit: true, turns: 0 }
+      }
+      setConfirm({ action, preview })
+    } finally {
+      setPreviewLoading(null)
+    }
+  }
+
+  const confirmRewind = async (): Promise<void> => {
+    if (!confirm || confirmPending) return
+    const { action } = confirm
+    setConfirmPending(true)
+    try {
+      if (action === 'restoreCode') {
+        const result = await restoreCodeAt(block.id)
+        if (result) {
+          const restored = result.restoredFiles.length
+          const skipped = result.skippedFiles.length
+          let text =
+            restored > 0
+              ? t('rewindRestoreCodeDone', { count: restored })
+              : t('rewindRestoreCodeDoneNone')
+          if (skipped > 0) text = `${text} ${t('rewindRestoreCodeSkipped', { count: skipped })}`
+          showRestoreNotice(text)
+        }
+      } else {
+        await rewindToMessage(block.id, { restoreFiles: action === 'restoreBoth' })
+      }
+      setConfirm(null)
+    } finally {
+      setConfirmPending(false)
+    }
   }
 
   if (editing) {
@@ -3003,6 +3166,21 @@ function UserMessageBubble({
             className="ds-user-message-edit-textarea block w-full min-w-0 resize-none break-words bg-transparent text-[15px] font-medium leading-[1.58] text-ds-ink outline-none [overflow-wrap:anywhere]"
           />
           <div className="mt-2 flex items-center justify-end gap-3">
+            <label
+              className={`mr-auto flex items-center gap-1.5 text-[12px] text-ds-muted ${
+                canRestoreOnResend && !busy ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+              }`}
+              title={canRestoreOnResend ? undefined : t('rewindRestoreFilesUnavailable')}
+            >
+              <input
+                type="checkbox"
+                checked={restoreFilesOnResend && canRestoreOnResend}
+                disabled={busy || !canRestoreOnResend}
+                onChange={(e) => setRestoreFilesOnResend(e.target.checked)}
+                className="h-3.5 w-3.5 accent-accent"
+              />
+              {t('rewindRestoreFilesLabel')}
+            </label>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -3041,21 +3219,229 @@ function UserMessageBubble({
       </div>
       <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-ds-faint opacity-90 transition group-hover:opacity-100">
         <ModelMetaTag label={block.modelLabel} className="flex-1 justify-start text-left" />
+        {restoreNotice ? (
+          <span className="min-w-0 truncate text-[12px] text-emerald-500">{restoreNotice}</span>
+        ) : null}
         <div className="flex items-center justify-end gap-3">
           <CopyFeedbackButton text={displayBody || block.text} iconOnly />
-          <button
-            type="button"
-            onClick={startEdit}
-            disabled={busy}
-            title={t('rewindEditMessage')}
-            aria-label={t('rewindEditMessage')}
-            className="rounded-md p-1 transition hover:bg-ds-hover hover:text-ds-muted disabled:cursor-not-allowed disabled:hover:text-ds-faint"
-          >
-            <PencilLine className="h-4 w-4" strokeWidth={1.8} />
-          </button>
+          <div ref={menuWrapRef} className="relative">
+            <button
+              type="button"
+              onClick={toggleMenu}
+              disabled={busy}
+              title={t('rewindEditMessage')}
+              aria-label={t('rewindEditMessage')}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="ds-rewind-trigger rounded-md p-1 hover:bg-ds-hover hover:text-ds-muted disabled:cursor-not-allowed disabled:hover:text-ds-faint"
+            >
+              {previewLoading !== null ? (
+                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+              ) : (
+                <PencilLine className="h-4 w-4" strokeWidth={1.8} />
+              )}
+            </button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                className={`ds-rewind-menu${menuClosing ? ' is-closing' : ''} absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated py-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]`}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeMenu()
+                    startEdit()
+                  }}
+                  className="block w-full px-3 py-2 text-left text-[13px] font-medium text-ds-ink transition-colors duration-100 hover:bg-ds-hover"
+                >
+                  {t('rewindEditMessage')}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void openRewindPreview('restoreBoth')}
+                  className="block w-full px-3 py-2 text-left text-[13px] font-medium text-ds-ink transition-colors duration-100 hover:bg-ds-hover"
+                >
+                  {t('rewindMenuRestoreBoth')}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void openRewindPreview('restoreConversation')}
+                  className="block w-full px-3 py-2 text-left text-[13px] font-medium text-ds-ink transition-colors duration-100 hover:bg-ds-hover"
+                >
+                  {t('rewindMenuRestoreConversation')}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void openRewindPreview('restoreCode')}
+                  className="block w-full px-3 py-2 text-left text-[13px] font-medium text-ds-ink transition-colors duration-100 hover:bg-ds-hover"
+                >
+                  {t('rewindMenuRestoreCode')}
+                </button>
+                <div className="mx-3 my-1 border-t border-ds-border-muted" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={closeMenu}
+                  className="block w-full px-3 py-2 text-left text-[13px] font-medium text-ds-muted transition-colors duration-100 hover:bg-ds-hover hover:text-ds-ink"
+                >
+                  {t('rewindCancel')}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
+      {confirm ? (
+        <RewindConfirmDialog
+          action={confirm.action}
+          preview={confirm.preview}
+          pending={confirmPending}
+          onConfirm={() => void confirmRewind()}
+          onCancel={() => setConfirm(null)}
+        />
+      ) : null}
     </div>
+  )
+}
+
+/**
+ * Confirmation dialog for the rewind restore menu entries: explains what will
+ * happen, lists the files the runtime preview says will be restored (capped,
+ * rest collapsed), warns about non-git workspaces, and offers 确认/取消.
+ * Follows the same portal + backdrop pattern as the other chat dialogs
+ * (e.g. GitLogDialog).
+ */
+function RewindConfirmDialog({
+  action,
+  preview,
+  pending,
+  onConfirm,
+  onCancel
+}: {
+  action: RewindMenuAction
+  preview: RewindPreview
+  pending: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}): ReactElement | null {
+  const { t } = useTranslation('common')
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCancel()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onCancel])
+
+  if (typeof document === 'undefined') return null
+
+  const title =
+    action === 'restoreBoth'
+      ? t('rewindMenuRestoreBoth')
+      : action === 'restoreCode'
+        ? t('rewindMenuRestoreCode')
+        : t('rewindMenuRestoreConversation')
+  const explanation =
+    action === 'restoreBoth'
+      ? t('rewindConfirmExplainBoth')
+      : action === 'restoreCode'
+        ? t('rewindConfirmExplainCode')
+        : t('rewindConfirmExplainConversation')
+  const shownFiles = preview.files.slice(0, REWIND_PREVIEW_FILE_LIMIT)
+  const hiddenFileCount = preview.files.length - shownFiles.length
+  const showFiles = action !== 'restoreConversation'
+
+  return createPortal(
+    <div
+      className="ds-modal-backdrop ds-rewind-dialog-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <div className="ds-modal-surface ds-rewind-dialog-surface flex max-h-[min(80vh,560px)] w-full max-w-lg flex-col overflow-hidden rounded-[14px]">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-ds-border px-5 py-4">
+          <h2 className="truncate text-[16px] font-semibold text-ds-ink">{title}</h2>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-full p-2 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+            aria-label={t('close')}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[13px] leading-5 text-ds-muted">
+          <p>{explanation}</p>
+
+          {showFiles && !preview.isGit && preview.files.length > 0 ? (
+            <div className="mt-3 flex gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/35 dark:text-amber-100">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+              <span className="min-w-0 break-words">{t('rewindConfirmNonGitWarning')}</span>
+            </div>
+          ) : null}
+
+          {showFiles ? (
+            <div className="mt-3">
+              <div className="mb-1 text-[12px] font-medium text-ds-faint">
+                {t('rewindConfirmFilesHeading')}
+              </div>
+              {shownFiles.length > 0 ? (
+                <ul className="max-h-48 overflow-y-auto rounded-lg border border-ds-border-muted px-3 py-2 text-[12px] text-ds-ink">
+                  {shownFiles.map((path) => (
+                    <li key={path} className="truncate py-0.5" title={path}>
+                      {path}
+                    </li>
+                  ))}
+                  {hiddenFileCount > 0 ? (
+                    <li className="py-0.5 text-ds-faint">
+                      {t('rewindConfirmMoreFiles', { count: hiddenFileCount })}
+                    </li>
+                  ) : null}
+                </ul>
+              ) : (
+                <p className="text-[12px] text-ds-faint">{t('rewindConfirmNoFiles')}</p>
+              )}
+              {preview.skipped.length > 0 ? (
+                <p className="mt-2 text-[12px] text-ds-faint">
+                  {t('rewindConfirmSkipped', { count: preview.skipped.length })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-ds-border-muted px-5 py-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
+          >
+            {t('rewindCancel')}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={pending}
+            autoFocus
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} /> : null}
+            {t('rewindConfirmSubmit')}
+          </button>
+        </footer>
+      </div>
+    </div>,
+    document.body
   )
 }
 

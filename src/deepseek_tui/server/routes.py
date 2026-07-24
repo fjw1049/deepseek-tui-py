@@ -1102,6 +1102,7 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
 from deepseek_tui.server.threads import (
     CreateThreadRequest,
     ForkThreadRequest,
+    RestoreCodeRequest,
     RewindThreadRequest,
     UpdateThreadRequest,
 )
@@ -1259,12 +1260,42 @@ async def rewind_thread(request: Request, thread_id: str) -> dict[str, Any]:
     payload = await body(request)
     req = RewindThreadRequest.model_validate(payload)
     try:
-        thread = await mgr.rewind_thread(thread_id, before_item_id=req.before_item_id)
+        thread = await mgr.rewind_thread(
+            thread_id,
+            before_item_id=req.before_item_id,
+            restore_files=req.restore_files,
+        )
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     except ValueError as exc:
         raise api_error(400, str(exc), error="invalid_request") from exc
     return thread.model_dump(mode="json")
+
+
+@router_threads.post("/threads/{thread_id}/restore-code")
+async def restore_code(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = RestoreCodeRequest.model_validate(payload)
+    try:
+        return await mgr.restore_code(thread_id, before_item_id=req.before_item_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_request") from exc
+
+
+@router_threads.get("/threads/{thread_id}/rewind-preview")
+async def rewind_preview(
+    request: Request, thread_id: str, before_item_id: str
+) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        return await mgr.rewind_preview(thread_id, before_item_id=before_item_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_request") from exc
 
 
 @router_threads.post("/threads/{thread_id}/resume")

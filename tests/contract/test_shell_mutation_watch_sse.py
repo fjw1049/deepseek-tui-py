@@ -94,17 +94,23 @@ async def test_shell_edit_emits_file_change_item(
 
     # handle.emit only queues — without this gate the pump could write the
     # file before _monitor_turn takes its pre-exec snapshot, and there would
-    # be no delta left to detect.
+    # be no delta left to detect. The first capture is _monitor_turn's
+    # turn-start snapshot (rewind file checkpoints); the pre-exec snapshot
+    # for the shell command is the second one.
     captured = asyncio.Event()
+    capture_calls = 0
     real_capture = shell_mutation_watch.capture_shell_snapshot
 
     async def _capture_spy(
         workspace: Path,
     ) -> shell_mutation_watch.ShellMutationSnapshot:
+        nonlocal capture_calls
         try:
             return await real_capture(workspace)
         finally:
-            captured.set()
+            capture_calls += 1
+            if capture_calls >= 2:
+                captured.set()
 
     monkeypatch.setattr(
         shell_mutation_watch, "capture_shell_snapshot", _capture_spy

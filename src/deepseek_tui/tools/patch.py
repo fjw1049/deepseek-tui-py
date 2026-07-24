@@ -36,6 +36,19 @@ def _backup_file(path: Path) -> _FileBackup:
     return (path, None)
 
 
+def _capture_pre_write(context: ToolContext, target: Path, rel: str) -> None:
+    """Hand the file's pre-write text to the turn checkpoint hook, if any."""
+    if context.pre_write_capture is None:
+        return
+    old: str | None = None
+    if target.exists():
+        try:
+            old = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return  # undecodable — leave resolution to git show at restore
+    context.capture_pre_write(rel.replace("\\", "/"), old)
+
+
 def _restore_file_backups(backups: list[_FileBackup]) -> None:
     for path, content in reversed(backups):
         try:
@@ -183,6 +196,7 @@ def _apply_changes(raw: Any, context: ToolContext) -> ToolResult:
                 except OSError:
                     old_text = ""
             backups.append(_backup_file(target))
+            _capture_pre_write(context, target, path)
             write_text_atomic(target, content)
             touched.append(path)
             summaries.append(
@@ -249,6 +263,7 @@ def _apply_file_patches(
                     except OSError:
                         old_text = ""
                     backups.append(_backup_file(target))
+                    _capture_pre_write(context, target, patch.path)
                     target.unlink()
                     summaries.append(
                         FileSummary(
@@ -288,10 +303,12 @@ def _apply_file_patches(
                     )
                 created = True
                 backups.append(_backup_file(target))
+                _capture_pre_write(context, target, patch.path)
                 write_text_atomic(target, "")
 
             if not created:
                 backups.append(_backup_file(target))
+                _capture_pre_write(context, target, patch.path)
 
             original = target.read_text(encoding="utf-8")
             trailing_newline = original.endswith("\n")

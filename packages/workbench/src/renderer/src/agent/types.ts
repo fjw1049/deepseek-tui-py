@@ -35,6 +35,20 @@ export type NormalizedThread = {
 
 export type RuntimeConnectionStatus = 'idle' | 'checking' | 'ready' | 'offline'
 
+/** Result of POST /v1/threads/{id}/restore-code (files restored, conversation kept). */
+export type RestoreCodeResult = {
+  restoredFiles: string[]
+  skippedFiles: string[]
+}
+
+/** Result of GET /v1/threads/{id}/rewind-preview — files a rewind-with-restore would touch. */
+export type RewindPreview = {
+  files: string[]
+  skipped: string[]
+  isGit: boolean
+  turns: number
+}
+
 export type ToolBlock = {
   kind: 'tool'
   id: string
@@ -392,7 +406,17 @@ export interface AgentProvider {
   deleteThread(threadId: string): Promise<void>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
   /** Truncate a thread in place: drop `beforeItemId` and everything after it. */
-  rewindThread?(threadId: string, beforeItemId: string): Promise<void>
+  rewindThread?(threadId: string, beforeItemId: string, restoreFiles?: boolean): Promise<void>
+  /**
+   * Restore workspace files to the state before `beforeItemId`'s turn WITHOUT
+   * truncating the conversation (POST /v1/threads/{id}/restore-code).
+   */
+  restoreCode?(threadId: string, beforeItemId: string): Promise<RestoreCodeResult>
+  /**
+   * Preview which files a rewind-with-restore (or restore-code) at
+   * `beforeItemId` would touch (GET /v1/threads/{id}/rewind-preview).
+   */
+  rewindPreview?(threadId: string, beforeItemId: string): Promise<RewindPreview>
   resumeThread?(threadId: string): Promise<void>
   compactThread?(threadId: string, reason?: string): Promise<void>
   subscribeThreadEvents(

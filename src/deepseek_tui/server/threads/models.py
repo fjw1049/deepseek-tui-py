@@ -183,6 +183,15 @@ class RewindThreadRequest(BaseModel):
     """Truncate a thread in place, dropping ``before_item_id`` and after."""
 
     before_item_id: str
+    # Also roll the dropped turns' workspace files back to their pre-turn
+    # state (per-turn file checkpoints). Conversation is truncated either way.
+    restore_files: bool = False
+
+
+class RestoreCodeRequest(BaseModel):
+    """Roll workspace files back to ``before_item_id``, conversation intact."""
+
+    before_item_id: str
 
 
 class StartTurnRequest(BaseModel):

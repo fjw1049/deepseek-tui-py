@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -28,6 +29,8 @@ const COLUMN_GAP = 8
 // capped so a short panel packs more weeks instead of inflating each square.
 const IDEAL_CELL_PX = 13
 const MIN_CELL_PX = 3
+/** Auto-dismiss the day detail after the user has had time to read it. */
+const SELECTED_DAY_TIMEOUT_MS = 3000
 
 type Props = {
   daily: UsageDailyPoint[]
@@ -38,6 +41,7 @@ type Props = {
 export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Props): ReactElement {
   const { t, i18n } = useTranslation('common')
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<HTMLDivElement>(null)
   const [plotBox, setPlotBox] = useState<{ width: number; height: number }>({
     width: 0,
@@ -55,6 +59,25 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
     observer.observe(el)
     return () => observer.disconnect()
   }, [fillHeight])
+
+  // Peek interaction: clear when clicking outside, or after a short timeout.
+  // Re-selecting the same day also toggles off (handled in onSelect below).
+  useEffect(() => {
+    if (!selectedDay) return
+    const timer = window.setTimeout(() => setSelectedDay(null), SELECTED_DAY_TIMEOUT_MS)
+    const onPointerDown = (event: PointerEvent) => {
+      const root = rootRef.current
+      if (!root) return
+      if (event.target instanceof Node && !root.contains(event.target)) {
+        setSelectedDay(null)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [selectedDay])
 
   const referenceDate = useMemo(
     () => (asOfDay ? new Date(`${asOfDay}T12:00:00`) : new Date()),
@@ -149,7 +172,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
     : 'min-w-0'
 
   return (
-    <div className={rootClass}>
+    <div ref={rootRef} className={rootClass}>
       <p className="mb-2.5 shrink-0 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
         {t('usageHeroActivity')}
       </p>
@@ -226,7 +249,9 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
                   cell={cell}
                   levelFor={levelFor}
                   selected={cell.day != null && cell.day === selectedDay}
-                  onSelect={setSelectedDay}
+                  onSelect={(day) =>
+                    setSelectedDay((current) => (current === day ? null : day))
+                  }
                   locale={i18n.language}
                   noUsageLabel={t('usageHeroHeatNoUsage')}
                   fillHeight={fillHeight}

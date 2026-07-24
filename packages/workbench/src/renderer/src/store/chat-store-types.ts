@@ -3,6 +3,7 @@ import type {
   ActivePluginMeta,
   ChatBlock,
   NormalizedThread,
+  RestoreCodeResult,
   RuntimeConnectionStatus,
   TurnCompletePayload,
   UserInputAnswer
@@ -162,7 +163,15 @@ export type ChatState = {
   withdrawQueuedMessage: (id: string) => QueuedUserMessage | null
   /** Interrupt the active turn (if any), then send this queued message next. */
   sendQueuedMessageNow: (id: string) => Promise<void>
-  rewindAndResend: (userBlockId: string, newText: string) => Promise<void>
+  rewindAndResend: (
+    userBlockId: string,
+    newText: string,
+    opts?: { restoreFiles?: boolean }
+  ) => Promise<void>
+  /** Rewind the conversation to just before a user message (optionally also restoring files). */
+  rewindToMessage: (userBlockId: string, opts: { restoreFiles: boolean }) => Promise<void>
+  /** Restore workspace files to the state before a user message's turn; conversation untouched. */
+  restoreCodeAt: (userBlockId: string) => Promise<RestoreCodeResult | null>
   interrupt: () => Promise<void>
   renameActiveThread: (title: string) => Promise<void>
   renameThread: (threadId: string, title: string) => Promise<void>

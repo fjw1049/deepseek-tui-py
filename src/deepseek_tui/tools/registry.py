@@ -133,6 +133,10 @@ class ToolContext:
     # Optional sink for File Mutation Ledger (main turn + subagents).
     # Receives a mutation dict matching ToolResult metadata["mutation"].
     on_file_mutation: Callable[[dict[str, Any]], None] | None = None
+    # Optional pre-write hook (server turn checkpoints for rewind): called
+    # with the workspace-relative path and the file's current text (None when
+    # the file does not exist yet) right before a write tool overwrites it.
+    pre_write_capture: Callable[[str, str | None], None] | None = None
     # Subagent id when tools run inside a child agent (projected into ledger).
     mutation_agent_id: str | None = None
 
@@ -148,6 +152,17 @@ class ToolContext:
         except Exception:
             logging.getLogger(__name__).debug(
                 "on_file_mutation_failed", exc_info=True
+            )
+
+    def capture_pre_write(self, path: str, old_text: str | None) -> None:
+        """Notify the turn checkpoint store about an impending file write."""
+        if self.pre_write_capture is None:
+            return
+        try:
+            self.pre_write_capture(path, old_text)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "pre_write_capture_failed", exc_info=True
             )
 
     @staticmethod

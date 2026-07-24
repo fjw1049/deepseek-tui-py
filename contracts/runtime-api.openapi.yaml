@@ -125,6 +125,128 @@ paths:
           description: Forked thread
         "404":
           description: Thread not found
+  /v1/threads/{thread_id}/rewind:
+    post:
+      summary: Truncate thread in place at before_item_id
+      description: >
+        Drops the item and everything after it from the durable store.
+        With restore_files=true the dropped turns' workspace files are also
+        rolled back to their pre-turn state (per-turn file checkpoints) before
+        truncation. Emits thread.rewound with restored_files / skipped_files.
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [before_item_id]
+              properties:
+                before_item_id:
+                  type: string
+                restore_files:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Rewound thread
+        "400":
+          description: Item not found in thread / turn active
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/restore-code:
+    post:
+      summary: Restore workspace files to before_item_id, conversation intact
+      description: >
+        Rolls files mutated by the cutoff turn and later turns back to their
+        pre-turn state and consumes those turns' checkpoints. Conversation
+        records are not touched.
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [before_item_id]
+              properties:
+                before_item_id:
+                  type: string
+      responses:
+        "200":
+          description: Restore report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  thread_id:
+                    type: string
+                  before_item_id:
+                    type: string
+                  restored_files:
+                    type: array
+                    items:
+                      type: string
+                  skipped_files:
+                    type: array
+                    items:
+                      type: string
+                  turns_without_checkpoint:
+                    type: array
+                    items:
+                      type: string
+                  turns:
+                    type: integer
+        "400":
+          description: Item not found in thread / turn active
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/rewind-preview:
+    get:
+      summary: Preview files a rewind/restore to before_item_id would touch
+      description: >
+        Aggregates the per-turn checkpoints of the cutoff turn and later
+        turns. files lists every mutated path (including skipped ones);
+        skipped is the subset whose pre-image cannot be resolved (non-git
+        workspace without recorded content); turns is the number of affected
+        turns; no_checkpoint counts affected turns that have no checkpoint
+        (nothing recoverable for them).
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+        - name: before_item_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: string
+                  skipped:
+                    type: array
+                    items:
+                      type: string
+                  is_git:
+                    type: boolean
+                  turns:
+                    type: integer
+                  no_checkpoint:
+                    type: integer
+        "400":
+          description: Item not found in thread
+        "404":
+          description: Thread not found
   /v1/threads/{thread_id}/resume:
     post:
       summary: Resume / warm thread engine

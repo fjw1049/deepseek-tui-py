@@ -236,6 +236,14 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(trimmedRoot)
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
+  const reloadCleanTabs = useWorkspaceEditorStore((s) => s.reloadCleanTabs)
+  // The tick also bumps on plain agent file writes, so refreshing clean open
+  // tabs here keeps them in sync with tool edits and rewind restores alike.
+  const reloadCleanEditorTabs = useCallback(
+    () => reloadCleanTabs(trimmedRoot),
+    [reloadCleanTabs, trimmedRoot]
+  )
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadCleanEditorTabs)
 
   const [treeWidth, setTreeWidth] = useState(readStoredTreeWidth)
   const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio)

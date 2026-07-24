@@ -8,6 +8,8 @@ import type {
   ChatBlock,
   NormalizedThread,
   ProcessIntentMeta,
+  RestoreCodeResult,
+  RewindPreview,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
   ThreadEventSink,
@@ -441,6 +443,22 @@ function toRuntimeError(info: RuntimeErrorJson & { message: string }): Error {
       ? JSON.stringify({ error: info.error, message: info.message })
       : info.message
   )
+}
+
+/**
+ * Read a string list from a runtime JSON payload, tolerating the first
+ * matching field name so backend response renames only need a one-line
+ * adjustment here.
+ */
+function stringListFromJson(
+  parsed: Record<string, unknown>,
+  ...fieldNames: string[]
+): string[] {
+  for (const name of fieldNames) {
+    const value = parsed[name]
+    if (Array.isArray(value)) return value.map((entry) => String(entry))
+  }
+  return []
 }
 
 function runtimeExecutionFlags(settings: AppSettingsV1): RuntimeExecutionFlags {
@@ -1233,13 +1251,42 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async rewindThread(threadId: string, beforeItemId: string): Promise<void> {
+  async rewindThread(threadId: string, beforeItemId: string, restoreFiles?: boolean): Promise<void> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/rewind`,
       'POST',
-      JSON.stringify({ before_item_id: beforeItemId })
+      JSON.stringify({ before_item_id: beforeItemId, restore_files: restoreFiles === true })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rewind thread failed'))
+  }
+
+  async restoreCode(threadId: string, beforeItemId: string): Promise<RestoreCodeResult> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/restore-code`,
+      'POST',
+      JSON.stringify({ before_item_id: beforeItemId })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'restore code failed'))
+    const parsed = JSON.parse(r.body) as Record<string, unknown>
+    return {
+      restoredFiles: stringListFromJson(parsed, 'restored_files', 'restored'),
+      skippedFiles: stringListFromJson(parsed, 'skipped_files', 'skipped')
+    }
+  }
+
+  async rewindPreview(threadId: string, beforeItemId: string): Promise<RewindPreview> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/rewind-preview?before_item_id=${encodeURIComponent(beforeItemId)}`,
+      'GET'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rewind preview failed'))
+    const parsed = JSON.parse(r.body) as Record<string, unknown>
+    return {
+      files: stringListFromJson(parsed, 'files'),
+      skipped: stringListFromJson(parsed, 'skipped'),
+      isGit: parsed.is_git !== false,
+      turns: typeof parsed.turns === 'number' ? parsed.turns : 0
+    }
   }
 
   async resumeThread(threadId: string): Promise<void> {

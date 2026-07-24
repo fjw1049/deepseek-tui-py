@@ -192,6 +192,52 @@ function finalizeTurnTiming(state: ChatState): Partial<ChatState> {
   }
 }
 
+/**
+ * Compute the state patch that drops the target user block and everything
+ * after it, cleaning up per-turn timing state for the dropped turns. Shared
+ * by `rewindAndResend` and `rewindToMessage`. Returns null when the target
+ * block is not a known user block.
+ */
+function truncateStateAtUserBlock(state: ChatState, userBlockId: string): Partial<ChatState> | null {
+  const idx = state.blocks.findIndex((b) => b.id === userBlockId && b.kind === 'user')
+  if (idx < 0) return null
+
+  const trimmedBlocks = state.blocks.slice(0, idx)
+
+  const droppedUserIds = state.blocks
+    .slice(idx)
+    .filter((b) => b.kind === 'user')
+    .map((b) => b.id)
+  const turnStartedAtByUserId = { ...state.turnStartedAtByUserId }
+  const turnDurationByUserId = { ...state.turnDurationByUserId }
+  const turnReasoningFirstAtByUserId = { ...state.turnReasoningFirstAtByUserId }
+  const turnReasoningLastAtByUserId = { ...state.turnReasoningLastAtByUserId }
+  for (const id of droppedUserIds) {
+    delete turnStartedAtByUserId[id]
+    delete turnDurationByUserId[id]
+    delete turnReasoningFirstAtByUserId[id]
+    delete turnReasoningLastAtByUserId[id]
+  }
+
+  sseAbort?.abort()
+  sseAbort = null
+  clearBusyWatchdog()
+
+  return {
+    blocks: trimmedBlocks,
+    liveReasoning: '',
+    liveAssistant: '',
+    currentTurnId: null,
+    currentTurnUserId: null,
+    turnStartedAtByUserId,
+    turnDurationByUserId,
+    turnReasoningFirstAtByUserId,
+    turnReasoningLastAtByUserId,
+    queuedMessages: [],
+    error: null
+  }
+}
+
 function appendLiveReasoningBlock(
   blocks: ChatBlock[],
   text: string,
@@ -2552,7 +2598,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setProjectsCollapsed: (collapsed) => set({ projectsCollapsed: collapsed }),
   setPinnedCollapsed: (collapsed) => set({ pinnedCollapsed: collapsed }),
 
-  rewindAndResend: async (userBlockId, newText) => {
+  rewindAndResend: async (userBlockId, newText, opts) => {
     const trimmed = newText.trim()
     if (!trimmed) return
     const state = get()
@@ -2560,14 +2606,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: i18n.t('common:rewindBusyError') })
       return
     }
-    const idx = state.blocks.findIndex((b) => b.id === userBlockId && b.kind === 'user')
-    if (idx < 0) return
+    if (!state.blocks.some((b) => b.id === userBlockId && b.kind === 'user')) return
 
     // Truncate on the runtime first so the dropped turns are deleted from
     // disk (they would otherwise resurface on the next thread reload) and
     // the engine session is re-synced without them. Blocks with local
     // optimistic ids (`u-…`/`q-…`) were never persisted, so only blocks
     // carrying a runtime item id (`item_…`) need the backend call.
+    let restoredOnBackend = false
     const p = getProvider(state.providerId)
     if (
       state.activeThreadId &&
@@ -2575,7 +2621,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       typeof p.rewindThread === 'function'
     ) {
       try {
-        await p.rewindThread(state.activeThreadId, userBlockId)
+        await p.rewindThread(state.activeThreadId, userBlockId, opts?.restoreFiles)
+        restoredOnBackend = opts?.restoreFiles === true
       } catch (e) {
         set({ error: formatRuntimeError(e) })
         return
@@ -2583,42 +2630,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     // Drop the target user block and everything after it from the UI.
-    const trimmedBlocks = state.blocks.slice(0, idx)
-
-    const droppedUserIds = state.blocks
-      .slice(idx)
-      .filter((b) => b.kind === 'user')
-      .map((b) => b.id)
-    const turnStartedAtByUserId = { ...state.turnStartedAtByUserId }
-    const turnDurationByUserId = { ...state.turnDurationByUserId }
-    const turnReasoningFirstAtByUserId = { ...state.turnReasoningFirstAtByUserId }
-    const turnReasoningLastAtByUserId = { ...state.turnReasoningLastAtByUserId }
-    for (const id of droppedUserIds) {
-      delete turnStartedAtByUserId[id]
-      delete turnDurationByUserId[id]
-      delete turnReasoningFirstAtByUserId[id]
-      delete turnReasoningLastAtByUserId[id]
+    const patch = truncateStateAtUserBlock(state, userBlockId)
+    if (!patch) return
+    set(patch)
+    if (restoredOnBackend) {
+      // Files changed on disk — refresh the git panels/docks watching this tick.
+      set((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
     }
 
-    sseAbort?.abort()
-    sseAbort = null
-    clearBusyWatchdog()
-
-    set({
-      blocks: trimmedBlocks,
-      liveReasoning: '',
-      liveAssistant: '',
-      currentTurnId: null,
-      currentTurnUserId: null,
-      turnStartedAtByUserId,
-      turnDurationByUserId,
-      turnReasoningFirstAtByUserId,
-      turnReasoningLastAtByUserId,
-      queuedMessages: [],
-      error: null
-    })
-
     await get().sendMessage(trimmed)
+  },
+
+  rewindToMessage: async (userBlockId, opts) => {
+    const state = get()
+    if (state.busy) {
+      set({ error: i18n.t('common:rewindBusyError') })
+      return
+    }
+    if (!state.blocks.some((b) => b.id === userBlockId && b.kind === 'user')) return
+
+    // Same runtime-first truncation as rewindAndResend, optionally restoring
+    // workspace files to the pre-turn state, but without sending a new turn.
+    let restoredOnBackend = false
+    const p = getProvider(state.providerId)
+    if (
+      state.activeThreadId &&
+      userBlockId.startsWith('item_') &&
+      typeof p.rewindThread === 'function'
+    ) {
+      try {
+        await p.rewindThread(state.activeThreadId, userBlockId, opts.restoreFiles)
+        restoredOnBackend = opts.restoreFiles
+      } catch (e) {
+        set({ error: formatRuntimeError(e) })
+        return
+      }
+    }
+
+    const patch = truncateStateAtUserBlock(state, userBlockId)
+    if (!patch) return
+    set(patch)
+    if (restoredOnBackend) {
+      set((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
+    }
+  },
+
+  restoreCodeAt: async (userBlockId) => {
+    const state = get()
+    if (state.busy) {
+      set({ error: i18n.t('common:rewindBusyError') })
+      return null
+    }
+    // Local-only blocks were never persisted, so there is no runtime state to
+    // restore against; the conversation is left untouched either way.
+    if (!state.activeThreadId || !userBlockId.startsWith('item_')) return null
+    const p = getProvider(state.providerId)
+    if (typeof p.restoreCode !== 'function') {
+      set({ error: i18n.t('common:rewindRestoreUnsupported') })
+      return null
+    }
+    try {
+      const result = await p.restoreCode(state.activeThreadId, userBlockId)
+      // Files changed on disk — refresh the git panels/docks watching this tick.
+      set((s) => ({ error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
+      return result
+    } catch (e) {
+      set({ error: formatRuntimeError(e) })
+      return null
+    }
   },
 
   resolveApproval: async (blockId, decision, remember = false) => {
