@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _PROCESS_STORE_KEY = "shell_processes"
 _PTY_STORE_KEY = "shell_pty_processes"
 _EXEC_ENV_STORE_KEY = "shell_exec_envs"
+_COLLECTOR_STORE_KEY = "shell_process_collectors"
 _MAX_STORED_PROCESSES = 20
 
 
@@ -373,16 +374,24 @@ async def wait_background_process(
         )
 
     process = _get_process(context, process_id)
-    if timeout_ms is not None and process.returncode is None:
-        # wait() does not consume the pipes, so a timeout leaves the
-        # process (and its buffered output) intact for a later call.
+    # communicate() runs as a cached background task so the pipes are drained
+    # continuously: a child that fills the pipe buffer would otherwise block
+    # on write and a bare process.wait() could never observe the exit.
+    collector = _ensure_collector(context, process_id, process)
+    if timeout_ms is None:
+        stdout, stderr = await collector
+    else:
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout_ms / 1000.0)
+            # shield: on timeout the collector keeps draining so a later
+            # call can still collect the full output.
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(collector), timeout=timeout_ms / 1000.0
+            )
         except asyncio.TimeoutError:
             return _running_process_result(process_id)
     _pop_process(context, process_id)
+    _pop_collector(context, process_id)
     exec_env = _pop_exec_env(context, process_id)
-    stdout, stderr = await process.communicate()
     return _build_shell_result(
         process,
         stdout,
@@ -437,7 +446,13 @@ async def cancel_background_process(context: ToolContext, process_id: str) -> To
         )
     process = _pop_process(context, process_id)
     process.terminate()
-    stdout, stderr = await process.communicate()
+    collector = _pop_collector(context, process_id)
+    if collector is not None:
+        # A wait call already started draining the pipes — reuse it instead
+        # of a second communicate() on the same streams.
+        stdout, stderr = await collector
+    else:
+        stdout, stderr = await process.communicate()
     return ToolResult(
         success=True,
         content="cancelled",
@@ -533,7 +548,38 @@ def _process_store(context: ToolContext) -> dict[str, Process]:
         ]
         for pid in terminated:
             del store[pid]
+            _pop_collector(context, pid)
     return store
+
+
+def _collector_store(
+    context: ToolContext,
+) -> dict[str, asyncio.Task[tuple[bytes | None, bytes | None]]]:
+    store = context.metadata.get(_COLLECTOR_STORE_KEY)
+    if store is None:
+        store = {}
+        context.metadata[_COLLECTOR_STORE_KEY] = store
+    if not isinstance(store, dict):
+        raise ToolError("shell collector store is invalid")
+    return store
+
+
+def _ensure_collector(
+    context: ToolContext, process_id: str, process: Process
+) -> asyncio.Task[tuple[bytes | None, bytes | None]]:
+    """Return the cached communicate() task for a process, creating it once."""
+    store = _collector_store(context)
+    collector = store.get(process_id)
+    if collector is None:
+        collector = asyncio.ensure_future(process.communicate())
+        store[process_id] = collector
+    return collector
+
+
+def _pop_collector(
+    context: ToolContext, process_id: str
+) -> asyncio.Task[tuple[bytes | None, bytes | None]] | None:
+    return _collector_store(context).pop(process_id, None)
 
 
 def _get_process(context: ToolContext, process_id: str) -> Process:

@@ -439,9 +439,9 @@ def build_primary_preview(
         if content := _param_preview(args, ("content",), 800):
             path = _param_preview(args, ("path",), 72) or "?"
             return f"path: {path}\n\n{content}"
-        if search := _param_preview(args, ("search", "replace"), 400):
+        if search := _param_preview(args, ("old_string", "new_string", "search", "replace"), 400):
             path = _param_preview(args, ("path",), 72) or "?"
-            return f"path: {path}\nsearch/replace:\n{search}"
+            return f"path: {path}\nold_string/new_string:\n{search}"
     if args:
         try:
             return _truncate(json.dumps(args, ensure_ascii=False, indent=0), 1200)

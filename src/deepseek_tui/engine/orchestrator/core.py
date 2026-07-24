@@ -876,8 +876,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
         profile = self.tool_profile or TOOL_PROFILE_FULL
+        # Deferral must apply on every branch, not only the one that goes
+        # through build_model_tool_catalog — otherwise a missing/cold/empty
+        # MCP discovery silently ships the full tool set to the model.
+        mode = (self.mode or "agent").strip() or "agent"
         if mcp is None:
             result = filter_tools_for_profile(list(native_tools), profile)
+            apply_native_tool_deferral(result, mode)
         else:
             mcp_tools = self._mcp_tools_cache
             if mcp_tools is None:
@@ -887,8 +892,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 mcp.schedule_background_discover()
                 logger.info("mcp_discover_deferred native_tools=%d", len(native_tools))
                 result = filter_tools_for_profile(list(native_tools), profile)
+                apply_native_tool_deferral(result, mode)
             elif not mcp_tools:
                 result = filter_tools_for_profile(list(native_tools), profile)
+                apply_native_tool_deferral(result, mode)
             else:
                 self._mcp_tools_cache = list(mcp_tools)
                 combined = build_model_tool_catalog(
@@ -2526,6 +2533,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     extra_active_tools=self._activated_tool_names,
                     latency_turn_id=latency_turn_id,
                     round_idx=round_idx,
+                    mode=self.mode,
                 )
             # Refresh the real pressure signal *within* the turn, not just at
             # turn end: every round's StreamDone carries the provider's

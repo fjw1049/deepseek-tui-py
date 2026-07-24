@@ -91,3 +91,50 @@ async def test_agent_cancel_requires_an_id(tmp_path) -> None:
     ctx = ToolContext(working_directory=tmp_path)
     with pytest.raises(ToolError, match="agent_id or process_id is required"):
         await AgentCancelTool().execute({}, ctx)
+
+
+async def test_agent_result_block_collects_large_output_within_timeout(tmp_path) -> None:
+    """Regression: a child that fills the OS pipe buffer must not deadlock the
+    timed wait (bare process.wait() never observes the exit while the child
+    is blocked on write; the collector task drains the pipes instead)."""
+    ctx = ToolContext(working_directory=tmp_path)
+    pid = await _spawn(ctx, "dd if=/dev/zero bs=1024 count=300 2>/dev/null | base64")
+
+    result = await AgentResultTool().execute(
+        {"process_id": pid, "block": True, "timeout_ms": 10000}, ctx
+    )
+
+    assert result.metadata["status"] == "completed"
+    assert result.metadata["returncode"] == 0
+    assert len(result.metadata["stdout"]) > 300_000
+
+
+async def test_agent_result_timeout_then_recollect_preserves_output(tmp_path) -> None:
+    """A timed-out wait leaves the collector running; the next blocking call
+    reuses it and still returns the full output."""
+    ctx = ToolContext(working_directory=tmp_path)
+    pid = await _spawn(ctx, "echo part1; sleep 2; echo part2")
+
+    first = await AgentResultTool().execute(
+        {"process_id": pid, "block": True, "timeout_ms": 1000}, ctx
+    )
+    assert first.metadata["status"] == "running"
+
+    second = await AgentResultTool().execute(
+        {"process_id": pid, "block": True, "timeout_ms": 10000}, ctx
+    )
+    assert second.metadata["status"] == "completed"
+    assert "part1" in second.content
+    assert "part2" in second.content
+
+
+async def test_agent_result_rejects_ambiguous_ids(tmp_path) -> None:
+    ctx = ToolContext(working_directory=tmp_path)
+    with pytest.raises(ToolError, match="either agent_id or process_id"):
+        await AgentResultTool().execute({"agent_id": "a1", "process_id": "p1"}, ctx)
+
+
+async def test_agent_cancel_rejects_ambiguous_ids(tmp_path) -> None:
+    ctx = ToolContext(working_directory=tmp_path)
+    with pytest.raises(ToolError, match="either agent_id or process_id"):
+        await AgentCancelTool().execute({"agent_id": "a1", "process_id": "p1"}, ctx)

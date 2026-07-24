@@ -255,3 +255,59 @@ async def test_glm_gets_reasoning_output_headroom():
     )
 
     assert client.requests[0].max_tokens == 32_768
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_defers_code_execution_in_turn():
+    """TurnLoop must forward mode to ensure_advanced_tooling: in agent mode
+    code_execution is deferred (not advertised to the model) while
+    tool_search stays active."""
+    client = _ScriptedClient([[StreamDone(usage=None)]])
+    loop = TurnLoop(client)
+
+    await loop.run(
+        request=MessageRequest(
+            model="deepseek-chat",
+            messages=[Message.user("hi")],
+        ),
+        emit=lambda _event: asyncio.sleep(0),
+        cancel_event=asyncio.Event(),
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "read_file", "description": "r", "parameters": {}},
+            },
+        ],
+        mode="agent",
+    )
+
+    names = [t.get("function", t).get("name") for t in (client.requests[0].tools or [])]
+    assert "code_execution" not in names
+    assert "tool_search_tool_regex" in names
+    assert "read_file" in names
+
+
+@pytest.mark.asyncio
+async def test_default_mode_keeps_code_execution_active():
+    """Without mode the legacy behavior is preserved: code_execution is
+    advertised directly."""
+    client = _ScriptedClient([[StreamDone(usage=None)]])
+    loop = TurnLoop(client)
+
+    await loop.run(
+        request=MessageRequest(
+            model="deepseek-chat",
+            messages=[Message.user("hi")],
+        ),
+        emit=lambda _event: asyncio.sleep(0),
+        cancel_event=asyncio.Event(),
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "read_file", "description": "r", "parameters": {}},
+            },
+        ],
+    )
+
+    names = [t.get("function", t).get("name") for t in (client.requests[0].tools or [])]
+    assert "code_execution" in names

@@ -441,7 +441,10 @@ class AgentResultTool(ToolSpec):
         return (
             "Fetch result of a background job (sub-agent via agent_id, or "
             "background shell process via process_id); optionally block until "
-            "complete."
+            "complete. When collecting the output of a finished/long-running "
+            "background process, pass block: true — the default non-blocking "
+            "peek returns status: running for unfinished jobs, which is a "
+            "status report, not the result."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -472,6 +475,8 @@ class AgentResultTool(ToolSpec):
         timeout_ms = max(1000, min(MAX_RESULT_TIMEOUT_MS, int(timeout_ms)))
         process_id = _pick_str(input_data, "process_id")
         if process_id is not None:
+            if _pick_str(input_data, "agent_id", "id") is not None:
+                raise ToolError("pass either agent_id or process_id, not both")
             # Background shell process — route to the shell process store.
             from deepseek_tui.tools import shell as _shell
 
@@ -533,6 +538,8 @@ class AgentCancelTool(ToolSpec):
     ) -> ToolResult:
         process_id = _pick_str(input_data, "process_id")
         if process_id is not None:
+            if _pick_str(input_data, "agent_id", "id") is not None:
+                raise ToolError("pass either agent_id or process_id, not both")
             from deepseek_tui.tools import shell as _shell
 
             return await _shell.cancel_background_process(context, process_id)

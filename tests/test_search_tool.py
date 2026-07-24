@@ -167,3 +167,24 @@ async def test_grep_head_limit_caps_matches(tmp_path: Path):
     assert result.metadata["shown"] == 3
     assert result.metadata["truncated"] is True
     assert "showing 3 of 10 matches" in result.content
+
+
+async def test_grep_adjacent_match_not_marked_as_context(tmp_path: Path):
+    """A match line inside a previous match's context window is still a match:
+    it must render as `path:N:` (not `path-N-`) and count as shown."""
+    (tmp_path / "a.txt").write_text(
+        "one\ntwo\nneedle\nneedle\nfive\n", encoding="utf-8"
+    )
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "-C": 1},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert "a.txt:3:needle" in result.content
+    assert "a.txt:4:needle" in result.content
+    assert "a.txt-4-needle" not in result.content
+    # Genuine context lines still render as context.
+    assert "a.txt-2-two" in result.content
+    assert "a.txt-5-five" in result.content
+    assert result.metadata["shown"] == 2

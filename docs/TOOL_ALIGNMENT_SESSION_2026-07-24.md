@@ -119,3 +119,14 @@ request_user_input→AskUserQuestion
 
 - 工作分支：`build_0724` → 新分支 `build_0725`（本次全部改动 + 本文档，单次提交）
 - 未做 git push；8 个预存测试失败与本次无关
+
+## 复审与修复（2026-07-24 晚，home）
+
+对 5888b1e 做了四轮独立审查（含与 Cursor 分析的交叉裁决），确认**对现有功能零回归**，但发现 deferral 接线漏洞并已全部修复（未提交，工作树改动）：
+
+1. **无 MCP / 空 MCP / 冷启动时 deferral 不生效**（`core.py` `_get_tools_with_mcp`）：三条 native-only 分支补上 `apply_native_tool_deferral`。修复前无 MCP 时 56 个工具全发，特性静默失效。
+2. **`agent_result(process_id, block=true)` 大输出假超时**（`shell.py`）：timed 分支从 `process.wait()`（不排空管道，子进程写满 pipe buffer 后死锁到超时）改为缓存的 `communicate()` collector task + `shield` 超时；`cancel` 复用同一 collector。
+3. **TurnLoop 未透传 mode**（`turn.py:156`）：`run()` 新增 `mode` 参数，`core.py` 调用点传 `self.mode`；code_execution 在 agent/plan 模式下正确 defer。
+4. 小修：grep 相邻 match 不再误标 context（`search.py` 按全文件 match 集合判定）；`agent_result`/`agent_cancel` 同传 agent_id+process_id 报冲突；审批预览兼容 `old_string`/`new_string`；`agent_result` description 与 base.md(.bak) 明确收集后台进程用 `block: true`。
+
+验证：agent 模式无 MCP 下 active 工具 = **27**，与上文清单逐名一致。新增回归测试 11 个（test_background_job_tools +4、test_search_tool +1、test_mcp_engine_integration +4、engine/test_core_fixes +2）。全量：`1050 passed, 19 skipped, 16 failed`——16 个失败与修复前完全相同（8 预存 + 7 live API 无 key + 1 p0 陈旧测试），零新增。

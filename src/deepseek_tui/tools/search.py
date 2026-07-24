@@ -282,6 +282,7 @@ def _grep_files(
             continue
         file_counts[path] = len(match_idx)
         total += len(match_idx)
+        match_lines = set(match_idx)  # 0-based; a real match never renders as context
         last_emitted = 0  # 1-based line no. dedup for overlapping context
         for i in match_idx:
             if shown_matches >= head_limit:
@@ -297,7 +298,7 @@ def _grep_files(
                 line = lines[j]
                 if len(line) > _MAX_LINE_LEN:
                     line = line[:_MAX_LINE_LEN] + "… (line truncated)"
-                rows.append((path, line_no, line, j != i))
+                rows.append((path, line_no, line, j not in match_lines))
     return rows, file_counts, total
 
 

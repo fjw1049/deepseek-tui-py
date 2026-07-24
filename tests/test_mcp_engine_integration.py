@@ -243,3 +243,69 @@ class TestExecuteMcpTool:
         result = await execute_external_mcp_tool(mgr, "mcp_srv_multi", {})
         assert result.success is True
         assert result.content == "line 1\nline 2"
+
+# --- Native deferral on MCP-less branches ------------------------------------
+
+
+class TestNativeDeferralWithoutMcp:
+    """apply_native_tool_deferral must run on every _get_tools_with_mcp
+    branch — a missing/cold/empty MCP discovery must not silently ship the
+    full (undeferred) tool set to the model."""
+
+    def _engine(self, tmp_path, mcp_manager=None, mode="agent"):
+        from deepseek_tui.engine.handle import EngineHandle
+        from deepseek_tui.engine.orchestrator import Engine
+        from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+        from deepseek_tui.tools.registry import (
+            ToolContext,
+            build_default_registry,
+        )
+
+        metadata = {MCP_MANAGER_KEY: mcp_manager} if mcp_manager is not None else {}
+        engine = Engine(
+            handle=EngineHandle(),
+            client=AsyncMock(),
+            tool_context=ToolContext(working_directory=tmp_path, metadata=metadata),
+            tool_registry=build_default_registry(mode=mode),
+        )
+        engine.mode = mode
+        return engine
+
+    @staticmethod
+    def _defer_map(tools):
+        return {
+            t.get("function", t).get("name"): bool(
+                t.get("function", t).get("defer_loading", False)
+            )
+            for t in tools
+        }
+
+    async def test_no_mcp_manager_defers_non_core_tools(self, tmp_path):
+        engine = self._engine(tmp_path)
+        defer = self._defer_map(await engine._get_tools_with_mcp())
+        assert defer["git_status"] is True
+        assert defer["workflow"] is True
+        assert defer["read_file"] is False
+        assert defer["exec_shell"] is False
+
+    async def test_empty_mcp_discovery_defers_non_core_tools(self, tmp_path):
+        mgr = McpManager([McpServerConfig(name="test_server", command="echo")])
+        mgr._discovered_tools_cache = []
+        engine = self._engine(tmp_path, mcp_manager=mgr)
+        defer = self._defer_map(await engine._get_tools_with_mcp())
+        assert defer["git_status"] is True
+        assert defer["read_file"] is False
+
+    async def test_cold_mcp_discovery_defers_non_core_tools(self, tmp_path):
+        mgr = McpManager([McpServerConfig(name="test_server", command="echo")])
+        mgr.schedule_background_discover = lambda: None
+        engine = self._engine(tmp_path, mcp_manager=mgr)
+        defer = self._defer_map(await engine._get_tools_with_mcp())
+        assert defer["git_status"] is True
+        assert defer["read_file"] is False
+
+    async def test_yolo_mode_defers_nothing_without_mcp(self, tmp_path):
+        engine = self._engine(tmp_path, mode="yolo")
+        defer = self._defer_map(await engine._get_tools_with_mcp())
+        assert defer["git_status"] is False
+        assert defer["workflow"] is False

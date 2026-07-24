@@ -137,6 +137,7 @@ class TurnLoop:
         extra_active_tools: set[str] | None = None,
         latency_turn_id: str | None = None,
         round_idx: int = 0,
+        mode: str | None = None,
     ) -> TurnResult:
         """Run a single turn of the conversation loop.
 
@@ -151,12 +152,14 @@ class TurnLoop:
         """
         state = _TurnState()
         tool_catalog = tools or []
-        # 延迟加载，模型至少能直接调用代码执行和工具发现能力，其余工具按延迟加载策略按需激活
+        # 延迟加载，模型至少能直接调用工具发现能力，代码执行及其余工具按
+        # 延迟加载策略按需激活（mode 缺省时保持旧行为：code_execution 直接激活）
         if tool_catalog:
             ensure_advanced_tooling(
                 tool_catalog,
                 include_tool_search=include_tool_search,
                 include_code_execution=include_code_execution,
+                mode=mode,
             )
 
         state.active_tool_names = initial_active_tools(tool_catalog)
